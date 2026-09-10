@@ -4,6 +4,24 @@ import * as diagnostics from "@/lib/connectivity-diagnostics/facade"
 
 const originalFetch = globalThis.fetch
 
+type RecordedEvent = { event: diagnostics.ConnectivityEvent; fields: diagnostics.DiagnosticFields }
+
+function captureConnectivityEvents(events: RecordedEvent[]): void {
+  vi.spyOn(diagnostics, "beginConnectivityObservation").mockImplementation((fields = {}) => ({
+    id: "op_test",
+    record: (event, extra = {}) => {
+      events.push({ event, fields: { ...fields, ...extra, operationId: "op_test" } })
+    },
+    stall: () => {
+      const timer = setTimeout(
+        () => events.push({ event: "http_stalled", fields: { ...fields, operationId: "op_test" } }),
+        10
+      )
+      return () => clearTimeout(timer)
+    },
+  }))
+}
+
 function mockResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -116,19 +134,13 @@ describe("HTTP connectivity phases", () => {
   })
 
   it("should distinguish a response-body stall from waiting for headers", async () => {
-    const events: diagnostics.ConnectivityEvent[] = []
-    vi.spyOn(diagnostics, "beginConnectivityObservation").mockImplementation(() => ({
-      id: "op_test",
-      record: (event) => {
-        events.push(event)
-      },
-      stall: () => {
-        const timer = setTimeout(() => events.push("http_stalled"), 10)
-        return () => clearTimeout(timer)
-      },
-    }))
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
     let finishBody: ((value: unknown) => void) | undefined
-    const response = new Response("{}", { status: 200 })
+    const response = new Response("{}", {
+      status: 200,
+      headers: { "x-railway-request-id": "railway_1" },
+    })
     response.json = () =>
       new Promise((resolve) => {
         finishBody = resolve
@@ -140,27 +152,130 @@ describe("HTTP connectivity phases", () => {
     finishBody?.({ ok: true })
 
     await expect(request).resolves.toEqual({ ok: true })
-    expect(events).toEqual(["http_start", "http_headers", "http_stalled", "http_body_complete"])
+    expect(events).toEqual([
+      {
+        event: "http_start",
+        fields: { method: "GET", route: "streams", transport: "fetch", operationId: "op_test" },
+      },
+      {
+        event: "http_headers",
+        fields: {
+          method: "GET",
+          route: "streams",
+          transport: "fetch",
+          operationId: "op_test",
+          status: 200,
+          correlationId: "railway_1",
+        },
+      },
+      {
+        event: "http_stalled",
+        fields: { method: "GET", route: "streams", transport: "fetch", operationId: "op_test" },
+      },
+      {
+        event: "http_body_complete",
+        fields: {
+          method: "GET",
+          route: "streams",
+          transport: "fetch",
+          operationId: "op_test",
+          status: 200,
+          correlationId: "railway_1",
+        },
+      },
+    ])
   })
 
   it("should instrument multipart fetch without adding a request timeout", async () => {
-    const events: diagnostics.ConnectivityEvent[] = []
-    vi.spyOn(diagnostics, "beginConnectivityObservation").mockImplementation(() => ({
-      id: "op_test",
-      record: (event) => {
-        events.push(event)
-      },
-      stall: () => () => {},
-    }))
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })) as unknown as typeof fetch
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "x-railway-request-id": "railway_2" },
+      })
+    ) as unknown as typeof fetch
 
     await expect(
       postMultipartFile("/api/workspaces/ws/profile/avatar", new File(["x"], "x.png"), "avatar")
     ).resolves.toEqual({ ok: true })
-    expect(events).toEqual(["http_start", "http_headers", "http_body_complete"])
+    expect(events).toEqual([
+      {
+        event: "http_start",
+        fields: { method: "POST", route: "avatars", transport: "fetch", operationId: "op_test" },
+      },
+      {
+        event: "http_headers",
+        fields: {
+          method: "POST",
+          route: "avatars",
+          transport: "fetch",
+          operationId: "op_test",
+          status: 200,
+          correlationId: "railway_2",
+        },
+      },
+      {
+        event: "http_body_complete",
+        fields: {
+          method: "POST",
+          route: "avatars",
+          transport: "fetch",
+          operationId: "op_test",
+          status: 200,
+          correlationId: "railway_2",
+        },
+      },
+    ])
     expect(vi.mocked(globalThis.fetch).mock.calls[0]![1]).not.toHaveProperty("signal")
+  })
+
+  it("should preserve response diagnostics when multipart JSON parsing fails", async () => {
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("not json", {
+        status: 200,
+        headers: { "x-railway-request-id": "railway_parse" },
+      })
+    ) as unknown as typeof fetch
+
+    const error = await postMultipartFile(
+      "/api/workspaces/ws/profile/avatar",
+      new File(["x"], "x.png"),
+      "avatar"
+    ).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(SyntaxError)
+    expect(events).toEqual([
+      {
+        event: "http_start",
+        fields: { method: "POST", route: "avatars", transport: "fetch", operationId: "op_test" },
+      },
+      {
+        event: "http_headers",
+        fields: {
+          method: "POST",
+          route: "avatars",
+          transport: "fetch",
+          operationId: "op_test",
+          status: 200,
+          correlationId: "railway_parse",
+        },
+      },
+      {
+        event: "http_failure",
+        fields: {
+          method: "POST",
+          route: "avatars",
+          transport: "fetch",
+          operationId: "op_test",
+          status: 200,
+          correlationId: "railway_parse",
+          reason: "unknown",
+        },
+      },
+    ])
   })
 })
 

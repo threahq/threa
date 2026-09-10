@@ -3,6 +3,7 @@ import { toast } from "sonner"
 import { act, render, spyOnExport, waitFor } from "@/test"
 import { AuthProvider, useAuth } from "@/auth"
 import * as dbModule from "@/db"
+import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
 
 let triggerLogout: () => void
 let captureLogin: ReturnType<typeof useAuth>["login"]
@@ -52,6 +53,7 @@ describe("AuthProvider logout", () => {
   })
 
   it("redirects to the logout endpoint even when navigator.serviceWorker.ready never resolves", async () => {
+    const suspend = vi.spyOn(diagnosticsModule, "suspendConnectivityDiagnostics")
     // Reproduces the desktop dev failure: an injectManifest module SW stranded
     // in "installing" means navigator.serviceWorker.ready never settles. The
     // push-cleanup step must not be able to block the logout redirect.
@@ -69,6 +71,7 @@ describe("AuthProvider logout", () => {
     await act(async () => {
       triggerLogout()
     })
+    expect(suspend).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000)

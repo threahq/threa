@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest"
+import { afterEach, describe, it, expect, vi } from "vitest"
 import type { Socket } from "socket.io-client"
+import * as diagnosticsModule from "./connectivity-diagnostics/facade"
 import { joinRoomBestEffort, joinRoomFireAndForget, joinRoomWithAck } from "./socket-room"
 
 type EventHandler = (...args: unknown[]) => void
@@ -54,6 +55,21 @@ function asSocket(mock: MockSocket): Socket {
   return mock as unknown as Socket
 }
 
+function captureJoinEvents(): Array<{
+  event: diagnosticsModule.ConnectivityEvent
+  fields: diagnosticsModule.DiagnosticFields
+}> {
+  const events: Array<{ event: diagnosticsModule.ConnectivityEvent; fields: diagnosticsModule.DiagnosticFields }> = []
+  vi.spyOn(diagnosticsModule, "beginConnectivityObservation").mockReturnValue({
+    id: "join_1",
+    record: (event, fields = {}) => events.push({ event, fields }),
+    stall: () => () => {},
+  })
+  return events
+}
+
+afterEach(() => vi.restoreAllMocks())
+
 describe("joinRoomWithAck", () => {
   it("should resolve when room join ack succeeds", async () => {
     const socket = new MockSocket()
@@ -87,10 +103,29 @@ describe("joinRoomWithAck", () => {
   it("should reject when ack times out", async () => {
     const socket = new MockSocket()
     socket.ackResult = null
+    const events = captureJoinEvents()
 
     await expect(joinRoomWithAck(asSocket(socket), "ws:workspace_1", { timeoutMs: 20 })).rejects.toThrow(
       'Timed out waiting for join ack for room "ws:workspace_1"'
     )
+    expect(events).toEqual([
+      { event: "room_join_start", fields: {} },
+      { event: "room_join_failure", fields: { reason: "timeout" } },
+    ])
+  })
+
+  it("should not infer a timeout reason from a server error message", async () => {
+    const socket = new MockSocket()
+    socket.ackResult = { ok: false, error: "Timed out according to the server" }
+    const events = captureJoinEvents()
+
+    await expect(joinRoomWithAck(asSocket(socket), "ws:workspace_1")).rejects.toThrow(
+      "Timed out according to the server"
+    )
+    expect(events).toEqual([
+      { event: "room_join_start", fields: {} },
+      { event: "room_join_failure", fields: { reason: "unknown" } },
+    ])
   })
 
   it("should dedupe concurrent joins for the same room", async () => {
@@ -141,6 +176,7 @@ describe("joinRoomWithAck", () => {
     const socket = new MockSocket()
     socket.connected = false
     const controller = new AbortController()
+    const events = captureJoinEvents()
 
     const joinPromise = joinRoomWithAck(asSocket(socket), "ws:workspace_1", {
       timeoutMs: 200,
@@ -151,6 +187,11 @@ describe("joinRoomWithAck", () => {
 
     await expect(joinPromise).rejects.toThrow('Join aborted for room "ws:workspace_1"')
     expect(socket.emitCalls).toBe(0)
+    expect(events).toEqual([
+      { event: "room_join_start", fields: {} },
+      { event: "room_join_connection_wait", fields: {} },
+      { event: "room_join_abort", fields: { reason: "abort" } },
+    ])
   })
 })
 

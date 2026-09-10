@@ -19,13 +19,14 @@ function mockInputs(params: {
   diagnostics?: boolean
   accountId?: string | null
   preferencesPending?: boolean
+  updatedAt?: string
 }) {
   vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
     preferences: {
       analyticsConsent: params.consent,
       sessionReplayOptIn: params.replay ?? false,
       performanceDiagnosticsOptIn: params.diagnostics ?? false,
-      updatedAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: params.updatedAt ?? "2026-06-01T00:00:00.000Z",
     },
     isLoading: params.preferencesPending ?? false,
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
@@ -143,8 +144,28 @@ describe("AnalyticsConsentGate", () => {
     )
   })
 
+  it("should retain the diagnostics runtime when an unrelated preference changes", () => {
+    const authorize = vi.spyOn(diagnosticsModule, "authorizeConnectivityDiagnostics").mockImplementation(() => {})
+    const suspend = vi.spyOn(diagnosticsModule, "suspendConnectivityDiagnostics").mockImplementation(() => {})
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: true })
+    const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    mockInputs({
+      consent: "granted",
+      analytics,
+      userId: "usr_1",
+      diagnostics: true,
+      updatedAt: "2026-06-01T00:01:00.000Z",
+    })
+    rerender(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    expect(authorize).toHaveBeenCalledTimes(2)
+    expect(suspend).not.toHaveBeenCalled()
+  })
+
   it("should not treat an optimistic preference update as a new diagnostics grant", () => {
     const authorize = vi.spyOn(diagnosticsModule, "authorizeConnectivityDiagnostics").mockImplementation(() => {})
+    const suspend = vi.spyOn(diagnosticsModule, "suspendConnectivityDiagnostics").mockImplementation(() => {})
     mockInputs({
       consent: "granted",
       analytics,
@@ -156,6 +177,7 @@ describe("AnalyticsConsentGate", () => {
     render(<AnalyticsConsentGate workspaceId="ws_1" />)
 
     expect(authorize).not.toHaveBeenCalled()
+    expect(suspend).not.toHaveBeenCalled()
   })
 
   it("should revoke the old scope when diagnostics consent is withdrawn", () => {

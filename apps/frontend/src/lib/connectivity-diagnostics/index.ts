@@ -6,6 +6,7 @@ import {
   clearConnectivityConsentTombstone,
   isConnectivityConsentTombstoned,
   readCachedConnectivityAuthorization,
+  readConnectivityConsentTombstones,
   readPendingConnectivityRevocations,
   tombstoneConnectivityAuthorization,
   type AuthorizedConnectivityDiagnosticsConfig,
@@ -578,12 +579,19 @@ async function persistPending(): Promise<void> {
 
   try {
     const database = getDb()
+    const tombstonedConsentIds = readConnectivityConsentTombstones()
+    const scopes = [...new Set(ready.map((item) => item.row.scope))]
     const result = await database.transaction("rw", database.events, database.consent, async () => {
       const accepted: DiagnosticRow[] = []
       const deferred: PendingRow[] = []
+      const consents = new Map(
+        (await database.consent.bulkGet(scopes))
+          .filter((consent): consent is ConsentRow => consent !== undefined)
+          .map((consent) => [consent.scope, consent] as const)
+      )
       for (const item of ready) {
-        if (isConnectivityConsentTombstoned(item.consentId)) continue
-        const consent = await database.consent.get(item.row.scope)
+        if (tombstonedConsentIds.has(item.consentId)) continue
+        const consent = consents.get(item.row.scope)
         if (consent?.active === 1 && consent.consentId === item.consentId) {
           accepted.push({ ...item.row, consentEpoch: consent.epoch })
         } else if (
@@ -897,6 +905,7 @@ registerConnectivityDiagnosticsRuntime({
   begin: beginConnectivityObservation,
   flush: flushConnectivityDiagnostics,
   record: recordConnectivityEvent,
+  suspend: suspendConnectivityDiagnostics,
 })
 
 export const connectivityDiagnosticsTestApi = {

@@ -13,6 +13,7 @@ export interface AuthorizedConnectivityDiagnosticsConfig extends ConnectivityDia
 }
 
 interface RevocationTombstone {
+  authorizationKey: string
   scope: string
   consentId: string
   blockedDecisionVersion: string
@@ -21,11 +22,15 @@ interface RevocationTombstone {
 }
 
 const AUTHORIZATION_PREFIX = "threa-connectivity-diagnostics:authorization"
-const TOMBSTONES_KEY = "threa-connectivity-diagnostics:revocations"
+const REVOCATION_PREFIX = "threa-connectivity-diagnostics:revocation"
 const MAX_TOMBSTONES = 100
 
 function authorizationKey(accountId: string, workspaceId: string): string {
   return `${AUTHORIZATION_PREFIX}:${accountId}:${workspaceId}`
+}
+
+function revocationKey(key: string, decisionVersion: string, consentId: string): string {
+  return `${REVOCATION_PREFIX}:${encodeURIComponent(key)}:${encodeURIComponent(decisionVersion)}:${encodeURIComponent(consentId)}`
 }
 
 function isConfig(value: unknown): value is AuthorizedConnectivityDiagnosticsConfig {
@@ -43,49 +48,83 @@ function isConfig(value: unknown): value is AuthorizedConnectivityDiagnosticsCon
   )
 }
 
-function readTombstones(): Record<string, RevocationTombstone> {
+function isTombstone(value: unknown): value is RevocationTombstone {
+  if (!value || typeof value !== "object") return false
+  const candidate = value as Partial<RevocationTombstone>
+  return (
+    typeof candidate.authorizationKey === "string" &&
+    typeof candidate.scope === "string" &&
+    typeof candidate.consentId === "string" &&
+    typeof candidate.blockedDecisionVersion === "string" &&
+    typeof candidate.cleanupPending === "boolean" &&
+    typeof candidate.updatedAt === "number"
+  )
+}
+
+function readStoredAuthorization(key: string): AuthorizedConnectivityDiagnosticsConfig | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(TOMBSTONES_KEY) ?? "{}") as Record<string, unknown>
-    return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, RevocationTombstone] => {
-        const value = entry[1] as Partial<RevocationTombstone> | null
-        return (
-          typeof value?.scope === "string" &&
-          typeof value.consentId === "string" &&
-          typeof value.blockedDecisionVersion === "string" &&
-          typeof value.cleanupPending === "boolean" &&
-          typeof value.updatedAt === "number"
-        )
-      })
-    )
+    const parsed = JSON.parse(localStorage.getItem(key) ?? "null")
+    return isConfig(parsed) ? parsed : null
   } catch {
-    return {}
+    return null
   }
 }
 
-function writeTombstones(tombstones: Record<string, RevocationTombstone>): void {
+function readTombstones(): Array<{ key: string; value: RevocationTombstone }> {
   try {
-    const bounded = Object.entries(tombstones)
-      .sort((left, right) => right[1].updatedAt - left[1].updatedAt)
-      .slice(0, MAX_TOMBSTONES)
-    localStorage.setItem(TOMBSTONES_KEY, JSON.stringify(Object.fromEntries(bounded)))
+    const tombstones: Array<{ key: string; value: RevocationTombstone }> = []
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index)
+      if (!key?.startsWith(`${REVOCATION_PREFIX}:`)) continue
+      const value = JSON.parse(localStorage.getItem(key) ?? "null")
+      if (isTombstone(value)) tombstones.push({ key, value })
+    }
+    return tombstones
+  } catch {
+    return []
+  }
+}
+
+function writeTombstone(tombstone: RevocationTombstone): void {
+  try {
+    const key = revocationKey(tombstone.authorizationKey, tombstone.blockedDecisionVersion, tombstone.consentId)
+    localStorage.setItem(key, JSON.stringify(tombstone))
+    const tombstones = readTombstones()
+    const retained = new Set([
+      key,
+      ...tombstones
+        .filter((entry) => entry.key !== key)
+        .sort((left, right) => right.value.updatedAt - left.value.updatedAt)
+        .slice(0, MAX_TOMBSTONES - 1)
+        .map((entry) => entry.key),
+    ])
+    for (const entry of tombstones) {
+      if (!retained.has(entry.key)) localStorage.removeItem(entry.key)
+    }
   } catch {
     // Storage is optional. The active runtime and IndexedDB state still revoke.
   }
+}
+
+function tombstonesFor(key: string): RevocationTombstone[] {
+  return readTombstones()
+    .map(({ value }) => value)
+    .filter((tombstone) => tombstone.authorizationKey === key)
+}
+
+function decisionIsBlocked(key: string, decisionVersion: string): boolean {
+  return tombstonesFor(key).some((tombstone) => decisionVersion <= tombstone.blockedDecisionVersion)
 }
 
 export function readCachedConnectivityAuthorization(
   accountId: string,
   workspaceId: string
 ): AuthorizedConnectivityDiagnosticsConfig | null {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(authorizationKey(accountId, workspaceId)) ?? "null")
-    if (!isConfig(parsed) || parsed.accountId !== accountId || parsed.workspaceId !== workspaceId) return null
-    if (isConnectivityConsentTombstoned(parsed.consentId)) return null
-    return parsed
-  } catch {
-    return null
-  }
+  const key = authorizationKey(accountId, workspaceId)
+  const parsed = readStoredAuthorization(key)
+  if (!parsed || parsed.accountId !== accountId || parsed.workspaceId !== workspaceId) return null
+  if (decisionIsBlocked(key, parsed.decisionVersion) || isConnectivityConsentTombstoned(parsed.consentId)) return null
+  return parsed
 }
 
 export function cacheConnectivityAuthorization(
@@ -95,39 +134,31 @@ export function cacheConnectivityAuthorization(
   createId: () => string
 ): AuthorizedConnectivityDiagnosticsConfig | null {
   const key = authorizationKey(accountId, config.workspaceId)
-  const tombstones = readTombstones()
-  const revoked = tombstones[key]
-  if (revoked && decisionVersion <= revoked.blockedDecisionVersion) return null
-  if (revoked) {
-    delete tombstones[key]
-    writeTombstones(tombstones)
-  }
+  if (decisionIsBlocked(key, decisionVersion)) return null
 
-  const existing = readCachedConnectivityAuthorization(accountId, config.workspaceId)
-  if (
+  const existing = readStoredAuthorization(key)
+  const canRefresh =
     existing &&
+    !isConnectivityConsentTombstoned(existing.consentId) &&
     existing.token === config.token &&
     existing.host === config.host &&
     existing.userId === config.userId &&
     existing.region === config.region
-  ) {
-    const refreshed = {
-      ...existing,
-      decisionVersion: decisionVersion > existing.decisionVersion ? decisionVersion : existing.decisionVersion,
-    }
-    try {
-      localStorage.setItem(key, JSON.stringify(refreshed))
-    } catch {
-      // Keep the live grant when the cache is unavailable.
-    }
-    return refreshed
-  }
+  const authorized = canRefresh
+    ? {
+        ...existing,
+        decisionVersion: decisionVersion > existing.decisionVersion ? decisionVersion : existing.decisionVersion,
+      }
+    : { ...config, accountId, consentId: createId(), decisionVersion }
 
-  const authorized = { ...config, accountId, consentId: createId(), decisionVersion }
   try {
     localStorage.setItem(key, JSON.stringify(authorized))
   } catch {
     // A blocked cache disables next-launch restoration, never the current app.
+  }
+
+  if (decisionIsBlocked(key, authorized.decisionVersion) || isConnectivityConsentTombstoned(authorized.consentId)) {
+    return null
   }
   return authorized
 }
@@ -140,50 +171,58 @@ export function tombstoneConnectivityAuthorization(
   revokedDecisionVersion?: string
 ): string | null {
   const key = authorizationKey(accountId, workspaceId)
-  let consentId = fallback?.consentId ?? null
-  let blockedDecisionVersion = fallback?.decisionVersion ?? null
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) ?? "null")
-    if (isConfig(parsed) && parsed.accountId === accountId && parsed.workspaceId === workspaceId) {
-      consentId = parsed.consentId
-      blockedDecisionVersion = parsed.decisionVersion
-    }
-    localStorage.removeItem(key)
-  } catch {
-    // Continue with the in-memory authorization when storage is unavailable.
-  }
-  if (!consentId || !blockedDecisionVersion) return null
-  if (revokedDecisionVersion && revokedDecisionVersion > blockedDecisionVersion)
-    blockedDecisionVersion = revokedDecisionVersion
+  const stored = readStoredAuthorization(key)
+  const storedApplies = !revokedDecisionVersion || !stored || stored.decisionVersion <= revokedDecisionVersion
+  const consentId = stored && storedApplies ? stored.consentId : (fallback?.consentId ?? "")
+  const versions = [fallback?.decisionVersion, revokedDecisionVersion]
+  if (stored && storedApplies) versions.push(stored.decisionVersion)
+  const blockedDecisionVersion = versions
+    .filter((value): value is string => typeof value === "string")
+    .sort()
+    .at(-1)
+  if (!blockedDecisionVersion) return null
 
-  const tombstones = readTombstones()
-  tombstones[key] = {
+  writeTombstone({
+    authorizationKey: key,
     scope,
     consentId,
     blockedDecisionVersion,
-    cleanupPending: true,
+    cleanupPending: consentId !== "" && scope !== "",
     updatedAt: Date.now(),
-  }
-  writeTombstones(tombstones)
-  return consentId
+  })
+  return consentId || null
 }
 
 export function readPendingConnectivityRevocations(): Array<{ scope: string; consentId: string }> {
-  return Object.values(readTombstones())
-    .filter((tombstone) => tombstone.cleanupPending)
-    .map(({ scope, consentId }) => ({ scope, consentId }))
+  const pending = new Map<string, { scope: string; consentId: string }>()
+  for (const { value } of readTombstones()) {
+    if (value.cleanupPending) pending.set(`${value.scope}\0${value.consentId}`, value)
+  }
+  return [...pending.values()].map(({ scope, consentId }) => ({ scope, consentId }))
 }
 
-export function isConnectivityConsentTombstoned(consentId: string): boolean {
-  return Object.values(readTombstones()).some(
-    (tombstone) => tombstone.consentId === consentId && tombstone.cleanupPending
+export function readConnectivityConsentTombstones(): Set<string> {
+  return new Set(
+    readTombstones()
+      .map(({ value }) => value.consentId)
+      .filter(Boolean)
   )
 }
 
+export function isConnectivityConsentTombstoned(consentId: string): boolean {
+  return readConnectivityConsentTombstones().has(consentId)
+}
+
 export function clearConnectivityConsentTombstone(consentId: string): void {
-  const tombstones = readTombstones()
-  const entry = Object.entries(tombstones).find(([, tombstone]) => tombstone.consentId === consentId)
-  if (!entry) return
-  tombstones[entry[0]] = { ...entry[1], cleanupPending: false, updatedAt: Date.now() }
-  writeTombstones(tombstones)
+  for (const entry of readTombstones()) {
+    if (entry.value.consentId !== consentId || !entry.value.cleanupPending) continue
+    try {
+      localStorage.setItem(
+        entry.key,
+        JSON.stringify({ ...entry.value, cleanupPending: false, updatedAt: Date.now() } satisfies RevocationTombstone)
+      )
+    } catch {
+      // Cleanup will retry from the still-pending in-memory request.
+    }
+  }
 }

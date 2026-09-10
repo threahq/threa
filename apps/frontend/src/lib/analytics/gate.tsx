@@ -43,6 +43,7 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
   }, [analytics?.posthogToken, analytics?.posthogHost, consent, replayOptIn, distinctId, workspaceId])
 
   useEffect(() => {
+    if (preferencesPending) return
     if (analytics && distinctId && accountId && diagnosticsDecisionVersion) {
       const scope = {
         token: analytics.posthogToken,
@@ -51,7 +52,7 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
         workspaceId,
         region: analytics.posthogHost,
       }
-      if (consent === "granted" && diagnosticsOptIn === true && diagnosticFlag === "available" && !preferencesPending) {
+      if (consent === "granted" && diagnosticsOptIn === true && diagnosticFlag === "available") {
         authorizeConnectivityDiagnostics(accountId, scope, diagnosticsDecisionVersion)
       } else if (
         consent === "denied" ||
@@ -65,7 +66,6 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
     } else {
       suspendConnectivityDiagnostics()
     }
-    return () => suspendConnectivityDiagnostics()
   }, [
     analytics?.posthogToken,
     analytics?.posthogHost,
@@ -78,6 +78,8 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
     workspaceId,
     accountId,
   ])
+
+  useEffect(() => () => suspendConnectivityDiagnostics(), [])
 
   return null
 }

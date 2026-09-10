@@ -103,6 +103,18 @@ describe("connectivity diagnostics persistence", () => {
     expect(send).toHaveBeenCalledTimes(1)
   })
 
+  it("should load consent once per scope for a pending persistence cycle", async () => {
+    const database = connectivityDiagnosticsTestApi.db
+    const bulkGet = vi.spyOn(database.consent, "bulkGet")
+
+    configureConnectivityDiagnostics(scope)
+    recordConnectivityEvent("socket_connect", { operationId: "op_1" })
+    recordConnectivityEvent("socket_disconnect", { operationId: "op_2" })
+
+    await vi.waitFor(async () => expect(await database.events.count()).toBe(2))
+    expect(bulkGet.mock.calls).toEqual([[[connectivityDiagnosticsTestApi.scopeOf(scope)]]])
+  })
+
   it("should keep one initialization operation while storage hangs and recover after it settles", async () => {
     connectivityDiagnosticsTestApi.setNetworkTimeoutMs(20)
     const database = connectivityDiagnosticsTestApi.db
@@ -254,7 +266,7 @@ describe("connectivity diagnostics persistence", () => {
       expect(await database.events.count()).toBe(0)
       expect((await database.consent.get(connectivityDiagnosticsTestApi.scopeOf(scope)))?.active).toBe(0)
     })
-    expect(connectivityDiagnosticsTestApi.isTombstoned(cached!.consentId)).toBe(false)
+    expect(connectivityDiagnosticsTestApi.isTombstoned(cached!.consentId)).toBe(true)
     configureConnectivityDiagnostics(scope)
     expect(connectivityDiagnosticsTestApi.readCachedAuthorization(accountId, scope.workspaceId)).toBeNull()
     expect(beginConnectivityObservation().id).toBe("")
@@ -312,8 +324,8 @@ describe("connectivity diagnostics persistence", () => {
       }
     )
     const otherTab = new BroadcastChannel("threa-connectivity-diagnostics")
-    otherTab.postMessage({ revokedScope, epoch: prior!.epoch + 1 })
-    await vi.waitFor(async () => expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0))
+    otherTab.postMessage({ revokedScope, consentId: prior!.consentId })
+    await vi.waitFor(() => expect(beginConnectivityObservation().id).toBe(""))
     recordConnectivityEvent("socket_connect")
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
@@ -540,10 +552,23 @@ describe("connectivity diagnostics persistence", () => {
       categorizeRoute("/api/workspaces/ws_secret/config?token=secret"),
       categorizeRoute("/api/workspaces/ws_secret/streams/stream_secret/messages"),
       categorizeRoute("https://region.test/api/workspaces/ws_secret/attachments/attach_secret/content"),
+      categorizeRoute("/api/workspaces/ws_secret/profile/avatar"),
+      categorizeRoute("/api/workspaces/ws_secret/streams"),
+      categorizeRoute("/api/workspaces/ws_secret/sync?after=secret"),
       categorizeRoute("/api/workspaces/ws_secret/agent-sessions/session_secret/events"),
       categorizeRoute("/api/workspaces/ws_secret/agent/trace"),
       categorizeRoute("/private/raw/path"),
-    ]).toEqual(["workspace_config", "messages", "attachments", "agent_trace", "other", "other"])
+    ]).toEqual([
+      "workspace_config",
+      "messages",
+      "attachments",
+      "avatars",
+      "streams",
+      "sync",
+      "agent_trace",
+      "other",
+      "other",
+    ])
     expect([
       categorizeRoom("ws:ws_1"),
       categorizeRoom("ws:ws_1:stream:stream_1"),

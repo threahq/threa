@@ -4,6 +4,7 @@ interface ConnectivityDiagnosticsRuntime {
   begin(fields?: DiagnosticFields): ConnectivityObservation
   flush(): Promise<boolean>
   record(event: ConnectivityEvent, fields?: DiagnosticFields): void
+  suspend(): void
 }
 
 let runtime: ConnectivityDiagnosticsRuntime | null = null
@@ -29,9 +30,7 @@ export function categorizeRoute(path: string): RouteCategory {
   let pathname = path.split("?", 1)[0] ?? ""
   try {
     pathname = new URL(path).pathname
-  } catch {
-    // Relative path.
-  }
+  } catch {}
   if (/^\/api\/workspaces\/[^/]+\/config$/.test(pathname)) return "workspace_config"
   if (/^\/api\/workspaces\/[^/]+\/agent-sessions\/[^/]+(?:\/|$)/.test(pathname)) return "agent_trace"
   if (pathname.includes("/attachments")) return "attachments"
@@ -74,6 +73,10 @@ export function recordConnectivityEvent(event: ConnectivityEvent, fields: Diagno
 
 export function flushConnectivityDiagnostics(): Promise<boolean> {
   return runtime?.flush() ?? Promise.resolve(true)
+}
+
+export function suspendConnectivityDiagnostics(): void {
+  runtime?.suspend()
 }
 
 export type { ConnectivityEvent, ConnectivityObservation, DiagnosticFields, RoomCategory, RouteCategory }

@@ -43,6 +43,28 @@ describe("PerfCapture ring buffer", () => {
     expect(capture.snapshot()).not.toBe(first)
   })
 
+  it("should acknowledge only samples from the supplied snapshot", () => {
+    const capture = new PerfCapture()
+    capture.mark("bootstrap.tx", 1)
+    capture.mark("stream.eventApply", 2)
+    const uploaded = capture.snapshot()
+    capture.mark("stream.eventApply", 3)
+
+    capture.acknowledge(uploaded)
+
+    expect(capture.snapshot().map((sample) => sample.value)).toEqual([3])
+  })
+
+  it("should not clear samples when acknowledging an empty snapshot", () => {
+    const capture = new PerfCapture()
+    const uploaded = capture.snapshot()
+    capture.mark("stream.eventApply", 1)
+
+    capture.acknowledge(uploaded)
+
+    expect(capture.snapshot().map((sample) => sample.value)).toEqual([1])
+  })
+
   it("clear empties both the ring and the pinned bootstrap samples", () => {
     const capture = new PerfCapture()
     capture.count("liveQuery.rerun")

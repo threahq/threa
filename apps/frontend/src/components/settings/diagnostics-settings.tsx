@@ -68,10 +68,12 @@ export function DiagnosticsSettings() {
     if (!workspaceId) return
     setSendState("sending")
     try {
+      const capture = getPerfCapture()
+      const samples = capture.snapshot()
       const perfUpload =
-        sampleCount > 0 ? sendPerfCapture(workspaceId, exportCapture(getPerfCapture())) : Promise.resolve()
+        samples.length > 0 ? sendPerfCapture(workspaceId, exportCapture(capture, samples)) : Promise.resolve()
       const [perfResult, connectivityResult] = await Promise.allSettled([perfUpload, flushConnectivityDiagnostics()])
-      if (perfResult.status === "fulfilled") getPerfCapture().clear()
+      if (samples.length > 0 && perfResult.status === "fulfilled") capture.acknowledge(samples)
       if (
         perfResult.status === "rejected" ||
         connectivityResult.status === "rejected" ||

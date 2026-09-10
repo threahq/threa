@@ -18,7 +18,20 @@ interface JoinRoomOptions {
 }
 
 const DEFAULT_JOIN_TIMEOUT_MS = 5000
+const JOIN_FAILURE_REASON = Symbol("joinFailureReason")
+type JoinFailureReason = "abort" | "timeout" | "disconnect"
+type JoinFailure = Error & { [JOIN_FAILURE_REASON]?: JoinFailureReason }
 const pendingJoinsBySocket = new WeakMap<Socket, Map<string, Promise<void>>>()
+
+function joinFailure(message: string, reason: JoinFailureReason): Error {
+  const error: JoinFailure = new Error(message)
+  error[JOIN_FAILURE_REASON] = reason
+  return error
+}
+
+function joinFailureReason(error: unknown): JoinFailureReason | undefined {
+  return error instanceof Error ? (error as JoinFailure)[JOIN_FAILURE_REASON] : undefined
+}
 
 function getPendingJoins(socket: Socket): Map<string, Promise<void>> {
   const pending = pendingJoinsBySocket.get(socket)
@@ -42,7 +55,7 @@ function waitForConnection(
   }
 
   if (signal?.aborted) {
-    return Promise.reject(new Error(`Join aborted for room "${room}"`))
+    return Promise.reject(joinFailure(`Join aborted for room "${room}"`, "abort"))
   }
 
   observation.record("room_join_connection_wait")
@@ -71,7 +84,7 @@ function waitForConnection(
 
     const handleAbort = () => {
       cleanup()
-      reject(new Error(`Join aborted for room "${room}"`))
+      reject(joinFailure(`Join aborted for room "${room}"`, "abort"))
     }
 
     socket.on("connect", handleConnect)
@@ -89,10 +102,11 @@ function waitForConnection(
       cleanup()
       debugBootstrap("Timed out waiting for socket connection before join", { room, timeoutMs, lastConnectError })
       reject(
-        new Error(
+        joinFailure(
           lastConnectError
             ? `Timed out waiting for socket connection before joining room "${room}": ${lastConnectError}`
-            : `Timed out waiting for socket connection before joining room "${room}"`
+            : `Timed out waiting for socket connection before joining room "${room}"`,
+          "timeout"
         )
       )
     }, timeoutMs)
@@ -100,11 +114,8 @@ function waitForConnection(
 }
 
 function isExpectedJoinInterruption(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  return (
-    error.message.startsWith("Join aborted for room") ||
-    error.message.startsWith("Socket disconnected while joining room")
-  )
+  const reason = joinFailureReason(error)
+  return reason === "abort" || reason === "disconnect"
 }
 
 function logJoinFailure(context: string, room: string, error: unknown, detail: string): void {
@@ -145,13 +156,13 @@ function emitJoinWithAck(socket: Socket, room: string, timeoutMs: number): Promi
     }
 
     const handleDisconnect = (reason: string) => {
-      rejectOnce(new Error(`Socket disconnected while joining room "${room}": ${reason}`))
+      rejectOnce(joinFailure(`Socket disconnected while joining room "${room}": ${reason}`, "disconnect"))
     }
 
     socket.on("disconnect", handleDisconnect)
 
     timeoutId = setTimeout(() => {
-      rejectOnce(new Error(`Timed out waiting for join ack for room "${room}"`))
+      rejectOnce(joinFailure(`Timed out waiting for join ack for room "${room}"`, "timeout"))
     }, timeoutMs)
 
     debugBootstrap("Emitting join with ack", { room })
@@ -170,7 +181,7 @@ export async function joinRoomWithAck(socket: Socket, room: string, options?: Jo
   const signal = options?.signal
 
   if (signal?.aborted) {
-    throw new Error(`Join aborted for room "${room}"`)
+    throw joinFailure(`Join aborted for room "${room}"`, "abort")
   }
 
   const pendingJoins = getPendingJoins(socket)
@@ -194,16 +205,13 @@ export async function joinRoomWithAck(socket: Socket, room: string, options?: Jo
   const joinPromise = (async () => {
     try {
       await waitForConnection(socket, room, timeoutMs, observation, signal)
-      if (signal?.aborted) throw new Error(`Join aborted for room "${room}"`)
+      if (signal?.aborted) throw joinFailure(`Join aborted for room "${room}"`, "abort")
       await emitJoinWithAck(socket, room, timeoutMs)
       observation.record("room_join_ack")
     } catch (error) {
-      const aborted = signal?.aborted === true
-      const timedOut = error instanceof Error && error.message.includes("Timed out")
-      let reason: "abort" | "timeout" | "unknown" = "unknown"
-      if (aborted) reason = "abort"
-      else if (timedOut) reason = "timeout"
-      observation.record(aborted ? "room_join_abort" : "room_join_failure", { reason })
+      const failureReason = joinFailureReason(error)
+      const reason = failureReason === "abort" || failureReason === "timeout" ? failureReason : "unknown"
+      observation.record(failureReason === "abort" ? "room_join_abort" : "room_join_failure", { reason })
       throw error
     }
   })()
@@ -253,7 +261,7 @@ function raceAbortSignal(promise: Promise<void>, signal: AbortSignal, room: stri
     const onAbort = () => {
       if (settled) return
       settled = true
-      reject(new Error(`Join aborted for room "${room}"`))
+      reject(joinFailure(`Join aborted for room "${room}"`, "abort"))
     }
 
     signal.addEventListener("abort", onAbort, { once: true })

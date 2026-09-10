@@ -73,14 +73,19 @@ describe("xhrUpload connectivity phases", () => {
     xhr.onload?.()
 
     await expect(result).resolves.toEqual({ status: 201, body: {} })
-    expect(events.map(({ event }) => event)).toEqual([
-      "http_start",
-      "http_stalled",
-      "http_upload_complete",
-      "http_headers",
-      "http_body_complete",
+    const base = {
+      method: "POST" as const,
+      route: "attachments" as const,
+      transport: "xhr" as const,
+      operationId: "op_test",
+    }
+    expect(events).toEqual([
+      { event: "http_start", fields: base },
+      { event: "http_stalled", fields: base },
+      { event: "http_upload_complete", fields: base },
+      { event: "http_headers", fields: { ...base, status: 201, correlationId: "railway_1" } },
+      { event: "http_body_complete", fields: { ...base, status: 201, correlationId: "railway_1" } },
     ])
-    expect(events[0]!.fields).toMatchObject({ method: "POST", route: "attachments", transport: "xhr" })
     expect(events[0]!.fields).not.toHaveProperty("url")
   })
 
@@ -95,6 +100,15 @@ describe("xhrUpload connectivity phases", () => {
     controller.abort()
 
     await expect(result).rejects.toMatchObject({ name: "AbortError" })
-    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_abort"])
+    const base = {
+      method: "POST" as const,
+      route: "attachments" as const,
+      transport: "xhr" as const,
+      operationId: "op_test",
+    }
+    expect(events).toEqual([
+      { event: "http_start", fields: base },
+      { event: "http_abort", fields: { ...base, reason: "abort" } },
+    ])
   })
 })

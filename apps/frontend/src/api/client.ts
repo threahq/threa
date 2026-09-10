@@ -85,6 +85,7 @@ export async function requestMultipart<T>(
   const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(path), transport: "fetch" })
   observation.record("http_start")
   const stopStallTimer = observation.stall()
+  let responseFields: { status: number; correlationId?: string } | null = null
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       method: "POST",
@@ -92,7 +93,7 @@ export async function requestMultipart<T>(
       body: formData,
     })
     const correlationId = response.headers.get("x-railway-request-id") ?? undefined
-    const responseFields = { status: response.status, correlationId }
+    responseFields = { status: response.status, correlationId }
     observation.record("http_headers", responseFields)
     if (!response.ok) {
       const error = await parseApiError(response, fallback)
@@ -106,7 +107,10 @@ export async function requestMultipart<T>(
     return body
   } catch (error) {
     if (!ApiError.isApiError(error)) {
-      observation.record("http_failure", { reason: "network" })
+      observation.record(
+        "http_failure",
+        responseFields ? { ...responseFields, reason: "unknown" } : { reason: "network" }
+      )
       void flushConnectivityDiagnostics()
     }
     throw error
