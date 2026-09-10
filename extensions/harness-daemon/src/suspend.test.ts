@@ -6,6 +6,7 @@ import type { ManagedAgent } from "./types"
 
 const NOW = Date.UTC(2026, 8, 9, 12, 0, 0)
 const IDLE_SINCE = NOW - IDLE_SUSPEND_AFTER_MS - 60_000
+const IDLE_DETAIL = `idle ${IDLE_SUSPEND_AFTER_MS / 60_000 + 1}m`
 
 const agent = (overrides: Partial<ManagedAgent> = {}): ManagedAgent => ({
   id: "agt_1",
@@ -87,7 +88,7 @@ describe("suspendAgent", () => {
       respawned: it.respawned.map(([paneId, cwd]) => [paneId, cwd]),
       placeholderMentionsTheName: it.respawned[0]?.[2].includes("feature"),
     }).toEqual({
-      outcome: { status: "suspended", detail: "idle 16m" },
+      outcome: { status: "suspended", detail: IDLE_DETAIL },
       persisted: [["suspended", "2026-09-09T12:00:00.000Z"]],
       respawned: [["%9", "/repo/threa.feature"]],
       placeholderMentionsTheName: true,
@@ -145,7 +146,7 @@ describe("suspendAgent", () => {
     expect({
       outcome: suspendAgent(agent(), it.deps, { thresholdMs: IDLE_SUSPEND_AFTER_MS, dryRun: true }),
       writes: [...it.persisted, ...it.respawned],
-    }).toEqual({ outcome: { status: "would suspend", detail: "idle 16m" }, writes: [] })
+    }).toEqual({ outcome: { status: "would suspend", detail: IDLE_DETAIL }, writes: [] })
   })
 })
 

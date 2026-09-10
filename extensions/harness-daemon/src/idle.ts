@@ -2,8 +2,15 @@ import { readFileSync } from "node:fs"
 import type { ClaudeNativeSession } from "./claude-registry"
 import type { ManagedAgent } from "./types"
 
-/** How long a Claude session must have been idle before the sweep winds it down. */
-export const IDLE_SUSPEND_AFTER_MS = 15 * 60_000
+/**
+ * How long a Claude session must have been idle before the sweep winds it down.
+ *
+ * Long, because the runtime reports idle for work this process cannot see from
+ * outside: a background subagent and a scheduled wake-up both run without a
+ * child process to find, and killing either loses it. 90 minutes outlasts
+ * almost all of that, and the sessions this exists for sit idle for days.
+ */
+export const IDLE_SUSPEND_AFTER_MS = 90 * 60_000
 
 /**
  * Every Bash tool call Claude Code makes sources this snapshot, so a child

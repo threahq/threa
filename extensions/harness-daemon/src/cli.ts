@@ -39,7 +39,7 @@ Usage:
   threa-harnessd attach <agent-id-or-name>
   threa-harnessd suspend [<agent-id-or-name>] [--idle-minutes <n>] [--dry-run]
       (wind idle Claude sessions down, keeping the row and the window; a queued turn resumes them)
-  threa-harnessd hold <agent-id-or-name> [--minutes <n>]   (keep the idle sweep off a session waiting on its own timer)
+  threa-harnessd hold <agent-id-or-name> [--minutes <n>]   (keep the idle sweep off a session waiting on a timer or a background subagent)
   threa-harnessd unhold <agent-id-or-name>
   threa-harnessd resolve [<agent-id-or-name-or-runtime-session-id>]
   threa-harnessd backfill-identities [--dry-run]  (record the identity two sources already agree on)
@@ -233,7 +233,7 @@ export interface SuspendRequest {
 }
 
 /** Minutes of runtime idleness a session must show before `suspend` winds it down. */
-export const DEFAULT_SUSPEND_IDLE_MINUTES = 15
+export const DEFAULT_SUSPEND_IDLE_MINUTES = 90
 
 export function parseSuspend(args: string[]): SuspendRequest {
   const rest = [...args]
