@@ -12,6 +12,17 @@ export interface PoolStats {
   timestamp: string
 }
 
+/** pg keeps every client it has handed out or is still dialling in `_clients`. */
+interface PoolInternals {
+  _clients?: { _connected?: boolean }[]
+}
+
+/** Null when pg no longer exposes `_clients`, so the caller stays quiet instead of blaming every client. */
+function countConnected(pool: Pool): number | null {
+  const clients = (pool as unknown as PoolInternals)._clients
+  return clients ? clients.filter((client) => client._connected === true).length : null
+}
+
 export interface PoolMonitorOptions {
   /** How often to log pool stats (ms). Default: 30000 (30 seconds) */
   logIntervalMs?: number
@@ -32,20 +43,11 @@ export interface PoolMonitorOptions {
  *   // Later...
  *   monitor.stop()
  */
-/** pg keeps every client it has handed out or is still dialling in `_clients`. */
-interface PoolInternals {
-  _clients?: { _connected?: boolean }[]
-}
-
-function countConnected(pool: Pool): number {
-  return (pool as unknown as PoolInternals)._clients?.filter((client) => client._connected === true).length ?? 0
-}
-
 export class PoolMonitor {
   private pools: Map<string, Pool>
   private intervalId?: NodeJS.Timeout
   private options: Required<PoolMonitorOptions>
-  private unconnectedSince = new Map<string, number>()
+  private unconnectedSamples = new Map<string, number>()
 
   constructor(pools: Record<string, Pool>, options: PoolMonitorOptions = {}) {
     this.pools = new Map(Object.entries(pools))
@@ -144,9 +146,10 @@ export class PoolMonitor {
       // connected, so a single unconnected client is normal and says nothing.
       // One that is still unconnected a sample later is not dialling any more.
       const pool = this.pools.get(stats.poolName)
-      const unconnected = pool ? stats.totalCount - countConnected(pool) : 0
-      const priorSamples = unconnected > 0 ? (this.unconnectedSince.get(stats.poolName) ?? 0) : 0
-      this.unconnectedSince.set(stats.poolName, unconnected > 0 ? priorSamples + 1 : 0)
+      const connected = pool ? countConnected(pool) : null
+      const unconnected = connected === null ? 0 : stats.totalCount - connected
+      const priorSamples = unconnected > 0 ? (this.unconnectedSamples.get(stats.poolName) ?? 0) : 0
+      this.unconnectedSamples.set(stats.poolName, unconnected > 0 ? priorSamples + 1 : 0)
 
       if (unconnected > 0 && priorSamples > 0) {
         logger.error(
