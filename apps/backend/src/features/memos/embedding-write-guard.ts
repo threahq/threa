@@ -39,9 +39,8 @@ export async function writeEmbeddingWithSourceHashGuard(guard: EmbeddingWriteGua
     if (embedded === null || embedded.sourceHash !== sourceHash) {
       embedded = { sourceHash, embedding: await guard.embed(text) }
     }
-    const { embedding } = embedded
 
-    const written = await guard.write({ embedding, sourceHash, expectedSourceHash })
+    const written = await guard.write({ embedding: embedded.embedding, sourceHash, expectedSourceHash })
     if (written > 0) return "written"
 
     logger.debug({ subject: guard.subject, attempt }, "Embedding lost to a concurrent write; re-reading the text")
