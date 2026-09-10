@@ -13,7 +13,12 @@ import type {
   TitleSource,
 } from "@threahq/types"
 import { StreamTypes, TitleSources } from "@threahq/types"
-import { archiveStatusSql, effectivelyArchivedSql, type ArchiveStatus } from "../../lib/sql-filters"
+import {
+  archiveStatusSql,
+  effectivelyArchivedSql,
+  MAX_STREAM_CHAIN_DEPTH,
+  type ArchiveStatus,
+} from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }
 
@@ -420,6 +425,11 @@ export const StreamRepository = {
     return result.rows.map((row) => row.id)
   },
 
+  /** Whether `streamId` is archived itself or sealed by an ancestor. */
+  async isEffectivelyArchived(db: Querier, workspaceId: string, streamId: string): Promise<boolean> {
+    return (await this.filterEffectivelyArchivedIds(db, workspaceId, [streamId])).length > 0
+  },
+
   /** The subset of `ids` that are archived themselves or sealed by an ancestor. */
   async filterEffectivelyArchivedIds(db: Querier, workspaceId: string, ids: readonly string[]): Promise<string[]> {
     if (ids.length === 0) return []
@@ -454,7 +464,7 @@ export const StreamRepository = {
         SELECT p.id, p.parent_stream_id, p.archived_at, c.depth + 1
         FROM chain c
         JOIN streams p ON p.id = c.parent_stream_id
-        WHERE c.depth < 32
+        WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
       )
       SELECT id, archived_at FROM chain
       WHERE archived_at IS NOT NULL
@@ -484,7 +494,7 @@ export const StreamRepository = {
         SELECT p.id, p.parent_stream_id, p.root_stream_id, c.depth + 1
         FROM chain c
         JOIN streams p ON p.id = c.parent_stream_id
-        WHERE c.depth < 32
+        WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
       )
       SELECT DISTINCT x.id
       FROM chain, LATERAL (VALUES (chain.id), (chain.root_stream_id)) AS x(id)

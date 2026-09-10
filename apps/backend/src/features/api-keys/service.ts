@@ -82,9 +82,8 @@ export class BotChannelService {
   ): Promise<boolean> {
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
     if (!stream) return false
-    if (!options.allowArchived) {
-      const sealed = await StreamRepository.filterEffectivelyArchivedIds(this.pool, workspaceId, [stream.id])
-      if (sealed.length > 0) return false
+    if (!options.allowArchived && (await StreamRepository.isEffectivelyArchived(this.pool, workspaceId, stream.id))) {
+      return false
     }
 
     // Publicness is the ROOT's visibility (INV-62) — a thread's own row can

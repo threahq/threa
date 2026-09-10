@@ -26,7 +26,7 @@ export function parseArchiveStatusFilter(archiveStatus?: ArchiveStatus[]): {
  * schema limit, so the cap is only there to stop a corrupt `parent_stream_id`
  * cycle from spinning (INV-1: no FK keeps the chain acyclic).
  */
-const MAX_STREAM_CHAIN_DEPTH = 32
+export const MAX_STREAM_CHAIN_DEPTH = 32
 
 /**
  * TRUE when the `streams` row aliased `alias` is archived itself or sits under

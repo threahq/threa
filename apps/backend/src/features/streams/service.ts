@@ -283,7 +283,7 @@ async function lockLifecycleStreams(
  */
 function assertCanArchive(target: Stream, root: Stream, actorId: string): void {
   if (target.createdBy === actorId || root.createdBy === actorId) return
-  throw new HttpError("Only the creator of this stream or of its root can archive it", {
+  throw new HttpError("Only the creator of this stream or of its root can archive or unarchive it", {
     status: 403,
     code: "FORBIDDEN",
   })
@@ -1232,72 +1232,52 @@ export class StreamService {
   }
 
   async archiveStream(streamId: string, workspaceId: string, archivedBy: string): Promise<Stream | null> {
-    return withTransaction(this.pool, async (client) => {
-      const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
-      await lockActorAccess(client, root, archivedBy)
-      assertCanArchive(target, root, archivedBy)
-      const stream = await StreamRepository.update(client, streamId, { archivedAt: new Date() })
-      if (stream) {
-        const evtId = eventId()
-        const event = await StreamEventRepository.insert(client, {
-          id: evtId,
-          streamId: stream.id,
-          eventType: "stream_archived",
-          payload: {
-            archivedAt: stream.archivedAt,
-          },
-          actorId: archivedBy,
-          actorType: "user",
-        })
-
-        // Route to this stream's room AND every descendant whose state flips
-        // with it: a thread viewer only joins the thread's room, so without
-        // those ids in the payload it would never learn an ancestor was
-        // archived and the composer would stay live until a refresh.
-        // Descendants inherit access from the same root (INV-62), so their
-        // rooms reach the same audience. The event row ships in the payload
-        // so clients append it as a first-class timeline row.
-        const threadStreamIds = await StreamRepository.listArchivalCascadeIds(client, stream.workspaceId, stream.id)
-
-        await OutboxRepository.insert(client, "stream:archived", {
-          workspaceId: stream.workspaceId,
-          streamId: stream.id,
-          stream,
-          event,
-          threadStreamIds,
-        })
-      }
-      return stream
-    })
+    return withTransaction(this.pool, (client) => this.setArchived(client, workspaceId, streamId, archivedBy, true))
   }
 
   async unarchiveStream(streamId: string, workspaceId: string, unarchivedBy: string): Promise<Stream | null> {
-    return withTransaction(this.pool, async (client) => {
-      const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
-      await lockActorAccess(client, root, unarchivedBy)
-      assertCanArchive(target, root, unarchivedBy)
-      const stream = await StreamRepository.update(client, streamId, { archivedAt: null })
-      if (stream) {
-        const evtId = eventId()
-        const event = await StreamEventRepository.insert(client, {
-          id: evtId,
-          streamId: stream.id,
-          eventType: "stream_unarchived",
-          payload: {},
-          actorId: unarchivedBy,
-          actorType: "user",
-        })
+    return withTransaction(this.pool, (client) => this.setArchived(client, workspaceId, streamId, unarchivedBy, false))
+  }
 
-        await OutboxRepository.insert(client, "stream:unarchived", {
-          workspaceId: stream.workspaceId,
-          streamId: stream.id,
-          stream,
-          event,
-          threadStreamIds: await StreamRepository.listArchivalCascadeIds(client, stream.workspaceId, stream.id),
-        })
-      }
-      return stream
+  /**
+   * Flip a stream's archived flag, append the lifecycle event, and queue the
+   * outbox notice, all in the caller's transaction.
+   *
+   * `threadStreamIds` carries every descendant whose effective state flips with
+   * this row: a thread viewer only joins the thread's room, so without those
+   * ids it would never learn an ancestor was archived and the composer would
+   * stay live until a refresh. Descendants inherit access from the same root
+   * (INV-62), so their rooms reach the same audience. The event row ships in
+   * the payload too, so clients append it as a first-class timeline row.
+   */
+  private async setArchived(
+    client: Querier,
+    workspaceId: string,
+    streamId: string,
+    actorId: string,
+    archived: boolean
+  ): Promise<Stream | null> {
+    const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
+    await lockActorAccess(client, root, actorId)
+    assertCanArchive(target, root, actorId)
+    const stream = await StreamRepository.update(client, streamId, { archivedAt: archived ? new Date() : null })
+    if (!stream) return stream
+    const event = await StreamEventRepository.insert(client, {
+      id: eventId(),
+      streamId: stream.id,
+      eventType: archived ? "stream_archived" : "stream_unarchived",
+      payload: archived ? { archivedAt: stream.archivedAt } : {},
+      actorId,
+      actorType: "user",
     })
+    await OutboxRepository.insert(client, archived ? "stream:archived" : "stream:unarchived", {
+      workspaceId: stream.workspaceId,
+      streamId: stream.id,
+      stream,
+      event,
+      threadStreamIds: await StreamRepository.listArchivalCascadeIds(client, stream.workspaceId, stream.id),
+    })
+    return stream
   }
 
   /**

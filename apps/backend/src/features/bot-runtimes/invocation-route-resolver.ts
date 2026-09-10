@@ -166,7 +166,7 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
   if (source.metadata[MESSAGE_METADATA_COMMAND_KEY]) return []
   const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
   if (!stream || stream.workspaceId !== source.workspaceId) return []
-  if ((await StreamRepository.filterEffectivelyArchivedIds(db, source.workspaceId, [stream.id])).length > 0) return []
+  if (await StreamRepository.isEffectivelyArchived(db, source.workspaceId, stream.id)) return []
   const rootId = stream.rootStreamId ?? stream.id
   const root =
     rootId === stream.id ? stream : await StreamRepository.findByIdForWorkspace(db, rootId, source.workspaceId)

@@ -36,9 +36,8 @@ export async function isStreamReadableAsOwner(
   if (!stream) return false
   // Archived anywhere up the parent chain counts: the owner can still read a
   // sealed thread, this arm must not.
-  if (!options.allowArchived) {
-    const sealed = await StreamRepository.filterEffectivelyArchivedIds(db, workspaceId, [stream.id])
-    if (sealed.length > 0) return false
+  if (!options.allowArchived && (await StreamRepository.isEffectivelyArchived(db, workspaceId, stream.id))) {
+    return false
   }
 
   const readable = await checkStreamAccess(db, streamId, workspaceId, ownerUserId)

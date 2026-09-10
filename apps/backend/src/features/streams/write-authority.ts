@@ -85,7 +85,7 @@ export async function projectStreamForPrincipal<T extends AuthorityStream>(
 
   const ancestorArchived = stream.archivedAt
     ? false
-    : (await StreamRepository.filterEffectivelyArchivedIds(db, workspaceId, [stream.id])).length > 0
+    : await StreamRepository.isEffectivelyArchived(db, workspaceId, stream.id)
   return { ...stream, ...deriveStreamViewerState({ target: stream, ancestorArchived, participates }) }
 }
 
