@@ -51,7 +51,7 @@ describe("cached connectivity consent", () => {
     cacheConnectivityAuthorization("account_1", otherConfig, grantedAt, () => "grant_2")
     const originalSetItem = Storage.prototype.setItem
     let nested = false
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
       if (key.startsWith("threa-connectivity-diagnostics:revocation:") && !nested) {
         nested = true
         tombstoneConnectivityAuthorization("account_1", "ws_2", "scope_2", undefined, revokedAt)
@@ -79,7 +79,7 @@ describe("cached connectivity consent", () => {
     cacheConnectivityAuthorization("account_1", config, grantedAt, () => "grant_1")
     const originalSetItem = Storage.prototype.setItem
     let revoked = false
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (key, value) {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
       if (key.includes(":authorization:") && !revoked) {
         revoked = true
         tombstoneConnectivityAuthorization("account_1", "ws_1", "scope_1", undefined, revokedAt)
