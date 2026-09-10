@@ -2617,6 +2617,53 @@ describe("session control via the actuator", () => {
     await session.shutdown()
   })
 
+  test("a handoff the session outlives keeps intake open instead of parking it busy", async () => {
+    const command = makeInvocation({
+      id: "binv_handoff_spawn",
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      claimToken: "tok_spawn",
+      metadata: { command: { executionKind: "bot-runtime", id: "cmd_spawn", name: "spawn", args: "" } },
+    })
+    const claims: unknown[] = []
+    const { session, fake, calls } = makeObservedControlSession([command], {
+      sessionControl: {
+        commands: ["spawn"],
+        interrupt: () => true,
+        runCommand: async () => ({
+          ok: true,
+          handoffKeepsSessionRunning: true,
+          handoff: (claim) => void claims.push(claim),
+          onHandoffReset: () => claims.push("reset"),
+        }),
+      },
+    })
+    ;(session as any).link = { rootStreamId: "stream_root" }
+
+    await (session as any).claimDrain()
+
+    expect({
+      claims,
+      complete: calls.complete,
+      fail: calls.fail,
+      released: fake.observations.get("binv_handoff_spawn")?.unregistered,
+      parked: (session as any).reconnectHandoff,
+      presenceSyncs: fake.presence.length,
+    }).toEqual({
+      claims: [
+        { workspaceId: "ws_1", invocationId: "binv_handoff_spawn", instanceId: "rt-test", claimToken: "tok_spawn" },
+      ],
+      complete: [],
+      fail: [],
+      released: true,
+      // `/spawn` launches a second agent and this desk answers the next message,
+      // so nothing parks and the reset that belongs to the parked path never runs.
+      parked: false,
+      presenceSyncs: 0,
+    })
+    await session.shutdown()
+  })
+
   test("a handoff that throws fails the command here and restores intake", async () => {
     const command = makeInvocation({
       id: "binv_handoff_failed",

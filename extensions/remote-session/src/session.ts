@@ -153,6 +153,14 @@ export interface SessionControlActuator {
      * observing the command once the handoff returns; a throw fails it here.
      */
     handoff?: (claim: HandedOffCommandClaim) => unknown | Promise<unknown>
+    /**
+     * Set by a handoff this session outlives (`/spawn` launches a second agent).
+     * The default assumes the handoff is winding this session down, so presence
+     * parks busy and claiming pauses until the process is gone; a session that
+     * keeps running must answer the next message instead of sitting out the
+     * fallback window. `onHandoffReset` belongs to the parked path only.
+     */
+    handoffKeepsSessionRunning?: boolean
     onHandoffReset?: () => unknown | Promise<unknown>
   }>
 }
@@ -1450,11 +1458,14 @@ export class RemoteSession {
             return this.completeSilentAck(invocation)
           }
           if (outcome.handoff) {
-            this.reconnectHandoff = true
-            this.onHandoffReset = outcome.onHandoffReset
-            await this.syncPresence()
+            const parks = !outcome.handoffKeepsSessionRunning
+            if (parks) {
+              this.reconnectHandoff = true
+              this.onHandoffReset = outcome.onHandoffReset
+              await this.syncPresence()
+            }
             if (this.stopped || !this.link || this.archive.detached || this.isClaimCancelled(invocation)) {
-              this.resetReconnectHandoff()
+              if (parks) this.resetReconnectHandoff()
               await this.failInvocation(invocation, "Remote session changed before the command was handed off.")
               return
             }
@@ -1466,11 +1477,13 @@ export class RemoteSession {
                 claimToken: invocation.claimToken,
               })
             } catch (error) {
-              this.resetReconnectHandoff()
+              if (parks) this.resetReconnectHandoff()
               throw error
             }
             this.releaseObservation(invocation.id)
-            this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), RECONNECT_HANDOFF_FALLBACK_MS)
+            if (parks) {
+              this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), RECONNECT_HANDOFF_FALLBACK_MS)
+            }
             return
           }
           if (!outcome.afterAck) {

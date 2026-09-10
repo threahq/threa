@@ -3866,7 +3866,6 @@ interface ClearCommandDeps {
 interface SpawnCommandDeps {
   available: () => boolean
   prepare: typeof prepareHarnessSpawn
-  complete: typeof completeInvocationWithSummary
   fail: typeof failInvocation
   spawnRuntimes: () => SpawnRuntimeOption[]
 }
@@ -4092,7 +4091,6 @@ async function runSpawnCommand(
   deps: SpawnCommandDeps = {
     available: harnessReconnectAvailable,
     prepare: prepareHarnessSpawn,
-    complete: completeInvocationWithSummary,
     fail: failInvocation,
     spawnRuntimes: defaultSpawnRuntimes,
   },
@@ -4118,6 +4116,7 @@ async function runSpawnCommand(
   // A replacement claim reruns this command, so anything past here would start a
   // second session for the one `/spawn` the user typed.
   if (!isCurrent()) return
+  if (!config) throw new Error("Threa remote config not loaded")
   // The thread hangs off the `/spawn` the user typed, so the agent's first
   // message is a reply to it rather than to a separate "Starting…" post.
   const anchorId = invocation.sourceMessageId
@@ -4127,6 +4126,13 @@ async function runSpawnCommand(
     discardSpawnBrief(briefFile)
     return
   }
+  const claimFile = writeCommandClaim({
+    runtime: "pi",
+    workspaceId: config.workspaceId,
+    invocationId: invocation.id,
+    instanceId: getInvocationInstanceId(invocation),
+    claimToken: invocation.claimToken,
+  })
   try {
     deps.prepare({
       runtime: parsed.runtime,
@@ -4134,17 +4140,20 @@ async function runSpawnCommand(
       rootStreamId: link.rootStreamId,
       anchorId,
       briefFile,
+      claimFile,
       ...(parsed.model ? { model: parsed.model } : {}),
       ...(parsed.thinking ? { thinking: parsed.thinking } : {}),
     })()
   } catch (error) {
+    discardCommandClaim(claimFile)
     discardSpawnBrief(briefFile)
     throw new Error(`Spawn launch failed: ${summarizeError(error)}`)
   }
-  // Nothing is posted in the scratchpad: the thread appearing under the user's
-  // own `/spawn` is the acknowledgement, and harnessd reports a failed launch
-  // there.
-  await deps.complete(invocation, undefined, ctx)
+  // harnessd owns the command from here: provisioning, briefing and a failed
+  // launch land on the user's own `/spawn` entry, so this pane's teardown must
+  // not fail it. Nothing is posted in the scratchpad — unlike `/done`, this
+  // session keeps running and stays claimable.
+  releaseObservation(invocation)
 }
 
 async function runDoneCommand(

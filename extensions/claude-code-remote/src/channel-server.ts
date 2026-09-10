@@ -266,6 +266,7 @@ export async function runClaudeCommand(
   afterAck?: () => void | Promise<void>
   handoff?: (claim: HandedOffCommandClaim) => void | Promise<void>
   onHandoffReset?: () => void
+  handoffKeepsSessionRunning?: boolean
 }> {
   /** Between the SDK holding intake and harnessd taking the pane: Claude must still be idle and the link unchanged. */
   const awaitHarnessHandoffWindow = async (spec: {
@@ -384,26 +385,37 @@ export async function runClaudeCommand(
       // The thread hangs off the `/spawn` the user typed, so the agent's first
       // message is a reply to it rather than to a separate "Starting…" post.
       const anchorId = invocationContext.sourceMessageId
-      // harnessd dies on a blank brief, so an empty prompt gets no file at all.
-      const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
-      try {
-        spawnLauncher({
-          runtime: parsed.runtime,
-          name: parsed.name,
-          rootStreamId: root,
-          anchorId,
-          briefFile,
-          ...(parsed.model ? { model: parsed.model } : {}),
-          ...(parsed.thinking ? { thinking: parsed.thinking } : {}),
-        })()
-      } catch (error) {
-        discardSpawnBrief(briefFile)
-        throw error
+      // harnessd drives the command from here: provisioning, briefing and a
+      // failed launch land on the user's own `/spawn` entry. Nothing is posted
+      // in the scratchpad — the thread appearing under it is the reply. This
+      // session keeps running, so the handoff must not park it busy.
+      return {
+        ok: true,
+        handoffKeepsSessionRunning: true,
+        handoff: async (claim) => {
+          // Written on the handoff, not while the outcome is built: a handoff
+          // the session abandons must leave nothing behind. harnessd dies on a
+          // blank brief, so an empty prompt gets no file at all.
+          const briefFile = parsed.prompt ? writeSpawnBrief(parsed.prompt) : undefined
+          const claimFile = writeCommandClaim({ runtime: "claude", ...claim })
+          try {
+            spawnLauncher({
+              runtime: parsed.runtime,
+              name: parsed.name,
+              rootStreamId: root,
+              anchorId,
+              briefFile,
+              claimFile,
+              ...(parsed.model ? { model: parsed.model } : {}),
+              ...(parsed.thinking ? { thinking: parsed.thinking } : {}),
+            })()
+          } catch (error) {
+            discardCommandClaim(claimFile)
+            discardSpawnBrief(briefFile)
+            throw error
+          }
+        },
       }
-      // Nothing is posted in the scratchpad: the thread appearing under the
-      // user's own `/spawn` is the acknowledgement, and harnessd reports a
-      // failed launch there.
-      return { ok: true }
     }
     case "done": {
       if (args !== "" && args !== "--force") {

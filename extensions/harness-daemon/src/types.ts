@@ -83,6 +83,8 @@ export interface SpawnOptions {
   attach?: { rootStreamId: string; anchorId: string }
   /** Path to a file whose content is delivered as a brief once the attached session is up. Requires `attach`. */
   briefFile?: string
+  /** Path to the `/spawn` command's own claim (see `writeCommandClaim`), for the launch to report into. Requires `attach`. */
+  claimFile?: string
 }
 
 export interface ResumeOptions {

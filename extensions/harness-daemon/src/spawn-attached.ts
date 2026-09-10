@@ -1,17 +1,13 @@
+import { readCommandClaim, type CommandClaim } from "@threahq/harness-client"
 import { readFileSync, unlinkSync } from "node:fs"
-import { spawnAgent, threaTarget } from "./commands"
+import { spawnAgent } from "./commands"
+import { claimCommandReporter, consoleCommandReporter, type CommandReporter } from "./command-reporter"
 import { die } from "./errors"
-import { postScratchpadNotice } from "./oom"
 import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea } from "./threa-http"
 import type { RuntimeKind, SpawnOptions, SpawnResult } from "./types"
 
-export interface StreamNoticeDeps {
-  postNotice: (streamId: string, content: string, runtime?: RuntimeKind) => Promise<void>
-  log: (message: string) => void
-}
-
-export interface AttachedSpawnDeps extends StreamNoticeDeps {
+export interface AttachedSpawnDeps {
   spawn: (options: SpawnOptions) => Promise<SpawnResult>
   readBrief: (path: string) => string
   unlinkBrief: (path: string) => void
@@ -21,18 +17,12 @@ export interface AttachedSpawnDeps extends StreamNoticeDeps {
     runtimeSessionId: string
     content: string
   }) => Promise<void>
+  readClaim: (path: string) => CommandClaim
+  commandReporter: (claim: CommandClaim) => CommandReporter
+  log: (message: string) => void
 }
 
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-/** Best-effort: a failure to report a failure must not mask the original error. */
-export async function notifyStream(streamId: string, content: string, deps: StreamNoticeDeps, runtime?: RuntimeKind) {
-  try {
-    await deps.postNotice(streamId, content, runtime)
-  } catch (error) {
-    deps.log(`harnessd: could not post to stream ${streamId}: ${reason(error)}`)
-  }
-}
 
 /**
  * The brief that stands in for a missing `/spawn` prompt. Its reply is the
@@ -49,13 +39,16 @@ function greetingBrief(options: SpawnOptions, result: SpawnResult): string {
 
 /**
  * Spawns an attached agent and hands it a brief through the Threa brief endpoint:
- * the caller's prompt when `--brief-file` carried one, a greeting otherwise. Every
- * failure is reported into the scratchpad root stream (best-effort) before
- * rethrowing, so a spawn that dies is never silent.
+ * the caller's prompt when `--brief-file` carried one, a greeting otherwise.
+ *
+ * The `/spawn` command that asked for it is still open, and `--claim-file` hands
+ * it to this process: provisioning and briefing are reported into it and it
+ * closes completed or failed — no message is posted about the launch.
  */
 export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpawnDeps): Promise<SpawnResult> {
   if (!options.attach) die("runAttachedSpawn requires options.attach")
-  const rootStreamId = options.attach.rootStreamId
+  const claim = options.claimFile ? deps.readClaim(options.claimFile) : undefined
+  const reporter = claim ? deps.commandReporter(claim) : consoleCommandReporter("spawn")
 
   // Claimed before the read, not after it: the file is this process's to remove
   // whichever way the spawn ends. Leaving it would strand the user's prompt in
@@ -71,10 +64,10 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
         content = deps.readBrief(briefPath)
         if (!content.trim()) die(`--brief-file ${briefPath} is empty`)
       }
+      await reporter.progress(`Provisioning a worktree for \`${options.name}\``)
       result = await deps.spawn(options)
     } catch (error) {
-      await notifyStream(rootStreamId, `harnessd: spawn of \`${options.name}\` failed: ${reason(error)}`, deps)
-      throw error
+      throw new Error(`spawn of \`${options.name}\` failed: ${reason(error)}`, { cause: error })
     }
 
     // The brief is what writes the thread's first message, and a thread with no
@@ -83,21 +76,25 @@ export async function runAttachedSpawn(options: SpawnOptions, deps: AttachedSpaw
     const brief = content ?? (result.activeStreamId ? greetingBrief(options, result) : undefined)
     if (brief !== undefined) {
       try {
+        await reporter.progress(`Briefing \`${options.name}\``)
         const instanceId = result.instanceId ?? die("spawned agent has no instanceId to brief")
         const runtimeSessionId = result.runtimeSessionId ?? die("spawned agent has no runtimeSessionId to brief")
         await deps.brief({ runtime: options.runtime, instanceId, runtimeSessionId, content: brief })
       } catch (error) {
-        await notifyStream(
-          rootStreamId,
-          `harnessd: \`${options.name}\` started in thread ${result.activeStreamId} but the brief was not delivered: ${reason(error)}`,
-          deps
+        throw new Error(
+          `\`${options.name}\` started in thread ${result.activeStreamId} but the brief was not delivered: ${reason(error)}`,
+          { cause: error }
         )
-        throw error
       }
     }
 
+    await reporter.complete()
     return result
+  } catch (error) {
+    await reporter.fail(reason(error))
+    throw error
   } finally {
+    reporter.stop()
     if (briefPath) {
       try {
         deps.unlinkBrief(briefPath)
@@ -124,12 +121,8 @@ export function defaultAttachedSpawnDeps(
       )
       if (!response.ok) throw new Error(`harnessd: could not deliver the brief: ${await failureExcerpt(response)}`)
     },
-    postNotice: (streamId, content, runtime) =>
-      postScratchpadNotice({
-        ...(runtime ? targetForRuntime(runtime, "post a spawn notice") : threaTarget("post a spawn notice")),
-        streamId,
-        content,
-      }),
+    readClaim: readCommandClaim,
+    commandReporter: (claim) => claimCommandReporter(targetForRuntime(claim.runtime, "drive /spawn"), claim, "spawn"),
     log: (message) => console.error(message),
   }
 }

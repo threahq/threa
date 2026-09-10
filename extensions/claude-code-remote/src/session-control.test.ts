@@ -491,6 +491,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   /** The side effects of the last {@link runSpawn}, readable even when it rejected. */
   const spawnEffects: { specs: HarnessSpawnSpec[]; started: number } = { specs: [], started: 0 }
 
+  const SPAWN_CLAIM = { workspaceId: "ws_1", invocationId: "binv_spawn", instanceId: "cc-1", claimToken: "tok" }
+
   const runSpawn = async (args: string, activeStreamId = "root", runtimes = SPAWN_RUNTIMES) => {
     const specs: HarnessSpawnSpec[] = (spawnEffects.specs = [])
     spawnEffects.started = 0
@@ -517,45 +519,59 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       },
       () => runtimes
     )
+    const shape = {
+      ok: outcome.ok,
+      message: outcome.message,
+      handoff: typeof outcome.handoff,
+      keepsRunning: outcome.handoffKeepsSessionRunning,
+    }
+    await outcome.handoff?.(SPAWN_CLAIM)
+    const claimFile = specs[0]?.claimFile
+    const claim = claimFile ? readCommandClaim(claimFile) : undefined
     const brief = specs[0]?.briefFile
     const briefContent = brief ? readFileSync(brief, "utf8") : undefined
     if (brief) unlinkSync(brief)
-    return { outcome, specs, started: spawnEffects.started, briefContent }
+    return { outcome: shape, specs, started: spawnEffects.started, briefContent, claim }
   }
 
-  it("anchors the thread on the /spawn message, writes the brief, launches harnessd, and posts nothing", async () => {
-    const { outcome, specs, started, briefContent } = await runSpawn("pi sidebar fix\nCollapse the sidebar.")
+  it("anchors the thread on the /spawn message, writes the brief, hands harnessd its claim, and posts nothing", async () => {
+    const { outcome, specs, started, briefContent, claim } = await runSpawn("pi sidebar fix\nCollapse the sidebar.")
 
     expect({
       outcome,
-      spec: { ...specs[0]!, briefFile: typeof specs[0]!.briefFile },
+      spec: { ...specs[0]!, briefFile: typeof specs[0]!.briefFile, claimFile: typeof specs[0]!.claimFile },
       started,
       briefContent,
+      claim,
     }).toEqual({
-      outcome: { ok: true },
+      // The launch is the handoff, so the desk stays claimable behind it.
+      outcome: { ok: true, message: undefined, handoff: "function", keepsRunning: true },
       spec: {
         runtime: "pi",
         name: "sidebar fix",
         rootStreamId: "root",
         anchorId: "msg_slash_spawn",
         briefFile: "string",
+        claimFile: "string",
       },
       started: 1,
       briefContent: "Collapse the sidebar.",
+      claim: { runtime: "claude", ...SPAWN_CLAIM },
     })
   })
 
   it("defaults /spawn to claude and passes no brief file for an empty prompt", async () => {
     const { outcome, specs, started, briefContent } = await runSpawn("tidy up")
 
-    expect({ outcome, spec: specs[0], started, briefContent }).toEqual({
-      outcome: { ok: true },
+    expect({ outcome, spec: { ...specs[0]!, claimFile: typeof specs[0]!.claimFile }, started, briefContent }).toEqual({
+      outcome: { ok: true, message: undefined, handoff: "function", keepsRunning: true },
       spec: {
         runtime: "claude",
         name: "tidy up",
         rootStreamId: "root",
         anchorId: "msg_slash_spawn",
         briefFile: undefined,
+        claimFile: "string",
       },
       started: 1,
       briefContent: undefined,
@@ -569,10 +585,13 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
           ok: false,
           message:
             "Usage: `/spawn [claude|pi] [/model <model>] [/thinking <level>] <name>` with the prompt on the following lines.",
+          handoff: "undefined",
+          keepsRunning: undefined,
         },
         specs: [],
         started: 0,
         briefContent: undefined,
+        claim: undefined,
       })
     }
   })
@@ -580,7 +599,12 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   it("refuses a runtime this machine lacks without launching or writing a brief", async () => {
     const { outcome, specs, started } = await runSpawn("pi sidebar fix\nCollapse the sidebar.", "root", CLAUDE_ONLY)
     expect({ outcome, specs, started }).toEqual({
-      outcome: { ok: false, message: "`pi` is not installed on this machine. Installed: claude." },
+      outcome: {
+        ok: false,
+        message: "`pi` is not installed on this machine. Installed: claude.",
+        handoff: "undefined",
+        keepsRunning: undefined,
+      },
       specs: [],
       started: 0,
     })
@@ -595,36 +619,40 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     expect(spawnEffects).toEqual({ specs: [], started: 0 })
   })
 
-  it("removes the brief when the harnessd launch fails", async () => {
+  it("removes the brief and the claim when the harnessd launch fails", async () => {
     let briefFile: string | undefined
-    await expect(
-      runClaudeCommand(
-        "spawn",
-        "pi broken\nfix the thing",
-        undefined,
-        "runtime",
-        undefined,
-        () => "root",
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" },
-        () => "root",
-        (spec: HarnessSpawnSpec) => {
-          briefFile = spec.briefFile
-          return () => {
-            throw new Error("harnessd missing")
-          }
-        },
-        () => SPAWN_RUNTIMES
-      )
-    ).rejects.toThrow("harnessd missing")
-    expect({ briefWritten: Boolean(briefFile), briefLeft: existsSync(briefFile ?? "") }).toEqual({
-      briefWritten: true,
-      briefLeft: false,
+    let claimFile: string | undefined
+    const outcome = await runClaudeCommand(
+      "spawn",
+      "pi broken\nfix the thing",
+      undefined,
+      "runtime",
+      undefined,
+      () => "root",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" },
+      () => "root",
+      (spec: HarnessSpawnSpec) => {
+        briefFile = spec.briefFile
+        claimFile = spec.claimFile
+        return () => {
+          throw new Error("harnessd missing")
+        }
+      },
+      () => SPAWN_RUNTIMES
+    )
+    await expect(outcome.handoff?.(SPAWN_CLAIM)).rejects.toThrow("harnessd missing")
+    expect({
+      wrote: { brief: typeof briefFile, claim: typeof claimFile },
+      left: { brief: existsSync(briefFile ?? ""), claim: existsSync(claimFile ?? "") },
+    }).toEqual({
+      wrote: { brief: "string", claim: "string" },
+      left: { brief: false, claim: false },
     })
   })
 

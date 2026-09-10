@@ -73,7 +73,7 @@ export function defaultDoneDeps(
     endSession: ({ runtime, ...identity }) =>
       endRuntimeSession(targetForRuntime(runtime, "end a runtime session"), identity),
     readClaim: readCommandClaim,
-    commandReporter: (claim) => claimCommandReporter(targetForRuntime(claim.runtime, "drive /done"), claim),
+    commandReporter: (claim) => claimCommandReporter(targetForRuntime(claim.runtime, "drive /done"), claim, "done"),
   }
 }
 
@@ -142,7 +142,7 @@ export interface DoneRequest {
  */
 export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<void> {
   const claim = request.claimFile ? deps.readClaim(request.claimFile) : undefined
-  const reporter = claim ? deps.commandReporter(claim) : consoleCommandReporter()
+  const reporter = claim ? deps.commandReporter(claim) : consoleCommandReporter("done")
   try {
     const found = deps.findAgent(request.ref)
     const { worktree, instanceId, runtimeSessionId } = found
