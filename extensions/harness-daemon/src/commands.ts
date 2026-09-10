@@ -33,7 +33,7 @@ import {
   upsertAgent,
 } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
-import { IDLE_SUSPEND_AFTER_MS } from "./idle"
+import { IDLE_SUSPEND_AFTER_MS, idleSuspendEnabled } from "./idle"
 import { defaultSuspendDeps, suspendAgent, wakeAgent, type SuspendDeps, type SuspendOutcome } from "./suspend"
 import { inspectProfiles, DEFAULT_PROFILE } from "./profiles"
 import { commandExists, output } from "./shell"
@@ -484,7 +484,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const sweepIdle = (): Promise<void> => {
     reconcileChain = reconcileChain
       .then(async () => {
-        if (options.dryRun) return
+        if (options.dryRun || !idleSuspendEnabled()) return
         await suspendIdleSessions({ idleMinutes: IDLE_SUSPEND_AFTER_MS / 60_000, deps: suspendDeps })
       })
       .catch((error) => {
@@ -507,6 +507,11 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
       })
   )
   console.log(`harnessd: listening for unarchived sessions with ${transports.length} supervisor socket(s)`)
+  if (!idleSuspendEnabled()) {
+    console.log(
+      `harnessd: idle suspension is off (THREA_HARNESSD_IDLE_SUSPEND=${process.env.THREA_HARNESSD_IDLE_SUSPEND})`
+    )
+  }
   await runWatchLoop({
     runPass: async () => {
       await Promise.all(transports.map((transport) => transport.connect()))

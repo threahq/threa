@@ -13,6 +13,18 @@ import type { ManagedAgent } from "./types"
 export const IDLE_SUSPEND_AFTER_MS = 90 * 60_000
 
 /**
+ * The off switch. Suspension is on by default; setting
+ * `THREA_HARNESSD_IDLE_SUSPEND` to `0`, `off`, `false`, or `no` turns the sweep
+ * off for the whole daemon, which is the only way to stop winding sessions down
+ * without reverting harnessd.
+ */
+export function idleSuspendEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.THREA_HARNESSD_IDLE_SUSPEND?.trim().toLowerCase()
+  if (raw === undefined || raw === "") return true
+  return !["0", "off", "false", "no"].includes(raw)
+}
+
+/**
  * Every Bash tool call Claude Code makes sources this snapshot, so a child
  * whose cmdline names one is work in flight — a build, a test run, a `sleep`
  * inside a wait loop — however idle the runtime's own status reads. The

@@ -47,6 +47,9 @@ Usage:
   threa-harnessd doctor
   threa-harnessd runtimes   (JSON list of spawnable runtimes installed here: value, label, description=binary path)
 
+Environment:
+  THREA_HARNESSD_IDLE_SUSPEND=0   (turn the idle sweep off for the whole daemon; 0/off/false/no)
+
 Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
   threa-harnessd spawn claude --name fix-sidebar --branch fix/sidebar --model opus --thinking high

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ClaudeNativeSession } from "./claude-registry"
-import { IDLE_SUSPEND_AFTER_MS, claudeIdleVerdict, procChildren, suspendHeld } from "./idle"
+import { IDLE_SUSPEND_AFTER_MS, claudeIdleVerdict, idleSuspendEnabled, procChildren, suspendHeld } from "./idle"
 import type { IdleProbeDeps } from "./idle"
 import type { ManagedAgent } from "./types"
 
@@ -77,5 +77,17 @@ describe("suspendHeld", () => {
       past: suspendHeld(agent(new Date(NOW - 60_000).toISOString()), NOW),
       garbage: suspendHeld(agent("whenever"), NOW),
     }).toEqual({ none: false, future: true, past: false, garbage: false })
+  })
+})
+
+describe("idleSuspendEnabled", () => {
+  test("is on unless the env says otherwise", () => {
+    expect({
+      unset: idleSuspendEnabled({}),
+      blank: idleSuspendEnabled({ THREA_HARNESSD_IDLE_SUSPEND: "" }),
+      off: idleSuspendEnabled({ THREA_HARNESSD_IDLE_SUSPEND: "0" }),
+      spelled: idleSuspendEnabled({ THREA_HARNESSD_IDLE_SUSPEND: " Off " }),
+      on: idleSuspendEnabled({ THREA_HARNESSD_IDLE_SUSPEND: "1" }),
+    }).toEqual({ unset: true, blank: true, off: false, spelled: false, on: true })
   })
 })
