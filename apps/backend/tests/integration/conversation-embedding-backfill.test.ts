@@ -241,7 +241,7 @@ describe("conversation-embeddings backfill and worker against the real schema", 
     )
   })
 
-  test("the worker throws for a retry when a newer embedding landed while it was embedding", async () => {
+  test("the worker leaves the winner's embedding alone when a newer one landed while it was embedding", async () => {
     const observed = `Choosing the launch date\nShipping in May.\n${openingText}`
     const newer = `Choosing the launch date\nShipping in June.\n${openingText}`
     await ConversationRepository.update(pool, wsId, summarizedId, { summary: "Shipping in May." })
@@ -271,16 +271,15 @@ describe("conversation-embeddings backfill and worker against the real schema", 
       data: { conversationId: summarizedId, workspaceId: wsId },
     }
 
-    await expect(createConversationEmbeddingWorker({ pool, embeddingService: racing })(job)).rejects.toThrow(
-      /source changed during embed/
-    )
+    await createConversationEmbeddingWorker({ pool, embeddingService: racing })(job)
+
     expect(await readEmbeddingRow(pool, summarizedId)).toEqual({
       embedding: `[${unitVector(3).join(",")}]`,
       embedding_source_hash: hashEmbeddingText(newer),
     })
     expect(hashEmbeddingText(observed)).not.toBe(hashEmbeddingText(newer))
 
-    // The retry sees the newer text already stored and does nothing
+    // A rerun sees the newer text already stored and does nothing
     const before = embeddingService.singles.length
     await createConversationEmbeddingWorker({ pool, embeddingService })(job)
     expect(embeddingService.singles.length).toBe(before)

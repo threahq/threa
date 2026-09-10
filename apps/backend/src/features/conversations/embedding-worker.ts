@@ -43,14 +43,20 @@ export function createConversationEmbeddingWorker(
     }
 
     const outcome = await writeEmbeddingWithSourceHashGuard({
-      subject: conversation.id,
-      loadText: async () => (await loadConversationEmbeddingTexts(pool, [conversation])).get(conversation.id) ?? "",
+      subject: conversationId,
+      // Re-read rather than reuse the row above: the guard calls this again
+      // after losing the write race, and the winner is exactly what changed.
+      loadText: async () => {
+        const current = await ConversationRepository.findById(pool, conversationId)
+        if (!current || !isConversationEmbeddable(current)) return null
+        return (await loadConversationEmbeddingTexts(pool, [current])).get(conversationId) ?? null
+      },
       readExpectedHash: async () =>
-        (await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversation.id])).get(
-          conversation.id
+        (await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversationId])).get(
+          conversationId
         ) ?? null,
       embed: (text) => embeddingService.embed(text, { workspaceId, functionId: "conversation-embedding" }),
-      write: (row) => ConversationRepository.updateEmbeddings(pool, workspaceId, [{ id: conversation.id, ...row }]),
+      write: (row) => ConversationRepository.updateEmbeddings(pool, workspaceId, [{ id: conversationId, ...row }]),
     })
 
     if (outcome === "written") log.info("Conversation embedding stored")
