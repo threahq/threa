@@ -61,4 +61,10 @@ describe("session wake notes", () => {
       missing: takeSessionWakeNote("ccs-never-written"),
     }).toEqual({ broken: undefined, partial: undefined, traversal: undefined, missing: undefined })
   })
+
+  test("answers undefined rather than throwing when the note cannot be read or removed", () => {
+    mkdirSync(join(dir, "ccs-unreadable.json"), { recursive: true })
+
+    expect(takeSessionWakeNote("ccs-unreadable")).toBeUndefined()
+  })
 })

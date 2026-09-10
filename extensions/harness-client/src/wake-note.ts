@@ -52,18 +52,22 @@ export function writeSessionWakeNote(note: SessionWakeNote): void {
  * Read and remove the note for this session, if it is still fresh. Removing it
  * as part of reading is what keeps one suspension to one brief — a second
  * reader (a restart, a second boot) finds nothing.
+ *
+ * Every session calls this at boot, suspended or not, so it must not throw:
+ * a filesystem that refuses the read or the removal costs the brief, never
+ * the session that was about to start.
  */
 export function takeSessionWakeNote(runtimeSessionId: string, nowMs = Date.now()): SessionWakeNote | undefined {
-  const path = notePath(runtimeSessionId)
-  if (!path || !existsSync(path)) return undefined
   let parsed: Partial<SessionWakeNote>
   try {
-    parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<SessionWakeNote>
-  } catch {
+    const path = notePath(runtimeSessionId)
+    if (!path || !existsSync(path)) return undefined
+    const raw = readFileSync(path, "utf8")
     rmSync(path, { force: true })
+    parsed = JSON.parse(raw) as Partial<SessionWakeNote>
+  } catch {
     return undefined
   }
-  rmSync(path, { force: true })
   if (
     typeof parsed.suspendedAt !== "string" ||
     typeof parsed.wokeAt !== "string" ||
