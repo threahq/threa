@@ -48,6 +48,7 @@ import { THINKING_LEVELS } from "./thinking-levels"
 import { formatClaudeStatusReport } from "./status"
 import { interrupt, steerText, submitLine, submitModelChange, tmuxAvailable } from "./tmux-control"
 import { TranscriptTracer } from "./transcript-trace"
+import { takeWakeBrief, type WakeBrief } from "./wake-brief"
 
 const RUNTIME_KIND = "claude-code-channel"
 export const CHANNEL_SOURCE = "threa-channel"
@@ -644,6 +645,8 @@ export class ChannelServer {
   private started = false
   private shuttingDown = false
   private currentRuntimeInvocationId: string | undefined
+  /** Set only when harnessd revived this session; spent on the first turn delivered. */
+  private wakeBrief: WakeBrief | undefined
 
   constructor(
     private readonly config: RemoteSessionConfig,
@@ -755,6 +758,7 @@ export class ChannelServer {
       onApiError: (invocationId, text) => this.carryOn?.onApiError(invocationId, text),
       log,
     })
+    this.wakeBrief = takeWakeBrief(config.runtimeSessionId)
     this.registerHandlers()
   }
 
@@ -905,8 +909,13 @@ export class ChannelServer {
     // run full-detail. Turning that off falls back to the configured base mode.
     this.tracer.beginTurn(turn.invocationId, turn.sealed && this.config.sealedFullTrace ? "full" : undefined)
     this.carryOn?.onTurnStarted(turn.invocationId, turn.streamId)
+    // The brief is spent on whichever turn arrives first, revival-triggered or
+    // not: a second turn is no longer the one that woke the session.
+    const wake = this.wakeBrief
+    this.wakeBrief = undefined
+    if (wake) await this.session.recordSteps(turn.invocationId, [wake.step])
     await this.notify("notifications/claude/channel", {
-      content: turn.content,
+      content: wake ? `${wake.notice}\n\n${turn.content}` : turn.content,
       meta: {
         invocation_id: turn.invocationId,
         stream_id: turn.streamId,

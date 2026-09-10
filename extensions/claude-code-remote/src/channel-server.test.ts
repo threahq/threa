@@ -1,5 +1,9 @@
-import { describe, expect, mock, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
+import { writeSessionWakeNote } from "@threahq/harness-client"
 import {
   ThreaClient,
   type ClaimedDelegation,
@@ -666,5 +670,87 @@ describe("CHANNEL_TOOLS schemas", () => {
         required: ["invocation_id", "text"],
       })
     }
+  })
+})
+
+describe("ChannelServer wake brief", () => {
+  let dir: string
+  const previous = process.env.THREA_HARNESS_WAKE_NOTES_DIR
+
+  beforeEach(() => {
+    dir = join(mkdtempSync(join(tmpdir(), "server-wake-")), "wake")
+    process.env.THREA_HARNESS_WAKE_NOTES_DIR = dir
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+    if (previous === undefined) delete process.env.THREA_HARNESS_WAKE_NOTES_DIR
+    else process.env.THREA_HARNESS_WAKE_NOTES_DIR = previous
+  })
+
+  const turn = (invocationId: string) =>
+    ({ invocationId, streamId: "stream_1", content: "Ship the fix." }) as DeliveredTurn
+
+  /** The prompts the channel pushed to Claude, in order. */
+  function captureNotifications(server: ChannelServer): string[] {
+    const sent: string[] = []
+    const mcp = (server as unknown as { mcp: { notification: (n: { params: { content: string } }) => Promise<void> } })
+      .mcp
+    spyOn(mcp, "notification").mockImplementation(async (n) => {
+      sent.push(n.params.content)
+    })
+    return sent
+  }
+
+  function deliver(server: ChannelServer, invocationId: string): Promise<void> {
+    return (server as unknown as { deliverToClaude(t: DeliveredTurn): Promise<void> }).deliverToClaude(
+      turn(invocationId)
+    )
+  }
+
+  test("briefs the first turn after a revival, in the prompt and on the trace, and only that turn", async () => {
+    const woke = Date.now()
+    writeSessionWakeNote({
+      runtimeSessionId: "ccs-test",
+      suspendedAt: new Date(woke - 16 * 60_000).toISOString(),
+      wokeAt: new Date(woke).toISOString(),
+    })
+    const config = makeConfig()
+    const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+    const steps = spyOn(server.session, "recordSteps").mockResolvedValue(true)
+    const sent = captureNotifications(server)
+
+    await deliver(server, "binv_1")
+    await deliver(server, "binv_2")
+
+    expect({
+      briefed: sent[0]?.startsWith("[harnessd] You were suspended"),
+      carriesTheTurn: sent[0]?.endsWith("\n\nShip the fix."),
+      second: sent[1],
+      steps: steps.mock.calls.map(([invocationId, frames]) => [
+        invocationId,
+        frames.map((frame) => [frame.stepType, frame.content.includes("asleep 16 min")]),
+      ]),
+    }).toEqual({
+      briefed: true,
+      carriesTheTurn: true,
+      second: "Ship the fix.",
+      steps: [["binv_1", [["context_received", true]]]],
+    })
+
+    await server.shutdown()
+  })
+
+  test("leaves a session that was never suspended alone", async () => {
+    const config = makeConfig()
+    const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+    const steps = spyOn(server.session, "recordSteps").mockResolvedValue(true)
+    const sent = captureNotifications(server)
+
+    await deliver(server, "binv_1")
+
+    expect({ sent, steps: steps.mock.calls.length }).toEqual({ sent: ["Ship the fix."], steps: 0 })
+
+    await server.shutdown()
   })
 })
