@@ -772,26 +772,57 @@ describe("BroadcastHandler", () => {
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    // Session room wins — the instance room is intentionally skipped because
-    // the per-session subscriber is a strict subset of the per-instance set
-    // and re-emitting would deliver duplicates to the session socket.
-    expect(emitChains).toContainEqual({
-      room: "bot:ws_1:bot:bot_alice:session:sess_99",
-      eventType: "bot_invocation:available",
-      payload: event.payload,
-      namespace: "/bot",
-    })
-    // Instance room must not also receive it — the per-session subscriber is a
-    // strict subset of the per-instance set, so a second emit would deliver
-    // duplicates to the session socket.
+    // Session room plus the read-only supervisor room, and NOT the instance
+    // room: the per-session subscriber is a strict subset of the per-instance
+    // set, so a second emit would deliver duplicates to the session socket.
+    // The supervisor is neither — it holds no runtime and claims nothing.
     expect(
-      emitChains.some(
-        (e) =>
-          e.eventType === "bot_invocation:available" &&
-          e.room === "bot:ws_1:bot:bot_alice:instance:inst_42" &&
-          e.namespace === "/bot"
-      )
-    ).toBe(false)
+      emitChains.filter((entry) => entry.eventType === "bot_invocation:available" && entry.namespace === "/bot")
+    ).toEqual([
+      {
+        room: "bot:ws_1:bot:bot_alice:session:sess_99",
+        eventType: "bot_invocation:available",
+        payload: event.payload,
+        namespace: "/bot",
+      },
+      {
+        room: "bot:ws_1:bot:bot_alice:supervisor",
+        eventType: "bot_invocation:available",
+        payload: event.payload,
+        namespace: "/bot",
+      },
+    ])
+  })
+
+  it("keeps an untargeted bot_invocation:available out of the supervisor room", async () => {
+    const event = makeEvent(3n, "bot_invocation:available", {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      invocationId: "inv_4",
+      requiredCapability: "active-scratchpad",
+      targetInstanceId: null,
+      targetRuntimeSessionId: null,
+      createdAt: new Date().toISOString(),
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    // Nothing for a supervisor to act on: no session is named, so no local row
+    // maps to it.
+    expect(
+      emitChains.filter((entry) => entry.eventType === "bot_invocation:available" && entry.namespace === "/bot")
+    ).toEqual([
+      {
+        room: "bot:ws_1:bot:bot_alice",
+        eventType: "bot_invocation:available",
+        payload: event.payload,
+        namespace: "/bot",
+      },
+    ])
   })
 
   it("routes bot:session_restored to the runtime and side-effect-free supervisor room", async () => {
