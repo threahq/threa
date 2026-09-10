@@ -10,6 +10,7 @@ import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand, useCommandArgs, NO_ARGS, type CommandArgNames } from "./command-list-context"
 import { StreamChip } from "./stream-chip"
 import { MENTION_PATTERN, isValidSlug } from "@threahq/types"
+import { STEER_DIRECTIVE_PATTERN } from "@/lib/commands"
 
 interface TriggerChipProps {
   type: "mention" | "channel" | "command" | "command-flag"
@@ -187,6 +188,9 @@ type CommandArgs = (name: string) => CommandArgNames
  * command, the arguments that command declares (`commandArgs`) render as chips
  * too: a flag and the value it takes share one chip (`/thinking low`), gold for
  * the flag, neutral for the value, so the line reads as one dispatch.
+ *
+ * `/steer` is the exception to "leading": it dispatches from anywhere in the
+ * message, so it chips anywhere too.
  */
 export function renderMentions(
   text: string,
@@ -217,7 +221,7 @@ export function renderMentions(
     | {
         index: number
         length: number
-        type: "mention" | "channel" | "command-flag"
+        type: "mention" | "channel" | "command" | "command-flag"
         slug: string
         value?: string
       }
@@ -241,6 +245,21 @@ export function renderMentions(
         type: "command-flag",
         slug: name,
         value,
+      })
+    }
+  }
+
+  // Gold like a leading command, because it dispatches like one.
+  if (isKnownCommand("steer")) {
+    const steerPattern = new RegExp(STEER_DIRECTIVE_PATTERN.source, "giu")
+    let steerMatch
+    while ((steerMatch = steerPattern.exec(processText)) !== null) {
+      const [, lead, token] = steerMatch
+      triggers.push({
+        index: steerMatch.index + lead.length,
+        length: token.length,
+        type: "command",
+        slug: token.slice(1),
       })
     }
   }
