@@ -44,6 +44,11 @@ export function semanticEqual(
 
 function semanticEqualAt(a: unknown, b: unknown, ignoreKeys: ReadonlySet<string>): boolean {
   if (Object.is(a, b)) return true
+  // A nullable field a wire payload omits and a cached row stores as `null`
+  // are the same data arriving in two serialization shapes. Treating them as
+  // different makes the two writers (socket mirror vs bootstrap apply)
+  // rewrite each other's row forever — one row per bootstrap, forever.
+  if ((a === undefined || a === null) && (b === undefined || b === null)) return true
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false
 
   const aIsArray = Array.isArray(a)

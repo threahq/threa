@@ -25,6 +25,24 @@ describe("bootstrap diff", () => {
     expect(diffRows(new Map([["stream_1", existing]]), [candidate]).toWrite).toEqual([])
   })
 
+  it("a nullable field omitted by the wire shape equals the cached null and never ping-pongs", () => {
+    // The socket mirror writes the row without the key; the bootstrap apply
+    // writes it with `parentAnchorId: null`. Either order must read as
+    // unchanged, or the two writers rewrite each other's row once per load.
+    const socketShaped = { id: "stream_1", name: "General" }
+    const bootstrapShaped = { id: "stream_1", name: "General", parentAnchorId: null }
+    expect(semanticEqual(socketShaped, bootstrapShaped)).toBe(true)
+    expect(semanticEqual(bootstrapShaped, socketShaped)).toBe(true)
+    expect(diffRows(new Map([["stream_1", socketShaped]]), [bootstrapShaped]).toWrite).toEqual([])
+    expect(diffRows(new Map([["stream_1", bootstrapShaped]]), [socketShaped]).toWrite).toEqual([])
+  })
+
+  it("null and undefined are distinct from real values", () => {
+    expect(semanticEqual({ id: "s", a: null }, { id: "s", a: "x" })).toBe(false)
+    expect(semanticEqual({ id: "s", a: undefined }, { id: "s", a: "x" })).toBe(false)
+    expect(semanticEqual({ id: "s", a: 0 }, { id: "s", a: null })).toBe(false)
+  })
+
   it("a nested payload change is detected", () => {
     const existing = { id: "stream_1", lastMessagePreview: { content: "hi", authorId: "usr_1" }, _cachedAt: 1 }
     const candidate = { id: "stream_1", lastMessagePreview: { content: "hey", authorId: "usr_1" }, _cachedAt: 1 }
