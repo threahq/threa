@@ -32,6 +32,12 @@ export interface RetainAssetsOptions {
   now?: number
   /** How long a chunk that has dropped out of the build stays revivable. */
   retentionMs?: number
+  /**
+   * Hard ceiling on retained files. The age window alone does not bound the
+   * store: every build churns content-hashed names, so a busy day can push a
+   * deploy past Cloudflare Pages' 20,000-file cap. Oldest mtime goes first.
+   */
+  maxFiles?: number
 }
 
 export interface RetainAssetsResult {
@@ -39,11 +45,14 @@ export interface RetainAssetsResult {
   revived: number
   /** Files in the retain store after this run. */
   retained: number
-  /** Files dropped for exceeding the retention window. */
+  /** Files dropped for exceeding the retention window or the file ceiling. */
   pruned: number
 }
 
 const DEFAULT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000 // 14 days
+
+/** Well under Pages' 20,000-file deployment cap. */
+const DEFAULT_MAX_FILES = 8_000
 
 export async function retainAssets(options: RetainAssetsOptions): Promise<RetainAssetsResult> {
   const now = options.now ?? Date.now()
@@ -75,6 +84,7 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
   //    step 1 re-stamped every live chunk to `now`, only chunks that have been
   //    absent from the build for the whole window age out here.
   let pruned = 0
+  const survivors: Array<{ name: string; mtimeMs: number }> = []
   for (const name of await readdir(retainDir)) {
     const filePath = path.join(retainDir, name)
     const info = await stat(filePath)
@@ -82,7 +92,19 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
     if (now - info.mtimeMs > retentionMs) {
       await rm(filePath)
       pruned++
+      continue
     }
+    survivors.push({ name, mtimeMs: info.mtimeMs })
+  }
+
+  // Age alone doesn't bound the store (see maxFiles); the ceiling applies to
+  // what survived the age prune. Current-build files outrank every stale one
+  // regardless of mtime — losing a live chunk's retained copy is what breaks an
+  // old tab on the *next* deploy. Stale files then go newest-first.
+  survivors.sort((a, b) => Number(currentNames.has(b.name)) - Number(currentNames.has(a.name)) || b.mtimeMs - a.mtimeMs)
+  for (const file of survivors.slice(options.maxFiles ?? DEFAULT_MAX_FILES)) {
+    await rm(path.join(retainDir, file.name))
+    pruned++
   }
 
   // 3) Revive retained chunks that dropped out of the current build. Never
