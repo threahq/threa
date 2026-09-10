@@ -34,10 +34,8 @@ export interface RetainAssetsOptions {
   retentionMs?: number
   /**
    * Hard ceiling on retained files. The age window alone does not bound the
-   * store: every build churns content-hashed names, and on a busy day the
-   * accumulated chunks can exceed Cloudflare Pages' 20,000-file deploy cap
-   * (2026-09-10). When the store passes the cap, the oldest-mtime entries go
-   * first — they are the least likely to be an old tab's missing chunk.
+   * store: every build churns content-hashed names, so a busy day can push a
+   * deploy past Cloudflare Pages' 20,000-file cap. Oldest mtime goes first.
    */
   maxFiles?: number
 }
@@ -47,13 +45,13 @@ export interface RetainAssetsResult {
   revived: number
   /** Files in the retain store after this run. */
   retained: number
-  /** Files dropped for exceeding the retention window. */
+  /** Files dropped for exceeding the retention window or the file ceiling. */
   pruned: number
 }
 
 const DEFAULT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000 // 14 days
 
-/** Well under Pages' 20,000-file deployment cap (INV-11: the deploy must not fail on volume). */
+/** Well under Pages' 20,000-file deployment cap. */
 const DEFAULT_MAX_FILES = 8_000
 
 export async function retainAssets(options: RetainAssetsOptions): Promise<RetainAssetsResult> {
@@ -86,6 +84,7 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
   //    step 1 re-stamped every live chunk to `now`, only chunks that have been
   //    absent from the build for the whole window age out here.
   let pruned = 0
+  const survivors: Array<{ name: string; mtimeMs: number }> = []
   for (const name of await readdir(retainDir)) {
     const filePath = path.join(retainDir, name)
     const info = await stat(filePath)
@@ -93,26 +92,17 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
     if (now - info.mtimeMs > retentionMs) {
       await rm(filePath)
       pruned++
+      continue
     }
+    survivors.push({ name, mtimeMs: info.mtimeMs })
   }
 
-  // Age alone doesn't bound the store (see maxFiles); enforce the ceiling after
-  // the age prune so a busy day of deploys cannot push a Pages deploy past its
-  // file cap.
-  let capped = 0
-  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
-  if (maxFiles < Number.POSITIVE_INFINITY) {
-    const survivors: Array<{ name: string; mtimeMs: number }> = []
-    for (const name of await readdir(retainDir)) {
-      const info = await stat(path.join(retainDir, name))
-      if (!info.isFile()) continue
-      survivors.push({ name, mtimeMs: info.mtimeMs })
-    }
-    survivors.sort((a, b) => b.mtimeMs - a.mtimeMs)
-    for (const file of survivors.slice(maxFiles)) {
-      await rm(path.join(retainDir, file.name))
-      pruned++
-    }
+  // Age alone doesn't bound the store (see maxFiles); the ceiling applies to
+  // what survived the age prune, newest kept first.
+  survivors.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  for (const file of survivors.slice(options.maxFiles ?? DEFAULT_MAX_FILES)) {
+    await rm(path.join(retainDir, file.name))
+    pruned++
   }
 
   // 3) Revive retained chunks that dropped out of the current build. Never
