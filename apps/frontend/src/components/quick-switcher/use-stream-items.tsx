@@ -142,11 +142,6 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const lowerQuery = searchText.toLowerCase()
     const usersById = new Map((users ?? []).map((workspaceUser) => [workspaceUser.id, workspaceUser]))
     const dmPeerByStreamId = new Map((dmPeers ?? []).map((peer) => [peer.streamId, peer.userId]))
-    // A thread rooted in someone else's aside is reachable but not listable —
-    // the aside itself never lists, and its threads inherit that.
-    const hiddenRootIds = new Set(
-      activeStreams.filter((s) => s.type === StreamTypes.ASIDE && s.createdBy !== currentUserId).map((s) => s.id)
-    )
 
     // Active streams are CachedStream (with lastMessagePreview), archived come from API as Stream.
     // The stream cache durably holds archived rows (archived-stream index), so
@@ -160,11 +155,14 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const isSearching = searchText.length > 0
 
     // Threads are the workspace's long tail — one per reply chain — so they join
-    // the list only once something narrows it: a query, or `is:thread`. Browsing
-    // an unnarrowed palette is a list of the streams you navigate BETWEEN.
+    // the list only once a query or `is:thread` narrows it; an unnarrowed palette
+    // is the streams you navigate BETWEEN. Unnamed ones stay out either way:
+    // their label is the placeholder "Thread", which `thre` would match wholesale.
     const wantsThreads = isSearching || typeFilters.includes(StreamTypes.THREAD)
-    // An unnamed thread has no text to match: `streamLabel` would hand every one
-    // of them the placeholder "Thread" and the query `thre` would return the lot.
+    // A thread rooted in someone else's aside inherits the aside's invisibility.
+    const hiddenRootIds = new Set(
+      activeStreams.filter((s) => s.type === StreamTypes.ASIDE && s.createdBy !== currentUserId).map((s) => s.id)
+    )
     const isSearchableThread = (s: StreamLike) =>
       wantsThreads && getStreamName(s) != null && !hiddenRootIds.has(s.rootStreamId ?? s.id)
 
@@ -191,9 +189,8 @@ export function useStreamItems(context: ModeContext): ModeResult {
       return parent ? streamLabel(parent) : null
     }
 
-    // Score first, then pre-compute urgency and counts for the survivors only
-    // (used by both sort and item builder): with threads in the candidate set the
-    // list is an order of magnitude longer, and most of it never renders.
+    // Score first, enrich the survivors only (sort and item builder both read
+    // these): with threads in the candidate set most of the list never renders.
     const enriched = filteredStreams
       .map((stream) => ({ stream, score: scoreStreamMatch(stream, lowerQuery) }))
       .filter(({ score }) => score !== Infinity)
@@ -221,8 +218,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
       const href = `/w/${workspaceId}/s/${asideHost ?? stream.id}`
       const isArchived = stream.archivedAt != null
       const typeLabel = getStreamTypeLabel(stream.type)
-      // Threads carry no member rows (INV-62) — access is inherited from the
-      // root — so "Not joined" would be true of every one of them.
+      // Threads carry no member rows (INV-62), so "Not joined" would be true of all.
       const isThread = stream.type === StreamTypes.THREAD
       const notJoined = !isThread && !memberStreamIds.has(stream.id) && stream.visibility === "public"
       const parentLabel = isThread ? parentLabelFor(stream) : null

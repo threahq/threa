@@ -65,13 +65,9 @@ const KEYWORD_TYPO_TIER = 21
 /**
  * The coarse quality band a score fell in: 0 whole-word, 1 partial, 2 the
  * tolerance guesses, 3 anything a caller ranks below the bands
- * (`scoreStreamMatch` scores a raw stream-id substring at 100).
- *
- * Bands are contiguous score ranges, so ordering by band and then by score is
- * the same order as ordering by score alone. That is what makes them a safe
- * place to hang a demotion: a caller that ranks one class of item below
- * another does it WITHIN a band, and the demotion can never lift a guess above
- * a real match or a partial hit above a whole-word one.
+ * (`scoreStreamMatch` scores a raw stream-id substring at 100). Bands are
+ * contiguous score ranges, so band-then-score is score order — which is what
+ * makes a band a safe place for a caller to hang its own demotion.
  */
 export function matchBand(score: number): number {
   if (score < PARTIAL_BAND) return 0

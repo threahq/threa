@@ -41,12 +41,7 @@ export function scoreStreamMatch(
   return Infinity
 }
 
-/**
- * Threads sort after top-level streams. Applied only within a match band, so a
- * thread whose title the query hits as a whole word still outranks a channel it
- * only fragments — the demotion answers "which of these equally-good hits did
- * you more likely mean", not "is a thread worth less".
- */
+/** Threads sort after top-level streams — see `compareStreamEntries`. */
 function typeRank(stream: SortableStream): number {
   return stream.type === StreamTypes.THREAD ? 1 : 0
 }
@@ -82,8 +77,8 @@ export function compareStreamEntries<S extends SortableStream>(
     const bandA = matchBand(a.score)
     const bandB = matchBand(b.score)
     if (bandA !== bandB) return bandA - bandB
-    // Bands are contiguous score ranges, so band-then-score is score order; the
-    // step exists to give the type demotion somewhere safe to sit.
+    // Only below the whole-word band: a thread whose title the query hits as a
+    // whole word still outranks a channel it only fragments.
     if (bandA > 0) {
       const typeDiff = typeRank(a.stream) - typeRank(b.stream)
       if (typeDiff !== 0) return typeDiff
