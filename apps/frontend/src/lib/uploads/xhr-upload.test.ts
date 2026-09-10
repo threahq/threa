@@ -66,7 +66,7 @@ describe("xhrUpload connectivity phases", () => {
       filename: "secret.txt",
     })
 
-    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(diagnostics.SLOW_REQUEST_MS)
     xhr.upload.onload?.()
     xhr.readyState = XMLHttpRequest.HEADERS_RECEIVED
     xhr.onreadystatechange?.()
@@ -87,6 +87,30 @@ describe("xhrUpload connectivity phases", () => {
       { event: "http_body_complete", fields: { ...base, status: 201, correlationId: "railway_1" } },
     ])
     expect(events[0]!.fields).not.toHaveProperty("url")
+  })
+
+  it("should keep a fast upload to start and upload-complete events", async () => {
+    const result = xhrUpload({
+      url: "/api/workspaces/ws/attachments/id/content",
+      blob: new Blob(["payload"]),
+      filename: "fast.txt",
+    })
+    xhr.upload.onload?.()
+    xhr.readyState = XMLHttpRequest.HEADERS_RECEIVED
+    xhr.onreadystatechange?.()
+    xhr.onload?.()
+
+    await expect(result).resolves.toEqual({ status: 201, body: {} })
+    const base = {
+      method: "POST" as const,
+      route: "attachments" as const,
+      transport: "xhr" as const,
+      operationId: "op_test",
+    }
+    expect(events).toEqual([
+      { event: "http_start", fields: base },
+      { event: "http_upload_complete", fields: base },
+    ])
   })
 
   it("should preserve caller cancellation and classify it as an abort", async () => {

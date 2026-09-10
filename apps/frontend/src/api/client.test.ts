@@ -133,7 +133,7 @@ describe("HTTP connectivity phases", () => {
     globalThis.fetch = originalFetch
   })
 
-  it("should distinguish a response-body stall from waiting for headers", async () => {
+  it("should record phase detail only once a request is slow", async () => {
     const events: RecordedEvent[] = []
     captureConnectivityEvents(events)
     let finishBody: ((value: unknown) => void) | undefined
@@ -148,40 +148,36 @@ describe("HTTP connectivity phases", () => {
     globalThis.fetch = vi.fn().mockResolvedValue(response) as unknown as typeof fetch
 
     const request = api.get("/api/workspaces/ws/streams")
-    await vi.advanceTimersByTimeAsync(10)
+    await vi.advanceTimersByTimeAsync(diagnostics.SLOW_REQUEST_MS)
     finishBody?.({ ok: true })
 
     await expect(request).resolves.toEqual({ ok: true })
+    expect(events.map((entry) => entry.event)).toEqual(["http_start", "http_stalled", "http_body_complete"])
+    expect(events.find((entry) => entry.event === "http_body_complete")?.fields).toEqual({
+      method: "GET",
+      route: "streams",
+      transport: "fetch",
+      operationId: "op_test",
+      status: 200,
+      correlationId: "railway_1",
+    })
+  })
+
+  it("should keep fast requests to a single start event", async () => {
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "x-railway-request-id": "railway_fast" },
+      })
+    ) as unknown as typeof fetch
+
+    await expect(api.get("/api/workspaces/ws/streams")).resolves.toEqual({ ok: true })
     expect(events).toEqual([
       {
         event: "http_start",
         fields: { method: "GET", route: "streams", transport: "fetch", operationId: "op_test" },
-      },
-      {
-        event: "http_headers",
-        fields: {
-          method: "GET",
-          route: "streams",
-          transport: "fetch",
-          operationId: "op_test",
-          status: 200,
-          correlationId: "railway_1",
-        },
-      },
-      {
-        event: "http_stalled",
-        fields: { method: "GET", route: "streams", transport: "fetch", operationId: "op_test" },
-      },
-      {
-        event: "http_body_complete",
-        fields: {
-          method: "GET",
-          route: "streams",
-          transport: "fetch",
-          operationId: "op_test",
-          status: 200,
-          correlationId: "railway_1",
-        },
       },
     ])
   })
@@ -203,28 +199,6 @@ describe("HTTP connectivity phases", () => {
       {
         event: "http_start",
         fields: { method: "POST", route: "avatars", transport: "fetch", operationId: "op_test" },
-      },
-      {
-        event: "http_headers",
-        fields: {
-          method: "POST",
-          route: "avatars",
-          transport: "fetch",
-          operationId: "op_test",
-          status: 200,
-          correlationId: "railway_2",
-        },
-      },
-      {
-        event: "http_body_complete",
-        fields: {
-          method: "POST",
-          route: "avatars",
-          transport: "fetch",
-          operationId: "op_test",
-          status: 200,
-          correlationId: "railway_2",
-        },
       },
     ])
     expect(vi.mocked(globalThis.fetch).mock.calls[0]![1]).not.toHaveProperty("signal")
@@ -251,17 +225,6 @@ describe("HTTP connectivity phases", () => {
       {
         event: "http_start",
         fields: { method: "POST", route: "avatars", transport: "fetch", operationId: "op_test" },
-      },
-      {
-        event: "http_headers",
-        fields: {
-          method: "POST",
-          route: "avatars",
-          transport: "fetch",
-          operationId: "op_test",
-          status: 200,
-          correlationId: "railway_parse",
-        },
       },
       {
         event: "http_failure",

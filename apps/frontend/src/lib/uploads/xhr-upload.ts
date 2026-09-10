@@ -2,6 +2,7 @@ import {
   beginConnectivityObservation,
   categorizeRoute,
   flushConnectivityDiagnostics,
+  SLOW_REQUEST_MS,
 } from "@/lib/connectivity-diagnostics/facade"
 
 /**
@@ -55,6 +56,10 @@ export function xhrUpload({
 
     const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(url), transport: "xhr" })
     observation.record("http_start")
+    const startedAt = performance.now()
+    // Phase detail (headers/body) is only evidence for slow requests; fast ones
+    // would triple telemetry volume without improving diagnosis.
+    const isSlow = () => performance.now() - startedAt >= SLOW_REQUEST_MS
     const stopStallTimer = observation.stall()
     let uploadComplete = false
 
@@ -88,7 +93,7 @@ export function xhrUpload({
       if (xhr.readyState !== XMLHttpRequest.HEADERS_RECEIVED || headersRecorded) return
       headersRecorded = true
       responseFields = { status: xhr.status, correlationId: xhr.getResponseHeader("x-railway-request-id") ?? undefined }
-      observation.record("http_headers", responseFields)
+      if (isSlow()) observation.record("http_headers", responseFields)
     }
     xhr.onload = () => {
       cleanup()
@@ -98,7 +103,7 @@ export function xhrUpload({
       } catch {
         // Non-JSON body (proxy error page) — status alone drives handling.
       }
-      observation.record("http_body_complete", responseFields)
+      if (isSlow()) observation.record("http_body_complete", responseFields)
       if (xhr.status < 200 || xhr.status >= 300) {
         observation.record("http_failure", { ...responseFields, reason: "server" })
         void flushConnectivityDiagnostics()

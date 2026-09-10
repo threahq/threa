@@ -378,6 +378,32 @@ describe("connectivity diagnostics persistence", () => {
     expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
   })
 
+  it("should retain a single-task burst beyond the drain target", async () => {
+    const batches: Array<Array<{ properties: { operationId: string } }>> = []
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      batches.push(JSON.parse(String(init?.body)).batch)
+      return new Response(null, { status: 200 })
+    })
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const operationIds = Array.from(
+      { length: connectivityDiagnosticsTestApi.MAX_MEMORY_HARD_ROWS },
+      (_, index) => `op_${index}`
+    )
+    for (const operationId of operationIds)
+      recordConnectivityEvent("http_start", { operationId, method: "GET", route: "messages" })
+    await settleWrites()
+
+    expect(await flushConnectivityDiagnostics()).toBe(true)
+    expect(
+      batches
+        .flat()
+        .map((event) => event.properties.operationId)
+        .sort()
+    ).toEqual(operationIds.sort())
+    expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
+  })
+
   it("should bound active consent metadata during maintenance", async () => {
     const database = connectivityDiagnosticsTestApi.db
     await database.consent.bulkPut(
