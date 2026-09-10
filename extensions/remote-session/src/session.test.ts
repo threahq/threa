@@ -556,6 +556,43 @@ describe("RemoteSession.onReplyTimeout", () => {
   })
 })
 
+describe("RemoteSession empty output", () => {
+  test("closes a reply that carried no words and no attachments as noResponse", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_empty" }))
+
+    const res = await session.reply("binv_empty", "   ")
+
+    expect({ ok: res.ok, closedTurn: res.closedTurn, body: calls.complete[0]?.body }).toEqual({
+      ok: true,
+      closedTurn: true,
+      body: {
+        instanceId: "rt-test",
+        claimToken: "tok",
+        sourceRevision: 1,
+        noResponse: true,
+        metadata: { "remote.invocationId": "binv_empty", "remote.instanceId": "rt-test" },
+      },
+    })
+  })
+
+  test("refuses an empty interim message instead of posting one in its place", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_blank" }))
+
+    const res = await session.sendInterim("binv_blank", "  \n ")
+
+    expect({ res, posted: calls.invocationMessage }).toEqual({
+      res: { ok: false, retryable: false, message: "An interim message needs content — nothing was posted." },
+      posted: [],
+    })
+  })
+})
+
 describe("RemoteSession late delivery after completion", () => {
   /** Close a turn the way a normal reply does, so the session remembers its route. */
   async function replyAndClose(session: RemoteSession, invocation: ClaimedInvocation, text = "Done.") {

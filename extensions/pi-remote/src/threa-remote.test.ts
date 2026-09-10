@@ -458,7 +458,7 @@ describe("Pi remote trace safety", () => {
     expect(__testing.normalizeThinkingLevel("bogus")).toBeNull()
   })
 
-  test("forwards model provider errors instead of the default Done. fallback", () => {
+  test("forwards model provider errors instead of closing the turn as silent", () => {
     const limitMessage = "Error: You have hit your ChatGPT usage limit (plus plan). Try again in ~139 min."
 
     expect(__testing.resolveFinalText({ error: limitMessage }, { assistantTexts: [], otherTexts: [] })).toBe(
@@ -529,11 +529,11 @@ describe("Pi remote trace safety", () => {
         { messages: [{ role: "user", content: "the original prompt" }] },
         { assistantTexts: [], otherTexts: [] }
       )
-    ).toBe("Done.")
+    ).toBe("")
   })
 
-  test("returns Done. only when nothing useful is captured", () => {
-    expect(__testing.resolveFinalText({}, { assistantTexts: [], otherTexts: [] })).toBe("Done.")
+  test("returns nothing when the turn produced nothing", () => {
+    expect(__testing.resolveFinalText({}, { assistantTexts: [], otherTexts: [] })).toBe("")
   })
 
   test("prefers the captured provider error over message scans", () => {
@@ -548,9 +548,9 @@ describe("Pi remote trace safety", () => {
   // The 2026-07-03 Pi-Orchestrator failure: opencode's gateway 502'd every
   // call, the client THREW (so `after_provider_response` never fired and
   // providerError stayed unset), and each errored assistant message had empty
-  // content plus `stopReason: "error"`. The turn fell through every branch to
-  // the "Done." fallback — the user asked "Did I mess up?" and got "Done.".
-  test("surfaces a model error carried on an errored assistant message instead of Done.", () => {
+  // content plus `stopReason: "error"`. The turn fell through every branch and
+  // closed clean — the user asked "Did I mess up?" and got no sign of it.
+  test("surfaces a model error carried on an errored assistant message", () => {
     const messages = [
       { role: "user", content: "Hi" },
       {
@@ -4194,6 +4194,37 @@ describe("invocation edit regressions", () => {
       contextGate.resolve(sourceMessages(sourceMessage(contributor, "delete queued", { sequence: "2" })))
       expect(await preparation).toBe(false)
       expect({ sends, pending: __testing.pendingInvocationId() }).toEqual({ sends: [], pending: undefined })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("closes a turn that produced no text as noResponse instead of posting filler", async () => {
+    configure(true)
+    const turn = invocation("binv_silent_turn", 1, "say nothing")
+    const ctx = context({ idle: true })
+    __testing.setTransportForTesting({
+      observeClaim: () => ({ sync: async () => {}, unregister: () => {} }),
+      recordSteps: async () => {},
+      updatePresence: async () => {},
+      disconnect: () => {},
+    })
+    __testing.beginPendingInvocation(turn as never)
+    expect(await __testing.observeInvocation({} as never, ctx, turn as never, "running")).toBe(true)
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input, init) => {
+      if (String(input).endsWith(`/bot-invocations/${turn.id}/complete`)) {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+      }
+      return json({ data: {} })
+    }) as typeof fetch)
+    try {
+      await __testing.completePending("   ", ctx)
+      expect({
+        closes: bodies.length,
+        noResponse: bodies[0]?.noResponse,
+        postedMarkdown: bodies[0]?.finalMessageMarkdown !== undefined,
+      }).toEqual({ closes: 1, noResponse: true, postedMarkdown: false })
     } finally {
       fetchSpy.mockRestore()
     }

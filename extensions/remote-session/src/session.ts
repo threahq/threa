@@ -1991,10 +1991,9 @@ export class RemoteSession {
     if (!prepared) {
       if (sealing) {
         const uploaded = await uploadSealedReplyAttachments(this.client, intent.text, process.cwd())
-        const fallback = uploaded.refs.length > 0 ? "" : "(empty message)"
         const body = await sealReply(
           sealing,
-          uploaded.markdown.trim() || fallback,
+          uploaded.markdown.trim(),
           uploaded.refs.length > 0 ? { attachmentRefs: uploaded.refs } : undefined
         )
         prepared = {
@@ -2058,23 +2057,31 @@ export class RemoteSession {
     }
   }
 
+  /**
+   * A reply that carries no words and no attachments closes as `noResponse` —
+   * the wire's own word for a turn that said nothing — instead of standing in a
+   * message the session never wrote.
+   */
   private async prepareReply(route: TurnRoute, text: string): Promise<PreparedClose> {
     const sealing = route.invocation.sealing
     const sourceRevision = route.invocation.sourceRevision
     if (sealing) {
       const { markdown, refs, attachmentIds } = await uploadSealedReplyAttachments(this.client, text, process.cwd())
-      const reply = await sealReply(
-        sealing,
-        markdown.trim() || "Done.",
-        refs.length > 0 ? { attachmentRefs: refs } : undefined
-      )
+      const spoken = markdown.trim()
+      const reply =
+        spoken.length > 0 || refs.length > 0
+          ? await sealReply(sealing, spoken, refs.length > 0 ? { attachmentRefs: refs } : undefined)
+          : undefined
       return {
         reason: "reply",
         sourceText: text,
         wire: {
           kind: "sealed",
           callbackToken: sealing.callbackToken,
-          body: { sourceRevision, reply: { ...reply, ...(attachmentIds.length > 0 && { attachmentIds }) } },
+          body:
+            reply === undefined
+              ? { noResponse: true, sourceRevision }
+              : { sourceRevision, reply: { ...reply, ...(attachmentIds.length > 0 && { attachmentIds }) } },
         },
       }
     }
@@ -2089,7 +2096,7 @@ export class RemoteSession {
           instanceId: this.config.instanceId,
           claimToken: route.invocation.claimToken,
           sourceRevision,
-          finalMessageMarkdown: markdown,
+          ...(markdown.trim().length > 0 ? { finalMessageMarkdown: markdown } : { noResponse: true as const }),
           metadata: {
             "remote.invocationId": route.invocation.id,
             "remote.instanceId": this.config.instanceId,
@@ -2248,6 +2255,13 @@ export class RemoteSession {
       return { ok: true, message: "sent" }
     }
     if (route.terminal) return this.terminalResult(invocationId, kind, intent.text)
+    if (intent.text.trim().length === 0) {
+      return {
+        ok: false,
+        retryable: false,
+        message: `Request ${invocationId} had already closed, and an empty ${kind} has nothing to post as a follow-up.`,
+      }
+    }
     try {
       await this.writeRouteMessage(route, intent, {
         "remote.invocationId": invocationId,
@@ -2275,6 +2289,9 @@ export class RemoteSession {
         retryable: false,
         message: `No open request with invocation_id ${invocationId} — interim messages need an open request (it may have been answered or closed).`,
       }
+    }
+    if (text.trim().length === 0) {
+      return { ok: false, retryable: false, message: "An interim message needs content — nothing was posted." }
     }
     const intent = route.snapshotIntent(text)
     return route.enqueue(() => this.runSend(route, intent))

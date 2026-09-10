@@ -403,7 +403,7 @@ export async function runMentions(args: RunArgs, deps: RunDeps): Promise<void> {
           await client.complete(invocation.id, {
             instanceId,
             claimToken: invocation.claimToken,
-            finalMessageMarkdown: reply,
+            ...(reply.length > 0 ? { finalMessageMarkdown: reply } : { noResponse: true }),
           })
         } catch (error) {
           await client
