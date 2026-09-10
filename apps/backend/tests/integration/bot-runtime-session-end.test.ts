@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRuntimeServiceFor } from "./setup"
+import { StreamTypes, Visibilities } from "@threahq/types"
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { MessageRepository } from "../../src/features/messaging"
+import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { botRuntimeSessionLinkId, messageId, streamId } from "../../src/lib/id"
 
-describe("endRuntimeSession", () => {
+describe("ending a bot runtime session", () => {
   let fixture: BotRuntimeFixture
   let pool: Pool
   let workspace: string
@@ -139,6 +141,11 @@ describe("endRuntimeSession", () => {
       instanceId: "reuse-instance-1",
       runtimeSessionId: "reuse-session-1",
     })
+    await service().archiveOwnCommandThread(pool, {
+      workspaceId: workspace,
+      botId: bot,
+      streamId: first.stream.id,
+    })
 
     const second = await service().attachRuntimeSessionToThread({
       workspaceId: workspace,
@@ -159,6 +166,107 @@ describe("endRuntimeSession", () => {
       runtimeSessionId: "reuse-session-2",
       status: "active",
     })
+
+    // `/done` archived the bot's thread; the fresh attach reopens it as the bot.
+    expect(second.stream.archivedAt).toBeNull()
+    const lifecycle = await StreamEventRepository.list(pool, first.stream.id, {
+      types: ["stream_archived", "stream_unarchived"],
+    })
+    expect(
+      lifecycle.map((event) => ({ type: event.eventType, actorId: event.actorId, actorType: event.actorType }))
+    ).toEqual([
+      { type: "stream_archived", actorId: bot, actorType: "bot" },
+      { type: "stream_unarchived", actorId: bot, actorType: "bot" },
+    ])
+  })
+
+  test("leaves every stream the ended links pointed at open", async () => {
+    const { stream: thread } = await attachThread("close-instance", "close-session")
+    await service().createOrLinkPiRemoteSession({
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "pi-local",
+      instanceId: "desk-instance",
+      runtimeSessionId: "desk-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+    const anchor = await anchorMessage()
+    const userThreadId = streamId()
+    await StreamRepository.insert(pool, {
+      id: userThreadId,
+      workspaceId: workspace,
+      type: StreamTypes.THREAD,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: root,
+      parentAnchorId: anchor.id,
+      rootStreamId: root,
+      createdBy: author,
+    })
+    await service().createOrLinkPiRemoteSession({
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "pi-local",
+      instanceId: "user-thread-instance",
+      runtimeSessionId: "user-thread-session",
+      rootStreamId: root,
+      activeStreamId: userThreadId,
+      linkedBy: author,
+    })
+
+    for (const [instanceId, runtimeSessionId] of [
+      ["close-instance", "close-session"],
+      ["desk-instance", "desk-session"],
+      ["user-thread-instance", "user-thread-session"],
+    ]) {
+      const ended = await service().endRuntimeSession({
+        workspaceId: workspace,
+        botId: bot,
+        instanceId,
+        runtimeSessionId,
+      })
+      expect(ended?.status).toBe("ended")
+    }
+
+    const streams = await pool.query<{ id: string; archived_at: Date | null }>(
+      "SELECT id, archived_at FROM streams WHERE id = ANY($1) ORDER BY id",
+      [[root, thread.id, userThreadId]]
+    )
+    expect(streams.rows.map((row) => row.archived_at)).toEqual([null, null, null])
+  })
+
+  test("`/done` archives only a thread the bot opened, and only once", async () => {
+    const { stream: thread } = await attachThread("guard-instance", "guard-session")
+    const anchor = await anchorMessage()
+    const userThreadId = streamId()
+    await StreamRepository.insert(pool, {
+      id: userThreadId,
+      workspaceId: workspace,
+      type: StreamTypes.THREAD,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: root,
+      parentAnchorId: anchor.id,
+      rootStreamId: root,
+      createdBy: author,
+    })
+    const archive = (streamIdToClose: string) =>
+      service().archiveOwnCommandThread(pool, { workspaceId: workspace, botId: bot, streamId: streamIdToClose })
+
+    expect({
+      ownThread: await archive(thread.id),
+      ownThreadAgain: await archive(thread.id),
+      scratchpad: await archive(root),
+      userThread: await archive(userThreadId),
+    }).toEqual({ ownThread: thread.id, ownThreadAgain: null, scratchpad: null, userThread: null })
+
+    const lifecycle = await StreamEventRepository.list(pool, thread.id, { types: ["stream_archived"] })
+    expect(lifecycle).toMatchObject([{ eventType: "stream_archived", actorId: bot, actorType: "bot" }])
+    const untouched = await pool.query<{ archived_at: Date | null }>(
+      "SELECT archived_at FROM streams WHERE id = ANY($1) ORDER BY id",
+      [[root, userThreadId]]
+    )
+    expect(untouched.rows.map((row) => row.archived_at)).toEqual([null, null])
   })
 
   test("cancels pending invocations targeted at the ended session and leaves other pending rows alone", async () => {
@@ -331,6 +439,9 @@ describe("endRuntimeSession", () => {
       linkedBy: author,
     })
 
+    const lockNoWait = () =>
+      pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
+
     const reader = await pool.connect()
     try {
       await reader.query("BEGIN")
@@ -344,17 +455,13 @@ describe("endRuntimeSession", () => {
 
       // `sessions/end` updates this row. NOWAIT turns the wait into an error, so
       // this asserts the share lock is really held rather than timing a sleep.
-      await expect(
-        pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
-      ).rejects.toMatchObject({ code: "55P03" })
+      await expect(lockNoWait()).rejects.toMatchObject({ code: "55P03" })
     } finally {
       await reader.query("ROLLBACK")
       reader.release()
     }
 
-    await expect(
-      pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
-    ).resolves.toMatchObject({ rowCount: 1 })
+    await expect(lockNoWait()).resolves.toMatchObject({ rowCount: 1 })
   })
 
   test("returns null for an already-ended or unknown identity", async () => {

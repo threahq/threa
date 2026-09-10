@@ -33,7 +33,8 @@ describe("session-control command catalog", () => {
     })
     expect(commands.find((command) => command.name === "done")).toEqual({
       name: "done",
-      description: "Wind down this thread's session: commit, push, remove the worktree, end the link",
+      description:
+        "Wind down this thread's session: commit, push, remove the worktree, end the link, archive the thread",
       kind: "bot-runtime",
       scope: "stream",
       args: [{ name: "--force", required: false, description: "Finish despite local runtime activity" }],

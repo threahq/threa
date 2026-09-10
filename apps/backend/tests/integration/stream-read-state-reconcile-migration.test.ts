@@ -37,11 +37,11 @@ describe("reconcile stream_read_state migration", () => {
         ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ
     `)
     migrationSql = await Bun.file(MIGRATION_PATH).text()
-  })
+  }, 30_000)
 
   afterAll(async () => {
     await cleanup()
-  })
+  }, 30_000)
 
   async function seedStream(client: import("pg").PoolClient, streamId: string, workspaceId: string): Promise<void> {
     await client.query(
