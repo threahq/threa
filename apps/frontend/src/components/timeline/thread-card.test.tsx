@@ -121,6 +121,37 @@ describe("ThreadCard", () => {
     expect(screen.getByText("2 attachments")).toBeInTheDocument()
   })
 
+  it("renders sealed when the thread's own summary is archived, still linking into it", () => {
+    renderCard(
+      <ThreadCard
+        replyCount={2}
+        href="/threads/1"
+        workspaceId="ws_1"
+        summary={{ ...baseSummary, archivedAt: "2026-09-09T10:00:00.000Z" }}
+      />
+    )
+    const link = screen.getByRole("link")
+    expect(link).toHaveAttribute("href", "/threads/1")
+    expect(link).toHaveAttribute("data-archived", "true")
+    expect(screen.getByLabelText("Archived thread")).toHaveTextContent("Archived")
+    expect(screen.getByText("2 replies")).toHaveClass("text-muted-foreground")
+    // The latest-reply row stays: sealed threads are read-only, not hidden.
+    expect(screen.getByText(/latest/i).textContent).toContain("latest")
+  })
+
+  it("renders sealed when the host timeline is archived even though the thread row is live", () => {
+    renderCard(<ThreadCard replyCount={1} href="/threads/1" workspaceId="ws_1" summary={baseSummary} hostArchived />)
+    expect(screen.getByRole("link")).toHaveAttribute("data-archived", "true")
+    expect(screen.getByLabelText("Archived thread")).toBeInTheDocument()
+  })
+
+  it("renders live with no archived marker when neither the thread nor its host is archived", () => {
+    renderCard(<ThreadCard replyCount={1} href="/threads/1" workspaceId="ws_1" summary={baseSummary} />)
+    expect(screen.getByRole("link")).not.toHaveAttribute("data-archived")
+    expect(screen.queryByLabelText("Archived thread")).toBeNull()
+    expect(screen.getByText("1 reply")).toHaveClass("text-primary")
+  })
+
   it("appends the draft token beside the reply count and keeps the latest-reply row", () => {
     renderCard(
       <ThreadCard

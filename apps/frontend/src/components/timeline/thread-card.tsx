@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { ChevronRight, Pencil } from "lucide-react"
+import { Archive, ChevronRight, Pencil } from "lucide-react"
 import type { ThreadSummary } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
@@ -59,6 +59,11 @@ interface ThreadCardProps {
    * The card suppresses its own `before:` line in that case.
    */
   ownsLeftLine?: boolean
+  /**
+   * The timeline this card sits in is archived (itself or through an
+   * ancestor), so the thread is sealed even when its own row is live.
+   */
+  hostArchived?: boolean
   className?: string
 }
 
@@ -80,6 +85,7 @@ export function ThreadCard({
   draft,
   isActive,
   ownsLeftLine = true,
+  hostArchived = false,
   className,
 }: ThreadCardProps) {
   const { getActorName } = useActors(workspaceId)
@@ -89,18 +95,25 @@ export function ThreadCard({
   const draftSnippetText = draft ? draftSnippet(draft) : ""
   const replyLabel = replyCountLabel(replyCount)
   const participants = summary?.participants ?? []
+  // Sealed threads stay in the timeline, greyed and still openable: the thread
+  // is read-only, not gone.
+  const archived = hostArchived || !!summary?.archivedAt
+  const labelTone = archived ? "text-muted-foreground" : "text-primary"
 
   return (
     <Link
       to={href}
+      data-archived={archived || undefined}
       className={cn(
         "group/thread relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-2",
         ownsLeftLine && "mt-2",
         // 2px gold thread line that extends up into the message gap — Ariadne's literal thread.
         // Suppressed when ThreadSlot owns the line so there's no double-draw.
         ownsLeftLine &&
-          "before:content-[''] before:absolute before:left-0 before:top-[-4px] before:bottom-1 before:w-[2px] before:rounded-full before:bg-primary/70 hover:before:bg-primary",
-        "hover:bg-primary/[0.04] transition-colors",
+          "before:content-[''] before:absolute before:left-0 before:top-[-4px] before:bottom-1 before:w-[2px] before:rounded-full",
+        ownsLeftLine && (archived ? "before:bg-muted-foreground/40" : "before:bg-primary/70 hover:before:bg-primary"),
+        archived ? "opacity-70 hover:bg-muted/40" : "hover:bg-primary/[0.04]",
+        "transition-colors",
         className
       )}
     >
@@ -124,7 +137,15 @@ export function ThreadCard({
             ))}
           </div>
         )}
-        {!isDraftOnly && <span className="font-medium text-primary group-hover/thread:underline">{replyLabel}</span>}
+        {!isDraftOnly && (
+          <span className={cn("font-medium group-hover/thread:underline", labelTone)}>{replyLabel}</span>
+        )}
+        {archived && (
+          <span className="flex items-center gap-1 text-muted-foreground" aria-label="Archived thread">
+            <Archive aria-hidden className="h-3 w-3" />
+            Archived
+          </span>
+        )}
         {isActive && (
           <span className="relative flex h-1.5 w-1.5" aria-label="Session active">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60 opacity-75" />

@@ -36,6 +36,7 @@ import {
 import { buildDelegationLink } from "@/lib/stream-links"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
+import { useHostArchived } from "./host-archived-context"
 import {
   TimelineCardActionDrawer,
   TimelineCardContextMenu,
@@ -146,6 +147,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
   // The viewer's unsent reply on this card's thread — shown on the slot before
   // the thread stream exists too (keyed on the anchor until promotion).
   const threadDraft = useThreadDraft(workspaceId, event.id, effectiveThreadId)
+  const hostArchived = useHostArchived()
   const [optimisticallyCancelled, setOptimisticallyCancelled] = useState(false)
   const [optimisticallyDone, setOptimisticallyDone] = useState(false)
   const [optimisticallyRequeued, setOptimisticallyRequeued] = useState(false)
@@ -451,6 +453,7 @@ export function DelegationEvent({ event, workspaceId, streamId, statusPatch, isT
           workspaceId={workspaceId}
           draft={threadDraft}
           draftHref={replyUrl}
+          hostArchived={hostArchived}
         />
       )}
       <TimelineCardQuickActions actions={actions} />

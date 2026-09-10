@@ -26,6 +26,8 @@ interface ThreadSlotProps {
   /** Panel url for the not-yet-created thread (`useThreadAnchor().replyUrl`) —
    *  where a draft-only card points until a real thread exists. */
   draftHref?: string | null
+  /** The anchor's timeline is archived, so the card renders sealed. */
+  hostArchived?: boolean
 }
 
 /**
@@ -62,6 +64,7 @@ export function ThreadSlot({
   workspaceId,
   draft,
   draftHref,
+  hostArchived = false,
 }: ThreadSlotProps) {
   const sessions = useAgentActivityForAnchor(workspaceId, anchorId)
   // A session running in another stream is a thread under this anchor and has
@@ -152,6 +155,7 @@ export function ThreadSlot({
             draft={draft}
             isActive={hasActivity}
             ownsLeftLine={false}
+            hostArchived={hostArchived}
           />
         ) : null}
       </CollapsibleRow>

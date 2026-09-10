@@ -550,6 +550,11 @@ export interface ThreadSummary {
     actorType: AuthorType
     contentMarkdown: string
   }
+  /**
+   * The thread stream's own `archivedAt`. Optional because summaries cached
+   * before the field shipped lack it; a missing value reads as live.
+   */
+  archivedAt?: string | null
 }
 
 export interface Message {

@@ -81,6 +81,7 @@ interface ThreadSummaryRow {
   last_reply_at: Date
   participant_ids: string[]
   participant_types: string[]
+  archived_at: Date | null
 }
 
 function threadSummaryFromRow(row: ThreadSummaryRow): ThreadSummary {
@@ -101,6 +102,7 @@ function threadSummaryFromRow(row: ThreadSummaryRow): ThreadSummary {
       actorType: row.latest_author_type as AuthorType,
       contentMarkdown: row.latest_content_markdown,
     },
+    archivedAt: row.archived_at?.toISOString() ?? null,
   }
 }
 
@@ -1459,7 +1461,8 @@ export const StreamRepository = {
           m.author_id,
           m.author_type,
           m.content_markdown,
-          m.created_at
+          m.created_at,
+          s.archived_at
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
         WHERE s.parent_stream_id = ${parentStreamId}
@@ -1470,7 +1473,7 @@ export const StreamRepository = {
       ),
       latest AS (
         SELECT DISTINCT ON (anchor_id)
-          anchor_id, id, author_id, author_type, content_markdown, created_at
+          anchor_id, id, author_id, author_type, content_markdown, created_at, archived_at
         FROM thread_messages
         ORDER BY anchor_id, created_at DESC, id DESC
       ),
@@ -1504,7 +1507,8 @@ export const StreamRepository = {
         l.content_markdown AS latest_content_markdown,
         l.created_at AS last_reply_at,
         COALESCE(p.author_ids, ARRAY[]::TEXT[]) AS participant_ids,
-        COALESCE(p.author_types, ARRAY[]::TEXT[]) AS participant_types
+        COALESCE(p.author_types, ARRAY[]::TEXT[]) AS participant_types,
+        l.archived_at
       FROM latest l
       LEFT JOIN participants p USING (anchor_id)
     `)
@@ -1547,7 +1551,8 @@ export const StreamRepository = {
           m.author_id,
           m.author_type,
           m.content_markdown,
-          m.created_at
+          m.created_at,
+          s.archived_at
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
         WHERE s.parent_stream_id = ${parentStreamId}
@@ -1580,7 +1585,8 @@ export const StreamRepository = {
         l.content_markdown AS latest_content_markdown,
         l.created_at AS last_reply_at,
         COALESCE((SELECT author_ids FROM participants), ARRAY[]::TEXT[]) AS participant_ids,
-        COALESCE((SELECT author_types FROM participants), ARRAY[]::TEXT[]) AS participant_types
+        COALESCE((SELECT author_types FROM participants), ARRAY[]::TEXT[]) AS participant_types,
+        l.archived_at
       FROM thread_messages l
       ORDER BY l.created_at DESC, l.id DESC
       LIMIT 1
