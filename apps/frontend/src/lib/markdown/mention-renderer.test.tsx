@@ -396,6 +396,35 @@ describe("mention-renderer", () => {
       expect(result[result.length - 1]).toBe(" fix the bug")
     })
 
+    it("chips a trailing /steer, which dispatches from anywhere in the message", () => {
+      const isSteer = (name: string) => name === "steer"
+      render(<>{renderMentions("Does that make sense? /steer", noEmoji, isSteer)}</>)
+
+      expect(screen.getByText("/steer").className).toContain(commandChipStyle)
+    })
+
+    it("chips /steer mid-sentence and leaves the prose around it", () => {
+      const isSteer = (name: string) => name === "steer"
+      const result = renderMentions("do it /steer now please", noEmoji, isSteer)
+
+      render(<>{result}</>)
+      expect(screen.getByText("/steer")).toBeInTheDocument()
+      expect([result[0], result[result.length - 1]]).toEqual(["do it ", " now please"])
+    })
+
+    it("leaves /steer as prose when the stream does not offer the command", () => {
+      const result = renderMentions("read the /steer docs", noEmoji, isKnown)
+
+      expect(result).toEqual(["read the /steer docs"])
+    })
+
+    it("does not chip /steer inside a path", () => {
+      const isSteer = (name: string) => name === "steer"
+      const result = renderMentions("see docs/steer/readme", noEmoji, isSteer)
+
+      expect(result).toEqual(["see docs/steer/readme"])
+    })
+
     it("chips no argument when the message does not open with a command", () => {
       const result = renderMentions("just talking about /model opus here", noEmoji, isKnown2, spawnArgs)
 

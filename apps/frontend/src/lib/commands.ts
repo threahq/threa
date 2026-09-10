@@ -39,8 +39,14 @@ export interface ExtractedSteerDirective {
   hasMessageContent: boolean
 }
 
-const RAW_STEER_PATTERN = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/iu
-const RAW_STEER_PATTERN_GLOBAL = new RegExp(RAW_STEER_PATTERN.source, "giu")
+/**
+ * `/steer` wherever it sits in a message — the one command that dispatches from
+ * anywhere rather than from the front (see {@link extractSteerDirective}).
+ * Group 1 is the character before the token, group 2 the token as authored, so
+ * the message renderer can chip exactly what dispatches here.
+ */
+export const STEER_DIRECTIVE_PATTERN = /(^|[^\p{L}\p{N}_/])(\/steer)(?=$|[^\p{L}\p{N}_/-])/iu
+const STEER_DIRECTIVE_PATTERN_GLOBAL = new RegExp(STEER_DIRECTIVE_PATTERN.source, "giu")
 const INLINE_CONTENT_PLACEHOLDER = "\uFFFC"
 const INLINE_CONTENT_CONTAINERS = new Set(["paragraph", "heading", "codeBlock"])
 
@@ -66,8 +72,8 @@ function steerDetectionText(node: JSONContent): string {
  */
 export function extractSteerDirective(content: JSONContent): ExtractedSteerDirective | null {
   const text = steerDetectionText(content)
-  if (!RAW_STEER_PATTERN.test(text)) return null
-  const withoutSteer = text.replace(RAW_STEER_PATTERN_GLOBAL, "$1")
+  if (!STEER_DIRECTIVE_PATTERN.test(text)) return null
+  const withoutSteer = text.replace(STEER_DIRECTIVE_PATTERN_GLOBAL, "$1")
   return { content, hasMessageContent: withoutSteer.trim().length > 0 }
 }
 
