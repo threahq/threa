@@ -2460,6 +2460,13 @@ export function createPublicApiHandlers({
               },
               ...(data.summary && { summary: data.summary }),
             })
+            if (runtimeCommand.name === "done") {
+              await botRuntimeService.archiveOwnCommandThread(client, {
+                workspaceId: req.workspaceId!,
+                botId: req.botApiKey!.botId,
+                streamId: completed.responseStreamId,
+              })
+            }
           }
           const session = denialSession ?? (await AgentSessionRepository.findById(client, completed.id))
           // RUNNING is the happy path; FAILED is recoverable here. Reaching this

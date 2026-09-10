@@ -1077,7 +1077,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "endBotRuntimeSession",
     summary: "End the runtime session link on purpose",
     description:
-      "Ends the link and frees the runtime identity for reuse. A thread the bot opened for the session is archived with it; a desk link's scratchpad and a thread a user opened stay open. Cancels any pending invocation still routed at this runtime session, except the one named by `exceptInvocationId` so the command that ends the link can finish reporting on it.",
+      "Ends the link without archiving any stream and frees the runtime identity for reuse. Cancels any pending invocation still routed at this runtime session, except the one named by `exceptInvocationId` so the command that ends the link can finish reporting on it.",
     tags: ["Bot runtimes"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
     parameters: [workspaceIdParam],
@@ -1268,6 +1268,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/complete",
     operationId: "completeBotInvocation",
     summary: "Complete a claimed bot invocation",
+    description:
+      "Closes the claim, posting the reply the body carries. Completing the `/done` command also archives the thread it ran in, when that thread is one the bot opened.",
     tags: ["Bot invocations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
     parameters: [

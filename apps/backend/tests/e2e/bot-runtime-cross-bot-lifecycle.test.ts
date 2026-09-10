@@ -204,15 +204,18 @@ describe("cross-bot runtime HTTP lifecycle", () => {
       expect(doneDispatch.success).toBe(true)
       const done = await claim(child)
       expect(done).toMatchObject({ runtimeSessionId: child.runtimeSessionId, metadata: { command: { name: "done" } } })
-      await complete(child, done)
       const ended = await botApiPost(client, workspace.id, "/bot-runtime/sessions/end", child.apiKey, {
         instanceId: child.instanceId,
         runtimeSessionId: child.runtimeSessionId,
+        exceptInvocationId: done.id,
       })
       expect(ended).toMatchObject({
         status: 200,
         data: { data: { linkId: attached.data.data.linkId, activeStreamId: thread, status: "ended" } },
       })
+      expect(await getStream(client, workspace.id, thread)).toMatchObject({ id: thread, archivedAt: null })
+
+      await complete(child, done)
       expect(await getStream(client, workspace.id, thread)).toMatchObject({
         id: thread,
         archivedAt: expect.any(String),

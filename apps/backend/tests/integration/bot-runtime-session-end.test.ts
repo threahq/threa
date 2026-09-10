@@ -141,6 +141,11 @@ describe("endRuntimeSession", () => {
       instanceId: "reuse-instance-1",
       runtimeSessionId: "reuse-session-1",
     })
+    await service().archiveOwnCommandThread(pool, {
+      workspaceId: workspace,
+      botId: bot,
+      streamId: first.stream.id,
+    })
 
     const second = await service().attachRuntimeSessionToThread({
       workspaceId: workspace,
@@ -162,7 +167,7 @@ describe("endRuntimeSession", () => {
       status: "active",
     })
 
-    // The end archived the bot's thread; the fresh attach reopens it as the bot.
+    // `/done` archived the bot's thread; the fresh attach reopens it as the bot.
     expect(second.stream.archivedAt).toBeNull()
     const lifecycle = await StreamEventRepository.list(pool, first.stream.id, {
       types: ["stream_archived", "stream_unarchived"],
@@ -175,26 +180,8 @@ describe("endRuntimeSession", () => {
     ])
   })
 
-  test("archives the thread the bot opened when its link ends, leaving the root open", async () => {
+  test("leaves every stream the ended links pointed at open", async () => {
     const { stream: thread } = await attachThread("close-instance", "close-session")
-
-    await service().endRuntimeSession({
-      workspaceId: workspace,
-      botId: bot,
-      instanceId: "close-instance",
-      runtimeSessionId: "close-session",
-    })
-
-    const [closed, rootStream] = await Promise.all([
-      StreamRepository.findByIdForWorkspace(pool, thread.id, workspace),
-      StreamRepository.findByIdForWorkspace(pool, root, workspace),
-    ])
-    expect({ thread: closed?.archivedAt !== null, root: rootStream?.archivedAt }).toEqual({ thread: true, root: null })
-    const [archived] = await StreamEventRepository.list(pool, thread.id, { types: ["stream_archived"] })
-    expect(archived).toMatchObject({ eventType: "stream_archived", actorId: bot, actorType: "bot" })
-  })
-
-  test("leaves a desk link's scratchpad and a user-opened thread open when their links end", async () => {
     await service().createOrLinkPiRemoteSession({
       workspaceId: workspace,
       botId: bot,
@@ -229,6 +216,7 @@ describe("endRuntimeSession", () => {
     })
 
     for (const [instanceId, runtimeSessionId] of [
+      ["close-instance", "close-session"],
       ["desk-instance", "desk-session"],
       ["user-thread-instance", "user-thread-session"],
     ]) {
@@ -241,11 +229,11 @@ describe("endRuntimeSession", () => {
       expect(ended?.status).toBe("ended")
     }
 
-    const archivedAt = await pool.query<{ id: string; archived_at: Date | null }>(
+    const streams = await pool.query<{ id: string; archived_at: Date | null }>(
       "SELECT id, archived_at FROM streams WHERE id = ANY($1) ORDER BY id",
-      [[root, userThreadId]]
+      [[root, thread.id, userThreadId]]
     )
-    expect(archivedAt.rows.map((row) => row.archived_at)).toEqual([null, null])
+    expect(streams.rows.map((row) => row.archived_at)).toEqual([null, null, null])
   })
 
   test("cancels pending invocations targeted at the ended session and leaves other pending rows alone", async () => {
@@ -418,6 +406,9 @@ describe("endRuntimeSession", () => {
       linkedBy: author,
     })
 
+    const lockNoWait = () =>
+      pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
+
     const reader = await pool.connect()
     try {
       await reader.query("BEGIN")
@@ -431,17 +422,13 @@ describe("endRuntimeSession", () => {
 
       // `sessions/end` updates this row. NOWAIT turns the wait into an error, so
       // this asserts the share lock is really held rather than timing a sleep.
-      await expect(
-        pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
-      ).rejects.toMatchObject({ code: "55P03" })
+      await expect(lockNoWait()).rejects.toMatchObject({ code: "55P03" })
     } finally {
       await reader.query("ROLLBACK")
       reader.release()
     }
 
-    await expect(
-      pool.query("SELECT id FROM bot_runtime_session_links WHERE id = $1 FOR UPDATE NOWAIT", [link.id])
-    ).resolves.toMatchObject({ rowCount: 1 })
+    await expect(lockNoWait()).resolves.toMatchObject({ rowCount: 1 })
   })
 
   test("returns null for an already-ended or unknown identity", async () => {

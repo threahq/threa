@@ -818,7 +818,6 @@ export class BotRuntimeService {
       })
       await this.terminalizeCancelledSessions(db, params.workspaceId, cancelled, "superseded")
       await this.emitCancellationHints(db, cancelled)
-      const archivedThreadId = await this.archiveOwnEndedThread(db, params.workspaceId, params.botId, ended)
       logger.info(
         {
           workspaceId: params.workspaceId,
@@ -827,7 +826,6 @@ export class BotRuntimeService {
           activeStreamId: ended.activeStreamId,
           linkId: ended.id,
           cancelledInvocations: cancelled.length,
-          archivedThreadId,
         },
         "Ended runtime session link"
       )
@@ -836,24 +834,26 @@ export class BotRuntimeService {
   }
 
   /**
-   * A thread the bot opened for its session is finished work once the link
-   * ends, so it closes with the link: the archive greys its card and drops it
-   * from the sidebar. A desk link (active stream = root) and a thread a user
-   * opened are left alone — the bot closes only what it opened. The `/done`
-   * command that ends the link still lands its closing chip: a no-message
-   * completion is not gated on the thread being writable.
+   * `/done` winds a session down on purpose, so the thread it ran in is
+   * finished work: the archive greys its card and drops it from the sidebar.
+   * The bot closes only what it opened — a `/done` run in a scratchpad, or in
+   * a thread a user opened, leaves the stream alone. Ending a session link
+   * archives nothing; only the command does. Runs in the completion's own
+   * transaction, so the closing chip and the archive land together.
    */
-  private async archiveOwnEndedThread(
+  async archiveOwnCommandThread(
     db: Querier,
-    workspaceId: string,
-    botId: string,
-    link: BotRuntimeSessionLink
+    params: { workspaceId: string; botId: string; streamId: string }
   ): Promise<string | null> {
-    if (link.activeStreamId === link.rootStreamId) return null
-    const thread = await StreamRepository.findByIdForWorkspace(db, link.activeStreamId, workspaceId)
-    if (!thread || thread.type !== StreamTypes.THREAD || thread.createdBy !== botId || thread.archivedAt) return null
+    const thread = await StreamRepository.findByIdForWorkspace(db, params.streamId, params.workspaceId)
+    if (!thread || thread.type !== StreamTypes.THREAD || thread.createdBy !== params.botId || thread.archivedAt) {
+      return null
+    }
     if (!this.streamService) throw new Error("BotRuntimeService missing scratchpad session dependencies")
-    await this.streamService.archiveStreamOn(db, workspaceId, thread.id, { kind: "bot", botId })
+    await this.streamService.archiveStreamOn(db, params.workspaceId, thread.id, {
+      kind: "bot",
+      botId: params.botId,
+    })
     return thread.id
   }
 
