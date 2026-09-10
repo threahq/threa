@@ -32,6 +32,8 @@ export interface RetainAssetsOptions {
   now?: number
   /** How long a chunk that has dropped out of the build stays revivable. */
   retentionMs?: number
+  /** Hard ceiling on files kept in the store; oldest drop out first. */
+  maxRetained?: number
 }
 
 export interface RetainAssetsResult {
@@ -39,15 +41,29 @@ export interface RetainAssetsResult {
   revived: number
   /** Files in the retain store after this run. */
   retained: number
-  /** Files dropped for exceeding the retention window. */
+  /** Files dropped for exceeding the retention window or the store ceiling. */
   pruned: number
 }
 
 const DEFAULT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000 // 14 days
 
+/**
+ * Cloudflare Pages rejects a deployment carrying more than 20,000 files and
+ * every retained chunk is revived into `dist/`, so the age window alone is not
+ * a bound: it reached 21,127 files and the deploy failed outright. Half the
+ * Pages budget leaves a build's own output room it can never lose to history.
+ */
+const DEFAULT_MAX_RETAINED = 10000
+
+/** Source maps are stripped before deploy, so retaining them buys nothing. */
+function isDeployable(name: string): boolean {
+  return !name.endsWith(".map")
+}
+
 export async function retainAssets(options: RetainAssetsOptions): Promise<RetainAssetsResult> {
   const now = options.now ?? Date.now()
   const retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS
+  const maxRetained = options.maxRetained ?? DEFAULT_MAX_RETAINED
   const { distAssetsDir, retainDir } = options
 
   // A missing dist means the build never produced assets — fail loudly rather
@@ -62,6 +78,7 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
   //    the live build from ever aging out, however old its retained copy was.
   const currentNames = new Set<string>()
   for (const name of await readdir(distAssetsDir)) {
+    if (!isDeployable(name)) continue
     const src = path.join(distAssetsDir, name)
     const info = await stat(src)
     if (!info.isFile()) continue
@@ -71,18 +88,35 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
     await utimes(dest, new Date(now), new Date(now))
   }
 
-  // 2) Prune retained chunks past the window. mtime is the age signal; because
-  //    step 1 re-stamped every live chunk to `now`, only chunks that have been
-  //    absent from the build for the whole window age out here.
+  // 2) Prune retained chunks past the window, then past the store ceiling.
+  //    mtime is the age signal; because step 1 re-stamped every live chunk to
+  //    `now`, only chunks that have been absent from the build for the whole
+  //    window age out here. A chunk in the current build is never pruned, so a
+  //    build larger than the ceiling still deploys whole.
   let pruned = 0
+  const survivors: { name: string; mtimeMs: number }[] = []
   for (const name of await readdir(retainDir)) {
     const filePath = path.join(retainDir, name)
     const info = await stat(filePath)
     if (!info.isFile()) continue
-    if (now - info.mtimeMs > retentionMs) {
+    if (!isDeployable(name)) {
       await rm(filePath)
       pruned++
+      continue
     }
+    if (!currentNames.has(name) && now - info.mtimeMs > retentionMs) {
+      await rm(filePath)
+      pruned++
+      continue
+    }
+    survivors.push({ name, mtimeMs: info.mtimeMs })
+  }
+
+  survivors.sort((a, b) => b.mtimeMs - a.mtimeMs)
+  const evictable = survivors.filter((entry) => !currentNames.has(entry.name))
+  for (const entry of evictable.slice(Math.max(0, maxRetained - currentNames.size))) {
+    await rm(path.join(retainDir, entry.name))
+    pruned++
   }
 
   // 3) Revive retained chunks that dropped out of the current build. Never

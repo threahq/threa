@@ -99,6 +99,42 @@ describe("retainAssets", () => {
     expect((await readdir(retainDir)).sort()).toEqual(["index-BBB.js", "vendor-FFF.js"])
   })
 
+  it("caps the store so a deploy stays under the Cloudflare Pages file limit", async () => {
+    const now = Date.now()
+    for (let i = 0; i < 6; i++) await writeAsset(retainDir, `old-${i}.js`, "old", now - (10 + i) * 1000)
+    await writeAsset(distAssetsDir, "index-BBB.js", "new-entry")
+
+    const result = await retainAssets({ distAssetsDir, retainDir, now, maxRetained: 4 })
+
+    expect(result).toMatchObject({ revived: 3, pruned: 3, retained: 4 })
+    // The current build keeps its slot, the newest three old chunks fill the rest.
+    expect((await readdir(retainDir)).sort()).toEqual(["index-BBB.js", "old-0.js", "old-1.js", "old-2.js"])
+  })
+
+  it("keeps the whole current build even when it exceeds the ceiling", async () => {
+    const now = Date.now()
+    await writeAsset(retainDir, "old-AAA.js", "old", now - 1000)
+    await writeAsset(distAssetsDir, "index-BBB.js", "new-entry")
+    await writeAsset(distAssetsDir, "vendor-CCC.js", "vendor")
+
+    const result = await retainAssets({ distAssetsDir, retainDir, now, maxRetained: 1 })
+
+    expect(result).toMatchObject({ revived: 0, pruned: 1, retained: 2 })
+    expect((await readdir(retainDir)).sort()).toEqual(["index-BBB.js", "vendor-CCC.js"])
+  })
+
+  it("never retains source maps, and drops ones a previous run stored", async () => {
+    await writeAsset(retainDir, "legacy-AAA.js.map", "{}")
+    await writeAsset(distAssetsDir, "index-BBB.js", "new-entry")
+    await writeAsset(distAssetsDir, "index-BBB.js.map", "{}")
+
+    const result = await retainAssets({ distAssetsDir, retainDir })
+
+    expect(result).toMatchObject({ revived: 0, pruned: 1, retained: 1 })
+    expect(await readdir(retainDir)).toEqual(["index-BBB.js"])
+    expect(existsSync(path.join(distAssetsDir, "legacy-AAA.js.map"))).toBe(false)
+  })
+
   it("throws when the dist assets dir is missing", async () => {
     await rm(distAssetsDir, { recursive: true, force: true })
     await expect(retainAssets({ distAssetsDir, retainDir })).rejects.toThrow(/dist assets dir not found/)
