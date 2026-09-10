@@ -98,6 +98,33 @@ describe("compareStreamEntries — searching", () => {
     // The toggle is ignored when searching: same order.
     expect(sort(entries, { isSearching: true, mode: "alphabetical" })).toEqual(["s_a", "s_c", "s_b"])
   })
+
+  it("sinks a thread below top-level streams it ties or beats within the partial band", () => {
+    const entries = [
+      // "auth" mid-word in "reauthorize" (partial band) vs the same band on a thread
+      // whose better score would otherwise put it first.
+      makeEntry(makeSortable({ id: "s_thread", type: StreamTypes.THREAD, displayName: "Reauth notes" }), { score: 8 }),
+      makeEntry(makeSortable({ id: "s_channel", slug: "reauthorize" }), { score: 11 }),
+    ]
+    expect(sort(entries, { isSearching: true, mode: "recency" })).toEqual(["s_channel", "s_thread"])
+  })
+
+  it("keeps a whole-word thread hit above a partial top-level hit", () => {
+    const entries = [
+      makeEntry(makeSortable({ id: "s_channel", slug: "reauthorize" }), { score: 8 }),
+      makeEntry(makeSortable({ id: "s_thread", type: StreamTypes.THREAD, displayName: "Auth rollout" }), { score: 3 }),
+    ]
+    expect(sort(entries, { isSearching: true, mode: "recency" })).toEqual(["s_thread", "s_channel"])
+  })
+
+  it("does not let the demotion lift a tolerance guess above a real partial match", () => {
+    const entries = [
+      // A typo-band channel must stay below a partial-band thread.
+      makeEntry(makeSortable({ id: "s_typo_channel", slug: "atuh" }), { score: 20.5 }),
+      makeEntry(makeSortable({ id: "s_thread", type: StreamTypes.THREAD, displayName: "Reauth notes" }), { score: 11 }),
+    ]
+    expect(sort(entries, { isSearching: true, mode: "recency" })).toEqual(["s_thread", "s_typo_channel"])
+  })
 })
 
 describe("compareStreamEntries — browsing in recency mode", () => {

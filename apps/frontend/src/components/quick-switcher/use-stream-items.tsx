@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
 import { StreamTypes, draftStreamScope, getAvatarUrl } from "@threahq/types"
 import type { Stream, StreamType } from "@threahq/types"
-import { streamLabel, STREAM_ICONS } from "@/lib/streams"
+import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
@@ -14,6 +14,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
 import { isToleranceMatch, scoreMatch } from "@/lib/match-score"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
+import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { FilterSelect } from "./filter-select"
 import {
   parseSearchQuery,
@@ -29,11 +30,10 @@ const FILTER_TYPES: { type: FilterType; label: string; icon: React.ReactNode }[]
   { type: "status", label: "Status", icon: <Archive className="h-4 w-4" /> },
 ]
 
-const STREAM_TYPE_OPTIONS: { value: StreamType; label: string }[] = [
-  { value: StreamTypes.SCRATCHPAD, label: "Scratchpad" },
-  { value: StreamTypes.CHANNEL, label: "Channel" },
-  { value: StreamTypes.DM, label: "Direct Message" },
-]
+const STREAM_TYPE_OPTIONS: { value: StreamType; label: string }[] = FILTER_TYPE_OPTIONS.map(({ value, label }) => ({
+  value,
+  label,
+}))
 
 const ARCHIVE_STATUS_OPTIONS: { value: "active" | "archived"; label: string }[] = [
   { value: "active", label: "Active" },
@@ -142,6 +142,11 @@ export function useStreamItems(context: ModeContext): ModeResult {
     const lowerQuery = searchText.toLowerCase()
     const usersById = new Map((users ?? []).map((workspaceUser) => [workspaceUser.id, workspaceUser]))
     const dmPeerByStreamId = new Map((dmPeers ?? []).map((peer) => [peer.streamId, peer.userId]))
+    // A thread rooted in someone else's aside is reachable but not listable —
+    // the aside itself never lists, and its threads inherit that.
+    const hiddenRootIds = new Set(
+      activeStreams.filter((s) => s.type === StreamTypes.ASIDE && s.createdBy !== currentUserId).map((s) => s.id)
+    )
 
     // Active streams are CachedStream (with lastMessagePreview), archived come from API as Stream.
     // The stream cache durably holds archived rows (archived-stream index), so
@@ -152,6 +157,17 @@ export function useStreamItems(context: ModeContext): ModeResult {
       ...(showArchived && archivedStreams ? archivedStreams : []),
     ]
 
+    const isSearching = searchText.length > 0
+
+    // Threads are the workspace's long tail — one per reply chain — so they join
+    // the list only once something narrows it: a query, or `is:thread`. Browsing
+    // an unnarrowed palette is a list of the streams you navigate BETWEEN.
+    const wantsThreads = isSearching || typeFilters.includes(StreamTypes.THREAD)
+    // An unnamed thread has no text to match: `streamLabel` would hand every one
+    // of them the placeholder "Thread" and the query `thre` would return the lot.
+    const isSearchableThread = (s: StreamLike) =>
+      wantsThreads && getStreamName(s) != null && !hiddenRootIds.has(s.rootStreamId ?? s.id)
+
     // Own asides are palette-reachable — the one list surface they appear on
     // besides their anchor row (the sidebar and pickers hide them).
     let filteredStreams = allStreams.filter(
@@ -160,19 +176,28 @@ export function useStreamItems(context: ModeContext): ModeResult {
         s.type === StreamTypes.CHANNEL ||
         s.type === StreamTypes.DM ||
         s.type === StreamTypes.SYSTEM ||
-        (s.type === StreamTypes.ASIDE && s.createdBy === currentUserId)
+        (s.type === StreamTypes.ASIDE && s.createdBy === currentUserId) ||
+        (s.type === StreamTypes.THREAD && isSearchableThread(s))
     )
 
     if (typeFilters.length > 0) {
       filteredStreams = filteredStreams.filter((s) => typeFilters.includes(s.type))
     }
 
-    const isSearching = searchText.length > 0
+    // A thread title alone is ambiguous out of context; name where it lives.
+    const streamsById = new Map(allStreams.map((s) => [s.id, s]))
+    const parentLabelFor = (stream: StreamLike): string | null => {
+      const parent = stream.parentStreamId ? streamsById.get(stream.parentStreamId) : undefined
+      return parent ? streamLabel(parent) : null
+    }
 
-    // Pre-compute urgency and counts once per stream (used by both sort and item builder)
+    // Score first, then pre-compute urgency and counts for the survivors only
+    // (used by both sort and item builder): with threads in the candidate set the
+    // list is an order of magnitude longer, and most of it never renders.
     const enriched = filteredStreams
-      .map((stream) => {
-        const score = scoreStreamMatch(stream, lowerQuery)
+      .map((stream) => ({ stream, score: scoreStreamMatch(stream, lowerQuery) }))
+      .filter(({ score }) => score !== Infinity)
+      .map(({ stream, score }) => {
         const unreadCount = getUnreadCount(stream.id)
         const mentionCount = getMentionCount(stream.id)
         const activityCount = getActivityCount(stream.id)
@@ -180,7 +205,6 @@ export function useStreamItems(context: ModeContext): ModeResult {
         const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted, activityCount)
         return { stream, score, unreadCount, mentionCount, urgency }
       })
-      .filter(({ score }) => score !== Infinity)
 
     // Quick-switcher always uses the recency-style browsing order; the share
     // pickers expose a toggle but reuse the same comparator.
@@ -197,9 +221,13 @@ export function useStreamItems(context: ModeContext): ModeResult {
       const href = `/w/${workspaceId}/s/${asideHost ?? stream.id}`
       const isArchived = stream.archivedAt != null
       const typeLabel = getStreamTypeLabel(stream.type)
-      const notJoined = !memberStreamIds.has(stream.id) && stream.visibility === "public"
-      let description = typeLabel
-      if (isArchived) description = `${typeLabel} · Archived`
+      // Threads carry no member rows (INV-62) — access is inherited from the
+      // root — so "Not joined" would be true of every one of them.
+      const isThread = stream.type === StreamTypes.THREAD
+      const notJoined = !isThread && !memberStreamIds.has(stream.id) && stream.visibility === "public"
+      const parentLabel = isThread ? parentLabelFor(stream) : null
+      let description = parentLabel ? `${typeLabel} · in ${parentLabel}` : typeLabel
+      if (isArchived) description = `${description} · Archived`
       else if (notJoined) description = `${typeLabel} · Not joined`
 
       let avatarUrl: string | undefined
