@@ -3,7 +3,7 @@ import { act, render, screen, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import type { ActiveAgentSession } from "@threahq/types"
 import * as contextsModule from "@/contexts"
-import { seedAgentActivity, updateAgentSessionProgress, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, updateAgentSessionProgress, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { AgentActivityHeaderChip } from "./agent-activity-header-chip"
 
 const workspaceId = "ws_1"
@@ -28,7 +28,7 @@ function session(overrides: Partial<ActiveAgentSession> = {}): ActiveAgentSessio
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (id: string) => `/trace/${id}`,
   } as ReturnType<typeof contextsModule.useTrace>)

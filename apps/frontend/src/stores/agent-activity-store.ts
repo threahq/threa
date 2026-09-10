@@ -519,8 +519,8 @@ export function useAgentSessionActivities(
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
-/** Test-only: wipe all state between cases. */
-export function __resetAgentActivityStore(): void {
+/** Drop every workspace's agent sessions — an account switch, or a test between cases. */
+export function resetAgentActivityStore(): void {
   workspaces.clear()
   terminalSessions.clear()
   for (const index of INDEXES) {

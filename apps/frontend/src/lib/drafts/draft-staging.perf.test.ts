@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest"
 import type { JSONContent } from "@threahq/types"
+import { accountStorageKey } from "@/lib/account-storage"
 import { NO_CAPTURE, PerfCapture, armPerfCapture } from "@/lib/perf/capture"
 import { stageDraftContent } from "./draft-staging"
 
@@ -8,7 +9,7 @@ const doc: JSONContent = {
   content: [{ type: "paragraph", content: [{ type: "text", text: "the quick brown fox" }] }],
 }
 
-const key = "threa:draft-stage:ws_1:scope_1"
+const key = () => accountStorageKey("draft-stage:ws_1:scope_1")!
 
 afterEach(() => {
   armPerfCapture(NO_CAPTURE)
@@ -24,18 +25,18 @@ describe("draft staging instrumentation", () => {
 
     const samples = capture.snapshot()
     const staged = samples.find((s) => s.name === "draft.stagedChars")
-    expect(staged?.value).toBe(localStorage.getItem(key)!.length)
+    expect(staged?.value).toBe(localStorage.getItem(key())!.length)
     expect(samples.some((s) => s.name === "draft.staging")).toBe(true)
   })
 
   it("stages an identical payload whether armed or not", () => {
     stageDraftContent("ws_1", "scope_1", doc)
-    const unarmed = localStorage.getItem(key)!
+    const unarmed = localStorage.getItem(key())!
     localStorage.clear()
 
     armPerfCapture(new PerfCapture())
     stageDraftContent("ws_1", "scope_1", doc)
-    const armed = localStorage.getItem(key)!
+    const armed = localStorage.getItem(key())!
 
     // `clientUpdatedAt` is a wall clock; everything else must match byte for byte.
     const strip = (raw: string) => JSON.stringify(JSON.parse(raw).contentJson)

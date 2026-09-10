@@ -6,7 +6,7 @@ import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as relativeTimeModule from "@/components/relative-time"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { ThreadSlot } from "./thread-slot"
 
 const workspaceId = "ws_1"
@@ -16,7 +16,7 @@ const threadStreamId = "stream_thread"
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (id: string) => `/trace/${id}`,
   } as ReturnType<typeof contextsModule.useTrace>)

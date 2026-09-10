@@ -22,13 +22,9 @@ import {
   useWorkspaceUsers,
   useWorkspaceUnreadState,
 } from "@/stores/workspace-store"
-import {
-  useShareTarget,
-  clearShareTargetCache,
-  readShareTargetFiles,
-  type ShareData,
-  type ShareMeta,
-} from "@/hooks/use-share-target"
+import { useShareTarget, ShareAccountChangedError, type ShareData } from "@/hooks/use-share-target"
+import { clearShareStash, readShareStashFiles, type ShareMeta, type ShareTargetRead } from "@/lib/share-target-storage"
+import { useAuth } from "@/auth"
 import { streamLabel } from "@/lib/streams"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -75,6 +71,7 @@ export function SharePickerPage() {
   const activityCounts = unreadState?.activityCounts ?? EMPTY_COUNTS
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const { createShareDraft, saveShareContent } = useShareTarget()
+  const { activeWorkosUserId } = useAuth()
 
   const [query, setQuery] = useState("")
   const [sortMode, setSortMode] = useStoredStreamSortMode()
@@ -85,24 +82,26 @@ export function SharePickerPage() {
 
   // Only lightweight text metadata comes from navigation state — files stay in Cache API
   // to avoid hitting browser history.state serialization limits (~640 KB in Firefox).
-  const shareMeta: ShareMeta = useMemo(() => {
-    const state = location.state as { shareMeta?: ShareMeta | null } | null
-    return state?.shareMeta ?? { title: null, text: null, url: null, hasFiles: false }
+  const shareRead: ShareTargetRead = useMemo(() => {
+    const state = location.state as { shareRead?: ShareTargetRead | null } | null
+    return state?.shareRead ?? { kind: "none" }
   }, [location.state])
 
+  const shareMeta: ShareMeta =
+    shareRead.kind === "shared" ? shareRead.meta : { title: null, text: null, url: null, hasFiles: false }
   const { title, text, url, hasFiles } = shareMeta
 
   // Read file blobs from the Cache API on mount (not from navigation state)
   useEffect(() => {
     if (!hasFiles) return
     let cancelled = false
-    readShareTargetFiles().then((f) => {
+    readShareStashFiles(activeWorkosUserId).then((f) => {
       if (!cancelled) setFiles(f)
     })
     return () => {
       cancelled = true
     }
-  }, [hasFiles])
+  }, [hasFiles, activeWorkosUserId])
 
   const filesLoading = hasFiles && files === null
   const resolvedFiles = files ?? []
@@ -145,13 +144,21 @@ export function SharePickerPage() {
       try {
         await saveShareContent(workspaceId!, streamId, shareData)
       } catch (err) {
+        // The account moved out from under the write: the shared content belongs
+        // to the account that received it, so nothing here is this account's to
+        // place, clear, or navigate into.
+        if (err instanceof ShareAccountChangedError) {
+          console.error("Shared content stayed with the account it was shared to", err)
+          setSubmitting(false)
+          return
+        }
         // Navigate anyway — the draft won't be pre-populated but the user isn't stranded
         console.error("Failed to save shared content", err)
       }
-      void clearShareTargetCache()
+      void clearShareStash(activeWorkosUserId)
       navigate(`/w/${workspaceId}/s/${streamId}`, { replace: true })
     },
-    [workspaceId, shareData, navigate, saveShareContent, filesLoading, submitting]
+    [workspaceId, shareData, navigate, saveShareContent, filesLoading, submitting, activeWorkosUserId]
   )
 
   const handleNewScratchpad = useCallback(async () => {
@@ -159,13 +166,18 @@ export function SharePickerPage() {
     setSubmitting(true)
     try {
       const result = await createShareDraft(workspaceId!, shareData)
-      void clearShareTargetCache()
+      void clearShareStash(activeWorkosUserId)
       navigate(result.path, { replace: true })
     } catch (err) {
+      if (err instanceof ShareAccountChangedError) {
+        console.error("Shared content stayed with the account it was shared to", err)
+        setSubmitting(false)
+        return
+      }
       console.error("Failed to create share draft", err)
       navigate(`/w/${workspaceId}`, { replace: true })
     }
-  }, [workspaceId, shareData, navigate, createShareDraft, filesLoading, submitting])
+  }, [workspaceId, shareData, navigate, createShareDraft, filesLoading, submitting, activeWorkosUserId])
 
   useEffect(() => {
     setSelectedIndex(0)
@@ -251,6 +263,13 @@ export function SharePickerPage() {
       <div className="w-full max-w-lg flex flex-col max-h-[80dvh]">
         <div className="px-4 pt-6 pb-4">
           <h1 className="text-lg font-medium">Share to Threa</h1>
+
+          {shareRead.kind === "unclaimed" && (
+            <div className="mt-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
+              The shared content was not saved — Threa could not tell which signed-in account it was meant for. Share it
+              again while online.
+            </div>
+          )}
 
           {sharedPreview && (
             <div className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">

@@ -30,10 +30,9 @@
  */
 
 import type { JSONContent } from "@threahq/types"
+import { accountStorageKey } from "@/lib/account-storage"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { getPerfCapture } from "@/lib/perf/capture"
-
-const PREFIX = "threa:draft-stage:"
 
 /**
  * Skip staging a serialized payload longer than this (measured in `string.length`,
@@ -52,12 +51,19 @@ export interface StagedDraft {
   clientUpdatedAt: number
 }
 
-function workspacePrefix(workspaceId: string): string {
-  return `${PREFIX}${workspaceId}:`
+/**
+ * Staged bodies are the composer's plaintext, so they are keyed under the
+ * account that typed them. Entries staged before the key carried an owner sit
+ * under the old `threa:draft-stage:` prefix, which nothing below can produce:
+ * they are never read and never pushed, whoever signs in next. Left in place
+ * rather than deleted — their owner is exactly what is unknown.
+ */
+function workspacePrefix(workspaceId: string): string | null {
+  return accountStorageKey(`draft-stage:${workspaceId}:`)
 }
 
-function keyFor(workspaceId: string, scope: string): string {
-  return `${workspacePrefix(workspaceId)}${scope}`
+function keyFor(workspaceId: string, scope: string): string | null {
+  return accountStorageKey(`draft-stage:${workspaceId}:${scope}`)
 }
 
 function storageAvailable(): boolean {
@@ -74,21 +80,23 @@ function storageAvailable(): boolean {
  */
 export function stageDraftContent(workspaceId: string, scope: string, contentJson: JSONContent): void {
   if (!storageAvailable()) return
+  const key = keyFor(workspaceId, scope)
+  if (key === null) return
   const capture = getPerfCapture()
   const stopStaging = capture.time("draft.staging")
   try {
     if (isEmptyContent(contentJson)) {
-      localStorage.removeItem(keyFor(workspaceId, scope))
+      localStorage.removeItem(key)
       return
     }
     const raw = JSON.stringify({ contentJson, clientUpdatedAt: Date.now() })
     if (raw.length > MAX_STAGED_CHARS) {
       // Too large to stage cheaply — drop any prior buffer and let the debounce
       // carry it to IDB. Leaving a stale smaller entry would recover the wrong body.
-      localStorage.removeItem(keyFor(workspaceId, scope))
+      localStorage.removeItem(key)
       return
     }
-    localStorage.setItem(keyFor(workspaceId, scope), raw)
+    localStorage.setItem(key, raw)
     capture.mark("draft.stagedChars", raw.length)
   } catch {
     // Quota exceeded / storage disabled — never interrupt typing. The local
@@ -101,8 +109,10 @@ export function stageDraftContent(workspaceId: string, scope: string, contentJso
 /** Read the staged plaintext entry for `scope`, or null when absent/corrupt. */
 export function readStagedDraft(workspaceId: string, scope: string): StagedDraft | null {
   if (!storageAvailable()) return null
+  const key = keyFor(workspaceId, scope)
+  if (key === null) return null
   try {
-    const raw = localStorage.getItem(keyFor(workspaceId, scope))
+    const raw = localStorage.getItem(key)
     if (!raw) return null
     const parsed = JSON.parse(raw) as { contentJson?: unknown; clientUpdatedAt?: unknown }
     if (!parsed || typeof parsed !== "object" || !parsed.contentJson) return null
@@ -119,8 +129,10 @@ export function readStagedDraft(workspaceId: string, scope: string): StagedDraft
 /** Remove the staged entry for `scope`. Idempotent; safe when absent. */
 export function clearStagedDraft(workspaceId: string, scope: string): void {
   if (!storageAvailable()) return
+  const key = keyFor(workspaceId, scope)
+  if (key === null) return
   try {
-    localStorage.removeItem(keyFor(workspaceId, scope))
+    localStorage.removeItem(key)
   } catch {
     // Ignore — a failed clear at worst leaves a stale buffer the next reconcile drops.
   }
@@ -130,6 +142,7 @@ export function clearStagedDraft(workspaceId: string, scope: string): void {
 export function listStagedDrafts(workspaceId: string): StagedDraft[] {
   if (!storageAvailable()) return []
   const prefix = workspacePrefix(workspaceId)
+  if (prefix === null) return []
   const out: StagedDraft[] = []
   try {
     // Snapshot the keys before reading. `localStorage.length`/`key(i)` index a

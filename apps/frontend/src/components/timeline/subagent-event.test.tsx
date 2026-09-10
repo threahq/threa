@@ -12,7 +12,7 @@ import type {
   SubagentSummary,
 } from "@threahq/types"
 import * as hooksModule from "@/hooks"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { subagentsApi } from "@/api"
@@ -134,7 +134,7 @@ function geometrySignature(container: HTMLElement): string {
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     // Per-id resolution: the card matches a live session's personaName against
     // the run persona's resolved name before claiming the spinner.

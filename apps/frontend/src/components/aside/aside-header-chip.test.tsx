@@ -5,7 +5,7 @@ import { StreamTypes } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { openAside, resetAsideStoreCache } from "@/stores/aside-store"
-import { __resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
+import { resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
 import { createMockStream } from "@/test/fixtures"
 import { AsideHeaderChip } from "./aside-header-chip"
 
@@ -40,7 +40,7 @@ let resumeSpy: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   resetAsideStoreCache()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   openSpy = vi.fn(() => Promise.resolve())
   resumeSpy = vi.fn()
   vi.spyOn(openAsideModule, "useOpenAside").mockReturnValue(openSpy as never)

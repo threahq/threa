@@ -1081,6 +1081,18 @@ export interface CachedSlot {
   _cachedAt: number
 }
 
+/**
+ * Which account's data a cached database holds. One row, written the first time
+ * an account opens it: a database whose marker names somebody else is not this
+ * account's cache, whatever its name says.
+ */
+export interface CacheOwnership {
+  id: typeof CACHE_OWNER_ID
+  workosUserId: string
+}
+
+export const CACHE_OWNER_ID = "owner"
+
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
   workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
@@ -1117,10 +1129,11 @@ export class ThreaDatabase extends Dexie {
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
   slots!: Table<CachedSlot, [string, string]>
   streamContextItems!: EntityTable<CachedStreamContextItem, "key">
+  cacheOwnership!: EntityTable<CacheOwnership, "id">
 
   private upgradeRecoveryAvailable = true
 
-  constructor(name: string) {
+  constructor(name: string, owner?: string) {
     super(name)
 
     this.version(1).stores({
@@ -1614,7 +1627,17 @@ export class ThreaDatabase extends Dexie {
       conversations: "id, workspaceId, [workspaceId+_lastActivityMs], _cachedAt, *conversation.messageIds",
     })
 
+    // v49: the account marker (see CacheOwnership).
+    this.version(49).stores({
+      cacheOwnership: "id",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
+
+    // Dexie holds every other transaction until this resolves, so nothing reads
+    // or writes a database before its contents are known to belong to the
+    // opener. The pre-auth handle passes no owner and stays ungated.
+    if (owner) this.on("ready", () => claimCacheOwnership(this, owner), true)
 
     // Another tab upgraded the shared per-account database. Dexie closes this
     // connection but leaves auto-open on, so the next operation would reopen
@@ -1638,6 +1661,23 @@ export class ThreaDatabase extends Dexie {
       return Dexie.delete(this.name).then(() => this.open()) as PromiseExtended<Dexie>
     })
   }
+}
+
+/**
+ * No marker means this account just created the database, so it claims it. A
+ * marker naming somebody else means the pointer that chose the database and the
+ * identity that filled it disagreed — the failure account isolation exists to
+ * prevent — so its contents are rebuilt from the server rather than shown. Loud,
+ * because reaching this is a bug, not a state to live with (INV-11).
+ */
+async function claimCacheOwnership(database: ThreaDatabase, owner: string): Promise<void> {
+  const marker = await database.cacheOwnership.get(CACHE_OWNER_ID)
+  if (marker?.workosUserId === owner) return
+  if (marker) {
+    console.error(`[db] ${database.name} holds ${marker.workosUserId}'s data, not ${owner}'s; rebuilding it cold`)
+    await Promise.all(database.tables.map((table) => table.clear()))
+  }
+  await database.cacheOwnership.put({ id: CACHE_OWNER_ID, workosUserId: owner })
 }
 
 const RECOVERABLE_OPEN_FAILURE_NAMES: ReadonlySet<string> = new Set([
@@ -1679,8 +1719,18 @@ let activeDb: ThreaDatabase = new ThreaDatabase("threa")
 // same place. The argument is the WorkOS user id (the auth identity), which is
 // also what push payloads carry as `workosUserId`.
 export function accountDbName(workosUserId: string): string {
-  return `threa_${workosUserId}`
+  return `${ACCOUNT_DB_PREFIX}${workosUserId}`
 }
+
+/**
+ * The prefix carries a scheme generation. A database written before the marker
+ * existed is named `threa_<id>`, and that name proves nothing — the app that
+ * wrote it could resolve one account's identity while pointing at another's
+ * database. Those keep their old name and are never opened again, but are left
+ * in place: deleting a database whose owner is unknown could destroy the other
+ * account's unsent work. The new one is owned from its first row.
+ */
+const ACCOUNT_DB_PREFIX = "threa_v2_"
 
 /** AccountScope-only: point the shared `db` proxy at an account's instance. */
 export function setActiveDb(instance: ThreaDatabase): void {

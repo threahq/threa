@@ -8,7 +8,7 @@ import { PanelProvider } from "@/contexts"
 import * as launchModule from "@/components/call/call-launch-context"
 import * as callHooksModule from "@/components/call/call-store-hooks"
 import * as anotherDeviceModule from "@/components/call/use-call-on-another-device"
-import { upsertActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
+import { upsertActiveCall, resetActiveCallsStore } from "@/stores/active-calls-store"
 import { CallCard } from "./call-card"
 
 const launch = vi.fn()
@@ -17,7 +17,7 @@ afterEach(() => vi.useRealTimers())
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetActiveCallsStore()
+  resetActiveCallsStore()
   launch.mockClear()
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: () => "Ada",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
-import { db, type CachedEvent } from "@/db"
+import { type CachedEvent } from "@/db"
+import { createDbScopedRegistry } from "@/lib/db-scoped-registry"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { useConversationBackfillMessages } from "@/stores/conversation-messages-store"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -167,6 +168,27 @@ interface StreamRailEntry {
   /** The last liveQuery emission, kept so an overlay publish can rebuild the rail
    *  without re-reading IDB. */
   events: CachedEvent[]
+  /**
+   * Just-sent rows this rail shows before IDB has emitted them, by id.
+   *
+   * The sender's own reply is written to `db.events` and reaches the card through
+   * Dexie's `liveQuery` — a write commit plus a full re-read of the stream, ~140ms
+   * on a desktop dev build and visibly worse on a phone, all of it AFTER the
+   * composer has already cleared, which is what made a board reply feel unsent.
+   * `publishOptimisticRailEvent` puts the row on the rail in the sending tick
+   * instead; the persisted copy takes over silently when the emission carrying it
+   * arrives (`buildRail` prefers it by id).
+   *
+   * A row leaves when the stream's emission holds it, when the echo swap's real
+   * row supersedes it (`clientMessageId`), when the send is deleted, or with the
+   * rail itself at teardown — the last one matters because the emission that
+   * would prune it dies with the subscription. A row that outlives its
+   * confirmation inside a live rail is still harmless: the same
+   * `supersededClientIds` rule that covers a stale merged-rail snapshot filters
+   * it (the convert-to-thread swap moves the real row to another stream, so its
+   * rail never sees the temp id).
+   */
+  overlay: Map<string, CachedEvent> | undefined
   listeners: Set<() => void>
   subscription: Subscription
   refCount: number
@@ -193,30 +215,13 @@ const RAIL_TEARDOWN_GRACE_MS = 5000
 // conversations) would otherwise mount one full `message_created` scan per card,
 // each re-running on every new message. This module-level registry collapses
 // that to one liveQuery per stream; the last card to unmount drops the refCount
-// to zero and tears the subscription down (and an account switch remounts the
-// whole board subtree, draining it), so no explicit lock/clear wiring is needed.
-const railRegistry = new Map<string, StreamRailEntry>()
-
-/**
- * Just-sent rows the rail shows before IDB has emitted them, by stream then id.
- *
- * The sender's own reply is written to `db.events` and reaches the card through
- * Dexie's `liveQuery` — a write commit plus a full re-read of the stream, ~140ms
- * on a desktop dev build and visibly worse on a phone, all of it AFTER the
- * composer has already cleared, which is what made a board reply feel unsent.
- * `publishOptimisticRailEvent` puts the row on the rail in the sending tick
- * instead; the persisted copy takes over silently when the emission carrying it
- * arrives (`buildRail` prefers it by id).
- *
- * An entry leaves when the stream's emission holds the row, when the echo swap's
- * real row supersedes it (`clientMessageId`), when the send is deleted, or with
- * the rail itself at teardown — the last one matters because the emission that
- * would prune it dies with the subscription. A row that outlives its confirmation
- * inside a live rail is still harmless: the same `supersededClientIds` rule that
- * covers a stale merged-rail snapshot filters it (the convert-to-thread swap
- * moves the real row to another stream, so its rail never sees the temp id).
- */
-const optimisticOverlay = new Map<string, Map<string, CachedEvent>>()
+// to zero and tears the subscription down.
+//
+// Scoped to the account database the rail read from: a stream id is shared by
+// every account that can see the stream, and the teardown grace below outlives
+// the switch's remount, so an id-keyed registry handed the next account the
+// previous one's events (and its unsent overlay rows).
+const railRegistry = createDbScopedRegistry<StreamRailEntry>()
 
 /**
  * Show a just-queued optimistic event on its stream's board rail now, without
@@ -224,14 +229,14 @@ const optimisticOverlay = new Map<string, Map<string, CachedEvent>>()
  * send path (`useQueueDraftMessage`) immediately before the write it mirrors.
  */
 export function publishOptimisticRailEvent(event: CachedEvent): void {
-  const entry = railRegistry.get(event.streamId)
+  const entry = railRegistry.peek(event.streamId)
   // No rail means no board card is reading this stream — nothing to make eager,
   // and no liveQuery would ever emit to prune the entry (the send paths that
   // create a scratchpad or a thread out of view come through here too).
   if (!entry) return
-  const overlay = optimisticOverlay.get(event.streamId) ?? new Map<string, CachedEvent>()
+  const overlay = entry.overlay ?? new Map<string, CachedEvent>()
   overlay.set(event.id, event)
-  optimisticOverlay.set(event.streamId, overlay)
+  entry.overlay = overlay
   // An unresolved rail is still doing its first read: rebuilding it here would
   // publish `resolved: true` over an empty event set and flip cards off their
   // projection with nothing to show. Its first emission picks the overlay up.
@@ -243,20 +248,20 @@ export function publishOptimisticRailEvent(event: CachedEvent): void {
 /** Drop a published row — its send was deleted, or its write failed, so no
  *  emission will ever confirm it. */
 export function revokeOptimisticRailEvent(id: string): void {
-  for (const [streamId, overlay] of optimisticOverlay) {
-    if (!overlay.delete(id)) continue
-    if (overlay.size === 0) optimisticOverlay.delete(streamId)
-    const entry = railRegistry.get(streamId)
-    if (!entry || !entry.rail.resolved) continue
-    entry.rail = buildRail(entry.events, optimisticOverlay.get(streamId))
+  for (const [, entry] of railRegistry.activeEntries()) {
+    const overlay = entry.overlay
+    if (!overlay?.delete(id)) continue
+    if (overlay.size === 0) entry.overlay = undefined
+    if (!entry.rail.resolved) continue
+    entry.rail = buildRail(entry.events, entry.overlay)
     for (const notify of entry.listeners) notify()
   }
 }
 
 /** Forget overlay rows the emission now carries (or whose echo supersedes them),
  *  so the persisted copy is the only one the rail builds from. */
-function pruneOverlay(streamId: string, events: CachedEvent[]): Map<string, CachedEvent> | undefined {
-  const overlay = optimisticOverlay.get(streamId)
+function pruneOverlay(entry: StreamRailEntry, events: CachedEvent[]): Map<string, CachedEvent> | undefined {
+  const overlay = entry.overlay
   if (!overlay) return undefined
   for (const event of events) {
     overlay.delete(event.id)
@@ -264,38 +269,35 @@ function pruneOverlay(streamId: string, events: CachedEvent[]): Map<string, Cach
     if (clientMessageId) overlay.delete(clientMessageId)
   }
   if (overlay.size > 0) return overlay
-  optimisticOverlay.delete(streamId)
+  entry.overlay = undefined
   return undefined
 }
 
 function subscribeStreamRail(streamId: string, listener: () => void): () => void {
-  let entry = railRegistry.get(streamId)
-  if (!entry) {
-    const created: StreamRailEntry = {
-      rail: LOADING_RAIL,
-      events: [],
-      listeners: new Set(),
-      refCount: 0,
-      subscription: { unsubscribe() {} } as Subscription,
-      teardown: null,
-    }
-    // Register BEFORE subscribing so `getSnapshot` (and any synchronous first
-    // emission) observes the entry consistently; the callback re-reads the live
-    // entry so a late emission after teardown is a no-op.
-    railRegistry.set(streamId, created)
-    created.subscription = liveQuery(() =>
-      db.events
+  // `database` and `entry` are captured for the whole life of THIS subscription:
+  // the query, the emission and the teardown all act on the pair that was live
+  // when the subscriber attached, never on whatever the key resolves to later.
+  const { database, entry, isNew } = railRegistry.acquire(streamId, () => ({
+    rail: LOADING_RAIL,
+    events: [],
+    overlay: undefined,
+    listeners: new Set<() => void>(),
+    refCount: 0,
+    subscription: { unsubscribe() {} } as Subscription,
+    teardown: null,
+  }))
+  if (isNew) {
+    entry.subscription = liveQuery(() =>
+      database.events
         .where("[streamId+eventType]")
         .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [streamId, eventType]))
         .toArray()
     ).subscribe((events) => {
-      const live = railRegistry.get(streamId)
-      if (!live) return
-      live.events = events
-      live.rail = buildRail(events, pruneOverlay(streamId, events))
-      for (const notify of live.listeners) notify()
+      if (!railRegistry.holds(database, streamId, entry)) return
+      entry.events = events
+      entry.rail = buildRail(events, pruneOverlay(entry, events))
+      for (const notify of entry.listeners) notify()
     })
-    entry = created
   }
   if (entry.teardown) {
     clearTimeout(entry.teardown)
@@ -303,22 +305,22 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
   }
   entry.listeners.add(listener)
   entry.refCount += 1
+  let released = false
   return () => {
-    const current = railRegistry.get(streamId)
-    if (!current) return
-    current.listeners.delete(listener)
-    current.refCount -= 1
-    if (current.refCount <= 0 && !current.teardown) {
-      current.teardown = setTimeout(() => {
-        const live = railRegistry.get(streamId)
-        if (!live || live.refCount > 0) return
-        live.subscription.unsubscribe()
-        railRegistry.delete(streamId)
+    if (released) return
+    released = true
+    entry.listeners.delete(listener)
+    entry.refCount -= 1
+    if (entry.refCount <= 0 && !entry.teardown) {
+      entry.teardown = setTimeout(() => {
+        if (entry.refCount > 0) return
+        entry.subscription.unsubscribe()
         // The emission that would have pruned this stream's published rows dies
         // with the subscription, so drop them here: nobody is rendering them, and
         // on a later re-subscribe the persisted copy is what should appear — a
         // surviving entry would resurrect a row IDB may no longer have.
-        optimisticOverlay.delete(streamId)
+        entry.overlay = undefined
+        railRegistry.remove(database, streamId, entry)
       }, RAIL_TEARDOWN_GRACE_MS)
     }
   }
@@ -416,7 +418,7 @@ function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]
   )
 
   const getSnapshot = useCallback(() => {
-    const inputs = streamIds.map((id) => railRegistry.get(id)?.rail ?? LOADING_RAIL)
+    const inputs = streamIds.map((id) => railRegistry.peek(id)?.rail ?? LOADING_RAIL)
     const cached = cacheRef.current
     if (cached && cached.inputs.length === inputs.length && cached.inputs.every((rail, i) => rail === inputs[i])) {
       return cached.merged
@@ -445,44 +447,43 @@ interface ThreadIndexEntry {
 // subscribes the card to that rail ahead of the swap, closing the gap where a
 // just-sent reply would otherwise blink out between the swap and the slower
 // `conversation:message_assigned` widening of the server `streamIds`.
-const threadIndexRegistry = new Map<string, ThreadIndexEntry>()
+// Account-scoped for the same reason as `railRegistry`: two accounts in one
+// workspace share the workspace id, and neither may read the other's threads.
+const threadIndexRegistry = createDbScopedRegistry<ThreadIndexEntry>()
 const EMPTY_THREAD_IDS: string[] = []
 
 function subscribeChildThreadIndex(workspaceId: string, listener: () => void): () => void {
-  let entry = threadIndexRegistry.get(workspaceId)
-  if (!entry) {
-    const created: ThreadIndexEntry = {
-      byParent: new Map(),
-      listeners: new Set(),
-      refCount: 0,
-      subscription: { unsubscribe() {} } as Subscription,
-    }
-    threadIndexRegistry.set(workspaceId, created)
-    created.subscription = liveQuery(() =>
-      db.streams.where("[workspaceId+type]").equals([workspaceId, StreamTypes.THREAD]).toArray()
+  const { database, entry, isNew } = threadIndexRegistry.acquire(workspaceId, () => ({
+    byParent: new Map<string, string>(),
+    listeners: new Set<() => void>(),
+    refCount: 0,
+    subscription: { unsubscribe() {} } as Subscription,
+  }))
+  if (isNew) {
+    entry.subscription = liveQuery(() =>
+      database.streams.where("[workspaceId+type]").equals([workspaceId, StreamTypes.THREAD]).toArray()
     ).subscribe((threads) => {
-      const live = threadIndexRegistry.get(workspaceId)
-      if (!live) return
+      if (!threadIndexRegistry.holds(database, workspaceId, entry)) return
       const byParent = new Map<string, string>()
       for (const thread of threads) {
         const anchor = thread.parentAnchorId ?? thread.parentMessageId
         if (anchor) byParent.set(anchor, thread.id)
       }
-      live.byParent = byParent
-      for (const notify of live.listeners) notify()
+      entry.byParent = byParent
+      for (const notify of entry.listeners) notify()
     })
-    entry = created
   }
   entry.listeners.add(listener)
   entry.refCount += 1
+  let released = false
   return () => {
-    const current = threadIndexRegistry.get(workspaceId)
-    if (!current) return
-    current.listeners.delete(listener)
-    current.refCount -= 1
-    if (current.refCount <= 0) {
-      current.subscription.unsubscribe()
-      threadIndexRegistry.delete(workspaceId)
+    if (released) return
+    released = true
+    entry.listeners.delete(listener)
+    entry.refCount -= 1
+    if (entry.refCount <= 0) {
+      entry.subscription.unsubscribe()
+      threadIndexRegistry.remove(database, workspaceId, entry)
     }
   }
 }
@@ -500,7 +501,7 @@ function useChildThreadStreamIds(workspaceId: string, parentMessageIds: string[]
   )
 
   const getSnapshot = useCallback(() => {
-    const byParent = threadIndexRegistry.get(workspaceId)?.byParent ?? null
+    const byParent = threadIndexRegistry.peek(workspaceId)?.byParent ?? null
     const cached = cacheRef.current
     if (cached && cached.byParent === byParent && cached.parentsKey === parentsKey) return cached.result
     const ids: string[] = []
@@ -538,7 +539,7 @@ export function useBoardRailsReady(streamIds: string[]): boolean {
     // `key` captures the set; the closure over `streamIds` is consistent with it.
     [key]
   )
-  const getSnapshot = useCallback(() => streamIds.every((id) => railRegistry.get(id)?.rail.resolved ?? false), [key])
+  const getSnapshot = useCallback(() => streamIds.every((id) => railRegistry.peek(id)?.rail.resolved ?? false), [key])
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
@@ -546,19 +547,18 @@ export function useBoardRailsReady(streamIds: string[]): boolean {
  *  drained rail is actually torn down once its grace elapses (the leak half of
  *  the grace-teardown contract). */
 export function __boardRailRegistrySize(): number {
-  return railRegistry.size
+  return railRegistry.size()
 }
 
 /** Tear down every shared stream subscription — for tests, so a module-level
  *  registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearBoardRailRegistry(): void {
-  for (const entry of railRegistry.values()) {
+  for (const entry of railRegistry.all()) {
     if (entry.teardown) clearTimeout(entry.teardown)
     entry.subscription.unsubscribe()
   }
   railRegistry.clear()
-  optimisticOverlay.clear()
-  for (const entry of threadIndexRegistry.values()) entry.subscription.unsubscribe()
+  for (const entry of threadIndexRegistry.all()) entry.subscription.unsubscribe()
   threadIndexRegistry.clear()
 }
 

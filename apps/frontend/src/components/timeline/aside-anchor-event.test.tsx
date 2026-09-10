@@ -6,7 +6,7 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
 import { getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
-import { __resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
+import { resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 
@@ -89,7 +89,7 @@ function unreadOnAside(count: number) {
 
 beforeEach(() => {
   resetAsideStoreCache()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([aside] as never)
 })
 

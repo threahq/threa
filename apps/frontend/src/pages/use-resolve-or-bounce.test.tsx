@@ -68,7 +68,6 @@ function installSpies() {
         getQueryClient: () => {
           throw new Error("not used")
         },
-        scopedKey: (s: string) => s,
       }) satisfies AccountScopeValue
   )
 }

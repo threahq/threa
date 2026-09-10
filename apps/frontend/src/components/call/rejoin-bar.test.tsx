@@ -6,7 +6,7 @@ import * as hooksModule from "@/hooks"
 import * as launchModule from "./call-launch-context"
 import * as callHooksModule from "./call-store-hooks"
 import { api } from "@/api/client"
-import { seedActiveCalls, removeActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
+import { seedActiveCalls, removeActiveCall, resetActiveCallsStore } from "@/stores/active-calls-store"
 import { RejoinBar } from "./rejoin-bar"
 
 const launch = vi.fn()
@@ -34,7 +34,7 @@ const LIVE: StreamActiveCall = {
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetActiveCallsStore()
+  resetActiveCallsStore()
   launch.mockClear()
   vi.spyOn(launchModule, "useCallLaunch").mockReturnValue({
     launch,

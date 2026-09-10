@@ -1,7 +1,15 @@
 import "fake-indexeddb/auto"
 import "@testing-library/jest-dom/vitest"
 import { beforeEach } from "vitest"
+import { setStorageAccount } from "@/lib/account-storage"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
+
+/**
+ * Account-owned browser storage is namespaced, so a suite that names no account
+ * exercises the unowned no-op path instead of the product path. Every test runs
+ * as an account; tests about the boundary set the owner they mean.
+ */
+export const TEST_STORAGE_ACCOUNT = "user_test_owner"
 
 // Node ≥25 ships an experimental global `localStorage` (enabled with an implicit
 // `--localstorage-file`) that shadows jsdom's spec-compliant one but omits the
@@ -28,6 +36,7 @@ if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localSto
 // state would otherwise leak between tests. Reset it before each case so
 // every test starts with an empty (unhydrated) cache.
 beforeEach(() => {
+  setStorageAccount(TEST_STORAGE_ACCOUNT)
   __resetCollapseCacheForTests()
 })
 

@@ -20,7 +20,7 @@ import * as userProfileModule from "@/components/user-profile"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 
 const WS = "ws_1"
 const CONV = "conv_1"
@@ -182,7 +182,7 @@ const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), 
 
 beforeEach(async () => {
   seq = 0
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
   await db.events.clear()

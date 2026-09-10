@@ -254,8 +254,8 @@ export function useActiveCallsForStream(
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
-/** Test-only: wipe all state between cases. */
-export function __resetActiveCallsStore(): void {
+/** Drop every workspace's live calls — an account switch, or a test between cases. */
+export function resetActiveCallsStore(): void {
   workspaces.clear()
   keyListeners.clear()
   rootSnapshots.clear()

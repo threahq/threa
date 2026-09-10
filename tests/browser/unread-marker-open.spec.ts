@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Browser } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
+import { accountStorageKey, loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
 
 /**
  * Open-at-unread-marker (unreadOpenPosition: "marker"): a stream with unreads
@@ -168,13 +168,13 @@ test.describe("Unread marker open", () => {
     await page.setViewportSize({ width: 1024, height: 500 })
 
     await page.evaluate(
-      ({ sid }) => {
+      ({ sid, anchorsKey }) => {
         localStorage.setItem(
-          "threa:timeline-anchors",
+          anchorsKey,
           JSON.stringify({ [sid]: { targetId: "msg_00000000000000000000000000", offsetPx: 0, at: Date.now() } })
         )
       },
-      { sid: streamId }
+      { sid: streamId, anchorsKey: await accountStorageKey(page, "timeline-anchors") }
     )
 
     await page.goto(`/w/${workspaceId}/s/${streamId}`)

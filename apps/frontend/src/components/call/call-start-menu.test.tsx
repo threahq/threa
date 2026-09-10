@@ -3,7 +3,7 @@ import { act } from "@testing-library/react"
 import { fireEvent, render, screen, userEvent, waitFor } from "@/test"
 import * as authModule from "@/auth"
 import { clearCallState, setCallSession, setCallPhase } from "@/stores/call-store"
-import { upsertActiveCall, __resetActiveCallsStore } from "@/stores/active-calls-store"
+import { upsertActiveCall, resetActiveCallsStore } from "@/stores/active-calls-store"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import type { CallController } from "@/calls/call-manager"
@@ -39,7 +39,7 @@ function renderMenu(manager: CallController) {
 
 beforeEach(() => {
   clearCallState()
-  __resetActiveCallsStore()
+  resetActiveCallsStore()
   resetWorkspaceStoreCache()
   resetWorkspaceTableRegistry()
   // The menu reads viewer identity to tell "join" from "take over".

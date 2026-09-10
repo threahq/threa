@@ -93,6 +93,18 @@ export async function respondToBootstrapRequest(
   return fetchImpl(request)
 }
 
+/**
+ * Delete snapshots captured before the cache key named an owner. They are
+ * already unreachable (every lookup carries an account) and a bootstrap is a
+ * copy of the server, so nothing is lost — but left alone they sit in the
+ * origin's storage, one account's workspace readable to anyone on the device.
+ */
+export async function pruneUnownedBootstrapSnapshots(cache: Cache): Promise<void> {
+  for (const request of await cache.keys()) {
+    if (!new URL(request.url).searchParams.has(BOOTSTRAP_ACCOUNT_PARAM)) await cache.delete(request)
+  }
+}
+
 export interface BootstrapSyncTarget {
   workspaceId: string
   streamId: string | null
@@ -121,7 +133,7 @@ async function openAccountDb(workosUserId: string): Promise<ThreaDatabase> {
   const name = accountDbName(workosUserId)
   let inst = accountDbs.get(name)
   if (!inst) {
-    inst = new Database(name)
+    inst = new Database(name, workosUserId)
     accountDbs.set(name, inst)
   }
   return inst
@@ -301,7 +313,7 @@ async function prefetchWorkspaceBootstrap(workosUserId: string, workspaceId: str
  * is the active account's view of the workspace and writing it under the
  * recipient's database or cache key would hand one account the other's data.
  */
-async function resolveCredentialOwner(): Promise<string | null> {
+export async function resolveCredentialOwner(): Promise<string | null> {
   try {
     const response = await fetch("/api/auth/me", { credentials: "include" })
     if (!response.ok) return null

@@ -8,7 +8,7 @@ import * as delegationEventModule from "@/components/timeline/delegation-event"
 import * as hooksModule from "@/hooks"
 import { PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { seedAgentActivity, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { ThreadParentEvent } from "./thread-parent-event"
 
 // Leaf renderers pull heavy provider trees; the anchor-agnostic behavior under
@@ -16,7 +16,7 @@ import { ThreadParentEvent } from "./thread-parent-event"
 // type — messages as messages, cards as cards — so scope the leaves (INV-48).
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   vi.spyOn(messageEventModule, "MessageEvent").mockImplementation((({
     event,
     isThreadParent,

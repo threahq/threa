@@ -15,7 +15,7 @@ import {
   agentActivityStreamContext,
   useAgentSessionActivities,
   useAgentSessionActivity,
-  __resetAgentActivityStore,
+  resetAgentActivityStore,
 } from "./agent-activity-store"
 
 const WS = "ws_1"
@@ -33,7 +33,7 @@ function session(overrides: Partial<ActiveAgentSession>): ActiveAgentSession {
 }
 
 describe("agent-activity-store", () => {
-  beforeEach(() => __resetAgentActivityStore())
+  beforeEach(() => resetAgentActivityStore())
 
   it("seeds by stream and reads back the running sessions", () => {
     seedAgentActivity(WS, [session({ sessionId: "s1", streamId: "stream_a" })])

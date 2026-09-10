@@ -526,6 +526,15 @@ export async function currentAccount(page: Page): Promise<DevLoginUser> {
 }
 
 /**
+ * The signed-in account's key for account-owned `localStorage`, mirroring
+ * `apps/frontend/src/lib/account-storage.ts`. A bare key is a record no account
+ * can reach, so a test that seeds one proves nothing.
+ */
+export async function accountStorageKey(page: Page, suffix: string): Promise<string> {
+  return `threa:acct:${(await currentAccount(page)).id}:${suffix}`
+}
+
+/**
  * Whether the service worker holds a bootstrap snapshot **for the signed-in
  * account**. The push-bootstrap cache is keyed by owner as well as URL, so a
  * bare-URL lookup finds nothing and a match on any entry would pass even when

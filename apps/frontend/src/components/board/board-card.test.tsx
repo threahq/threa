@@ -14,11 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
 import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
-import {
-  upsertAgentSession,
-  updateAgentSessionProgress,
-  __resetAgentActivityStore,
-} from "@/stores/agent-activity-store"
+import { upsertAgentSession, updateAgentSessionProgress, resetAgentActivityStore } from "@/stores/agent-activity-store"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db, type CachedEvent, type CachedStream } from "@/db"
 import * as conversationReadModule from "@/components/message/conversation-read-context"
@@ -204,7 +200,7 @@ function fakeSocket() {
 const readValue = { state: () => "ungated" as const, markReadUpToHere: vi.fn(), markUnread: vi.fn() }
 
 beforeEach(async () => {
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   __clearBoardRailRegistry()
   __clearConversationGraphRegistry()
   __resetCollapseCacheForTests()

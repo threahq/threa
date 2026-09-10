@@ -1,7 +1,8 @@
 import { useCallback, useSyncExternalStore } from "react"
 import { liveQuery, type Subscription } from "dexie"
 import { StreamTypes } from "@threahq/types"
-import { db, type CachedBoardPost, type CachedStream } from "@/db"
+import { type CachedBoardPost, type CachedStream } from "@/db"
+import { createDbScopedRegistry } from "@/lib/db-scoped-registry"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { streamLabel } from "@/lib/streams"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
@@ -93,43 +94,43 @@ interface GraphEntry {
 // hundreds of conversations; a per-card scan for "which conversation anchors this
 // thread / owns this message" would be O(cards × conversations). This collapses
 // it to one liveQuery per workspace whose derived index every card reads, torn
-// down when the last card unmounts (adjustment E). Mirrors `threadIndexRegistry`.
-const graphRegistry = new Map<string, GraphEntry>()
+// down when the last card unmounts (adjustment E). Mirrors `threadIndexRegistry`,
+// account scoping included: two accounts share a workspace id but never a
+// conversation graph, and a snapshot left keyed by that id alone was readable by
+// the next account's first render, before the outgoing cards had unmounted.
+const graphRegistry = createDbScopedRegistry<GraphEntry>()
 
 function subscribeConversationGraph(workspaceId: string, listener: () => void): () => void {
-  let entry = graphRegistry.get(workspaceId)
-  if (!entry) {
-    const created: GraphEntry = {
-      graph: EMPTY_GRAPH,
-      resolved: false,
-      listeners: new Set(),
-      refCount: 0,
-      subscription: { unsubscribe() {} } as Subscription,
-    }
-    // Register BEFORE subscribing so `getSnapshot` observes the entry consistently;
-    // the callback re-reads the live entry so a late emission after teardown no-ops.
-    graphRegistry.set(workspaceId, created)
-    created.subscription = liveQuery(() =>
-      db.conversations.where("workspaceId").equals(workspaceId).toArray()
+  // Captured for this subscription's whole life — the query, the emission and
+  // the teardown act on the (database, entry) pair that was live at attach.
+  const { database, entry, isNew } = graphRegistry.acquire(workspaceId, () => ({
+    graph: EMPTY_GRAPH,
+    resolved: false,
+    listeners: new Set<() => void>(),
+    refCount: 0,
+    subscription: { unsubscribe() {} } as Subscription,
+  }))
+  if (isNew) {
+    entry.subscription = liveQuery(() =>
+      database.conversations.where("workspaceId").equals(workspaceId).toArray()
     ).subscribe((posts) => {
-      const live = graphRegistry.get(workspaceId)
-      if (!live) return
-      live.graph = buildGraph(posts)
-      live.resolved = true
-      for (const notify of live.listeners) notify()
+      if (!graphRegistry.holds(database, workspaceId, entry)) return
+      entry.graph = buildGraph(posts)
+      entry.resolved = true
+      for (const notify of entry.listeners) notify()
     })
-    entry = created
   }
   entry.listeners.add(listener)
   entry.refCount += 1
+  let released = false
   return () => {
-    const current = graphRegistry.get(workspaceId)
-    if (!current) return
-    current.listeners.delete(listener)
-    current.refCount -= 1
-    if (current.refCount <= 0) {
-      current.subscription.unsubscribe()
-      graphRegistry.delete(workspaceId)
+    if (released) return
+    released = true
+    entry.listeners.delete(listener)
+    entry.refCount -= 1
+    if (entry.refCount <= 0) {
+      entry.subscription.unsubscribe()
+      graphRegistry.remove(database, workspaceId, entry)
     }
   }
 }
@@ -140,7 +141,7 @@ export function useConversationGraph(workspaceId: string): ConversationGraph {
     (onChange: () => void) => subscribeConversationGraph(workspaceId, onChange),
     [workspaceId]
   )
-  const getSnapshot = useCallback(() => graphRegistry.get(workspaceId)?.graph ?? EMPTY_GRAPH, [workspaceId])
+  const getSnapshot = useCallback(() => graphRegistry.peek(workspaceId)?.graph ?? EMPTY_GRAPH, [workspaceId])
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
@@ -152,7 +153,7 @@ export function useConversationGraphReady(workspaceId: string): boolean {
     (onChange: () => void) => subscribeConversationGraph(workspaceId, onChange),
     [workspaceId]
   )
-  const getSnapshot = useCallback(() => graphRegistry.get(workspaceId)?.resolved ?? false, [workspaceId])
+  const getSnapshot = useCallback(() => graphRegistry.peek(workspaceId)?.resolved ?? false, [workspaceId])
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
@@ -443,6 +444,6 @@ export function deriveBranchProvenance(params: {
 /** Tear down every shared conversation-graph subscription — for tests, so a
  *  module-level registry can't leak a liveQuery (or a snapshot) across cases. */
 export function __clearConversationGraphRegistry(): void {
-  for (const entry of graphRegistry.values()) entry.subscription.unsubscribe()
+  for (const entry of graphRegistry.all()) entry.subscription.unsubscribe()
   graphRegistry.clear()
 }

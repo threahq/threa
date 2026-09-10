@@ -8,7 +8,7 @@ import * as relativeTimeModule from "@/components/relative-time"
 import * as agentTraceModule from "@/hooks/use-agent-trace"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { AgentSessionStep } from "@threahq/types"
-import { seedAgentActivity, updateAgentSessionProgress, __resetAgentActivityStore } from "@/stores/agent-activity-store"
+import { seedAgentActivity, updateAgentSessionProgress, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { AgentSessionEvent } from "./agent-session-event"
 
 const WS = "ws_1"
@@ -40,7 +40,7 @@ function traceResult(steps: AgentSessionStep[]): ReturnType<typeof agentTraceMod
 
 beforeEach(() => {
   vi.restoreAllMocks()
-  __resetAgentActivityStore()
+  resetAgentActivityStore()
   // A running card mounts the live effect grid, which subscribes to the session
   // room; these cases are about the card's own meta line, not the trace rail.
   vi.spyOn(agentTraceModule, "useAgentTrace").mockReturnValue(traceResult([]))

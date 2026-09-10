@@ -10,6 +10,9 @@ import { hasSeededWorkspaceCache, seedWorkspaceCache } from "@/stores/workspace-
 import { addIncomingCall, getIncomingCalls } from "@/stores/incoming-call-store"
 import { getFloatingSurfaceGeometry, publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
 import { accountDbName, getActiveDb, type CachedWorkspace } from "@/db"
+import { setStorageAccount } from "@/lib/account-storage"
+import { TEST_STORAGE_ACCOUNT } from "@/test/setup"
+import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { openCompose, useComposeOverlay } from "@/stores/compose-overlay-store"
 
 // PR-4a headline test. Mounts the real AuthProvider + AccountScopeProvider
@@ -193,11 +196,12 @@ describe("AccountScope", () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals()
+    setStorageAccount(TEST_STORAGE_ACCOUNT)
     localStorage.clear()
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
     // Await deletion so a not-yet-dropped DB never bleeds into the next test.
     await Promise.all(
-      ["threa", "threa_workos_A", "threa_workos_B"].map(
+      ["threa", accountDbName("workos_A"), accountDbName("workos_B")].map(
         (name) =>
           new Promise<void>((resolve) => {
             const req = indexedDB.deleteDatabase(name)
@@ -317,8 +321,8 @@ describe("AccountScope", () => {
     // not deletion); the two are physically distinct named databases.
     expect(await scopeB.getDb().workspaces.count()).toBe(0)
     expect(await dbA.workspaces.count()).toBe(1)
-    expect(dbA.name).toBe("threa_workos_A")
-    expect(scopeB.getDb().name).toBe("threa_workos_B")
+    expect(dbA.name).toBe(accountDbName("workos_A"))
+    expect(scopeB.getDb().name).toBe(accountDbName("workos_B"))
 
     // Layer 2 — TanStack Query: B's client never sees A's cached entry.
     expect(scopeB.getQueryClient().getQueryData(QUERY_KEY)).toBeUndefined()
@@ -328,6 +332,30 @@ describe("AccountScope", () => {
     expect(hasSeededWorkspaceCache("workspace_A")).toBe(false)
     expect(getIncomingCalls()).toHaveLength(0)
     expect(getFloatingSurfaceGeometry()).toBeNull()
+  })
+
+  it("should move account-owned local storage with the scope, and back", async () => {
+    // The composer's crash-safe buffer holds plaintext the user typed. It has to
+    // follow the account, not the tab: the pre-fix build staged A's body under a
+    // key B's startup reconcile then read, recovered into B's database and
+    // queued for push as B's draft.
+    const { handle } = mountScopeTree()
+    await waitForActive(handle, "workos_A")
+    const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "A typed this" }] }] }
+    stageDraftContent("workspace_A", "stream_shared", body)
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B")
+    })
+    await waitForActive(handle, "workos_B")
+
+    expect(readStagedDraft("workspace_A", "stream_shared")).toBeNull()
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_A")
+    })
+    await waitForActive(handle, "workos_A")
+    expect(readStagedDraft("workspace_A", "stream_shared")?.contentJson).toEqual(body)
   })
 
   it("moves the display identity with the scope, before the cookie catches up", async () => {

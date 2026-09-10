@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { onlineManager, QueryObserver } from "@tanstack/react-query"
 import { SyncEngine, isSyncEngineCurrent, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
-import { __resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
+import { resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
@@ -2675,7 +2675,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
 describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
   beforeEach(async () => {
     resetRevealGate()
-    __resetAgentActivityStore()
+    resetAgentActivityStore()
     await Promise.all([
       db.workspaces.clear(),
       db.syncCursors.clear(),
