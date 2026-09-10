@@ -190,7 +190,6 @@ describe("runtime-scoped production HTTP wiring", () => {
             attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" },
           });
           await defaultAttachedSpawnDeps().brief({ runtime, instanceId, runtimeSessionId, content: "child brief" });
-          await defaultDoneDeps().endSession({ runtime, instanceId, runtimeSessionId });
 
           const promptless = defaultAttachedSpawnDeps();
           promptless.spawn = async () => ({
@@ -199,9 +198,12 @@ describe("runtime-scoped production HTTP wiring", () => {
             tmuxSession: "agents",
             tmuxWindow: "child",
             activeStreamId: "${THREAD}",
+            instanceId,
+            runtimeSessionId,
             output: "",
           });
           await runAttachedSpawn({ runtime, name: runtime + "-child", attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" } }, promptless);
+          await defaultDoneDeps().endSession({ runtime, instanceId, runtimeSessionId });
           const failed = defaultAttachedSpawnDeps();
           failed.spawn = async () => { throw new Error("synthetic spawn failure"); };
           await runAttachedSpawn({ runtime, name: runtime + "-child", attach: { rootStreamId: "${ROOT}", anchorId: "msg_anchor" } }, failed).catch(() => {});
@@ -224,34 +226,23 @@ describe("runtime-scoped production HTTP wiring", () => {
       expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" })
 
       expect(requests.map(({ authorization, path }) => ({ authorization, path }))).toEqual([
-        ...["sessions", "sessions/brief", "sessions/end"].map((suffix) => ({
+        ...["sessions", "sessions/brief", "sessions/brief", "sessions/end"].map((suffix) => ({
           authorization: `Bearer ${PI_KEY}`,
           path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
         })),
-        { authorization: `Bearer ${PI_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages` },
         { authorization: `Bearer ${CLAUDE_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
-        ...["sessions", "sessions/brief", "sessions/end"].map((suffix) => ({
+        ...["sessions", "sessions/brief", "sessions/brief", "sessions/end"].map((suffix) => ({
           authorization: `Bearer ${CLAUDE_KEY}`,
           path: `/api/v1/workspaces/${WORKSPACE}/bot-runtime/${suffix}`,
         })),
-        { authorization: `Bearer ${CLAUDE_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages` },
         { authorization: `Bearer ${PI_KEY}`, path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages` },
       ])
       expect(requests.filter(({ path }) => path.endsWith("/messages"))).toEqual(
-        (["pi", "claude"] as const).flatMap((runtime) => [
-          {
-            authorization: `Bearer ${runtime === "pi" ? PI_KEY : CLAUDE_KEY}`,
-            path: `/api/v1/workspaces/${WORKSPACE}/streams/${THREAD}/messages`,
-            body: {
-              content: `**${runtime}-child** is running in \`/repo/child\` (tmux \`child\`). No prompt came with \`/spawn\` — reply here to give it one.`,
-            },
-          },
-          {
-            authorization: `Bearer ${runtime === "pi" ? CLAUDE_KEY : PI_KEY}`,
-            path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages`,
-            body: { content: `harnessd: spawn of \`${runtime}-child\` failed: synthetic spawn failure` },
-          },
-        ])
+        (["pi", "claude"] as const).map((runtime) => ({
+          authorization: `Bearer ${runtime === "pi" ? CLAUDE_KEY : PI_KEY}`,
+          path: `/api/v1/workspaces/${WORKSPACE}/streams/${ROOT}/messages`,
+          body: { content: `harnessd: spawn of \`${runtime}-child\` failed: synthetic spawn failure` },
+        }))
       )
       expect(sessions.size).toBe(0)
     } finally {

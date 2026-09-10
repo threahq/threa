@@ -113,14 +113,18 @@ describe("runAttachedSpawn", () => {
     ])
   })
 
-  test("no brief file means no readBrief, brief, or unlinkBrief calls", async () => {
+  test("no brief file briefs the agent to greet the user, and reads or unlinks nothing", async () => {
     const { deps, recorded } = makeDeps()
 
     const result = await runAttachedSpawn(BASE_OPTIONS, deps)
 
     expect(recorded.calls).toEqual([
       "spawn:fix-sidebar",
-      "postNotice:stream_thread:**fix-sidebar** is running in `/repo/fix-sidebar` (tmux `fix-sidebar`). No prompt came with `/spawn` — reply here to give it one.",
+      [
+        "brief:claude:cc-sidebar:ccs-sidebar:You were just started as `fix-sidebar` and nobody has asked you for anything yet.",
+        "You are working in `/repo/fix-sidebar` on branch `fix/sidebar` (tmux window `fix-sidebar`).",
+        "Say hello in a sentence or two, name where you are, and ask what they want done. Do not start any work yet.",
+      ].join("\n\n"),
     ])
     expect(result).toBe(RESULT)
   })
