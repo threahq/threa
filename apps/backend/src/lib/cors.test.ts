@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test"
-import { HttpError } from "@threahq/backend-common"
+import { describe, expect, spyOn, test } from "bun:test"
+import { HttpError, logger } from "@threahq/backend-common"
 import { createCorsOriginChecker } from "./cors"
 
 describe("createCorsOriginChecker", () => {
@@ -27,13 +27,23 @@ describe("createCorsOriginChecker", () => {
     expect(allowed).toBe(true)
   })
 
-  test("rejects non-allowlisted origins", () => {
+  test("rejects non-allowlisted origins and records which origin it was", () => {
     const checker = createCorsOriginChecker(["https://app.example.com"])
+    const warnings: unknown[] = []
+    const warn = spyOn(logger, "warn").mockImplementation(((data: unknown) => {
+      warnings.push(data)
+    }) as never)
 
     let rejection: unknown
-    checker("https://evil.example.com", (err) => {
-      rejection = err
-    })
+    try {
+      checker("https://evil.example.com", (err) => {
+        rejection = err
+      })
+    } finally {
+      warn.mockRestore()
+    }
+
+    expect(warnings).toEqual([{ origin: "https://evil.example.com" }])
 
     expect(rejection).toBeInstanceOf(HttpError)
     const { message, status, code } = rejection as HttpError
