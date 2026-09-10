@@ -7,7 +7,7 @@ import { MessageRepository } from "../../src/features/messaging"
 import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { botRuntimeSessionLinkId, messageId, streamId } from "../../src/lib/id"
 
-describe("endRuntimeSession", () => {
+describe("ending a bot runtime session", () => {
   let fixture: BotRuntimeFixture
   let pool: Pool
   let workspace: string
@@ -234,6 +234,39 @@ describe("endRuntimeSession", () => {
       [[root, thread.id, userThreadId]]
     )
     expect(streams.rows.map((row) => row.archived_at)).toEqual([null, null, null])
+  })
+
+  test("`/done` archives only a thread the bot opened, and only once", async () => {
+    const { stream: thread } = await attachThread("guard-instance", "guard-session")
+    const anchor = await anchorMessage()
+    const userThreadId = streamId()
+    await StreamRepository.insert(pool, {
+      id: userThreadId,
+      workspaceId: workspace,
+      type: StreamTypes.THREAD,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: root,
+      parentAnchorId: anchor.id,
+      rootStreamId: root,
+      createdBy: author,
+    })
+    const archive = (streamIdToClose: string) =>
+      service().archiveOwnCommandThread(pool, { workspaceId: workspace, botId: bot, streamId: streamIdToClose })
+
+    expect({
+      ownThread: await archive(thread.id),
+      ownThreadAgain: await archive(thread.id),
+      scratchpad: await archive(root),
+      userThread: await archive(userThreadId),
+    }).toEqual({ ownThread: thread.id, ownThreadAgain: null, scratchpad: null, userThread: null })
+
+    const lifecycle = await StreamEventRepository.list(pool, thread.id, { types: ["stream_archived"] })
+    expect(lifecycle).toMatchObject([{ eventType: "stream_archived", actorId: bot, actorType: "bot" }])
+    const untouched = await pool.query<{ archived_at: Date | null }>(
+      "SELECT archived_at FROM streams WHERE id = ANY($1) ORDER BY id",
+      [[root, userThreadId]]
+    )
+    expect(untouched.rows.map((row) => row.archived_at)).toEqual([null, null])
   })
 
   test("cancels pending invocations targeted at the ended session and leaves other pending rows alone", async () => {
