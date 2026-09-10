@@ -48,7 +48,11 @@ const modeConfigs: Record<Mode, ModeConfig> = {
   "backend-integration": {
     runner: "bun",
     cwd: path.join(rootDir, "apps/backend"),
-    baseOptions: ["--preload", "./tests/setup.ts", "--max-concurrency", "1"],
+    // Every integration fixture creates an isolated database and runs the full
+    // migration list in a `beforeAll`, which outruns Bun's 5s default hook
+    // timeout on a loaded CI runner. One default here beats 30 files each
+    // remembering to pass it.
+    baseOptions: ["--preload", "./tests/setup.ts", "--max-concurrency", "1", "--timeout", "30000"],
     defaultPatterns: ["tests/integration/"],
   },
   "backend-e2e": {
