@@ -2,6 +2,7 @@ import {
   beginConnectivityObservation,
   categorizeRoute,
   flushConnectivityDiagnostics,
+  SLOW_REQUEST_MS,
 } from "@/lib/connectivity-diagnostics/facade"
 
 export class ApiError extends Error {
@@ -84,6 +85,10 @@ export async function requestMultipart<T>(
 ): Promise<T> {
   const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(path), transport: "fetch" })
   observation.record("http_start")
+  const startedAt = performance.now()
+  // Phase detail (headers/body) is only evidence for slow requests; fast ones
+  // would triple telemetry volume without improving diagnosis.
+  const isSlow = () => performance.now() - startedAt >= SLOW_REQUEST_MS
   const stopStallTimer = observation.stall()
   let responseFields: { status: number; correlationId?: string } | null = null
   try {
@@ -94,16 +99,16 @@ export async function requestMultipart<T>(
     })
     const correlationId = response.headers.get("x-railway-request-id") ?? undefined
     responseFields = { status: response.status, correlationId }
-    observation.record("http_headers", responseFields)
+    if (isSlow()) observation.record("http_headers", responseFields)
     if (!response.ok) {
       const error = await parseApiError(response, fallback)
-      observation.record("http_body_complete", responseFields)
+      if (isSlow()) observation.record("http_body_complete", responseFields)
       observation.record("http_failure", { ...responseFields, reason: "server" })
       void flushConnectivityDiagnostics()
       throw error
     }
     const body = (await response.json()) as T
-    observation.record("http_body_complete", responseFields)
+    if (isSlow()) observation.record("http_body_complete", responseFields)
     return body
   } catch (error) {
     if (!ApiError.isApiError(error)) {
@@ -151,6 +156,10 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
   const method = (init.method ?? "GET") as "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
   const observation = beginConnectivityObservation({ method, route: categorizeRoute(path), transport: "fetch" })
   observation.record("http_start")
+  const startedAt = performance.now()
+  // Phase detail (headers/body) is only evidence for slow requests; fast ones
+  // would triple telemetry volume without improving diagnosis.
+  const isSlow = () => performance.now() - startedAt >= SLOW_REQUEST_MS
   const stopStallTimer = observation.stall()
 
   const controller = new AbortController()
@@ -205,17 +214,17 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
 
   const correlationId = response.headers.get("x-railway-request-id") ?? undefined
   const responseFields = { status: response.status, correlationId }
-  observation.record("http_headers", responseFields)
+  if (isSlow()) observation.record("http_headers", responseFields)
   if (response.status === 204) {
     stopStallTimer()
-    observation.record("http_body_complete", responseFields)
+    if (isSlow()) observation.record("http_body_complete", responseFields)
     return undefined as T
   }
 
   if (!response.ok) {
     try {
       const error = await parseApiError(response)
-      observation.record("http_body_complete", responseFields)
+      if (isSlow()) observation.record("http_body_complete", responseFields)
       observation.record("http_failure", { ...responseFields, reason: "server" })
       void flushConnectivityDiagnostics()
       throw error
@@ -226,7 +235,7 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
 
   try {
     const body = (await response.json()) as T
-    observation.record("http_body_complete", responseFields)
+    if (isSlow()) observation.record("http_body_complete", responseFields)
     return body
   } catch {
     observation.record("http_failure", { ...responseFields, reason: "unknown" })

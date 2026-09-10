@@ -80,3 +80,8 @@ export function suspendConnectivityDiagnostics(): void {
 }
 
 export type { ConnectivityEvent, ConnectivityObservation, DiagnosticFields, RoomCategory, RouteCategory }
+
+/** Requests at least this old when a phase event is recorded are "slow" — the
+ * threshold below which phase detail is dropped to keep telemetry volume down.
+ * Shared by the stall mark so both definitions of "slow" agree. */
+export const SLOW_REQUEST_MS = 5_000

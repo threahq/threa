@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie"
 import { currentAppVersion } from "@/lib/app-build"
-import { createDiagnosticId, registerConnectivityDiagnosticsRuntime } from "./facade"
+import { createDiagnosticId, registerConnectivityDiagnosticsRuntime, SLOW_REQUEST_MS } from "./facade"
 import {
   cacheConnectivityAuthorization,
   clearConnectivityConsentTombstone,
@@ -103,10 +103,14 @@ const MAX_ROWS = 500
 const MAX_BYTES = 256 * 1024
 const MAX_MEMORY_ROWS = 100
 const MAX_MEMORY_BYTES = 64 * 1024
+// Eviction bound. Bursts (a boot fanning out dozens of room joins in one task)
+// legitimately exceed the drain target before persistence can run, so rows are
+// dropped only past this hard cap, never merely for exceeding MAX_MEMORY_ROWS.
+const MAX_MEMORY_HARD_ROWS = 400
+const MAX_MEMORY_HARD_BYTES = 256 * 1024
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const FLUSH_INTERVAL_MS = 30_000
 const MIN_TRIGGER_FLUSH_MS = 5_000
-const STALL_MS = 5_000
 const NETWORK_TIMEOUT_MS = 10_000
 const MAX_STALL_TIMERS = 100
 const MAX_CONSENT_ROWS = 100
@@ -704,7 +708,7 @@ export function beginConnectivityObservation(fields: DiagnosticFields = {}): Con
         stallTimers.delete(timer)
         record(event, extra)
         triggerFlush()
-      }, STALL_MS)
+      }, SLOW_REQUEST_MS)
       stallTimers.add(timer)
       return () => {
         clearTimeout(timer)
@@ -716,11 +720,11 @@ export function beginConnectivityObservation(fields: DiagnosticFields = {}): Con
 
 function enqueuePending(item: PendingRow): void {
   if (item.row.byteSize > MAX_MEMORY_BYTES) return
-  while (pending.length && (pending.length >= MAX_MEMORY_ROWS || pendingBytes + item.row.byteSize > MAX_MEMORY_BYTES)) {
-    pendingBytes -= pending.shift()!.row.byteSize
-  }
   pending.push(item)
   pendingBytes += item.row.byteSize
+  while (pending.length > MAX_MEMORY_HARD_ROWS || pendingBytes > MAX_MEMORY_HARD_BYTES) {
+    pendingBytes -= pending.shift()!.row.byteSize
+  }
 }
 
 function recordForRuntime(captured: Runtime, event: ConnectivityEvent, fields: DiagnosticFields): void {
@@ -917,9 +921,9 @@ export const connectivityDiagnosticsTestApi = {
   MAX_BYTES,
   MAX_AGE_MS,
   MAX_MEMORY_ROWS,
+  MAX_MEMORY_HARD_ROWS,
   MAX_STALL_TIMERS,
   MAX_CONSENT_ROWS,
-  STALL_MS,
   NETWORK_TIMEOUT_MS,
   stallTimerCount: () => stallTimers.size,
   pendingCount: () => pending.length,
