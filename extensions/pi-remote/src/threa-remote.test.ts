@@ -1169,6 +1169,50 @@ describe("buildPersistedConfig", () => {
   })
 })
 
+describe("completeInvocationWithSummary", () => {
+  test("closes a control command with its account and posts no message", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://example.test",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+    })
+    const posts: Array<{ url: string; body: Record<string, unknown> }> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      posts.push({ url: String(input), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
+      return new Response(JSON.stringify({ data: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }) as typeof fetch)
+    try {
+      const closed = await __testing.completeInvocationWithSummary(
+        invocation("binv_summary") as never,
+        "Thinking level changed: `low` → `high`"
+      )
+      const complete = posts.find((post) => post.url.endsWith("/bot-invocations/binv_summary/complete"))
+      expect({ closed, body: complete?.body }).toEqual({
+        closed: true,
+        body: {
+          instanceId: "pi-matrix",
+          claimToken: "claim_binv_summary",
+          sourceRevision: 1,
+          summary: "Thinking level changed: `low` → `high`",
+          metadata: {
+            "pi.remote.invocationId": "binv_summary",
+            "pi.remote.instanceId": "pi-matrix",
+            "pi.remote.sessionControl": "true",
+          },
+        },
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
 describe("Pi reload session control", () => {
   test("completes the control claim then queues reload through a command context", async () => {
     const commands = new Map<string, { handler: (args: string, ctx: any) => Promise<void> }>()
@@ -1701,7 +1745,7 @@ describe("Pi reconnect session control", () => {
     expect({ messages, prepared }).toEqual({
       messages: [
         "failed: Pi is busy; retry when idle or use `/reconnect --force`.",
-        "completed: Reconnect request accepted; attempting to resume the linked Pi session.",
+        "completed: Reconnect accepted; resuming the linked Pi session.",
         "failed: A Threa invocation is still running; use `/stop` before reconnecting.",
       ],
       prepared: 1,
@@ -3714,9 +3758,7 @@ describe("invocation edit regressions", () => {
         claim as never
       )
       expect(level).toBe("high")
-      expect(writes).toEqual([
-        expect.objectContaining({ sourceRevision: 2, finalMessageMarkdown: expect.stringContaining("high") }),
-      ])
+      expect(writes).toEqual([expect.objectContaining({ sourceRevision: 2, summary: expect.stringContaining("high") })])
       expect(observation.unregisters()).toBe(1)
     } finally {
       fetchSpy.mockRestore()
