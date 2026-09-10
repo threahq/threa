@@ -63,6 +63,20 @@ const LABEL_TYPO_TIER = 20
 const KEYWORD_TYPO_TIER = 21
 
 /**
+ * The coarse quality band a score fell in: 0 whole-word, 1 partial, 2 the
+ * tolerance guesses, 3 anything a caller ranks below the bands
+ * (`scoreStreamMatch` scores a raw stream-id substring at 100). Bands are
+ * contiguous score ranges, so band-then-score is score order — which is what
+ * makes a band a safe place for a caller to hang its own demotion.
+ */
+export function matchBand(score: number): number {
+  if (score < PARTIAL_BAND) return 0
+  if (score < LABEL_FUZZY_TIER) return 1
+  if (score < KEYWORD_TYPO_TIER + 1) return 2
+  return 3
+}
+
+/**
  * Whether a score came from the fuzzy or typo band — i.e. the query never
  * actually occurred in the text and the match is a guess.
  *
@@ -78,7 +92,7 @@ const KEYWORD_TYPO_TIER = 21
  * `scoreStreamMatch` scores a raw stream-id substring at 100.
  */
 export function isToleranceMatch(score: number): boolean {
-  return score >= LABEL_FUZZY_TIER && score < KEYWORD_TYPO_TIER + 1
+  return matchBand(score) === 2
 }
 
 /** Place a match kind on the tier ladder for the field it was found in. */

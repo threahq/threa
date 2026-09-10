@@ -10,6 +10,7 @@ import { SidebarProvider } from "@/contexts/sidebar-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
 import { StreamTypes } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
+import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
@@ -369,6 +370,114 @@ describe("QuickSwitcher Integration Tests", () => {
         hostStreamId: "stream_host",
         asideId: "stream_aside_mine",
       })
+    })
+
+    it("finds a named thread by its title, and leaves threads out of the unnarrowed palette", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_thread_named",
+          type: StreamTypes.THREAD,
+          displayName: "Retry budget for the outbox",
+          parentStreamId: "stream_channel1",
+          rootStreamId: "stream_channel1",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      // Browsing: threads are the long tail, not a navigation target list.
+      expect(screen.queryByText("Retry budget for the outbox")).not.toBeInTheDocument()
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "retry budget")
+
+      expect(await screen.findByText("Retry budget for the outbox")).toBeInTheDocument()
+      // The row says where the thread lives, so a bare title isn't ambiguous.
+      expect(screen.getByText("Thread · in #general")).toBeInTheDocument()
+    })
+
+    it("never lists an unnamed thread — its placeholder label would match 'thread'", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_thread_unnamed",
+          type: StreamTypes.THREAD,
+          parentStreamId: "stream_channel1",
+          rootStreamId: "stream_channel1",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "thread")
+
+      expect(screen.queryByText("Thread")).not.toBeInTheDocument()
+    })
+
+    it("ranks a thread below a top-level stream when both match only partially", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.streams = [
+        createMockStream({
+          id: "stream_thread_partial",
+          type: StreamTypes.THREAD,
+          // "budget" is a prefix here (partial band) — the stronger score of the two.
+          displayName: "Budgeting the retry window",
+          parentStreamId: "stream_channel1",
+          rootStreamId: "stream_channel1",
+        }),
+        createMockStream({
+          id: "stream_channel_partial",
+          type: StreamTypes.CHANNEL,
+          displayName: "Rebudgeted",
+          slug: "rebudgeted",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "budget")
+
+      await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2))
+      expect(screen.getAllByRole("option").map((row) => row.textContent)).toEqual([
+        expect.stringContaining("#rebudgeted"),
+        expect.stringContaining("Budgeting the retry window"),
+      ])
+    })
+
+    it("opens a selected thread as its own page", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_thread_named",
+          type: StreamTypes.THREAD,
+          displayName: "Retry budget for the outbox",
+          parentStreamId: "stream_channel1",
+          rootStreamId: "stream_channel1",
+        }),
+      ]
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "retry budget")
+      await user.click(await screen.findByText("Retry budget for the outbox"))
+
+      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_thread_named")
+    })
+
+    it("offers every typeable stream type in the mouse-driven filter picker", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      // An empty workspace, so the only rows on screen are the picker's own.
+      mockWorkspaceBootstrap.data.streams = []
+      mockWorkspaceBootstrap.data.users = []
+      renderWithProviders(<QuickSwitcher {...defaultProps} open={true} />)
+
+      await user.click(screen.getByRole("button", { name: /add filter/i }))
+      await user.click(await screen.findByText("Stream type"))
+
+      // The typed `is:` trigger and this dropdown read one list; they drifted
+      // before, and `thread` was typeable but not pickable.
+      for (const { label } of FILTER_TYPE_OPTIONS) {
+        expect(await screen.findByText(label)).toBeInTheDocument()
+      }
     })
 
     it("should not render dialog content when open=false", () => {

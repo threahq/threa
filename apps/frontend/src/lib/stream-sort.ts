@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react"
+import { StreamTypes } from "@threahq/types"
 import type { Stream } from "@threahq/types"
 import type { UrgencyLevel } from "@/components/layout/sidebar/types"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
-import { scoreMatch } from "@/lib/match-score"
+import { matchBand, scoreMatch } from "@/lib/match-score"
 import { streamLabel } from "@/lib/streams"
 
 /** Sort modes used by stream pickers (quick switcher, share modal, share picker). */
@@ -40,6 +41,11 @@ export function scoreStreamMatch(
   return Infinity
 }
 
+/** Threads sort after top-level streams — see `compareStreamEntries`. */
+function typeRank(stream: SortableStream): number {
+  return stream.type === StreamTypes.THREAD ? 1 : 0
+}
+
 function compareNames(a: SortableStream, b: SortableStream): number {
   const aName = streamLabel(a)
   const bName = streamLabel(b)
@@ -58,7 +64,7 @@ export interface SortableEntry<S extends SortableStream> {
  * Comparator for stream picker entries. Mirrors the quick-switcher behavior so
  * the share dialog and share-target picker stay visually aligned with it.
  *
- *   - searching:         score → alphabetical (mode is ignored)
+ *   - searching:         match band → threads last (partial bands) → score → alphabetical
  *   - browsing/recency:  urgency → activity time → alphabetical
  *   - browsing/alpha:    alphabetical
  */
@@ -68,6 +74,15 @@ export function compareStreamEntries<S extends SortableStream>(
   options: { isSearching: boolean; mode: StreamSortMode }
 ): number {
   if (options.isSearching) {
+    const bandA = matchBand(a.score)
+    const bandB = matchBand(b.score)
+    if (bandA !== bandB) return bandA - bandB
+    // Only below the whole-word band: a thread whose title the query hits as a
+    // whole word still outranks a channel it only fragments.
+    if (bandA > 0) {
+      const typeDiff = typeRank(a.stream) - typeRank(b.stream)
+      if (typeDiff !== 0) return typeDiff
+    }
     if (a.score !== b.score) return a.score - b.score
     return compareNames(a.stream, b.stream)
   }

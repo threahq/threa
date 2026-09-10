@@ -2,9 +2,14 @@
  * TipTap extension for `is:` filter trigger in search mode.
  * Shows stream type options (scratchpad, channel, dm, thread) when user types `is:`.
  *
+ * The one list of stream types a filter can name: the typed `is:` trigger, the
+ * search panel's filter menu and the quick switcher's "Add filter" dropdown all
+ * read it. They drifted before — `thread` was typeable but not pickable.
+ *
  * Unlike mention/channel extensions, this inserts plain text, not a node.
  * Note: `type:` is kept as an alias in the parser but the primary trigger is `is:`.
  */
+import type { StreamType } from "@threahq/types"
 import { Extension } from "@tiptap/core"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
@@ -15,7 +20,7 @@ export const FilterTypePluginKey = new PluginKey("filterType")
 
 export interface FilterTypeItem {
   id: string
-  value: string
+  value: StreamType
   label: string
   description: string
 }
