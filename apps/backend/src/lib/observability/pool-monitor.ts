@@ -32,10 +32,20 @@ export interface PoolMonitorOptions {
  *   // Later...
  *   monitor.stop()
  */
+/** pg keeps every client it has handed out or is still dialling in `_clients`. */
+interface PoolInternals {
+  _clients?: { _connected?: boolean }[]
+}
+
+function countConnected(pool: Pool): number {
+  return (pool as unknown as PoolInternals)._clients?.filter((client) => client._connected === true).length ?? 0
+}
+
 export class PoolMonitor {
   private pools: Map<string, Pool>
   private intervalId?: NodeJS.Timeout
   private options: Required<PoolMonitorOptions>
+  private unconnectedSince = new Map<string, number>()
 
   constructor(pools: Record<string, Pool>, options: PoolMonitorOptions = {}) {
     this.pools = new Map(Object.entries(pools))
@@ -130,21 +140,19 @@ export class PoolMonitor {
       poolConnectionsWaiting.set({ pool: stats.poolName }, stats.waitingCount)
       poolUtilizationPercent.set({ pool: stats.poolName }, stats.utilizationPercent)
 
-      // Detect phantom connection state: high total count with persistent waiters suggests
-      // pool corruption where connections exist in _clients but aren't actually connected
+      // A client pg is still dialling counts against totalCount before it is
+      // connected, so a single unconnected client is normal and says nothing.
+      // One that is still unconnected a sample later is not dialling any more.
       const pool = this.pools.get(stats.poolName)
-      if (pool && stats.totalCount > 20 && hasWaiting && stats.waitingCount >= 10) {
-        const poolInternal = pool as any
-        const connectedCount = poolInternal._clients?.filter((c: any) => c._connected === true).length ?? 0
+      const unconnected = pool ? stats.totalCount - countConnected(pool) : 0
+      const priorSamples = unconnected > 0 ? (this.unconnectedSince.get(stats.poolName) ?? 0) : 0
+      this.unconnectedSince.set(stats.poolName, unconnected > 0 ? priorSamples + 1 : 0)
 
+      if (unconnected > 0 && priorSamples > 0) {
         logger.error(
-          {
-            ...logData,
-            connectedClients: connectedCount,
-            phantomClients: stats.totalCount - connectedCount,
-          },
-          `POOL CORRUPTION DETECTED: Pool '${stats.poolName}' has ${connectedCount} connected clients but ${stats.totalCount} total. ` +
-            `${stats.totalCount - connectedCount} phantom connections detected!`
+          { ...logData, unconnectedClients: unconnected, samples: priorSamples + 1 },
+          `Pool '${stats.poolName}' has held ${unconnected} unconnected client(s) for ${priorSamples + 1} samples; ` +
+            `they are occupying pool slots without a connection`
         )
       }
 

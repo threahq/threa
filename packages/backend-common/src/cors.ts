@@ -1,4 +1,5 @@
 import { HttpError } from "./errors"
+import { logger } from "./logger"
 
 type CorsOriginCallback = (err: Error | null, origin?: boolean) => void
 type CorsOriginChecker = (origin: string | undefined, callback: CorsOriginCallback) => void
@@ -18,6 +19,10 @@ export function createCorsOriginChecker(allowedOrigins: string[]): CorsOriginChe
       return
     }
 
+    // The 403 is an HttpError, which the error middleware answers without
+    // logging, so this is the only record of which origin was turned away —
+    // the one thing that separates a scanner from a misconfigured client.
+    logger.warn({ origin }, "Rejected a request from a disallowed CORS origin")
     callback(new HttpError("CORS origin not allowed", { status: 403, code: "CORS_ORIGIN_NOT_ALLOWED" }), false)
   }
 }
