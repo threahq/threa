@@ -89,6 +89,23 @@ describe("retainAssets", () => {
     expect(later).toMatchObject({ revived: 1, pruned: 0 })
   })
 
+  it("caps the store by mtime so a busy deploy day cannot breach the Pages file limit", async () => {
+    const start = Date.now()
+    // Four retained chunks from earlier builds, oldest first.
+    await writeAsset(retainDir, "oldest-001.js", "old", start - 40_000)
+    await writeAsset(retainDir, "older-002.js", "old", start - 30_000)
+    await writeAsset(retainDir, "newer-003.js", "new", start - 20_000)
+    await writeAsset(retainDir, "newest-004.js", "new", start - 10_000)
+    await writeAsset(distAssetsDir, "index-005.js", "entry")
+
+    const result = await retainAssets({ distAssetsDir, retainDir, now: start, maxFiles: 3 })
+
+    // The oldest two go first; the current build's chunk is re-stamped to now
+    // before the cap applies, so a live chunk can never be capped out.
+    expect(result.pruned).toBe(2)
+    expect((await readdir(retainDir)).sort()).toEqual(["index-005.js", "newer-003.js", "newest-004.js"])
+  })
+
   it("creates the retain store on first run and folds the build into it", async () => {
     await writeAsset(distAssetsDir, "index-BBB.js", "new-entry")
     await writeAsset(distAssetsDir, "vendor-FFF.js", "vendor")

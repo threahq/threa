@@ -32,6 +32,14 @@ export interface RetainAssetsOptions {
   now?: number
   /** How long a chunk that has dropped out of the build stays revivable. */
   retentionMs?: number
+  /**
+   * Hard ceiling on retained files. The age window alone does not bound the
+   * store: every build churns content-hashed names, and on a busy day the
+   * accumulated chunks can exceed Cloudflare Pages' 20,000-file deploy cap
+   * (2026-09-10). When the store passes the cap, the oldest-mtime entries go
+   * first — they are the least likely to be an old tab's missing chunk.
+   */
+  maxFiles?: number
 }
 
 export interface RetainAssetsResult {
@@ -44,6 +52,9 @@ export interface RetainAssetsResult {
 }
 
 const DEFAULT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000 // 14 days
+
+/** Well under Pages' 20,000-file deployment cap (INV-11: the deploy must not fail on volume). */
+const DEFAULT_MAX_FILES = 8_000
 
 export async function retainAssets(options: RetainAssetsOptions): Promise<RetainAssetsResult> {
   const now = options.now ?? Date.now()
@@ -81,6 +92,25 @@ export async function retainAssets(options: RetainAssetsOptions): Promise<Retain
     if (!info.isFile()) continue
     if (now - info.mtimeMs > retentionMs) {
       await rm(filePath)
+      pruned++
+    }
+  }
+
+  // Age alone doesn't bound the store (see maxFiles); enforce the ceiling after
+  // the age prune so a busy day of deploys cannot push a Pages deploy past its
+  // file cap.
+  let capped = 0
+  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
+  if (maxFiles < Number.POSITIVE_INFINITY) {
+    const survivors: Array<{ name: string; mtimeMs: number }> = []
+    for (const name of await readdir(retainDir)) {
+      const info = await stat(path.join(retainDir, name))
+      if (!info.isFile()) continue
+      survivors.push({ name, mtimeMs: info.mtimeMs })
+    }
+    survivors.sort((a, b) => b.mtimeMs - a.mtimeMs)
+    for (const file of survivors.slice(maxFiles)) {
+      await rm(path.join(retainDir, file.name))
       pruned++
     }
   }
