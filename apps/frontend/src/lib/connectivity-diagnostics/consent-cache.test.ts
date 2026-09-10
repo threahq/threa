@@ -106,6 +106,24 @@ describe("cached connectivity consent", () => {
     }).toEqual({ pending: [], tombstoned: true, restored: null })
   })
 
+  it("should preserve a repeated revocation while prior cleanup completes", () => {
+    cacheConnectivityAuthorization("account_1", config, grantedAt, () => "grant_1")
+    tombstoneConnectivityAuthorization("account_1", "ws_1", "scope_1", undefined, revokedAt)
+    const originalSetItem = Storage.prototype.setItem
+    let revoked = false
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+      if (value.includes('"cleanupPending":false') && !revoked) {
+        revoked = true
+        tombstoneConnectivityAuthorization("account_1", "ws_1", "scope_1", undefined, revokedAt)
+      }
+      return originalSetItem.call(this, key, value)
+    })
+
+    clearConnectivityConsentTombstone("grant_1")
+
+    expect(readPendingConnectivityRevocations()).toEqual([{ scope: "scope_1", consentId: "grant_1" }])
+  })
+
   it("should bound independently stored revocations", () => {
     for (let index = 0; index < 110; index++) {
       const workspaceId = `ws_${index}`

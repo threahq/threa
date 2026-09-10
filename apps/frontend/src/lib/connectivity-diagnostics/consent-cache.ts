@@ -30,7 +30,7 @@ function authorizationKey(accountId: string, workspaceId: string): string {
 }
 
 function revocationKey(key: string, decisionVersion: string, consentId: string): string {
-  return `${REVOCATION_PREFIX}:${encodeURIComponent(key)}:${encodeURIComponent(decisionVersion)}:${encodeURIComponent(consentId)}`
+  return `${REVOCATION_PREFIX}:${encodeURIComponent(key)}:${encodeURIComponent(decisionVersion)}:${encodeURIComponent(consentId)}:${crypto.randomUUID()}`
 }
 
 function isConfig(value: unknown): value is AuthorizedConnectivityDiagnosticsConfig {
