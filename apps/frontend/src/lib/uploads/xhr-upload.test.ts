@@ -101,7 +101,16 @@ describe("xhrUpload connectivity phases", () => {
     xhr.onload?.()
 
     await expect(result).resolves.toEqual({ status: 201, body: {} })
-    expect(events.map((entry) => entry.event)).toEqual(["http_start", "http_upload_complete"])
+    const base = {
+      method: "POST" as const,
+      route: "attachments" as const,
+      transport: "xhr" as const,
+      operationId: "op_test",
+    }
+    expect(events).toEqual([
+      { event: "http_start", fields: base },
+      { event: "http_upload_complete", fields: base },
+    ])
   })
 
   it("should preserve caller cancellation and classify it as an abort", async () => {

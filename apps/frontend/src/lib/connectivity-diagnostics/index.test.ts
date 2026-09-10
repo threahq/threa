@@ -379,11 +379,15 @@ describe("connectivity diagnostics persistence", () => {
   })
 
   it("should retain a single-task burst beyond the drain target", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }))
+    const batches: Array<Array<{ properties: { operationId: string } }>> = []
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      batches.push(JSON.parse(String(init?.body)).batch)
+      return new Response(null, { status: 200 })
+    })
     configureConnectivityDiagnostics(scope)
     await new Promise((resolve) => setTimeout(resolve, 0))
     const operationIds = Array.from(
-      { length: connectivityDiagnosticsTestApi.MAX_MEMORY_HARD_ROWS + 20 },
+      { length: connectivityDiagnosticsTestApi.MAX_MEMORY_HARD_ROWS },
       (_, index) => `op_${index}`
     )
     for (const operationId of operationIds)
@@ -391,6 +395,12 @@ describe("connectivity diagnostics persistence", () => {
     await settleWrites()
 
     expect(await flushConnectivityDiagnostics()).toBe(true)
+    expect(
+      batches
+        .flat()
+        .map((event) => event.properties.operationId)
+        .sort()
+    ).toEqual(operationIds.sort())
     expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
   })
 
