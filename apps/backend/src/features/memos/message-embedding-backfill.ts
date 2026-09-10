@@ -4,7 +4,8 @@ import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/back
 import { logger } from "../../lib/logger"
 import { MessageRepository, type Message } from "../messaging"
 import type { EmbeddingServiceLike } from "./embedding-service"
-import { hashEmbeddingText, loadMessageEmbeddingText } from "./message-embedding-text"
+import { hashEmbeddingText } from "./embedding-write-guard"
+import { loadMessageEmbeddingText } from "./message-embedding-text"
 
 /** The embeddings API caps tokens per request, and a chunk can hold up to 500 messages of up to 8k chars each. */
 const EMBED_SUB_BATCH_SIZE = 100

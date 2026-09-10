@@ -90,6 +90,6 @@ export { createEmbeddingWorker } from "./embedding-worker"
 export type { EmbeddingWorkerDeps } from "./embedding-worker"
 
 export { registerMessageEmbeddingBackfill } from "./message-embedding-backfill"
-export { hashEmbeddingText } from "./message-embedding-text"
+export { hashEmbeddingText, writeEmbeddingWithSourceHashGuard } from "./embedding-write-guard"
 
 export { createMemoHandlers, serializeMemoResult } from "./handlers"

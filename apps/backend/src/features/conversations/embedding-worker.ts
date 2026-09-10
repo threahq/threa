@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { ConversationEmbeddingJobData, JobHandler } from "../../lib/queue"
 import { logger } from "../../lib/logger"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { hashEmbeddingText, type EmbeddingServiceLike } from "../memos"
+import { writeEmbeddingWithSourceHashGuard, type EmbeddingServiceLike } from "../memos"
 import { ConversationRepository } from "./repository"
 import { isConversationEmbeddable, loadConversationEmbeddingTexts } from "./embedding-text"
 
@@ -13,9 +13,8 @@ export interface ConversationEmbeddingWorkerDeps {
 
 /**
  * Three phases (INV-41): read the conversation and its opener, embed with no
- * connection held, write back. The write is a CAS on the source hash observed
- * before embedding; when another writer moved it meanwhile the job throws so
- * the queue retries against the current text (INV-20).
+ * connection held, write back under a CAS on the source hash observed before
+ * embedding (INV-20).
  */
 export function createConversationEmbeddingWorker(
   deps: ConversationEmbeddingWorkerDeps
@@ -43,23 +42,17 @@ export function createConversationEmbeddingWorker(
       return
     }
 
-    const text = (await loadConversationEmbeddingTexts(pool, [conversation])).get(conversation.id) ?? ""
-    const sourceHash = hashEmbeddingText(text)
-    const storedHashes = await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversation.id])
-    const expectedSourceHash = storedHashes.get(conversation.id) ?? null
-    if (expectedSourceHash === sourceHash) {
-      log.debug("Embedding text unchanged, skipping")
-      return
-    }
+    const outcome = await writeEmbeddingWithSourceHashGuard({
+      subject: conversation.id,
+      loadText: async () => (await loadConversationEmbeddingTexts(pool, [conversation])).get(conversation.id) ?? "",
+      readExpectedHash: async () =>
+        (await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversation.id])).get(
+          conversation.id
+        ) ?? null,
+      embed: (text) => embeddingService.embed(text, { workspaceId, functionId: "conversation-embedding" }),
+      write: (row) => ConversationRepository.updateEmbeddings(pool, workspaceId, [{ id: conversation.id, ...row }]),
+    })
 
-    const embedding = await embeddingService.embed(text, { workspaceId, functionId: "conversation-embedding" })
-
-    const written = await ConversationRepository.updateEmbeddings(pool, workspaceId, [
-      { id: conversation.id, embedding, sourceHash, expectedSourceHash },
-    ])
-    if (written === 0) {
-      throw new Error(`Conversation ${conversation.id} embedding source changed during embed; retrying`)
-    }
-    log.info("Conversation embedding stored")
+    if (outcome === "written") log.info("Conversation embedding stored")
   }
 }
