@@ -5,7 +5,8 @@ import { useSocket, useWorkspaceService } from "@/contexts"
 import { useAccountScope, useUser } from "@/auth"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { getQueryLoadState, isTerminalBootstrapError } from "@/lib/query-load-state"
-import { db } from "@/db"
+import { db, getActiveDb } from "@/db"
+import { getAccountGeneration } from "@/db/event-writes"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
 import { useWorkspaceUsers, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
@@ -91,13 +92,16 @@ export function useWorkspaceBootstrap(workspaceId: string) {
   const hasTerminalError = existingQueryState?.status === "error" && isTerminalBootstrapError(existingQueryState.error)
   const query = useQuery({
     queryKey: workspaceKeys.bootstrap(workspaceId),
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
+      const account = { database: getActiveDb(), generation: getAccountGeneration() }
       debugBootstrap("Workspace bootstrap queryFn start", { workspaceId, hasSocket: !!socket })
       if (!socket) {
         debugBootstrap("Workspace bootstrap missing socket", { workspaceId })
         throw new Error("Socket not available for workspace subscription")
       }
       await joinRoomBestEffort(socket, `ws:${workspaceId}`, "WorkspaceBootstrap")
+      signal.throwIfAborted()
+      if (getAccountGeneration() !== account.generation) throw new DOMException("Account changed", "AbortError")
 
       // Capture timestamp BEFORE fetch — any socket writes during the fetch
       // will have _cachedAt > fetchStartedAt and survive stale cleanup.
@@ -108,6 +112,7 @@ export function useWorkspaceBootstrap(workspaceId: string) {
       // unnamed account goes to the network instead, stranding the prefetch and
       // handing a cold open a second, later source of truth to paint.
       const bootstrap = await workspaceService.bootstrap(workspaceId, { accountId: activeWorkosUserId })
+      signal.throwIfAborted()
       debugBootstrap("Workspace bootstrap fetch success", {
         workspaceId,
         streamCount: bootstrap.streams.length,
@@ -116,7 +121,7 @@ export function useWorkspaceBootstrap(workspaceId: string) {
       // Shred bootstrap into individual IDB tables (including unreadState +
       // userPreferences); cache the returned merged bootstrap so the query
       // cache carries the same counter values as IDB.
-      return (await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)).bootstrap
+      return (await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt, account)).bootstrap
     },
     // Keep terminal auth/not-found errors disabled to avoid loops.
     // Non-terminal errors can recover automatically on future attempts.
