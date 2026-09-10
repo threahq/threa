@@ -13,6 +13,7 @@ import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as streamKeyCacheModule from "@/lib/crypto/stream-key-cache"
 import * as messageEnvelopeModule from "@/lib/crypto/message-envelope"
 import * as boardCardMessagesModule from "@/hooks/use-board-card-messages"
+import * as optimisticSequenceModule from "@/lib/optimistic-sequence"
 import { bumpAccountGeneration } from "@/db/event-writes"
 
 const WORKSPACE_ID = "ws_1"
@@ -272,8 +273,9 @@ describe("useQueueDraftMessage", () => {
     mockUnlockedSession()
 
     const { result } = setup()
+    let clientId = ""
     await act(async () => {
-      await result.current.queueDraftMessage(
+      ;({ clientId } = await result.current.queueDraftMessage(
         { contentJson: CONTENT },
         {
           workspaceId: WORKSPACE_ID,
@@ -282,11 +284,68 @@ describe("useQueueDraftMessage", () => {
           draftId: PANEL_ID,
           e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
         }
+      ))
+    })
+
+    // The positive control for the guard: the row that reaches the database must
+    // be the composed one, not merely a call that happened.
+    expect(mockPendingAdd.mock.calls).toEqual([
+      [
+        {
+          clientId,
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          content: "hi",
+          contentFormat: "markdown",
+          contentJson: CONTENT,
+          attachmentIds: undefined,
+          composeTrace: undefined,
+          steer: undefined,
+          createdAt: expect.any(Number),
+          retryCount: 0,
+          streamCreation: threadCreation,
+          conversation: undefined,
+          draftId: PANEL_ID,
+          ciphertext: "CT",
+          envelope: { v: 2, keyGeneration: 3, iv: "iv", aad: "aad" },
+          e2eVersion: 2,
+        },
+      ],
+    ])
+    expect(mockEventsAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: clientId,
+        _clientId: clientId,
+        workspaceId: WORKSPACE_ID,
+        streamId: PANEL_ID,
+        _status: "pending",
+        payload: expect.objectContaining({ messageId: clientId, contentMarkdown: "hi", contentJson: CONTENT }),
+      })
+    )
+    expect(mockNotifyQueue).toHaveBeenCalledTimes(1)
+  })
+
+  it("allocates both optimistic sequences from the composing account's database", async () => {
+    mockUnlockedSession()
+    const captured = dbModule.getActiveDb()
+    const anchorSpy = vi.spyOn(streamSyncModule, "getLatestPersistedSequence").mockResolvedValue("41")
+    const nextSpy = vi.spyOn(optimisticSequenceModule, "nextOptimisticSequence").mockResolvedValue("42")
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        { workspaceId: WORKSPACE_ID, streamId: PANEL_ID, streamCreation: threadCreation, draftId: PANEL_ID }
       )
     })
 
-    expect(mockPendingAdd).toHaveBeenCalledTimes(1)
-    expect(mockEventsAdd).toHaveBeenCalledTimes(1)
-    expect(mockNotifyQueue).toHaveBeenCalledTimes(1)
+    // Both helpers default to the *active* database. Reading it inside the
+    // transaction would look at the replacement account after a switch, so the
+    // captured handle has to be passed explicitly.
+    expect(anchorSpy).toHaveBeenCalledWith(PANEL_ID, captured)
+    expect(nextSpy).toHaveBeenCalledWith(PANEL_ID, undefined, captured)
+    expect(mockEventsAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ sequence: "42", _sequenceNum: 42, _anchorSequenceNum: 41 })
+    )
   })
 })

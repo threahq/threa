@@ -199,9 +199,13 @@ export function useQueueDraftMessage(workspaceId: string) {
       try {
         const { database } = account
         await database.transaction("rw", [database.pendingMessages, database.events], async () => {
+          // Both helpers read `events`, and both default to the *active*
+          // database — after a switch that is the replacement account's, outside
+          // this transaction, so the sequences would be allocated against the
+          // wrong tail and the generation check below would abort the send.
           const [anchorSequence, allocatedSequence] = await Promise.all([
-            getLatestPersistedSequence(params.streamId),
-            nextOptimisticSequence(params.streamId),
+            getLatestPersistedSequence(params.streamId, database),
+            nextOptimisticSequence(params.streamId, undefined, database),
           ])
           if (getAccountGeneration() !== account.generation) {
             throw new Error("Cannot send message: the account that composed it is no longer active")

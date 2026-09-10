@@ -222,8 +222,10 @@ describe("upload-manager", () => {
     await vi.waitFor(() => expect(attachmentsApi.reserve).toHaveBeenCalled())
     await Promise.resolve()
 
-    expect(findUploadJob(job.jobId)?.status).not.toBe("error")
-    expect(report).not.toHaveBeenCalled()
+    expect({ job: findUploadJob(job.jobId), reports: report.mock.calls }).toEqual({
+      job: expect.objectContaining({ status: "reserving" }),
+      reports: [],
+    })
   })
 
   it("a byte transfer refused because the account moved keeps the durable job for its own account", async () => {
@@ -242,9 +244,15 @@ describe("upload-manager", () => {
 
     // The row survives in this account's database, so the transfer resumes when
     // that account is active again — and nothing read the refusal as "settled".
-    expect(await db.uploadJobs.get("attach_moved")).toMatchObject({ status: "pending" })
-    expect(findUploadJob(job.jobId)?.status).not.toBe("error")
-    expect(report).not.toHaveBeenCalled()
+    expect({
+      persisted: await db.uploadJobs.get("attach_moved"),
+      job: findUploadJob(job.jobId),
+      reports: report.mock.calls,
+    }).toEqual({
+      persisted: expect.objectContaining({ status: "pending" }),
+      job: expect.objectContaining({ status: "uploading" }),
+      reports: [],
+    })
   })
 
   it("network errors retry with backoff and can still succeed", async () => {

@@ -1,5 +1,6 @@
+import { useEffect, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, render, waitFor } from "@/test"
+import { act, fireEvent, render, screen, waitFor } from "@/test"
 import { AuthProvider, useAuth } from "@/auth"
 import { AccountScopeProvider, useAccountScope, type AccountScopeValue } from "@/auth/account-scope"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
@@ -8,7 +9,8 @@ import { reportAccountMismatch } from "@/api/account-assertion"
 import { hasSeededWorkspaceCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { addIncomingCall, getIncomingCalls } from "@/stores/incoming-call-store"
 import { getFloatingSurfaceGeometry, publishFloatingSurfaceGeometry } from "@/stores/floating-surface-geometry-store"
-import type { CachedWorkspace } from "@/db"
+import { accountDbName, getActiveDb, type CachedWorkspace } from "@/db"
+import { openCompose, useComposeOverlay } from "@/stores/compose-overlay-store"
 
 // PR-4a headline test. Mounts the real AuthProvider + AccountScopeProvider
 // (not the full App: that drags in socket.io, the router, and every route
@@ -83,7 +85,13 @@ function stallRevalidation() {
 // mounted here, so the injected navigation records instead of navigating.
 const landings: string[] = []
 
-function mountScopeTree() {
+interface MountOptions {
+  /** Mounted inside the keyed per-account subtree, alongside the probe. */
+  children?: ReactNode
+  landAt?: (path: string) => void | Promise<unknown>
+}
+
+function mountScopeTree(opts?: MountOptions) {
   const handle: { current: AccountScopeValue | null } = { current: null }
   const identity: { current: { id: string; email: string; name: string } | null | undefined } = { current: undefined }
   function Probe() {
@@ -91,10 +99,12 @@ function mountScopeTree() {
     identity.current = useAuth().user
     return null
   }
+  const landAt = opts?.landAt ?? ((path: string) => void landings.push(path))
   const utils = render(
     <AuthProvider>
-      <AccountScopeProvider landAt={(path) => void landings.push(path)}>
+      <AccountScopeProvider landAt={landAt}>
         <Probe />
+        {opts?.children}
       </AccountScopeProvider>
     </AuthProvider>
   )
@@ -105,6 +115,52 @@ async function waitForActive(handle: { current: AccountScopeValue | null }, id: 
   await waitFor(() => {
     expect(handle.current?.activeWorkosUserId).toBe(id)
   })
+}
+
+/** `/api/accounts/switch` refuses; identity revalidation keeps naming account A. */
+function failSwitch(status = 500) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.endsWith("/api/auth/me")) return meResponse("workos_A")
+    return { status, ok: false, json: async () => ({}) } as unknown as Response
+  })
+  vi.stubGlobal("fetch", fetchMock)
+  return fetchMock
+}
+
+/**
+ * A stand-in for the real queue processors (outbox drain, operation queue):
+ * kicked from a mount effect, running under the account fence, exiting the
+ * moment its account is retired and leaving its rows pending.
+ */
+function makeQueueProcessor() {
+  const drained: string[] = []
+  const pending = ["m1", "m2"]
+  let mounts = 0
+  let opened = false
+  let open: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    open = () => {
+      opened = true
+      resolve()
+    }
+  })
+
+  function QueueProcessor() {
+    useEffect(() => {
+      mounts += 1
+      void runAccountOwnedWork(async (fence) => {
+        while (pending.length > 0) {
+          if (!opened) await gate
+          if (fence.isRetired()) return
+          drained.push(pending.shift()!)
+        }
+      })
+    }, [])
+    return null
+  }
+
+  return { QueueProcessor, drained, mounts: () => mounts, open: () => open() }
 }
 
 describe("AccountScope", () => {
@@ -452,5 +508,221 @@ describe("AccountScope", () => {
     expect(scopeB.getQueryClient().getQueryData(QUERY_KEY)).toBeUndefined()
     expect(getIncomingCalls()).toHaveLength(0)
     expect(cancelSpy).toHaveBeenCalled()
+  })
+
+  it("should notify module-store subscribers after commit, never mid-render", async () => {
+    // `flushModuleStoreCaches` emits to real `useSyncExternalStore` subscribers.
+    // Run from the provider's render pass, those emits schedule updates on
+    // components React is already rendering — a render-phase update, and an
+    // inconsistent snapshot for anything reading the store on the same pass.
+    const overlayOpen: boolean[] = []
+    function OverlaySubscriber() {
+      overlayOpen.push(useComposeOverlay().open)
+      return null
+    }
+    const handle: { current: AccountScopeValue | null } = { current: null }
+    function Probe() {
+      handle.current = useAccountScope()
+      return null
+    }
+
+    const consoleErrors: string[] = []
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      consoleErrors.push(args.map((a) => String(a)).join(" "))
+    })
+
+    try {
+      render(
+        <>
+          <OverlaySubscriber />
+          <AuthProvider>
+            <AccountScopeProvider landAt={(path) => void landings.push(path)}>
+              <Probe />
+            </AccountScopeProvider>
+          </AuthProvider>
+        </>
+      )
+      await waitForActive(handle, "workos_A")
+
+      await act(async () => {
+        openCompose("stream_A")
+      })
+      expect(overlayOpen.at(-1)).toBe(true)
+
+      await act(async () => {
+        await handle.current!.switchAccount("workos_B")
+      })
+      await waitForActive(handle, "workos_B")
+    } finally {
+      errorSpy.mockRestore()
+    }
+
+    // The subscriber really is wired to the reset (so a silent listener can't
+    // pass this), and React never saw an update scheduled during a render.
+    expect({
+      overlayAfterSwitch: overlayOpen.at(-1),
+      renderPhaseWarnings: consoleErrors.filter((e) => e.includes("while rendering a different component")),
+    }).toEqual({ overlayAfterSwitch: false, renderPhaseWarnings: [] })
+  })
+
+  it("should restart the retired account's processors when the switch itself fails", async () => {
+    // The retirement runs before the request, so a refused switch leaves the
+    // account it never left with stopped processors and rows still pending —
+    // and nothing scheduled to kick them.
+    const proc = makeQueueProcessor()
+    const { handle } = mountScopeTree({ children: <proc.QueueProcessor /> })
+    await waitForActive(handle, "workos_A")
+    const mountsBefore = proc.mounts()
+    expect(proc.drained).toEqual([])
+
+    failSwitch()
+    let failure: unknown = null
+    await act(async () => {
+      const switching = handle.current!.switchAccount("workos_B").catch((e: unknown) => {
+        failure = e
+      })
+      // The epoch is already raised; let the parked drain observe it and exit.
+      proc.open()
+      await switching
+    })
+
+    await waitFor(() => expect(proc.drained).toEqual(["m1", "m2"]))
+    expect({
+      active: handle.current?.activeWorkosUserId,
+      error: String(failure),
+      // Restarted by remounting the same account, not by rewinding the epoch.
+      remounts: proc.mounts() - mountsBefore,
+    }).toEqual({ active: "workos_A", error: "Error: Account switch failed (500)", remounts: 1 })
+  })
+
+  it("should leave a newer retirement alone when a stale switch attempt fails", async () => {
+    // Another tab flips this browser to C while this tab's switch to B is still
+    // on the wire. When B's request finally fails, its retirement is no longer
+    // the one in force: C is mounted and running, and a resume from the stale
+    // attempt would tear C's subtree down for nothing.
+    let rejectSwitch: (reason: Error) => void = () => {}
+    let sessionId = "workos_A"
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString()
+        if (url.endsWith("/api/auth/me")) return meResponse(sessionId)
+        return new Promise<Response>((_resolve, reject) => {
+          rejectSwitch = reject
+        })
+      })
+    )
+
+    let mounts = 0
+    function MountCounter() {
+      useEffect(() => {
+        mounts += 1
+      }, [])
+      return null
+    }
+    const { handle } = mountScopeTree({ children: <MountCounter /> })
+    await waitForActive(handle, "workos_A")
+    const mountsBefore = mounts
+
+    let failure: unknown = null
+    const switching = handle.current!.switchAccount("workos_B").catch((e: unknown) => {
+      failure = e
+    })
+
+    const otherTab = new BroadcastChannel("threa-auth")
+    sessionId = "workos_C"
+    await act(async () => {
+      otherTab.postMessage({ type: "switched", activeWorkosUserId: "workos_C" })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    otherTab.close()
+    await waitForActive(handle, "workos_C")
+    const mountsAfterAdoption = mounts
+
+    await act(async () => {
+      rejectSwitch(new Error("network down"))
+      await switching
+    })
+
+    expect({
+      active: handle.current?.activeWorkosUserId,
+      error: String(failure),
+      adoptionRemounts: mountsAfterAdoption - mountsBefore,
+      // The stale attempt is not the retirement in force: C keeps running.
+      staleAttemptRemounts: mounts - mountsAfterAdoption,
+    }).toEqual({ active: "workos_C", error: "Error: network down", adoptionRemounts: 1, staleAttemptRemounts: 0 })
+  })
+
+  it("should surface a landing that never settles instead of revealing the wrong URL", async () => {
+    let settleLanding: (() => void) | null = null
+    const landAt = vi.fn((path: string) => {
+      landings.push(path)
+      return new Promise<void>((resolve) => {
+        settleLanding = resolve
+      })
+    })
+    const { handle } = mountScopeTree({ landAt })
+    await waitForActive(handle, "workos_A")
+
+    // Fake timers only from here: the landing's timeout is armed by the switch.
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        await handle.current!.switchAccount("workos_B")
+      })
+      expect(screen.queryByText("Couldn't open this account")).toBeNull()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+      })
+      // The account is right, the URL is not: say so rather than revealing the
+      // outgoing account's location under the new account.
+      expect(screen.getByText("Couldn't open this account")).toBeInTheDocument()
+      expect(handle.current?.activeWorkosUserId).toBe("workos_A")
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }))
+      })
+      await act(async () => {
+        settleLanding?.()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect({
+        landingCalls: landAt.mock.calls.map(([path]) => path),
+        active: handle.current?.activeWorkosUserId,
+        errorShown: screen.queryByText("Couldn't open this account"),
+      }).toEqual({ landingCalls: ["/workspaces", "/workspaces"], active: "workos_B", errorShown: null })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("should let the outgoing subtree's teardown write to its own database", async () => {
+    // Unmount cleanups run under whatever the `db` proxy points at when they
+    // fire. Moving the pointer while the outgoing subtree was still mounted put
+    // its last writes — read state, draft flushes, upload bookkeeping — into the
+    // account that replaced it. The handover drops the subtree first, so the
+    // pointer only moves once there is nothing left to write.
+    let teardownDbName: string | null = null
+    function Departing() {
+      useEffect(() => {
+        return () => {
+          teardownDbName = getActiveDb().name
+        }
+      }, [])
+      return null
+    }
+
+    const { handle } = mountScopeTree({ children: <Departing /> })
+    await waitForActive(handle, "workos_A")
+    teardownDbName = null
+
+    await act(async () => {
+      await handle.current!.switchAccount("workos_B")
+    })
+    await waitForActive(handle, "workos_B")
+
+    expect(teardownDbName).toBe(accountDbName("workos_A"))
   })
 })

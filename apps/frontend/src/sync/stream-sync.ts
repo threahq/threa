@@ -169,8 +169,11 @@ export async function bumpLaterOptimisticAnchors(
     })
 }
 
-export async function getLatestPersistedSequence(streamId: string): Promise<string | null> {
-  const latestEvent = await db.events
+export async function getLatestPersistedSequence(
+  streamId: string,
+  database: ThreaDatabase = getActiveDb()
+): Promise<string | null> {
+  const latestEvent = await database.events
     .where("[streamId+_sequenceNum]")
     .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
@@ -1037,7 +1040,8 @@ export async function updateMemoEmbedSummary(streamId: string, summary: MemoEmbe
 export async function updateMessageEvent(
   streamId: string,
   messageId: string,
-  updater: (payload: Record<string, unknown>) => Record<string, unknown>
+  updater: (payload: Record<string, unknown>) => Record<string, unknown>,
+  database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
   // modify() runs the callback inside a readwrite cursor so the read and write
   // are atomic. This prevents lost updates when multiple socket handlers
@@ -1061,7 +1065,7 @@ export async function updateMessageEvent(
   // `false` (not a bare return) is what tells Dexie to SKIP the row: any
   // other return value re-puts it, which would fire observability for every
   // same-id row in another stream.
-  await db.events
+  await database.events
     .where("payload.messageId")
     .equals(messageId)
     .modify((event) => {
@@ -1080,13 +1084,14 @@ export async function updateMessageEvent(
 export async function updateEventByAnchor(
   streamId: string,
   anchorId: string,
-  updater: (payload: Record<string, unknown>) => Record<string, unknown>
+  updater: (payload: Record<string, unknown>) => Record<string, unknown>,
+  database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
   if (anchorId.startsWith("msg_")) {
-    await updateMessageEvent(streamId, anchorId, updater)
+    await updateMessageEvent(streamId, anchorId, updater, database)
     return
   }
-  await db.events
+  await database.events
     .where("id")
     .equals(anchorId)
     .modify((event) => {
@@ -1151,11 +1156,13 @@ export async function optimisticReplyCountUpdate(
  * created, we swap the threadId to the server-assigned one so navigation
  * targets the real thread.
  */
-export async function setParentThreadId(parentStreamId: string, anchorId: string, threadId: string): Promise<void> {
-  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
-    ...p,
-    threadId,
-  }))
+export async function setParentThreadId(
+  parentStreamId: string,
+  anchorId: string,
+  threadId: string,
+  database: ThreaDatabase = getActiveDb()
+): Promise<void> {
+  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({ ...p, threadId }), database)
 }
 
 // ============================================================================

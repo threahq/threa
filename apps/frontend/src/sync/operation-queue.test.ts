@@ -39,6 +39,29 @@ function cachedScheduledRow(overrides: Partial<CachedScheduledMessage> = {}): Ca
   }
 }
 
+function wireDraftRow(id: string, version: number) {
+  return {
+    id,
+    workspaceId,
+    userId: "usr_1",
+    scope: "stream:stream_1",
+    rootStreamId: null,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "",
+    attachmentIds: [],
+    command: null,
+    contextRefs: null,
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
+    version,
+    clientUpdatedAt: new Date(1000).toISOString(),
+    stashedAt: null,
+    createdAt: new Date(1000).toISOString(),
+    updatedAt: new Date(1000).toISOString(),
+  }
+}
+
 const messageService = {
   update: vi.fn(),
   delete: vi.fn(),
@@ -64,6 +87,8 @@ beforeEach(async () => {
   vi.clearAllMocks()
   await db.pendingOperations.clear()
   await db.scheduledMessages.clear()
+  await db.drafts.clear()
+  await db.composerLoaded.clear()
 })
 
 describe("processOperationQueue permanent-4xx handling", () => {
@@ -268,5 +293,68 @@ describe("processOperationQueue database capture", () => {
 
     expect(await replacementDb.scheduledMessages.toArray()).toEqual([])
     expect(await claimedDb.scheduledMessages.get(schedId)).toMatchObject({ status: "sent" })
+  })
+
+  it("should reconcile a split draft push entirely in the database it claimed the op from", async () => {
+    // The split path is the deepest tail in the queue: an id migration, a
+    // cancel, a re-enqueue and a kept-row seed, each its own await. Passing the
+    // captured handle to `executeDraftUpsert` alone would still leave every one
+    // of those resolving the *active* database — the replacement account's.
+    const claimedDb = getActiveDb()
+    await claimedDb.drafts.put({
+      id: "draft_x",
+      workspaceId,
+      scope: "stream:stream_1",
+      contentJson: { type: "doc", content: [] },
+      attachments: [],
+      baseVersion: 1,
+      clientUpdatedAt: 1000,
+      stashedAt: null,
+    } as unknown as Parameters<typeof claimedDb.drafts.put>[0])
+    await claimedDb.composerLoaded.put({ scope: "stream:stream_1", workspaceId, draftId: "draft_x" })
+    await enqueueOperation(workspaceId, "upsert_draft", { draftId: "draft_x", writeId: "write_a" })
+
+    const replacementDb = new ThreaDatabase(accountDbName("user_replacement_draft"))
+    const draftsService = {
+      upsert: vi.fn(async (_w: string, id: string) => {
+        // The switch lands while the push is on the wire.
+        setActiveDb(replacementDb)
+        if (id !== "draft_x") return { draft: wireDraftRow(id, 6), split: false } as unknown as never
+        return {
+          draft: wireDraftRow("draft_new", 5),
+          split: true,
+          originalId: id,
+          keptDraft: wireDraftRow("draft_x", 7),
+        } as unknown as never
+      }),
+      resolve: vi.fn(),
+      delete: vi.fn(),
+    }
+
+    try {
+      await processOperationQueue(
+        messageService,
+        reactionService,
+        undefined,
+        draftsService as unknown as Parameters<typeof processOperationQueue>[3],
+        () => true
+      )
+    } finally {
+      setActiveDb(claimedDb)
+    }
+
+    // Not one row, pointer or queued op in the arriving account's storage.
+    expect(await replacementDb.drafts.toArray()).toEqual([])
+    expect(await replacementDb.composerLoaded.toArray()).toEqual([])
+    expect(await replacementDb.pendingOperations.toArray()).toEqual([])
+
+    // All of it in the account that queued the push: our content under the
+    // server-minted id (composer following it) and the kept copy seeded back.
+    expect(await claimedDb.drafts.get("draft_new")).toMatchObject({ id: "draft_new", baseVersion: 6 })
+    expect(await claimedDb.drafts.get("draft_x")).toMatchObject({ id: "draft_x", baseVersion: 7 })
+    expect((await claimedDb.composerLoaded.get("stream:stream_1"))?.draftId).toBe("draft_new")
+    // The re-enqueued push for the migrated id was queued in — and drained
+    // from — the claimed database, so it actually reached the server.
+    expect(draftsService.upsert.mock.calls.map((call) => call[1])).toEqual(["draft_x", "draft_new"])
   })
 })

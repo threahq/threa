@@ -26,6 +26,16 @@ export interface AccountWorkFence {
   isRetired(): boolean
 }
 
+/**
+ * What one call to {@link retireAccountWork} retired, so a switch that fails
+ * before the account moves can tell whether it is still the attempt in charge.
+ * Both fields only ever move forward — a retirement is never undone.
+ */
+export interface AccountRetirement {
+  epoch: number
+  generation: number
+}
+
 let epoch = 0
 const inFlight = new Set<Promise<unknown>>()
 
@@ -55,8 +65,9 @@ export function runAccountOwnedWork<T>(run: (fence: AccountWorkFence) => Promise
  * {@link RETIRE_TIMEOUT_MS} regardless — a switch the user asked for is not
  * held hostage by a stalled request.
  */
-export async function retireAccountWork(timeoutMs: number = RETIRE_TIMEOUT_MS): Promise<void> {
+export async function retireAccountWork(timeoutMs: number = RETIRE_TIMEOUT_MS): Promise<AccountRetirement> {
   epoch += 1
+  const retirement: AccountRetirement = { epoch, generation: getAccountAssertionGeneration() }
   let timer: ReturnType<typeof setTimeout> | undefined
   await Promise.race([
     Promise.allSettled([...inFlight]),
@@ -65,4 +76,21 @@ export async function retireAccountWork(timeoutMs: number = RETIRE_TIMEOUT_MS): 
     }),
   ])
   clearTimeout(timer)
+  return retirement
+}
+
+/**
+ * True while `retirement` is still the newest one and the account it retired
+ * work for is still the active one. A caller whose switch failed uses this to
+ * decide whether it may restart the work it stopped: a newer retirement, or an
+ * account that moved anyway (a second switch, another tab's adoption), owns the
+ * fence now and a stale attempt must keep its hands off it.
+ *
+ * The epoch is deliberately never rewound. Work started after a retirement
+ * captured the raised epoch, so lowering it would make that work read itself as
+ * retired — restarting the stopped processors is the caller's job, not this
+ * module's.
+ */
+export function isRetirementCurrent(retirement: AccountRetirement): boolean {
+  return retirement.epoch === epoch && retirement.generation === getAccountAssertionGeneration()
 }

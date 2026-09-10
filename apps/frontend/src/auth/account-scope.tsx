@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import type { QueryClient } from "@tanstack/react-query"
 import { API_BASE } from "@/api/client"
 import { FallbackLoader } from "@/components/fallback-loader"
+import { ErrorView } from "@/components/error-view"
+import { Button } from "@/components/ui/button"
 import { accountHomePath } from "@/lib/last-workspace"
 import { ThreaDatabase, accountDbName } from "@/db"
 // Imported from the module directly, not the @/db barrel: AccountScope is the
@@ -32,7 +34,7 @@ import { resetIncomingCallStoreCache } from "@/stores/incoming-call-store"
 import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surface-geometry-store"
 import { resetRevealGate } from "@/sync/reveal-gate"
 import { resetUploadManager } from "@/lib/uploads/upload-manager"
-import { retireAccountWork } from "@/sync/account-fence"
+import { isRetirementCurrent, retireAccountWork } from "@/sync/account-fence"
 import { resetRowConfirmations } from "@/sync/bootstrap-diff"
 import { useAuth } from "./hooks"
 import type { User } from "./types"
@@ -154,10 +156,24 @@ interface AccountScopeProviderProps {
   landAt: (path: string) => void | Promise<unknown>
 }
 
-// A landing that never settles (a route chunk that fails to load) must not
-// leave the app on the splash forever — reveal the new account anyway. It is
-// already the correct account; only the destination URL is in doubt.
+// A landing that never settles (a route chunk that fails to load) must not leave
+// the app on the splash forever. Revealing anyway was worse: the account is
+// right but the URL is the outgoing account's, so the app looks like it worked
+// and shows the wrong place. Say so and offer the retry instead.
 const LANDING_TIMEOUT_MS = 5000
+
+function LandingFailed({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center">
+      <ErrorView
+        title="Couldn't open this account"
+        description="You're signed in to the right account, but we couldn't reach its home page."
+      >
+        <Button onClick={onRetry}>Try again</Button>
+      </ErrorView>
+    </div>
+  )
+}
 
 export function AccountScopeProvider({ children, landAt }: AccountScopeProviderProps) {
   // AuthProvider owns which account is active — for identity and for storage
@@ -166,6 +182,13 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   const { activeWorkosUserId: effectiveId, activateAccount } = useAuth()
 
   const [pendingLanding, setPendingLanding] = useState<string | null>(null)
+  const [landingFailed, setLandingFailed] = useState(false)
+  const [landingAttempt, setLandingAttempt] = useState(0)
+  // The account whose subtree is currently mounted, and a nonce that lets the
+  // provider remount that subtree without changing account. `null` means
+  // nothing is adopted yet, which `null`-the-account-id cannot express.
+  const [adopted, setAdopted] = useState<{ id: string | null } | null>(null)
+  const [resumeNonce, setResumeNonce] = useState(0)
 
   const dbRegistry = useRef(new Map<string, ThreaDatabase>())
   const qcRegistry = useRef(new Map<string, QueryClient>())
@@ -188,14 +211,25 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
     return qc
   }, [])
 
-  // One retirement point for every way the active account can change — this
-  // tab's switch, another tab's broadcast, and a revalidation that discovers
-  // the browser moved on without it. Whoever changed it, the outgoing account's
-  // queries and module snapshots drop here, before the new subtree mounts.
-  const retiredIdRef = useRef(effectiveId)
-  if (effectiveId !== retiredIdRef.current) {
-    const outgoing = retiredIdRef.current
-    retiredIdRef.current = effectiveId
+  // The subtree belongs to `adopted.id`; while that differs from the active
+  // account there is nothing safe to render, so it is hidden until the handover
+  // below completes.
+  const handingOver = adopted === null || adopted.id !== effectiveId
+
+  // The one account-change handover — this tab's switch, another tab's
+  // broadcast, a revalidation that discovers the browser moved on without it.
+  // It runs after commit, never during render, for two reasons that both cost
+  // us a bug: the module-store resets emit synchronously to live
+  // `useSyncExternalStore` subscribers (a render-phase update), and the
+  // outgoing subtree is still mounted during the render that discovers the
+  // change — moving the `db` proxy there pointed its unmount cleanups at the
+  // incoming account's database. By the time this effect runs the outgoing
+  // subtree is gone, so its last writes landed in its own database, and the
+  // incoming one has not mounted, so no frame pairs the new identity with the
+  // previous account's data.
+  useEffect(() => {
+    if (adopted && adopted.id === effectiveId) return
+    const outgoing = adopted?.id ?? null
     if (outgoing) {
       // Abort in-flight queries on the now-stale client so a late response
       // can never land in the orphaned cache. Storage isolation (distinct DB
@@ -204,16 +238,12 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       qcRegistry.current.get(outgoing)?.cancelQueries()
       flushModuleStoreCaches()
     }
-  }
-
-  // Redirect the shared `db` proxy at the active account *before* the keyed
-  // subtree (and its useLiveQuery / SyncEngine) renders. Idempotent registry
-  // lookup + pointer move; intentionally render-time so the swap is atomic
-  // w.r.t. children mounting (see db/database.ts INV-9 note). Pre-auth we
-  // leave the default "threa" handle in place.
-  if (effectiveId) {
-    setActiveDb(resolveDb(effectiveId))
-  }
+    // Redirect the shared `db` proxy at the active account before the keyed
+    // subtree (and its useLiveQuery / SyncEngine) mounts. Pre-auth keeps the
+    // default "threa" handle in place.
+    if (effectiveId) setActiveDb(resolveDb(effectiveId))
+    setAdopted({ id: effectiveId })
+  }, [adopted, effectiveId, resolveDb])
 
   const effectiveIdRef = useRef(effectiveId)
   effectiveIdRef.current = effectiveId
@@ -228,6 +258,7 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   const adoptAccount = useCallback(
     (targetUserId: string, identity: User | null, landing: "account-home" | "keep-location") => {
       activateAccount(targetUserId, identity)
+      setLandingFailed(false)
       if (landing === "account-home") setPendingLanding(accountHomePath(targetUserId))
     },
     [activateAccount]
@@ -254,18 +285,27 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
   useEffect(() => {
     if (!pendingLanding) return
     let settled = false
-    const reveal = () => {
+    const finish = (landed: boolean) => {
       if (settled) return
       settled = true
-      setPendingLanding(null)
+      if (landed) setPendingLanding(null)
+      else setLandingFailed(true)
     }
-    const timer = setTimeout(reveal, LANDING_TIMEOUT_MS)
-    void Promise.resolve(landAt(pendingLanding)).then(reveal, reveal)
+    const timer = setTimeout(() => finish(false), LANDING_TIMEOUT_MS)
+    void Promise.resolve(landAt(pendingLanding)).then(
+      () => finish(true),
+      () => finish(false)
+    )
     return () => {
       settled = true
       clearTimeout(timer)
     }
-  }, [pendingLanding, landAt])
+  }, [pendingLanding, landAt, landingAttempt])
+
+  const retryLanding = useCallback(() => {
+    setLandingFailed(false)
+    setLandingAttempt((n) => n + 1)
+  }, [])
 
   const switchAccount = useCallback(
     async (targetUserId: string, opts?: SwitchAccountOptions): Promise<void> => {
@@ -273,19 +313,36 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
       // BEFORE its credential moves: a message on the wire settles under the
       // account that composed it and nothing new starts. Bounded, so a stalled
       // request cannot hold the switch (see sync/account-fence).
-      await retireAccountWork()
-      const res = await fetch(`${API_BASE}/api/accounts/switch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ targetUserId }),
-      })
-      if (!res.ok) {
-        throw new Error(`Account switch failed (${res.status})`)
+      const retirement = await retireAccountWork()
+      try {
+        const res = await fetch(`${API_BASE}/api/accounts/switch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ targetUserId }),
+        })
+        if (!res.ok) {
+          throw new Error(`Account switch failed (${res.status})`)
+        }
+        const { activeUserId } = (await res.json()) as { activeUserId: string }
+        adoptAccount(activeUserId, opts?.identity ?? null, opts?.landing ?? "account-home")
+        channelRef.current?.postMessage({
+          type: "switched",
+          activeWorkosUserId: activeUserId,
+        } satisfies SwitchedMessage)
+      } catch (err) {
+        // The account never moved, but its work is already retired: the queue
+        // and outbox processors returned and their rows sit pending with
+        // nothing left to kick them. Remounting the same account's subtree
+        // re-runs the socket/SyncEngine mounts that drain them. Lowering the
+        // epoch instead would be wrong twice over — it restarts nothing, and
+        // work started after the retirement captured the raised value and
+        // would read itself as retired. If a newer retirement landed while
+        // this attempt was on the wire (a second switch, another tab's
+        // adoption), that one owns the fence and this attempt stays out.
+        if (isRetirementCurrent(retirement)) setResumeNonce((n) => n + 1)
+        throw err
       }
-      const { activeUserId } = (await res.json()) as { activeUserId: string }
-      adoptAccount(activeUserId, opts?.identity ?? null, opts?.landing ?? "account-home")
-      channelRef.current?.postMessage({ type: "switched", activeWorkosUserId: activeUserId } satisfies SwitchedMessage)
     },
     [adoptAccount]
   )
@@ -303,16 +360,18 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
     scopedKey,
   }
 
-  // Keyed remount boundary: changing the active account unmounts the old
-  // per-account subtree and mounts a fresh one — atomic swap of QueryClient,
-  // socket, SyncEngine, and every useState/useRef/useLiveQuery below it. While
-  // a landing is pending the subtree stays unmounted, so the destination's
-  // first mount is already at its own URL.
-  return (
-    <AccountScopeContext.Provider value={value}>
-      {pendingLanding ? <FallbackLoader /> : <ScopedRoot key={effectiveId ?? NO_ACCOUNT_KEY}>{children}</ScopedRoot>}
-    </AccountScopeContext.Provider>
-  )
+  // Keyed remount boundary: changing the active account (or bumping the resume
+  // nonce after a failed switch) unmounts the old per-account subtree and
+  // mounts a fresh one — atomic swap of QueryClient, socket, SyncEngine, and
+  // every useState/useRef/useLiveQuery below it. While the handover or a
+  // landing is pending the subtree stays unmounted, so the destination's first
+  // mount is already under its own storage and at its own URL.
+  let body: ReactNode
+  if (landingFailed) body = <LandingFailed onRetry={retryLanding} />
+  else if (handingOver || pendingLanding) body = <FallbackLoader />
+  else body = <ScopedRoot key={`${effectiveId ?? NO_ACCOUNT_KEY}#${resumeNonce}`}>{children}</ScopedRoot>
+
+  return <AccountScopeContext.Provider value={value}>{body}</AccountScopeContext.Provider>
 }
 
 function ScopedRoot({ children }: { children: ReactNode }) {

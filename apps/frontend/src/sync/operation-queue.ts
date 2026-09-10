@@ -298,7 +298,12 @@ async function executeOperation(
         payload.draftId as string,
         payload.writeId as string,
         draftsService,
-        priorWriteIds
+        priorWriteIds,
+        // The captured handle rides all the way through the push's reconciliation
+        // — split migration, cleanup enqueues, the confirm transaction. The
+        // default resolves the *active* database, which after a switch is
+        // another account's.
+        database
       )
       break
     }

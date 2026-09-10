@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
+import { AuthErrorCodes } from "../../packages/types/src/constants"
 import {
   devLogin,
   expectApiOk,
@@ -395,7 +396,11 @@ test.describe("Account switch — two accounts sharing a workspace", () => {
       { timeout: 30_000 }
     )
     releaseSend()
-    expect((await refused).status()).toBe(409)
+    const refusal = await refused
+    expect({ status: refusal.status(), code: (await refusal.json()).code }).toEqual({
+      status: 409,
+      code: AuthErrorCodes.ACCOUNT_MISMATCH,
+    })
 
     await openChannel()
     // Long enough for the refused send to be mishandled — deleted from the

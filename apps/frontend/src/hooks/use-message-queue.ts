@@ -56,7 +56,8 @@ function getRetryDelay(retryCount: number): number {
 
 /**
  * Promote a draft by creating the real stream, moving the optimistic event,
- * and cleaning up draft data. Returns the real stream ID.
+ * and cleaning up draft data. Returns the real stream ID, or `null` when the
+ * account that queued the message was retired mid-promotion.
  *
  * Idempotent: `promotedStreamId` is persisted on the pending message
  * immediately after stream creation succeeds. On retry, if the field is
@@ -68,8 +69,9 @@ async function promoteDraft(
   streamService: { create: (workspaceId: string, data: CreateStreamInput) => Promise<Stream> },
   syncEngine: { subscribeStream: (id: string) => Promise<void>; kickOperationQueue: () => void },
   queryClient: QueryClient,
-  database: ThreaDatabase
-): Promise<string> {
+  database: ThreaDatabase,
+  fence: AccountWorkFence
+): Promise<string | null> {
   const creation = next.streamCreation!
   const draftStreamId = next.streamId
 
@@ -112,7 +114,19 @@ async function promoteDraft(
       lastMessagePreview: null,
       _cachedAt: Date.now(),
     })
+  }
 
+  // The create is the only step that has to happen exactly once, and its id is
+  // now durable in this account's database. Everything past here publishes into
+  // process-wide surfaces — the sidebar bootstrap cache, the socket room, the
+  // draft stores — which belong to whichever account is active. A retired
+  // promotion stops here with `streamCreation` still set, so the account that
+  // queued the message redoes the rest against `promotedStreamId` when it
+  // returns, instead of handing its stream to its replacement.
+  if (fence.isRetired()) return null
+
+  if (createdStream) {
+    const newStream = createdStream
     // Add the new stream to the sidebar bootstrap cache
     queryClient.setQueryData(workspaceKeys.bootstrap(next.workspaceId), (old: any) => {
       if (!old) return old
@@ -129,18 +143,13 @@ async function promoteDraft(
     })
   }
 
-  type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
-  await (database.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
-    streamId: realStreamId,
-    streamCreation: undefined,
-  })
-
   // Move the optimistic event from draft streamId to real streamId
   const optimisticEvent = await database.events.get(next.clientId)
   const movedEvent = optimisticEvent
     ? { ...optimisticEvent, streamId: realStreamId, _sequenceNum: sequenceToNum(optimisticEvent.sequence) }
     : undefined
   if (movedEvent) await database.events.put(movedEvent)
+  if (fence.isRetired()) return null
 
   // Subscribe to the real stream's socket room before sending so we catch
   // the message:created event for the optimistic swap
@@ -161,7 +170,8 @@ async function promoteDraft(
   // re-increment here.
   const anchorId = creation.parentAnchorId ?? creation.parentMessageId
   if (creation.type === StreamTypes.THREAD && creation.parentStreamId && anchorId) {
-    setParentThreadId(creation.parentStreamId, anchorId, realStreamId).catch(() => {})
+    await setParentThreadId(creation.parentStreamId, anchorId, realStreamId, database)
+    if (fence.isRetired()) return null
   }
 
   // Clean up draft data (no-ops gracefully for non-scratchpad drafts).
@@ -174,6 +184,7 @@ async function promoteDraft(
         await database.streams.delete(draftStreamId)
       }
     })
+    if (fence.isRetired()) return null
     deleteDraftScratchpadFromCache(next.workspaceId, next.draftId)
     // Re-point the promoted scope's surviving drafts onto the real stream so
     // stash entries composed before promotion keep roaming (the just-sent loaded
@@ -181,11 +192,17 @@ async function promoteDraft(
     // their canonical anchor scope, not under the synthetic draft panel id.
     const fromScope =
       creation.type === StreamTypes.THREAD && anchorId ? draftThreadScope(anchorId) : draftStreamScope(next.draftId)
-    await rescopeScopeDrafts(next.workspaceId, fromScope, draftStreamScope(realStreamId))
+    await rescopeScopeDrafts(next.workspaceId, fromScope, draftStreamScope(realStreamId), database)
+    if (fence.isRetired()) return null
     syncEngine.kickOperationQueue()
   }
 
-  return realStreamId
+  type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
+  await (database.pendingMessages.update as unknown as UpdateFn)(next.clientId, {
+    streamId: realStreamId,
+    streamCreation: undefined,
+  })
+  return fence.isRetired() ? null : realStreamId
 }
 
 /**
@@ -296,7 +313,11 @@ export function useMessageQueue(workspaceId: string): void {
         try {
           // If this message needs a stream created first, promote the draft
           if (next.streamCreation) {
-            const realStreamId = await promoteDraft(next, streamService, syncEngine, queryClient, database)
+            const realStreamId = await promoteDraft(next, streamService, syncEngine, queryClient, database, fence)
+            // Retired mid-promotion: the created stream is recorded on the
+            // pending row, so leave the rest of the promotion (and the send)
+            // to the account that queued it.
+            if (realStreamId === null) return
             // Re-read the message after promotion (streamId was updated)
             next.streamId = realStreamId
             next.streamCreation = undefined
