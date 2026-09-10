@@ -45,7 +45,10 @@ interface SyncEngineDeps {
   syncStatus: SyncStatusStore
   queryClient: QueryClient
   workspaceService: {
-    bootstrap: (workspaceId: string, opts?: { fresh?: boolean }) => Promise<WorkspaceBootstrap>
+    bootstrap: (
+      workspaceId: string,
+      opts?: { fresh?: boolean; accountId?: string | null }
+    ) => Promise<WorkspaceBootstrap>
   }
   streamService: {
     bootstrap: (

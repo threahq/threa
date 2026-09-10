@@ -52,10 +52,12 @@ function createWrapper(
               {
                 value: {
                   user: { id: "workos_1", email: "kris@example.com", name: "Kris" },
+                  activeWorkosUserId: "workos_1",
                   loading: false,
                   error: null,
                   login: vi.fn(),
                   logout: vi.fn(),
+                  activateAccount: vi.fn(),
                   refetch: vi.fn(),
                 },
               },

@@ -42,8 +42,8 @@ export function useResolveOrBounce(workspaceId: string, syncEngine: { lastWorksp
       // workspace" or the `/` entry route bounces back through this failing
       // bootstrap on every cold launch. Guarded so a concurrently-set id
       // isn't clobbered.
-      if (getLastWorkspaceId() === workspaceId) {
-        clearLastWorkspaceId()
+      if (activeWorkosUserId && getLastWorkspaceId(activeWorkosUserId) === workspaceId) {
+        clearLastWorkspaceId(activeWorkosUserId)
       }
       navigate("/workspaces", { replace: true })
     }
@@ -54,7 +54,10 @@ export function useResolveOrBounce(workspaceId: string, syncEngine: { lastWorksp
         const { ownerUserId } = await accountsApi.resolve(workspaceId)
         if (ignore) return
         if (ownerUserId && ownerUserId !== activeWorkosUserId) {
-          await switchAccount(ownerUserId)
+          // The viewer followed this link deliberately and the control plane
+          // confirmed the destination account can see it, so the destination
+          // keeps the location instead of landing on its own home.
+          await switchAccount(ownerUserId, { landing: "keep-location" })
           return
         }
         bounce()

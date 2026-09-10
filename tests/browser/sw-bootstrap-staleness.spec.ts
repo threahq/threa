@@ -1,5 +1,5 @@
 import { test, expect, request as playwrightRequest, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, expectApiOk, hasCachedBootstrapForAccount } from "./helpers"
 
 /**
  * The service worker pre-fetches and caches the workspace bootstrap every time
@@ -75,14 +75,10 @@ test.describe("Service worker bootstrap staleness", () => {
       document.dispatchEvent(new Event("visibilitychange"))
     })
     await expect
-      .poll(
-        () =>
-          page.evaluate(async (wid) => {
-            const cache = await caches.open("push-bootstrap")
-            return !!(await cache.match(`/api/workspaces/${wid}/bootstrap`))
-          }, workspaceId),
-        { timeout: 15000, message: "SW never cached the bootstrap on hide" }
-      )
+      .poll(() => hasCachedBootstrapForAccount(page, workspaceId), {
+        timeout: 15000,
+        message: "SW never cached the bootstrap on hide",
+      })
       .toBe(true)
 
     // Away, so the live event cannot be delivered.
@@ -129,6 +125,15 @@ test.describe("Service worker bootstrap staleness", () => {
       }
     })
 
+    // A bootstrap request that doesn't name its account can never be answered
+    // from the snapshot, so this spec would pass without a stale copy ever
+    // being in play. Watch what the cold start actually asks for.
+    const bootstrapQueries: string[] = []
+    page.on("request", (request) => {
+      const url = new URL(request.url())
+      if (/^\/api\/workspaces\/[^/]+\/bootstrap$/.test(url.pathname)) bootstrapQueries.push(url.search)
+    })
+
     await context.setOffline(false)
     await page.reload()
     await expect(page.locator('[contenteditable="true"]').first()).toBeVisible({ timeout: 20000 })
@@ -139,6 +144,12 @@ test.describe("Service worker bootstrap staleness", () => {
         message: "the away-change never landed — a stale snapshot won and nothing replayed it",
       })
       .toBe("left")
+
+    expect(bootstrapQueries.length, "the cold start asked for the workspace bootstrap").toBeGreaterThan(0)
+    expect(
+      bootstrapQueries.filter((query) => !new URLSearchParams(query).has("account")),
+      "every workspace bootstrap names the account it is for"
+    ).toEqual([])
 
     await api.dispose()
   })

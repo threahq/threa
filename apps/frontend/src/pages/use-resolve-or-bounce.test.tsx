@@ -7,7 +7,7 @@ import { ApiError } from "@/api/client"
 import { accountsApi } from "@/api"
 import * as syncStatusModule from "@/sync/sync-status"
 import * as accountScopeModule from "@/auth/account-scope"
-import { getLastWorkspaceId, setLastWorkspaceId, clearLastWorkspaceId } from "@/lib/last-workspace"
+import { clearAllLastWorkspaceIds, getLastWorkspaceId, setLastWorkspaceId } from "@/lib/last-workspace"
 import type { AccountScopeValue } from "@/auth/account-scope"
 
 const WS = "ws_deeplink"
@@ -82,7 +82,7 @@ beforeEach(() => {
   mockActiveId = "workos_A"
   switchAccountMock.mockClear().mockResolvedValue(undefined)
   mockNavigate.mockReset()
-  clearLastWorkspaceId()
+  clearAllLastWorkspaceIds()
   installSpies()
 })
 
@@ -92,23 +92,23 @@ afterEach(() => {
 
 describe("useResolveOrBounce", () => {
   it("flips in place when a different signed-in account owns the workspace", async () => {
-    setLastWorkspaceId(WS)
+    setLastWorkspaceId("workos_A", WS)
     const resolveSpy = vi.spyOn(accountsApi, "resolve").mockResolvedValue({ ownerUserId: "workos_B" })
 
     renderHook(() => useResolveOrBounce(WS, syncEngine(new ApiError(403, "FORBIDDEN", "no"))), {
       wrapper: Wrapper,
     })
 
-    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B"))
+    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B", { landing: "keep-location" }))
     expect(resolveSpy).toHaveBeenCalledWith(WS)
     // In-place flip: no route navigation, last-workspace stays pinned so a
     // reload lands back on this deep link under the owning account.
     expect(mockNavigate).not.toHaveBeenCalled()
-    expect(getLastWorkspaceId()).toBe(WS)
+    expect(getLastWorkspaceId("workos_A")).toBe(WS)
   })
 
   it("bounces to the workspace list when nothing resolves (backend 404)", async () => {
-    setLastWorkspaceId(WS)
+    setLastWorkspaceId("workos_A", WS)
     vi.spyOn(accountsApi, "resolve").mockRejectedValue(new ApiError(404, "WORKSPACE_NOT_RESOLVABLE", "none"))
 
     renderHook(() => useResolveOrBounce(WS, syncEngine(new ApiError(404, "NOT_FOUND", "no"))), {
@@ -118,11 +118,11 @@ describe("useResolveOrBounce", () => {
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/workspaces", { replace: true }))
     expect(switchAccountMock).not.toHaveBeenCalled()
     // Guarded clear fired because the pinned id matched the dead workspace.
-    expect(getLastWorkspaceId()).toBeNull()
+    expect(getLastWorkspaceId("workos_A")).toBeNull()
   })
 
   it("bounce keeps a non-matching pinned last-workspace untouched", async () => {
-    setLastWorkspaceId("ws_other")
+    setLastWorkspaceId("workos_A", "ws_other")
     vi.spyOn(accountsApi, "resolve").mockRejectedValue(new ApiError(404, "WORKSPACE_NOT_RESOLVABLE", "none"))
 
     renderHook(() => useResolveOrBounce(WS, syncEngine(new ApiError(403, "FORBIDDEN", "no"))), {
@@ -130,7 +130,7 @@ describe("useResolveOrBounce", () => {
     })
 
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith("/workspaces", { replace: true }))
-    expect(getLastWorkspaceId()).toBe("ws_other")
+    expect(getLastWorkspaceId("workos_A")).toBe("ws_other")
   })
 
   it("bounces (no self-switch) when resolve returns the already-active account", async () => {

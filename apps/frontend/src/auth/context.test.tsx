@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { toast } from "sonner"
-import { act, render, spyOnExport, waitFor } from "@/test"
+import { act, render, screen, spyOnExport, waitFor } from "@/test"
 import { AuthProvider, useAuth } from "@/auth"
 import * as dbModule from "@/db"
 import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
@@ -16,6 +16,16 @@ function LoginProbe() {
 function LogoutProbe() {
   triggerLogout = useAuth().logout
   return null
+}
+
+function SessionProbe() {
+  const { activeWorkosUserId, user } = useAuth()
+  return (
+    <>
+      <span data-testid="active">{activeWorkosUserId ?? "unresolved"}</span>
+      <span data-testid="identity">{user?.name ?? "unresolved"}</span>
+    </>
+  )
 }
 
 describe("AuthProvider logout", () => {
@@ -172,9 +182,11 @@ describe("AuthProvider login / accountError", () => {
     expect(replaceSpy).toHaveBeenCalledWith(null, "", "/w/workspace_1?foo=bar")
   })
 
-  it("clears the stale last-workspace pointer on accountAdded and strips the param", async () => {
+  it("strips the accountAdded param and leaves the other accounts' pointers alone", async () => {
     stubLocation("?accountAdded=1&foo=bar")
-    localStorage.setItem("threa-last-workspace", "workspace_old")
+    // The added account has no pointer of its own yet, and the previous
+    // account's is keyed to that account — nothing to invalidate.
+    localStorage.setItem("threa-last-workspace:workos_prev", "workspace_old")
     const replaceSpy = vi.spyOn(window.history, "replaceState").mockImplementation(() => {})
 
     render(
@@ -186,7 +198,7 @@ describe("AuthProvider login / accountError", () => {
     await waitFor(() => {
       expect(replaceSpy).toHaveBeenCalledWith(null, "", "/w/workspace_1?foo=bar")
     })
-    expect(localStorage.getItem("threa-last-workspace")).toBeNull()
+    expect(localStorage.getItem("threa-last-workspace:workos_prev")).toBe("workspace_old")
   })
 
   it("does not toast when there is no accountError param", async () => {
@@ -203,5 +215,62 @@ describe("AuthProvider login / accountError", () => {
       await Promise.resolve()
     })
     expect(toastSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe("AuthProvider add-account return", () => {
+  const originalLocation = window.location
+
+  beforeEach(() => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      writable: true,
+      value: { pathname: "/workspaces", search: "?accountAdded=1", hash: "", href: "" } as unknown as Location,
+    })
+    vi.spyOn(window.history, "replaceState").mockImplementation(() => {})
+    // This browser was signed in as the *previous* account right up to the
+    // redirect, so both its pointer and its cached identity are still here.
+    localStorage.setItem("threa-active-account", "workos_prev")
+    localStorage.setItem(
+      "threa-account-identity:workos_prev",
+      JSON.stringify({ id: "workos_prev", email: "prev@example.com", name: "Previous Account" })
+    )
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            json: async () => ({ id: "workos_added", email: "added@example.com", name: "Added Account" }),
+          }) as unknown as Response
+      )
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    localStorage.clear()
+    Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
+  })
+
+  it("resolves the added account from the credential instead of the stale active pointer", async () => {
+    render(
+      <AuthProvider>
+        <SessionProbe />
+      </AuthProvider>
+    )
+
+    // The add changed the session cookie out of band: publishing the stored
+    // pointer here would mount the previous account's identity and storage
+    // scope under the added account's credential.
+    expect(screen.getByTestId("active")).toHaveTextContent("unresolved")
+    expect(screen.getByTestId("identity")).toHaveTextContent("unresolved")
+
+    await waitFor(() => {
+      expect(screen.getByTestId("active")).toHaveTextContent("workos_added")
+    })
+    expect(screen.getByTestId("identity")).toHaveTextContent("Added Account")
   })
 })

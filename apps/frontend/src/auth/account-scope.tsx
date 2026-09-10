@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import type { QueryClient } from "@tanstack/react-query"
 import { API_BASE } from "@/api/client"
+import { FallbackLoader } from "@/components/fallback-loader"
+import { accountHomePath } from "@/lib/last-workspace"
 import { ThreaDatabase, accountDbName } from "@/db"
 // Imported from the module directly, not the @/db barrel: AccountScope is the
 // sole writer of the active-db pointer, so the mutator is intentionally kept
@@ -31,6 +33,7 @@ import { resetFloatingSurfaceGeometryStoreCache } from "@/stores/floating-surfac
 import { resetRevealGate } from "@/sync/reveal-gate"
 import { resetRowConfirmations } from "@/sync/bootstrap-diff"
 import { useAuth } from "./hooks"
+import type { User } from "./types"
 
 const NO_ACCOUNT_KEY = "__no_account__"
 const PRE_AUTH_ID = "__pre_auth__"
@@ -39,6 +42,28 @@ const AUTH_CHANNEL = "threa-auth"
 interface SwitchedMessage {
   type: "switched"
   activeWorkosUserId: string
+}
+
+export interface SwitchAccountOptions {
+  /**
+   * The destination's display identity, when the caller already holds it (the
+   * switcher reads it from `/api/accounts`). Passing it means the first paint
+   * under the new scope — including a message composed immediately after —
+   * already carries the destination's identity instead of waiting a round trip.
+   */
+  identity?: User | null
+  /**
+   * Where the destination account lands.
+   *
+   * - `"account-home"` (default) leaves the outgoing account's URL behind for
+   *   the destination's own last workspace. An explicit switch is a change of
+   *   viewer, not of place: the previous account's stream is not somewhere the
+   *   destination asked to be, and it is usually a 403 for them.
+   * - `"keep-location"` keeps the current URL, for an entry the destination
+   *   account was explicitly sent to and is authorized for (a notification
+   *   deep link, a workspace link resolved to its owning account).
+   */
+  landing?: "account-home" | "keep-location"
 }
 
 export interface AccountScopeValue {
@@ -50,11 +75,11 @@ export interface AccountScopeValue {
   getQueryClient: () => QueryClient
   /**
    * Flip the active account in place (no page reload). Calls the PR-3
-   * `/api/accounts/switch` contract, then triggers the keyed remount so the
-   * whole per-account subtree (db, QueryClient, socket, SyncEngine) swaps
-   * atomically, and broadcasts to other tabs.
+   * `/api/accounts/switch` contract, then retires the outgoing account's work
+   * and triggers the keyed remount so identity, db, QueryClient, socket and
+   * SyncEngine swap atomically, and broadcasts to other tabs.
    */
-  switchAccount: (targetUserId: string) => Promise<void>
+  switchAccount: (targetUserId: string, opts?: SwitchAccountOptions) => Promise<void>
   /** Namespace a storage key to the active account. */
   scopedKey: (suffix: string) => string
 }
@@ -114,33 +139,28 @@ function flushModuleStoreCaches(): void {
 
 interface AccountScopeProviderProps {
   children: ReactNode
+  /**
+   * Router navigation, injected because this provider sits above the router.
+   * Used only to land a switched-to account on its own home; it resolves when
+   * the destination route is committed, and the subtree stays unmounted until
+   * then so no route belonging to the outgoing account renders under the new
+   * account's storage.
+   */
+  landAt: (path: string) => void | Promise<unknown>
 }
 
-export function AccountScopeProvider({ children }: AccountScopeProviderProps) {
-  const { user } = useAuth()
-  const authUserId = user?.id ?? null
+// A landing that never settles (a route chunk that fails to load) must not
+// leave the app on the splash forever — reveal the new account anyway. It is
+// already the correct account; only the destination URL is in doubt.
+const LANDING_TIMEOUT_MS = 5000
 
-  // A programmatic / cross-tab switch moves the scope ahead of the cookie
-  // identity until the next /api/auth/me catches up; the scope is derived from
-  // the switch, never blocked on auth re-fetch.
-  const [switchedId, setSwitchedId] = useState<string | null>(null)
-  const effectiveId = switchedId ?? authUserId
+export function AccountScopeProvider({ children, landAt }: AccountScopeProviderProps) {
+  // AuthProvider owns which account is active — for identity and for storage
+  // alike. Deriving the scope from anything else is what let a switched-to
+  // account render under the previous account's display identity.
+  const { activeWorkosUserId: effectiveId, activateAccount } = useAuth()
 
-  // Collapse the transient switch override back into the cookie identity. On
-  // logout / session-loss (`authUserId` → null, no navigation — see
-  // auth/context.tsx 401 path) this drops the scope so a parked account's
-  // db/QueryClient is never served while unauthenticated; once /api/auth/me
-  // catches up to a programmatic switch (`switchedId === authUserId`) it
-  // retires the redundant override so a later logout can't strand a stale id.
-  useEffect(() => {
-    if (authUserId === null) {
-      setSwitchedId(null)
-      return
-    }
-    if (switchedId === authUserId) {
-      setSwitchedId(null)
-    }
-  }, [authUserId, switchedId])
+  const [pendingLanding, setPendingLanding] = useState<string | null>(null)
 
   const dbRegistry = useRef(new Map<string, ThreaDatabase>())
   const qcRegistry = useRef(new Map<string, QueryClient>())
@@ -176,43 +196,80 @@ export function AccountScopeProvider({ children }: AccountScopeProviderProps) {
   effectiveIdRef.current = effectiveId
   const channelRef = useRef<BroadcastChannel | null>(null)
 
+  /**
+   * The one account-change lifecycle: retire the outgoing account's work, hand
+   * the new identity to its owner, and hold the subtree until the destination
+   * has somewhere of its own to land. Every entry point (this tab's switch,
+   * another tab's broadcast) goes through it.
+   */
+  const adoptAccount = useCallback(
+    (targetUserId: string, identity: User | null, landing: "account-home" | "keep-location") => {
+      const outgoing = effectiveIdRef.current
+      if (outgoing) {
+        // Abort in-flight queries on the now-stale client so a late response
+        // can never land in the orphaned cache. Storage isolation (distinct DB
+        // name + distinct QueryClient) makes correctness independent of timing;
+        // this is purely to stop wasted work.
+        qcRegistry.current.get(outgoing)?.cancelQueries()
+      }
+      flushModuleStoreCaches()
+      activateAccount(targetUserId, identity)
+      if (landing === "account-home") setPendingLanding(accountHomePath(targetUserId))
+    },
+    [activateAccount]
+  )
+
   useEffect(() => {
     const channel = new BroadcastChannel(AUTH_CHANNEL)
     channelRef.current = channel
     channel.onmessage = (e: MessageEvent) => {
       const data = e.data as Partial<SwitchedMessage> | null
       if (data?.type !== "switched" || !data.activeWorkosUserId) return
-      const current = effectiveIdRef.current
-      if (data.activeWorkosUserId === current) return
-      // Abort in-flight queries on the now-stale client so a late response
-      // can never land in the orphaned cache. Storage isolation (distinct DB
-      // name + distinct QueryClient) makes correctness independent of timing;
-      // this is purely to stop wasted work.
-      if (current) qcRegistry.current.get(current)?.cancelQueries()
-      flushModuleStoreCaches()
-      setSwitchedId(data.activeWorkosUserId)
+      if (data.activeWorkosUserId === effectiveIdRef.current) return
+      // Another tab's deep-link intent is not this tab's: whatever this tab was
+      // showing belonged to the outgoing account, so it lands on the
+      // destination's home.
+      adoptAccount(data.activeWorkosUserId, null, "account-home")
     }
     return () => {
       channel.close()
       channelRef.current = null
     }
-  }, [])
+  }, [adoptAccount])
 
-  const switchAccount = useCallback(async (targetUserId: string): Promise<void> => {
-    const res = await fetch(`${API_BASE}/api/accounts/switch`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ targetUserId }),
-    })
-    if (!res.ok) {
-      throw new Error(`Account switch failed (${res.status})`)
+  useEffect(() => {
+    if (!pendingLanding) return
+    let settled = false
+    const reveal = () => {
+      if (settled) return
+      settled = true
+      setPendingLanding(null)
     }
-    const { activeUserId } = (await res.json()) as { activeUserId: string }
-    flushModuleStoreCaches()
-    setSwitchedId(activeUserId)
-    channelRef.current?.postMessage({ type: "switched", activeWorkosUserId: activeUserId } satisfies SwitchedMessage)
-  }, [])
+    const timer = setTimeout(reveal, LANDING_TIMEOUT_MS)
+    void Promise.resolve(landAt(pendingLanding)).then(reveal, reveal)
+    return () => {
+      settled = true
+      clearTimeout(timer)
+    }
+  }, [pendingLanding, landAt])
+
+  const switchAccount = useCallback(
+    async (targetUserId: string, opts?: SwitchAccountOptions): Promise<void> => {
+      const res = await fetch(`${API_BASE}/api/accounts/switch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ targetUserId }),
+      })
+      if (!res.ok) {
+        throw new Error(`Account switch failed (${res.status})`)
+      }
+      const { activeUserId } = (await res.json()) as { activeUserId: string }
+      adoptAccount(activeUserId, opts?.identity ?? null, opts?.landing ?? "account-home")
+      channelRef.current?.postMessage({ type: "switched", activeWorkosUserId: activeUserId } satisfies SwitchedMessage)
+    },
+    [adoptAccount]
+  )
 
   const registryId = effectiveId ?? PRE_AUTH_ID
   const getDb = useCallback(() => resolveDb(registryId), [resolveDb, registryId])
@@ -229,10 +286,12 @@ export function AccountScopeProvider({ children }: AccountScopeProviderProps) {
 
   // Keyed remount boundary: changing the active account unmounts the old
   // per-account subtree and mounts a fresh one — atomic swap of QueryClient,
-  // socket, SyncEngine, and every useState/useRef/useLiveQuery below it.
+  // socket, SyncEngine, and every useState/useRef/useLiveQuery below it. While
+  // a landing is pending the subtree stays unmounted, so the destination's
+  // first mount is already at its own URL.
   return (
     <AccountScopeContext.Provider value={value}>
-      <ScopedRoot key={effectiveId ?? NO_ACCOUNT_KEY}>{children}</ScopedRoot>
+      {pendingLanding ? <FallbackLoader /> : <ScopedRoot key={effectiveId ?? NO_ACCOUNT_KEY}>{children}</ScopedRoot>}
     </AccountScopeContext.Provider>
   )
 }

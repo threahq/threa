@@ -63,7 +63,7 @@ import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
 import { isServerStreamId } from "@/lib/stream-ids"
-import { useAuth } from "@/auth"
+import { useAccountScope, useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
@@ -237,6 +237,7 @@ function WorkspaceSyncHandler({
   const scheduledService = useScheduledService()
   const syncStatusStore = useContext(SyncStatusContext)
   const { user } = useAuth()
+  const { activeWorkosUserId } = useAccountScope()
   const isOnline = useOnlineStatus()
   const { streamId: currentStreamId } = useParams<{ streamId: string }>()
   const wasOfflineRef = useRef(!navigator.onLine)
@@ -251,7 +252,12 @@ function WorkspaceSyncHandler({
       workspaceId,
       syncStatus: syncStatusStore!,
       queryClient,
-      workspaceService,
+      // Bound to the account this subtree was mounted for, so the service
+      // worker can only answer a bootstrap from a copy pre-fetched for the same
+      // viewer. A switch remounts the subtree, which rebuilds the binding.
+      workspaceService: {
+        bootstrap: (id, opts) => workspaceService.bootstrap(id, { ...opts, accountId: activeWorkosUserId }),
+      },
       streamService,
       messageService,
       reactionService: {
@@ -511,7 +517,7 @@ export function WorkspaceLayout() {
   // to a real user so a pre-auth render can't pin a workspace.
   useEffect(() => {
     if (workspaceId && user) {
-      setLastWorkspaceId(workspaceId)
+      setLastWorkspaceId(user.id, workspaceId)
     }
   }, [workspaceId, user])
 

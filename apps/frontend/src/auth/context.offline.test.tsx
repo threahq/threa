@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, screen, waitFor, spyOnExport } from "@/test"
 import { AuthProvider, useAuth } from "@/auth"
 import * as dbModule from "@/db"
-import { getCachedUser, setCachedUser } from "@/lib/cached-user"
+import { getActiveAccountId, getCachedIdentity, setActiveAccountId, setCachedIdentity } from "@/lib/cached-user"
 import { getLastWorkspaceId, setLastWorkspaceId } from "@/lib/last-workspace"
 
 const CACHED = { id: "user_1", email: "a@b.co", name: "Ada" }
+
+function signedInAs(user: typeof CACHED) {
+  setCachedIdentity(user)
+  setActiveAccountId(user.id)
+}
 
 function Probe() {
   const auth = useAuth()
@@ -32,7 +37,7 @@ describe("AuthProvider — offline-first identity", () => {
   })
 
   it("renders instantly from the cached identity with no network gate", () => {
-    setCachedUser(CACHED)
+    signedInAs(CACHED)
     // Revalidation never resolves — the first paint must not wait on it.
     vi.stubGlobal(
       "fetch",
@@ -50,7 +55,7 @@ describe("AuthProvider — offline-first identity", () => {
   })
 
   it("keeps the cached user when background revalidation fails (stays usable offline)", async () => {
-    setCachedUser(CACHED)
+    signedInAs(CACHED)
     const fetchMock = vi.fn(async () => {
       throw new Error("network down")
     })
@@ -68,11 +73,11 @@ describe("AuthProvider — offline-first identity", () => {
       expect(screen.getByTestId("loading")).toHaveTextContent("false")
       expect(screen.getByTestId("error")).toHaveTextContent("none")
     })
-    expect(getCachedUser()).toEqual(CACHED)
+    expect(getCachedIdentity(CACHED.id)).toEqual(CACHED)
   })
 
   it("clears the cached identity and drops the user on a 401", async () => {
-    setCachedUser(CACHED)
+    signedInAs(CACHED)
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ status: 401, ok: false, json: async () => ({}) }) as unknown as Response)
@@ -86,7 +91,10 @@ describe("AuthProvider — offline-first identity", () => {
 
     await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("none"))
     expect(screen.getByTestId("loading")).toHaveTextContent("false")
-    expect(getCachedUser()).toBeNull()
+    expect({ identity: getCachedIdentity(CACHED.id), active: getActiveAccountId() }).toEqual({
+      identity: null,
+      active: null,
+    })
   })
 })
 
@@ -114,8 +122,8 @@ describe("AuthProvider — logout clears local identity", () => {
   })
 
   it("clears the cached user and last workspace on logout", async () => {
-    setCachedUser(CACHED)
-    setLastWorkspaceId("ws_1")
+    signedInAs(CACHED)
+    setLastWorkspaceId(CACHED.id, "ws_1")
     // Pending revalidation so the mount fetch can't clear state first — only
     // logout should.
     vi.stubGlobal(
@@ -143,7 +151,10 @@ describe("AuthProvider — logout clears local identity", () => {
     })
 
     expect(window.location.href).toBe("/api/auth/logout")
-    expect(getCachedUser()).toBeNull()
-    expect(getLastWorkspaceId()).toBeNull()
+    expect({ identity: getCachedIdentity(CACHED.id), active: getActiveAccountId() }).toEqual({
+      identity: null,
+      active: null,
+    })
+    expect(getLastWorkspaceId(CACHED.id)).toBeNull()
   })
 })

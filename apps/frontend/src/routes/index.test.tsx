@@ -16,7 +16,8 @@ import { DelegationRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } f
 import { ApiError, delegationsApi } from "@/api"
 import * as useLastLocationModule from "@/hooks/use-last-location"
 import * as sidebarContextModule from "@/contexts/sidebar-context"
-import { clearLastWorkspaceId, setLastWorkspaceId } from "@/lib/last-workspace"
+import { AuthProvider, AccountScopeProvider } from "@/auth"
+import { setLastWorkspaceId } from "@/lib/last-workspace"
 
 const mockUseLastLocation = vi.fn()
 const mockTogglePinned = vi.fn()
@@ -74,33 +75,63 @@ function makeDelegationSummary(overrides: Partial<DelegationSummary> = {}): Dele
 }
 
 describe("RootRedirect", () => {
-  beforeEach(() => clearLastWorkspaceId())
+  // Real AuthProvider + AccountScopeProvider: the entry route resolves the
+  // pointer of whichever account is actually signed in, so a stub scope would
+  // test nothing (INV-39).
+  function renderEntry() {
+    return render(
+      <AuthProvider>
+        <AccountScopeProvider landAt={() => {}}>
+          <MemoryRouter initialEntries={["/"]}>
+            <Routes>
+              <Route path="/" element={<RootRedirect />} />
+              <Route path="/w/:workspaceId" element={<PathEcho />} />
+              <Route path="/workspaces" element={<PathEcho />} />
+            </Routes>
+          </MemoryRouter>
+        </AccountScopeProvider>
+      </AuthProvider>
+    )
+  }
+
+  function signedInAs(workosUserId: string) {
+    localStorage.setItem("threa-active-account", workosUserId)
+    localStorage.setItem(
+      `threa-account-identity:${workosUserId}`,
+      JSON.stringify({ id: workosUserId, email: `${workosUserId}@example.com`, name: workosUserId })
+    )
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            json: async () => ({ id: workosUserId, email: `${workosUserId}@example.com`, name: workosUserId }),
+          }) as unknown as Response
+      )
+    )
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.unstubAllGlobals()
+    window.__eagerAuthPromise = undefined
+  })
 
   it("sends a returning user straight to their last workspace", async () => {
-    setLastWorkspaceId("ws_abc")
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<RootRedirect />} />
-          <Route path="/w/:workspaceId" element={<PathEcho />} />
-          <Route path="/workspaces" element={<PathEcho />} />
-        </Routes>
-      </MemoryRouter>
-    )
+    signedInAs("workos_A")
+    setLastWorkspaceId("workos_A", "ws_abc")
+    renderEntry()
 
     expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_abc")
   })
 
-  it("falls back to the workspace picker when no last workspace is recorded", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<RootRedirect />} />
-          <Route path="/w/:workspaceId" element={<PathEcho />} />
-          <Route path="/workspaces" element={<PathEcho />} />
-        </Routes>
-      </MemoryRouter>
-    )
+  it("falls back to the workspace picker when this account has no last workspace", async () => {
+    signedInAs("workos_B")
+    // Another account's pointer is not a hint about this one.
+    setLastWorkspaceId("workos_A", "ws_abc")
+    renderEntry()
 
     expect(await screen.findByTestId("path")).toHaveTextContent("/workspaces")
   })

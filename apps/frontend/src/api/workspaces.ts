@@ -1,5 +1,5 @@
 import { api, requestMultipart } from "./client"
-import { BOOTSTRAP_FRESH_PARAM } from "@/lib/sw-bootstrap-prefetch"
+import { BOOTSTRAP_ACCOUNT_PARAM, BOOTSTRAP_FRESH_PARAM } from "@/lib/sw-bootstrap-prefetch"
 import type {
   Workspace,
   WorkspaceBootstrap,
@@ -47,10 +47,19 @@ export const workspacesApi = {
    * before the device went away would silently be older than that head, and
    * every entry between the two would be stranded.
    */
-  async bootstrap(workspaceId: string, opts?: { fresh?: boolean }): Promise<WorkspaceBootstrap> {
+  async bootstrap(
+    workspaceId: string,
+    opts?: { fresh?: boolean; accountId?: string | null }
+  ): Promise<WorkspaceBootstrap> {
     // Both signals: the query flag survives every engine's request handling,
-    // `no-store` also keeps the HTTP cache out of it.
-    const path = `/api/workspaces/${workspaceId}/bootstrap${opts?.fresh ? `?${BOOTSTRAP_FRESH_PARAM}=1` : ""}`
+    // `no-store` also keeps the HTTP cache out of it. `accountId` names the
+    // viewer this snapshot is for, so the service worker can only answer from a
+    // pre-fetched copy captured for the same account.
+    const params = new URLSearchParams()
+    if (opts?.fresh) params.set(BOOTSTRAP_FRESH_PARAM, "1")
+    if (opts?.accountId) params.set(BOOTSTRAP_ACCOUNT_PARAM, opts.accountId)
+    const query = params.toString()
+    const path = `/api/workspaces/${workspaceId}/bootstrap${query ? `?${query}` : ""}`
     const res = await api.get<{ data: WorkspaceBootstrap }>(path, opts?.fresh ? { cache: "no-store" } : undefined)
     return res.data
   },

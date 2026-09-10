@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, Trash2, UserPlus } from "lucide-react"
 import { toast } from "sonner"
@@ -18,17 +18,32 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { getInitials } from "@/lib/initials"
+import { useWorkspaceUsers } from "@/stores/workspace-store"
 
 const SEARCH_PARAM = "account-switcher"
 
+/**
+ * One row's display identity. `name` is the account's profile in the workspace
+ * being viewed when it has one — a WorkOS name is often a stale sign-up name,
+ * and the switcher is the one surface where two of the viewer's own accounts
+ * sit side by side, so the workspace-local profile is what makes them
+ * distinguishable. The workspace roster is already the active account's own
+ * view of it, so no profile it cannot see is revealed.
+ */
+interface AccountLabel {
+  name: string
+  email: string
+}
+
 interface AccountRowProps {
   account: AccountSummary
-  onSwitch: (id: string) => void
+  label: AccountLabel
+  onSwitch: (account: AccountSummary) => void
   onRemove: (id: string) => void
   onReauth: () => void
 }
 
-function AccountRow({ account, onSwitch, onRemove, onReauth }: AccountRowProps) {
+function AccountRow({ account, label, onSwitch, onRemove, onReauth }: AccountRowProps) {
   if (account.state === "stale") {
     return (
       <div className="flex items-center gap-2 rounded-lg px-3 py-2.5">
@@ -55,7 +70,7 @@ function AccountRow({ account, onSwitch, onRemove, onReauth }: AccountRowProps) 
     )
   }
 
-  const initials = getInitials(account.name || account.email) || "?"
+  const initials = getInitials(label.name || label.email) || "?"
 
   if (account.state === "active") {
     return (
@@ -64,8 +79,8 @@ function AccountRow({ account, onSwitch, onRemove, onReauth }: AccountRowProps) 
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{account.name}</p>
-          <p className="truncate text-xs text-muted-foreground">{account.email}</p>
+          <p className="truncate text-sm font-medium text-foreground">{label.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{label.email}</p>
         </div>
         <Check className="h-4 w-4 shrink-0 text-primary" aria-label="Current account" />
       </div>
@@ -76,21 +91,21 @@ function AccountRow({ account, onSwitch, onRemove, onReauth }: AccountRowProps) 
     <div className="flex items-center gap-1">
       <button
         type="button"
-        onClick={() => onSwitch(account.id)}
+        onClick={() => onSwitch(account)}
         className="flex flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left ring-offset-background transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         <Avatar className="h-9 w-9">
           <AvatarFallback>{initials}</AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-foreground">{account.name}</p>
-          <p className="truncate text-xs text-muted-foreground">{account.email}</p>
+          <p className="truncate text-sm font-medium text-foreground">{label.name}</p>
+          <p className="truncate text-xs text-muted-foreground">{label.email}</p>
         </div>
       </button>
       <Button
         variant="ghost"
         size="icon"
-        aria-label={`Remove ${account.name || account.email || account.id || "account"}`}
+        aria-label={`Remove ${label.name || label.email || account.id || "account"}`}
         onClick={() => onRemove(account.id)}
       >
         <Trash2 className="h-4 w-4" />
@@ -123,12 +138,26 @@ export function AccountSwitcherDialog() {
   const { login } = useAuth()
   const scope = useAccountScope()
   const queryClient = useQueryClient()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+  const workspaceUsers = useWorkspaceUsers(workspaceId)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ACCOUNTS_LIST_KEY,
     queryFn: () => accountsApi.list(),
     enabled: isOpen,
   })
+
+  const labelFor = (account: AccountSummary): AccountLabel => {
+    // Matched on `workosUserId` — the only identifier shared by a signed-in
+    // account and a workspace member row. Never on name or email: two accounts
+    // can carry the same person's name, and an email match would silently pick
+    // whichever row happened to share it.
+    const profile = workspaceUsers.find((member) => member.workosUserId === account.id)
+    return {
+      name: profile?.name || account.name,
+      email: profile?.email || account.email,
+    }
+  }
 
   useEffect(() => {
     setMounted(true)
@@ -150,9 +179,15 @@ export function AccountSwitcherDialog() {
     login(undefined, { intent: "add" })
   }
 
-  const handleSwitch = async (id: string) => {
+  const handleSwitch = async (account: AccountSummary) => {
     try {
-      await scope.switchAccount(id)
+      // The account list is the control plane's answer for *this* browser, so
+      // its identity is authoritative enough to paint with immediately — the
+      // destination never renders under the outgoing account's name.
+      await scope.switchAccount(account.id, {
+        identity: { id: account.id, email: account.email, name: account.name },
+        landing: "account-home",
+      })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to switch account")
     }
@@ -190,6 +225,7 @@ export function AccountSwitcherDialog() {
                 <AccountRow
                   key={account.id}
                   account={account}
+                  label={labelFor(account)}
                   onSwitch={handleSwitch}
                   onRemove={handleRemove}
                   onReauth={addAccount}

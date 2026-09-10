@@ -13,6 +13,14 @@ const stubLoginSchema = z.object({
 const devLoginSchema = z.object({
   email: z.email(),
   name: z.string().min(1),
+  /**
+   * `add` parks the current session and makes this one active, exactly as the
+   * interactive stub form and the real OAuth callback do. Without it the only
+   * way to hold two accounts in one browser context is the interactive form, so
+   * multi-account browser tests would have to bypass the real park/coalesce
+   * sequence — the part most worth testing.
+   */
+  intent: z.literal("add").optional(),
 })
 
 interface Dependencies {
@@ -79,7 +87,24 @@ export function createAuthStubHandlers({ authStubService, sessionCookies, accoun
       if (!parsed.success) {
         throw new HttpError("Invalid login parameters", { status: 400, code: "INVALID_LOGIN" })
       }
-      const result = await authStubService.devLogin(parsed.data)
+      const { email, name, intent } = parsed.data
+      const result = await authStubService.devLogin({ email, name })
+
+      if (intent === "add") {
+        const parked = await accountsService.addAndParkActive(
+          res,
+          req.cookies,
+          sessionCookies.read(req.cookies),
+          result.session,
+          result.user.id
+        )
+        if (!parked.ok) {
+          throw new HttpError("Maximum accounts reached", { status: 409, code: parked.code })
+        }
+        res.json({ user: result.user })
+        return
+      }
+
       sessionCookies.set(res, result.session)
       res.json({ user: result.user })
     },

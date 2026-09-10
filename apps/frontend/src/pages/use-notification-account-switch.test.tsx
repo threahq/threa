@@ -55,9 +55,22 @@ describe("useNotificationAccountSwitch", () => {
 
     renderHook(() => useNotificationAccountSwitch(WS))
 
-    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B"))
+    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B", { landing: "keep-location" }))
     expect(resolveSpy).toHaveBeenCalledWith("workos_B", WS)
     expect(loginMock).not.toHaveBeenCalled()
+  })
+
+  it("switches on a notification click that lands in the workspace already on screen", async () => {
+    // No remount: the click navigates within the mounted layout, so the intent
+    // arrives after the hook's first read.
+    const resolveSpy = vi.spyOn(accountsApi, "resolveIdentity").mockResolvedValue({ ownerUserId: "workos_B" })
+    renderHook(() => useNotificationAccountSwitch(WS))
+    expect(resolveSpy).not.toHaveBeenCalled()
+
+    setNotificationIntent(WS, "workos_B")
+
+    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B", { landing: "keep-location" }))
+    expect(resolveSpy).toHaveBeenCalledWith("workos_B", WS)
   })
 
   it("does nothing when there is no pending intent", async () => {
@@ -145,7 +158,7 @@ describe("useNotificationAccountSwitch", () => {
 
     renderHook(() => useNotificationAccountSwitch(WS), { wrapper: StrictMode })
 
-    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B"))
+    await waitFor(() => expect(switchAccountMock).toHaveBeenCalledWith("workos_B", { landing: "keep-location" }))
     expect(resolveSpy).toHaveBeenCalledWith("workos_B", WS)
     expect(loginMock).not.toHaveBeenCalled()
   })
