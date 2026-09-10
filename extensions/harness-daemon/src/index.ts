@@ -7,8 +7,10 @@ import {
   parseDone,
   parseReconnect,
   parseResolve,
+  parseHold,
   parseResume,
   parseSpawn,
+  parseSuspend,
   parseTombstone,
   usage,
 } from "./cli"
@@ -28,6 +30,9 @@ import {
   spawnAgent,
   steerAgent,
   stopAgent,
+  suspendIdleSessions,
+  holdAgent,
+  unholdAgent,
   tombstoneCommand,
   reapArchived,
   watchUnarchived,
@@ -75,6 +80,15 @@ async function main(): Promise<void> {
     return installBootResumeAgent(parseResume(args))
   }
   if (command === "stop") return stopAgent(args[0] ?? die("stop requires an agent id or name"))
+  if (command === "suspend") {
+    await suspendIdleSessions(parseSuspend(args))
+    return
+  }
+  if (command === "hold") {
+    const { ref, minutes } = parseHold(args)
+    return holdAgent(ref, minutes)
+  }
+  if (command === "unhold") return unholdAgent(args[0] ?? die("unhold requires an agent id or name"))
   if (command === "kick") return kickAgent(args[0] ?? die("kick requires an agent id, name, or runtime session id"))
   if (command === "clear") return clearAgent(args[0] ?? die("clear requires an agent id, name, or runtime session id"))
   if (command === "done") return doneAgent(parseDone(args), defaultDoneDeps())

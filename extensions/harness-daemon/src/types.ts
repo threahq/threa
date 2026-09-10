@@ -4,7 +4,7 @@ export type { RuntimeKind }
 export type ScratchpadStatus = "active" | "archived" | "inaccessible" | "unavailable"
 /** The two verdicts that outlive a pass, so a row carrying one is backed off rather than re-probed. */
 export type ProbeVerdict = Extract<ScratchpadStatus, "archived" | "inaccessible">
-export type AgentStatus = "starting" | "online" | "offline" | "stopped" | "error"
+export type AgentStatus = "starting" | "online" | "offline" | "stopped" | "suspended" | "error"
 
 export interface ManagedAgent {
   id: string
@@ -51,6 +51,18 @@ export interface ManagedAgent {
    * revival acting on it is completing a recorded user request, not auto-clearing.
    */
   clearPendingAt?: string
+  /**
+   * ISO instant harnessd wound this session down for idling. Set only while
+   * `status` is `suspended`; the wake path clears both together.
+   */
+  suspendedAt?: string
+  /**
+   * ISO instant before which the idle sweep leaves this row alone, whatever the
+   * runtime's own status says. An agent waiting on a timer it started itself
+   * reads as idle from the outside, so it asks for the hold rather than being
+   * guessed at.
+   */
+  suspendHoldUntil?: string
 }
 
 /** What a runtime starts on, as the spawn named it: `claude --model/--effort`, `pi --model/--thinking`. */

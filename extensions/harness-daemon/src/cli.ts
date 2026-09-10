@@ -37,11 +37,18 @@ Usage:
   threa-harnessd steer <agent-id-or-name> [follow-up text]
   threa-harnessd keys <agent-id-or-name> <tmux send-keys tokens...>
   threa-harnessd attach <agent-id-or-name>
+  threa-harnessd suspend [<agent-id-or-name>] [--idle-minutes <n>] [--dry-run]
+      (wind idle Claude sessions down, keeping the row and the window; a queued turn resumes them)
+  threa-harnessd hold <agent-id-or-name> [--minutes <n>]   (keep the idle sweep off a session waiting on a timer or a background subagent)
+  threa-harnessd unhold <agent-id-or-name>
   threa-harnessd resolve [<agent-id-or-name-or-runtime-session-id>]
   threa-harnessd backfill-identities [--dry-run]  (record the identity two sources already agree on)
   threa-harnessd tombstone [--dry-run]           (retire rows whose worktree is gone and whose scratchpad is archived)
   threa-harnessd doctor
   threa-harnessd runtimes   (JSON list of spawnable runtimes installed here: value, label, description=binary path)
+
+Environment:
+  THREA_HARNESSD_IDLE_SUSPEND=0   (turn the idle sweep off for the whole daemon; 0/off/false/no)
 
 Examples:
   threa-harnessd spawn pi --name explore-long-chat-perf --branch explore/long-chat-perf
@@ -51,6 +58,8 @@ Examples:
   threa-harnessd install-watch
   threa-harnessd do spawn a pi agent for long chat performance
   threa-harnessd kick fix-sidebar
+  threa-harnessd suspend --dry-run
+  threa-harnessd hold fix-sidebar --minutes 90
   threa-harnessd interrupt fix-sidebar
   threa-harnessd steer fix-sidebar "also update the tests"
   threa-harnessd keys fix-sidebar /compact Enter
@@ -218,6 +227,50 @@ export function parseTombstone(args: string[]): { dryRun: boolean } {
     if (key !== "dry-run") die(`unexpected tombstone argument: --${key}`)
   }
   return { dryRun: boolFlag(flags, "dry-run") }
+}
+
+export interface SuspendRequest {
+  ref?: string
+  dryRun: boolean
+  idleMinutes: number
+}
+
+/** Minutes of runtime idleness a session must show before `suspend` winds it down. */
+export const DEFAULT_SUSPEND_IDLE_MINUTES = 90
+
+export function parseSuspend(args: string[]): SuspendRequest {
+  const rest = [...args]
+  const ref = rest[0]?.startsWith("--") ? undefined : rest.shift()
+  const flags = parseFlags(rest)
+  for (const key of Object.keys(flags)) {
+    if (key !== "dry-run" && key !== "idle-minutes") die(`unexpected suspend argument: --${key}`)
+  }
+  return {
+    ref,
+    dryRun: boolFlag(flags, "dry-run"),
+    idleMinutes: parseMinutes(stringFlag(flags, "idle-minutes"), DEFAULT_SUSPEND_IDLE_MINUTES, "idle-minutes"),
+  }
+}
+
+/** How long a hold lasts when the caller names no duration. */
+export const DEFAULT_SUSPEND_HOLD_MINUTES = 60
+
+export function parseHold(args: string[]): { ref: string; minutes: number } {
+  const rest = [...args]
+  const ref = rest.shift()
+  if (!ref || ref.startsWith("--")) die("hold requires an agent id, name, or runtime session id")
+  const flags = parseFlags(rest)
+  for (const key of Object.keys(flags)) {
+    if (key !== "minutes") die(`unexpected hold argument: --${key}`)
+  }
+  return { ref, minutes: parseMinutes(stringFlag(flags, "minutes"), DEFAULT_SUSPEND_HOLD_MINUTES, "minutes") }
+}
+
+function parseMinutes(value: string | undefined, fallback: number, flag: string): number {
+  if (value === undefined) return fallback
+  const minutes = Number(value)
+  if (!Number.isFinite(minutes) || minutes < 0) die(`--${flag} takes a non-negative number of minutes`)
+  return minutes
 }
 
 export function parseResolve(args: string[]): string | undefined {

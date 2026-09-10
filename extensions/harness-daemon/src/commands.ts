@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import {
   BotSupervisorTransport,
   readHarnessLinks,
+  type BotInvocationAvailablePayload,
   type BotSessionRestoredPayload,
   type HarnessLink,
 } from "@threahq/harness-client"
@@ -32,6 +33,8 @@ import {
   upsertAgent,
 } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { IDLE_SUSPEND_AFTER_MS, idleSuspendEnabled } from "./idle"
+import { defaultSuspendDeps, suspendAgent, wakeAgent, type SuspendDeps, type SuspendOutcome } from "./suspend"
 import { inspectProfiles, DEFAULT_PROFILE } from "./profiles"
 import { commandExists, output } from "./shell"
 import { resolveRuntimeBinary, SPAWN_RUNTIMES } from "./runtimes"
@@ -444,6 +447,52 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
     return reconcileChain
   }
 
+  // A suspended session is the one runtime that cannot hear its own turn
+  // arrive: harnessd killed it. The supervisor socket carries the invocation
+  // for it, and the revival that follows is the ordinary one, so a wake and a
+  // crash recovery differ only in who noticed.
+  const suspendDeps = defaultSuspendDeps()
+  const wake = (payload: BotInvocationAvailablePayload): Promise<void> => {
+    reconcileChain = reconcileChain
+      .then(async () => {
+        if (options.dryRun) return
+        const suspended = readInventory().find(
+          (row) => row.status === "suspended" && row.runtimeSessionId === payload.runtimeSessionId
+        )
+        if (!suspended) return
+        console.log(`harnessd: ${payload.invocationId} is waiting for suspended ${suspended.name}; resuming`)
+        const release = await acquireProcessLock(resumeActiveLockPath())
+        let woken
+        try {
+          woken = wakeAgent(suspended, suspendDeps)
+        } finally {
+          release()
+        }
+        ensureTmuxSession(session, true)
+        const unavailable = await resumeActive({ ...options, tmux: session, agentIds: new Set([woken.id]) })
+        if (unavailable) scheduleUnavailableRetry()
+      })
+      .catch((error) => {
+        console.error(`harnessd: wake failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    return reconcileChain
+  }
+
+  // Chained like every other pass: winding a session down and reviving one
+  // both respawn panes, and the lock alone would only serialize them across
+  // processes.
+  const sweepIdle = (): Promise<void> => {
+    reconcileChain = reconcileChain
+      .then(async () => {
+        if (options.dryRun || !idleSuspendEnabled()) return
+        await suspendIdleSessions({ idleMinutes: IDLE_SUSPEND_AFTER_MS / 60_000, deps: suspendDeps })
+      })
+      .catch((error) => {
+        console.error(`harnessd: idle sweep failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    return reconcileChain
+  }
+
   await startupReconciliation(defaultStartupReconciliationDeps(() => reconcile(), options.dryRun ?? false))
   const vanishedPanes = createVanishedPaneSweep()
 
@@ -453,10 +502,16 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
         ...target,
         onReady: () => reconcile(),
         onSessionRestored: (payload) => reconcile(payload),
+        onInvocationAvailable: (payload) => wake(payload),
         log: (message) => console.warn(`harnessd: supervisor socket: ${message}`),
       })
   )
   console.log(`harnessd: listening for unarchived sessions with ${transports.length} supervisor socket(s)`)
+  if (!idleSuspendEnabled()) {
+    console.log(
+      `harnessd: idle suspension is off (THREA_HARNESSD_IDLE_SUSPEND=${process.env.THREA_HARNESSD_IDLE_SUSPEND})`
+    )
+  }
   await runWatchLoop({
     runPass: async () => {
       await Promise.all(transports.map((transport) => transport.connect()))
@@ -474,6 +529,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
       if (pass.vanished.length > 0) void reviveVanished(pass.vanished.map((entry) => entry.agent))
       await briefs.record(matchOomKills(kills, { ...pass, scopeOfPid, panePidOfScope }))
       await briefs.deliver(pass.live)
+      void sweepIdle()
     },
     sleep: Bun.sleep,
     intervalMs: reconnectIntervalMs,
@@ -539,6 +595,7 @@ export type ReviveStatus =
   | "blocked"
   | "failed"
   | "skipped stopped"
+  | "skipped suspended"
   | "skipped missing link"
   | "skipped missing credentials"
   | "skipped missing session id"
@@ -680,6 +737,10 @@ export async function reviveAgent(
     return { status: "already running" }
   }
   if (agent.status === "stopped") return { status: "skipped stopped" }
+  // Its pane holds a placeholder, so every sweep sees a missing runtime and
+  // would restart the session harnessd deliberately wound down. Only the wake
+  // path clears the mark, and it does so before handing the row back here.
+  if (agent.status === "suspended") return { status: "skipped suspended" }
   if (!agent.scratchpadUrl) return { status: "skipped missing link", detail: "no scratchpad URL recorded" }
   if (!scratchpad) return { status: "skipped missing link", detail: `invalid scratchpad URL: ${agent.scratchpadUrl}` }
   if (target && scratchpad.streamId !== target.rootStreamId) return undefined
@@ -941,6 +1002,60 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
   }
   if (parts.length > 0) console.log(`harnessd: ${parts.join(", ")}`)
   return unavailable
+}
+
+/**
+ * Wind idle Claude sessions down. Named row or whole inventory, one lock, one
+ * report — the automatic sweep in `watch-unarchived` calls the same function
+ * so a manual run and an unattended pass cannot drift apart.
+ *
+ * Shares `resume-active.lock` with the revive, reap and tombstone passes: a
+ * revival racing this would respawn the very pane it is placing a placeholder
+ * in.
+ */
+export async function suspendIdleSessions(request: {
+  ref?: string
+  dryRun?: boolean
+  idleMinutes: number
+  deps?: SuspendDeps
+}): Promise<SuspendOutcome[]> {
+  const deps = request.deps ?? defaultSuspendDeps()
+  const candidates = request.ref
+    ? [findAgent(request.ref)]
+    : readInventory().filter((agent) => agent.status === "online" && agent.runtime === "claude" && !agent.tombstonedAt)
+  const release = request.dryRun ? () => {} : await acquireProcessLock(resumeActiveLockPath())
+  const outcomes: SuspendOutcome[] = []
+  try {
+    for (const agent of candidates) {
+      const outcome = suspendAgent(agent, deps, {
+        thresholdMs: request.idleMinutes * 60_000,
+        dryRun: request.dryRun,
+      })
+      outcomes.push(outcome)
+      // A named row reports every verdict; a sweep over the whole inventory
+      // would otherwise print a refusal line for each of a dozen busy agents
+      // every pass.
+      if (request.ref || outcome.status !== "skipped") {
+        console.log(`${outcome.status}\t${agent.name}\t${outcome.detail}`)
+      }
+    }
+  } finally {
+    release()
+  }
+  return outcomes
+}
+
+export function holdAgent(ref: string, minutes: number): void {
+  const agent = findAgent(ref)
+  const until = new Date(Date.now() + minutes * 60_000).toISOString()
+  upsertAgent({ ...agent, suspendHoldUntil: until, updatedAt: now() })
+  console.log(`harnessd: ${agent.name} is held against the idle sweep until ${until}`)
+}
+
+export function unholdAgent(ref: string): void {
+  const agent = findAgent(ref)
+  upsertAgent({ ...agent, suspendHoldUntil: undefined, updatedAt: now() })
+  console.log(`harnessd: ${agent.name} is back under the idle sweep`)
 }
 
 export function listAgents(): void {
@@ -1214,6 +1329,9 @@ export function doctor(): void {
   // auto-answers the safe ones; doctor only reports.
   for (const agent of panes ? readInventory() : []) {
     if (agent.runtime !== "claude" || agent.status === "stopped" || agent.tombstonedAt) continue
+    // A suspended pane holds harnessd's own placeholder, which is neither idle
+    // nor working; reporting it blocked would be reporting a wind-down as a fault.
+    if (agent.status === "suspended") continue
     let verdict: string
     try {
       const resolved = resolveManagedAgentPane(agent, panes)
