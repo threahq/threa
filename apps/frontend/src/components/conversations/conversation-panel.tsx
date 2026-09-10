@@ -392,12 +392,12 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   const hostStreamType = hostStream?.type
   const locator = useStreamName(workspaceId, anchorStreamId ?? "", "generic") ?? "Conversation"
   // Archived conversations are read-only (INV-62): the anchor stream's own
-  // state, else the root it inherits from, else the board post's cold-load
+  // state, else an archived ancestor, else the board post's cold-load
   // verdict (kept live by `setBoardRootArchived`).
   const archived = useEffectiveArchived({
+    workspaceId,
     stream: hostStream,
-    rootStreamId: hostStream?.rootStreamId ?? null,
-    fallbackRootArchived: post?.rootArchived === true,
+    fallbackArchived: post?.rootArchived === true,
   })
   const archivedReason = conversationArchivedReason(archived)
 

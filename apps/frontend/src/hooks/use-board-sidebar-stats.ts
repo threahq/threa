@@ -40,13 +40,14 @@ export const ZERO_BOARD_STREAM_STATS: BoardStreamStats = { topics: 0 }
  * `cardinality(message_ids) > 0` board filter and `mergeBoardConversation`'s
  * delete-on-empty) or its root is archived (hidden on the board by default) —
  * per the post's own `rootArchived` flag or, for a card cached before its root
- * was archived, the fresher `archivedRootIds` index the board vetoes with. Lens
+ * was archived, the fresher `sealedStreamIds` index (root or anchor sealed by
+ * archival at any depth) the board vetoes with. Lens
  * totals reuse `matchesBoardLens`, the same read-side lens authority the board
  * card filters with, so the two surfaces can't drift.
  */
 export function aggregateBoardSidebarStats(
   posts: CachedBoardPost[],
-  archivedRootIds: ReadonlySet<string> = new Set()
+  sealedStreamIds: ReadonlySet<string> = new Set()
 ): BoardSidebarStats {
   const byStream = new Map<string, BoardStreamStats>()
   const lensTotals = Object.fromEntries(BOARD_LENSES.map((lens) => [lens, 0])) as Record<BoardLens, number>
@@ -54,7 +55,7 @@ export function aggregateBoardSidebarStats(
     if (post.conversation.messageIds.length === 0) continue
     if (post.rootArchived === true) continue
     const rootId = post.rootStreamId ?? post.conversation.streamId
-    if (archivedRootIds.has(rootId)) continue
+    if (sealedStreamIds.has(rootId) || sealedStreamIds.has(post.conversation.streamId)) continue
     let entry = byStream.get(rootId)
     if (!entry) {
       entry = { topics: 0 }
@@ -81,7 +82,7 @@ export function aggregateBoardSidebarStats(
 export function useBoardSidebarStats(
   workspaceId: string,
   enabled: boolean,
-  archivedRootIds: ReadonlySet<string>
+  sealedStreamIds: ReadonlySet<string>
 ): BoardSidebarStats | null {
   const posts = useLiveQuery(async () => {
     // Off board mode, return before any table read so `useLiveQuery` subscribes
@@ -92,5 +93,5 @@ export function useBoardSidebarStats(
       .between([workspaceId, Dexie.minKey], [workspaceId, Dexie.maxKey])
       .toArray()
   }, [enabled, workspaceId])
-  return useMemo(() => (posts ? aggregateBoardSidebarStats(posts, archivedRootIds) : null), [posts, archivedRootIds])
+  return useMemo(() => (posts ? aggregateBoardSidebarStats(posts, sealedStreamIds) : null), [posts, sealedStreamIds])
 }

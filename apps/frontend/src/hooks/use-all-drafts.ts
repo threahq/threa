@@ -15,7 +15,13 @@ import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
 import { purgeScopeDrafts } from "./use-draft-message"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
-import { getStreamName, isHiddenStreamType, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import {
+  collectSealedStreamIds,
+  getStreamName,
+  isHiddenStreamType,
+  streamFallbackLabel,
+  streamLabel,
+} from "@/lib/streams"
 import { draftInlineText, draftMarkdown, draftPreviewStatusLabel } from "@/lib/drafts/decryption"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { conversationOriginLabel, subtopicOriginLabel, threadOriginLabel } from "@/lib/drafts/origin-label"
@@ -190,25 +196,13 @@ function resolveRootStreamId(
 }
 
 /**
- * Whether a stream is archived — directly, or because it descends from an
- * archived root. Archiving marks only the root row (a thread stays "active" and
- * inherits archival via `rootStreamId`), so a thread at any depth under an
- * archived root resolves as archived here; this mirrors the sidebar's
- * `isSidebarStreamVisible` archived rule. Callers pass a draft's resolved host
- * stream id (channel/DM/thread-parent/board-anchor). An unresolved id (`null`,
- * or a stream not in cache) is treated as not-archived, so a draft is never
- * hidden on missing data.
+ * Whether a draft's host is archived, directly or by an archived ancestor:
+ * `sealedStreamIds` is `collectSealedStreamIds` over the cached streams, the
+ * same verdict the sidebar lists by. An unresolved id (`null`, or a stream not
+ * in cache) is not sealed, so a draft is never hidden on missing data.
  */
-export function isStreamArchived(
-  streamId: string | null,
-  streamMap: Map<string, CachedStream>,
-  archivedStreamIds: ReadonlySet<string>
-): boolean {
-  if (!streamId) return false
-  const stream = streamMap.get(streamId)
-  if (!stream) return false
-  if (stream.archivedAt) return true
-  return stream.rootStreamId != null && archivedStreamIds.has(stream.rootStreamId)
+export function isStreamArchived(streamId: string | null, sealedStreamIds: ReadonlySet<string>): boolean {
+  return streamId !== null && sealedStreamIds.has(streamId)
 }
 
 /**
@@ -219,9 +213,9 @@ export function isStreamArchived(
 export function isDraftHostHidden(
   streamId: string | null,
   streamMap: Map<string, CachedStream>,
-  archivedStreamIds: ReadonlySet<string>
+  sealedStreamIds: ReadonlySet<string>
 ): boolean {
-  if (isStreamArchived(streamId, streamMap, archivedStreamIds)) return true
+  if (isStreamArchived(streamId, sealedStreamIds)) return true
   const stream = streamId ? streamMap.get(streamId) : undefined
   return stream !== undefined && isHiddenStreamType(stream)
 }
@@ -486,13 +480,9 @@ export function useAllDrafts(workspaceId: string) {
     return map
   }, [cachedStreams])
 
-  // Ids of directly-archived streams; a thread inherits archival via its root
-  // (see `isStreamArchived`). Drives the archived-draft filter in the loop below.
-  const archivedStreamIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const stream of cachedStreams ?? []) if (stream.archivedAt) ids.add(stream.id)
-    return ids
-  }, [cachedStreams])
+  // Archived streams plus everything sealed under them along the parent
+  // chain. Drives the archived-draft filter in the loop below.
+  const archivedStreamIds = useMemo(() => collectSealedStreamIds(cachedStreams ?? []), [cachedStreams])
 
   const {
     boardPostMap,
@@ -766,11 +756,7 @@ export function useDraftSummary(workspaceId: string): DraftSummary {
     return map
   }, [cachedStreams])
 
-  const archivedStreamIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const stream of cachedStreams ?? []) if (stream.archivedAt) ids.add(stream.id)
-    return ids
-  }, [cachedStreams])
+  const archivedStreamIds = useMemo(() => collectSealedStreamIds(cachedStreams ?? []), [cachedStreams])
 
   // Parent-message → host-stream map for thread drafts, so the badge hides a
   // thread reply under an archived root in step with the explorer. Gated on a

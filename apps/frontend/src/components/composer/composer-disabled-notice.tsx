@@ -11,10 +11,10 @@ export const CONVERSATION_ROOT_ARCHIVED_REASON =
 /** Read-only copy for a conversation surface, by where the archive lives. */
 export function conversationArchivedReason(archived: {
   ownArchived: boolean
-  rootArchived: boolean
+  ancestorArchived: boolean
 }): string | undefined {
   if (archived.ownArchived) return CONVERSATION_ARCHIVED_REASON
-  if (archived.rootArchived) return CONVERSATION_ROOT_ARCHIVED_REASON
+  if (archived.ancestorArchived) return CONVERSATION_ROOT_ARCHIVED_REASON
   return undefined
 }
 

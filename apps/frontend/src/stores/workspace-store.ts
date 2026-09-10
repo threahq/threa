@@ -449,6 +449,24 @@ export function useWorkspaceStreams(workspaceId: string | undefined): CachedStre
   )
 }
 
+/**
+ * One id index per rows reference: the archival chain walk (`findArchivedAncestor`)
+ * runs per rendered surface, and every timeline, card and settings panel would
+ * otherwise rebuild the same map from the same rows.
+ */
+const streamIndexMemo = new WeakMap<CachedStream[], ReadonlyMap<string, CachedStream>>()
+
+export function useWorkspaceStreamIndex(workspaceId: string | undefined): ReadonlyMap<string, CachedStream> {
+  const streams = useWorkspaceStreamsRaw(workspaceId)
+  return useMemo(() => {
+    const memo = streamIndexMemo.get(streams)
+    if (memo) return memo
+    const index = new Map(streams.map((stream) => [stream.id, stream]))
+    streamIndexMemo.set(streams, index)
+    return index
+  }, [streams])
+}
+
 export function useWorkspaceStreamMemberships(workspaceId: string | undefined): CachedStreamMembership[] {
   const cached = workspaceId ? (cache.memberships.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "memberships", cached)

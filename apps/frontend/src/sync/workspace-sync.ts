@@ -18,6 +18,7 @@ import {
 import { getAccountGeneration } from "@/db/event-writes"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { mergeConversationByTitleRevision, mergeStreamByTitleRevision } from "@/lib/title-merge"
+import { findArchivedAncestor } from "@/lib/streams"
 import {
   diffRows,
   diffSingleton,
@@ -178,6 +179,8 @@ interface StreamPayload {
   streamId: string
   stream: Stream
   dmUserIds?: [string, string]
+  /** On archive/unarchive: the live descendants sealed or released with the stream. */
+  threadStreamIds?: string[]
 }
 
 interface WorkspaceUserAddedPayload {
@@ -937,20 +940,36 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleStreamArchived = async (payload: StreamPayload) => {
+    const descendantIds = payload.threadStreamIds ?? []
+    const sealedIds = [payload.stream.id, ...descendantIds]
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as StreamBootstrap
       return { ...bootstrap, stream: mergeStreamByTitleRevision(bootstrap.stream, payload.stream) }
     })
+    // A descendant's open timeline reads its sealing ancestor off its own
+    // bootstrap when the chain isn't in the stream cache; a nearer archived
+    // ancestor already recorded there stays the answer.
+    const archivedAt = payload.stream.archivedAt
+    if (archivedAt) {
+      for (const id of descendantIds) {
+        queryClient.setQueryData(streamKeys.bootstrap(workspaceId, id), (old: unknown) => {
+          if (!old || typeof old !== "object") return old
+          const bootstrap = old as StreamBootstrap
+          if (bootstrap.archivedAncestor) return old
+          return { ...bootstrap, archivedAncestor: { streamId: payload.stream.id, archivedAt } }
+        })
+      }
+    }
 
-    // Remove from workspace bootstrap cache (sidebar - archived streams don't show)
+    // Remove from workspace bootstrap cache (sidebar - sealed streams don't show)
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as { streams?: Stream[] }
       if (!bootstrap.streams) return old
       return {
         ...bootstrap,
-        streams: bootstrap.streams.filter((s) => s.id !== payload.stream.id),
+        streams: bootstrap.streams.filter((s) => !sealedIds.includes(s.id)),
       }
     })
 
@@ -958,9 +977,9 @@ export function registerWorkspaceSocketHandlers(
     // missing row (swept while archived) is restored rather than silently lost.
     await upsertStreamRow(payload.stream)
     // The board gates on each card's own `rootArchived`, so the cards this
-    // stream covers must carry the new verdict or they keep showing until a
-    // refetch.
-    await setBoardRootArchived(workspaceId, payload.stream.id, true)
+    // stream and its sealed descendants cover must carry the new verdict or
+    // they keep showing until a refetch.
+    await setBoardRootArchived(workspaceId, sealedIds, true)
   }
 
   const handleStreamUnarchived = async (payload: StreamPayload) => {
@@ -992,7 +1011,20 @@ export function registerWorkspaceSocketHandlers(
     // Upsert IndexedDB — partial merge preserves lastMessagePreview etc.; a
     // missing row (swept while archived) is restored rather than silently lost.
     await upsertStreamRow(payload.stream)
-    await setBoardRootArchived(workspaceId, payload.stream.id, false)
+    // Unarchiving under a still-archived ancestor is inert: the stream and its
+    // descendants stay sealed, so the board verdicts and the descendants'
+    // sealing-ancestor pointers keep standing.
+    if (await hasArchivedAncestorInCache(workspaceId, payload.stream)) return
+    const descendantIds = payload.threadStreamIds ?? []
+    for (const id of descendantIds) {
+      queryClient.setQueryData(streamKeys.bootstrap(workspaceId, id), (old: unknown) => {
+        if (!old || typeof old !== "object") return old
+        const bootstrap = old as StreamBootstrap
+        if (bootstrap.archivedAncestor?.streamId !== payload.stream.id) return old
+        return { ...bootstrap, archivedAncestor: null }
+      })
+    }
+    await setBoardRootArchived(workspaceId, [payload.stream.id, ...descendantIds], false)
   }
 
   const handleWorkspaceUserAdded = async (payload: WorkspaceUserAddedPayload) => {
@@ -2512,6 +2544,19 @@ export function registerWorkspaceSocketHandlers(
  * unarchived live — a fully-mapped row is put instead, so a live
  * archive/unarchive can't silently drop the local row (INV-11: no silent loss).
  */
+/**
+ * Whether a cached stream above `stream` along `parentStreamId` is archived.
+ * Reads the whole workspace's stream rows once (one indexed query) rather than
+ * one `get` per hop. A missing link resolves as not archived: the server sent
+ * the unarchive, so absent contrary evidence the release is applied.
+ */
+async function hasArchivedAncestorInCache(workspaceId: string, stream: Stream): Promise<boolean> {
+  if (!stream.parentStreamId) return false
+  const rows = await db.streams.where("workspaceId").equals(workspaceId).toArray()
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  return findArchivedAncestor(stream, (id) => byId.get(id)).sealedBy !== null
+}
+
 async function upsertStreamRow(stream: Stream): Promise<void> {
   await db.transaction("rw", db.streams, async () => {
     const now = Date.now()

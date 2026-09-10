@@ -202,24 +202,24 @@ describe("categorizeStream", () => {
 
 describe("isSidebarStreamVisible", () => {
   const memberStreamIds = new Set(["stream_member"])
-  const archivedStreamIds = new Set(["stream_archived_root"])
+  const archivedStreamIds = new Set(["stream_archived_root", "stream_sealed_thread"])
 
   it("hides a stream that is itself archived", () => {
     const stream = makeStream({ id: "stream_archived", archivedAt: "2026-01-01T00:00:00Z" })
     expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(false)
   })
 
-  it("hides a thread whose root stream is archived, at any nesting depth", () => {
+  it("hides a thread sealed by an archived ancestor (the sealed set carries the chain verdict)", () => {
     const thread = makeStream({
-      id: "stream_thread",
+      id: "stream_sealed_thread",
       type: StreamTypes.THREAD,
-      rootStreamId: "stream_archived_root",
+      rootStreamId: "stream_active_root",
       visibility: Visibilities.PRIVATE,
     })
     expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds)).toBe(false)
   })
 
-  it("keeps a thread whose root stream is active", () => {
+  it("keeps a thread whose chain is live", () => {
     const thread = makeStream({
       id: "stream_thread",
       type: StreamTypes.THREAD,

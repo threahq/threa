@@ -1,176 +1,137 @@
-import { describe, it, expect, vi, afterEach } from "vitest"
+import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook } from "@testing-library/react"
 import type { CachedStream } from "@/db"
-import * as streamStore from "@/stores/stream-store"
+import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
 import { useEffectiveArchived } from "./use-effective-archived"
 
-function seedRoot(root: Partial<CachedStream> | undefined) {
-  vi.spyOn(streamStore, "useStreamFromStore").mockReturnValue(root as CachedStream | undefined)
+const WS = "ws_1"
+const ARCHIVED_AT = "2026-01-01T00:00:00.000Z"
+
+function row(id: string, overrides: Partial<CachedStream> = {}): CachedStream {
+  return {
+    id,
+    workspaceId: WS,
+    type: "thread",
+    displayName: id,
+    slug: null,
+    description: null,
+    visibility: "private",
+    parentStreamId: null,
+    rootStreamId: null,
+    companionMode: "off",
+    companionPersonaId: null,
+    createdBy: "usr_1",
+    createdAt: ARCHIVED_AT,
+    updatedAt: ARCHIVED_AT,
+    archivedAt: null,
+    _cachedAt: 0,
+    ...overrides,
+  } as CachedStream
 }
 
-afterEach(() => {
-  vi.restoreAllMocks()
+function seed(streams: CachedStream[]) {
+  seedWorkspaceCache(WS, {
+    workspace: { id: WS, name: "W", slug: "w", createdAt: ARCHIVED_AT, updatedAt: ARCHIVED_AT, _cachedAt: 0 } as never,
+    users: [],
+    streams,
+    memberships: [],
+    dmPeers: [],
+    personas: [],
+    bots: [],
+  })
+}
+
+beforeEach(() => {
+  resetWorkspaceStoreCache()
+  resetWorkspaceTableRegistry()
 })
 
 describe("useEffectiveArchived", () => {
   it("seals on the anchor stream's own archivedAt", () => {
-    seedRoot(undefined)
+    seed([])
+    const { result } = renderHook(() =>
+      useEffectiveArchived({ workspaceId: WS, stream: { id: "t", archivedAt: ARCHIVED_AT }, fallbackArchived: null })
+    )
+    expect(result.current).toEqual({ ownArchived: true, ancestorArchived: false, sealedById: null, isArchived: true })
+  })
+
+  it("inherits from an archived ancestor at any depth in the stream cache", () => {
+    const chan = row("chan", { type: "channel" })
+    const a = row("thread_a", { parentStreamId: "chan", rootStreamId: "chan", archivedAt: ARCHIVED_AT })
+    const b = row("thread_b", { parentStreamId: "thread_a", rootStreamId: "chan" })
+    seed([chan, a, b])
     const { result } = renderHook(() =>
       useEffectiveArchived({
-        stream: { archivedAt: "2026-01-01T00:00:00.000Z" },
-        rootStreamId: null,
-        fallbackRootArchived: false,
+        workspaceId: WS,
+        stream: { id: "thread_c", parentStreamId: "thread_b", rootStreamId: "chan", archivedAt: null },
+        fallbackArchived: null,
       })
     )
-    expect(result.current).toEqual({ ownArchived: true, rootArchived: false, isArchived: true })
+    expect(result.current).toEqual({
+      ownArchived: false,
+      ancestorArchived: true,
+      sealedById: "thread_a",
+      isArchived: true,
+    })
   })
 
-  it("inherits from the root row in the stream cache", () => {
-    seedRoot({ id: "stream_root", archivedAt: "2026-01-01T00:00:00.000Z" })
+  it("a fully resolved live chain wins over a stale fallback", () => {
+    seed([row("chan", { type: "channel" })])
     const { result } = renderHook(() =>
       useEffectiveArchived({
-        stream: { archivedAt: null },
-        rootStreamId: "stream_root",
-        fallbackRootArchived: false,
+        workspaceId: WS,
+        stream: { id: "t", parentStreamId: "chan", rootStreamId: "chan", archivedAt: null },
+        fallbackArchived: { streamId: "chan", archivedAt: ARCHIVED_AT },
       })
     )
-    expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
+    expect(result.current).toEqual({ ownArchived: false, ancestorArchived: false, sealedById: null, isArchived: false })
   })
 
-  it("a present, unarchived root row wins over a stale fallback", () => {
-    seedRoot({ id: "stream_root", archivedAt: null })
+  it("falls back to the cold-load verdict when a chain link is absent", () => {
+    seed([])
     const { result } = renderHook(() =>
       useEffectiveArchived({
-        stream: { archivedAt: null },
-        rootStreamId: "stream_root",
-        fallbackRootArchived: true,
+        workspaceId: WS,
+        stream: { id: "t", parentStreamId: "chan", rootStreamId: "chan", archivedAt: null },
+        fallbackArchived: { streamId: "chan", archivedAt: ARCHIVED_AT },
       })
     )
-    expect(result.current).toEqual({ ownArchived: false, rootArchived: false, isArchived: false })
+    expect(result.current).toEqual({ ownArchived: false, ancestorArchived: true, sealedById: "chan", isArchived: true })
   })
 
-  it("falls back to the cold-load verdict when the root row is absent", () => {
-    seedRoot(undefined)
+  it("is unarchived with no own state, an absent chain and no fallback", () => {
+    seed([])
     const { result } = renderHook(() =>
       useEffectiveArchived({
-        stream: { archivedAt: null },
-        rootStreamId: "stream_root",
-        fallbackRootArchived: "2026-01-01T00:00:00.000Z",
+        workspaceId: WS,
+        stream: { id: "t", parentStreamId: "chan", rootStreamId: "chan", archivedAt: null },
+        fallbackArchived: undefined,
       })
-    )
-    expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
-  })
-
-  it("is unarchived with no own state, no root row and no fallback", () => {
-    seedRoot(undefined)
-    const { result } = renderHook(() =>
-      useEffectiveArchived({
-        stream: { archivedAt: null },
-        rootStreamId: "stream_root",
-        fallbackRootArchived: undefined,
-      })
-    )
-    expect(result.current).toEqual({ ownArchived: false, rootArchived: false, isArchived: false })
-  })
-
-  it("ignores a root fallback when the surface has no root to inherit from", () => {
-    seedRoot(undefined)
-    const { result } = renderHook(() =>
-      useEffectiveArchived({ stream: { archivedAt: null }, rootStreamId: null, fallbackRootArchived: true })
-    )
-    expect(result.current.isArchived).toBe(false)
-  })
-  it("applies the fallback when the anchor row itself is absent (chain unresolvable)", () => {
-    seedRoot(undefined)
-    const { result } = renderHook(() =>
-      useEffectiveArchived({ stream: undefined, rootStreamId: null, fallbackRootArchived: true })
-    )
-    expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
-  })
-
-  it("stays unarchived with an absent anchor and no fallback verdict", () => {
-    seedRoot(undefined)
-    const { result } = renderHook(() =>
-      useEffectiveArchived({ stream: undefined, rootStreamId: null, fallbackRootArchived: false })
     )
     expect(result.current.isArchived).toBe(false)
   })
 
-  it("uses a caller-supplied root row instead of self-resolving", () => {
-    seedRoot(undefined)
+  it("applies a boolean fallback when the anchor row itself is absent", () => {
+    seed([])
     const { result } = renderHook(() =>
-      useEffectiveArchived({
-        stream: { archivedAt: null },
-        rootStreamId: "stream_root",
-        rootStream: { archivedAt: null },
-        fallbackRootArchived: "2026-01-01T00:00:00.000Z",
-      })
+      useEffectiveArchived({ workspaceId: WS, stream: undefined, fallbackArchived: true })
     )
-    expect(result.current.isArchived).toBe(false)
-    expect(streamStore.useStreamFromStore).toHaveBeenCalledWith(undefined)
+    expect(result.current).toEqual({ ownArchived: false, ancestorArchived: true, sealedById: null, isArchived: true })
   })
 
-  it("a caller-supplied null root row means known-absent and takes the fallback", () => {
-    seedRoot(undefined)
+  it("seals an aside whose host thread sits under an archived root", () => {
+    seed([
+      row("root", { type: "scratchpad", archivedAt: ARCHIVED_AT }),
+      row("host", { parentStreamId: "root", rootStreamId: "root" }),
+    ])
     const { result } = renderHook(() =>
       useEffectiveArchived({
-        stream: { archivedAt: null },
-        rootStreamId: "stream_root",
-        rootStream: null,
-        fallbackRootArchived: "2026-01-01T00:00:00.000Z",
+        workspaceId: WS,
+        stream: { id: "aside", parentStreamId: "host", rootStreamId: null, archivedAt: null },
+        fallbackArchived: null,
       })
     )
-    expect(result.current.rootArchived).toBe(true)
-  })
-
-  describe("aside host inheritance (twin of write-authority)", () => {
-    function seedRows(rows: Record<string, Partial<CachedStream>>) {
-      vi.spyOn(streamStore, "useStreamFromStore").mockImplementation(
-        (id) => (id ? (rows[id] as CachedStream | undefined) : undefined) as CachedStream | undefined
-      )
-    }
-    const aside = { archivedAt: null, type: "aside", parentStreamId: "stream_host" }
-
-    it("should seal an aside when its host is archived", () => {
-      seedRows({ stream_host: { id: "stream_host", rootStreamId: null, archivedAt: "2026-01-01T00:00:00.000Z" } })
-      const { result } = renderHook(() =>
-        useEffectiveArchived({ stream: aside, rootStreamId: null, fallbackRootArchived: false })
-      )
-      expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
-    })
-
-    it("should seal an aside on a thread whose root is archived", () => {
-      seedRows({
-        stream_host: { id: "stream_host", rootStreamId: "stream_root", archivedAt: null },
-        stream_root: { id: "stream_root", rootStreamId: null, archivedAt: "2026-01-01T00:00:00.000Z" },
-      })
-      const { result } = renderHook(() =>
-        useEffectiveArchived({ stream: aside, rootStreamId: null, fallbackRootArchived: false })
-      )
-      expect(result.current).toEqual({ ownArchived: false, rootArchived: true, isArchived: true })
-    })
-
-    it("should leave an aside writable while its host chain is live", () => {
-      seedRows({
-        stream_host: { id: "stream_host", rootStreamId: "stream_root", archivedAt: null },
-        stream_root: { id: "stream_root", rootStreamId: null, archivedAt: null },
-      })
-      const { result } = renderHook(() =>
-        useEffectiveArchived({ stream: aside, rootStreamId: null, fallbackRootArchived: false })
-      )
-      expect(result.current).toEqual({ ownArchived: false, rootArchived: false, isArchived: false })
-    })
-
-    it("should not read a non-aside's parent as a host", () => {
-      seedRows({ stream_host: { id: "stream_host", rootStreamId: null, archivedAt: "2026-01-01T00:00:00.000Z" } })
-      const { result } = renderHook(() =>
-        useEffectiveArchived({
-          stream: { archivedAt: null, type: "thread", parentStreamId: "stream_host" },
-          rootStreamId: null,
-          fallbackRootArchived: false,
-        })
-      )
-      expect(result.current).toEqual({ ownArchived: false, rootArchived: false, isArchived: false })
-    })
+    expect(result.current).toMatchObject({ ancestorArchived: true, sealedById: "root" })
   })
 })

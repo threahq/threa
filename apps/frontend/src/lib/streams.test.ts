@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest"
 import { SLUG_MAX_LENGTH } from "@threahq/types"
-import { resolveDmDisplayName, resolveStreamName, streamChipSlug, streamLabel } from "./streams"
+import {
+  collectSealedStreamIds,
+  findArchivedAncestor,
+  resolveDmDisplayName,
+  resolveStreamName,
+  streamChipSlug,
+  streamLabel,
+} from "./streams"
 
 describe("streamLabel", () => {
   it("prefixes a channel with its slug", () => {
@@ -94,5 +101,64 @@ describe("streamChipSlug", () => {
 
   it("folds the placeholder for an unnamed scratchpad", () => {
     expect(streamChipSlug({ type: "scratchpad", slug: null, displayName: null })).toBe("untitled")
+  })
+})
+
+describe("findArchivedAncestor", () => {
+  const rows: Record<
+    string,
+    { id: string; archivedAt: string | null; parentStreamId: string | null; rootStreamId: string | null }
+  > = {
+    chan: { id: "chan", archivedAt: null, parentStreamId: null, rootStreamId: null },
+    thread_a: { id: "thread_a", archivedAt: "2026-01-01T00:00:00Z", parentStreamId: "chan", rootStreamId: "chan" },
+    thread_b: { id: "thread_b", archivedAt: null, parentStreamId: "thread_a", rootStreamId: "chan" },
+    thread_c: { id: "thread_c", archivedAt: null, parentStreamId: "thread_b", rootStreamId: "chan" },
+    thread_live: { id: "thread_live", archivedAt: null, parentStreamId: "chan", rootStreamId: "chan" },
+    archived_root: {
+      id: "archived_root",
+      archivedAt: "2026-01-01T00:00:00Z",
+      parentStreamId: null,
+      rootStreamId: null,
+    },
+  }
+  const lookup = (id: string) => rows[id]
+
+  it("names the nearest archived ancestor at any depth", () => {
+    expect(findArchivedAncestor(rows.thread_c, lookup)).toEqual({ resolved: true, sealedBy: rows.thread_a })
+    expect(findArchivedAncestor(rows.thread_b, lookup)).toEqual({ resolved: true, sealedBy: rows.thread_a })
+  })
+
+  it("resolves to nothing when every ancestor is live", () => {
+    expect(findArchivedAncestor(rows.thread_live, lookup)).toEqual({ resolved: true, sealedBy: null })
+    expect(findArchivedAncestor(rows.chan, lookup)).toEqual({ resolved: true, sealedBy: null })
+  })
+
+  it("is unresolved when a chain link is missing and the root is live", () => {
+    const orphan = { id: "orphan", archivedAt: null, parentStreamId: "missing", rootStreamId: "chan" }
+    expect(findArchivedAncestor(orphan, lookup)).toEqual({ resolved: false, sealedBy: null })
+  })
+
+  it("falls back to an archived root when a chain link is missing", () => {
+    const orphan = { id: "orphan", archivedAt: null, parentStreamId: "missing", rootStreamId: "archived_root" }
+    expect(findArchivedAncestor(orphan, lookup)).toEqual({ resolved: true, sealedBy: rows.archived_root })
+  })
+
+  it("stops at the depth bound on a cyclic chain", () => {
+    const cyclic = { id: "x", archivedAt: null, parentStreamId: "x", rootStreamId: null }
+    expect(findArchivedAncestor(cyclic, () => cyclic)).toEqual({ resolved: false, sealedBy: null })
+  })
+})
+
+describe("collectSealedStreamIds", () => {
+  it("collects archived streams and everything under them, not unresolvable chains", () => {
+    const sealed = collectSealedStreamIds([
+      { id: "chan", archivedAt: null, parentStreamId: null },
+      { id: "thread_a", archivedAt: "2026-01-01T00:00:00Z", parentStreamId: "chan", rootStreamId: "chan" },
+      { id: "thread_b", archivedAt: null, parentStreamId: "thread_a", rootStreamId: "chan" },
+      { id: "aside", archivedAt: null, parentStreamId: "thread_b", rootStreamId: null },
+      { id: "thread_live", archivedAt: null, parentStreamId: "chan", rootStreamId: "chan" },
+      { id: "orphan", archivedAt: null, parentStreamId: "missing", rootStreamId: "chan" },
+    ])
+    expect([...sealed].sort()).toEqual(["aside", "thread_a", "thread_b"])
   })
 })

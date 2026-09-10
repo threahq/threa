@@ -684,23 +684,13 @@ export function StreamContent({
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
   const isSystem = stream?.type === StreamTypes.SYSTEM
-  // Archived state is root-inherited (INV-62); the shared hook owns the
-  // two-source resolution (root row in the stream cache, else the per-stream
-  // bootstrap's cold-load verdict).
-  const rootStreamId = isThread ? (stream?.rootStreamId ?? null) : null
-  // The root row is resolved here, from the warm workspace-stream cache this
-  // component already reads, rather than left to the hook: a self-resolving
-  // read reports the root absent on the mount's first render, so a stale
-  // bootstrap verdict would flash the archived notice over the composer.
-  const rootFromCache = useMemo(
-    () => (rootStreamId ? (idbStreams.find((candidate) => candidate.id === rootStreamId) ?? null) : null),
-    [idbStreams, rootStreamId]
-  )
-  const { rootArchived, isArchived } = useEffectiveArchived({
+  // Archived state is inherited down the parent chain; the shared hook walks
+  // the warm workspace-stream cache and falls back to the per-stream
+  // bootstrap's cold-load verdict only when a link is missing.
+  const { ancestorArchived, isArchived } = useEffectiveArchived({
+    workspaceId,
     stream,
-    rootStreamId,
-    rootStream: rootFromCache,
-    fallbackRootArchived: bootstrap?.archivedAncestor?.archivedAt,
+    fallbackArchived: bootstrap?.archivedAncestor,
   })
 
   // Conversation overlay (channels/DMs): URL-derived so a refresh or shared
@@ -722,7 +712,7 @@ export function StreamContent({
   // thread's replies live as secondary members and the opener as primary), not
   // the thread's own list (which has none). A channel/DM uses its own list. The
   // query key matches the overlay's when both are live, so they dedupe.
-  const conversationMembershipStreamId = isThread ? rootStreamId : streamId
+  const conversationMembershipStreamId = isThread ? (stream?.rootStreamId ?? null) : streamId
   const conversationMembershipEnabled =
     !isDraft && !!conversationMembershipStreamId && (isThread || supportsConversationOverlay)
   const { conversations: streamConversations, refetch: refetchStreamConversations } = useConversations(
@@ -2484,7 +2474,7 @@ export function StreamContent({
     disabledReason = "System notifications are read-only."
   } else if (stream?.archivedAt) {
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."
-  } else if (rootArchived) {
+  } else if (ancestorArchived) {
     disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
   }
 

@@ -56,7 +56,7 @@ import {
   isUnreadStream,
 } from "./utils"
 import type { StreamItemData } from "./types"
-import { isUtilityStream, resolveDmDisplayName, streamLabel } from "@/lib/streams"
+import { collectSealedStreamIds, isUtilityStream, resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { useMuteStream, useUnmuteStream } from "@/hooks/use-conversations"
 import { useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
@@ -150,21 +150,16 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
-  // Archiving a stream marks only that row; its thread descendants stay "active"
-  // and would otherwise still surface in the sidebar. A thread inherits its root
-  // via `rootStreamId`, so one lookup hides every nested thread under an archived
-  // root (scratchpad, channel, or any top-level stream).
+  // Archiving a stream marks only that row; everything under it along the
+  // parent chain (threads at any depth, asides) is sealed by inheritance and
+  // must leave the sidebar with it.
   // Signature-memoized: `idbStreams` re-emits on every db.streams write, and
-  // this set now also feeds useBoardSidebarStats, whose aggregation must not
-  // re-run unless archived membership actually changed.
-  const archivedStreamIdSignature = useMemo(() => {
-    const ids: string[] = []
-    for (const stream of idbStreams) if (stream.archivedAt) ids.push(stream.id)
-    return ids.sort().join(",")
-  }, [idbStreams])
-  const archivedStreamIds = useMemo(
-    () => new Set<string>(archivedStreamIdSignature ? archivedStreamIdSignature.split(",") : []),
-    [archivedStreamIdSignature]
+  // this set also feeds useBoardSidebarStats, whose aggregation must not
+  // re-run unless sealed membership actually changed.
+  const sealedStreamIdSignature = useMemo(() => [...collectSealedStreamIds(idbStreams)].sort().join(","), [idbStreams])
+  const sealedStreamIds = useMemo(
+    () => new Set<string>(sealedStreamIdSignature ? sealedStreamIdSignature.split(",") : []),
+    [sealedStreamIdSignature]
   )
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
@@ -179,7 +174,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const processedStreams = useMemo(() => {
     return idbStreams
-      .filter((stream) => isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds))
+      .filter((stream) => isSidebarStreamVisible(stream, memberStreamIds, sealedStreamIds))
       .map((stream): StreamItemData => {
         const streamWithPreview = { ...stream, lastMessagePreview: stream.lastMessagePreview ?? null }
         const unreadCount = getUnreadCount(stream.id)
@@ -210,7 +205,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       })
   }, [
     idbStreams,
-    archivedStreamIds,
+    sealedStreamIds,
     memberStreamIds,
     mutedStreamIdSet,
     getUnreadCount,
@@ -342,7 +337,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // The single reactive topic-stats pass — one subscription for the whole board
   // sidebar (rows + Lenses counts), gated on board mode so chats mode subscribes
   // to nothing (perf contract in the exploration doc).
-  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage, archivedStreamIds)
+  const boardSidebarStats = useBoardSidebarStats(workspaceId, isBoardPage, sealedStreamIds)
   const boardMode = useMemo<SidebarBoardMode | null>(() => {
     if (!isBoardPage) return null
     return {

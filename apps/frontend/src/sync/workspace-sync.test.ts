@@ -3603,6 +3603,116 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("cascades stream:archived over threadStreamIds: board rows, sidebar cache, and descendant bootstraps", async () => {
+    await db.conversations.clear()
+    await seedBoardRow("conv_in_thread", "ws_1", "thread_deep", "chan_root")
+    await seedBoardRow("conv_elsewhere", "ws_1", "chan_other", "chan_other")
+
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        streams: [
+          { ...makeStream("thread_top"), lastMessagePreview: null },
+          { ...makeStream("thread_deep"), lastMessagePreview: null },
+          { ...makeStream("chan_other"), lastMessagePreview: null },
+        ],
+      })
+    )
+    queryClient.setQueryData(
+      streamKeys.bootstrap("ws_1", "thread_deep"),
+      makeStreamBootstrap("thread_deep", { archivedAncestor: null })
+    )
+    const nearer = { streamId: "thread_mid", archivedAt: "2025-12-01T00:00:00Z" }
+    queryClient.setQueryData(
+      streamKeys.bootstrap("ws_1", "thread_nearer"),
+      makeStreamBootstrap("thread_nearer", { archivedAncestor: nearer })
+    )
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:archived", {
+      workspaceId: "ws_1",
+      streamId: "thread_top",
+      stream: makeStream("thread_top", { type: "thread", archivedAt: "2026-01-01T00:00:00Z" }),
+      threadStreamIds: ["thread_deep", "thread_nearer"],
+    })
+
+    await vi.waitFor(async () => {
+      expect(await db.conversations.get("conv_in_thread")).toMatchObject({ rootArchived: true })
+    })
+    expect((await db.conversations.get("conv_elsewhere"))?.rootArchived).toBeUndefined()
+    const sidebar = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(sidebar?.streams.map((s) => s.id)).toEqual(["chan_other"])
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_deep"))?.archivedAncestor
+    ).toEqual({ streamId: "thread_top", archivedAt: "2026-01-01T00:00:00Z" })
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_nearer"))?.archivedAncestor
+    ).toEqual(nearer)
+
+    emit("stream:unarchived", {
+      workspaceId: "ws_1",
+      streamId: "thread_top",
+      stream: makeStream("thread_top", { type: "thread", archivedAt: null }),
+      threadStreamIds: ["thread_deep", "thread_nearer"],
+    })
+    await vi.waitFor(async () => {
+      expect(await db.conversations.get("conv_in_thread")).toMatchObject({ rootArchived: false })
+    })
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_deep"))?.archivedAncestor
+    ).toBeNull()
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_nearer"))?.archivedAncestor
+    ).toEqual(nearer)
+
+    cleanup()
+  })
+
+  it("keeps board rows and descendant bootstraps sealed on an inert stream:unarchived under an archived ancestor", async () => {
+    await db.conversations.clear()
+    await db.streams.put({
+      ...makeStream("chan_sealed", { archivedAt: "2026-01-01T00:00:00Z" }),
+      lastMessagePreview: null,
+      _cachedAt: Date.now(),
+    })
+    await seedBoardRow("conv_inert", "ws_1", "thread_inert_child", "chan_sealed")
+    await db.conversations.update("conv_inert", { rootArchived: true })
+
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      streamKeys.bootstrap("ws_1", "thread_inert_child"),
+      makeStreamBootstrap("thread_inert_child", {
+        archivedAncestor: { streamId: "thread_inert", archivedAt: "2026-02-01T00:00:00Z" },
+      })
+    )
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:unarchived", {
+      workspaceId: "ws_1",
+      streamId: "thread_inert",
+      stream: makeStream("thread_inert", {
+        type: "thread",
+        parentStreamId: "chan_sealed",
+        rootStreamId: "chan_sealed",
+        archivedAt: null,
+      }),
+      threadStreamIds: ["thread_inert_child"],
+    })
+
+    await vi.waitFor(async () => {
+      expect((await db.streams.get("thread_inert"))?.archivedAt).toBeNull()
+    })
+    expect(await db.conversations.get("conv_inert")).toMatchObject({ rootArchived: true })
+    expect(
+      queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_inert_child"))?.archivedAncestor
+    ).toEqual({ streamId: "thread_inert", archivedAt: "2026-02-01T00:00:00Z" })
+
+    cleanup()
+  })
+
   it("preserves an existing row's lastMessagePreview on stream:unarchived", async () => {
     await db.streams.put({
       ...makeStream("stream_unarch2", { archivedAt: "2026-01-01T00:00:00Z" }),

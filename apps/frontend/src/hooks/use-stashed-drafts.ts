@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from "react"
+import { collectSealedStreamIds } from "@/lib/streams"
 import { type CachedDraft, type CachedStream } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { isDraftInHostPile, resolveDraftHomeStream, type DraftPileContext } from "@/lib/drafts/home-stream"
@@ -149,7 +150,7 @@ function isHostHomeEligible(
 ): boolean {
   const home = resolveDraftHomeStream(scope, pileContext)
   if (!home) return false
-  return !isStreamEncrypted(home, streamMap) && !isStreamArchived(home, streamMap, archivedStreamIds)
+  return !isStreamEncrypted(home, streamMap) && !isStreamArchived(home, archivedStreamIds)
 }
 
 /**
@@ -201,11 +202,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     return map
   }, [cachedStreams])
 
-  const archivedStreamIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const stream of cachedStreams ?? []) if (stream.archivedAt) ids.add(stream.id)
-    return ids
-  }, [cachedStreams])
+  const archivedStreamIds = useMemo(() => collectSealedStreamIds(cachedStreams ?? []), [cachedStreams])
 
   const candidates = useMemo(() => allDrafts.filter(draftHasPayload), [allDrafts])
 

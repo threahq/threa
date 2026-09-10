@@ -1687,6 +1687,7 @@ describe("ConversationPanel — archived is read-only (INV-62)", () => {
   function seedStreams(rows: Record<string, Record<string, unknown>>) {
     vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation(((id: string | undefined) =>
       id ? (rows[id] ?? undefined) : undefined) as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamIndex").mockReturnValue(new Map(Object.entries(rows)) as never)
   }
 
   /** Captures the docked composer's gating props without mounting the editor. */
@@ -1722,7 +1723,13 @@ describe("ConversationPanel — archived is read-only (INV-62)", () => {
 
   it("inherits the root's archived state for a conversation anchored in a thread", async () => {
     seedStreams({
-      stream_1: { id: "stream_1", type: "thread", rootStreamId: "stream_root", archivedAt: null },
+      stream_1: {
+        id: "stream_1",
+        type: "thread",
+        parentStreamId: "stream_root",
+        rootStreamId: "stream_root",
+        archivedAt: null,
+      },
       stream_root: { id: "stream_root", type: "channel", archivedAt: "2026-01-01T00:00:00.000Z" },
     })
     const captured = captureComposer()
@@ -1736,7 +1743,15 @@ describe("ConversationPanel — archived is read-only (INV-62)", () => {
   })
 
   it("falls back to the post's rootArchived verdict on a cold load with no root row", async () => {
-    seedStreams({ stream_1: { id: "stream_1", type: "thread", rootStreamId: "stream_root", archivedAt: null } })
+    seedStreams({
+      stream_1: {
+        id: "stream_1",
+        type: "thread",
+        parentStreamId: "stream_root",
+        rootStreamId: "stream_root",
+        archivedAt: null,
+      },
+    })
     const captured = captureComposer()
     mountPanel({ cached: asCached({ ...makePost(), rootArchived: true }) })
     await screen.findByText("Opening message body.")
