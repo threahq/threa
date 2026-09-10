@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render } from "@testing-library/react"
 import * as contextsModule from "@/contexts"
+import * as accountScopeModule from "@/auth/account-scope"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as workspaceUserModule from "@/hooks/use-current-workspace-user-id"
 import * as posthogModule from "./posthog"
+import * as diagnosticsModule from "@/lib/connectivity-diagnostics"
 import { AnalyticsConsentGate } from "./gate"
 
 type Consent = "unset" | "granted" | "denied"
@@ -14,14 +16,31 @@ function mockInputs(params: {
   analytics: typeof analytics | null
   userId: string | null
   replay?: boolean
+  diagnostics?: boolean
+  accountId?: string | null
+  preferencesPending?: boolean
+  updatedAt?: string
 }) {
   vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
-    preferences: { analyticsConsent: params.consent, sessionReplayOptIn: params.replay ?? false },
+    preferences: {
+      analyticsConsent: params.consent,
+      sessionReplayOptIn: params.replay ?? false,
+      performanceDiagnosticsOptIn: params.diagnostics ?? false,
+      updatedAt: params.updatedAt ?? "2026-06-01T00:00:00.000Z",
+    },
+    isLoading: params.preferencesPending ?? false,
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
   vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockReturnValue({
-    data: { analytics: params.analytics },
+    data: { analytics: params.analytics, featureFlags: { user: { perfDiagnostics: "available" } } },
   } as unknown as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>)
   vi.spyOn(workspaceUserModule, "useCurrentWorkspaceUserId").mockReturnValue(params.userId)
+  vi.spyOn(accountScopeModule, "useAccountScopeOptional").mockReturnValue(
+    params.accountId === null
+      ? null
+      : ({ activeWorkosUserId: params.accountId ?? "workos_1" } as ReturnType<
+          typeof accountScopeModule.useAccountScopeOptional
+        >)
+  )
 }
 
 describe("AnalyticsConsentGate", () => {
@@ -106,12 +125,82 @@ describe("AnalyticsConsentGate", () => {
     })
   })
 
-  it("should keep analytics running when the gate unmounts", () => {
-    mockInputs({ consent: "granted", analytics, userId: "usr_1" })
+  it("should configure diagnostics only with analytics consent, feature access, and opt-in", () => {
+    const authorize = vi.spyOn(diagnosticsModule, "authorizeConnectivityDiagnostics").mockImplementation(() => {})
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: true })
+
+    render(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    expect(authorize).toHaveBeenCalledWith(
+      "workos_1",
+      {
+        token: "tok_1",
+        host: "https://eu.example.com",
+        userId: "usr_1",
+        workspaceId: "ws_1",
+        region: "https://eu.example.com",
+      },
+      "2026-06-01T00:00:00.000Z"
+    )
+  })
+
+  it("should retain the diagnostics runtime when an unrelated preference changes", () => {
+    const authorize = vi.spyOn(diagnosticsModule, "authorizeConnectivityDiagnostics").mockImplementation(() => {})
+    const suspend = vi.spyOn(diagnosticsModule, "suspendConnectivityDiagnostics").mockImplementation(() => {})
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: true })
+    const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    mockInputs({
+      consent: "granted",
+      analytics,
+      userId: "usr_1",
+      diagnostics: true,
+      updatedAt: "2026-06-01T00:01:00.000Z",
+    })
+    rerender(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    expect(authorize).toHaveBeenCalledTimes(2)
+    expect(suspend).not.toHaveBeenCalled()
+  })
+
+  it("should not treat an optimistic preference update as a new diagnostics grant", () => {
+    const authorize = vi.spyOn(diagnosticsModule, "authorizeConnectivityDiagnostics").mockImplementation(() => {})
+    const suspend = vi.spyOn(diagnosticsModule, "suspendConnectivityDiagnostics").mockImplementation(() => {})
+    mockInputs({
+      consent: "granted",
+      analytics,
+      userId: "usr_1",
+      diagnostics: true,
+      preferencesPending: true,
+    })
+
+    render(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    expect(authorize).not.toHaveBeenCalled()
+    expect(suspend).not.toHaveBeenCalled()
+  })
+
+  it("should revoke the old scope when diagnostics consent is withdrawn", () => {
+    const revoke = vi.spyOn(diagnosticsModule, "revokeConnectivityDiagnostics").mockImplementation(() => {})
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: true })
+    const { rerender } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: false })
+    rerender(<AnalyticsConsentGate workspaceId="ws_1" />)
+
+    expect(revoke).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: "workos_1", userId: "usr_1", workspaceId: "ws_1" })
+    )
+  })
+
+  it("should suspend diagnostics but keep analytics running when the gate unmounts", () => {
+    const suspend = vi.spyOn(diagnosticsModule, "suspendConnectivityDiagnostics").mockImplementation(() => {})
+    mockInputs({ consent: "granted", analytics, userId: "usr_1", diagnostics: true })
     const { unmount } = render(<AnalyticsConsentGate workspaceId="ws_1" />)
 
     unmount()
 
+    expect(suspend).toHaveBeenCalled()
     expect(stop).not.toHaveBeenCalled()
   })
 })

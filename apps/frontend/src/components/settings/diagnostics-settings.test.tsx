@@ -9,6 +9,7 @@ import { DEFAULT_USER_PREFERENCES } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as perfApiModule from "@/api/perf-diagnostics"
+import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
 import * as profileSettingsModule from "./profile-settings"
 import { PerfCapture, armPerfCapture, resetPerfArming, setPerfConsentArmed } from "@/lib/perf/capture"
 import { DiagnosticsSettings } from "./diagnostics-settings"
@@ -100,11 +101,11 @@ describe("DiagnosticsSettings", () => {
     }).toEqual({ samples: 0, written: [["performanceDiagnosticsOptIn", false]] })
   })
 
-  it("disables Send with an empty buffer", () => {
+  it("allows Send with no performance samples so buffered connectivity events can flush", () => {
     setPerfConsentArmed(true)
     mountSettings(true)
 
-    expect(screen.getByRole("button", { name: /send diagnostics/i })).toBeDisabled()
+    expect(screen.getByRole("button", { name: /send diagnostics/i })).toBeEnabled()
   })
 
   it("swaps the button to a checkmark on a successful send and fires no toast", async () => {
@@ -124,6 +125,54 @@ describe("DiagnosticsSettings", () => {
       success: success.mock.calls.length,
       error: error.mock.calls.length,
     }).toEqual({ sends: 1, success: 0, error: 0 })
+  })
+
+  it("should acknowledge only the performance samples included in the upload", async () => {
+    const capture = armWithSamples(1)
+    let acknowledgeUpload!: (value: { id: string }) => void
+    vi.spyOn(perfApiModule, "sendPerfCapture").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          acknowledgeUpload = resolve
+        })
+    )
+    mountSettings(true)
+
+    await userEvent.click(screen.getByRole("button", { name: /send diagnostics/i }))
+    await waitFor(() => expect(acknowledgeUpload).toBeTypeOf("function"))
+    capture.mark("liveQuery.rerun", 99)
+    acknowledgeUpload({ id: "perfcap_1" })
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /send diagnostics/i }).querySelector(".lucide-check")).toBeTruthy()
+    )
+    expect(capture.snapshot().map((sample) => sample.value)).toEqual([99])
+  })
+
+  it("should preserve samples recorded while an empty performance snapshot flushes connectivity", async () => {
+    const capture = armWithSamples(0)
+    const send = vi.spyOn(perfApiModule, "sendPerfCapture")
+    let finishFlush!: (delivered: boolean) => void
+    vi.spyOn(diagnosticsModule, "flushConnectivityDiagnostics").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishFlush = resolve
+        })
+    )
+    mountSettings(true)
+
+    await userEvent.click(screen.getByRole("button", { name: /send diagnostics/i }))
+    await waitFor(() => expect(finishFlush).toBeTypeOf("function"))
+    capture.mark("liveQuery.rerun", 42)
+    finishFlush(true)
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /send diagnostics/i }).querySelector(".lucide-check")).toBeTruthy()
+    )
+    expect({ sends: send.mock.calls.length, samples: capture.snapshot().map((sample) => sample.value) }).toEqual({
+      sends: 0,
+      samples: [42],
+    })
   })
 
   it("reports a failed send with an error toast", async () => {

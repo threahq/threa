@@ -29,6 +29,7 @@ import type {
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { surfacePrivacyBlockToast } from "@/lib/share-privacy-toast"
+import { recordConnectivityEvent } from "@/lib/connectivity-diagnostics/facade"
 
 const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(MessageReferenceErrorCodes))
 
@@ -201,7 +202,7 @@ async function promoteDraft(
  * - Web Locks API prevents multiple tabs from processing the same message.
  * - Failed messages are skipped so newer messages aren't blocked.
  */
-export function useMessageQueue(): void {
+export function useMessageQueue(workspaceId: string): void {
   const isConnected = useSocketConnected()
   const messageService = useMessageService()
   const streamService = useStreamService()
@@ -209,10 +210,48 @@ export function useMessageQueue(): void {
   const queryClient = useQueryClient()
   const { markPending, markFailed, markSent, registerQueueNotify, retryMessage, deleteMessage } = usePendingMessages()
 
-  const isProcessing = useRef(false)
-  const hasPendingWork = useRef(false)
+  const isProcessingGenerationRef = useRef<number | null>(null)
+  const pendingWorkGenerationRef = useRef<number | null>(null)
+  const processQueueRef = useRef<() => void>(() => {})
   const isConnectedRef = useRef(isConnected)
+  const wasSocketBlockedRef = useRef(!isConnected)
+  const wasInFlightBlockedRef = useRef(false)
+  const wasLockBlockedRef = useRef(false)
+  const workspaceRef = useRef(workspaceId)
+  const workspaceGenerationRef = useRef(0)
+
+  if (workspaceRef.current !== workspaceId) {
+    workspaceRef.current = workspaceId
+    workspaceGenerationRef.current++
+    pendingWorkGenerationRef.current = null
+    wasSocketBlockedRef.current = !isConnected
+    wasInFlightBlockedRef.current = false
+    wasLockBlockedRef.current = false
+  }
+
+  const workspaceGeneration = workspaceGenerationRef.current
   isConnectedRef.current = isConnected
+
+  const recordQueueTransition = useCallback(
+    (
+      expectedGeneration: number,
+      event: "message_queue_blocked" | "message_queue_unblocked",
+      blockedBy: "socket" | "in_flight" | "lock"
+    ) => {
+      if (workspaceGenerationRef.current === expectedGeneration) recordConnectivityEvent(event, { blockedBy })
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (wasSocketBlockedRef.current === !isConnected) return
+    wasSocketBlockedRef.current = !isConnected
+    recordQueueTransition(
+      workspaceGeneration,
+      isConnected ? "message_queue_unblocked" : "message_queue_blocked",
+      "socket"
+    )
+  }, [isConnected, recordQueueTransition, workspaceGeneration])
 
   const drainQueue = useCallback(async () => {
     const now = Date.now()
@@ -424,20 +463,36 @@ export function useMessageQueue(): void {
   ])
 
   const processQueue = useCallback(async () => {
-    if (isProcessing.current) {
-      hasPendingWork.current = true
+    if (workspaceGenerationRef.current !== workspaceGeneration) return
+    if (isProcessingGenerationRef.current !== null) {
+      if (!wasInFlightBlockedRef.current) {
+        wasInFlightBlockedRef.current = true
+        recordQueueTransition(workspaceGeneration, "message_queue_blocked", "in_flight")
+      }
+      pendingWorkGenerationRef.current = workspaceGeneration
       return
     }
 
-    isProcessing.current = true
-    hasPendingWork.current = false
+    isProcessingGenerationRef.current = workspaceGeneration
+    pendingWorkGenerationRef.current = null
 
     try {
       // Cross-tab safety: only one tab processes the outbox at a time.
       // If another tab holds the lock, we skip — it's already processing.
       if (navigator.locks) {
         await navigator.locks.request("threa-outbox", { ifAvailable: true }, async (lock) => {
-          if (!lock) return // Another tab is processing
+          if (workspaceGenerationRef.current !== workspaceGeneration) return
+          if (!lock) {
+            if (!wasLockBlockedRef.current) {
+              wasLockBlockedRef.current = true
+              recordQueueTransition(workspaceGeneration, "message_queue_blocked", "lock")
+            }
+            return
+          }
+          if (wasLockBlockedRef.current) {
+            wasLockBlockedRef.current = false
+            recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "lock")
+          }
           await drainQueue()
         })
       } else {
@@ -445,14 +500,27 @@ export function useMessageQueue(): void {
         await drainQueue()
       }
     } finally {
-      isProcessing.current = false
+      const ownsProcess = isProcessingGenerationRef.current === workspaceGeneration
+      if (ownsProcess) isProcessingGenerationRef.current = null
 
-      if (hasPendingWork.current) {
-        hasPendingWork.current = false
-        void processQueue()
+      if (workspaceGenerationRef.current === workspaceGeneration) {
+        if (wasInFlightBlockedRef.current) {
+          wasInFlightBlockedRef.current = false
+          recordQueueTransition(workspaceGeneration, "message_queue_unblocked", "in_flight")
+        }
+
+        if (pendingWorkGenerationRef.current === workspaceGeneration) {
+          pendingWorkGenerationRef.current = null
+          void processQueue()
+        }
+      } else if (ownsProcess && pendingWorkGenerationRef.current === workspaceGenerationRef.current) {
+        pendingWorkGenerationRef.current = null
+        processQueueRef.current()
       }
     }
-  }, [drainQueue])
+  }, [drainQueue, recordQueueTransition, workspaceGeneration])
+
+  processQueueRef.current = () => void processQueue()
 
   // Register notify callback so other hooks can kick the queue via context
   useEffect(() => {

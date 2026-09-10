@@ -10,6 +10,7 @@ export interface PerfCaptureLike {
   count(name: PerfMarkName): void
   time(name: PerfMarkName): () => void
   snapshot(): PerformanceSample[]
+  acknowledge(samples: readonly PerformanceSample[]): void
   clear(): void
 }
 
@@ -49,10 +50,21 @@ export class PerfCapture implements PerfCaptureLike {
   }
 
   snapshot(): PerformanceSample[] {
-    const ring = this.filled
-      ? [...this.buffer.slice(this.next), ...this.buffer.slice(0, this.next)]
-      : this.buffer.slice(0, this.next)
-    return [...this.pinned, ...ring].sort((a, b) => a.at - b.at)
+    return [...this.pinned, ...this.ringSamples()].sort((a, b) => a.at - b.at)
+  }
+
+  acknowledge(samples: readonly PerformanceSample[]): void {
+    if (!samples.length) return
+    const acknowledged = new Set(samples)
+    const ring = this.ringSamples().filter((sample) => !acknowledged.has(sample))
+    this.pinned = this.pinned.filter((sample) => !acknowledged.has(sample))
+    this.buffer = new Array(RING_CAPACITY)
+    ring.forEach((sample, index) => {
+      this.buffer[index] = sample
+    })
+    this.next = ring.length % RING_CAPACITY
+    this.filled = ring.length === RING_CAPACITY
+    if (!this.pinned.length && !ring.length) this.startedAtValue = new Date().toISOString()
   }
 
   clear(): void {
@@ -61,6 +73,12 @@ export class PerfCapture implements PerfCaptureLike {
     this.next = 0
     this.filled = false
     this.startedAtValue = new Date().toISOString()
+  }
+
+  private ringSamples(): PerformanceSample[] {
+    return this.filled
+      ? [...this.buffer.slice(this.next), ...this.buffer.slice(0, this.next)]
+      : this.buffer.slice(0, this.next)
   }
 
   private push(sample: PerformanceSample): void {
@@ -93,6 +111,7 @@ export const NO_CAPTURE: PerfCaptureLike = Object.freeze({
   count: (): void => {},
   time: (): (() => void) => NO_OP_STOP,
   snapshot: (): PerformanceSample[] => [],
+  acknowledge: (): void => {},
   clear: (): void => {},
 })
 

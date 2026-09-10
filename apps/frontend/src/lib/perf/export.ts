@@ -1,4 +1,9 @@
-import { type PerfDeviceClass, type PerformanceCapture, performanceCaptureSchema } from "@threahq/types"
+import {
+  type PerfDeviceClass,
+  type PerformanceCapture,
+  type PerformanceSample,
+  performanceCaptureSchema,
+} from "@threahq/types"
 import { ulid } from "ulid"
 import { currentAppVersion } from "@/lib/app-build"
 import { type PerfCaptureLike } from "./capture"
@@ -16,13 +21,16 @@ export function deviceClass(): PerfDeviceClass {
   return "low"
 }
 
-export function exportCapture(capture: PerfCaptureLike): PerformanceCapture {
+export function exportCapture(
+  capture: PerfCaptureLike,
+  samples: readonly PerformanceSample[] = capture.snapshot()
+): PerformanceCapture {
   return performanceCaptureSchema.parse({
     captureId: `cap_${ulid()}`,
     appVersion: currentAppVersion() ?? "unknown",
     deviceClass: deviceClass(),
     startedAt: capture.startedAt,
-    samples: capture.snapshot(),
+    samples,
   })
 }
 

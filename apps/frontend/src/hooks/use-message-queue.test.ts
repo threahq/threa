@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { renderHook, act, waitFor } from "@testing-library/react"
-import { useMessageQueue } from "./use-message-queue"
+import { useMessageQueue as useMessageQueueHook } from "./use-message-queue"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as dbModule from "@/db"
@@ -9,12 +9,15 @@ import * as draftPromotionsModule from "@/lib/draft-promotions"
 import * as streamSyncModule from "@/sync/stream-sync"
 import * as draftStoreModule from "@/stores/draft-store"
 import * as boardStoreModule from "@/stores/board-store"
+import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MessageErrorCodes, MessageReferenceErrorCodes } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { createElement, type ReactNode } from "react"
+
+const useMessageQueue = (workspaceId = "ws_1") => useMessageQueueHook(workspaceId)
 
 const mockCreate = vi.fn()
 const mockMarkPending = vi.fn()
@@ -176,6 +179,45 @@ describe("useMessageQueue", () => {
     renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
 
     expect(mockRegisterQueueNotify).toHaveBeenCalledWith(expect.any(Function))
+  })
+
+  it("should not emit an old queue completion after the workspace changes", async () => {
+    let finishSend!: (value: { id: string }) => void
+    mockCreate.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishSend = resolve
+        })
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_workspace_switch",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Hello",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+    const record = vi.spyOn(diagnosticsModule, "recordConnectivityEvent").mockImplementation(() => {})
+    const { rerender } = renderHook(({ workspaceId }) => useMessageQueue(workspaceId), {
+      initialProps: { workspaceId: "ws_1" },
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(finishSend).toBeTypeOf("function"))
+    const notify = mockRegisterQueueNotify.mock.calls.at(-1)![0]
+
+    act(() => notify())
+    await waitFor(() => expect(record).toHaveBeenCalledWith("message_queue_blocked", { blockedBy: "in_flight" }))
+    mockIsConnected = false
+    rerender({ workspaceId: "ws_2" })
+    finishSend({ id: "msg_1" })
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    expect(record.mock.calls).toEqual([["message_queue_blocked", { blockedBy: "in_flight" }]])
   })
 
   it("should process a pending message when connected", async () => {

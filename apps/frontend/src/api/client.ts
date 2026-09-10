@@ -1,3 +1,9 @@
+import {
+  beginConnectivityObservation,
+  categorizeRoute,
+  flushConnectivityDiagnostics,
+} from "@/lib/connectivity-diagnostics/facade"
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -71,7 +77,49 @@ export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ""
  * multer field the endpoint reads (`avatar` for avatars, `file` for persona
  * knowledge attachments).
  */
-export async function postMultipartFile<T>(
+export async function requestMultipart<T>(
+  path: string,
+  formData: FormData,
+  fallback: { code?: string; message?: string } = {}
+): Promise<T> {
+  const observation = beginConnectivityObservation({ method: "POST", route: categorizeRoute(path), transport: "fetch" })
+  observation.record("http_start")
+  const stopStallTimer = observation.stall()
+  let responseFields: { status: number; correlationId?: string } | null = null
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    })
+    const correlationId = response.headers.get("x-railway-request-id") ?? undefined
+    responseFields = { status: response.status, correlationId }
+    observation.record("http_headers", responseFields)
+    if (!response.ok) {
+      const error = await parseApiError(response, fallback)
+      observation.record("http_body_complete", responseFields)
+      observation.record("http_failure", { ...responseFields, reason: "server" })
+      void flushConnectivityDiagnostics()
+      throw error
+    }
+    const body = (await response.json()) as T
+    observation.record("http_body_complete", responseFields)
+    return body
+  } catch (error) {
+    if (!ApiError.isApiError(error)) {
+      observation.record(
+        "http_failure",
+        responseFields ? { ...responseFields, reason: "unknown" } : { reason: "network" }
+      )
+      void flushConnectivityDiagnostics()
+    }
+    throw error
+  } finally {
+    stopStallTimer()
+  }
+}
+
+export function postMultipartFile<T>(
   path: string,
   file: File,
   fieldName: string,
@@ -79,15 +127,7 @@ export async function postMultipartFile<T>(
 ): Promise<T> {
   const formData = new FormData()
   formData.append(fieldName, file)
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    credentials: "include",
-    body: formData,
-  })
-  if (!response.ok) {
-    throw await parseApiError(response, fallback)
-  }
-  return (await response.json()) as T
+  return requestMultipart<T>(path, formData, fallback)
 }
 
 /** Multipart avatar upload (bots and personas) — the `avatar`-field specialization. */
@@ -108,6 +148,10 @@ export type ApiRequestInit = RequestInit & { timeoutMs?: number }
 
 async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<T> {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: callerSignal, ...init } = options
+  const method = (init.method ?? "GET") as "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
+  const observation = beginConnectivityObservation({ method, route: categorizeRoute(path), transport: "fetch" })
+  observation.record("http_start")
+  const stopStallTimer = observation.stall()
 
   const controller = new AbortController()
   let timedOut = false
@@ -134,6 +178,18 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
       },
     })
   } catch (err) {
+    stopStallTimer()
+    let diagnosticEvent: "http_timeout" | "http_abort" | "http_failure" = "http_failure"
+    let diagnosticReason: "timeout" | "abort" | "network" = "network"
+    if (timedOut) {
+      diagnosticEvent = "http_timeout"
+      diagnosticReason = "timeout"
+    } else if (controller.signal.aborted) {
+      diagnosticEvent = "http_abort"
+      diagnosticReason = "abort"
+    }
+    observation.record(diagnosticEvent, { reason: diagnosticReason })
+    void flushConnectivityDiagnostics()
     // A timeout is a network-like failure, not an auth signal. Throw a plain
     // Error (NOT an ApiError) so `handleGlobalError` can't mistake it for a
     // 401 and bounce the user to login — queries fall back to cached/IDB
@@ -147,20 +203,37 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
     if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort)
   }
 
+  const correlationId = response.headers.get("x-railway-request-id") ?? undefined
+  const responseFields = { status: response.status, correlationId }
+  observation.record("http_headers", responseFields)
   if (response.status === 204) {
+    stopStallTimer()
+    observation.record("http_body_complete", responseFields)
     return undefined as T
   }
 
   if (!response.ok) {
-    throw await parseApiError(response)
+    try {
+      const error = await parseApiError(response)
+      observation.record("http_body_complete", responseFields)
+      observation.record("http_failure", { ...responseFields, reason: "server" })
+      void flushConnectivityDiagnostics()
+      throw error
+    } finally {
+      stopStallTimer()
+    }
   }
 
-  // A malformed success payload (server lied about content-type) is a distinct
-  // failure mode from an error response, so it gets its own code.
   try {
-    return (await response.json()) as T
+    const body = (await response.json()) as T
+    observation.record("http_body_complete", responseFields)
+    return body
   } catch {
+    observation.record("http_failure", { ...responseFields, reason: "unknown" })
+    void flushConnectivityDiagnostics()
     throw new ApiError(response.status, "PARSE_ERROR", "Failed to parse server response")
+  } finally {
+    stopStallTimer()
   }
 }
 

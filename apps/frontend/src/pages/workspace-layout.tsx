@@ -373,8 +373,8 @@ function WorkspaceSyncHandler({
   )
 }
 
-function MessageQueueHandler() {
-  useMessageQueue()
+function MessageQueueHandler({ workspaceId }: { workspaceId: string }) {
+  useMessageQueue(workspaceId)
   return null
 }
 
@@ -545,7 +545,7 @@ export function WorkspaceLayout() {
             <VisibleStreamPresence streamIds={streamIds} />
             <AppUpdateChecker />
             <FreshnessWatchers />
-            <MessageQueueHandler />
+            <MessageQueueHandler workspaceId={workspaceId} />
             <StreamNameDecryptor workspaceId={workspaceId} />
             <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
               <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
