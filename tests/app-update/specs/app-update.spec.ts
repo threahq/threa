@@ -15,6 +15,8 @@ import {
   seedPrecacheEntry,
   runGc,
   workerStatus,
+  requestUpdate,
+  SW_SETTLE_TIMEOUT,
 } from "../support/control"
 
 interface Generation {
@@ -30,9 +32,16 @@ async function generations(): Promise<Record<string, Generation>> {
 async function installWaiting(page: import("@playwright/test").Page, version: string): Promise<void> {
   await controlApi.setDeployed(version)
   await controlApi.setLatest(version)
-  await page.evaluate(() => navigator.serviceWorker.getRegistration().then((registration) => registration?.update()))
   const buildId = (await generations())[version].buildId
-  await expect.poll(() => workerStatus(page, "waiting"), { timeout: 20000 }).toEqual({ buildId, ready: true })
+  await expect
+    .poll(
+      async () => {
+        await requestUpdate(page)
+        return workerStatus(page, "waiting")
+      },
+      { timeout: SW_SETTLE_TIMEOUT }
+    )
+    .toEqual({ buildId, ready: true })
 }
 
 test.describe.configure({ mode: "serial" })
@@ -58,7 +67,7 @@ test("ready build B applies in one reload", async ({ page }) => {
   page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
 
   await button.click()
-  await expect.poll(() => fixtureVersion(page), { timeout: 20000 }).toBe("B")
+  await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
 })
 
@@ -73,7 +82,7 @@ test("ready build B applies offline in one reload without clearing domain data",
 
   await context.setOffline(true)
   await button.click()
-  await expect.poll(() => fixtureVersion(page), { timeout: 20000 }).toBe("B")
+  await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
   expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
   expect(await getLocalDraftSentinel(page, "threa-test-draft")).toBe("saved")
@@ -90,7 +99,7 @@ test("should keep update controls usable on a narrow screen", async ({ page, con
   await page.screenshot({ path: testInfo.outputPath("app-status-mobile.png"), fullPage: true })
   await context.setOffline(true)
   await button.click()
-  await expect.poll(() => fixtureVersion(page), { timeout: 20000 }).toBe("B")
+  await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
 })
 
 test("toast shows busy while applying from AppStatus", async ({ page }) => {
@@ -146,19 +155,21 @@ for (const failure of ["interrupted", "corrupted"] as const) {
 
     await controlApi.setDeployed("B")
     await controlApi.setLatest("B")
-    await page.evaluate(() =>
-      navigator.serviceWorker
-        .getRegistration()
-        .then((r) => r?.update())
-        .catch(() => undefined)
-    )
+    await requestUpdate(page)
 
+    // A failed install ends `redundant`; how long the browser then keeps
+    // pointing `installing` at that dead worker is its own business, and
+    // Firefox takes longer than Chromium. What must hold is that B never
+    // reaches `waiting` and the install stops being live.
     await expect
-      .poll(() =>
-        page.evaluate(async () => {
-          const r = await navigator.serviceWorker.getRegistration()
-          return { waiting: r?.waiting?.state ?? null, installing: r?.installing?.state ?? null }
-        })
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const r = await navigator.serviceWorker.getRegistration()
+            const installing = r?.installing?.state ?? null
+            return { waiting: r?.waiting?.state ?? null, installing: installing === "redundant" ? null : installing }
+          }),
+        { timeout: SW_SETTLE_TIMEOUT }
       )
       .toEqual({ waiting: null, installing: null })
     expect(await fixtureVersion(page)).toBe("A")
@@ -171,12 +182,7 @@ test("failed sw.js with latest B neither offers reload nor blinds A", async ({ p
   await controlApi.setDeployed("B")
   await controlApi.setLatest("B")
   await controlApi.failWorker(true)
-  await page.evaluate(() =>
-    navigator.serviceWorker
-      .getRegistration()
-      .then((r) => r?.update())
-      .catch(() => undefined)
-  )
+  await requestUpdate(page)
 
   expect(await fixtureVersion(page)).toBe("A")
   await expect(page.getByRole("button", { name: /reload and update/i })).not.toBeAttached()
@@ -190,7 +196,7 @@ test("ready B with server latest C reloads to B without wiping caches", async ({
   page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
 
   await page.getByRole("button", { name: /reload and update/i }).click()
-  await expect.poll(() => fixtureVersion(page), { timeout: 20000 }).toBe("B")
+  await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
   expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
 })
@@ -201,11 +207,19 @@ test("legacy SKIP_WAITING activates the actual B worker without an unsolicited r
   const reloads: string[] = []
   page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
 
-  await page.evaluate(() =>
-    navigator.serviceWorker.getRegistration().then((r) => r?.waiting?.postMessage({ type: "SKIP_WAITING" }))
-  )
+  // Re-posted every tick: the message is fire-and-forget, and one dropped while
+  // the browser is busy would otherwise leave the poll waiting on nothing.
+  // Repeating is a no-op once B activates, since `waiting` is then null.
   await expect
-    .poll(() => workerStatus(page, "controller"), { timeout: 20000 })
+    .poll(
+      async () => {
+        await page.evaluate(() =>
+          navigator.serviceWorker.getRegistration().then((r) => r?.waiting?.postMessage({ type: "SKIP_WAITING" }))
+        )
+        return workerStatus(page, "controller")
+      },
+      { timeout: SW_SETTLE_TIMEOUT }
+    )
     .toEqual({ buildId: buildB, ready: true })
   expect(reloads).toEqual([])
   expect(await fixtureVersion(page)).toBe("A")
@@ -224,9 +238,14 @@ test("C superseding waiting B retains A and C precaches and removes B", async ({
 
   await controlApi.setDeployed("C")
   await controlApi.setLatest("C")
-  await page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => r?.update()))
   await expect
-    .poll(() => workerStatus(page, "waiting"), { timeout: 20000 })
+    .poll(
+      async () => {
+        await requestUpdate(page)
+        return workerStatus(page, "waiting")
+      },
+      { timeout: SW_SETTLE_TIMEOUT }
+    )
     .toEqual({
       buildId: info.C.buildId,
       ready: true,

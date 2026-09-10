@@ -7,6 +7,14 @@ import {
   SW_MSG_GC_REPLY,
 } from "../../../apps/frontend/src/lib/sw-messages"
 
+/**
+ * Budget for any service-worker lifecycle transition. CI runners install,
+ * activate and precache two browsers' workers on shared cores, where the
+ * default 5s assertion window is not enough for a state change that is merely
+ * slow rather than wrong.
+ */
+export const SW_SETTLE_TIMEOUT = 20000
+
 let cachedUrl: string | null = null
 
 export async function serverUrl(): Promise<string> {
@@ -37,6 +45,21 @@ export const controlApi = {
   corruptAsset: (path: string) => control("POST", "/__control/corrupt-asset", { path }),
   clearCorruptAsset: (path: string) => control("POST", "/__control/clear-corrupt-asset", { path }),
   state: () => control("GET", "/__control/state"),
+}
+
+/**
+ * Ask the registration to check for a new worker, unless an install is already
+ * in flight — `update()` may abort and restart one, and a poll that re-triggers
+ * every tick would never let a slow install finish. Polls call this each tick
+ * so a trigger the browser drops while busy is retried instead of leaving the
+ * assertion to wait out its whole timeout with nothing installing.
+ */
+export async function requestUpdate(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.getRegistration()
+    if (!registration || registration.installing) return
+    await registration.update().catch(() => undefined)
+  })
 }
 
 export async function waitForControlled(page: Page): Promise<void> {
@@ -91,7 +114,7 @@ export async function workerStatus(page: Page, target: "controller" | "waiting" 
           channel.port2.close()
           resolve(value)
         }
-        const timer = setTimeout(() => finish(null), 1500)
+        const timer = setTimeout(() => finish(null), 5000)
         channel.port1.onmessage = (event) => {
           const data = event.data as { type?: string; buildId?: string; ready?: boolean }
           finish(
