@@ -83,7 +83,7 @@ describe("CarryOnController", () => {
     expect(log.notices[0]!.text).toContain("/carry-on")
 
     expect(controller.enqueue("also bump the version").ok).toBe(true)
-    expect(controller.enqueue("").message).toContain("1 message(s) queued")
+    expect(controller.enqueue("").summary).toContain("1 message(s) queued")
     expect(controller.absorbSteer("and fix the tests")).toContain("queued the steer")
     controller.stop()
   })

@@ -96,6 +96,17 @@ async function waitFor<T>(what: string, probe: () => Promise<T | undefined>, tim
   throw new Error(`timed out waiting for ${what}\nconnector log:\n${connectorLog}`)
 }
 
+/**
+ * A session-control command's account of what it did rides on its own
+ * completion entry, not as a message, so it is read from the command event.
+ */
+function whenSummary(client: TestClient, workspaceId: string, streamId: string, summary: string): Promise<true> {
+  return waitFor(`the "${summary}" command summary`, async () => {
+    const events = await listEvents(client, workspaceId, streamId, ["command_completed"])
+    return events.some((event) => (event.payload as { summary?: string }).summary === summary) || undefined
+  })
+}
+
 beforeAll(() => {
   // Pack from the in-repo sources exactly as a release would, in dependency
   // order: each declaration build resolves its siblings through their dist/.
@@ -234,7 +245,7 @@ describe("published bot-runtime packages", () => {
 
     // The SDK stamps every message it posts, so count by metadata rather than
     // text: an echo reply embeds the scratchpad history, which would otherwise
-    // re-match earlier interims and acks.
+    // re-match earlier interims.
     interface Posted {
       contentMarkdown?: string
       metadata?: Record<string, string>
@@ -244,7 +255,6 @@ describe("published bot-runtime packages", () => {
     const interims = (all: Posted[]) => all.filter((p) => p.metadata?.["remote.interim"] === "true")
     const replies = (all: Posted[]) =>
       all.filter((p) => p.metadata?.["remote.instanceId"] && !p.metadata?.["remote.sessionControl"])
-    const acks = (all: Posted[]) => all.filter((p) => p.metadata?.["remote.sessionControl"] === "true")
     const whenCount = (what: string, select: (all: Posted[]) => Posted[], times: number) =>
       waitFor(`${times} ${what}`, async () => {
         const all = await posted()
@@ -267,8 +277,7 @@ describe("published bot-runtime packages", () => {
     await sendMessage(client, workspace.id, streamId, "third")
     await whenCount("interims", interims, 3)
     await dispatchCommand(client, workspace.id, streamId, "/stop")
-    const afterStop = await whenCount("session-control acks", acks, 1)
-    expect(acks(afterStop)[0]!.contentMarkdown).toBe("Stopped the current turn.")
+    await whenSummary(client, workspace.id, streamId, "Stopped the current turn.")
     // The stopped turn had already posted an interim, so it closes silently:
     // no echo, and no "Stopped by /stop." note either.
     await new Promise((resolve) => setTimeout(resolve, ECHO_DELAY_MS + 1_000))
@@ -343,7 +352,6 @@ describe("published bot-runtime packages", () => {
       (await listEvents(client, workspace.id, streamId)).map((event) => event.payload as Posted)
     const replies = (all: Posted[]) =>
       all.filter((p) => p.metadata?.["remote.instanceId"] && !p.metadata?.["remote.sessionControl"])
-    const acks = (all: Posted[]) => all.filter((p) => p.metadata?.["remote.sessionControl"] === "true")
 
     await sendMessage(client, workspace.id, streamId, "first question")
     const afterFirst = await waitFor("the script's reply", async () => {
@@ -357,15 +365,13 @@ describe("published bot-runtime packages", () => {
       connectorLog.includes("thinking about: second") ? true : undefined
     )
     await dispatchCommand(client, workspace.id, streamId, "/stop")
-    const afterStop = await waitFor("the stop acknowledgement", async () => {
-      const all = await posted()
-      return acks(all).length >= 1 ? all : undefined
-    })
-    expect(acks(afterStop)[0]!.contentMarkdown).toBe("Stopped the current turn.")
+    await whenSummary(client, workspace.id, streamId, "Stopped the current turn.")
     await new Promise((resolve) => setTimeout(resolve, ECHO_DELAY_MS + 1_000))
     const final = await posted()
     expect(replies(final)).toHaveLength(1)
-    expect(final.some((p) => p.contentMarkdown?.includes("Stopped by /stop."))).toBe(true)
+    // The interrupted turn closes on its own entry; the /stop chip is the only
+    // account of it, so no note is posted in the stream.
+    expect(final.some((p) => p.contentMarkdown?.includes("Stopped by /stop."))).toBe(false)
 
     connector.kill("SIGTERM")
     const exitCode = await new Promise<number | null>((resolve) => connector!.once("exit", resolve))

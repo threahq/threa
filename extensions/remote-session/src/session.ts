@@ -142,7 +142,9 @@ export interface SessionControlActuator {
   ): Promise<{
     /** False rejects the command: it closes as failed with `message` as the reason and nothing is posted. */
     ok: boolean
-    /** Ack markdown to post. Omitted closes the command with no post at all, for one whose visible outcome lands elsewhere (`/spawn`'s thread). */
+    /** What the command did ("Set the model to opus"). It lands on the command's own entry, not in the stream. */
+    summary?: string
+    /** Reply markdown, for a command whose result is content the user asked for (`/status`'s report) rather than an account of it. */
     message?: string
     afterAck?: () => unknown | Promise<unknown>
     /**
@@ -1442,6 +1444,11 @@ export class RemoteSession {
             await this.failInvocation(invocation, outcome.message ?? "Command rejected.")
             return
           }
+          const ackOutcome = (): Promise<boolean> => {
+            if (outcome.message !== undefined) return this.completeReply(invocation, outcome.message)
+            if (outcome.summary !== undefined) return this.completeAck(invocation, outcome.summary)
+            return this.completeSilentAck(invocation)
+          }
           if (outcome.handoff) {
             this.reconnectHandoff = true
             this.onHandoffReset = outcome.onHandoffReset
@@ -1466,18 +1473,14 @@ export class RemoteSession {
             this.reconnectResetTimer = setTimeout(() => this.resetReconnectHandoff(), RECONNECT_HANDOFF_FALLBACK_MS)
             return
           }
-          const ack = (): Promise<boolean> =>
-            outcome.message === undefined
-              ? this.completeSilentAck(invocation)
-              : this.completeAck(invocation, outcome.message)
           if (!outcome.afterAck) {
-            await ack()
+            await ackOutcome()
             return
           }
           this.reconnectHandoff = true
           this.onHandoffReset = outcome.onHandoffReset
           await this.syncPresence()
-          const completed = await ack()
+          const completed = await ackOutcome()
           if (!completed || this.stopped || !this.link || this.archive.detached) {
             this.resetReconnectHandoff()
             return
@@ -1504,7 +1507,7 @@ export class RemoteSession {
       return
     }
     const hadTurn = this.inflight.size > 0
-    await this.completeInterruptedTurns("Stopped by /stop.")
+    await this.completeInterruptedTurns()
     await this.completeAck(invocation, hadTurn ? "Stopped the current turn." : "Sent an interrupt to the session.")
     await this.syncPresence()
   }
@@ -1635,14 +1638,7 @@ export class RemoteSession {
     }
     await new Promise((resolve) => setTimeout(resolve, STEER_SETTLE_MS))
     if (this.isClaimCancelled(invocation)) return
-    // Always leave a visible marker carrying the steer text: a bare
-    // "Superseded by /steer." followed by working silence reads as "the steer
-    // was lost". The note doubles as the delivery acknowledgement.
-    const preview = text.length > 120 ? `${text.slice(0, 120)}…` : text
-    await this.completeInterruptedTurns(
-      preview ? `Superseded by /steer — now handling: “${preview}”` : "Superseded by /steer.",
-      { alwaysNote: true }
-    )
+    await this.completeInterruptedTurns()
 
     const { parts, swept, interceptedCount } = await this.sweepQueuedForSteer(text)
     if (this.isClaimCancelled(invocation)) return
@@ -1730,12 +1726,46 @@ export class RemoteSession {
     }
   }
 
-  private async completeAck(invocation: ClaimedInvocation, markdown: string): Promise<boolean> {
+  /**
+   * Close a session-control command with an account of what it did. The summary
+   * lands on the command's own entry, so nothing is posted in the stream and
+   * there is nothing to seal — it states what happened and never quotes stream
+   * content, the same way the dispatched entry already carries the command args.
+   */
+  private async completeAck(invocation: ClaimedInvocation, summary: string): Promise<boolean> {
     if (this.isClaimCancelled(invocation)) return false
     const signal = this.observedClaims.get(invocation.id)?.lifecycle.signal
-    // Sealed session-control ack on E2E: seal the confirmation under the stream
-    // key and post it as `sealedReply`. Falls through to the plaintext path when
-    // the bot can't seal (no wrap / key race), which silently closes on E2E.
+    try {
+      await this.client.complete(
+        invocation.id,
+        {
+          instanceId: this.config.instanceId,
+          claimToken: invocation.claimToken,
+          sourceRevision: invocation.sourceRevision,
+          summary,
+          metadata: {
+            "remote.invocationId": invocation.id,
+            "remote.sessionControl": "true",
+          },
+        },
+        signal
+      )
+      if (signal?.aborted || this.isClaimCancelled(invocation)) return false
+    } catch (error) {
+      await this.failAfterTerminalWrite(invocation, error, "session-control acknowledgement")
+      return false
+    }
+    this.releaseObservation(invocation.id)
+    return true
+  }
+
+  /** Close a session-control command by posting its answer — content the user asked for, not an account of the command. */
+  private async completeReply(invocation: ClaimedInvocation, markdown: string): Promise<boolean> {
+    if (this.isClaimCancelled(invocation)) return false
+    const signal = this.observedClaims.get(invocation.id)?.lifecycle.signal
+    // Sealed session-control reply on E2E: seal it under the stream key and post
+    // it as `sealedReply`. Falls through to the plaintext path when the bot can't
+    // seal (no wrap / key race), which silently closes on E2E.
     const sealedReply = await this.sealSessionControlAck(invocation, markdown)
     if (signal?.aborted || this.isClaimCancelled(invocation)) return false
     try {
@@ -1755,9 +1785,9 @@ export class RemoteSession {
       )
       if (signal?.aborted || this.isClaimCancelled(invocation)) return false
     } catch (error) {
-      // Reached only when the ack couldn't be sealed (no BIK / wrap race, so
+      // Reached only when the reply couldn't be sealed (no BIK / wrap race, so
       // `sealSessionControlAck` returned undefined). On an E2E scratchpad the
-      // plaintext ack is rejected with E2E_STREAM_PLAINTEXT_UNSUPPORTED; close
+      // plaintext reply is rejected with E2E_STREAM_PLAINTEXT_UNSUPPORTED; close
       // silently — the command still ran and command:completed carries the
       // feedback. Narrow to that exact code so a capability/validation 400 isn't
       // masked as a successful close (INV-11, fail loud).
@@ -1773,7 +1803,7 @@ export class RemoteSession {
       await this.failAfterTerminalWrite(
         invocation,
         error,
-        sealedReply ? "sealed session-control acknowledgement" : "session-control acknowledgement"
+        sealedReply ? "sealed session-control reply" : "session-control reply"
       )
       return false
     }
@@ -1831,11 +1861,10 @@ export class RemoteSession {
 
   /**
    * Close every in-flight turn that an interrupt just aborted, so none
-   * idle-hangs for an hour. By default a turn that already posted interim
-   * messages closes silently (the user has heard from it); `alwaysNote` posts
-   * the note regardless — steers use it so delivery is always visible.
+   * idle-hangs for an hour. Nothing is posted: the /stop or /steer that caused
+   * the interrupt closes with its own account of it, on its own entry.
    */
-  private async completeInterruptedTurns(note: string, opts: { alwaysNote?: boolean } = {}): Promise<void> {
+  private async completeInterruptedTurns(): Promise<void> {
     const routes = [...this.inflight.values()]
     const closes = routes.map((route) => {
       route.revoke()
@@ -1844,10 +1873,9 @@ export class RemoteSession {
       const generation = route.generation
       const task = route.enqueue(async () => {
         if (this.stopped || generation !== this.lifecycle || route.state === "closed") return
-        const silent = route.sentCount > 0 && !opts.alwaysNote
         try {
           await this.completeTurn(route.invocation, {
-            ...(silent ? { noResponse: true as const } : { markdown: `_${note}_` }),
+            noResponse: true,
             metadata: { "remote.invocationId": route.invocation.id, "remote.interrupted": "true" },
             signal: route.execution.signal,
           })

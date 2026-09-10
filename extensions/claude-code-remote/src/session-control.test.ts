@@ -250,7 +250,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     for (const args of ["", "--force"]) {
       const outcome = await runClaudeCommand("reconnect", args, undefined, "runtime", undefined, () => "root")
       expect(outcome.ok).toBe(true)
-      expect(outcome.message).toBe("Reconnect request accepted; attempting to resume the linked Claude session.")
+      expect(outcome.summary).toBe("Reconnect accepted; resuming the linked Claude session.")
       expect(typeof outcome.afterAck).toBe("function")
     }
   })
@@ -370,8 +370,8 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     for (const args of ["", "--force"]) {
       const outcome = await runClaudeCommand("clear", args, undefined, "runtime", undefined, () => "root")
       expect(outcome.ok).toBe(true)
-      expect(outcome.message).toBe(
-        "Clear accepted — killing this session and starting a fresh conversation on the same scratchpad."
+      expect(outcome.summary).toBe(
+        "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad."
       )
       expect(typeof outcome.afterAck).toBe("function")
     }
@@ -756,7 +756,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
     )
     expect({ outcome, sends }).toEqual({
-      outcome: { ok: true, message: "Sent `ctrl-d` to the linked Claude session." },
+      outcome: { ok: true, summary: "Sent `ctrl-d` to the linked Claude session." },
       sends: [["ctrl-d", process.ppid]],
     })
   })
@@ -826,7 +826,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
     )
     expect({ outcome, sends }).toEqual({
-      outcome: { ok: true, message: "Sent `enter` to the linked Claude session." },
+      outcome: { ok: true, summary: "Sent `enter` to the linked Claude session." },
       sends: [["enter", process.ppid]],
     })
   })
