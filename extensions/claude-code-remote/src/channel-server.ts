@@ -723,6 +723,8 @@ export class ChannelServer {
       ? new CarryOnController({
           isInflight: (invocationId) => this.session.isInflight(invocationId),
           keepAlive: (streamId) => this.session.keepAlive(streamId),
+          reportHold: (invocationId, content, statusText) =>
+            this.session.recordSteps(invocationId, [{ stepType: "rate_limited", content }], statusText),
           postNotice: (streamId, text) => this.session.postToStream(streamId, { content: text }),
           closeTurn: async (invocationId, text) => {
             const result = await this.session.reply(invocationId, text)
