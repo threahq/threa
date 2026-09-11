@@ -56,7 +56,13 @@ import {
   isUnreadStream,
 } from "./utils"
 import type { StreamItemData } from "./types"
-import { collectSealedStreamIds, isUtilityStream, resolveDmDisplayName, streamLabel } from "@/lib/streams"
+import {
+  collectSealedStreamIds,
+  hiddenStreamIds as collectHiddenStreamIds,
+  isUtilityStream,
+  resolveDmDisplayName,
+  streamLabel,
+} from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { useMuteStream, useUnmuteStream } from "@/hooks/use-conversations"
 import { useBoardMutedStreamIds } from "@/stores/board-exclusions-store"
@@ -162,6 +168,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sealedStreamIdSignature]
   )
 
+  const hiddenStreamIds = useMemo(() => collectHiddenStreamIds(idbStreams), [idbStreams])
+
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
   // draft, surfaced as a per-row hint. `loadedDraftStreamIdSignature` (from the
   // lightweight summary) keeps this Set referentially stable across draft edits
@@ -174,7 +182,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const processedStreams = useMemo(() => {
     return idbStreams
-      .filter((stream) => isSidebarStreamVisible(stream, memberStreamIds, sealedStreamIds))
+      .filter((stream) => isSidebarStreamVisible(stream, memberStreamIds, sealedStreamIds, hiddenStreamIds))
       .map((stream): StreamItemData => {
         const streamWithPreview = { ...stream, lastMessagePreview: stream.lastMessagePreview ?? null }
         const unreadCount = getUnreadCount(stream.id)
@@ -206,6 +214,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   }, [
     idbStreams,
     sealedStreamIds,
+    hiddenStreamIds,
     memberStreamIds,
     mutedStreamIdSet,
     getUnreadCount,

@@ -9,7 +9,7 @@ import {
 } from "@threahq/types"
 import { createDmDraftId } from "@/hooks/use-stream-or-draft"
 import { stripMarkdownToInline, truncateInline } from "@/lib/markdown"
-import { getStreamName, isHiddenStreamType } from "@/lib/streams"
+import { getStreamName } from "@/lib/streams"
 import type { SectionKey, SortType, StreamItemData, UrgencyLevel } from "./types"
 
 /** Minimal workspace-user shape needed to synthesize a DM draft row. */
@@ -69,15 +69,15 @@ export function buildVirtualDmDrafts(args: {
 /** Minimal stream shape for the sidebar visibility filter. */
 interface SidebarVisibilityStream {
   id: string
-  type: string
   archivedAt: string | null
   rootStreamId: string | null
   visibility: string
 }
 
 /**
- * Whether a stream should appear in the sidebar. A stream is hidden when its
- * type never lists (`isHiddenStreamType`), when it is archived, or when it is
+ * Whether a stream should appear in the sidebar. A stream is hidden when it
+ * never lists (`hiddenStreamIds`: an aside, or a thread rooted in one — the
+ * row's own type is not enough to tell), when it is archived, or when it is
  * sealed by an archived ancestor (`sealedStreamIds`, from
  * `collectSealedStreamIds`). Non-public streams are otherwise always visible
  * (bootstrap only includes them when the viewer has access); public ones
@@ -86,9 +86,10 @@ interface SidebarVisibilityStream {
 export function isSidebarStreamVisible(
   stream: SidebarVisibilityStream,
   memberStreamIds: ReadonlySet<string>,
-  sealedStreamIds: ReadonlySet<string>
+  sealedStreamIds: ReadonlySet<string>,
+  hiddenStreamIds: ReadonlySet<string>
 ): boolean {
-  if (isHiddenStreamType(stream)) return false
+  if (hiddenStreamIds.has(stream.id)) return false
   if (stream.archivedAt || sealedStreamIds.has(stream.id)) return false
   if (stream.visibility !== Visibilities.PUBLIC) return true
   return memberStreamIds.has(stream.id)

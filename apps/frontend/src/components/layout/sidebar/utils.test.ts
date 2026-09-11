@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import * as prosemirror from "@threahq/prosemirror"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threahq/types"
+import { hiddenStreamIds as collectHiddenStreamIds } from "@/lib/streams"
 import {
   buildVirtualDmDrafts,
   calculateUrgency,
@@ -203,10 +204,17 @@ describe("categorizeStream", () => {
 describe("isSidebarStreamVisible", () => {
   const memberStreamIds = new Set(["stream_member"])
   const archivedStreamIds = new Set(["stream_archived_root", "stream_sealed_thread"])
+  // Derived the way the sidebar derives it, so the root-in-aside rule is what
+  // the case below proves, not a hand-built set.
+  const hiddenStreamIds = collectHiddenStreamIds([
+    makeStream({ id: "stream_aside", type: StreamTypes.ASIDE }),
+    makeStream({ id: "stream_aside_thread", type: StreamTypes.THREAD, rootStreamId: "stream_aside" }),
+    makeStream({ id: "stream_active_root" }),
+  ])
 
   it("hides a stream that is itself archived", () => {
     const stream = makeStream({ id: "stream_archived", archivedAt: "2026-01-01T00:00:00Z" })
-    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(false)
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
   })
 
   it("hides a thread sealed by an archived ancestor (the sealed set carries the chain verdict)", () => {
@@ -216,7 +224,7 @@ describe("isSidebarStreamVisible", () => {
       rootStreamId: "stream_active_root",
       visibility: Visibilities.PRIVATE,
     })
-    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds)).toBe(false)
+    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
   })
 
   it("keeps a thread whose chain is live", () => {
@@ -226,27 +234,37 @@ describe("isSidebarStreamVisible", () => {
       rootStreamId: "stream_active_root",
       visibility: Visibilities.PRIVATE,
     })
-    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds)).toBe(true)
+    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(true)
   })
 
   it("hides an aside even though the viewer is its only member (anchor rows are its listing)", () => {
     const aside = makeStream({ id: "stream_aside", type: StreamTypes.ASIDE, visibility: Visibilities.PRIVATE })
-    expect(isSidebarStreamVisible(aside, memberStreamIds, archivedStreamIds)).toBe(false)
+    expect(isSidebarStreamVisible(aside, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
+  })
+
+  it("hides a thread rooted in an aside (the hidden set carries the root verdict)", () => {
+    const thread = makeStream({
+      id: "stream_aside_thread",
+      type: StreamTypes.THREAD,
+      rootStreamId: "stream_aside",
+      visibility: Visibilities.PRIVATE,
+    })
+    expect(isSidebarStreamVisible(thread, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
   })
 
   it("shows a public stream the viewer is a member of", () => {
     const stream = makeStream({ id: "stream_member", visibility: Visibilities.PUBLIC })
-    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(true)
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(true)
   })
 
   it("hides a public stream the viewer is not a member of", () => {
     const stream = makeStream({ id: "stream_other", visibility: Visibilities.PUBLIC })
-    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(false)
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
   })
 
   it("shows a non-public stream regardless of membership (access already gated by bootstrap)", () => {
     const stream = makeStream({ id: "stream_private", visibility: Visibilities.PRIVATE })
-    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds)).toBe(true)
+    expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(true)
   })
 })
 
