@@ -807,7 +807,7 @@ function countDropped(scope: string, consentId: string, reason: DropReason, coun
   const existing = target.get(key)
   if (existing) existing.dropped += count
   else target.set(key, { reason, scope, consentId, dropped: count })
-  if (!dropTransactionStack.length) requestPersistence()
+  requestPersistence()
 }
 
 function beginDropTransaction(): void {
