@@ -44,6 +44,18 @@ export type ConnectivityEvent =
   | "room_join_connection_wait"
   | "message_queue_blocked"
   | "message_queue_unblocked"
+  | "diagnostics_dropped"
+
+const DROP_REASONS = [
+  "memory_overflow",
+  "row_too_large",
+  "store_trimmed",
+  "tombstoned",
+  "consent_mismatch",
+  "consent_regenerated",
+] as const
+
+export type DropReason = (typeof DROP_REASONS)[number]
 
 export type RouteCategory =
   | "workspace_config"
@@ -70,6 +82,8 @@ export interface DiagnosticFields {
   attempt?: number
   reason?: ReasonClass
   blockedBy?: "socket" | "in_flight" | "lock"
+  dropReason?: DropReason
+  dropped?: number
 }
 
 interface DiagnosticRow extends DiagnosticFields {
@@ -99,15 +113,16 @@ interface DiagnosticsDb extends Dexie {
   consent: EntityTable<ConsentRow, "scope">
 }
 
-const MAX_ROWS = 500
-const MAX_BYTES = 256 * 1024
+const MAX_ROWS = 2000
+const MAX_BYTES = 1024 * 1024
 const MAX_MEMORY_ROWS = 100
 const MAX_MEMORY_BYTES = 64 * 1024
 // Eviction bound. Bursts (a boot fanning out dozens of room joins in one task)
 // legitimately exceed the drain target before persistence can run, so rows are
 // dropped only past this hard cap, never merely for exceeding MAX_MEMORY_ROWS.
-const MAX_MEMORY_HARD_ROWS = 400
-const MAX_MEMORY_HARD_BYTES = 256 * 1024
+const MAX_MEMORY_HARD_ROWS = 1000
+const MAX_MEMORY_HARD_BYTES = 512 * 1024
+const MAX_DROP_ROWS = 50
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const FLUSH_INTERVAL_MS = 30_000
 const MIN_TRIGGER_FLUSH_MS = 5_000
@@ -494,13 +509,23 @@ async function trimConsentRows(database: DiagnosticsDb, protectedScope?: string)
 async function initializeRuntime(target: Runtime): Promise<void> {
   try {
     const database = getDb()
+    beginDropTransaction()
     const result = await database.transaction("rw", database.events, database.consent, async () => {
       if (isConnectivityConsentTombstoned(target.config.consentId)) return null
       const prior = await database.consent.get(target.scope)
       if (isConnectivityConsentTombstoned(target.config.consentId)) return null
       const sameGrant = prior?.active === 1 && prior.consentId === target.config.consentId
       const epoch = sameGrant ? prior.epoch : (prior?.epoch ?? -1) + 1
-      if (!sameGrant) await database.events.where("scope").equals(target.scope).delete()
+      if (!sameGrant) {
+        // Accounting rows have no user content: keep them across the consent
+        // generation so their reports still ship, and count only real rows.
+        const deleted = await database.events
+          .where("scope")
+          .equals(target.scope)
+          .filter((row) => row.event !== "diagnostics_dropped")
+          .delete()
+        if (deleted) countDropped(target.scope, target.config.consentId, "consent_regenerated", deleted)
+      }
       await database.consent.put({
         scope: target.scope,
         epoch,
@@ -513,6 +538,7 @@ async function initializeRuntime(target: Runtime): Promise<void> {
     })
 
     removePendingScopes(result?.removedScopes ?? new Set())
+    commitDropTransaction()
     if (
       !result ||
       runtime?.generation !== target.generation ||
@@ -528,6 +554,7 @@ async function initializeRuntime(target: Runtime): Promise<void> {
     target.resolveReady(true)
     requestPersistence()
   } catch {
+    abortDropTransaction()
     target.resolveReady(false)
     if (runtime?.generation !== target.generation || isConnectivityConsentTombstoned(target.config.consentId)) return
     target.status = "retry_wait"
@@ -567,12 +594,13 @@ async function runRevocation(request: RevocationRequest): Promise<void> {
 }
 
 function requestPersistence(): void {
-  if (!pending.length) return
+  if (!pending.length && !dropCounts.size) return
   persistenceRequested = true
   pumpStorage()
 }
 
 async function persistPending(): Promise<void> {
+  flushDropCounters()
   const ready = pending
   if (!ready.length) {
     persistenceFailures = 0
@@ -585,6 +613,7 @@ async function persistPending(): Promise<void> {
     const database = getDb()
     const tombstonedConsentIds = readConnectivityConsentTombstones()
     const scopes = [...new Set(ready.map((item) => item.row.scope))]
+    beginDropTransaction()
     const result = await database.transaction("rw", database.events, database.consent, async () => {
       const accepted: DiagnosticRow[] = []
       const deferred: PendingRow[] = []
@@ -594,7 +623,17 @@ async function persistPending(): Promise<void> {
           .map((consent) => [consent.scope, consent] as const)
       )
       for (const item of ready) {
-        if (tombstonedConsentIds.has(item.consentId)) continue
+        // Accounting rows are internal bookkeeping with no user content: they
+        // survive tombstones and consent mismatches so drop reports reach
+        // PostHog even mid-revocation.
+        if (item.row.event === "diagnostics_dropped") {
+          accepted.push(item.row)
+          continue
+        }
+        if (tombstonedConsentIds.has(item.consentId)) {
+          countDropped(item.row.scope, item.consentId, "tombstoned", 1)
+          continue
+        }
         const consent = consents.get(item.row.scope)
         if (consent?.active === 1 && consent.consentId === item.consentId) {
           accepted.push({ ...item.row, consentEpoch: consent.epoch })
@@ -604,6 +643,8 @@ async function persistPending(): Promise<void> {
           runtime.status !== "ready"
         ) {
           deferred.push(item)
+        } else {
+          countDropped(item.row.scope, item.consentId, "consent_mismatch", 1)
         }
       }
       if (accepted.length) await database.events.bulkPut(accepted)
@@ -612,6 +653,7 @@ async function persistPending(): Promise<void> {
       return { deferred, removedScopes }
     })
     removePendingScopes(result.removedScopes)
+    commitDropTransaction()
     for (const item of result.deferred) enqueuePending(item)
     persistenceFailures = 0
     if (result.deferred.length) {
@@ -621,6 +663,7 @@ async function persistPending(): Promise<void> {
       persistenceNextAttemptAt = 0
     }
   } catch {
+    abortDropTransaction()
     for (const item of ready) enqueuePending(item)
     persistenceFailures++
     persistenceRequested = true
@@ -631,14 +674,17 @@ async function persistPending(): Promise<void> {
 async function runMaintenance(): Promise<void> {
   try {
     const database = getDb()
+    beginDropTransaction()
     const removedScopes = await database.transaction("rw", database.events, database.consent, async () => {
       await trimPersistedRows(database)
       return trimConsentRows(database, runtime?.scope)
     })
+    commitDropTransaction()
     removePendingScopes(removedScopes)
     maintenanceFailures = 0
     maintenanceNextAttemptAt = 0
   } catch {
+    abortDropTransaction()
     maintenanceFailures++
     maintenanceRequested = true
     maintenanceNextAttemptAt = Date.now() + retryDelay(maintenanceFailures)
@@ -677,6 +723,10 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
   }
   if (oneOf(fields.reason, ["network", "timeout", "abort", "server", "transport", "unknown"])) {
     result.reason = fields.reason
+  }
+  if (oneOf(fields.dropReason, DROP_REASONS)) result.dropReason = fields.dropReason
+  if (Number.isInteger(fields.dropped) && fields.dropped! > 0 && fields.dropped! <= 100_000) {
+    result.dropped = fields.dropped
   }
   if (oneOf(fields.blockedBy, ["socket", "in_flight", "lock"])) result.blockedBy = fields.blockedBy
   return result
@@ -719,30 +769,109 @@ export function beginConnectivityObservation(fields: DiagnosticFields = {}): Con
 }
 
 function enqueuePending(item: PendingRow): void {
-  if (item.row.byteSize > MAX_MEMORY_BYTES) return
+  if (item.row.byteSize > MAX_MEMORY_BYTES) {
+    countDropped(item.row.scope, item.consentId, "row_too_large", 1)
+    return
+  }
   pending.push(item)
   pendingBytes += item.row.byteSize
+  const evictedByScope = new Map<string, number>()
+  let lastEvictedConsentId = item.consentId
   while (pending.length > MAX_MEMORY_HARD_ROWS || pendingBytes > MAX_MEMORY_HARD_BYTES) {
-    pendingBytes -= pending.shift()!.row.byteSize
+    const oldest = pending.shift()!
+    pendingBytes -= oldest.row.byteSize
+    lastEvictedConsentId = oldest.consentId
+    evictedByScope.set(oldest.row.scope, (evictedByScope.get(oldest.row.scope) ?? 0) + 1)
   }
+  for (const [scope, count] of evictedByScope) countDropped(scope, lastEvictedConsentId, "memory_overflow", count)
+}
+
+const dropKey = (scope: string, consentId: string, reason: DropReason) => `${scope}\0${consentId}\0${reason}`
+
+interface DropCounter {
+  reason: DropReason
+  scope: string
+  consentId: string
+  dropped: number
+}
+
+// Counters keep the scope and consent of the dropped rows: attributing them to
+// whatever runtime happens to be active would misreport drops after account
+// switches, and discarding them without a runtime would lose reports.
+const dropCounts = new Map<string, DropCounter>()
+// Counts produced inside a Dexie transaction are accumulated locally and merged
+// only after the transaction commits — a rolled-back transaction must not
+// report drops whose rows are still persisted.
+const dropTransactionStack: Array<Map<string, DropCounter>> = []
+
+function countDropped(scope: string, consentId: string, reason: DropReason, count: number): void {
+  const target = dropTransactionStack.at(-1) ?? dropCounts
+  const key = dropKey(scope, consentId, reason)
+  const existing = target.get(key)
+  if (existing) existing.dropped += count
+  else target.set(key, { reason, scope, consentId, dropped: count })
+  requestPersistence()
+}
+
+function beginDropTransaction(): void {
+  dropTransactionStack.push(new Map())
+}
+
+function commitDropTransaction(): void {
+  const local = dropTransactionStack.pop()
+  if (!local) return
+  const parent = dropTransactionStack.at(-1) ?? dropCounts
+  for (const [key, counter] of local) {
+    const existing = parent.get(key)
+    if (existing) existing.dropped += counter.dropped
+    else parent.set(key, { ...counter })
+  }
+  if (!dropTransactionStack.length) requestPersistence()
+}
+
+function abortDropTransaction(): void {
+  dropTransactionStack.pop()
+}
+
+// Drop accounting rows are built only at persist time so counting inside a
+// persist cycle can't recurse into another enqueue.
+function flushDropCounters(): void {
+  for (const [key, counter] of dropCounts) {
+    dropCounts.delete(key)
+    const row = buildRow(counter.scope, -1, "diagnostics_dropped", {
+      dropReason: counter.reason,
+      dropped: counter.dropped,
+    })
+    pending.push({ row, consentId: counter.consentId })
+    pendingBytes += row.byteSize
+  }
+}
+
+function buildRow(
+  scope: string,
+  consentEpoch: number,
+  event: ConnectivityEvent,
+  fields: DiagnosticFields
+): DiagnosticRow {
+  const base = {
+    ...projectFields(fields),
+    id: createDiagnosticId(),
+    scope,
+    event,
+    bootId,
+    browserSessionId,
+    appVersion: currentAppVersion() ?? "unknown",
+    wallTime: new Date().toISOString(),
+    monotonicMs: performance.now(),
+    createdAt: Date.now(),
+    consentEpoch,
+  }
+  return { ...base, byteSize: byteLength(base) }
 }
 
 function recordForRuntime(captured: Runtime, event: ConnectivityEvent, fields: DiagnosticFields): void {
   try {
-    const base = {
-      ...projectFields(fields),
-      id: createDiagnosticId(),
-      scope: captured.scope,
-      event,
-      bootId,
-      browserSessionId,
-      appVersion: currentAppVersion() ?? "unknown",
-      wallTime: new Date().toISOString(),
-      monotonicMs: performance.now(),
-      createdAt: Date.now(),
-      consentEpoch: captured.epoch ?? -1,
-    }
-    const row: DiagnosticRow = { ...base, byteSize: byteLength(base) }
+    const row = buildRow(captured.scope, captured.epoch ?? -1, event, fields)
     enqueuePending({ row, consentId: captured.config.consentId })
     requestPersistence()
   } catch {
@@ -758,11 +887,31 @@ export function recordConnectivityEvent(event: ConnectivityEvent, fields: Diagno
 async function trimPersistedRows(database: DiagnosticsDb): Promise<void> {
   await deleteExpiredRows(database)
   const rows = await database.events.orderBy("createdAt").toArray()
-  let bytes = rows.reduce((sum, row) => sum + row.byteSize, 0)
-  let removeCount = Math.max(0, rows.length - MAX_ROWS)
-  for (let index = 0; index < removeCount; index++) bytes -= rows[index]!.byteSize
-  while (removeCount < rows.length && bytes > MAX_BYTES) bytes -= rows[removeCount++]!.byteSize
-  if (removeCount) await database.events.bulkDelete(rows.slice(0, removeCount).map((row) => row.id))
+  // The row cap bounds real captured events. Accounting rows are bookkeeping:
+  // they don't displace real rows, or each report would evict another event and
+  // report itself forever.
+  const real = rows.filter((row) => row.event !== "diagnostics_dropped")
+  const accounting = rows.length - real.length
+  let bytes = real.reduce((sum, row) => sum + row.byteSize, 0)
+  let removeCount = Math.max(0, real.length - MAX_ROWS)
+  for (let index = 0; index < removeCount; index++) bytes -= real[index]!.byteSize
+  while (removeCount < real.length && bytes > MAX_BYTES) bytes -= real[removeCount++]!.byteSize
+  if (removeCount) {
+    const trimmedByScope = new Map<string, number>()
+    for (const row of real.slice(0, removeCount))
+      trimmedByScope.set(row.scope, (trimmedByScope.get(row.scope) ?? 0) + 1)
+    for (const [scope, count] of trimmedByScope) countDropped(scope, "", "store_trimmed", count)
+    await database.events.bulkDelete(real.slice(0, removeCount).map((row) => row.id))
+  }
+  const staleAccounting = accounting - MAX_DROP_ROWS
+  if (staleAccounting > 0) {
+    await database.events.bulkDelete(
+      rows
+        .filter((row) => row.event === "diagnostics_dropped")
+        .slice(0, staleAccounting)
+        .map((row) => row.id)
+    )
+  }
 }
 
 function triggerFlush(): void {
@@ -819,7 +968,9 @@ async function runFlush(): Promise<boolean> {
 
   try {
     const database = getDb()
+    beginDropTransaction()
     await database.transaction("rw", database.events, () => trimPersistedRows(database))
+    commitDropTransaction()
     if (runtime?.generation !== captured.generation) return false
     const snapshot = (await database.events.where("scope").equals(captured.scope).sortBy("createdAt")).slice(
       0,
@@ -885,6 +1036,7 @@ async function runFlush(): Promise<boolean> {
 
     return !pending.some(({ row }) => row.scope === captured.scope)
   } catch {
+    abortDropTransaction()
     return false
   }
 }
@@ -938,4 +1090,5 @@ export const connectivityDiagnosticsTestApi = {
   },
   readCachedAuthorization: readCachedConnectivityAuthorization,
   isTombstoned: isConnectivityConsentTombstoned,
+  clearDropCounters: () => dropCounts.clear(),
 }

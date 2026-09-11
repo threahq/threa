@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { clearConnectivityConsentTombstone, tombstoneConnectivityAuthorization } from "./consent-cache"
 import {
   authorizeConnectivityDiagnostics,
   beginConnectivityObservation,
@@ -43,6 +44,7 @@ describe("connectivity diagnostics persistence", () => {
     vi.restoreAllMocks()
     connectivityDiagnosticsTestApi.setNetworkTimeoutMs(connectivityDiagnosticsTestApi.NETWORK_TIMEOUT_MS)
     connectivityDiagnosticsTestApi.setRetryBaseMs(20)
+    connectivityDiagnosticsTestApi.clearDropCounters()
   })
 
   afterEach(() => suspendConnectivityDiagnostics())
@@ -188,9 +190,10 @@ describe("connectivity diagnostics persistence", () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     const rows = await connectivityDiagnosticsTestApi.db.events.toArray()
+    const real = rows.filter((row) => row.event !== "diagnostics_dropped")
     expect({
-      withinCount: rows.length <= connectivityDiagnosticsTestApi.MAX_ROWS,
-      withinBytes: rows.reduce((sum, row) => sum + row.byteSize, 0) <= connectivityDiagnosticsTestApi.MAX_BYTES,
+      withinCount: real.length <= connectivityDiagnosticsTestApi.MAX_ROWS,
+      withinBytes: real.reduce((sum, row) => sum + row.byteSize, 0) <= connectivityDiagnosticsTestApi.MAX_BYTES,
       oldRowPresent: rows.some((row) => row.id === existing!.id),
     }).toEqual({ withinCount: true, withinBytes: true, oldRowPresent: false })
   })
@@ -402,6 +405,123 @@ describe("connectivity diagnostics persistence", () => {
         .sort()
     ).toEqual(operationIds.sort())
     expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
+  })
+
+  it("should account for rows discarded on consent mismatch", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await connectivityDiagnosticsTestApi.db.consent.put({
+      scope: connectivityDiagnosticsTestApi.scopeOf(scope),
+      epoch: 9,
+      active: 1,
+      consentId: "stale_consent",
+      updatedAt: Date.now(),
+    })
+    recordConnectivityEvent("socket_connect")
+    await settleWrites()
+
+    const dropRows = (await connectivityDiagnosticsTestApi.db.events.toArray()).filter(
+      (row) => row.event === "diagnostics_dropped"
+    )
+    expect(dropRows).toHaveLength(1)
+    expect(dropRows[0]).toMatchObject({ dropReason: "consent_mismatch", dropped: 1 })
+  })
+
+  it("should account for rows wiped by consent regeneration and keep their accounting", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    recordConnectivityEvent("socket_connect")
+    await settleWrites()
+
+    localStorage.removeItem(`threa-connectivity-diagnostics:authorization:${accountId}:${scope.workspaceId}`)
+    configureConnectivityDiagnostics(scope, accountId, "preferences_v2")
+    await flushConnectivityDiagnostics()
+
+    const all = await connectivityDiagnosticsTestApi.db.events.toArray()
+    expect(all.some((row) => row.event === "socket_connect" && row.dropReason === undefined)).toBe(false)
+    const dropRows = all.filter((row) => row.event === "diagnostics_dropped")
+    expect(dropRows).toHaveLength(1)
+    expect(dropRows[0]).toMatchObject({ dropReason: "consent_regenerated", dropped: 1 })
+  })
+
+  it("should account for rows evicted by the memory hard cap", async () => {
+    const batches: Array<Array<{ event: string; properties: { dropReason?: string; dropped?: number } }>> = []
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      batches.push(JSON.parse(String(init?.body)).batch)
+      return new Response(null, { status: 200 })
+    })
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    for (let index = 0; index < connectivityDiagnosticsTestApi.MAX_MEMORY_HARD_ROWS + 50; index++)
+      recordConnectivityEvent("http_start", { operationId: `op_${index}`, method: "GET", route: "messages" })
+    await settleWrites()
+
+    expect(await flushConnectivityDiagnostics()).toBe(true)
+    const delivered = batches.flat().filter((event) => event.event === "connectivity_http_start")
+    const dropEvents = batches.flat().filter((event) => event.event === "connectivity_diagnostics_dropped")
+    expect(dropEvents).toHaveLength(1)
+    expect(dropEvents[0]!.properties).toMatchObject({
+      dropReason: "memory_overflow",
+      dropped: connectivityDiagnosticsTestApi.MAX_MEMORY_HARD_ROWS + 50 - delivered.length,
+    })
+  })
+
+  it("should account for rows trimmed out of the persisted store", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const database = connectivityDiagnosticsTestApi.db
+    const overflow = 30
+    await database.events.bulkPut(
+      Array.from({ length: connectivityDiagnosticsTestApi.MAX_ROWS + overflow }, (_, index) => ({
+        id: `seeded_${index}`,
+        scope: connectivityDiagnosticsTestApi.scopeOf(scope),
+        event: "http_start" as const,
+        bootId: "boot_test",
+        browserSessionId: "session_test",
+        appVersion: "test",
+        wallTime: new Date().toISOString(),
+        monotonicMs: index,
+        createdAt: Date.now() - 2_000 + index,
+        byteSize: 200,
+        consentEpoch: 0,
+      }))
+    )
+
+    recordConnectivityEvent("socket_connect")
+    await settleWrites()
+    await flushConnectivityDiagnostics()
+
+    await vi.waitFor(async () => {
+      const rows = (await database.events.toArray()).filter((row) => row.event === "diagnostics_dropped")
+      expect(rows).toHaveLength(1)
+    })
+    const dropRows = (await database.events.toArray()).filter((row) => row.event === "diagnostics_dropped")
+    expect(dropRows).toHaveLength(1)
+    expect(dropRows[0]).toMatchObject({ dropReason: "store_trimmed", dropped: overflow + 1 })
+  })
+
+  it("should account for rows discarded on tombstoned consent", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const cached = connectivityDiagnosticsTestApi.readCachedAuthorization(accountId, scope.workspaceId)!
+    tombstoneConnectivityAuthorization(accountId, scope.workspaceId, connectivityDiagnosticsTestApi.scopeOf(scope), {
+      consentId: cached.consentId,
+      decisionVersion: cached.decisionVersion,
+    })
+    recordConnectivityEvent("socket_connect")
+    await settleWrites()
+    clearConnectivityConsentTombstone(cached.consentId)
+    await flushConnectivityDiagnostics()
+
+    const persistedRows = await connectivityDiagnosticsTestApi.db.events.toArray()
+    expect(persistedRows.some((row) => row.event === "socket_connect")).toBe(false)
+    const dropRows = persistedRows.filter((row) => row.event === "diagnostics_dropped")
+    expect(dropRows).toHaveLength(1)
+    expect(dropRows[0]).toMatchObject({ dropReason: "tombstoned", dropped: 1 })
   })
 
   it("should bound active consent metadata during maintenance", async () => {
