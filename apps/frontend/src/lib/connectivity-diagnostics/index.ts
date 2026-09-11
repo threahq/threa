@@ -46,13 +46,16 @@ export type ConnectivityEvent =
   | "message_queue_unblocked"
   | "diagnostics_dropped"
 
-export type DropReason =
-  | "memory_overflow"
-  | "row_too_large"
-  | "store_trimmed"
-  | "tombstoned"
-  | "consent_mismatch"
-  | "consent_regenerated"
+const DROP_REASONS = [
+  "memory_overflow",
+  "row_too_large",
+  "store_trimmed",
+  "tombstoned",
+  "consent_mismatch",
+  "consent_regenerated",
+] as const
+
+export type DropReason = (typeof DROP_REASONS)[number]
 
 export type RouteCategory =
   | "workspace_config"
@@ -780,14 +783,7 @@ function enqueuePending(item: PendingRow): void {
   for (const [scope, count] of evictedByScope) countDropped(scope, lastEvictedConsentId, "memory_overflow", count)
 }
 
-const DROP_REASONS = [
-  "memory_overflow",
-  "row_too_large",
-  "store_trimmed",
-  "tombstoned",
-  "consent_mismatch",
-  "consent_regenerated",
-] as const
+const dropKey = (scope: string, reason: DropReason) => `${scope}\0${reason}`
 
 interface DropCounter {
   reason: DropReason
@@ -804,7 +800,6 @@ const dropCounts = new Map<string, DropCounter>()
 // only after the transaction commits — a rolled-back transaction must not
 // report drops whose rows are still persisted.
 const dropTransactionStack: Array<Map<string, DropCounter>> = []
-const dropKey = (scope: string, reason: DropReason) => `${scope}\0${reason}`
 
 function countDropped(scope: string, consentId: string, reason: DropReason, count: number): void {
   const target = dropTransactionStack.at(-1) ?? dropCounts
@@ -812,7 +807,7 @@ function countDropped(scope: string, consentId: string, reason: DropReason, coun
   const existing = target.get(key)
   if (existing) existing.dropped += count
   else target.set(key, { reason, scope, consentId, dropped: count })
-  if (!parent) requestPersistence()
+  if (!dropTransactionStack.length) requestPersistence()
 }
 
 function beginDropTransaction(): void {
@@ -840,41 +835,40 @@ function abortDropTransaction(): void {
 function flushDropCounters(): void {
   for (const [key, counter] of dropCounts) {
     dropCounts.delete(key)
-    const base = {
-      ...projectFields({ dropReason: counter.reason, dropped: counter.dropped }),
-      id: createDiagnosticId(),
-      scope: counter.scope,
-      event: "diagnostics_dropped" as const,
-      bootId,
-      browserSessionId,
-      appVersion: currentAppVersion() ?? "unknown",
-      wallTime: new Date().toISOString(),
-      monotonicMs: performance.now(),
-      createdAt: Date.now(),
-      consentEpoch: -1,
-    }
-    const row: DiagnosticRow = { ...base, byteSize: byteLength(base) }
+    const row = buildRow(counter.scope, -1, "diagnostics_dropped", {
+      dropReason: counter.reason,
+      dropped: counter.dropped,
+    })
     pending.push({ row, consentId: counter.consentId })
     pendingBytes += row.byteSize
   }
 }
 
+function buildRow(
+  scope: string,
+  consentEpoch: number,
+  event: ConnectivityEvent,
+  fields: DiagnosticFields
+): DiagnosticRow {
+  const base = {
+    ...projectFields(fields),
+    id: createDiagnosticId(),
+    scope,
+    event,
+    bootId,
+    browserSessionId,
+    appVersion: currentAppVersion() ?? "unknown",
+    wallTime: new Date().toISOString(),
+    monotonicMs: performance.now(),
+    createdAt: Date.now(),
+    consentEpoch,
+  }
+  return { ...base, byteSize: byteLength(base) }
+}
+
 function recordForRuntime(captured: Runtime, event: ConnectivityEvent, fields: DiagnosticFields): void {
   try {
-    const base = {
-      ...projectFields(fields),
-      id: createDiagnosticId(),
-      scope: captured.scope,
-      event,
-      bootId,
-      browserSessionId,
-      appVersion: currentAppVersion() ?? "unknown",
-      wallTime: new Date().toISOString(),
-      monotonicMs: performance.now(),
-      createdAt: Date.now(),
-      consentEpoch: captured.epoch ?? -1,
-    }
-    const row: DiagnosticRow = { ...base, byteSize: byteLength(base) }
+    const row = buildRow(captured.scope, captured.epoch ?? -1, event, fields)
     enqueuePending({ row, consentId: captured.config.consentId })
     requestPersistence()
   } catch {
