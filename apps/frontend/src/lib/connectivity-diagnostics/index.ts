@@ -506,6 +506,7 @@ async function trimConsentRows(database: DiagnosticsDb, protectedScope?: string)
 async function initializeRuntime(target: Runtime): Promise<void> {
   try {
     const database = getDb()
+    beginDropTransaction()
     const result = await database.transaction("rw", database.events, database.consent, async () => {
       if (isConnectivityConsentTombstoned(target.config.consentId)) return null
       const prior = await database.consent.get(target.scope)
@@ -534,6 +535,7 @@ async function initializeRuntime(target: Runtime): Promise<void> {
     })
 
     removePendingScopes(result?.removedScopes ?? new Set())
+    commitDropTransaction()
     if (
       !result ||
       runtime?.generation !== target.generation ||
@@ -549,6 +551,7 @@ async function initializeRuntime(target: Runtime): Promise<void> {
     target.resolveReady(true)
     requestPersistence()
   } catch {
+    abortDropTransaction()
     target.resolveReady(false)
     if (runtime?.generation !== target.generation || isConnectivityConsentTombstoned(target.config.consentId)) return
     target.status = "retry_wait"
@@ -607,6 +610,7 @@ async function persistPending(): Promise<void> {
     const database = getDb()
     const tombstonedConsentIds = readConnectivityConsentTombstones()
     const scopes = [...new Set(ready.map((item) => item.row.scope))]
+    beginDropTransaction()
     const result = await database.transaction("rw", database.events, database.consent, async () => {
       const accepted: DiagnosticRow[] = []
       const deferred: PendingRow[] = []
@@ -646,6 +650,7 @@ async function persistPending(): Promise<void> {
       return { deferred, removedScopes }
     })
     removePendingScopes(result.removedScopes)
+    commitDropTransaction()
     for (const item of result.deferred) enqueuePending(item)
     persistenceFailures = 0
     if (result.deferred.length) {
@@ -655,6 +660,7 @@ async function persistPending(): Promise<void> {
       persistenceNextAttemptAt = 0
     }
   } catch {
+    abortDropTransaction()
     for (const item of ready) enqueuePending(item)
     persistenceFailures++
     persistenceRequested = true
@@ -794,14 +800,39 @@ interface DropCounter {
 // whatever runtime happens to be active would misreport drops after account
 // switches, and discarding them without a runtime would lose reports.
 const dropCounts = new Map<string, DropCounter>()
+// Counts produced inside a Dexie transaction are accumulated locally and merged
+// only after the transaction commits — a rolled-back transaction must not
+// report drops whose rows are still persisted.
+const dropTransactionStack: Array<Map<string, DropCounter>> = []
 const dropKey = (scope: string, reason: DropReason) => `${scope}\0${reason}`
 
 function countDropped(scope: string, consentId: string, reason: DropReason, count: number): void {
+  const target = dropTransactionStack.at(-1) ?? dropCounts
   const key = dropKey(scope, reason)
-  const existing = dropCounts.get(key)
+  const existing = target.get(key)
   if (existing) existing.dropped += count
-  else dropCounts.set(key, { reason, scope, consentId, dropped: count })
-  requestPersistence()
+  else target.set(key, { reason, scope, consentId, dropped: count })
+  if (!parent) requestPersistence()
+}
+
+function beginDropTransaction(): void {
+  dropTransactionStack.push(new Map())
+}
+
+function commitDropTransaction(): void {
+  const local = dropTransactionStack.pop()
+  if (!local) return
+  const parent = dropTransactionStack.at(-1) ?? dropCounts
+  for (const [key, counter] of local) {
+    const existing = parent.get(key)
+    if (existing) existing.dropped += counter.dropped
+    else parent.set(key, { ...counter })
+  }
+  if (!dropTransactionStack.length) requestPersistence()
+}
+
+function abortDropTransaction(): void {
+  dropTransactionStack.pop()
 }
 
 // Drop accounting rows are built only at persist time so counting inside a
@@ -940,7 +971,9 @@ async function runFlush(): Promise<boolean> {
 
   try {
     const database = getDb()
+    beginDropTransaction()
     await database.transaction("rw", database.events, () => trimPersistedRows(database))
+    commitDropTransaction()
     if (runtime?.generation !== captured.generation) return false
     const snapshot = (await database.events.where("scope").equals(captured.scope).sortBy("createdAt")).slice(
       0,
@@ -1006,6 +1039,7 @@ async function runFlush(): Promise<boolean> {
 
     return !pending.some(({ row }) => row.scope === captured.scope)
   } catch {
+    abortDropTransaction()
     return false
   }
 }
