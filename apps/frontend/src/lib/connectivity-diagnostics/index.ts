@@ -513,8 +513,14 @@ async function initializeRuntime(target: Runtime): Promise<void> {
       const sameGrant = prior?.active === 1 && prior.consentId === target.config.consentId
       const epoch = sameGrant ? prior.epoch : (prior?.epoch ?? -1) + 1
       if (!sameGrant) {
-        const deleted = await database.events.where("scope").equals(target.scope).delete()
-        if (deleted) countDropped("consent_regenerated", deleted)
+        // Accounting rows have no user content: keep them across the consent
+        // generation so their reports still ship, and count only real rows.
+        const deleted = await database.events
+          .where("scope")
+          .equals(target.scope)
+          .filter((row) => row.event !== "diagnostics_dropped")
+          .delete()
+        if (deleted) countDropped(target.scope, target.config.consentId, "consent_regenerated", deleted)
       }
       await database.consent.put({
         scope: target.scope,
@@ -611,13 +617,14 @@ async function persistPending(): Promise<void> {
       )
       for (const item of ready) {
         // Accounting rows are internal bookkeeping with no user content: they
-        // survive tombstones so drop reports reach PostHog even mid-revocation.
+        // survive tombstones and consent mismatches so drop reports reach
+        // PostHog even mid-revocation.
         if (item.row.event === "diagnostics_dropped") {
           accepted.push(item.row)
           continue
         }
         if (tombstonedConsentIds.has(item.consentId)) {
-          countDropped("tombstoned", 1)
+          countDropped(item.row.scope, item.consentId, "tombstoned", 1)
           continue
         }
         const consent = consents.get(item.row.scope)
@@ -630,7 +637,7 @@ async function persistPending(): Promise<void> {
         ) {
           deferred.push(item)
         } else {
-          countDropped("consent_mismatch", 1)
+          countDropped(item.row.scope, item.consentId, "consent_mismatch", 1)
         }
       }
       if (accepted.length) await database.events.bulkPut(accepted)
@@ -751,17 +758,20 @@ export function beginConnectivityObservation(fields: DiagnosticFields = {}): Con
 
 function enqueuePending(item: PendingRow): void {
   if (item.row.byteSize > MAX_MEMORY_BYTES) {
-    countDropped("row_too_large", 1)
+    countDropped(item.row.scope, item.consentId, "row_too_large", 1)
     return
   }
   pending.push(item)
   pendingBytes += item.row.byteSize
-  let evicted = 0
+  const evictedByScope = new Map<string, number>()
+  let lastEvictedConsentId = item.consentId
   while (pending.length > MAX_MEMORY_HARD_ROWS || pendingBytes > MAX_MEMORY_HARD_BYTES) {
-    pendingBytes -= pending.shift()!.row.byteSize
-    evicted++
+    const oldest = pending.shift()!
+    pendingBytes -= oldest.row.byteSize
+    lastEvictedConsentId = oldest.consentId
+    evictedByScope.set(oldest.row.scope, (evictedByScope.get(oldest.row.scope) ?? 0) + 1)
   }
-  if (evicted) countDropped("memory_overflow", evicted)
+  for (const [scope, count] of evictedByScope) countDropped(scope, lastEvictedConsentId, "memory_overflow", count)
 }
 
 const DROP_REASONS = [
@@ -773,29 +783,36 @@ const DROP_REASONS = [
   "consent_regenerated",
 ] as const
 
-const dropCounts = new Map<DropReason, number>()
+interface DropCounter {
+  reason: DropReason
+  scope: string
+  consentId: string
+  dropped: number
+}
 
-function countDropped(reason: DropReason, count: number): void {
-  dropCounts.set(reason, (dropCounts.get(reason) ?? 0) + count)
+// Counters keep the scope and consent of the dropped rows: attributing them to
+// whatever runtime happens to be active would misreport drops after account
+// switches, and discarding them without a runtime would lose reports.
+const dropCounts = new Map<string, DropCounter>()
+const dropKey = (scope: string, reason: DropReason) => `${scope}\0${reason}`
+
+function countDropped(scope: string, consentId: string, reason: DropReason, count: number): void {
+  const key = dropKey(scope, reason)
+  const existing = dropCounts.get(key)
+  if (existing) existing.dropped += count
+  else dropCounts.set(key, { reason, scope, consentId, dropped: count })
   requestPersistence()
 }
 
 // Drop accounting rows are built only at persist time so counting inside a
 // persist cycle can't recurse into another enqueue.
 function flushDropCounters(): void {
-  const active = runtime
-  if (!active) {
-    dropCounts.clear()
-    return
-  }
-  for (const reason of DROP_REASONS) {
-    const dropped = dropCounts.get(reason)
-    if (!dropped) continue
-    dropCounts.delete(reason)
+  for (const [key, counter] of dropCounts) {
+    dropCounts.delete(key)
     const base = {
-      ...projectFields({ dropReason: reason, dropped }),
+      ...projectFields({ dropReason: counter.reason, dropped: counter.dropped }),
       id: createDiagnosticId(),
-      scope: active.scope,
+      scope: counter.scope,
       event: "diagnostics_dropped" as const,
       bootId,
       browserSessionId,
@@ -803,10 +820,10 @@ function flushDropCounters(): void {
       wallTime: new Date().toISOString(),
       monotonicMs: performance.now(),
       createdAt: Date.now(),
-      consentEpoch: active.epoch ?? -1,
+      consentEpoch: -1,
     }
     const row: DiagnosticRow = { ...base, byteSize: byteLength(base) }
-    pending.push({ row, consentId: active.config.consentId })
+    pending.push({ row, consentId: counter.consentId })
     pendingBytes += row.byteSize
   }
 }
@@ -852,7 +869,10 @@ async function trimPersistedRows(database: DiagnosticsDb): Promise<void> {
   for (let index = 0; index < removeCount; index++) bytes -= real[index]!.byteSize
   while (removeCount < real.length && bytes > MAX_BYTES) bytes -= real[removeCount++]!.byteSize
   if (removeCount) {
-    countDropped("store_trimmed", removeCount)
+    const trimmedByScope = new Map<string, number>()
+    for (const row of real.slice(0, removeCount))
+      trimmedByScope.set(row.scope, (trimmedByScope.get(row.scope) ?? 0) + 1)
+    for (const [scope, count] of trimmedByScope) countDropped(scope, "", "store_trimmed", count)
     await database.events.bulkDelete(real.slice(0, removeCount).map((row) => row.id))
   }
   const staleAccounting = accounting - MAX_DROP_ROWS

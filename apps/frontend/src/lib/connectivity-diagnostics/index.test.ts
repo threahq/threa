@@ -407,6 +407,45 @@ describe("connectivity diagnostics persistence", () => {
     expect(await connectivityDiagnosticsTestApi.db.events.count()).toBe(0)
   })
 
+  it("should account for rows discarded on consent mismatch", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await connectivityDiagnosticsTestApi.db.consent.put({
+      scope: connectivityDiagnosticsTestApi.scopeOf(scope),
+      epoch: 9,
+      active: 1,
+      consentId: "stale_consent",
+      updatedAt: Date.now(),
+    })
+    recordConnectivityEvent("socket_connect")
+    await settleWrites()
+
+    const dropRows = (await connectivityDiagnosticsTestApi.db.events.toArray()).filter(
+      (row) => row.event === "diagnostics_dropped"
+    )
+    expect(dropRows).toHaveLength(1)
+    expect(dropRows[0]).toMatchObject({ dropReason: "consent_mismatch", dropped: 1 })
+  })
+
+  it("should account for rows wiped by consent regeneration and keep their accounting", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 503 }))
+    configureConnectivityDiagnostics(scope)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    recordConnectivityEvent("socket_connect")
+    await settleWrites()
+
+    localStorage.removeItem(`threa-connectivity-diagnostics:authorization:${accountId}:${scope.workspaceId}`)
+    configureConnectivityDiagnostics(scope, accountId, "preferences_v2")
+    await settleWrites()
+
+    const all = await connectivityDiagnosticsTestApi.db.events.toArray()
+    expect(all.some((row) => row.event === "socket_connect" && row.dropReason === undefined)).toBe(false)
+    const dropRows = all.filter((row) => row.event === "diagnostics_dropped")
+    expect(dropRows).toHaveLength(1)
+    expect(dropRows[0]).toMatchObject({ dropReason: "consent_regenerated", dropped: 1 })
+  })
+
   it("should account for rows evicted by the memory hard cap", async () => {
     const batches: Array<Array<{ event: string; properties: { dropReason?: string; dropped?: number } }>> = []
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
@@ -478,9 +517,9 @@ describe("connectivity diagnostics persistence", () => {
     clearConnectivityConsentTombstone(cached.consentId)
     await flushConnectivityDiagnostics()
 
-    const dropRows = (await connectivityDiagnosticsTestApi.db.events.toArray()).filter(
-      (row) => row.event === "diagnostics_dropped"
-    )
+    const persistedRows = await connectivityDiagnosticsTestApi.db.events.toArray()
+    expect(persistedRows.some((row) => row.event === "socket_connect")).toBe(false)
+    const dropRows = persistedRows.filter((row) => row.event === "diagnostics_dropped")
     expect(dropRows).toHaveLength(1)
     expect(dropRows[0]).toMatchObject({ dropReason: "tombstoned", dropped: 1 })
   })
