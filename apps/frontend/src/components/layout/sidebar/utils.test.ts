@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import * as prosemirror from "@threahq/prosemirror"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threahq/types"
+import { hiddenStreamIds as collectHiddenStreamIds } from "@/lib/streams"
 import {
   buildVirtualDmDrafts,
   calculateUrgency,
@@ -203,7 +204,13 @@ describe("categorizeStream", () => {
 describe("isSidebarStreamVisible", () => {
   const memberStreamIds = new Set(["stream_member"])
   const archivedStreamIds = new Set(["stream_archived_root", "stream_sealed_thread"])
-  const hiddenStreamIds = new Set(["stream_aside", "stream_aside_thread"])
+  // Derived the way the sidebar derives it, so the root-in-aside rule is what
+  // the case below proves, not a hand-built set.
+  const hiddenStreamIds = collectHiddenStreamIds([
+    makeStream({ id: "stream_aside", type: StreamTypes.ASIDE }),
+    makeStream({ id: "stream_aside_thread", type: StreamTypes.THREAD, rootStreamId: "stream_aside" }),
+    makeStream({ id: "stream_active_root" }),
+  ])
 
   it("hides a stream that is itself archived", () => {
     const stream = makeStream({ id: "stream_archived", archivedAt: "2026-01-01T00:00:00Z" })

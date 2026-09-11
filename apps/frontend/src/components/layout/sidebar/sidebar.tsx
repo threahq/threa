@@ -168,9 +168,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sealedStreamIdSignature]
   )
 
-  // An aside never lists (its anchor row in the host is its listing), and
-  // neither does a thread rooted in one; the row's own type only tells for the
-  // aside itself.
   const hiddenStreamIds = useMemo(() => collectHiddenStreamIds(idbStreams), [idbStreams])
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
