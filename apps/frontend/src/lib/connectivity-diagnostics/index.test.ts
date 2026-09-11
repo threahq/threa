@@ -437,7 +437,7 @@ describe("connectivity diagnostics persistence", () => {
 
     localStorage.removeItem(`threa-connectivity-diagnostics:authorization:${accountId}:${scope.workspaceId}`)
     configureConnectivityDiagnostics(scope, accountId, "preferences_v2")
-    await settleWrites()
+    await flushConnectivityDiagnostics()
 
     const all = await connectivityDiagnosticsTestApi.db.events.toArray()
     expect(all.some((row) => row.event === "socket_connect" && row.dropReason === undefined)).toBe(false)

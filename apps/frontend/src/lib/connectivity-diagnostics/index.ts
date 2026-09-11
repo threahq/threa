@@ -674,14 +674,17 @@ async function persistPending(): Promise<void> {
 async function runMaintenance(): Promise<void> {
   try {
     const database = getDb()
+    beginDropTransaction()
     const removedScopes = await database.transaction("rw", database.events, database.consent, async () => {
       await trimPersistedRows(database)
       return trimConsentRows(database, runtime?.scope)
     })
+    commitDropTransaction()
     removePendingScopes(removedScopes)
     maintenanceFailures = 0
     maintenanceNextAttemptAt = 0
   } catch {
+    abortDropTransaction()
     maintenanceFailures++
     maintenanceRequested = true
     maintenanceNextAttemptAt = Date.now() + retryDelay(maintenanceFailures)
@@ -783,7 +786,7 @@ function enqueuePending(item: PendingRow): void {
   for (const [scope, count] of evictedByScope) countDropped(scope, lastEvictedConsentId, "memory_overflow", count)
 }
 
-const dropKey = (scope: string, reason: DropReason) => `${scope}\0${reason}`
+const dropKey = (scope: string, consentId: string, reason: DropReason) => `${scope}\0${consentId}\0${reason}`
 
 interface DropCounter {
   reason: DropReason
@@ -803,7 +806,7 @@ const dropTransactionStack: Array<Map<string, DropCounter>> = []
 
 function countDropped(scope: string, consentId: string, reason: DropReason, count: number): void {
   const target = dropTransactionStack.at(-1) ?? dropCounts
-  const key = dropKey(scope, reason)
+  const key = dropKey(scope, consentId, reason)
   const existing = target.get(key)
   if (existing) existing.dropped += count
   else target.set(key, { reason, scope, consentId, dropped: count })
