@@ -44,6 +44,15 @@ export type ConnectivityEvent =
   | "room_join_connection_wait"
   | "message_queue_blocked"
   | "message_queue_unblocked"
+  | "diagnostics_dropped"
+
+export type DropReason =
+  | "memory_overflow"
+  | "row_too_large"
+  | "store_trimmed"
+  | "tombstoned"
+  | "consent_mismatch"
+  | "consent_regenerated"
 
 export type RouteCategory =
   | "workspace_config"
@@ -70,6 +79,8 @@ export interface DiagnosticFields {
   attempt?: number
   reason?: ReasonClass
   blockedBy?: "socket" | "in_flight" | "lock"
+  dropReason?: DropReason
+  dropped?: number
 }
 
 interface DiagnosticRow extends DiagnosticFields {
@@ -99,15 +110,16 @@ interface DiagnosticsDb extends Dexie {
   consent: EntityTable<ConsentRow, "scope">
 }
 
-const MAX_ROWS = 500
-const MAX_BYTES = 256 * 1024
+const MAX_ROWS = 2000
+const MAX_BYTES = 1024 * 1024
 const MAX_MEMORY_ROWS = 100
 const MAX_MEMORY_BYTES = 64 * 1024
 // Eviction bound. Bursts (a boot fanning out dozens of room joins in one task)
 // legitimately exceed the drain target before persistence can run, so rows are
 // dropped only past this hard cap, never merely for exceeding MAX_MEMORY_ROWS.
-const MAX_MEMORY_HARD_ROWS = 400
-const MAX_MEMORY_HARD_BYTES = 256 * 1024
+const MAX_MEMORY_HARD_ROWS = 1000
+const MAX_MEMORY_HARD_BYTES = 512 * 1024
+const MAX_DROP_ROWS = 50
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const FLUSH_INTERVAL_MS = 30_000
 const MIN_TRIGGER_FLUSH_MS = 5_000
@@ -500,7 +512,10 @@ async function initializeRuntime(target: Runtime): Promise<void> {
       if (isConnectivityConsentTombstoned(target.config.consentId)) return null
       const sameGrant = prior?.active === 1 && prior.consentId === target.config.consentId
       const epoch = sameGrant ? prior.epoch : (prior?.epoch ?? -1) + 1
-      if (!sameGrant) await database.events.where("scope").equals(target.scope).delete()
+      if (!sameGrant) {
+        const deleted = await database.events.where("scope").equals(target.scope).delete()
+        if (deleted) countDropped("consent_regenerated", deleted)
+      }
       await database.consent.put({
         scope: target.scope,
         epoch,
@@ -567,12 +582,13 @@ async function runRevocation(request: RevocationRequest): Promise<void> {
 }
 
 function requestPersistence(): void {
-  if (!pending.length) return
+  if (!pending.length && !dropCounts.size) return
   persistenceRequested = true
   pumpStorage()
 }
 
 async function persistPending(): Promise<void> {
+  flushDropCounters()
   const ready = pending
   if (!ready.length) {
     persistenceFailures = 0
@@ -594,7 +610,16 @@ async function persistPending(): Promise<void> {
           .map((consent) => [consent.scope, consent] as const)
       )
       for (const item of ready) {
-        if (tombstonedConsentIds.has(item.consentId)) continue
+        // Accounting rows are internal bookkeeping with no user content: they
+        // survive tombstones so drop reports reach PostHog even mid-revocation.
+        if (item.row.event === "diagnostics_dropped") {
+          accepted.push(item.row)
+          continue
+        }
+        if (tombstonedConsentIds.has(item.consentId)) {
+          countDropped("tombstoned", 1)
+          continue
+        }
         const consent = consents.get(item.row.scope)
         if (consent?.active === 1 && consent.consentId === item.consentId) {
           accepted.push({ ...item.row, consentEpoch: consent.epoch })
@@ -604,6 +629,8 @@ async function persistPending(): Promise<void> {
           runtime.status !== "ready"
         ) {
           deferred.push(item)
+        } else {
+          countDropped("consent_mismatch", 1)
         }
       }
       if (accepted.length) await database.events.bulkPut(accepted)
@@ -678,6 +705,10 @@ function projectFields(fields: DiagnosticFields): DiagnosticFields {
   if (oneOf(fields.reason, ["network", "timeout", "abort", "server", "transport", "unknown"])) {
     result.reason = fields.reason
   }
+  if (oneOf(fields.dropReason, DROP_REASONS)) result.dropReason = fields.dropReason
+  if (Number.isInteger(fields.dropped) && fields.dropped! > 0 && fields.dropped! <= 100_000) {
+    result.dropped = fields.dropped
+  }
   if (oneOf(fields.blockedBy, ["socket", "in_flight", "lock"])) result.blockedBy = fields.blockedBy
   return result
 }
@@ -719,11 +750,64 @@ export function beginConnectivityObservation(fields: DiagnosticFields = {}): Con
 }
 
 function enqueuePending(item: PendingRow): void {
-  if (item.row.byteSize > MAX_MEMORY_BYTES) return
+  if (item.row.byteSize > MAX_MEMORY_BYTES) {
+    countDropped("row_too_large", 1)
+    return
+  }
   pending.push(item)
   pendingBytes += item.row.byteSize
+  let evicted = 0
   while (pending.length > MAX_MEMORY_HARD_ROWS || pendingBytes > MAX_MEMORY_HARD_BYTES) {
     pendingBytes -= pending.shift()!.row.byteSize
+    evicted++
+  }
+  if (evicted) countDropped("memory_overflow", evicted)
+}
+
+const DROP_REASONS = [
+  "memory_overflow",
+  "row_too_large",
+  "store_trimmed",
+  "tombstoned",
+  "consent_mismatch",
+  "consent_regenerated",
+] as const
+
+const dropCounts = new Map<DropReason, number>()
+
+function countDropped(reason: DropReason, count: number): void {
+  dropCounts.set(reason, (dropCounts.get(reason) ?? 0) + count)
+  requestPersistence()
+}
+
+// Drop accounting rows are built only at persist time so counting inside a
+// persist cycle can't recurse into another enqueue.
+function flushDropCounters(): void {
+  const active = runtime
+  if (!active) {
+    dropCounts.clear()
+    return
+  }
+  for (const reason of DROP_REASONS) {
+    const dropped = dropCounts.get(reason)
+    if (!dropped) continue
+    dropCounts.delete(reason)
+    const base = {
+      ...projectFields({ dropReason: reason, dropped }),
+      id: createDiagnosticId(),
+      scope: active.scope,
+      event: "diagnostics_dropped" as const,
+      bootId,
+      browserSessionId,
+      appVersion: currentAppVersion() ?? "unknown",
+      wallTime: new Date().toISOString(),
+      monotonicMs: performance.now(),
+      createdAt: Date.now(),
+      consentEpoch: active.epoch ?? -1,
+    }
+    const row: DiagnosticRow = { ...base, byteSize: byteLength(base) }
+    pending.push({ row, consentId: active.config.consentId })
+    pendingBytes += row.byteSize
   }
 }
 
@@ -758,11 +842,28 @@ export function recordConnectivityEvent(event: ConnectivityEvent, fields: Diagno
 async function trimPersistedRows(database: DiagnosticsDb): Promise<void> {
   await deleteExpiredRows(database)
   const rows = await database.events.orderBy("createdAt").toArray()
-  let bytes = rows.reduce((sum, row) => sum + row.byteSize, 0)
-  let removeCount = Math.max(0, rows.length - MAX_ROWS)
-  for (let index = 0; index < removeCount; index++) bytes -= rows[index]!.byteSize
-  while (removeCount < rows.length && bytes > MAX_BYTES) bytes -= rows[removeCount++]!.byteSize
-  if (removeCount) await database.events.bulkDelete(rows.slice(0, removeCount).map((row) => row.id))
+  // The row cap bounds real captured events. Accounting rows are bookkeeping:
+  // they don't displace real rows, or each report would evict another event and
+  // report itself forever.
+  const real = rows.filter((row) => row.event !== "diagnostics_dropped")
+  const accounting = rows.length - real.length
+  let bytes = real.reduce((sum, row) => sum + row.byteSize, 0)
+  let removeCount = Math.max(0, real.length - MAX_ROWS)
+  for (let index = 0; index < removeCount; index++) bytes -= real[index]!.byteSize
+  while (removeCount < real.length && bytes > MAX_BYTES) bytes -= real[removeCount++]!.byteSize
+  if (removeCount) {
+    countDropped("store_trimmed", removeCount)
+    await database.events.bulkDelete(real.slice(0, removeCount).map((row) => row.id))
+  }
+  const staleAccounting = accounting - MAX_DROP_ROWS
+  if (staleAccounting > 0) {
+    await database.events.bulkDelete(
+      rows
+        .filter((row) => row.event === "diagnostics_dropped")
+        .slice(0, staleAccounting)
+        .map((row) => row.id)
+    )
+  }
 }
 
 function triggerFlush(): void {
@@ -938,4 +1039,5 @@ export const connectivityDiagnosticsTestApi = {
   },
   readCachedAuthorization: readCachedConnectivityAuthorization,
   isTombstoned: isConnectivityConsentTombstoned,
+  clearDropCounters: () => dropCounts.clear(),
 }

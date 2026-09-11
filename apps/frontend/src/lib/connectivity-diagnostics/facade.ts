@@ -1,4 +1,11 @@
-import type { ConnectivityEvent, ConnectivityObservation, DiagnosticFields, RoomCategory, RouteCategory } from "./index"
+import type {
+  ConnectivityEvent,
+  ConnectivityObservation,
+  DiagnosticFields,
+  DropReason,
+  RoomCategory,
+  RouteCategory,
+} from "./index"
 
 interface ConnectivityDiagnosticsRuntime {
   begin(fields?: DiagnosticFields): ConnectivityObservation
@@ -79,7 +86,7 @@ export function suspendConnectivityDiagnostics(): void {
   runtime?.suspend()
 }
 
-export type { ConnectivityEvent, ConnectivityObservation, DiagnosticFields, RoomCategory, RouteCategory }
+export type { ConnectivityEvent, ConnectivityObservation, DiagnosticFields, DropReason, RoomCategory, RouteCategory }
 
 /** Requests at least this old when a phase event is recorded are "slow" — the
  * threshold below which phase detail is dropped to keep telemetry volume down.
