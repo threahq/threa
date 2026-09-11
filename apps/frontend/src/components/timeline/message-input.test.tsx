@@ -838,7 +838,9 @@ describe("MessageInput", () => {
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
       await arm("conv_1")
 
-      expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
+      await waitFor(() =>
+        expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
+      )
       // The panel's composer is asked to open, and no inline strip is left behind.
       expect(consumeConversationReplyOpen("conv_1")).toBe(true)
       await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
