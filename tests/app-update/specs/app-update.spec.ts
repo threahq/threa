@@ -66,7 +66,7 @@ test("ready build B applies in one reload", async ({ page }) => {
   const reloads: string[] = []
   page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
 
-  await button.click()
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), button.click()])
   await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
 })
@@ -81,7 +81,7 @@ test("ready build B applies offline in one reload without clearing domain data",
   page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
 
   await context.setOffline(true)
-  await button.click()
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), button.click()])
   await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
   expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
@@ -98,7 +98,7 @@ test("should keep update controls usable on a narrow screen", async ({ page, con
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await page.screenshot({ path: testInfo.outputPath("app-status-mobile.png"), fullPage: true })
   await context.setOffline(true)
-  await button.click()
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), button.click()])
   await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
 })
 
@@ -195,7 +195,10 @@ test("ready B with server latest C reloads to B without wiping caches", async ({
   const reloads: string[] = []
   page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
 
-  await page.getByRole("button", { name: /reload and update/i }).click()
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: "domcontentloaded" }),
+    page.getByRole("button", { name: /reload and update/i }).click(),
+  ])
   await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
   expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
