@@ -332,6 +332,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 
   const registerOpenMenu = useCallback(
     (close: () => void) => {
+      clearHideTimeout()
       openMenusRef.current.add(close)
       return () => {
         openMenusRef.current.delete(close)
@@ -340,7 +341,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         }
       }
     },
-    [hidePreview]
+    [clearHideTimeout, hidePreview]
   )
 
   const startResizing = useCallback(() => {

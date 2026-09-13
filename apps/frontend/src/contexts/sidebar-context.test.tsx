@@ -48,6 +48,32 @@ describe("SidebarContext.togglePinned (desktop)", () => {
   })
 })
 
+describe("SidebarContext.registerOpenMenu", () => {
+  it("cancels a pending preview hide so the sidebar stays under the menu", () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useSidebar(), { wrapper })
+      act(() => result.current.collapse())
+      act(() => result.current.setHovering(true))
+      act(() => result.current.setHovering(false))
+      expect(result.current.state).toBe("preview")
+
+      let unregister = () => {}
+      act(() => {
+        unregister = result.current.registerOpenMenu(() => {})
+      })
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(result.current.state).toBe("preview")
+
+      act(() => unregister())
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(result.current.state).toBe("collapsed")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe("SidebarContext.dismissMenus", () => {
   it("collapse closes every registered menu and forgets one that unregistered", () => {
     const { result } = renderHook(() => useSidebar(), { wrapper })

@@ -150,6 +150,26 @@ describe("sidebar-actions", () => {
       expect(registerOpenMenu).toHaveBeenCalled()
     })
 
+    it("closes when the sidebar dismisses its menus", async () => {
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(
+        <SidebarActionContextMenu actions={actions}>
+          <div>Stream row</div>
+        </SidebarActionContextMenu>
+      )
+
+      fireEvent.contextMenu(screen.getByText("Stream row"))
+      expect(await screen.findByText("Settings")).toBeInTheDocument()
+      expect(openMenuClosers).toHaveLength(1)
+
+      act(() => openMenuClosers[0]())
+
+      expect(screen.queryByText("Settings")).not.toBeInTheDocument()
+      expect(openMenuClosers).toHaveLength(0)
+      expect(screen.getByText("Stream row")).toBeInTheDocument()
+    })
+
     it("renders children untouched when disabled", () => {
       const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
 

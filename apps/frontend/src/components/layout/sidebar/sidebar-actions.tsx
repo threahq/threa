@@ -373,14 +373,17 @@ interface SidebarActionContextMenuProps {
  */
 export function SidebarActionContextMenu({ actions, children, disabled, focusRef }: SidebarActionContextMenuProps) {
   const [open, setOpen] = useState(false)
-  // Radix ContextMenu has no controlled `open`: a sidebar close cannot dismiss
-  // it, so registration only holds off the hover-preview timer.
-  useSidebarMenu(open, () => {})
+  // Radix ContextMenu has no controlled `open`; remounting the root is the only way to close it from outside.
+  const [mountKey, setMountKey] = useState(0)
+  useSidebarMenu(open, () => {
+    setOpen(false)
+    setMountKey((key) => key + 1)
+  })
 
   if (disabled || actions.length === 0) return <>{children}</>
 
   return (
-    <ContextMenu onOpenChange={setOpen}>
+    <ContextMenu key={mountKey} onOpenChange={setOpen}>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent
         className="w-40"
