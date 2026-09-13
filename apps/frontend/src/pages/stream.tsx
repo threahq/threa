@@ -62,6 +62,8 @@ import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useCoverClose } from "@/hooks/use-cover-close"
+import { CONTEXT_COVER, CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
@@ -133,44 +135,37 @@ export function StreamPage() {
   // (rendered by StreamContent, which reads the same param — INV-59).
   const isConversationOverlayOn = searchParams.get("convOverlay") === "on"
 
+  // Turning it on pushes so back turns it off; off pops that entry when it is
+  // what lies beneath (the panel's X in stream-content.tsx closes the same way).
+  const closeConversationOverlay = useCoverClose(CONVERSATION_OVERLAY_COVER)
   const setConversationOverlayOn = (on: boolean) => {
-    setSearchParams(
-      (prev) => {
-        const newParams = new URLSearchParams(prev)
-        if (on) {
-          newParams.set("convOverlay", "on")
-        } else {
-          newParams.delete("convOverlay")
-        }
-        return newParams
-      },
-      // The overlay is ephemeral view chrome, not navigation: every toggle
-      // path replaces (the panel's X in stream-content.tsx does too), so Back
-      // leaves the stream instead of silently toggling chrome. The URL still
-      // updates for refresh/share (INV-59).
-      { replace: true }
-    )
+    if (!on) {
+      closeConversationOverlay()
+      return
+    }
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      newParams.set("convOverlay", "on")
+      return newParams
+    })
   }
 
   // "In this stream" overview panel. The `context` param doubles as open-state
   // (present ⇒ open) and the selected category filter ("all" by default); the
-  // panel reads/writes the filter value. Ephemeral view chrome (INV-59) like the
-  // conversation overlay, so toggling replaces history rather than pushing.
+  // panel reads/writes the filter value.
   const isContextOpen = searchParams.get("context") !== null
 
+  const closeContext = useCoverClose(CONTEXT_COVER)
   const setContextOpen = (open: boolean) => {
-    setSearchParams(
-      (prev) => {
-        const newParams = new URLSearchParams(prev)
-        if (open) {
-          newParams.set("context", "all")
-        } else {
-          newParams.delete("context")
-        }
-        return newParams
-      },
-      { replace: true }
-    )
+    if (!open) {
+      closeContext()
+      return
+    }
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      newParams.set("context", "all")
+      return newParams
+    })
   }
 
   // A thread opens in the same right-edge panel slot, so the context overlay

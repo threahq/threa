@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useParams, useSearchParams } from "react-router-dom"
+import { useCoverClose } from "@/hooks/use-cover-close"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, Trash2, UserPlus } from "lucide-react"
 import { toast } from "sonner"
@@ -20,7 +21,7 @@ import {
 import { getInitials } from "@/lib/initials"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 
-const SEARCH_PARAM = "account-switcher"
+const ACCOUNT_SWITCHER_COVER = ["account-switcher"] as const
 
 /**
  * One row's display identity. `name` is the account's profile in the workspace
@@ -131,9 +132,10 @@ function AccountListSkeleton() {
 }
 
 export function AccountSwitcherDialog() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
+  const close = useCoverClose(ACCOUNT_SWITCHER_COVER)
   const [mounted, setMounted] = useState(false)
-  const isOpen = searchParams.get(SEARCH_PARAM) !== null
+  const isOpen = searchParams.get(ACCOUNT_SWITCHER_COVER[0]) !== null
 
   const { login } = useAuth()
   const scope = useAccountScope()
@@ -164,12 +166,6 @@ export function AccountSwitcherDialog() {
   }, [])
 
   if (!mounted) return null
-
-  const close = () => {
-    const next = new URLSearchParams(searchParams)
-    next.delete(SEARCH_PARAM)
-    setSearchParams(next, { replace: true })
-  }
 
   const accounts = data?.accounts ?? []
   const maxAccounts = data?.maxAccounts ?? accounts.length
@@ -203,7 +199,7 @@ export function AccountSwitcherDialog() {
   }
 
   return (
-    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()}>
+    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()} historyEntry={false}>
       <ResponsiveDialogContent desktopClassName="sm:max-w-md p-0 gap-0" drawerClassName="flex flex-col gap-0">
         <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
           <ResponsiveDialogTitle>Switch account</ResponsiveDialogTitle>

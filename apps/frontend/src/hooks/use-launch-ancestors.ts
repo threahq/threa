@@ -28,9 +28,9 @@ export function resetLaunchAncestorsForTests(): void {
  * page this context renders, once the page's own stream row is cached (its
  * ancestors come from that row); a launch the viewer has already navigated
  * away from is left alone, while a replace in that window (a `?m=` clear, a
- * draft promoting to its stream) keeps it waiting. The replace and pushes land in one React commit,
- * so the pushed hops carry a `launchRebuild` state, and the panel hop the
- * `panelPopsToClose` attestation PanelProvider reads.
+ * draft promoting to its stream) keeps it waiting. The replace and pushes
+ * land in one React commit, so the pushed hops carry a `launchRebuild` state,
+ * and each cover hop the `popsToClose` attestation `useCoverClose` reads.
  */
 export function useRebuildLaunchAncestors(workspaceId: string | undefined): void {
   const location = useLocation()

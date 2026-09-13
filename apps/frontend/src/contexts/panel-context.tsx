@@ -1,5 +1,7 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
-import { useSearchParams, useLocation, useNavigate, useNavigationType } from "react-router-dom"
+import { useSearchParams, useLocation } from "react-router-dom"
+import { useCoverClose } from "@/hooks/use-cover-close"
+import { PANEL_COVER } from "@/lib/covers"
 
 /** Which pane the user most recently interacted with — drives "copy current link" (mod+L). */
 export type FocusedPane = "main" | "panel"
@@ -89,8 +91,6 @@ interface PanelProviderProps {
 export function PanelProvider({ children }: PanelProviderProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
-  const navigate = useNavigate()
-  const navigationType = useNavigationType()
 
   // Parse panel ID from URL - single panel only
   const panelId = useMemo(() => {
@@ -125,60 +125,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [setSearchParams]
   )
 
-  // True when the history entry underneath the current one is THIS view without a
-  // panel — the only case where closing may pop rather than rewrite the URL.
-  //
-  // Derived from the navigation that produced the current entry rather than
-  // recorded by `openPanel`, because most panels open through
-  // `<Link to={getPanelUrl(...)}>` (INV-40) and never call it. Popping a deep link
-  // or a reload would navigate the user off the page — possibly out of the app —
-  // so anything but a same-view PUSH closes by rewriting the URL instead.
-  //
-  // The entry below must carry NO panel, not merely a different one. Closing means
-  // "no panel open" — the affordance is labelled "Return to #channel" on a nested
-  // thread — so opening a second panel from inside the first has to close by
-  // rewriting the URL, or that control reveals the parent thread instead of the
-  // stream. Back still steps through them one at a time; only close is absolute.
-  const canPopToClose = useRef(false)
-  const locationRef = useRef<string | null>(null)
-  const locationKeyRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (location.key === locationKeyRef.current) return
-    locationKeyRef.current = location.key
-    const params = new URLSearchParams(location.search)
-    const here = `${location.pathname}?${params.toString()}`
-    params.delete("panel")
-    const hereWithoutPanel = `${location.pathname}?${params.toString()}`
-    const previousLocation = locationRef.current
-    locationRef.current = here
-    if (panelId === null) canPopToClose.current = false
-    // A replace leaves the entry below untouched, so the claim carries over.
-    else if (navigationType !== "REPLACE")
-      canPopToClose.current =
-        navigationType === "PUSH" &&
-        // The cold-launch rebuild (useRebuildLaunchAncestors) batches its
-        // hops into one commit, so `previousLocation` never sees the
-        // panel-less entry it pushed on top of — the push carries an
-        // attestation of what its construction guarantees instead.
-        (previousLocation === hereWithoutPanel ||
-          (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose === true)
-  }, [location.key, location.pathname, location.search, location.state, navigationType, panelId])
-
-  const closePanel = useCallback(() => {
-    if (canPopToClose.current) {
-      canPopToClose.current = false
-      navigate(-1)
-      return
-    }
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete("panel")
-        return next
-      },
-      { replace: true }
-    )
-  }, [navigate, setSearchParams])
+  const closePanel = useCoverClose(PANEL_COVER)
 
   // Tracked via a ref, not state: only the copy-link shortcut reads it (on
   // keypress), so updating it on every click/focus must not re-render panel

@@ -22,6 +22,7 @@ import {
   DrawerTrigger,
 } from "./drawer"
 import { cn } from "@/lib/utils"
+import type { HistoryEntryProp } from "./history-back-close"
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ function getSnapPointOffset(activeSnapPoint: number | string | null): string {
 
 // ── Root ────────────────────────────────────────────────────────────────
 
-interface ResponsiveDialogProps {
+interface ResponsiveDialogProps extends HistoryEntryProp {
   children: React.ReactNode
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -67,7 +68,7 @@ interface ResponsiveDialogProps {
   disableSnapPoints?: boolean
 }
 
-function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }: ResponsiveDialogProps) {
+function ResponsiveDialog({ children, snapPoints, disableSnapPoints, historyEntry, ...props }: ResponsiveDialogProps) {
   const isMobile = useIsMobile()
   const resolvedSnaps = React.useMemo(() => snapPoints ?? [...DEFAULT_SNAP_POINTS], [snapPoints])
   const [activeSnap, setActiveSnap] = React.useState<number | string | null>(
@@ -89,7 +90,7 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }:
   if (isMobile && disableSnapPoints) {
     root = (
       <DisableSnapPointsContext.Provider value={true}>
-        <Drawer open={props.open} onOpenChange={props.onOpenChange}>
+        <Drawer open={props.open} onOpenChange={props.onOpenChange} historyEntry={historyEntry}>
           {children}
         </Drawer>
       </DisableSnapPointsContext.Provider>
@@ -104,13 +105,18 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }:
           activeSnapPoint={activeSnap}
           setActiveSnapPoint={setActiveSnap}
           fadeFromIndex={resolvedSnaps.length - 1}
+          historyEntry={historyEntry}
         >
           {children}
         </Drawer>
       </ActiveSnapPointContext.Provider>
     )
   } else {
-    root = <Dialog {...props}>{children}</Dialog>
+    root = (
+      <Dialog {...props} historyEntry={historyEntry}>
+        {children}
+      </Dialog>
+    )
   }
 
   return <ResponsiveModeProvider isMobile={isMobile}>{root}</ResponsiveModeProvider>

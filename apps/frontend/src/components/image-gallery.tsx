@@ -1023,7 +1023,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   )
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()} historyEntry={false}>
       {!current ? null : (
         <DialogContent
           data-media-gallery=""

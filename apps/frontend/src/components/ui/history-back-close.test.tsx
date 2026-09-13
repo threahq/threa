@@ -492,10 +492,37 @@ describe("HistoryBackClose via Dialog (mobile)", () => {
   })
 })
 
+describe("HistoryBackClose via Dialog (desktop)", () => {
+  beforeEach(() => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(false)
+  })
+
+  it("takes an entry like on mobile: back closes it and stays, UI close pops it", async () => {
+    const router = makeRouter(<DialogHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    await openDrawer(router, "open-dialog")
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("dialog-closed")).toBeInTheDocument())
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
+
+    await openDrawer(router, "open-dialog")
+    fireEvent.click(screen.getByText("close-dialog"))
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+})
+
 /**
- * The media gallery already deepens history itself (`?media=`) and pops that
- * entry on close, so it now pushes TWO entries per open (its own plus the
- * sentinel). One back press must still land on the bare stream.
+ * The media gallery deepens history itself (`?media=`) and pops that entry on
+ * close, so its dialog takes no sentinel: one entry per open, one back press
+ * or one close to land on the bare stream.
  */
 function GalleryHarness() {
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
@@ -505,7 +532,8 @@ function GalleryHarness() {
       <span>{open ? "gallery-open" : "gallery-closed"}</span>
       <button onClick={() => openMedia("attach_1")}>open-gallery</button>
       <button onClick={() => openMedia("attach_2")}>next-item</button>
-      <Dialog open={open} onOpenChange={(next) => !next && closeMedia()}>
+      <button onClick={closeMedia}>close-gallery</button>
+      <Dialog open={open} onOpenChange={(next) => !next && closeMedia()} historyEntry={false}>
         <DialogContent>
           <DialogTitle>Media</DialogTitle>
         </DialogContent>
@@ -514,9 +542,35 @@ function GalleryHarness() {
   )
 }
 
-describe("HistoryBackClose with the URL-driven media gallery (mobile)", () => {
+describe.each([
+  ["mobile", true],
+  ["desktop", false],
+])("HistoryBackClose with the URL-driven media gallery (%s)", (_, isMobile) => {
   beforeEach(() => {
-    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(isMobile)
+  })
+
+  it("closing via the gallery's own control pops its entry so the next back leaves the page", async () => {
+    const router = makeRouter(
+      <MediaGalleryProvider>
+        <GalleryHarness />
+      </MediaGalleryProvider>
+    )
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    fireEvent.click(screen.getByText("open-gallery"))
+    await waitFor(() => expect(router.state.location.search).toBe("?media=attach_1"))
+    await act(async () => {})
+
+    fireEvent.click(screen.getByText("close-gallery"))
+    await waitFor(() => expect(screen.getByText("gallery-closed")).toBeInTheDocument())
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
   })
 
   it("one back press closes the gallery, clears ?media= and stays on the page", async () => {
@@ -599,7 +653,7 @@ function GalleryWithCodeViewerHarness() {
     <div>
       <span>{open ? "gallery-open" : "gallery-closed"}</span>
       <button onClick={() => openMedia("attach_1")}>open-gallery</button>
-      <Dialog open={open} onOpenChange={(next) => !next && closeMedia()}>
+      <Dialog open={open} onOpenChange={(next) => !next && closeMedia()} historyEntry={false}>
         <DialogContent>
           <DialogTitle>Media</DialogTitle>
           <button onClick={() => codeViewer?.open({ code: "const a = 1", languageId: "typescript" })}>

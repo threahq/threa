@@ -5,6 +5,8 @@ import { useLocation, useNavigationType, useSearchParams } from "react-router-do
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useCoverClose } from "@/hooks/use-cover-close"
+import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
 import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -725,15 +727,7 @@ export function StreamContent({
     () => buildMessageConversationMap(streamConversations),
     [streamConversations]
   )
-  const closeConversationOverlay = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        prev.delete("convOverlay")
-        return prev
-      },
-      { replace: true }
-    )
-  }, [setSearchParams])
+  const closeConversationOverlay = useCoverClose(CONVERSATION_OVERLAY_COVER)
   // Move-to-thread batch mode suspends the whole overlay (legend, rails, chips,
   // correction swatch) — batch turns every row into a selection toggle, and the
   // overlay's swatch would compete for the same clicks. Split-conversation batch

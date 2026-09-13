@@ -109,7 +109,7 @@ export function EditInviteLinkDialog({
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints historyEntry={false}>
       <ResponsiveDialogContent desktopClassName="max-w-md" drawerClassName="max-h-[92dvh] overflow-y-auto">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Edit invite link</ResponsiveDialogTitle>

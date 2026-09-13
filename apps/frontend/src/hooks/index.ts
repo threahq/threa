@@ -216,6 +216,7 @@ export { useLastLocation, usePersistLastLocation } from "./use-last-location"
 
 export { useRecordNavigationJournal, useNavigationJournal, type JournalStep } from "./use-navigation-journal"
 export { useRebuildLaunchAncestors } from "./use-launch-ancestors"
+export { useCoverClose } from "./use-cover-close"
 
 export { usePullToRefresh } from "./use-pull-to-refresh"
 
