@@ -529,7 +529,7 @@ export function WorkspaceLayout() {
 
   usePersistLastLocation(workspaceId)
   useRecordNavigationJournal(workspaceId)
-  useRebuildLaunchAncestors(workspaceId)
+  useRebuildLaunchAncestors(user ? workspaceId : undefined)
   useCapturePageviews()
 
   // Remember the workspace the user is in so the `/` entry route can redirect
