@@ -127,7 +127,8 @@ export function recentStreams(journal: NavigationJournal, workspaceId: string, l
     .map(({ streamId, href, at }) => ({ streamId, href, at }))
 }
 
-function pageStreamId(path: string, workspaceId: string): string | null {
+/** The stream a `/w/:ws/s/:id` path renders; null for any other page. */
+export function pageStreamId(path: string, workspaceId: string): string | null {
   const pathname = path.split("?")[0]
   const prefix = `/w/${workspaceId}/s/`
   if (!pathname.startsWith(prefix)) return null

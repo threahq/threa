@@ -156,9 +156,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
     else if (navigationType !== "REPLACE")
       canPopToClose.current =
         navigationType === "PUSH" &&
-        // The exact-restore two-hop (routes/index.tsx ExactRestore) batches
-        // both navigations into one commit, so `previousLocation` never sees
-        // the panel-less entry it pushed on top of — the push carries an
+        // The cold-launch rebuild (useRebuildLaunchAncestors) batches its
+        // hops into one commit, so `previousLocation` never sees the
+        // panel-less entry it pushed on top of — the push carries an
         // attestation of what its construction guarantees instead.
         (previousLocation === hereWithoutPanel ||
           (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose === true)

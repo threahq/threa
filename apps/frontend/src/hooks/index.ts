@@ -215,6 +215,7 @@ export { useSidebarSwipe } from "./use-sidebar-swipe"
 export { useLastLocation, usePersistLastLocation } from "./use-last-location"
 
 export { useRecordNavigationJournal, useNavigationJournal, type JournalStep } from "./use-navigation-journal"
+export { useRebuildLaunchAncestors } from "./use-launch-ancestors"
 
 export { usePullToRefresh } from "./use-pull-to-refresh"
 
