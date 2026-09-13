@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import sharp from "sharp"
+import sharp, { type Metadata } from "sharp"
 import { withTransaction } from "../../../db"
 import { logger } from "../../../lib/logger"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
@@ -125,7 +125,7 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
    * Encodes the resized thumbnail. Animated GIFs stay animated (frame-rate
    * capped); everything else collapses to a single orientation-corrected frame.
    */
-  private async renderThumbnail(original: Buffer, metadata: sharp.Metadata): Promise<Buffer> {
+  private async renderThumbnail(original: Buffer, metadata: Metadata): Promise<Buffer> {
     const isAnimatedGif = metadata.format === "gif" && (metadata.pages ?? 1) > 1
     if (isAnimatedGif) {
       return this.renderAnimatedGifThumbnail(original, metadata)
@@ -147,7 +147,7 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
    * which frames survive: low-rate sources keep their pacing as-authored, while
    * high-rate sources are downsampled and re-timed to preserve total duration.
    */
-  private async renderAnimatedGifThumbnail(original: Buffer, metadata: sharp.Metadata): Promise<Buffer> {
+  private async renderAnimatedGifThumbnail(original: Buffer, metadata: Metadata): Promise<Buffer> {
     const pages = metadata.pages ?? 1
     const loop = metadata.loop ?? 0
     const plan = planGifThumbnailFrames(metadata.delay ?? [], pages)
