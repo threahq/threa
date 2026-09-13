@@ -183,7 +183,9 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
   const openLink = (value: string) => {
     const next = new URLSearchParams(searchParams)
     next.set(INVITE_LINK_COVER[0], value)
-    setSearchParams(next)
+    // A stale id already in the URL (a revoked link) is the same cover: swap
+    // it rather than stack a second entry Back would land on.
+    setSearchParams(next, { replace: selectedLink !== null })
   }
 
   const handleCopy = async (invitationId: string) => {
