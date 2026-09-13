@@ -105,6 +105,12 @@ describe("SidebarHeader", () => {
       ],
       cursor: 2,
     })
+    // stream_a is no longer cached (deleted, or not hydrated yet): it has no
+    // name to show and no page to open, so it gets no row.
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([
+      { id: "stream_b", type: "channel", slug: "bravo" },
+      { id: "stream_c", type: "channel", slug: "charlie" },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>)
     const user = userEvent.setup()
     renderHeader()
 
@@ -114,8 +120,8 @@ describe("SidebarHeader", () => {
       "/w/ws_1/s/stream_b",
       null,
       "/w/ws_1/s/stream_b",
-      "/w/ws_1/s/stream_a",
     ])
+    expect(screen.getByRole("menuitem", { name: /#bravo/ })).toBeInTheDocument()
     expect(screen.getByRole("menuitem", { name: /Back/ })).toHaveAttribute("href", "/w/ws_1/s/stream_b")
     expect(screen.getByRole("menuitem", { name: /Forward/ })).toHaveAttribute("aria-disabled", "true")
   })

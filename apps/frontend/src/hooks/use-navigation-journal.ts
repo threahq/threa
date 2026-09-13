@@ -7,7 +7,7 @@ import {
   EMPTY_JOURNAL,
   isJournaledPath,
   journalPath,
-  journalStreamIds,
+  journalTouchesStream,
   journalTarget,
   journalVisit,
   readJournal,
@@ -42,8 +42,7 @@ export function useRecordNavigationJournal(workspaceId: string | undefined): voi
     if (!user || !workspaceId || !streamsLoaded) return
     if (!isJournaledPath(pathname, workspaceId)) return
     const path = journalPath({ pathname, search })
-    const hidden = hiddenStreamIds(cachedStreams)
-    if (journalStreamIds(path, workspaceId).some((id) => hidden.has(id))) return
+    if (journalTouchesStream(path, workspaceId, hiddenStreamIds(cachedStreams))) return
     journalVisit(user.id, workspaceId, path, { cursorHint, navigationType })
   }, [user, workspaceId, streamsLoaded, pathname, search, cursorHint, navigationType, cachedStreams])
 }

@@ -43,15 +43,21 @@ export function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps
   }
 
   const now = new Date()
-  const recentActions: SidebarActionItem[] = recent.map((entry, index) => ({
-    id: entry.streamId,
-    href: entry.href,
-    label: resolveStreamName(entry.streamId, { streams, users, dmPeers }, "sidebar") ?? "Unknown stream",
-    icon: STREAM_ICONS[streams.find((stream) => stream.id === entry.streamId)?.type ?? "channel"],
-    description: formatRelativeTime(new Date(entry.at), now, undefined, { terse: true }),
-    onSelect: collapseOnMobile,
-    separatorBefore: index === 0,
-  }))
+  // The journal outlives the streams cache: a deleted or not-yet-hydrated
+  // stream has no name to show and no page to open, so its row is skipped.
+  const recentActions: SidebarActionItem[] = recent.flatMap((entry) => {
+    const label = resolveStreamName(entry.streamId, { streams, users, dmPeers }, "sidebar")
+    if (!label) return []
+    return {
+      id: entry.streamId,
+      href: entry.href,
+      label,
+      icon: STREAM_ICONS[streams.find((stream) => stream.id === entry.streamId)?.type ?? "channel"],
+      description: formatRelativeTime(new Date(entry.at), now, undefined, { terse: true }),
+      onSelect: collapseOnMobile,
+    }
+  })
+  if (recentActions[0]) recentActions[0].separatorBefore = true
 
   const openSwitcherIn = (mode: "stream" | "command") => () => {
     collapseOnMobile()

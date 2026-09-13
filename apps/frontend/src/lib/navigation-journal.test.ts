@@ -3,7 +3,7 @@ import {
   EMPTY_JOURNAL,
   NAVIGATION_JOURNAL_LIMIT,
   journalPath,
-  journalStreamIds,
+  journalTouchesStream,
   journalTarget,
   isJournaledPath,
   readJournal,
@@ -61,17 +61,13 @@ describe("isJournaledPath", () => {
   })
 })
 
-describe("journalStreamIds", () => {
-  it("returns the page stream and every panel stream", () => {
-    expect(journalStreamIds(`/w/${WS}/s/stream_a?panel=stream_b&panel=stream_c`, WS)).toEqual([
-      "stream_a",
-      "stream_b",
-      "stream_c",
-    ])
-  })
-
-  it("returns only panels on a non-stream page", () => {
-    expect(journalStreamIds(`/w/${WS}/board?panel=stream_b`, WS)).toEqual(["stream_b"])
+describe("journalTouchesStream", () => {
+  it("sees the page stream and every panel stream", () => {
+    const path = `/w/${WS}/s/stream_a?panel=stream_b&panel=stream_c`
+    expect(journalTouchesStream(path, WS, new Set(["stream_a"]))).toBe(true)
+    expect(journalTouchesStream(path, WS, new Set(["stream_c"]))).toBe(true)
+    expect(journalTouchesStream(path, WS, new Set(["stream_d"]))).toBe(false)
+    expect(journalTouchesStream(`/w/${WS}/board?panel=stream_b`, WS, new Set(["stream_b"]))).toBe(true)
   })
 })
 

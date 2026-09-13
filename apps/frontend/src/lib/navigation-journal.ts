@@ -56,16 +56,12 @@ export function isJournaledPath(pathname: string, workspaceId: string): boolean 
   return true
 }
 
-/** Every stream this journal path renders: the page's own stream plus each
- *  `?panel=` stream. Used to drop entries touching a hidden (aside) stream. */
-export function journalStreamIds(path: string, workspaceId: string): string[] {
-  const ids: string[] = []
+/** Whether the page's own stream or any `?panel=` stream on this journal path
+ *  is in `streamIds`. Used to keep hidden (aside) streams out of the journal. */
+export function journalTouchesStream(path: string, workspaceId: string, streamIds: ReadonlySet<string>): boolean {
   const pageId = pageStreamId(path, workspaceId)
-  if (pageId) ids.push(pageId)
-  for (const panel of new URLSearchParams(path.split("?")[1]).getAll("panel")) {
-    if (panel) ids.push(panel)
-  }
-  return ids
+  if (pageId && streamIds.has(pageId)) return true
+  return new URLSearchParams(path.split("?")[1]).getAll("panel").some((panel) => streamIds.has(panel))
 }
 
 export interface VisitOptions {

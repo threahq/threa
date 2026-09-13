@@ -322,6 +322,8 @@ describe("sidebarQuickJump shortcut", () => {
     expect(matchesKeyBinding(new KeyboardEvent("keydown", { key: "[", metaKey: true }), back)).toBe(true)
     expect(matchesKeyBinding(new KeyboardEvent("keydown", { key: "]", metaKey: true }), forward)).toBe(true)
     expect(isSafeShortcutBinding(back)).toBe(true)
+    // AltGr+8 is `[` on Nordic and German layouts and arrives as ctrl+alt.
+    expect(matchesKeyBinding(new KeyboardEvent("keydown", { key: "[", ctrlKey: true, altKey: true }), back)).toBe(false)
   })
 
   it("captures other actions unchanged", () => {

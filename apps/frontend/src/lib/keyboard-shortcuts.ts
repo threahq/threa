@@ -263,8 +263,9 @@ export function matchesKeyBinding(event: KeyboardEvent, binding: string): boolea
   // "mod" matches metaKey OR ctrlKey for cross-platform parity.
   const modPressed = event.metaKey || event.ctrlKey
 
-  // vim-style ctrl+[ as escape.
-  if (parsed.key === "[" && event.ctrlKey && event.key === "[") {
+  // vim-style ctrl+[ as escape. AltGr reports as ctrl+alt, and `[` sits on
+  // AltGr+8 on Nordic and German layouts, so typing it must not match here.
+  if (parsed.key === "[" && event.ctrlKey && event.key === "[" && !event.altKey && !event.metaKey && !event.shiftKey) {
     return true
   }
 
