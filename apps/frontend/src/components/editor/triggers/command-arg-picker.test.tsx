@@ -50,6 +50,30 @@ describe("CommandArgPicker", () => {
     })
   })
 
+  it("should complete on Tab even with no row armed, rather than let the editor indent", () => {
+    const ref = createRef<CommandArgPickerRef>()
+    const picked: string[] = []
+    render(
+      <CommandArgPicker
+        ref={ref}
+        items={[
+          { value: "claude", label: "Claude Code" },
+          { value: "pi", label: "Pi" },
+        ]}
+        clientRect={() => new DOMRect()}
+        command={(item) => picked.push(item.value)}
+        deferSelection
+      />
+    )
+    const tab = new KeyboardEvent("keydown", { key: "Tab", cancelable: true })
+    const consumed = ref.current!.onKeyDown(tab)
+    expect({ consumed, prevented: tab.defaultPrevented, picked }).toEqual({
+      consumed: true,
+      prevented: true,
+      picked: ["claude"],
+    })
+  })
+
   it("should leave focus in the editor on mousedown, so the click still reaches the option", () => {
     const picked: string[] = []
     render(

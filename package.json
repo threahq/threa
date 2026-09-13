@@ -78,12 +78,7 @@
   },
   "lint-staged": {
     "!(.agents|.claude)/**/*.{js,jsx,ts,tsx,json,css,md,html}": "prettier --write",
-    "apps/backend/{src,tests}/**/*.{ts,tsx}": "apps/backend/node_modules/.bin/eslint",
-    "apps/frontend/{src,tests}/**/*.{ts,tsx}": "apps/frontend/node_modules/.bin/eslint",
-    "apps/enclave/{src,tests}/**/*.{ts,tsx}": "apps/enclave/node_modules/.bin/eslint",
-    "apps/backoffice/{src,tests}/**/*.{ts,tsx}": "apps/backoffice/node_modules/.bin/eslint",
-    "apps/control-plane/{src,tests}/**/*.{ts,tsx}": "apps/control-plane/node_modules/.bin/eslint",
-    "apps/db-read-proxy/{src,tests}/**/*.{ts,tsx}": "apps/db-read-proxy/node_modules/.bin/eslint"
+    "apps/{backend,frontend,enclave,backoffice,control-plane,db-read-proxy}/{src,tests}/**/*.{ts,tsx}": "bun scripts/lint-staged-eslint.ts"
   },
   "dependencies": {
     "limax": "^4.2.2",

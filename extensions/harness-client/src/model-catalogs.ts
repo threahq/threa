@@ -13,31 +13,35 @@ export interface ModelSuggestion {
 }
 
 /**
- * Claude Code's built-in `/model` aliases with the display copy its picker
- * shows (v2.1.199). Only the stable aliases live here — models beyond them
- * (e.g. Fable) arrive via `discoverAdditionalClaudeModels`, so a new release
- * shows up without a code change.
+ * Claude Code's built-in `/model` aliases. Only the stable aliases live here —
+ * models beyond them (e.g. Fable) arrive via `discoverAdditionalClaudeModels`,
+ * so a new release shows up without a code change.
+ *
+ * The copy names the role, never the version: the alias is stable but the model
+ * behind it moves every release, and a hardcoded "Opus 4.8" here outlived the
+ * client by two minor versions while claiming to describe it. Version-bearing
+ * copy comes only from the client's own cache, which updates with the client.
  */
 const CLAUDE_BASELINE_MODELS: ModelSuggestion[] = [
   {
     value: "default",
     label: "Default",
-    description: "Recommended · Opus 4.8 with 1M context",
+    description: "Recommended · whatever the client picks by default",
   },
   {
     value: "opus",
     label: "Opus",
-    description: "Opus 4.8 with 1M context · Best for everyday, complex tasks",
+    description: "Most capable · best for everyday, complex tasks",
   },
   {
     value: "sonnet",
     label: "Sonnet",
-    description: "Sonnet 5 · Efficient for routine tasks",
+    description: "Efficient for routine tasks",
   },
   {
     value: "haiku",
     label: "Haiku",
-    description: "Haiku 4.5 · Fastest for quick answers",
+    description: "Fastest for quick answers",
   },
 ]
 

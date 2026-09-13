@@ -34,10 +34,11 @@ export interface SuggestionListProps<T> {
    */
   highlightResetKey?: string
   /**
-   * Open with no row armed: nothing is highlighted and Enter/Tab fall through to
+   * Open with no row armed: nothing is highlighted and Enter falls through to
    * the editor until the user arrows or hovers. For a list that opens on a
    * prefix which is also markdown (`##` is an h2 marker) — the rows are visible
    * so the user knows to keep typing, and the key that would send still sends.
+   * Tab still completes; see its case in `onKeyDown`.
    */
   deferSelection?: boolean
 }
@@ -125,7 +126,13 @@ function SuggestionListInner<T>(
           event.preventDefault()
           setSelectedKey(keys[selectedIndex < 0 ? 0 : (selectedIndex + 1) % items.length])
           return true
+        // Tab completes, armed row or not: falling through reaches the
+        // editor's indent keymap, which types a literal tab into the message
+        // instead of finishing the word the list is offering.
         case "Tab":
+          event.preventDefault()
+          command(items[Math.max(0, selectedIndex)])
+          return true
         case "Enter":
           if (selectedIndex < 0) return false
           event.preventDefault()
