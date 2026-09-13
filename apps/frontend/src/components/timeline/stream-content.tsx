@@ -467,7 +467,7 @@ export function isTypingChromeHidden(stripCollapsed: boolean, mobileComposerTypi
  *  - Restore yields to PUSH navigation: choosing a stream is a fresh open
  *    that lands at the tail and auto-reads; restore is for continuations —
  *    reload, cold relaunch (POP or the boot path's REPLACE redirects,
- *    including ExactRestore's `panelPopsToClose` PUSH hop), back/forward.
+ *    including the launch rebuild's `launchRebuild` PUSH hops), back/forward.
  *  - A stale anchor (row no longer in the initial window) falls through to
  *    the marker/tail branches instead of silently racing them.
  *  - "latest" preference (or nothing unread) falls to the tail, which the
@@ -2606,12 +2606,11 @@ export function StreamContent({
       // The nav type is per-navigation, so at decision time it still describes
       // how THIS stream was entered even though the decision can resolve a few
       // renders after the switch (waiting out the load). One PUSH is not a
-      // stream choice: ExactRestore's second `?panel=` hop (routes/index.tsx)
-      // pushes so the Android back gesture can close the restored panel — its
-      // `panelPopsToClose` state marks the cold relaunch, which restore is for.
+      // stream choice: the cold-launch history rebuild (useRebuildLaunchAncestors)
+      // pushes the launched page back on top of its ancestors — its
+      // `launchRebuild` state marks the cold launch, which restore is for.
       isPushNavigation:
-        navigationType === "PUSH" &&
-        (location.state as { panelPopsToClose?: boolean } | null)?.panelPopsToClose !== true,
+        navigationType === "PUSH" && (location.state as { launchRebuild?: boolean } | null)?.launchRebuild !== true,
       anchor,
       anchorInWindow:
         anchor !== null &&

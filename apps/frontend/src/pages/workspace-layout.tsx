@@ -53,6 +53,7 @@ import {
   usePersistLastLocation,
   useNavigationJournal,
   useRecordNavigationJournal,
+  useRebuildLaunchAncestors,
   type JournalStep,
   useAppUpdate,
   useMessageQueue,
@@ -528,6 +529,7 @@ export function WorkspaceLayout() {
 
   usePersistLastLocation(workspaceId)
   useRecordNavigationJournal(workspaceId)
+  useRebuildLaunchAncestors(workspaceId)
   useCapturePageviews()
 
   // Remember the workspace the user is in so the `/` entry route can redirect
