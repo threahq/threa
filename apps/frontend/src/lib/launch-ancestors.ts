@@ -1,3 +1,4 @@
+import { pageStreamId } from "@/lib/navigation-journal"
 import { hiddenStreamIds } from "@/lib/streams"
 
 /** The fields of a cached stream row the ancestor walk reads. */
@@ -36,11 +37,10 @@ export function launchAncestors(
     hops[hops.length - 1].state = { launchRebuild: true, panelPopsToClose: true }
   }
 
-  const prefix = `/w/${workspaceId}/s/`
-  const pageStreamId = location.pathname.startsWith(prefix) ? location.pathname.slice(prefix.length) : ""
-  if (pageStreamId && !pageStreamId.includes("/")) {
-    for (const id of visibleAncestors(pageStreamId, streams)) {
-      hops.unshift({ to: `${prefix}${id}`, state: { launchRebuild: true } })
+  const streamId = pageStreamId(location.pathname, workspaceId)
+  if (streamId) {
+    for (const id of visibleAncestors(streamId, streams)) {
+      hops.unshift({ to: `/w/${workspaceId}/s/${id}`, state: { launchRebuild: true } })
     }
   }
 
@@ -55,16 +55,20 @@ function visibleAncestors(streamId: string, streams: readonly AncestorStream[]):
   const out: string[] = []
   const seen = new Set([streamId])
   let cursor = byId.get(streamId)?.parentStreamId ?? null
+  let uncached = false
   while (cursor && !seen.has(cursor)) {
     seen.add(cursor)
     const parent = byId.get(cursor)
-    if (!parent) break
+    if (!parent) {
+      uncached = true
+      break
+    }
     if (!hidden.has(parent.id)) out.push(parent.id)
     cursor = parent.parentStreamId
   }
   // The walk stopped at an uncached link (a lazily hydrated thread): the root
   // is in the bootstrap, so it still goes underneath.
   const rootId = byId.get(streamId)?.rootStreamId
-  if (cursor && rootId && !seen.has(rootId) && byId.has(rootId) && !hidden.has(rootId)) out.push(rootId)
+  if (uncached && rootId && !seen.has(rootId) && byId.has(rootId) && !hidden.has(rootId)) out.push(rootId)
   return out
 }

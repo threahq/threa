@@ -102,6 +102,30 @@ describe("useRebuildLaunchAncestors", () => {
     expect(loc()).toBe(`/w/${WS}/s/chan`)
   })
 
+  it("leaves a reload with history already beneath alone", async () => {
+    window.history.replaceState({ idx: 2 }, "")
+    try {
+      const { back, loc } = mount([`/w/${WS}/s/thr`])
+      await act(async () => {})
+      await back()
+      expect(loc()).toBe(`/w/${WS}/s/thr`)
+    } finally {
+      window.history.replaceState(null, "")
+    }
+  })
+
+  it("keeps waiting through a replace in the load window", async () => {
+    loaded.mockReturnValue(false)
+    const { router, back, loc, rerender } = mount([`/w/${WS}/s/thr?m=evt_1`])
+    await act(async () => {
+      await router.navigate(`/w/${WS}/s/thr`, { replace: true })
+    })
+    loaded.mockReturnValue(true)
+    await rerender()
+    await back()
+    expect(loc()).toBe(`/w/${WS}/s/chan`)
+  })
+
   it("leaves a launch the viewer has already navigated away from alone", async () => {
     loaded.mockReturnValue(false)
     const { router, back, loc, rerender } = mount([`/w/${WS}/s/thr`])
