@@ -113,16 +113,18 @@ export function journalTarget(journal: NavigationJournal, direction: -1 | 1): Jo
 export function recentStreams(journal: NavigationJournal, workspaceId: string, limit = 5): RecentStream[] {
   const currentPath = journal.entries[journal.cursor]?.path
   const exclude = currentPath ? pageStreamId(currentPath, workspaceId) : null
-  const seen = new Set<string>()
-  const out: RecentStream[] = []
-  for (let i = journal.entries.length - 1; i >= 0 && out.length < limit; i--) {
-    const entry = journal.entries[i]
+  // Back/Forward re-stamp `at` in place, so position is not recency: rank by
+  // each stream's newest stamp.
+  const newest = new Map<string, RecentStream>()
+  for (const entry of journal.entries) {
     const streamId = pageStreamId(entry.path, workspaceId)
-    if (!streamId || streamId === exclude || seen.has(streamId)) continue
-    seen.add(streamId)
-    out.push({ streamId, href: `/w/${workspaceId}/s/${streamId}`, at: entry.at })
+    if (!streamId || streamId === exclude) continue
+    const previous = newest.get(streamId)
+    if (!previous || entry.at > previous.at) {
+      newest.set(streamId, { streamId, href: `/w/${workspaceId}/s/${streamId}`, at: entry.at })
+    }
   }
-  return out
+  return [...newest.values()].sort((a, b) => b.at - a.at).slice(0, limit)
 }
 
 function pageStreamId(path: string, workspaceId: string): string | null {
@@ -161,7 +163,7 @@ function parseJournal(raw: string): NavigationJournal | null {
   }
   const cursor = record.cursor
   if (!Number.isInteger(cursor) || cursor < -1 || cursor >= entries.length) return null
-  if (entries.length === 0 && cursor !== -1) return null
+  if ((entries.length === 0) !== (cursor === -1)) return null
   return { entries, cursor }
 }
 

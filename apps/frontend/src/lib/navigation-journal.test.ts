@@ -182,6 +182,14 @@ describe("recentStreams", () => {
     ])
   })
 
+  it("ranks by the newest stamp, not journal position, after Back re-stamps an entry", () => {
+    const journal = journalOf([`/w/${WS}/s/s1`, `/w/${WS}/s/s2`, `/w/${WS}/s/s3`], 2)
+    const stepped = recordVisit(journal, `/w/${WS}/s/s1`, 99, { cursorHint: 0, navigationType: "PUSH" })
+    expect(recentStreams(stepped, WS).map((s) => s.streamId)).toEqual(["s3", "s2"])
+    const back = recordVisit(journal, `/w/${WS}/s/s2`, 99, { cursorHint: 1, navigationType: "PUSH" })
+    expect(recentStreams(back, WS).map((s) => s.streamId)).toEqual(["s3", "s1"])
+  })
+
   it("honours the limit", () => {
     const journal = journalOf([`/w/${WS}/s/s1`, `/w/${WS}/s/s2`, `/w/${WS}/s/s3`], 2)
     expect(recentStreams(journal, WS, 1)).toEqual([{ streamId: "s2", href: `/w/${WS}/s/s2`, at: 2 }])
@@ -206,6 +214,7 @@ describe("storage", () => {
       '{"entries":"nope","cursor":0}',
       '{"entries":[{"path":1,"at":1}],"cursor":0}',
       '{"entries":[],"cursor":4}',
+      '{"entries":[{"path":"/a","at":1}],"cursor":-1}',
     ]) {
       localStorage.setItem(key, raw)
       resetJournalCacheForTests()

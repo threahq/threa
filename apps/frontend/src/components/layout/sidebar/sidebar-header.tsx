@@ -184,7 +184,15 @@ function HistoryStep({
 
   return (
     <DropdownMenuItem asChild className="flex-1 cursor-pointer gap-1.5">
-      <Link to={target.to} state={target.state} onClick={() => onNavigate(target)}>
+      <Link
+        to={target.to}
+        state={target.state}
+        onClick={(event) => {
+          // A modified or non-primary click opens another tab: this tab's cursor stays.
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+          onNavigate(target)
+        }}
+      >
         {content}
       </Link>
     </DropdownMenuItem>

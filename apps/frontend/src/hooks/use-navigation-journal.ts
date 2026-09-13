@@ -2,7 +2,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react"
 import { useLocation, useNavigationType } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { hiddenStreamIds } from "@/lib/streams"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceStreamsLoaded } from "@/stores/workspace-store"
 import {
   EMPTY_JOURNAL,
   isJournaledPath,
@@ -31,18 +31,21 @@ export function useRecordNavigationJournal(workspaceId: string | undefined): voi
   const { pathname, search, state } = useLocation()
   const navigationType = useNavigationType()
   const cachedStreams = useWorkspaceStreams(workspaceId ?? "")
+  // Before the streams table hydrates the hidden set is empty and an aside
+  // page would be recorded; the entry has no cleanup path, so wait.
+  const streamsLoaded = useWorkspaceStreamsLoaded(workspaceId)
 
   const journalCursor: unknown = (state as { journalCursor?: unknown } | null)?.journalCursor
   const cursorHint = typeof journalCursor === "number" ? journalCursor : undefined
 
   useEffect(() => {
-    if (!user || !workspaceId) return
+    if (!user || !workspaceId || !streamsLoaded) return
     if (!isJournaledPath(pathname, workspaceId)) return
     const path = journalPath({ pathname, search })
     const hidden = hiddenStreamIds(cachedStreams)
     if (journalStreamIds(path, workspaceId).some((id) => hidden.has(id))) return
     journalVisit(user.id, workspaceId, path, { cursorHint, navigationType })
-  }, [user, workspaceId, pathname, search, cursorHint, navigationType, cachedStreams])
+  }, [user, workspaceId, streamsLoaded, pathname, search, cursorHint, navigationType, cachedStreams])
 }
 
 export interface NavigationJournalView {
