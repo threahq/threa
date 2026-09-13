@@ -276,9 +276,19 @@ See `.env.example` at the repo root for the full list with descriptions. The cri
 | `CONTROL_PLANE_URL`                                                  | `http://control-plane.railway.internal:8080`                                 |
 | `INTERNAL_API_KEY`                                                   | Shared inter-service secret                                                  |
 | `REGION`                                                             | `eu-north-1`                                                                 |
+| `ATTACHMENT_MALWARE_SCAN_ENABLED`                                    | EICAR test-signature check; enabled unless explicitly `false`                |
 | `POSTHOG_PROJECT_TOKEN`, `POSTHOG_HOST`                              | PostHog project token + ingest host for this region — see below              |
 | `CLOUDFLARE_REALTIME_APP_ID`                                         | CF Realtime (SFU) app id for calls — see below                               |
 | `CLOUDFLARE_REALTIME_APP_SECRET`                                     | CF Realtime app secret (media-plane credential)                              |
+
+`ATTACHMENT_MALWARE_SCAN_ENABLED` checks only the first 8 KiB for EICAR test
+signatures. It is not general malware detection. With the flag disabled, the
+scanner returns `clean` without reading bytes. Neither result establishes that
+an attachment is malware-free. Encrypted uploads are unscannable and carry a
+separate `e2e_unscanned` status.
+
+The enclave has its own `OPENROUTER_API_KEY`. Its no-training filter does not
+establish zero retention; see the [enclave retention and egress policy](../apps/enclave/README.md#retention-policy).
 
 #### PostHog (error reporting)
 

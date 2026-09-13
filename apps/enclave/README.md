@@ -18,14 +18,15 @@ the oldest encrypted scratchpad turn its EIK can serve (ciphertext + the SSK
 wraps addressed to this EIK + the sessionId). It runs each claimed turn
 detached — unwrapping the SSK, opening the message(s), running the same
 `AgentRuntime` loop the backend uses for non-E2E personas (over an enclave-only
-LLM client: OpenRouter, zero-retention, single egress), and sealing each reply
-back under the SSK. While the loop runs it refreshes the session heartbeat
+LLM client using OpenRouter with no-training provider routing), and sealing each
+reply back under the SSK. While the loop runs it refreshes the session heartbeat
 (whose response also carries the user's "Stop research" abort flag) and streams
 each sealed reply back the moment the loop sends it (so an interim "I'll look
 into it" lands ahead of the final answer), then acks completion. The enclave
 runs **no inbound content routes at all** — only read-only liveness/identity
-metadata. Plaintext exists only in-process, for the loop's duration, and is
-never logged.
+metadata. This service holds plaintext in memory for the loop's duration and
+never logs it. Decrypted content sent to model providers and web tools is subject
+to those services' data policies.
 
 ## Trust boundary (5a)
 
@@ -60,8 +61,9 @@ What the enclave does not do:
   `Authorization` nor the `X-Internal-Api-Key` header is ever written (the
   `pino-http` `redact` paths are belt-and-braces on top of that).
 - No outbound traffic except the backend (register/heartbeat/revoke + the claim
-  poll + the per-session heartbeat/messages/complete/fail callbacks) and the
-  OpenRouter API (the LLM upstream).
+  poll + the per-session heartbeat/messages/complete/fail callbacks), the
+  OpenRouter API (the LLM upstream), and the web tools' hosts (see the egress
+  section below).
 
 ## Environment
 
@@ -70,22 +72,34 @@ What the enclave does not do:
 | `PORT`                            | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation` (read-only metadata — there are no content routes).                                                                                |
 | `BACKEND_BASE_URL`                | yes                  | Regional backend base URL — target for register/heartbeat/revoke, the claim poll, and the per-session heartbeat/messages/complete/fail callbacks.                                        |
 | `ENCLAVE_INTERNAL_API_KEY`        | yes                  | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY` and must NOT equal the shared `INTERNAL_API_KEY`. |
-| `OPENROUTER_API_KEY`              | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                                                                                                |
+| `OPENROUTER_API_KEY`              | yes                  | The enclave's LLM credential. Requests set `provider.data_collection: "deny"`. See the retention policy below.                                                                           |
 | `OPENROUTER_BASE_URL`             | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                                                   |
+| `TAVILY_API_KEY`                  | no                   | Enables Tavily web search. Without it, URL reading and research using URL reads remain available.                                                                                        |
 | `ENCLAVE_HEARTBEAT_INTERVAL_MS`   | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                                                          |
 | `ENCLAVE_CLAIM_POLL_INTERVAL_MS`  | no (default `1500`)  | Idle claim-poll interval — the turn-start latency floor when no work is flowing (a win re-polls immediately).                                                                            |
 | `ENCLAVE_MAX_CONCURRENT_SESSIONS` | no (default `8`)     | Per-instance ceiling on concurrently-running turns. At capacity the claim loop stops claiming until a turn settles, bounding per-box memory and OpenRouter spend. Scale with replicas.   |
 
-## Egress allow-list (operational)
+## Retention policy
 
-In production the egress firewall should pin the enclave to exactly:
+`provider.data_collection: "deny"` excludes providers that train on request data.
+It does not enforce Zero Data Retention. [OpenRouter documents ZDR as a separate
+routing control](https://openrouter.ai/docs/guides/features/zdr), enforced through
+account/key policies or `provider.zdr: true`. This client does not set that flag.
+Verify account policies before promising zero retention.
 
-- `BACKEND_BASE_URL` — for `/internal/enclave-runtimes/*`: registration,
-  heartbeat, revoke, the claim poll, and the per-session
-  heartbeat/messages/complete/fail callbacks.
-- `OPENROUTER_BASE_URL` (`openrouter.ai`) — the LLM upstream for claimed turns.
+## Egress (operational)
 
-No other outbound traffic is required.
+- `BACKEND_BASE_URL` handles registration, claims, heartbeats and encrypted
+  result callbacks under `/internal/enclave-runtimes/*`.
+- `OPENROUTER_BASE_URL`, default `openrouter.ai`, receives model requests.
+- `api.tavily.com` receives web-search queries when `TAVILY_API_KEY` is set
+  and the turn's tool policy permits web tools.
+- `read_url` fetches public HTTP and HTTPS URLs, including redirects and images.
+  It rejects private/reserved addresses and rechecks redirect destinations.
+
+A firewall limited to the backend and OpenRouter does not support all these
+tools. Match outbound access to the tools you enable. A narrower host allow-list
+restricts which URLs can be read; blocked requests fail at tool execution.
 
 ## Running locally
 
@@ -125,7 +139,8 @@ railway add --service enclave
 # 2. Set its variables. ENCLAVE_INTERNAL_API_KEY must MATCH the backend's — set the
 #    same fresh secret on both services (it is dedicated to the enclave channel and
 #    must NOT equal the shared INTERNAL_API_KEY). OPENROUTER_API_KEY is your
-#    zero-retention OpenRouter key (billing-attached, so set it yourself).
+#    OpenRouter key (billing-attached, so set it yourself). TAVILY_API_KEY is
+#    optional and adds api.tavily.com to the egress surface when set.
 railway variables --service enclave \
   --set "BACKEND_BASE_URL=http://backend.railway.internal:8080" \
   --set "ENCLAVE_INTERNAL_API_KEY=<same value as backend's ENCLAVE_INTERNAL_API_KEY>" \
@@ -138,5 +153,3 @@ railway up --service enclave
 Then confirm with the `enclave_runtimes` query above — a fresh row with a
 recent `last_seen_at` and null `revoked_at` means it registered and is
 heartbeating (and therefore polling for claims).
-
-Egress (above) should be pinned to the backend + `openrouter.ai` only.
