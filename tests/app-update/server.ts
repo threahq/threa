@@ -23,6 +23,7 @@ const state = {
   failAssetPaths: new Set<string>(),
   corruptAssetPaths: new Set<string>(),
   stallBootstrapMs: 0,
+  bootstrapInFlight: 0,
 }
 
 function generation() {
@@ -65,6 +66,7 @@ async function handleControl(req: Request): Promise<Response> {
       deployed: state.deployed,
       latest: state.latest,
       failWorker: state.failWorker,
+      bootstrapInFlight: state.bootstrapInFlight,
       failAssets: [...state.failAssetPaths],
       corruptAssets: [...state.corruptAssetPaths],
       generations: Object.fromEntries(
@@ -143,7 +145,12 @@ const server: Server = Bun.serve({
     }
 
     if (pathname.startsWith("/api/workspaces/") && pathname.endsWith("/bootstrap")) {
-      await new Promise((resolve) => setTimeout(resolve, state.stallBootstrapMs))
+      state.bootstrapInFlight++
+      try {
+        await new Promise((resolve) => setTimeout(resolve, state.stallBootstrapMs))
+      } finally {
+        state.bootstrapInFlight--
+      }
       return Response.json({ streams: [] }, { headers: { "cache-control": "no-store" } })
     }
 

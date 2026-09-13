@@ -65,6 +65,11 @@ export const APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS = 5_000
  */
 export const APP_UPDATE_APPLY_TIMEOUT_MS = 30_000
 export const APP_UPDATE_STATUS_TIMEOUT_MS = 1500
+/**
+ * Age bound for an attempt on bfcache restore. Measured from the activation
+ * wait, not from apply(): the registration and worker lookups before it have
+ * their own bounds and must not eat into this one.
+ */
 export const APP_UPDATE_APPLYING_MAX_AGE_MS = APP_UPDATE_APPLY_TIMEOUT_MS + APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS
 export const APP_UPDATE_REGISTRATION_TIMEOUT_MS = 10_000
 
@@ -661,7 +666,8 @@ export class AppUpdateController {
     // Watch the target's own state and the controller identity instead of
     // messaging the outgoing worker: every message event we send it is
     // in-flight work that defers the very activation we are waiting for.
-    const deadline = Date.now() + APP_UPDATE_APPLY_TIMEOUT_MS
+    attempt.startedAt = Date.now()
+    const deadline = attempt.startedAt + APP_UPDATE_APPLY_TIMEOUT_MS
     while (Date.now() < deadline) {
       if (this.reloadPromise) return this.reloadPromise
       if (superseded()) return

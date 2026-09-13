@@ -80,6 +80,7 @@ test("ready build B applies while the outgoing worker still holds an in-flight r
   await page.evaluate(() => {
     void fetch("/api/workspaces/workspace_test/bootstrap?account=owner").catch(() => undefined)
   })
+  await expect.poll(async () => (await controlApi.state()).bootstrapInFlight).toBe(1)
   const button = page.getByRole("button", { name: /reload and update/i })
   await button.waitFor()
   const reloads: string[] = []
