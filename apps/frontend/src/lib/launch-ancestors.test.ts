@@ -29,12 +29,21 @@ describe("launchAncestors", () => {
   it("puts the page without its panel beneath a panel URL, the panel hop attesting pop-to-close", () => {
     expect(launchAncestors(at(`/w/${WS}/board?lens=mine&panel=conv:c`), WS, [])).toEqual([
       { to: `/w/${WS}/board?lens=mine` },
-      { to: `/w/${WS}/board?lens=mine&panel=conv:c`, state: { launchRebuild: true, panelPopsToClose: true } },
+      { to: `/w/${WS}/board?lens=mine&panel=conv:c`, state: { launchRebuild: true, popsToClose: "panel" } },
     ])
     expect(launchAncestors(at(`/w/${WS}/s/thr?panel=conv:c`), WS, [channel, thread])).toEqual([
       { to: `/w/${WS}/s/chan` },
       { to: `/w/${WS}/s/thr`, state: { launchRebuild: true } },
-      { to: `/w/${WS}/s/thr?panel=conv:c`, state: { launchRebuild: true, panelPopsToClose: true } },
+      { to: `/w/${WS}/s/thr?panel=conv:c`, state: { launchRebuild: true, popsToClose: "panel" } },
+    ])
+  })
+
+  it("peels a trace over a panel outermost first, each hop attesting its own cover", () => {
+    expect(launchAncestors(at(`/w/${WS}/s/thr?panel=conv:c&trace=t&highlight=m`), WS, [channel, thread])).toEqual([
+      { to: `/w/${WS}/s/chan` },
+      { to: `/w/${WS}/s/thr`, state: { launchRebuild: true } },
+      { to: `/w/${WS}/s/thr?panel=conv%3Ac`, state: { launchRebuild: true, popsToClose: "panel" } },
+      { to: `/w/${WS}/s/thr?panel=conv:c&trace=t&highlight=m`, state: { launchRebuild: true, popsToClose: "trace" } },
     ])
   })
 

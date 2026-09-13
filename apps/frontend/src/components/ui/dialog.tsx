@@ -2,15 +2,14 @@ import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
-import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { HistoryBackClose } from "./history-back-close"
 
 const Dialog = ({ open, defaultOpen, onOpenChange, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) => {
-  const isMobile = useIsMobile()
   // Open state is lifted out of Radix (mirroring uncontrolled usage into local
   // state) so HistoryBackClose can close trigger-driven dialogs too — same
-  // contract as Drawer, because a mobile dialog IS a full-screen overlay.
+  // contract as Drawer. A dialog is modal on every viewport, so it takes a
+  // history entry on desktop as well: back and Escape both dismiss it.
   const isControlled = open !== undefined
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen ?? false)
   const resolvedOpen = isControlled ? open : uncontrolledOpen
@@ -24,7 +23,7 @@ const Dialog = ({ open, defaultOpen, onOpenChange, ...props }: React.ComponentPr
 
   return (
     <>
-      {isMobile && <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />}
+      <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />
       <DialogPrimitive.Root open={resolvedOpen} onOpenChange={handleOpenChange} {...props} />
     </>
   )

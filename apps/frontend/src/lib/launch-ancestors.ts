@@ -1,3 +1,4 @@
+import { PANEL_COVER, TRACE_COVER, type Cover } from "@/lib/covers"
 import { pageStreamId } from "@/lib/navigation-journal"
 import { hiddenStreamIds } from "@/lib/streams"
 
@@ -11,7 +12,7 @@ export interface AncestorStream {
 
 export interface LaunchHop {
   to: string
-  state?: { launchRebuild: true; panelPopsToClose?: true }
+  state?: { launchRebuild: true; popsToClose?: string }
 }
 
 /**
@@ -19,7 +20,8 @@ export interface LaunchHop {
  * bottom to top, ending with the launch URL itself. Reached from the sidebar
  * or a card, the same page sits on: its stream's visible ancestors (parent
  * chain; the root when a link in the chain is not cached), the page without
- * its `?panel=`, then the launch URL. A single hop means nothing to rebuild.
+ * its `?panel=`, that with the panel but without `?trace=`, then the launch
+ * URL. A single hop means nothing to rebuild.
  */
 export function launchAncestors(
   location: { pathname: string; search: string },
@@ -30,11 +32,12 @@ export function launchAncestors(
   const hops: LaunchHop[] = [{ to: top, state: { launchRebuild: true } }]
 
   const params = new URLSearchParams(location.search)
-  if (params.has("panel")) {
-    params.delete("panel")
+  for (const cover of COVERS_TOP_DOWN) {
+    if (!params.has(cover[0])) continue
+    for (const param of cover) params.delete(param)
     const query = params.toString()
     hops.unshift({ to: query ? `${location.pathname}?${query}` : location.pathname, state: { launchRebuild: true } })
-    hops[hops.length - 1].state = { launchRebuild: true, panelPopsToClose: true }
+    hops[1].state = { launchRebuild: true, popsToClose: cover[0] }
   }
 
   const streamId = pageStreamId(location.pathname, workspaceId)
@@ -47,6 +50,9 @@ export function launchAncestors(
   hops[0] = { to: hops[0].to }
   return hops
 }
+
+/** Outermost cover first: a trace opens over a panel, never under one. */
+const COVERS_TOP_DOWN: readonly Cover[] = [TRACE_COVER, PANEL_COVER]
 
 /** Nearest ancestor first. Hidden (aside-rooted) streams are never pages, so they are skipped. */
 function visibleAncestors(streamId: string, streams: readonly AncestorStream[]): string[] {

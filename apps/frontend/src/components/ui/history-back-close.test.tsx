@@ -492,6 +492,33 @@ describe("HistoryBackClose via Dialog (mobile)", () => {
   })
 })
 
+describe("HistoryBackClose via Dialog (desktop)", () => {
+  beforeEach(() => {
+    vi.spyOn(mobileModule, "useIsMobile").mockReturnValue(false)
+  })
+
+  it("takes an entry like on mobile: back closes it and stays, UI close pops it", async () => {
+    const router = makeRouter(<DialogHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    await openDrawer(router, "open-dialog")
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("dialog-closed")).toBeInTheDocument())
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
+
+    await openDrawer(router, "open-dialog")
+    fireEvent.click(screen.getByText("close-dialog"))
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+})
+
 /**
  * The media gallery already deepens history itself (`?media=`) and pops that
  * entry on close, so it now pushes TWO entries per open (its own plus the

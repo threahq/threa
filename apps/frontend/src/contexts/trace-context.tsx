@@ -1,5 +1,7 @@
 import { createContext, useContext, useCallback, useMemo, type ReactNode } from "react"
 import { useSearchParams, useLocation } from "react-router-dom"
+import { useCoverClose } from "@/hooks/use-cover-close"
+import { TRACE_COVER } from "@/lib/covers"
 
 interface TraceContextValue {
   isOpen: boolean
@@ -17,7 +19,7 @@ interface TraceProviderProps {
 }
 
 export function TraceProvider({ children }: TraceProviderProps) {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
   const location = useLocation()
 
   const sessionId = useMemo(() => searchParams.get("trace"), [searchParams])
@@ -38,17 +40,7 @@ export function TraceProvider({ children }: TraceProviderProps) {
     [searchParams, location.pathname]
   )
 
-  const closeTraceModal = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete("trace")
-        next.delete("highlight")
-        return next
-      },
-      { replace: true }
-    )
-  }, [setSearchParams])
+  const closeTraceModal = useCoverClose(TRACE_COVER)
 
   const value = useMemo<TraceContextValue>(
     () => ({

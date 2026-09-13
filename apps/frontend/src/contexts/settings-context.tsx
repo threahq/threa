@@ -1,5 +1,7 @@
 import { createContext, useContext, useCallback, useMemo, type ReactNode } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useCoverClose } from "@/hooks/use-cover-close"
+import { SETTINGS_COVER } from "@/lib/covers"
 import { SETTINGS_TABS, type SettingsTab } from "@threahq/types"
 
 interface SettingsContextValue {
@@ -27,20 +29,18 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
   const activeTab: SettingsTab =
     settingsParam && SETTINGS_TABS.includes(settingsParam as SettingsTab) ? (settingsParam as SettingsTab) : DEFAULT_TAB
 
+  // Opening pushes so back closes the dialog; re-opening on another tab while
+  // open replaces, like a tab change.
   const openSettings = useCallback(
     (tab?: SettingsTab) => {
       const newParams = new URLSearchParams(searchParams)
       newParams.set("settings", tab || DEFAULT_TAB)
-      setSearchParams(newParams, { replace: true })
+      setSearchParams(newParams, { replace: isOpen })
     },
-    [searchParams, setSearchParams]
+    [isOpen, searchParams, setSearchParams]
   )
 
-  const closeSettings = useCallback(() => {
-    const newParams = new URLSearchParams(searchParams)
-    newParams.delete("settings")
-    setSearchParams(newParams, { replace: true })
-  }, [searchParams, setSearchParams])
+  const closeSettings = useCoverClose(SETTINGS_COVER)
 
   const setActiveTab = useCallback(
     (tab: SettingsTab) => {
