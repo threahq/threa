@@ -36,6 +36,16 @@ export interface OpenAsideState {
   originScope: string
 }
 
+/**
+ * Whether a `?panel=` open belongs inside the aside's surface: any thread but
+ * the aside's own host. An aside opened from inside a thread has that thread
+ * as its host, and the host view already shows it — a panel on top would be
+ * two chromes for one stream.
+ */
+export function asideHoldsPanel(panelId: string | null, hostStreamId: string): boolean {
+  return panelId !== null && panelId !== hostStreamId
+}
+
 /** How wide the aside's own column is on the stage. The floor keeps its chat
  *  and composer usable; the ceiling is enforced against the live stage by the
  *  component, which knows how much room the host pane still needs. */

@@ -5,7 +5,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } 
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
-import { useAsideForHost } from "@/stores/aside-store"
+import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
@@ -209,7 +209,11 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // order, or focus walks into content nobody can see.
   const asideStage = !asideIsSheet && asideOpen !== null
   const { isMobile } = useSidebar()
-  const { isPanelOpen, closePanel } = usePanel()
+  const { panelId, isPanelOpen, closePanel } = usePanel()
+  // A thread the aside's surface holds (the stage's host pane, or the phone's
+  // sheet) is mounted there and nowhere else: not in the slot, not as the
+  // phone's takeover behind the sheet.
+  const panelInAside = asideOpen !== null && asideHoldsPanel(panelId, asideOpen.hostStreamId)
   // The board's filters live in the URL (INV-59) — six params, three dimensions
   // × include/exclude, parsed here and rewritten by the filter bar's toggles.
   // Id lists are deduped and capped at the shared server limits so a hand-built
@@ -1003,7 +1007,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // stream page), so the narrow board feed isn't crushed beside it. The column
   // stays mounted behind it, and must keep its position in this tree to do so —
   // see `panelTakeoverClasses`.
-  const mobileTakeover = isMobile && isPanelOpen
+  const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const layout = panelTakeoverClasses(mobileTakeover)
 
   return (
@@ -1022,7 +1026,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           shouldAnimate={shouldAnimate}
           // The stage mounts the panel in its host pane; the slot keeps its
           // width lifecycle but shows nothing under the overlay.
-          showContent={showContent && !asideStage}
+          showContent={showContent && !asideStage && !panelInAside}
           isResizing={isResizing}
           maxWidth={maxWidth}
           minWidth={minWidth}

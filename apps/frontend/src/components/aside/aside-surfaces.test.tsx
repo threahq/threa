@@ -336,6 +336,30 @@ describe("aside surfaces", () => {
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
     })
 
+    it("gives a thread opened while the sheet stands the sheet itself, at the full detent, and hands it back on close", async () => {
+      renderPage(`${HOST_PATH}?panel=stream_thread_1`)
+      openOnHost()
+
+      const sheet = await screen.findByTestId("aside-sheet")
+      expect(sheet).toHaveAttribute("data-view", "panel")
+      expect(within(sheet).getByTestId("panel-host")).toBeInTheDocument()
+      expect(screen.queryByTestId("aside-pane")).toBeNull()
+      await waitFor(() => expect(sheet).toHaveAttribute("data-detent", "full"))
+
+      fireEvent.click(within(sheet).getByTestId("panel-host"))
+      await waitFor(() => expect(screen.getByTestId("aside-sheet")).toHaveAttribute("data-view", "aside"))
+      expect(screen.getByTestId("aside-pane")).toBeInTheDocument()
+      expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
+    })
+
+    it("shows the thread an aside was opened from under the sheet, not as a panel in it", async () => {
+      renderPage(`${HOST_PATH}?panel=stream_host`)
+      openOnHost()
+
+      expect(await screen.findByTestId("aside-sheet")).toHaveAttribute("data-view", "aside")
+      expect(screen.queryByTestId("panel-host")).toBeNull()
+    })
+
     it("takes the typing with it when opened from a composer, and rests at the peek otherwise", () => {
       // Opened from a row or the palette: nothing held focus, the host stays
       // readable above the peek, and no keyboard rises on its own.
