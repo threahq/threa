@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useCoverClose } from "@/hooks/use-cover-close"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -30,12 +31,15 @@ import { ScheduleTab } from "./schedule-tab"
 import { StatusesTab } from "./statuses-tab"
 import { DictationTab } from "./dictation-tab"
 
+const WS_SETTINGS_COVER = [WS_SETTINGS_PARAM] as const
+
 interface WorkspaceSettingsDialogProps {
   workspaceId: string
 }
 
 export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialogProps) {
   const [searchParams, setSearchParams] = useSearchParams()
+  const close = useCoverClose(WS_SETTINGS_COVER)
   const [mounted, setMounted] = useState(false)
 
   // The feature flags view is read-only and deliberately absent (including via
@@ -67,12 +71,6 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
 
   if (!mounted) return null
 
-  const close = () => {
-    const newParams = new URLSearchParams(searchParams)
-    newParams.delete(WS_SETTINGS_PARAM)
-    setSearchParams(newParams, { replace: true })
-  }
-
   const setTab = (tab: string) => {
     const newParams = new URLSearchParams(searchParams)
     newParams.set(WS_SETTINGS_PARAM, tab)
@@ -80,7 +78,7 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
   }
 
   return (
-    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()}>
+    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()} historyEntry={false}>
       <ResponsiveDialogContent
         desktopClassName="w-[min(96vw,980px)] max-w-none h-[min(720px,calc(100vh-2rem))] sm:flex flex-col overflow-hidden p-0 gap-0"
         drawerClassName="flex flex-col gap-0"

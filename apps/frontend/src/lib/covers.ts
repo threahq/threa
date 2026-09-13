@@ -10,6 +10,7 @@ export const TRACE_COVER = ["trace", "highlight"] as const
 export const SETTINGS_COVER = ["settings"] as const
 export const CONTEXT_COVER = ["context"] as const
 export const CONVERSATION_OVERLAY_COVER = ["convOverlay"] as const
+export const INVITE_LINK_COVER = ["invite-link"] as const
 
 export type Cover = readonly [string, ...string[]]
 

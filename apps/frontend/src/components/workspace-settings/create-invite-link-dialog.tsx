@@ -107,7 +107,12 @@ export function CreateInviteLinkDialog({
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={(nextOpen) => !nextOpen && close()} disableSnapPoints>
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={(nextOpen) => !nextOpen && close()}
+      disableSnapPoints
+      historyEntry={false}
+    >
       <ResponsiveDialogContent desktopClassName="max-w-md" drawerClassName="max-h-[92dvh] overflow-y-auto">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>{createdToken ? "Invite link ready" : "Create invite link"}</ResponsiveDialogTitle>

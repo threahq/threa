@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
-import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import { Check, ChevronDown, Copy, KeyRound, Link as LinkIcon, Mail, MoreHorizontal, Pencil } from "lucide-react"
 import { toast } from "sonner"
 import {
@@ -28,7 +28,8 @@ import { invitationsApi, invitationKeys } from "@/api/invitations"
 import { ApiError } from "@/api/client"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useFormattedDate } from "@/hooks"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useCoverClose } from "@/hooks/use-cover-close"
+import { INVITE_LINK_COVER } from "@/lib/covers"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useChangeWorkspaceMemberRole, useRemoveWorkspaceMember } from "@/hooks/use-workspace-member-management"
 import { hasPermission } from "@/lib/permissions"
@@ -89,8 +90,6 @@ function memberErrorMessage(err: unknown, fallback: string): string {
   }
 }
 
-const INVITE_LINK_PARAM = "invite-link"
-
 function invitationErrorMessage(error: unknown, fallback: string): string {
   if (ApiError.isApiError(error)) return error.message
   if (error instanceof Error) return error.message
@@ -128,16 +127,11 @@ export function PendingEmailInvitationDetails({
 
 export function UsersTab({ workspaceId }: UsersTabProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const navigationType = useNavigationType()
-  const isMobile = useIsMobile()
+  const closeLink = useCoverClose(INVITE_LINK_COVER)
   const [emailInviteOpen, setEmailInviteOpen] = useState(false)
-  const selectedLink = searchParams.get(INVITE_LINK_PARAM)
+  const selectedLink = searchParams.get(INVITE_LINK_COVER[0])
   const [copiedInvitationId, setCopiedInvitationId] = useState<string | null>(null)
   const [memberToRemove, setMemberToRemove] = useState<WorkspaceUserRow | null>(null)
-  const ownedLinkEntryRef = useRef(false)
-  const locationKeyRef = useRef<string | null>(null)
 
   // Tokens are returned exactly once at create time; we keep them in-memory so
   // the admin can copy the link from the pending list. Refreshing the page
@@ -186,30 +180,10 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
   )
   const editedInvitation = linkInvitations.find((invitation) => invitation.id === selectedLink) ?? null
 
-  useEffect(() => {
-    if (location.key === locationKeyRef.current) return
-    locationKeyRef.current = location.key
-    if (!selectedLink) ownedLinkEntryRef.current = false
-    else if (navigationType !== "REPLACE") {
-      ownedLinkEntryRef.current =
-        navigationType === "PUSH" &&
-        (location.state as { inviteLinkPopsToClose?: boolean } | null)?.inviteLinkPopsToClose === true
-    }
-  }, [location.key, location.state, navigationType, selectedLink])
-
-  const setLinkOverlay = (value: string | null) => {
-    if (!value && !isMobile && ownedLinkEntryRef.current) {
-      ownedLinkEntryRef.current = false
-      navigate(-1)
-      return
-    }
+  const openLink = (value: string) => {
     const next = new URLSearchParams(searchParams)
-    if (value) next.set(INVITE_LINK_PARAM, value)
-    else next.delete(INVITE_LINK_PARAM)
-    setSearchParams(next, {
-      replace: !value || isMobile,
-      state: value && !isMobile ? { ...(location.state ?? {}), inviteLinkPopsToClose: true } : location.state,
-    })
+    next.set(INVITE_LINK_COVER[0], value)
+    setSearchParams(next)
   }
 
   const handleCopy = async (invitationId: string) => {
@@ -240,7 +214,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
               <Mail className="mr-2 h-4 w-4" />
               <span>Invite by email</span>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setLinkOverlay("create")}>
+            <DropdownMenuItem onClick={() => openLink("create")}>
               <LinkIcon className="mr-2 h-4 w-4" />
               <span>Create invite link</span>
             </DropdownMenuItem>
@@ -380,7 +354,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                     >
                       <CopyLinkLabel isCopied={copiedInvitationId === invitation.id} tokenInMemory={tokenInMemory} />
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setLinkOverlay(invitation.id)}>
+                    <Button size="sm" variant="ghost" onClick={() => openLink(invitation.id)}>
                       <Pencil className="mr-1 h-3.5 w-3.5" />
                       Edit
                     </Button>
@@ -455,7 +429,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
       <CreateInviteLinkDialog
         workspaceId={workspaceId}
         open={selectedLink === "create"}
-        onOpenChange={(open) => !open && setLinkOverlay(null)}
+        onOpenChange={(open) => !open && closeLink()}
         onSuccess={() => invitationsQuery.refetch()}
         onTokenCreated={(invitationId, token) => tokensRef.current.set(invitationId, token)}
       />
@@ -463,7 +437,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
         workspaceId={workspaceId}
         invitation={editedInvitation}
         open={editedInvitation !== null}
-        onOpenChange={(open) => !open && setLinkOverlay(null)}
+        onOpenChange={(open) => !open && closeLink()}
         onSuccess={() => invitationsQuery.refetch()}
       />
 

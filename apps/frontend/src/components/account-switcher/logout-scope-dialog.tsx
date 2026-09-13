@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
+import { useCoverClose } from "@/hooks/use-cover-close"
 import { useQuery } from "@tanstack/react-query"
 import { LogOut, Users } from "lucide-react"
 import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
@@ -19,6 +20,7 @@ import {
 // any other "log out" surface) sets the same key — drifting strings would
 // silently leave the confirm dialog closed and skip the multi-account check.
 export const LOGOUT_CONFIRM_PARAM = "logout-confirm"
+const LOGOUT_CONFIRM_COVER = [LOGOUT_CONFIRM_PARAM] as const
 
 /**
  * Confirm dialog shown when the user clicks "Log out" with more than one
@@ -31,7 +33,8 @@ export const LOGOUT_CONFIRM_PARAM = "logout-confirm"
  * to the dialog without owning any state itself.
  */
 export function LogoutScopeDialog() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchParams] = useSearchParams()
+  const close = useCoverClose(LOGOUT_CONFIRM_COVER)
   const [mounted, setMounted] = useState(false)
   const isOpen = searchParams.get(LOGOUT_CONFIRM_PARAM) !== null
   const { logout, user } = useAuth()
@@ -50,12 +53,6 @@ export function LogoutScopeDialog() {
 
   if (!mounted) return null
 
-  const close = () => {
-    const next = new URLSearchParams(searchParams)
-    next.delete(LOGOUT_CONFIRM_PARAM)
-    setSearchParams(next, { replace: true })
-  }
-
   const liveAccounts = data?.accounts.filter((a) => a.state !== "stale") ?? []
   const otherCount = Math.max(0, liveAccounts.length - 1)
   // Name first then email mirrors AccountRow (name as title, email as
@@ -64,7 +61,7 @@ export function LogoutScopeDialog() {
   const activeLabel = user?.name || user?.email || "this account"
 
   return (
-    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()}>
+    <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()} historyEntry={false}>
       <ResponsiveDialogContent desktopClassName="sm:max-w-md p-0 gap-0" drawerClassName="flex flex-col gap-0">
         <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
           <ResponsiveDialogTitle>Log out</ResponsiveDialogTitle>
