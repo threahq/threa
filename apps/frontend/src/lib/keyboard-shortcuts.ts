@@ -27,6 +27,22 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     global: true,
   },
   {
+    id: "historyBack",
+    label: "Back",
+    description: "Go back in stream history",
+    defaultKey: "mod+[",
+    category: "navigation",
+    global: true,
+  },
+  {
+    id: "historyForward",
+    label: "Forward",
+    description: "Go forward in stream history",
+    defaultKey: "mod+]",
+    category: "navigation",
+    global: true,
+  },
+  {
     id: "searchInStream",
     label: "Search in Stream",
     description: "Search messages in the current stream",

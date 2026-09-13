@@ -5,6 +5,9 @@ import { SidebarHeader } from "./sidebar-header"
 import * as contextsModule from "@/contexts"
 import * as searchPanelModule from "@/components/search/search-panel-context"
 import * as inputModeModule from "@/hooks/use-input-mode"
+import * as authModule from "@/auth"
+import * as workspaceStoreModule from "@/stores/workspace-store"
+import { resetJournalCacheForTests, writeJournal } from "@/lib/navigation-journal"
 
 const openSwitcher = vi.fn()
 const openSearch = vi.fn()
@@ -14,7 +17,7 @@ const isTouch = { value: false }
 function renderHeader() {
   return render(
     <MemoryRouter>
-      <SidebarHeader workspaceName="Threa" />
+      <SidebarHeader workspaceName="Threa" workspaceId="ws_1" />
     </MemoryRouter>
   )
 }
@@ -41,6 +44,14 @@ describe("SidebarHeader", () => {
       openSearch,
     } as unknown as ReturnType<typeof searchPanelModule.useSearchPanel>)
     vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => (isTouch.value ? "touch" : "mouse"))
+    vi.spyOn(authModule, "useAuth").mockReturnValue({ user: { id: "usr_1" } } as unknown as ReturnType<
+      typeof authModule.useAuth
+    >)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([])
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([])
+    vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([])
+    localStorage.clear()
+    resetJournalCacheForTests()
   })
 
   it("opens the search panel from the header's icon button", async () => {
@@ -72,5 +83,40 @@ describe("SidebarHeader", () => {
     await user.click(screen.getByRole("menuitem", { name: /Jump to stream/i }))
 
     expect(openSwitcher).toHaveBeenCalledWith("stream")
+  })
+
+  it("disables both history steps when the journal is empty", async () => {
+    const user = userEvent.setup()
+    renderHeader()
+
+    await user.click(screen.getByRole("button", { name: "History" }))
+
+    expect(screen.queryByRole("link", { name: /Back/ })).toBeNull()
+    expect(screen.getByRole("menuitem", { name: /Back/ })).toHaveAttribute("aria-disabled", "true")
+    expect(screen.getByRole("menuitem", { name: /Forward/ })).toHaveAttribute("aria-disabled", "true")
+  })
+
+  it("lists the earlier streams newest first and links Back to the previous entry", async () => {
+    writeJournal("usr_1", "ws_1", {
+      entries: [
+        { path: "/w/ws_1/s/stream_a", at: 1 },
+        { path: "/w/ws_1/s/stream_b", at: 2 },
+        { path: "/w/ws_1/s/stream_c", at: 3 },
+      ],
+      cursor: 2,
+    })
+    const user = userEvent.setup()
+    renderHeader()
+
+    await user.click(screen.getByRole("button", { name: "History" }))
+
+    expect(screen.getAllByRole("menuitem").map((item) => item.getAttribute("href"))).toEqual([
+      "/w/ws_1/s/stream_b",
+      null,
+      "/w/ws_1/s/stream_b",
+      "/w/ws_1/s/stream_a",
+    ])
+    expect(screen.getByRole("menuitem", { name: /Back/ })).toHaveAttribute("href", "/w/ws_1/s/stream_b")
+    expect(screen.getByRole("menuitem", { name: /Forward/ })).toHaveAttribute("aria-disabled", "true")
   })
 })

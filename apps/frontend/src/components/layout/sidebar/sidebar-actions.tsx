@@ -1,5 +1,5 @@
-import type { ComponentProps, MouseEvent, ReactNode, RefObject } from "react"
-import { Check, ChevronDown, type LucideIcon, MoreHorizontal } from "lucide-react"
+import type { ComponentProps, ComponentType, MouseEvent, ReactNode, RefObject } from "react"
+import { Check, ChevronDown, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils"
 export interface SidebarActionItem {
   id: string
   label: string
-  icon: LucideIcon
+  icon: ComponentType<{ className?: string }>
   /** Emoji glyph rendered in place of `icon` (e.g. the user's current status). */
   emoji?: string | null
   /** Optional muted second line under the label (e.g. "Clears in 2 hours"). */
