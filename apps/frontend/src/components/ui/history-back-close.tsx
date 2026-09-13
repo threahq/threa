@@ -155,16 +155,20 @@ class OverlayHistoryCoordinator {
       )
     } else if (want < live && onTop && top.replaced) {
       this.entries.pop()
+      this.scheduleReconcile()
     } else if (onTop && (want < live || !top.live)) {
       this.inFlight = "pop"
       void router.navigate(-1)
     } else if (want < live) {
+      // One entry per pass, then again: several overlays can close in one
+      // commit (a page change unmounting a sheet and the drawer over it).
       for (let i = this.entries.length - 1; i >= 0; i--) {
         if (this.entries[i]!.live) {
           this.entries[i]!.live = false
           break
         }
       }
+      this.scheduleReconcile()
     }
   }
 

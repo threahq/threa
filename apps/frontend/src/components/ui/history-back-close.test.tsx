@@ -73,6 +73,16 @@ function StackedHarness() {
       <Link to={`${STREAM_PATH}?panel=1`} onClick={() => setBOpen(false)}>
         reply-item
       </Link>
+      {/* Both overlays close in the commit that pushes (a page change unmounting them) */}
+      <Link
+        to={`${STREAM_PATH}?panel=1`}
+        onClick={() => {
+          setAOpen(false)
+          setBOpen(false)
+        }}
+      >
+        leave-both
+      </Link>
       <Drawer open={aOpen} onOpenChange={setAOpen}>
         <DrawerContent>
           <DrawerTitle>A</DrawerTitle>
@@ -300,6 +310,39 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     })
     await waitFor(() => expect(screen.getByText("a-closed")).toBeInTheDocument())
     expect(router.state.location.key).toBe(initialKey)
+    expect(pushes.count).toBe(1)
+  })
+
+  it("two overlays closing under one push both leave stale entries", async () => {
+    const router = makeRouter(<StackedHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    await openDrawer(router, "open-a")
+    const aKey = router.state.location.key
+    fireEvent.click(screen.getByText("open-b"))
+    await waitFor(() => expect(router.state.location.key).not.toBe(aKey))
+    fireEvent.click(screen.getByText("leave-both"))
+    await waitFor(() => expect(router.state.location.search).toBe("?panel=1"))
+    await act(async () => {})
+    const pushes = countPushes(router)
+
+    // Neither left-behind entry stands in for the next overlay.
+    await openDrawer(router, "open-a")
+    expect(pushes.count).toBe(1)
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("a-closed")).toBeInTheDocument())
+    expect(router.state.location.search).toBe("?panel=1")
+
+    // Both stale entries go by pops: the back lands on B's, its pop lands on
+    // A's, and that pop lands where the reader was before either opened.
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
     expect(pushes.count).toBe(1)
   })
 
