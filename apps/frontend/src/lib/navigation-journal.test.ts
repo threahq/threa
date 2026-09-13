@@ -190,6 +190,18 @@ describe("recentStreams", () => {
     expect(recentStreams(back, WS).map((s) => s.streamId)).toEqual(["s3", "s1"])
   })
 
+  it("breaks equal stamps by journal position, later first", () => {
+    const journal: NavigationJournal = {
+      entries: [
+        { path: `/w/${WS}/s/s1`, at: 7 },
+        { path: `/w/${WS}/s/s2`, at: 7 },
+        { path: `/w/${WS}/s/s3`, at: 7 },
+      ],
+      cursor: 0,
+    }
+    expect(recentStreams(journal, WS).map((s) => s.streamId)).toEqual(["s3", "s2"])
+  })
+
   it("honours the limit", () => {
     const journal = journalOf([`/w/${WS}/s/s1`, `/w/${WS}/s/s2`, `/w/${WS}/s/s3`], 2)
     expect(recentStreams(journal, WS, 1)).toEqual([{ streamId: "s2", href: `/w/${WS}/s/s2`, at: 2 }])

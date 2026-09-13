@@ -115,16 +115,20 @@ export function recentStreams(journal: NavigationJournal, workspaceId: string, l
   const exclude = currentPath ? pageStreamId(currentPath, workspaceId) : null
   // Back/Forward re-stamp `at` in place, so position is not recency: rank by
   // each stream's newest stamp.
-  const newest = new Map<string, RecentStream>()
-  for (const entry of journal.entries) {
+  // Equal stamps (visits within one ms) fall back to journal position.
+  const newest = new Map<string, RecentStream & { index: number }>()
+  journal.entries.forEach((entry, index) => {
     const streamId = pageStreamId(entry.path, workspaceId)
-    if (!streamId || streamId === exclude) continue
+    if (!streamId || streamId === exclude) return
     const previous = newest.get(streamId)
-    if (!previous || entry.at > previous.at) {
-      newest.set(streamId, { streamId, href: `/w/${workspaceId}/s/${streamId}`, at: entry.at })
+    if (!previous || entry.at >= previous.at) {
+      newest.set(streamId, { streamId, href: `/w/${workspaceId}/s/${streamId}`, at: entry.at, index })
     }
-  }
-  return [...newest.values()].sort((a, b) => b.at - a.at).slice(0, limit)
+  })
+  return [...newest.values()]
+    .sort((a, b) => b.at - a.at || b.index - a.index)
+    .slice(0, limit)
+    .map(({ streamId, href, at }) => ({ streamId, href, at }))
 }
 
 function pageStreamId(path: string, workspaceId: string): string | null {
