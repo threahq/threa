@@ -274,11 +274,30 @@ test.describe("Aside — mobile surface", () => {
       })
 
       // OS back peels one layer at a time: the thread first, then the aside.
+      // Playwright's goBack walks history the way the browser's own back does
+      // NOT: Chrome marks every same-document entry skippable when the app
+      // pushes after a back without a user gesture in between, and Android's
+      // next back then leaves the app. That rule is invisible here, so the
+      // proof is that nothing pushes after either back.
+      await page.evaluate(() => {
+        const w = window as unknown as { __pushes: number }
+        w.__pushes = 0
+        const original = history.pushState.bind(history)
+        history.pushState = (...args) => {
+          w.__pushes += 1
+          return original(...args)
+        }
+      })
+      const pushesAfterBack = () => page.evaluate(() => (window as unknown as { __pushes: number }).__pushes)
       await page.goBack()
       await expect(sheet(page)).toHaveAttribute("data-view", "aside", { timeout: 10000 })
+      await page.waitForTimeout(500)
+      expect(await pushesAfterBack()).toBe(0)
       await page.goBack()
       await expect(sheet(page)).toHaveCount(0)
       expect(page.url()).toContain(streamId)
+      await page.waitForTimeout(500)
+      expect(await pushesAfterBack()).toBe(0)
     })
   })
 

@@ -209,10 +209,6 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   return (
     <>
       <HistoryBackClose open onClose={closeAside} />
-      {/* Registered above the aside: with an overlay open the coordinator keeps
-          its sentinel on top of the `?panel=` entry, so a back (the panel's own
-          close pops too) must peel the thread first, and the aside only next. */}
-      <HistoryBackClose open={threadInSheet} onClose={closePanel} />
       <div
         ref={sheetRef}
         data-testid="aside-sheet"
