@@ -54,12 +54,19 @@ export interface AppUpdateControllerDeps {
 }
 
 export const APP_UPDATE_CHECK_TIMEOUT_MS = 10_000
-export const APP_UPDATE_APPLY_TIMEOUT_MS = 10_000
-export const APP_UPDATE_STATUS_TIMEOUT_MS = 1500
-export const APP_UPDATE_APPLYING_MAX_AGE_MS = 30_000
-export const APP_UPDATE_REGISTRATION_TIMEOUT_MS = 10_000
 /** Bound on "did the reload we requested actually start navigating". */
 export const APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS = 5_000
+/**
+ * Chromium activates a skipWaiting worker only once the outgoing worker has no
+ * in-flight events (fetch responses, waitUntil work), and waits up to five
+ * minutes for that. A cold open's bootstrap response or a slow asset fetch is
+ * routed through the old worker, so the window must outlast ordinary mobile
+ * network work, not just a message round trip.
+ */
+export const APP_UPDATE_APPLY_TIMEOUT_MS = 30_000
+export const APP_UPDATE_STATUS_TIMEOUT_MS = 1500
+export const APP_UPDATE_APPLYING_MAX_AGE_MS = APP_UPDATE_APPLY_TIMEOUT_MS + APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS
+export const APP_UPDATE_REGISTRATION_TIMEOUT_MS = 10_000
 
 export function createBrowserAppUpdateLifecycle(): AppUpdateLifecycle {
   return {
@@ -478,7 +485,10 @@ export class AppUpdateController {
       await pending
     } finally {
       if (this.checkPromise === pending) this.checkPromise = null
-      if (!this.disposed && !this.applyPromise) {
+      // Cleanup is in-flight work in the controller. With a newer build ready
+      // that controller is the one whose idleness gates the switch, and the
+      // build that replaces it collects the same caches on its own first check.
+      if (!this.disposed && !this.applyPromise && this.state.phase !== "ready") {
         try {
           this.deps.serviceWorker?.controller?.postMessage({ type: SW_MSG_RUN_GC })
         } catch {
@@ -648,19 +658,19 @@ export class AppUpdateController {
       return
     }
 
+    // Watch the target's own state and the controller identity instead of
+    // messaging the outgoing worker: every message event we send it is
+    // in-flight work that defers the very activation we are waiting for.
     const deadline = Date.now() + APP_UPDATE_APPLY_TIMEOUT_MS
     while (Date.now() < deadline) {
       if (this.reloadPromise) return this.reloadPromise
       if (superseded()) return
-      const controller = this.deps.serviceWorker?.controller
-      if (controller?.state === "activated") {
-        const status = await this.queryWorkerStatus(controller)
-        if (superseded()) return
-        // Re-verify identity immediately before deciding to reload: the
-        // controller can have moved on again during that round trip.
-        if (status && this.deps.serviceWorker?.controller === controller && status.buildId === targetBuildId) {
-          return this.requestReload()
-        }
+      if (targetWorker.state === "redundant") {
+        await this.failApply(registration, generation, "activation-failed")
+        return
+      }
+      if (targetWorker.state === "activated" && this.deps.serviceWorker?.controller === targetWorker) {
+        return this.requestReload()
       }
       await new Promise((resolve) => setTimeout(resolve, 300))
     }
