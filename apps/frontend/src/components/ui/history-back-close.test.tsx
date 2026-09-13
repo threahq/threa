@@ -117,11 +117,13 @@ function makeRouter(ui: React.ReactElement) {
   return router
 }
 
-/** Every PUSH the router commits from now on, whoever issued it. */
+/** Every PUSH the router commits from now on, whoever issued it, by where it landed. */
 function countPushes(router: ReturnType<typeof makeRouter>) {
-  const pushes = { count: 0 }
+  const pushes = { count: 0, urls: [] as string[] }
   router.subscribe((state) => {
-    if (state.historyAction === "PUSH") pushes.count += 1
+    if (state.historyAction !== "PUSH") return
+    pushes.count += 1
+    pushes.urls.push(state.location.pathname + state.location.search)
   })
   return pushes
 }
@@ -290,7 +292,7 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     // B's old entry is stale, not a stand-in: the reopened B pushes its own,
     // else the first back would close the panel by URL and leave B floating.
     await openDrawer(router, "open-b")
-    expect(pushes.count).toBe(1)
+    expect(pushes.urls).toEqual([`${STREAM_PATH}?panel=1`])
 
     await act(async () => {
       await router.navigate(-1)
@@ -329,7 +331,7 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
 
     // Neither left-behind entry stands in for the next overlay.
     await openDrawer(router, "open-a")
-    expect(pushes.count).toBe(1)
+    expect(pushes.urls).toEqual([`${STREAM_PATH}?panel=1`])
 
     await act(async () => {
       await router.navigate(-1)
