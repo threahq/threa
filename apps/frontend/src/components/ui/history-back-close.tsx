@@ -20,8 +20,8 @@ interface OverlayEntry {
  *
  * Overlays never touch history themselves — they register on open and
  * unregister on close/unmount — and `reconcile()` converges the number of
- * sentinel entries we own toward the number of open overlays, one navigation
- * at a time (`inFlight` serializes ops, because a browser `history.go(-1)`
+ * live entries we own toward the number of open overlays, one navigation at
+ * a time (`inFlight` serializes ops, because a browser `history.go(-1)`
  * settles asynchronously and a concurrent push would interleave with it).
  * Overlay *handoffs* — a menu drawer closing while the dialog it launched
  * opens in the same tick — net out to the same depth, so they cost nothing.
@@ -29,15 +29,19 @@ interface OverlayEntry {
  * The one rule that matters on a phone: NEVER push after a back. Chrome marks
  * every same-document entry skippable when a `pushState` follows a
  * browser-initiated back without a user activation in between, and Android's
- * back then skips them all and leaves the app. So a back that lands under one
- * of our entries closes its overlay and forgets the entry; a back that lands
- * ON one of our entries (an app entry above it was popped — the URL closes
- * what it opened) changes nothing, and the next press closes that overlay.
- * An entry left behind by an overlay that closed while navigating on (the
- * actions drawer whose "Reply in thread" pushes `?panel=`) stays counted, so
- * no fresh entry is pushed for it, and is popped the moment a back lands on
- * it — a pop, never a push. Leaving the pathname forgets every entry: the
- * overlays are gone with the page, and the entries are ordinary back presses.
+ * back then skips them all and leaves the app. So a back that leaves our top
+ * entry closes its overlay and forgets the entry; a back that lands ON one of
+ * our entries (an app entry above it was popped — the URL closes what it
+ * opened) changes nothing, and the next press closes that overlay. An overlay
+ * that closes while the app has navigated on top of its entry (the actions
+ * drawer whose "Reply in thread" pushes `?panel=`) leaves that entry behind:
+ * it is marked stale — no longer standing in for anything, so the next
+ * overlay gets an entry of its own — and popped the moment a back lands on
+ * it, a pop, never a push. Overlays close last-opened-first, so the stale one
+ * is always our topmost live entry. A replace on our top entry keeps it ours
+ * under its new key (the gallery swiping to the next item) unless the overlay
+ * closed with it, in which case the entry is the app's now (a menu item that
+ * closes its drawer and replace-navigates) and we let go of it.
  *
  * Ground truth is `router.state` (attached via {@link attachOverlayHistoryRouter}),
  * NEVER a React-committed location — for what it reads AND for how it hears
@@ -58,13 +62,11 @@ class OverlayHistoryCoordinator {
   private stack: OverlayEntry[] = []
   private inFlight: "push" | "pop" | null = null
   private reconcileScheduled = false
-  // Keys of the entries we pushed and still account for, bottom to top. Only
-  // the count and the top matter: a back that leaves the top entry closes the
-  // top overlay. Keys survive a reload only as history state, and a reloaded
-  // session starts with none — those entries are inert data.
-  private sentinelKeys: string[] = []
+  // The entries we pushed and still account for, bottom to top. A reloaded
+  // session starts with none. `live` is false once the overlay it stood in
+  // for has closed; `replaced` marks the top entry until the next navigation.
+  private entries: { key: string; live: boolean; replaced: boolean }[] = []
   private lastKey: string | null = null
-  private lastPathname: string | null = null
   private router: DataRouter | null = null
   private unsubscribe: (() => void) | null = null
 
@@ -73,7 +75,6 @@ class OverlayHistoryCoordinator {
     this.unsubscribe?.()
     this.router = router
     this.lastKey = router.state.location.key
-    this.lastPathname = router.state.location.pathname
     this.unsubscribe = router.subscribe((state) => this.handleLocation(state.location, state.historyAction))
   }
 
@@ -88,8 +89,8 @@ class OverlayHistoryCoordinator {
     this.scheduleReconcile()
   }
 
-  private get topKey(): string | undefined {
-    return this.sentinelKeys[this.sentinelKeys.length - 1]
+  private get top() {
+    return this.entries[this.entries.length - 1]
   }
 
   /** Fed every location the router commits, by the subscription in {@link attachRouter}. */
@@ -97,29 +98,26 @@ class OverlayHistoryCoordinator {
     if (location.key === this.lastKey) return
     const leftKey = this.lastKey
     this.lastKey = location.key
-    const leftPathname = this.lastPathname
-    this.lastPathname = location.pathname
     const settledOp = this.inFlight
     this.inFlight = null
+    const top = this.top
+    if (top) top.replaced = false
 
-    if (location.pathname !== leftPathname) {
-      this.sentinelKeys = []
-    } else if (settledOp === "push") {
-      this.sentinelKeys.push(location.key)
+    if (settledOp === "push") {
+      this.entries.push({ key: location.key, live: true, replaced: false })
     } else if (settledOp === "pop") {
-      this.sentinelKeys.pop()
-    } else if (leftKey !== null && leftKey === this.topKey) {
+      this.entries.pop()
+    } else if (top && leftKey === top.key) {
       // The back gesture consumed our top entry: close its overlay in place.
       // Removed from the stack synchronously so the reconcile below sees the
       // depth already balanced and pushes nothing.
       if (navigationType === "POP") {
-        this.sentinelKeys.pop()
-        this.stack.pop()?.close()
+        this.entries.pop()
+        if (top.live) this.stack.pop()?.close()
+      } else if (navigationType === "REPLACE") {
+        top.key = location.key
+        top.replaced = true
       }
-      // A replace rewrote our entry into one the app owns (a menu item that
-      // closes its drawer and replace-navigates): the entry is no longer ours
-      // to pop.
-      else if (navigationType === "REPLACE") this.sentinelKeys.pop()
     }
 
     this.scheduleReconcile()
@@ -146,24 +144,35 @@ class OverlayHistoryCoordinator {
     if (router.state.navigation.state !== "idle") return
     const location = router.state.location
     const want = this.stack.length
-    if (want > this.sentinelKeys.length) {
+    const live = this.entries.filter((entry) => entry.live).length
+    const top = this.top
+    const onTop = top !== undefined && location.key === top.key
+    if (want > live) {
       this.inFlight = "push"
       void router.navigate(
         { pathname: location.pathname, search: location.search, hash: location.hash },
         { state: location.state, preventScrollReset: true }
       )
-    } else if (want < this.sentinelKeys.length && location.key === this.topKey) {
+    } else if (want < live && onTop && top.replaced) {
+      this.entries.pop()
+    } else if (onTop && (want < live || !top.live)) {
       this.inFlight = "pop"
       void router.navigate(-1)
+    } else if (want < live) {
+      for (let i = this.entries.length - 1; i >= 0; i--) {
+        if (this.entries[i]!.live) {
+          this.entries[i]!.live = false
+          break
+        }
+      }
     }
   }
 
   resetForTests(): void {
     this.stack = []
     this.inFlight = null
-    this.sentinelKeys = []
+    this.entries = []
     this.lastKey = null
-    this.lastPathname = null
     this.unsubscribe?.()
     this.unsubscribe = null
     this.router = null

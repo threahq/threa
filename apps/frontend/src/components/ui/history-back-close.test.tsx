@@ -260,6 +260,49 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     expect(pushes.count).toBe(0)
   })
 
+  it("an overlay opened over a left-behind entry gets an entry of its own", async () => {
+    const router = makeRouter(<StackedHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    // A holds its entry, B's item pushes `?panel=` and closes B; in the panel
+    // the reader opens B again (a long-press on a thread message).
+    await openDrawer(router, "open-a")
+    const aKey = router.state.location.key
+    fireEvent.click(screen.getByText("open-b"))
+    await waitFor(() => expect(router.state.location.key).not.toBe(aKey))
+    fireEvent.click(screen.getByText("reply-item"))
+    await waitFor(() => expect(router.state.location.search).toBe("?panel=1"))
+    await act(async () => {})
+    const panelKey = router.state.location.key
+    const pushes = countPushes(router)
+
+    // B's old entry is stale, not a stand-in: the reopened B pushes its own,
+    // else the first back would close the panel by URL and leave B floating.
+    await openDrawer(router, "open-b")
+    expect(pushes.count).toBe(1)
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("b-closed")).toBeInTheDocument())
+    expect(router.state.location.key).toBe(panelKey)
+    expect(screen.getByText("a-open")).toBeInTheDocument()
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.key).toBe(aKey))
+    expect(screen.getByText("a-open")).toBeInTheDocument()
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("a-closed")).toBeInTheDocument())
+    expect(router.state.location.key).toBe(initialKey)
+    expect(pushes.count).toBe(1)
+  })
+
   it("closing a stack in one tick unwinds the sentinel", async () => {
     const router = makeRouter(<StackedHarness />)
     render(<RouterProvider router={router} />)
@@ -289,25 +332,26 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     expect(router.state.location.pathname).toBe("/other")
   })
 
-  it("back onto an entry left with the drawer open lands there, one press one entry", async () => {
+  it("back onto an entry left behind on another page pops it, never pushes", async () => {
     const router = makeRouter(<DrawerHarness />)
     render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
 
     await openDrawer(router)
-    const sentinelKey = router.state.location.key
     fireEvent.click(screen.getByText("navigate-item"))
     await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
     await act(async () => {})
+    const pushes = countPushes(router)
 
-    // The sentinel entry is where the reader left the page: back returns to it
-    // and stops. Popping it as well — it is still marked, and it was ours once
-    // — spends two entries on one press, and on a phone that is how the app
-    // ends up closing a navigation early.
+    // The entry the drawer left behind stands in for nothing: a back lands on
+    // it and it goes by a pop, so the reader is where they were before the
+    // drawer opened and nothing was pushed after the back.
     await act(async () => {
       await router.navigate(-1)
     })
-    await act(async () => {})
-    expect(router.state.location.key).toBe(sentinelKey)
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    expect(router.state.location.pathname).toBe(STREAM_PATH)
+    expect(pushes.count).toBe(0)
   })
 
   it("a menu item that closes the drawer and replace-navigates keeps its target", async () => {
@@ -415,6 +459,7 @@ function GalleryHarness() {
     <div>
       <span>{open ? "gallery-open" : "gallery-closed"}</span>
       <button onClick={() => openMedia("attach_1")}>open-gallery</button>
+      <button onClick={() => openMedia("attach_2")}>next-item</button>
       <Dialog open={open} onOpenChange={(next) => !next && closeMedia()}>
         <DialogContent>
           <DialogTitle>Media</DialogTitle>
@@ -454,6 +499,40 @@ describe("HistoryBackClose with the URL-driven media gallery (mobile)", () => {
     expect(router.state.location.search).toBe("")
 
     // History is balanced: the next back leaves the page
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+  it("swiping to the next item replaces our entry in place: one back still closes, nothing pushed", async () => {
+    const router = makeRouter(
+      <MediaGalleryProvider>
+        <GalleryHarness />
+      </MediaGalleryProvider>
+    )
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    fireEvent.click(screen.getByText("open-gallery"))
+    await waitFor(() => expect(router.state.location.search).toBe("?media=attach_1"))
+    await act(async () => {})
+    const pushes = countPushes(router)
+
+    // The gallery replace-navigates between items, and the entry on top is
+    // ours. Forgetting it here meant a fresh push per swipe, and a back that
+    // landed on `?media=` reopened the gallery and pushed again.
+    fireEvent.click(screen.getByText("next-item"))
+    await waitFor(() => expect(router.state.location.search).toBe("?media=attach_2"))
+    await act(async () => {})
+    expect(pushes.count).toBe(0)
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("gallery-closed")).toBeInTheDocument())
+    await waitFor(() => expect(router.state.location.key).toBe(initialKey))
+    expect(pushes.count).toBe(0)
+
     await act(async () => {
       await router.navigate(-1)
     })
