@@ -16,6 +16,13 @@ async function createWorkspace(page: Page, testId: string) {
 
 async function openCreateLink(page: Page, workspaceId: string) {
   await page.goto(`/w/${workspaceId}?ws-settings=users`)
+  await expect
+    .poll(
+      async () =>
+        new URL(page.url()).pathname.startsWith(`/w/${workspaceId}/s/`) ||
+        (await page.getByText("No streams yet", { exact: true }).isVisible())
+    )
+    .toBe(true)
   await page.getByRole("button", { name: "Invite", exact: true }).click()
   await page.getByRole("menuitem", { name: "Create invite link" }).click()
   await expect(page).toHaveURL(/invite-link=create/)
@@ -98,8 +105,11 @@ test.describe("Multi-use invite links", () => {
     await openCreateLink(page, workspace.id)
     await page.getByRole("button", { name: "Cancel" }).click()
     await expect(page).not.toHaveURL(/invite-link=/)
+    await expect(page.getByRole("heading", { name: "Create invite link" })).not.toBeVisible()
+    await expect(page.getByRole("heading", { name: "Workspace Settings" })).toBeVisible()
     await page.keyboard.press("Escape")
     await expect(page).not.toHaveURL(/ws-settings=/)
+    await expect(page.getByRole("heading", { name: "Workspace Settings" })).not.toBeVisible()
     await page.goBack()
     await expect(page).not.toHaveURL(/invite-link=|ws-settings=/)
     await expect(page.getByRole("heading", { name: "Create invite link" })).not.toBeVisible()
