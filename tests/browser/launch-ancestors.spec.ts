@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type BrowserContext, type Page } from "@playwright/test"
 import {
   clickReplyInThread,
   createChannel,
@@ -24,7 +24,11 @@ declare global {
   }
 }
 
-async function countPushes(page: Page): Promise<void> {
+/** A fresh tab is the cold launch: one history entry, nothing beneath. A
+ *  `goto` in the tab that built the fixture would reload onto the entries it
+ *  already holds, and a reload rebuilds nothing. */
+async function coldLaunch(context: BrowserContext, url: string): Promise<Page> {
+  const page = await context.newPage()
   await page.addInitScript(() => {
     window.__pushes = 0
     const push = history.pushState.bind(history)
@@ -33,6 +37,8 @@ async function countPushes(page: Page): Promise<void> {
       push(...args)
     }
   })
+  await page.goto(url)
+  return page
 }
 
 const pushes = (page: Page) => page.evaluate(() => window.__pushes ?? 0)
@@ -58,14 +64,13 @@ async function createThread(page: Page, testId: string): Promise<{ channelId: st
 }
 
 test.describe("Launch ancestors", () => {
-  test("a thread launched by URL gets its channel beneath it", async ({ page }) => {
-    await countPushes(page)
-    const { testId } = await loginAndCreateWorkspace(page, "launch-thread")
-    const { channelId, threadId } = await createThread(page, testId)
-    const base = new URL(page.url()).origin
-    const workspaceId = page.url().match(/\/w\/([^/?]+)/)![1]
+  test("a thread launched by URL gets its channel beneath it", async ({ page: setup, context }) => {
+    const { testId } = await loginAndCreateWorkspace(setup, "launch-thread")
+    const { channelId, threadId } = await createThread(setup, testId)
+    const base = new URL(setup.url()).origin
+    const workspaceId = setup.url().match(/\/w\/([^/?]+)/)![1]
 
-    await page.goto(`${base}/w/${workspaceId}/s/${threadId}`)
+    const page = await coldLaunch(context, `${base}/w/${workspaceId}/s/${threadId}`)
     await expect(page.getByText(`launch reply ${testId}`)).toBeVisible({ timeout: 20_000 })
     await expect.poll(() => pushes(page), { timeout: 20_000 }).toBe(1)
 
@@ -82,14 +87,16 @@ test.describe("Launch ancestors", () => {
     expect(await pushes(page)).toBe(1)
   })
 
-  test("a panel URL launched cold gets the page beneath it, so back closes the panel", async ({ page }) => {
-    await countPushes(page)
-    const { testId } = await loginAndCreateWorkspace(page, "launch-panel")
-    const { channelId, threadId } = await createThread(page, testId)
-    const base = new URL(page.url()).origin
-    const workspaceId = page.url().match(/\/w\/([^/?]+)/)![1]
+  test("a panel URL launched cold gets the page beneath it, so back closes the panel", async ({
+    page: setup,
+    context,
+  }) => {
+    const { testId } = await loginAndCreateWorkspace(setup, "launch-panel")
+    const { channelId, threadId } = await createThread(setup, testId)
+    const base = new URL(setup.url()).origin
+    const workspaceId = setup.url().match(/\/w\/([^/?]+)/)![1]
 
-    await page.goto(`${base}/w/${workspaceId}/s/${channelId}?panel=${threadId}`)
+    const page = await coldLaunch(context, `${base}/w/${workspaceId}/s/${channelId}?panel=${threadId}`)
     await expect(page.getByTestId("panel").getByText(`launch reply ${testId}`)).toBeVisible({ timeout: 20_000 })
     await expect.poll(() => pushes(page), { timeout: 20_000 }).toBe(1)
 
