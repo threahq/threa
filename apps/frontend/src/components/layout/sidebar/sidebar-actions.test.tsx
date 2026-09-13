@@ -3,7 +3,7 @@ import { useRef, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { toast } from "sonner"
-import { fireEvent, render, screen, userEvent, waitFor, spyOnExport } from "@/test"
+import { act, fireEvent, render, screen, userEvent, waitFor, spyOnExport } from "@/test"
 import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
@@ -14,7 +14,13 @@ import * as contextsModule from "@/contexts"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 
-const setMenuOpen = vi.fn()
+const openMenuClosers: Array<() => void> = []
+const registerOpenMenu = vi.fn((close: () => void) => {
+  openMenuClosers.push(close)
+  return () => {
+    openMenuClosers.splice(openMenuClosers.indexOf(close), 1)
+  }
+})
 
 function renderWithRouter(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>)
@@ -34,10 +40,11 @@ function ContextMenuHarness({ actions }: { actions: SidebarActionItem[] }) {
 describe("sidebar-actions", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    setMenuOpen.mockReset()
+    registerOpenMenu.mockClear()
+    openMenuClosers.length = 0
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
-      setMenuOpen,
+      registerOpenMenu,
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
@@ -104,6 +111,23 @@ describe("sidebar-actions", () => {
 
       expect(onSelect).toHaveBeenCalled()
     })
+
+    it("registers while open and closes when the sidebar dismisses its menus", async () => {
+      const user = userEvent.setup()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(<SidebarActionMenu actions={actions} ariaLabel="Stream actions" />)
+      expect(openMenuClosers).toHaveLength(0)
+
+      await user.click(screen.getByRole("button", { name: "Stream actions" }))
+      await screen.findByRole("menu")
+      expect(openMenuClosers).toHaveLength(1)
+
+      act(() => openMenuClosers[0]())
+
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument())
+      expect(openMenuClosers).toHaveLength(0)
+    })
   })
 
   describe("SidebarActionContextMenu", () => {
@@ -123,7 +147,27 @@ describe("sidebar-actions", () => {
       await user.click(await screen.findByText("Settings"))
 
       expect(onSelect).toHaveBeenCalled()
-      expect(setMenuOpen).toHaveBeenCalledWith(true)
+      expect(registerOpenMenu).toHaveBeenCalled()
+    })
+
+    it("closes when the sidebar dismisses its menus", async () => {
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(
+        <SidebarActionContextMenu actions={actions}>
+          <div>Stream row</div>
+        </SidebarActionContextMenu>
+      )
+
+      fireEvent.contextMenu(screen.getByText("Stream row"))
+      expect(await screen.findByText("Settings")).toBeInTheDocument()
+      expect(openMenuClosers).toHaveLength(1)
+
+      act(() => openMenuClosers[0]())
+
+      expect(screen.queryByText("Settings")).not.toBeInTheDocument()
+      expect(openMenuClosers).toHaveLength(0)
+      expect(screen.getByText("Stream row")).toBeInTheDocument()
     })
 
     it("renders children untouched when disabled", () => {
@@ -164,7 +208,7 @@ describe("sidebar-actions", () => {
       fireEvent.contextMenu(screen.getByText("Stream row"))
 
       expect(screen.getByText("Stream row")).toBeInTheDocument()
-      expect(setMenuOpen).not.toHaveBeenCalled()
+      expect(registerOpenMenu).not.toHaveBeenCalled()
     })
   })
 

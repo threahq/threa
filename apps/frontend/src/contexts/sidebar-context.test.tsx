@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { SidebarProvider, useSidebar } from "./sidebar-context"
@@ -45,6 +45,73 @@ describe("SidebarContext.togglePinned (desktop)", () => {
 
     act(() => result.current.togglePinned())
     expect(result.current.state).toBe("pinned")
+  })
+})
+
+describe("SidebarContext.registerOpenMenu", () => {
+  it("cancels a pending preview hide so the sidebar stays under the menu", () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useSidebar(), { wrapper })
+      act(() => result.current.collapse())
+      act(() => result.current.setHovering(true))
+      act(() => result.current.setHovering(false))
+      expect(result.current.state).toBe("preview")
+
+      let unregister = () => {}
+      act(() => {
+        unregister = result.current.registerOpenMenu(() => {})
+      })
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(result.current.state).toBe("preview")
+
+      act(() => unregister())
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(result.current.state).toBe("collapsed")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe("SidebarContext.dismissMenus", () => {
+  it("collapse closes every registered menu and forgets one that unregistered", () => {
+    const { result } = renderHook(() => useSidebar(), { wrapper })
+    const first = vi.fn()
+    const second = vi.fn()
+    const gone = vi.fn()
+
+    let unregisterGone = () => {}
+    act(() => {
+      result.current.registerOpenMenu(first)
+      result.current.registerOpenMenu(second)
+      unregisterGone = result.current.registerOpenMenu(gone)
+    })
+    act(() => unregisterGone())
+
+    act(() => result.current.collapse())
+
+    expect({ first: first.mock.calls.length, second: second.mock.calls.length, gone: gone.mock.calls.length }).toEqual({
+      first: 1,
+      second: 1,
+      gone: 0,
+    })
+    expect(result.current.state).toBe("collapsed")
+  })
+
+  it("togglePinned closes menus when it collapses, not when it opens", () => {
+    const { result } = renderHook(() => useSidebar(), { wrapper })
+    const close = vi.fn()
+
+    act(() => result.current.collapse())
+    act(() => {
+      result.current.registerOpenMenu(close)
+    })
+    act(() => result.current.togglePinned())
+    expect({ state: result.current.state, closed: close.mock.calls.length }).toEqual({ state: "pinned", closed: 0 })
+
+    act(() => result.current.togglePinned())
+    expect({ state: result.current.state, closed: close.mock.calls.length }).toEqual({ state: "collapsed", closed: 1 })
   })
 })
 

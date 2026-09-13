@@ -102,8 +102,14 @@ interface SidebarContextValue {
   toggleSectionState: (section: string, defaultState?: CollapseState) => void
   /** Force a section to a specific state without toggling. */
   setSectionState: (section: string, state: CollapseState) => void
-  /** Notify that a menu inside the sidebar opened/closed (prevents collapse while open) */
-  setMenuOpen: (open: boolean) => void
+  /**
+   * Register an open menu rooted in the sidebar. Menus render in portals and
+   * outlive the sidebar's DOM, so an open one holds off the hover-preview
+   * timer and is closed by `dismissMenus`. Returns the unregister function.
+   */
+  registerOpenMenu: (close: () => void) => () => void
+  /** Close every registered menu — runs when the sidebar starts closing. */
+  dismissMenus: () => void
 }
 
 const SidebarContext = createContext<SidebarContextValue | null>(null)
@@ -207,7 +213,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
   const isHoveringRef = useRef(false)
   const [isResizing, setIsResizing] = useState(false)
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const menuOpenCountRef = useRef(0)
+  const openMenusRef = useRef(new Set<() => void>())
 
   const updatePersistedState = useCallback(
     (updates: Partial<SidebarPersistedState>) => {
@@ -259,6 +265,10 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     }, HIDE_DELAY_MS)
   }, [clearHideTimeout])
 
+  const dismissMenus = useCallback(() => {
+    for (const close of [...openMenusRef.current]) close()
+  }, [])
+
   // Toggle between collapsed and pinned (or preview on mobile).
   // On desktop, toggling while in preview (hover) locks it to pinned instead
   // of collapsing — otherwise the active hover would immediately re-open
@@ -269,6 +279,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     if (isMobile && state === "collapsed" && document.activeElement instanceof HTMLElement) {
       document.activeElement.blur()
     }
+    if (state === "pinned" || (state === "preview" && isMobile)) dismissMenus()
     setState((current) => {
       let next: SidebarState
       if (current === "pinned") {
@@ -288,16 +299,17 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
       }
       return next
     })
-  }, [clearHideTimeout, isMobile, state, updatePersistedState])
+  }, [clearHideTimeout, dismissMenus, isMobile, state, updatePersistedState])
 
   // Collapse the sidebar (skip localStorage persist on mobile to preserve desktop preference)
   const collapse = useCallback(() => {
     clearHideTimeout()
+    dismissMenus()
     setState("collapsed")
     if (!isMobile) {
       updatePersistedState({ openState: "collapsed" })
     }
-  }, [clearHideTimeout, isMobile, updatePersistedState])
+  }, [clearHideTimeout, dismissMenus, isMobile, updatePersistedState])
 
   // Collapse only when on mobile — safe to call unconditionally from click handlers
   const collapseOnMobile = useCallback(() => {
@@ -311,23 +323,25 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
       isHoveringRef.current = hovering
       if (hovering) {
         showPreview()
-      } else if (!isResizing && menuOpenCountRef.current === 0) {
+      } else if (!isResizing && openMenusRef.current.size === 0) {
         hidePreview()
       }
     },
     [showPreview, hidePreview, isResizing]
   )
 
-  // Track open menus inside the sidebar (dropdowns render in portals outside the sidebar DOM,
-  // so mouse-leaving the sidebar while a menu is open should NOT collapse it)
-  const setMenuOpen = useCallback(
-    (open: boolean) => {
-      menuOpenCountRef.current = Math.max(0, menuOpenCountRef.current + (open ? 1 : -1))
-      if (!open && menuOpenCountRef.current === 0 && !isHoveringRef.current) {
-        hidePreview()
+  const registerOpenMenu = useCallback(
+    (close: () => void) => {
+      clearHideTimeout()
+      openMenusRef.current.add(close)
+      return () => {
+        openMenusRef.current.delete(close)
+        if (openMenusRef.current.size === 0 && !isHoveringRef.current) {
+          hidePreview()
+        }
       }
     },
-    [hidePreview]
+    [clearHideTimeout, hidePreview]
   )
 
   const startResizing = useCallback(() => {
@@ -429,7 +443,8 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         setWidth,
         toggleSectionState,
         setSectionState,
-        setMenuOpen,
+        registerOpenMenu,
+        dismissMenus,
       }}
     >
       {children}

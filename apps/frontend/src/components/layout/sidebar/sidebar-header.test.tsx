@@ -35,7 +35,7 @@ describe("SidebarHeader", () => {
     } as unknown as ReturnType<typeof contextsModule.useQuickSwitcher>)
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
-      setMenuOpen: vi.fn(),
+      registerOpenMenu: vi.fn(() => () => {}),
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: { keyboardShortcuts: {} },

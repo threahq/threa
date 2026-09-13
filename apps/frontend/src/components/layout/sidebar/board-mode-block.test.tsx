@@ -50,6 +50,7 @@ function stub(
 
   vi.spyOn(Contexts, "useSidebar").mockReturnValue({
     collapseOnMobile: vi.fn(),
+    registerOpenMenu: vi.fn(() => () => {}),
   } as unknown as ReturnType<typeof Contexts.useSidebar>)
   vi.spyOn(Contexts, "usePreferencesOptional").mockReturnValue(
     opts.boardDefaultLens === undefined
