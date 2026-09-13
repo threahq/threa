@@ -27,6 +27,22 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     global: true,
   },
   {
+    id: "historyBack",
+    label: "Back",
+    description: "Go back in stream history",
+    defaultKey: "mod+[",
+    category: "navigation",
+    global: true,
+  },
+  {
+    id: "historyForward",
+    label: "Forward",
+    description: "Go forward in stream history",
+    defaultKey: "mod+]",
+    category: "navigation",
+    global: true,
+  },
+  {
     id: "searchInStream",
     label: "Search in Stream",
     description: "Search messages in the current stream",
@@ -247,8 +263,9 @@ export function matchesKeyBinding(event: KeyboardEvent, binding: string): boolea
   // "mod" matches metaKey OR ctrlKey for cross-platform parity.
   const modPressed = event.metaKey || event.ctrlKey
 
-  // vim-style ctrl+[ as escape.
-  if (parsed.key === "[" && event.ctrlKey && event.key === "[") {
+  // vim-style ctrl+[ as escape. AltGr reports as ctrl+alt, and `[` sits on
+  // AltGr+8 on Nordic and German layouts, so typing it must not match here.
+  if (parsed.key === "[" && event.ctrlKey && event.key === "[" && !event.altKey && !event.metaKey && !event.shiftKey) {
     return true
   }
 

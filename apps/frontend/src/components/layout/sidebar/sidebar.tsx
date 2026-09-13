@@ -627,7 +627,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   return (
     <>
       <SidebarShell
-        header={<SidebarHeader workspaceName={workspace?.name ?? ""} />}
+        header={<SidebarHeader workspaceName={workspace?.name ?? ""} workspaceId={workspaceId} />}
         body={
           <SidebarStreamList
             workspaceId={workspaceId}

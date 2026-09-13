@@ -9,7 +9,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react"
-import { Outlet, useParams, useSearchParams, useMatch, Navigate } from "react-router-dom"
+import { Outlet, useParams, useSearchParams, useMatch, useNavigate, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/app-shell"
 import { Sidebar } from "@/components/layout/sidebar"
 import { AppToastHost } from "@/components/app-update-toast"
@@ -51,6 +51,9 @@ import {
   useKeyboardShortcuts,
   useMentionables,
   usePersistLastLocation,
+  useNavigationJournal,
+  useRecordNavigationJournal,
+  type JournalStep,
   useAppUpdate,
   useMessageQueue,
   useUnreadTabIndicator,
@@ -106,13 +109,26 @@ const PAGE_RESUME_THRESHOLD_MS = 5_000
 interface WorkspaceKeyboardHandlerProps {
   onOpenSwitcher: (mode: QuickSwitcherMode) => void
   currentStreamId: string | undefined
+  workspaceId: string
   children: ReactNode
 }
 
-function WorkspaceKeyboardHandler({ onOpenSwitcher, currentStreamId, children }: WorkspaceKeyboardHandlerProps) {
+function WorkspaceKeyboardHandler({
+  onOpenSwitcher,
+  currentStreamId,
+  workspaceId,
+  children,
+}: WorkspaceKeyboardHandlerProps) {
   const { openSettings } = useSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
+  const journal = useNavigationJournal(workspaceId)
+  const navigate = useNavigate()
+  const stepJournal = (target: JournalStep | null) => {
+    if (!target) return
+    journal.step(target)
+    navigate(target.to, { state: target.state })
+  }
 
   useKeyboardShortcuts({
     openQuickSwitcher: () => onOpenSwitcher("stream"),
@@ -126,6 +142,8 @@ function WorkspaceKeyboardHandler({ onOpenSwitcher, currentStreamId, children }:
       openOutcomes({
         streamIds: currentStreamId ? [currentStreamId] : [],
       }),
+    historyBack: () => stepJournal(journal.back),
+    historyForward: () => stepJournal(journal.forward),
   })
 
   return <>{children}</>
@@ -509,6 +527,7 @@ export function WorkspaceLayout() {
   const streams = useWorkspaceStreams(workspaceId ?? "")
 
   usePersistLastLocation(workspaceId)
+  useRecordNavigationJournal(workspaceId)
   useCapturePageviews()
 
   // Remember the workspace the user is in so the `/` entry route can redirect
@@ -562,7 +581,11 @@ export function WorkspaceLayout() {
                         <WorkspaceEmojiProvider workspaceId={workspaceId}>
                           <PreferencesProvider workspaceId={workspaceId}>
                             <SettingsProvider>
-                              <WorkspaceKeyboardHandler onOpenSwitcher={openSwitcher} currentStreamId={streamId}>
+                              <WorkspaceKeyboardHandler
+                                onOpenSwitcher={openSwitcher}
+                                currentStreamId={streamId}
+                                workspaceId={workspaceId}
+                              >
                                 <E2eUnlockProvider workspaceId={workspaceId}>
                                   <QuickSwitcherProvider openSwitcher={openSwitcher}>
                                     <PanelProvider>
