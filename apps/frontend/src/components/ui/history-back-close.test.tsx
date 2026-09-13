@@ -69,6 +69,10 @@ function StackedHarness() {
       >
         close-both
       </button>
+      {/* An actions-drawer item: closes B and pushes a same-page URL entry */}
+      <Link to={`${STREAM_PATH}?panel=1`} onClick={() => setBOpen(false)}>
+        reply-item
+      </Link>
       <Drawer open={aOpen} onOpenChange={setAOpen}>
         <DrawerContent>
           <DrawerTitle>A</DrawerTitle>
@@ -101,6 +105,15 @@ function makeRouter(ui: React.ReactElement) {
   )
   attachOverlayHistoryRouter(router)
   return router
+}
+
+/** Every PUSH the router commits from now on, whoever issued it. */
+function countPushes(router: ReturnType<typeof makeRouter>) {
+  const pushes = { count: 0 }
+  router.subscribe((state) => {
+    if (state.historyAction === "PUSH") pushes.count += 1
+  })
+  return pushes
 }
 
 async function openDrawer(router: ReturnType<typeof makeRouter>, name = "open-drawer") {
@@ -146,24 +159,43 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
   })
 
-  it("survives a forward navigation and closes on the next back, in place", async () => {
+  it("survives a forward navigation: back returns to the drawer's entry, the next back closes it", async () => {
     const router = makeRouter(<DrawerHarness />)
     render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
 
     await openDrawer(router)
+    const drawerKey = router.state.location.key
+    const pushes = countPushes(router)
 
-    // A forward push must not close the drawer; the coordinator re-establishes
-    // the sentinel at the new location.
+    // A forward push must not close the drawer, and the coordinator must not
+    // stack a second entry over it — the phone's aside sheet is exactly this:
+    // a `?panel=` entry pushed while the sheet's entry sits below.
     await act(async () => {
       await router.navigate(`${STREAM_PATH}?x=1`)
     })
+    await act(async () => {})
     expect(screen.getByText("drawer-open")).toBeInTheDocument()
+    expect(pushes.count).toBe(1)
+
+    // Back lands on the entry the drawer was opened on, drawer still open, and
+    // the coordinator pushes NOTHING after it: Chrome marks every entry
+    // skippable when a pushState follows a back without a user gesture between
+    // them, and Android's next back then leaves the app.
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await act(async () => {})
+    expect(router.state.location.key).toBe(drawerKey)
+    expect(screen.getByText("drawer-open")).toBeInTheDocument()
+    expect(pushes.count).toBe(1)
 
     await act(async () => {
       await router.navigate(-1)
     })
     await waitFor(() => expect(screen.getByText("drawer-closed")).toBeInTheDocument())
-    expect(router.state.location.pathname).toBe(STREAM_PATH)
+    expect(router.state.location.key).toBe(initialKey)
+    expect(pushes.count).toBe(1)
   })
 
   it("back closes only the top drawer of a stack", async () => {
@@ -188,6 +220,44 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     })
     await waitFor(() => expect(screen.getByText("a-closed")).toBeInTheDocument())
     expect(router.state.location.pathname).toBe(STREAM_PATH)
+  })
+
+  it("an entry left behind by a drawer that closed while pushing is popped on landing, never re-pushed", async () => {
+    const router = makeRouter(<StackedHarness />)
+    render(<RouterProvider router={router} />)
+    const initialKey = router.state.location.key
+
+    // The phone's shape: the aside sheet (A) holds its entry, the message
+    // actions drawer (B) opens over it, and its "Reply in thread" link closes
+    // B while pushing `?panel=` — B's entry stays under the panel's.
+    await openDrawer(router, "open-a")
+    const aKey = router.state.location.key
+    fireEvent.click(screen.getByText("open-b"))
+    await waitFor(() => expect(router.state.location.key).not.toBe(aKey))
+    fireEvent.click(screen.getByText("reply-item"))
+    await waitFor(() => expect(router.state.location.search).toBe("?panel=1"))
+    await act(async () => {})
+    expect(screen.getByText("b-closed")).toBeInTheDocument()
+    expect(screen.getByText("a-open")).toBeInTheDocument()
+    const pushes = countPushes(router)
+
+    // One back closes the panel and settles on A's entry with A still open,
+    // consuming B's stale entry by a pop — a push here is what makes Android's
+    // next back leave the app.
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.key).toBe(aKey))
+    expect(screen.getByText("a-open")).toBeInTheDocument()
+    expect(router.state.location.search).toBe("")
+    expect(pushes.count).toBe(0)
+
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(screen.getByText("a-closed")).toBeInTheDocument())
+    expect(router.state.location.key).toBe(initialKey)
+    expect(pushes.count).toBe(0)
   })
 
   it("closing a stack in one tick unwinds the sentinel", async () => {
@@ -444,14 +514,17 @@ describe("HistoryBackClose with the code viewer stacked over the gallery (mobile
     fireEvent.click(screen.getByText("open-code-viewer"))
     await waitFor(() => expect(screen.getByRole("button", { name: "Wrap lines" })).toBeInTheDocument())
     await act(async () => {})
+    const pushes = countPushes(router)
 
-    // First back: the viewer goes, the gallery stays open on ?media=
+    // First back: the viewer goes, the gallery stays open on ?media=, and
+    // nothing is pushed after the back (the viewer had its own entry)
     await act(async () => {
       await router.navigate(-1)
     })
     await waitFor(() => expect(screen.queryByRole("button", { name: "Wrap lines" })).not.toBeInTheDocument())
     expect(screen.getByText("gallery-open")).toBeInTheDocument()
     expect(router.state.location.search).toBe("?media=attach_1")
+    expect(pushes.count).toBe(0)
 
     // Second back: the gallery goes, and we are back where we started
     await act(async () => {
