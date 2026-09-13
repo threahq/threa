@@ -1,4 +1,13 @@
-import type { ComponentProps, ComponentType, MouseEvent, ReactNode, RefObject } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ComponentType,
+  type MouseEvent,
+  type ReactNode,
+  type RefObject,
+} from "react"
 import { Check, ChevronDown, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
@@ -198,6 +207,43 @@ function SidebarActionMenuGroup({ members }: { members: SidebarActionItem[] }) {
   )
 }
 
+/** Holds `close` registered with the sidebar while `open`, so a sidebar close dismisses the menu. */
+function useSidebarMenu(open: boolean, close: () => void) {
+  const { registerOpenMenu } = useSidebar()
+  const closeRef = useRef(close)
+  closeRef.current = close
+  useEffect(() => {
+    if (!open) return
+    return registerOpenMenu(() => closeRef.current())
+  }, [open, registerOpenMenu])
+}
+
+interface SidebarDropdownMenuProps {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  children: ReactNode
+}
+
+/**
+ * The dropdown root for every menu inside the sidebar: registers itself while
+ * open so closing the sidebar (swipe, shortcut, backdrop) closes the menu too.
+ */
+export function SidebarDropdownMenu({ open, onOpenChange, children }: SidebarDropdownMenuProps) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const isOpen = open ?? uncontrolledOpen
+  const handleOpenChange = (next: boolean) => {
+    setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }
+  useSidebarMenu(isOpen, () => handleOpenChange(false))
+
+  return (
+    <DropdownMenu open={isOpen} onOpenChange={handleOpenChange}>
+      {children}
+    </DropdownMenu>
+  )
+}
+
 export function SidebarActionMenu({
   actions,
   trigger,
@@ -209,8 +255,6 @@ export function SidebarActionMenu({
   open,
   onOpenChange,
 }: SidebarActionMenuProps) {
-  const { setMenuOpen } = useSidebar()
-
   if (actions.length === 0 && !header) return null
 
   const defaultTrigger = (
@@ -232,13 +276,7 @@ export function SidebarActionMenu({
   )
 
   return (
-    <DropdownMenu
-      open={open}
-      onOpenChange={(next) => {
-        setMenuOpen(next)
-        onOpenChange?.(next)
-      }}
-    >
+    <SidebarDropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{trigger ?? defaultTrigger}</DropdownMenuTrigger>
       <DropdownMenuContent side={side} align={align} className={cn("w-40", contentClassName)}>
         {header}
@@ -250,7 +288,7 @@ export function SidebarActionMenu({
           )
         )}
       </DropdownMenuContent>
-    </DropdownMenu>
+    </SidebarDropdownMenu>
   )
 }
 
@@ -334,12 +372,15 @@ interface SidebarActionContextMenuProps {
  * there are no actions or the menu is disabled.
  */
 export function SidebarActionContextMenu({ actions, children, disabled, focusRef }: SidebarActionContextMenuProps) {
-  const { setMenuOpen } = useSidebar()
+  const [open, setOpen] = useState(false)
+  // Radix ContextMenu has no controlled `open`: a sidebar close cannot dismiss
+  // it, so registration only holds off the hover-preview timer.
+  useSidebarMenu(open, () => {})
 
   if (disabled || actions.length === 0) return <>{children}</>
 
   return (
-    <ContextMenu onOpenChange={setMenuOpen}>
+    <ContextMenu onOpenChange={setOpen}>
       <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
       <ContextMenuContent
         className="w-40"

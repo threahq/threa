@@ -37,7 +37,8 @@ import {
   parseLensParam,
 } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { SidebarDropdownMenu } from "./sidebar-actions"
 import { BoardFilterChips } from "./board-filter-chips"
 import { BoardUnreadRow } from "./board-link-row"
 
@@ -141,7 +142,7 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                     now, and touch has no hover to reveal a hidden trigger.
                     Fixed footprint per INV-21. Management verbs are actions,
                     not navigation. */}
-                <DropdownMenu>
+                <SidebarDropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
@@ -168,7 +169,7 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                       Delete
                     </DropdownMenuItem>
                   </DropdownMenuContent>
-                </DropdownMenu>
+                </SidebarDropdownMenu>
               </div>
             )
           })}
@@ -218,7 +219,7 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                   </span>
                 )}
               </Link>
-              <DropdownMenu>
+              <SidebarDropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
@@ -236,7 +237,7 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                     {isHome ? "Board home" : "Set as board home"}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </SidebarDropdownMenu>
             </div>
           )
         })}

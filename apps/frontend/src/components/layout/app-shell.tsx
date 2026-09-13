@@ -92,6 +92,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     isResizing,
     setHovering,
     collapse,
+    dismissMenus,
     showPreview,
     startResizing,
     stopResizing,
@@ -185,6 +186,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     isMobile,
     onOpen: showPreview,
     onClose: collapse,
+    onCloseStart: dismissMenus,
   })
 
   // Skipped while a finger is the active input — a mouse (even on a touchscreen

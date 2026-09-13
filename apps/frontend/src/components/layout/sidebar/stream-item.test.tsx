@@ -17,7 +17,7 @@ import * as streamSettingsModule from "@/components/stream-settings/use-stream-s
 
 const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
-const setMenuOpen = vi.fn()
+const registerOpenMenu = vi.fn(() => () => {})
 
 // Active input (useInputMode) and touch capability (useTouchCapable) are
 // independent — a touch-capable laptop is mouse-driven — so drive them from
@@ -76,13 +76,13 @@ describe("StreamItem", () => {
     vi.useFakeTimers()
     collapseOnMobile.mockReset()
     openStreamSettings.mockReset()
-    setMenuOpen.mockReset()
+    registerOpenMenu.mockClear()
     touchState.inputMode = "touch"
     touchState.touchCapable = true
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
-      setMenuOpen,
+      registerOpenMenu,
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
@@ -476,7 +476,7 @@ describe("StreamItem — board mode", () => {
     touchState.touchCapable = true
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
       collapseOnMobile,
-      setMenuOpen,
+      registerOpenMenu,
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
     vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
     vi.spyOn(hooksModule, "useActors").mockReturnValue({

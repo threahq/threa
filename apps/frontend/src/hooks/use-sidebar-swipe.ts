@@ -32,6 +32,8 @@ interface UseSidebarSwipeOptions {
   isMobile: boolean
   onOpen: () => void
   onClose: () => void
+  /** A closing swipe locked in — fires before the finger lifts, not when the close commits. */
+  onCloseStart: () => void
 }
 
 /**
@@ -45,7 +47,7 @@ interface UseSidebarSwipeOptions {
  * Returns refs to attach to the sidebar `<aside>` and backdrop `<div>`,
  * plus an `isSwiping` boolean to suppress CSS transitions during gestures.
  */
-export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSidebarSwipeOptions) {
+export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose, onCloseStart }: UseSidebarSwipeOptions) {
   const [isSwiping, setIsSwiping] = useState(false)
   const sidebarRef = useRef<HTMLElement>(null)
   const backdropRef = useRef<HTMLDivElement>(null)
@@ -54,8 +56,8 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
   const clearStylesRafRef = useRef<number | null>(null)
 
   // Latest values in a ref so event handlers always read current state
-  const stateRef = useRef({ isOpen, onOpen, onClose })
-  stateRef.current = { isOpen, onOpen, onClose }
+  const stateRef = useRef({ isOpen, onOpen, onClose, onCloseStart })
+  stateRef.current = { isOpen, onOpen, onClose, onCloseStart }
 
   // After swipe ends and isSwiping becomes false, clear residual inline styles.
   // This runs after React has painted the CSS classes, so removing the inline
@@ -200,6 +202,8 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose }: UseSideba
           trackerRef.current = null
           return
         }
+
+        if (!t.opening) stateRef.current.onCloseStart()
 
         // Cancel any pending snap timeout from a previous gesture so it
         // doesn't fire setIsSwiping(false) mid-swipe and clear our styles

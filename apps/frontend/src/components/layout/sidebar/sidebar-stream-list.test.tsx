@@ -56,7 +56,7 @@ function makeBoardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {
 function stubSidebarContexts() {
   vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
     collapseOnMobile: vi.fn(),
-    setMenuOpen: vi.fn(),
+    registerOpenMenu: vi.fn(() => () => {}),
   } as unknown as ReturnType<typeof contextsModule.useSidebar>)
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { keyboardShortcuts: {} },
