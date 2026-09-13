@@ -9,6 +9,16 @@ interface HistoryBackCloseProps {
   onClose: () => void
 }
 
+/**
+ * Shared by the overlay primitives: `false` for an overlay whose open state
+ * lives in the URL (`?media=`, `?settings=`, `?trace=`). Opening it already
+ * pushed an entry and `useCoverClose` pops that one, so a sentinel on top
+ * would cost a second back press and be left behind by the cover's own close.
+ */
+export interface HistoryEntryProp {
+  historyEntry?: boolean
+}
+
 interface OverlayEntry {
   close: () => void
 }

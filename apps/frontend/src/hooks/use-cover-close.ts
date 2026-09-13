@@ -15,11 +15,11 @@ import type { Cover, PopsToCloseState } from "@/lib/covers"
  * PUSH qualifies. The claim is kept per history entry key, so it survives a
  * forward navigation and a back onto the entry. It carries over to a replace
  * on top (the gallery swiping to the next item, a settings tab change) and to
- * a same-URL push on top, which is an overlay's sentinel entry
+ * a same-URL push on top, an overlay's sentinel entry
  * (`history-back-close.tsx`): neither touches the entry beneath. The
  * cold-launch rebuild (`useRebuildLaunchAncestors`) batches its hops into one
  * commit, so the previous location never sees the entry it pushed on top of;
- * its push carries `popsToClose: <param>` as the attestation instead.
+ * its hops carry `popsToClose: <param>` as the attestation instead.
  *
  * The entry beneath must carry NONE of the cover's params, not merely other
  * values: closing means "cover gone" (a nested thread's affordance reads
@@ -43,11 +43,14 @@ export function useCoverClose(cover: Cover): () => void {
     const beneath = `${location.pathname}?${params.toString()}`
     const before = previous.current
     previous.current = { key: location.key, url }
-    if (!open || !before) return
+    if (!open) return
+    // An attested entry stays attested however it is reached: the rebuild's
+    // inner hops are first seen by popping back onto them.
     const attested = (location.state as PopsToCloseState | null)?.popsToClose === cover[0]
-    const pushedOverBeneath = navigationType === "PUSH" && (attested || before.url === beneath)
-    const onTop = (navigationType === "REPLACE" || url === before.url) && claimed.current.has(before.key)
-    if (pushedOverBeneath || onTop) claimed.current.add(location.key)
+    const pushedOverBeneath = navigationType === "PUSH" && before?.url === beneath
+    const onTop =
+      before !== null && (navigationType === "REPLACE" || url === before.url) && claimed.current.has(before.key)
+    if (attested || pushedOverBeneath || onTop) claimed.current.add(location.key)
   }, [cover, location.key, location.pathname, location.search, location.state, navigationType])
 
   return useCallback(() => {

@@ -175,7 +175,7 @@ export function TraceDialog() {
   const messageCount = steps.filter((s) => s.stepType === "message_sent" || s.stepType === "message_edited").length
 
   return (
-    <ResponsiveDialog open onOpenChange={(open) => !open && closeTraceModal()}>
+    <ResponsiveDialog open onOpenChange={(open) => !open && closeTraceModal()} historyEntry={false}>
       <ResponsiveDialogContent
         desktopClassName="max-w-4xl max-h-[90vh] sm:flex flex-col p-0 gap-0 [&>button:last-child]:hidden"
         drawerClassName="flex flex-col p-0"

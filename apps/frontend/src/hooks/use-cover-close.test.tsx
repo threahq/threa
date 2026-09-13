@@ -1,20 +1,29 @@
 import { describe, it, expect } from "vitest"
 import { render, screen, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, Link, RouterProvider, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import {
+  createMemoryRouter,
+  Link,
+  RouterProvider,
+  useLocation,
+  useNavigate,
+  useSearchParams,
+  type InitialEntry,
+} from "react-router-dom"
 import { useCoverClose } from "./use-cover-close"
-import { TRACE_COVER } from "@/lib/covers"
+import { PANEL_COVER, TRACE_COVER, type Cover } from "@/lib/covers"
 
 const ELSEWHERE = "/elsewhere"
-const PAGE = "/s/stream_1?panel=x"
+const BARE = "/s/stream_1"
+const PAGE = `${BARE}?panel=x`
 
 /** A `?trace=` cover with its `?highlight=` companion, opened the ways covers
  *  open in the product: a push, a `<Link>`, a replace, or a launch rebuild. */
-function Probe() {
+function Probe({ cover }: { cover: Cover }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [, setSearchParams] = useSearchParams()
-  const close = useCoverClose(TRACE_COVER)
+  const close = useCoverClose(cover)
   const set = (trace: string, replace: boolean) =>
     setSearchParams(
       (prev) => {
@@ -40,8 +49,8 @@ function Probe() {
   )
 }
 
-function mount(initialEntries: string[]) {
-  const router = createMemoryRouter([{ path: "*", element: <Probe /> }], {
+function mount(initialEntries: InitialEntry[], cover: Cover = TRACE_COVER) {
+  const router = createMemoryRouter([{ path: "*", element: <Probe cover={cover} /> }], {
     initialEntries,
     initialIndex: initialEntries.length - 1,
   })
@@ -125,5 +134,27 @@ describe("useCoverClose", () => {
     expect(loc()).toBe(PAGE)
     await back()
     expect(loc()).toBe(`${PAGE}&trace=a`)
+  })
+
+  it("honors the attestation on a hop it first sees by popping back onto it (a stacked cold launch)", async () => {
+    // The rebuild commits its hops in one batch: the panel hop under the trace
+    // hop is never observed as a PUSH, only as a POP once the trace is closed.
+    const user = userEvent.setup()
+    const { back, loc } = mount(
+      [
+        ELSEWHERE,
+        BARE,
+        { pathname: BARE, search: "?panel=x", state: { popsToClose: "panel" } },
+        { pathname: BARE, search: "?panel=x&trace=t", state: { popsToClose: "trace" } },
+      ],
+      PANEL_COVER
+    )
+    await back()
+    expect(loc()).toBe(PAGE)
+
+    await user.click(screen.getByRole("button", { name: "close" }))
+    expect(loc()).toBe(BARE)
+    await back()
+    expect(loc()).toBe(ELSEWHERE)
   })
 })

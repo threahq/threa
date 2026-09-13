@@ -3,9 +3,15 @@ import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { HistoryBackClose } from "./history-back-close"
+import { HistoryBackClose, type HistoryEntryProp } from "./history-back-close"
 
-const Dialog = ({ open, defaultOpen, onOpenChange, ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) => {
+const Dialog = ({
+  open,
+  defaultOpen,
+  onOpenChange,
+  historyEntry = true,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Root> & HistoryEntryProp) => {
   // Open state is lifted out of Radix (mirroring uncontrolled usage into local
   // state) so HistoryBackClose can close trigger-driven dialogs too — same
   // contract as Drawer. A dialog is modal on every viewport, so it takes a
@@ -23,7 +29,7 @@ const Dialog = ({ open, defaultOpen, onOpenChange, ...props }: React.ComponentPr
 
   return (
     <>
-      <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />
+      {historyEntry && <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />}
       <DialogPrimitive.Root open={resolvedOpen} onOpenChange={handleOpenChange} {...props} />
     </>
   )

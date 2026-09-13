@@ -5,7 +5,7 @@ import { Drawer as DrawerPrimitive } from "vaul"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
-import { HistoryBackClose } from "./history-back-close"
+import { HistoryBackClose, type HistoryEntryProp } from "./history-back-close"
 
 const Drawer = ({
   shouldScaleBackground = true,
@@ -13,8 +13,9 @@ const Drawer = ({
   open,
   defaultOpen,
   onOpenChange,
+  historyEntry = true,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Root>) => {
+}: React.ComponentProps<typeof DrawerPrimitive.Root> & HistoryEntryProp) => {
   const isMobile = useIsMobile()
   // Open state is lifted out of vaul (mirroring uncontrolled usage into local
   // state) so HistoryBackClose can close trigger-driven drawers too.
@@ -31,7 +32,7 @@ const Drawer = ({
 
   return (
     <>
-      {isMobile && <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />}
+      {isMobile && historyEntry && <HistoryBackClose open={resolvedOpen} onClose={() => handleOpenChange(false)} />}
       {/* repositionInputs=false disables Vaul's built-in visualViewport keyboard
           handling which sets inline style.height on the drawer content. This conflicts
           with our dvh units that already account for the virtual keyboard, causing

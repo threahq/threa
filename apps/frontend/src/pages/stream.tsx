@@ -143,14 +143,11 @@ export function StreamPage() {
       closeConversationOverlay()
       return
     }
-    setSearchParams(
-      (prev) => {
-        const newParams = new URLSearchParams(prev)
-        newParams.set("convOverlay", "on")
-        return newParams
-      },
-      { replace: isConversationOverlayOn }
-    )
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      newParams.set("convOverlay", "on")
+      return newParams
+    })
   }
 
   // "In this stream" overview panel. The `context` param doubles as open-state
@@ -164,14 +161,11 @@ export function StreamPage() {
       closeContext()
       return
     }
-    setSearchParams(
-      (prev) => {
-        const newParams = new URLSearchParams(prev)
-        newParams.set("context", "all")
-        return newParams
-      },
-      { replace: isContextOpen }
-    )
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      newParams.set("context", "all")
+      return newParams
+    })
   }
 
   // A thread opens in the same right-edge panel slot, so the context overlay
