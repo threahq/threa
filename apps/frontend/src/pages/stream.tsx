@@ -59,7 +59,7 @@ import { ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
-import { useAsideForHost } from "@/stores/aside-store"
+import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { ConversationList } from "@/components/conversations"
@@ -81,7 +81,7 @@ export function StreamPage() {
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { isPanelOpen, closePanel, setFocusedPane } = usePanel()
+  const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
   const {
     containerRef,
     panelWidth,
@@ -105,6 +105,10 @@ export function StreamPage() {
   const asideIsSheet = useAsideIsSheet()
   const openAside = useAsideForHost(asideHostKey)
   const asideStage = !asideIsSheet && openAside !== null
+  // A thread the aside's surface holds (the stage's host pane, or the phone's
+  // sheet) is mounted there and nowhere else: not in the slot, not as the
+  // phone's takeover behind the sheet.
+  const panelInAside = openAside !== null && asideHoldsPanel(panelId, openAside.hostStreamId)
 
   useTypeToFocus()
 
@@ -942,7 +946,7 @@ export function StreamPage() {
   // behind it so closing a thread lands back where the reader was rather than
   // re-running the opening scroll. It must keep its position in this tree to do so
   // — see `panelTakeoverClasses`.
-  const mobileTakeover = isMobile && isPanelOpen
+  const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const layout = panelTakeoverClasses(mobileTakeover)
 
   return (
@@ -971,7 +975,7 @@ export function StreamPage() {
             shouldAnimate={shouldAnimate}
             // The stage mounts the panel in its host pane; the slot keeps its
             // width lifecycle but shows nothing under the overlay.
-            showContent={showContent && !asideStage}
+            showContent={showContent && !asideStage && !panelInAside}
             isResizing={isResizing}
             maxWidth={maxWidth}
             minWidth={minWidth}

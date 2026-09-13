@@ -80,6 +80,24 @@ async function openAsideFromPalette(page: Page): Promise<void> {
   await expect(page.getByRole("dialog")).toHaveCount(0)
 }
 
+/**
+ * A phone reaches a message's actions by holding it: the hover toolbar with
+ * the "Reply in thread" link is hidden below `sm`, and the hold opens the
+ * action drawer. The row's touch handlers live on its layout container, and
+ * synthetic events only bubble upward, so the press targets `.message-content`.
+ */
+async function replyInThreadByLongPress(page: Page, row: Locator): Promise<void> {
+  const target = row.locator(".message-content").first()
+  const box = (await target.boundingBox())!
+  const touch = { identifier: 1, clientX: box.x + box.width / 2, clientY: box.y + 12 }
+  await target.dispatchEvent("touchstart", { touches: [touch], changedTouches: [touch], targetTouches: [touch] })
+  await page.waitForTimeout(700)
+  await target.dispatchEvent("touchend", { touches: [], changedTouches: [], targetTouches: [] })
+  const drawer = page.locator("[data-vaul-drawer]")
+  await expect(drawer).toBeVisible({ timeout: 10000 })
+  await drawer.getByRole("link", { name: "Reply in thread" }).click()
+}
+
 test.describe("Aside — mobile surface", () => {
   let testId: string
 
@@ -191,6 +209,77 @@ test.describe("Aside — mobile surface", () => {
     await page.goBack()
     await expect(sheet(page)).toHaveCount(0)
     expect(page.url()).toContain(streamId)
+  })
+
+  test.describe("with a touch screen", () => {
+    test.use({ hasTouch: true })
+
+    test("gives a thread opened from the aside the sheet itself, and hands it back on close", async ({ page }) => {
+      await createChannel(page, `aside-mt-${testId}`)
+      const { workspaceId, streamId } = extractIds(page)
+      const prefix = `[${testId}-thread]`
+      await seedMessages(page, workspaceId, streamId, prefix)
+      await page.setViewportSize(PHONE)
+      await page.goto(`/w/${workspaceId}/s/${streamId}`)
+      await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
+
+      await openAsideFromPalette(page)
+      await expect(pane(page)).toHaveAttribute("data-view", "chat", { timeout: 15000 })
+      const asideId = await pane(page).getAttribute("data-aside-id")
+      expect(asideId).toBeTruthy()
+
+      // A message in the aside's own conversation stands in for a subagent's
+      // card: the thread it opens is rooted in the aside, so the sheet is the
+      // only surface it can show on.
+      const posted = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId: asideId, content: `${prefix} in the aside` },
+      })
+      expectApiOk(posted, "Send aside message")
+      await dragHandle(page, -PHONE.height * 0.5)
+      await expect(sheet(page)).toHaveAttribute("data-detent", "full", { timeout: 10000 })
+      const asideRow = sheet(page)
+        .locator("[data-message-id]")
+        .filter({ hasText: `${prefix} in the aside` })
+        .first()
+      await expect(asideRow).toBeVisible({ timeout: 15000 })
+
+      // The thread takes the sheet: the aside's chat steps aside for it, and the
+      // page mounts no takeover panel of its own behind the sheet.
+      await replyInThreadByLongPress(page, asideRow)
+      await expect(sheet(page)).toHaveAttribute("data-view", "panel", { timeout: 10000 })
+      await expect(sheet(page).getByText(/Start a new thread/)).toBeVisible()
+      await expect(sheet(page).getByTestId("aside-conversation")).toHaveCount(0)
+      await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
+      await expect(hostScroller(page, streamId)).toHaveCount(1)
+
+      const threadEditor = sheet(page).locator("[contenteditable='true']").first()
+      await threadEditor.focus()
+      await page.keyboard.type("in the thread")
+      await page.keyboard.press("Meta+Enter")
+      await expect(sheet(page).locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({
+        timeout: 10000,
+      })
+
+      // Closing the thread (the panel's phone back control) hands the sheet
+      // back to the aside, still open, and the reply count on the row is the
+      // way back in.
+      await sheet(page).getByRole("button", { name: "Back", exact: true }).click()
+      await expect(sheet(page)).toHaveAttribute("data-view", "aside", { timeout: 10000 })
+      await expect(sheet(page).getByTestId("aside-conversation")).toBeVisible()
+      expect(new URL(page.url()).searchParams.get("panel")).toBeNull()
+      await asideRow.getByRole("link", { name: /1 reply/ }).click()
+      await expect(sheet(page)).toHaveAttribute("data-view", "panel", { timeout: 10000 })
+      await expect(sheet(page).locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({
+        timeout: 10000,
+      })
+
+      // OS back peels one layer at a time: the thread first, then the aside.
+      await page.goBack()
+      await expect(sheet(page)).toHaveAttribute("data-view", "aside", { timeout: 10000 })
+      await page.goBack()
+      await expect(sheet(page)).toHaveCount(0)
+      expect(page.url()).toContain(streamId)
+    })
   })
 
   test("gives an open draft the whole sheet, and comes back to the conversation behind it", async ({ page }) => {

@@ -7,7 +7,13 @@ import { StreamContent } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { ASIDE_STAGE_MIN_WIDTH, closeAside, setAsideStageWidth, useAsideStageWidth } from "@/stores/aside-store"
+import {
+  ASIDE_STAGE_MIN_WIDTH,
+  asideHoldsPanel,
+  closeAside,
+  setAsideStageWidth,
+  useAsideStageWidth,
+} from "@/stores/aside-store"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelResizeHandle } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
@@ -67,12 +73,9 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   const [searchParams] = useSearchParams()
   // A thread opened from the host pane takes the pane. The page's own slot
   // shows nothing while the stage stands (stream.tsx, board.tsx), so this is
-  // the thread's only mount, and the panel's close hands the pane back. An
-  // aside opened from inside a thread has that thread as its host, and the
-  // host view already shows it — a panel on top would be two chromes for one
-  // stream.
+  // the thread's only mount, and the panel's close hands the pane back.
   const { panelId, closePanel } = usePanel()
-  const threadInPane = panelId !== null && panelId !== hostStreamId
+  const threadInPane = asideHoldsPanel(panelId, hostStreamId)
   // Closing the thread means back to the host, so its composer takes focus on
   // the hand-back (the page does the same for main when a panel closes);
   // otherwise the next keystroke routes to the only other panel zone, the

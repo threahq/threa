@@ -7,8 +7,16 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
+import { PanelHost } from "@/components/layout/panel-host"
+import { usePanel } from "@/contexts"
 import { cn } from "@/lib/utils"
-import { closeAside, setAsideSheetDetent, useAsideOpenDraft, useAsideSheetDetent } from "@/stores/aside-store"
+import {
+  asideHoldsPanel,
+  closeAside,
+  setAsideSheetDetent,
+  useAsideOpenDraft,
+  useAsideSheetDetent,
+} from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
 import {
   ASIDE_PEEK_FRACTION,
@@ -100,6 +108,17 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   useEffect(() => {
     if (openDraft) setAsideSheetDetent("full")
   }, [openDraft])
+  // A thread opened while the sheet stands — a subagent's card in the aside,
+  // a reply link on the host showing above the peek — takes the sheet, the way
+  // it takes the stage's host pane. The page mounts no takeover panel of its
+  // own while the sheet holds it (stream.tsx, board.tsx), so this is the
+  // thread's only mount; the panel's close hands the sheet back to the aside.
+  // A thread is a whole timeline, so the sheet goes to the full detent for it.
+  const { panelId, closePanel } = usePanel()
+  const threadInSheet = asideHoldsPanel(panelId, hostStreamId)
+  useEffect(() => {
+    if (threadInSheet) setAsideSheetDetent("full")
+  }, [threadInSheet])
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     // Without this the browser turns the drag into a text selection and
@@ -190,10 +209,15 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   return (
     <>
       <HistoryBackClose open onClose={closeAside} />
+      {/* Registered above the aside: with an overlay open the coordinator keeps
+          its sentinel on top of the `?panel=` entry, so a back (the panel's own
+          close pops too) must peel the thread first, and the aside only next. */}
+      <HistoryBackClose open={threadInSheet} onClose={closePanel} />
       <div
         ref={sheetRef}
         data-testid="aside-sheet"
         data-detent={detent}
+        data-view={threadInSheet ? "panel" : "aside"}
         onFocusCapture={onFocusCapture}
         data-suppress-pull-refresh="true"
         className={cn(
@@ -221,14 +245,18 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         >
           <span aria-hidden className="h-1 w-9 rounded-full bg-muted-foreground/40" />
         </div>
-        <div className="min-h-0 flex-1">
-          <AsidePane
-            workspaceId={workspaceId}
-            asideId={asideId}
-            hostStreamId={hostStreamId}
-            originScope={originScope}
-            autoFocus={takeFocus}
-          />
+        <div className="flex min-h-0 flex-1 flex-col">
+          {threadInSheet ? (
+            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+          ) : (
+            <AsidePane
+              workspaceId={workspaceId}
+              asideId={asideId}
+              hostStreamId={hostStreamId}
+              originScope={originScope}
+              autoFocus={takeFocus}
+            />
+          )}
         </div>
       </div>
     </>
