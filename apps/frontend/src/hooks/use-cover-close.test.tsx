@@ -14,6 +14,7 @@ import { useCoverClose } from "./use-cover-close"
 import { PANEL_COVER, TRACE_COVER, type Cover } from "@/lib/covers"
 
 const ELSEWHERE = "/elsewhere"
+const ROOT = "/w/ws?panel=x"
 const BARE = "/s/stream_1"
 const PAGE = `${BARE}?panel=x`
 
@@ -44,6 +45,14 @@ function Probe({ cover }: { cover: Cover }) {
       <button onClick={() => navigate(`${PAGE}&trace=e`, { state: { popsToClose: "panel" } })}>
         rebuild e for panel
       </button>
+      <button
+        onClick={() => {
+          navigate(PAGE, { replace: true })
+          navigate(`${PAGE}&trace=a&highlight=m-a`)
+        }}
+      >
+        redirect then push a
+      </button>
       <button onClick={close}>close</button>
     </div>
   )
@@ -68,6 +77,21 @@ describe("useCoverClose", () => {
     const user = userEvent.setup()
     const { back, loc } = mount([ELSEWHERE, PAGE])
     await user.click(screen.getByRole("button", { name: "push a" }))
+    expect(loc()).toBe(`${PAGE}&trace=a&highlight=m-a`)
+
+    await user.click(screen.getByRole("button", { name: "close" }))
+    expect(loc()).toBe(PAGE)
+    await back()
+    expect(loc()).toBe(ELSEWHERE)
+  })
+
+  it("claims a push batched into one commit with the redirect beneath it", async () => {
+    // The workspace root redirects to its default stream with a replace, and a
+    // cover opened in the same tick pushes on top of that; React commits both
+    // at once, so the committed location never shows the entry beneath.
+    const user = userEvent.setup()
+    const { back, loc } = mount([ELSEWHERE, ROOT])
+    await user.click(screen.getByRole("button", { name: "redirect then push a" }))
     expect(loc()).toBe(`${PAGE}&trace=a&highlight=m-a`)
 
     await user.click(screen.getByRole("button", { name: "close" }))
