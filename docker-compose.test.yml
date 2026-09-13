@@ -31,7 +31,7 @@ services:
       retries: 10
 
   minio-test:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     ports:
       - "9002:9000"
       - "9003:9001"
