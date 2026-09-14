@@ -22,6 +22,8 @@ const state = {
   failWorker: false,
   failAssetPaths: new Set<string>(),
   corruptAssetPaths: new Set<string>(),
+  stallBootstrapMs: 0,
+  bootstrapInFlight: 0,
 }
 
 function generation() {
@@ -64,6 +66,7 @@ async function handleControl(req: Request): Promise<Response> {
       deployed: state.deployed,
       latest: state.latest,
       failWorker: state.failWorker,
+      bootstrapInFlight: state.bootstrapInFlight,
       failAssets: [...state.failAssetPaths],
       corruptAssets: [...state.corruptAssetPaths],
       generations: Object.fromEntries(
@@ -106,7 +109,10 @@ async function handleControl(req: Request): Promise<Response> {
     if (typeof body.path === "string") state.corruptAssetPaths.add(body.path)
   } else if (path === "/__control/clear-corrupt-asset") {
     if (typeof body.path === "string") state.corruptAssetPaths.delete(body.path)
+  } else if (path === "/__control/stall-bootstrap") {
+    state.stallBootstrapMs = typeof body.ms === "number" ? body.ms : 0
   } else if (path === "/__control/reset") {
+    state.stallBootstrapMs = 0
     state.deployed = "A"
     state.latest = "A"
     state.failWorker = false
@@ -124,6 +130,7 @@ const port = process.env.APP_UPDATE_SERVER_PORT ? Number(process.env.APP_UPDATE_
 const server: Server = Bun.serve({
   hostname: "127.0.0.1",
   port,
+  idleTimeout: 60,
   async fetch(req) {
     const url = new URL(req.url)
     const pathname = url.pathname
@@ -135,6 +142,16 @@ const server: Server = Bun.serve({
       return new Response("<!doctype html><title>blank</title>", {
         headers: { "content-type": "text/html", "cache-control": "no-store" },
       })
+    }
+
+    if (pathname.startsWith("/api/workspaces/") && pathname.endsWith("/bootstrap")) {
+      state.bootstrapInFlight++
+      try {
+        await new Promise((resolve) => setTimeout(resolve, state.stallBootstrapMs))
+      } finally {
+        state.bootstrapInFlight--
+      }
+      return Response.json({ streams: [] }, { headers: { "cache-control": "no-store" } })
     }
 
     if (pathname === "/version.json") {

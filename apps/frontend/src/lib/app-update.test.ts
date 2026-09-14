@@ -7,7 +7,7 @@ import {
   createBrowserAppUpdateLifecycle,
   fetchLatestVersion,
 } from "./app-update"
-import { SW_MSG_APPLY_UPDATE, SW_MSG_QUERY_STATUS, SW_MSG_STATUS_REPLY } from "./sw-messages"
+import { SW_MSG_APPLY_UPDATE, SW_MSG_QUERY_STATUS, SW_MSG_RUN_GC, SW_MSG_STATUS_REPLY } from "./sw-messages"
 
 class FakeMessagePort extends EventTarget {
   other: FakeMessagePort | undefined
@@ -445,6 +445,79 @@ describe("AppUpdateController", () => {
     expect(stateSnapshot().phase).toBe("failed")
     expect(stateSnapshot().failure).toBe("activation-timeout")
     expect(reload).not.toHaveBeenCalled()
+  })
+
+  it("apply waits for a late activation without messaging the outgoing worker", async () => {
+    vi.useFakeTimers()
+    let oldWorkerQueries = 0
+    const oldWorker = new FakeWorker("activated", () => {
+      oldWorkerQueries++
+      return { version: "A", buildId: "A", ready: true }
+    })
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    container.controller = oldWorker
+    registration.active = oldWorker
+    registration.waiting = worker
+    makeController()
+    await controller.start()
+    await controller.check()
+    expect(stateSnapshot().phase).toBe("ready")
+
+    const queriesBeforeApply = oldWorkerQueries
+    const applyPromise = controller.apply()
+    // The outgoing worker is still busy: activation lands well after the old
+    // 10s window would have given up.
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(stateSnapshot().phase).toBe("applying")
+    worker.state = "activated"
+    registration.active = worker
+    registration.waiting = null
+    container.controller = worker
+    container.dispatchEvent(new Event("controllerchange"))
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS + 500)
+    await applyPromise
+    expect(reload).toHaveBeenCalledOnce()
+    expect(oldWorkerQueries).toBe(queriesBeforeApply)
+  })
+
+  it("apply fails as activation-failed when the target worker becomes redundant", async () => {
+    vi.useFakeTimers()
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    registration.waiting = worker
+    makeController()
+    await controller.start()
+    await controller.check()
+    const promise = controller.apply()
+    await vi.advanceTimersByTimeAsync(1000)
+    worker.state = "redundant"
+    registration.waiting = null
+    await vi.advanceTimersByTimeAsync(1000)
+    await promise
+    expect(stateSnapshot()).toMatchObject({ phase: "failed", failure: "activation-failed" })
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it("check skips precache cleanup on the outgoing controller once a newer build is ready", async () => {
+    const posted: unknown[] = []
+    const oldWorker = new FakeWorker("activated", () => ({ version: "A", buildId: "A", ready: true }))
+    const originalPost = oldWorker.postMessage.bind(oldWorker)
+    oldWorker.postMessage = (data: unknown, transfer?: Transferable[]) => {
+      posted.push(data)
+      originalPost(data, transfer)
+    }
+    container.controller = oldWorker
+    registration.active = oldWorker
+    makeController({ fetchLatestVersion: async () => "A" })
+    await controller.start()
+    await controller.check()
+    expect(stateSnapshot().phase).toBe("current")
+    expect(posted).toContainEqual({ type: SW_MSG_RUN_GC })
+
+    posted.length = 0
+    registration.waiting = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    await controller.check()
+    expect(stateSnapshot().phase).toBe("ready")
+    expect(posted).not.toContainEqual({ type: SW_MSG_RUN_GC })
   })
 
   it("apply is single-flight while a reload is in progress", async () => {

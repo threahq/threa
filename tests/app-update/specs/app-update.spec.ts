@@ -71,6 +71,26 @@ test("ready build B applies in one reload", async ({ page }) => {
   expect(reloads).toHaveLength(1)
 })
 
+test("ready build B applies while the outgoing worker still holds an in-flight response", async ({ page }) => {
+  await installWaiting(page, "B")
+  // Chromium defers a skipWaiting activation until the outgoing worker has no
+  // in-flight events; a bootstrap response it is proxying is exactly that, and
+  // one that outlives the old 10s apply window used to surface as a failure.
+  await controlApi.stallBootstrap(12_000)
+  await page.evaluate(() => {
+    void fetch("/api/workspaces/workspace_test/bootstrap?account=owner").catch(() => undefined)
+  })
+  await expect.poll(async () => (await controlApi.state()).bootstrapInFlight).toBe(1)
+  const button = page.getByRole("button", { name: /reload and update/i })
+  await button.waitFor()
+  const reloads: string[] = []
+  page.on("framenavigated", (frame) => frame === page.mainFrame() && reloads.push(frame.url()))
+
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 40_000 }), button.click()])
+  await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
+  expect(reloads).toHaveLength(1)
+})
+
 test("ready build B applies offline in one reload without clearing domain data", async ({ page, context }) => {
   await createDomainCacheSentinel(page, "threa-test-domain", "/__domain-sentinel")
   await setLocalDraftSentinel(page, "threa-test-draft", "saved")

@@ -44,6 +44,7 @@ export const controlApi = {
   clearFailAsset: (path: string) => control("POST", "/__control/clear-fail-asset", { path }),
   corruptAsset: (path: string) => control("POST", "/__control/corrupt-asset", { path }),
   clearCorruptAsset: (path: string) => control("POST", "/__control/clear-corrupt-asset", { path }),
+  stallBootstrap: (ms: number) => control("POST", "/__control/stall-bootstrap", { ms }),
   state: () => control("GET", "/__control/state"),
 }
 
