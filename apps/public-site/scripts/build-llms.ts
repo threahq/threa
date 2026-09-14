@@ -422,7 +422,8 @@ if (unroutable.length) {
   )
 }
 
-const unlisted = builtPages.filter((html) => !ALL_PAGES.some((p) => p.html === html))
+// Pages serves 404.html for missing routes outside the markdown middleware.
+const unlisted = builtPages.filter((html) => html !== "404.html" && !ALL_PAGES.some((p) => p.html === html))
 if (unlisted.length) {
   throw new Error(`Pages built without a PAGES/SITE_PAGES entry in scripts/build-llms.ts: ${unlisted.join(", ")}`)
 }

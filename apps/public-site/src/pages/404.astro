@@ -1,0 +1,64 @@
+---
+import Layout from "../layouts/Layout.astro"
+import SvgDefs from "../components/SvgDefs.astro"
+
+// A top-level 404.html disables Cloudflare Pages' implicit SPA fallback.
+---
+
+<Layout title="Page not found · Threa" description="That page doesn't exist.">
+  <SvgDefs />
+
+  <div class="frame">
+    <div class="hero-shell">
+      <div class="hero-inner">
+        <div class="nav-row">
+          <a class="brand" href="/">
+            <svg aria-hidden="true"><use href="#threa-mark" /></svg>
+            <span class="wordmark">Threa</span>
+          </a>
+          <nav class="nav-links">
+            <a href="/">Product</a>
+            <a href="/developers">Developers</a>
+            <a href="/about">About</a>
+          </nav>
+        </div>
+
+        <div class="nf-hero">
+          <h1 class="h-display">That page doesn't exist.</h1>
+          <p class="lede">
+            Check the address or <a href="/">return to the home page</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .brand {
+    text-decoration: none;
+  }
+  .nf-hero {
+    padding-top: 96px;
+  }
+  .nf-hero .h-display {
+    max-width: 15ch;
+  }
+  .nf-hero .lede {
+    max-width: 52ch;
+  }
+  .nf-hero a {
+    color: hsl(var(--gold) / 0.9);
+    text-decoration-color: hsl(var(--gold) / 0.4);
+    text-underline-offset: 3px;
+  }
+  .nf-hero a:hover {
+    color: hsl(var(--gold));
+    text-decoration-color: hsl(var(--gold));
+  }
+  @media (max-width: 768px) {
+    .nf-hero {
+      padding-top: 48px;
+    }
+  }
+</style>
