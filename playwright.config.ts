@@ -245,6 +245,9 @@ export default defineConfig({
         REGIONS: JSON.stringify({ local: { internalUrl: `http://localhost:${backendPort}` } }),
         CORS_ALLOWED_ORIGINS: `http://localhost:${controlPlanePort},http://localhost:${frontendPort}`,
         GLOBAL_RATE_LIMIT_MAX: "10000",
+        // Every worker shares one IP; /api/invitations/lookup and /claim sit
+        // behind the 20/min auth limiter, which a run of invite specs trips.
+        AUTH_RATE_LIMIT_MAX: "10000",
         WORKSPACE_CREATION_SKIP_INVITE: "true",
       },
     },
