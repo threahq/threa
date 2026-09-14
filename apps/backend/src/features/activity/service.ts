@@ -21,6 +21,9 @@ import {
   ActivityTypes,
   MENTION_BROADCAST_HERE,
   MENTION_BROADCAST_CHANNEL,
+  getAvatarUrl,
+  getBotAvatarUrl,
+  getPersonaAvatarUrl,
   type JSONContent,
 } from "@threahq/types"
 import { withClient, withTransaction } from "../../db"
@@ -113,7 +116,7 @@ export class ActivityService {
 
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = contentMarkdown.slice(0, 200)
-      const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
+      const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const recipientIds = [...userIds]
       const readUserIds = await this.resolveAlreadyReadRecipients(
@@ -132,7 +135,7 @@ export class ActivityService {
         messageId,
         actorId,
         actorType,
-        context: { contentPreview, authorName, ...streamContext },
+        context: { contentPreview, ...author, ...streamContext },
         readUserIds,
       })
     })
@@ -163,7 +166,7 @@ export class ActivityService {
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = contentMarkdown.slice(0, 200)
-      const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
+      const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const rows = await ActivityRepository.insertBatch(client, {
         workspaceId,
@@ -173,7 +176,7 @@ export class ActivityService {
         messageId,
         actorId,
         actorType,
-        context: { contentPreview, authorName, ...streamContext },
+        context: { contentPreview, ...author, ...streamContext },
         isSelf: true,
       })
 
@@ -254,7 +257,7 @@ export class ActivityService {
 
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = contentMarkdown.slice(0, 200)
-      const authorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
+      const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const resolved = await resolveNotificationLevelsForStream(client, stream, streamMembers)
       const eligibleUserIds = resolved
@@ -286,7 +289,7 @@ export class ActivityService {
         messageId,
         actorId,
         actorType,
-        context: { contentPreview, authorName, ...streamContext },
+        context: { contentPreview, ...author, ...streamContext },
         readUserIds,
       })
     })
@@ -376,11 +379,11 @@ export class ActivityService {
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = (message.contentMarkdown ?? "").slice(0, 200)
-      const actorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
+      const actor = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const context = {
         contentPreview,
-        authorName: actorName,
+        ...actor,
         emoji,
         ...streamContext,
       }
@@ -541,29 +544,37 @@ export class ActivityService {
     return StreamMemberRepository.filterMemberIds(client, stream.id, userIds)
   }
 
-  private async resolveAuthorName(
+  /**
+   * Display name plus the served avatar path (64px webp) for an activity's actor.
+   * The avatar rides the activity context so the push payload can use it as the
+   * notification icon without a second lookup at delivery time.
+   */
+  private async resolveAuthor(
     client: PoolClient,
     workspaceId: string,
     actorId: string,
     actorType: string
-  ): Promise<string | null> {
+  ): Promise<{ authorName: string | null; authorAvatarUrl?: string }> {
     switch (actorType) {
       case AuthorTypes.USER: {
         const user = await UserRepository.findById(client, workspaceId, actorId)
-        return user?.name ?? null
+        return { authorName: user?.name ?? null, authorAvatarUrl: getAvatarUrl(workspaceId, user?.avatarUrl, 64) }
       }
       case AuthorTypes.BOT: {
         const bot = await BotRepository.findById(client, workspaceId, actorId)
-        return bot?.name ?? null
+        return { authorName: bot?.name ?? null, authorAvatarUrl: getBotAvatarUrl(workspaceId, bot?.avatarUrl, 64) }
       }
       case AuthorTypes.PERSONA: {
         const persona = await PersonaRepository.findById(client, actorId, workspaceId)
-        return persona?.name ?? null
+        return {
+          authorName: persona?.name ?? null,
+          authorAvatarUrl: getPersonaAvatarUrl(workspaceId, persona?.avatarUrl, 64),
+        }
       }
       case AuthorTypes.SYSTEM:
-        return "Threa"
+        return { authorName: "Threa" }
       default:
-        return null
+        return { authorName: null }
     }
   }
 
@@ -599,7 +610,7 @@ export class ActivityService {
 
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
-      const actorName = await this.resolveAuthorName(client, workspaceId, addedBy, addedByType)
+      const actor = await this.resolveAuthor(client, workspaceId, addedBy, addedByType)
 
       const rows = await ActivityRepository.insertBatch(client, {
         workspaceId,
@@ -609,7 +620,7 @@ export class ActivityService {
         messageId: event.id,
         actorId: addedBy,
         actorType: addedByType,
-        context: { authorName: actorName, ...streamContext },
+        context: { ...actor, ...streamContext },
       })
 
       return rows

@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
+import { PushActionsSection } from "./push-actions-section"
 import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
@@ -497,6 +498,8 @@ export function NotificationsSettings() {
           <PauseNotificationsSection workspaceId={workspaceId} />
           <Separator />
           <PushNotificationSection workspaceId={workspaceId} />
+          <Separator />
+          <PushActionsSection workspaceId={workspaceId} />
         </>
       )}
     </div>

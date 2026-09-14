@@ -1,17 +1,34 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import webpush from "web-push"
-import { PushSubscriptionRepository, PushService, UserSessionRepository } from "../../src/features/push"
+import {
+  PushSubscriptionRepository,
+  PushService,
+  UserSessionRepository,
+  type PushPreferences,
+} from "../../src/features/push"
 import { workspaceId, userId, streamId, messageId, activityId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
 import {
   PrefNotificationLevels,
   ActivityTypes,
   StreamTypes,
+  DEFAULT_PUSH_ACTIONS,
+  DEFAULT_PUSH_REMINDER_MINUTES,
+  DEFAULT_PUSH_QUICK_REACTION,
   type PrefNotificationLevel,
   type StreamType,
 } from "@threahq/types"
 import type { ActivityCreatedOutboxPayload } from "../../src/lib/outbox"
+
+function pushPreferences(notificationLevel: PrefNotificationLevel): PushPreferences {
+  return {
+    notificationLevel,
+    pushActions: [...DEFAULT_PUSH_ACTIONS],
+    pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
+    pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+  }
+}
 
 // Stub web-push to avoid real HTTP calls
 const sendSpy = spyOn(webpush, "sendNotification").mockResolvedValue({} as any)
@@ -364,7 +381,7 @@ describe("Push Notifications", () => {
           subject: "mailto:test@threa.app",
         },
         lookups: {
-          getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+          getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),
           isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
@@ -528,7 +545,8 @@ describe("Push Notifications", () => {
           subject: "mailto:test@threa.app",
         },
         lookups: {
-          getUserNotificationLevel: async () => overrides?.notificationLevel ?? PrefNotificationLevels.ALL,
+          getUserPushPreferences: async () =>
+            pushPreferences(overrides?.notificationLevel ?? PrefNotificationLevels.ALL),
           isNotificationPaused: async () => overrides?.notificationPaused ?? false,
           getStreamType: async (_workspaceId) => overrides?.streamType ?? StreamTypes.CHANNEL,
           getWorkosUserId: async () => overrides?.workosUserId ?? null,
@@ -1242,7 +1260,7 @@ describe("Push Notifications", () => {
           subject: "mailto:test@threa.app",
         },
         lookups: {
-          getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+          getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),
           isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
@@ -1327,7 +1345,7 @@ describe("Push Notifications", () => {
         pool,
         vapidConfig: null,
         lookups: {
-          getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+          getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),
           isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,

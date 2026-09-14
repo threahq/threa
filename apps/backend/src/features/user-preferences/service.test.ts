@@ -265,3 +265,32 @@ describe("UserPreferencesService.updatePreferences codeBlockWrapOverrides", () =
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["codeBlockWrapOverrides"])
   })
 })
+
+describe("UserPreferencesService.updatePreferences pushQuickReaction", () => {
+  afterEach(() => mock.restore())
+
+  it("rejects an emoji the reactions endpoint would refuse, before touching the database", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const service = new UserPreferencesService({} as any)
+
+    await expect(
+      service.updatePreferences(WORKSPACE_ID, USER_ID, { pushQuickReaction: "not an emoji" })
+    ).rejects.toMatchObject({ status: 400, code: "INVALID_EMOJI" })
+    expect(bulkSet).not.toHaveBeenCalled()
+  })
+
+  it("stores a known emoji as the quick reaction", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([{ key: "pushQuickReaction", value: "🎉" }])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { pushQuickReaction: "🎉" })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "pushQuickReaction", value: "🎉" }])
+    expect(prefs.pushQuickReaction).toBe("🎉")
+  })
+})

@@ -39,7 +39,12 @@ function makeService(
     pool: fakePool,
     vapidConfig: { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: "mailto:test@example.com" },
     lookups: {
-      getUserNotificationLevel: async () => level,
+      getUserPushPreferences: async () => ({
+        notificationLevel: level,
+        pushActions: ["mark_read", "remind"],
+        pushReminderMinutes: 5,
+        pushQuickReaction: "👍",
+      }),
       isNotificationPaused: async () => isNotificationPaused,
       getStreamType: async () => "channel",
       getWorkosUserId: async () => "workos_1",
@@ -151,15 +156,26 @@ describe("PushService delivery options", () => {
     })
   })
 
-  it("ships the body as plain text with emoji resolved, since the SW renders it verbatim (INV-60)", async () => {
+  it("ships a plain-text body, the actor avatar path, and the user's button preferences", async () => {
     const payload = makeActivityPayload()
     payload.activity.activityType = ActivityTypes.REACTION
-    payload.activity.context = { contentPreview: "**ship it** :rocket: [@kris](user:usr_1)", emoji: ":+1:" }
+    payload.activity.context = {
+      contentPreview: "**ship it** :rocket: [@kris](user:usr_1)",
+      emoji: ":+1:",
+      authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
+    }
     await makeService(false).deliverPushForActivity(payload)
 
     const [, body] = sendNotification.mock.calls[0] as [unknown, string]
     const { data } = JSON.parse(body) as { data: Record<string, unknown> }
-    expect(data).toMatchObject({ contentPreview: "ship it 🚀 @kris", emoji: "👍" })
+    expect(data).toMatchObject({
+      contentPreview: "ship it 🚀 @kris",
+      emoji: "👍",
+      authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
+      pushActions: ["mark_read", "remind"],
+      pushReminderMinutes: 5,
+      pushQuickReaction: "👍",
+    })
   })
 
   it("keeps mention pushes on a distinct topic so they don't collapse into message pushes", async () => {

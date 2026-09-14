@@ -108,6 +108,25 @@ export const UnreadOpenPositions = {
   MARKER: "marker",
 } as const satisfies Record<string, UnreadOpenPosition>
 
+// Buttons on a push notification. Chrome caps a notification at two action
+// buttons, so the user fills up to two ordered slots from these.
+export const PUSH_ACTION_OPTIONS = ["mark_read", "remind", "react"] as const
+export type PushAction = (typeof PUSH_ACTION_OPTIONS)[number]
+
+export const PushActions = {
+  MARK_READ: "mark_read",
+  REMIND: "remind",
+  REACT: "react",
+} as const satisfies Record<string, PushAction>
+
+export const PUSH_ACTIONS_MAX = 2
+export const DEFAULT_PUSH_ACTIONS: readonly PushAction[] = ["mark_read", "remind"]
+export const DEFAULT_PUSH_REMINDER_MINUTES = 5
+export const PUSH_REMINDER_MINUTES_MIN = 1
+/** One week, the longest reminder the saved view offers. */
+export const PUSH_REMINDER_MINUTES_MAX = 7 * 24 * 60
+export const DEFAULT_PUSH_QUICK_REACTION = "👍"
+
 // Label-remove-on-move behavior — when a labeled stream is dragged out of its
 // label section in the sidebar (into a custom section or a different label),
 // whether to also strip the label it was sitting under. "ask" prompts each time
@@ -344,6 +363,12 @@ export interface UserPreferences {
    * ("latest", the default) or at the first unread ("marker", Discord-style).
    */
   unreadOpenPosition: UnreadOpenPosition
+  /** Ordered push notification buttons, at most PUSH_ACTIONS_MAX, no repeats. */
+  pushActions: PushAction[]
+  /** How far ahead the "Remind me" push button schedules the saved reminder. */
+  pushReminderMinutes: number
+  /** Emoji (character or `:shortcode:`) the quick-reaction push button sends. */
+  pushQuickReaction: string
   scratchpadCustomPrompt: string | null
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
@@ -483,6 +508,9 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   linkPreviewDefault: "open",
   labelRemoveOnMove: "ask",
   unreadOpenPosition: "latest",
+  pushActions: [...DEFAULT_PUSH_ACTIONS],
+  pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
+  pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
@@ -534,6 +562,9 @@ export interface UpdateUserPreferencesInput {
   linkPreviewDefault?: LinkPreviewDefault
   labelRemoveOnMove?: LabelRemoveOnMove
   unreadOpenPosition?: UnreadOpenPosition
+  pushActions?: PushAction[]
+  pushReminderMinutes?: number
+  pushQuickReaction?: string
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number

@@ -3,6 +3,8 @@ import { withTransaction } from "../../db"
 import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { assertAssignablePersona } from "../agents"
+import { toShortcode } from "../emoji"
+import { HttpError } from "../../lib/errors"
 import {
   type UserPreferences,
   type UpdateUserPreferencesInput,
@@ -73,6 +75,9 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "linkPreviewDefault",
     "labelRemoveOnMove",
     "unreadOpenPosition",
+    "pushActions",
+    "pushReminderMinutes",
+    "pushQuickReaction",
     "scratchpadCustomPrompt",
     "codeBlockCollapseThreshold",
     "blockquoteCollapseThreshold",
@@ -157,6 +162,10 @@ export class UserPreferencesService {
     updates: UpdateUserPreferencesInput
   ): Promise<UserPreferences> {
     await assertAssignablePersona(this.pool, updates.defaultCompanionPersonaId, workspaceId, { callerUserId: userId })
+    // Same acceptance as the reactions endpoint, so a saved quick reaction can never 400 later.
+    if (updates.pushQuickReaction !== undefined && toShortcode(updates.pushQuickReaction) === null) {
+      throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
+    }
     return withTransaction(this.pool, async (client) => {
       const currentOverrides =
         updates.keyboardShortcuts !== undefined ? await UserPreferencesRepository.findOverrides(client, userId) : null

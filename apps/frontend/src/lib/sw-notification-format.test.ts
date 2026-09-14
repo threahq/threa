@@ -5,8 +5,38 @@ import {
   formatTitle,
   formatBody,
   isViewingStream,
+  resolveActions,
+  formatReminderDelay,
+  planNotificationAction,
+  countNotifiedMessages,
+  resolveLatestMessageId,
   type NotificationMessage,
 } from "./sw-notification-format"
+
+describe("resolveLatestMessageId", () => {
+  it("advances to each new message", () => {
+    expect(resolveLatestMessageId(undefined, { activityType: "message", messageId: "msg_1" })).toBe("msg_1")
+    expect(
+      resolveLatestMessageId(
+        { messageId: "msg_1", latestMessageId: "msg_1" },
+        { activityType: "message", messageId: "msg_2" }
+      )
+    ).toBe("msg_2")
+  })
+
+  it("keeps the newer message when a reaction to an older one joins the card", () => {
+    expect(
+      resolveLatestMessageId(
+        { messageId: "msg_1", latestMessageId: "msg_2" },
+        { activityType: "reaction", messageId: "msg_0" }
+      )
+    ).toBe("msg_2")
+  })
+
+  it("acts on the reacted message when the card holds nothing else", () => {
+    expect(resolveLatestMessageId(undefined, { activityType: "reaction", messageId: "msg_0" })).toBe("msg_0")
+  })
+})
 
 describe("resolveTag", () => {
   it("returns streamId for message activity", () => {
@@ -196,5 +226,91 @@ describe("formatBody", () => {
       { authorName: "Pierre", contentPreview: "hello", emoji: "🫡" },
     ]
     expect(formatBody(messages)).toBe('Pierre reacted 🫡 to "hello"\nAlice: hello')
+  })
+})
+
+describe("resolveActions", () => {
+  it("defaults to mark read and a 5m reminder for a message", () => {
+    expect(resolveActions("message", {})).toEqual([
+      { action: "mark_read", title: "Mark read" },
+      { action: "remind", title: "Remind me in 5m" },
+    ])
+  })
+
+  it("follows the user's slots, duration, and quick reaction", () => {
+    expect(
+      resolveActions("message", { pushActions: ["react", "remind"], pushReminderMinutes: 120, pushQuickReaction: "🎉" })
+    ).toEqual([
+      { action: "react", title: "🎉" },
+      { action: "remind", title: "Remind me in 2h" },
+    ])
+  })
+
+  it("drops the reaction button on a reaction push, since the message is the reader's own", () => {
+    expect(resolveActions("reaction", { pushActions: ["mark_read", "react"] })).toEqual([
+      { action: "mark_read", title: "Mark read" },
+    ])
+  })
+
+  it("honours an empty slot list and never exceeds two buttons", () => {
+    expect(resolveActions("message", { pushActions: [] })).toEqual([])
+    expect(resolveActions("message", { pushActions: ["mark_read", "remind", "react"] })).toEqual([
+      { action: "mark_read", title: "Mark read" },
+      { action: "remind", title: "Remind me in 5m" },
+    ])
+  })
+})
+
+describe("formatReminderDelay", () => {
+  it("picks the largest whole unit", () => {
+    expect([5, 90, 60, 1440, 4320].map(formatReminderDelay)).toEqual(["5m", "90m", "1h", "1d", "3d"])
+  })
+})
+
+describe("planNotificationAction", () => {
+  const data = { workspaceId: "ws_1", streamId: "stream_1", messageId: "msg_oldest", latestMessageId: "msg_newest" }
+
+  it("marks the stream read through the newest message of the card", () => {
+    expect(planNotificationAction("mark_read", data)).toEqual({
+      url: "/api/workspaces/ws_1/streams/stream_1/read",
+      body: { lastEventId: "msg_newest" },
+    })
+  })
+
+  it("reacts to the newest message of the card with the user's quick reaction", () => {
+    expect(planNotificationAction("react", { ...data, pushQuickReaction: "🎉" })).toEqual({
+      url: "/api/workspaces/ws_1/messages/msg_newest/reactions",
+      body: { emoji: "🎉" },
+    })
+    expect(planNotificationAction("react", data)?.body).toEqual({ emoji: "👍" })
+  })
+
+  it("saves the newest message with a reminder the configured minutes ahead", () => {
+    const now = Date.UTC(2026, 8, 14, 12, 0, 0)
+    expect(planNotificationAction("remind", { ...data, pushReminderMinutes: 30 }, now)).toEqual({
+      url: "/api/workspaces/ws_1/saved",
+      body: { messageId: "msg_newest", remindAt: "2026-09-14T12:30:00.000Z" },
+    })
+    expect(planNotificationAction("remind", data, now)?.body.remindAt).toBe("2026-09-14T12:05:00.000Z")
+  })
+
+  it("falls back to the deep-link message when no newer one is recorded", () => {
+    expect(planNotificationAction("react", { ...data, latestMessageId: undefined })?.url).toBe(
+      "/api/workspaces/ws_1/messages/msg_oldest/reactions"
+    )
+  })
+
+  it("returns null without the ids to act on, or for an unknown action", () => {
+    expect(planNotificationAction("mark_read", { ...data, streamId: undefined })).toBeNull()
+    expect(planNotificationAction("react", { workspaceId: "ws_1" })).toBeNull()
+    expect(planNotificationAction("mute", data)).toBeNull()
+  })
+})
+
+describe("countNotifiedMessages", () => {
+  it("sums the messages behind every card and ignores cards without any", () => {
+    expect(
+      countNotifiedMessages([{ messages: [{}, {}, {}] }, { messages: [{}] }, { kind: "call_ring" } as never, undefined])
+    ).toBe(4)
   })
 })

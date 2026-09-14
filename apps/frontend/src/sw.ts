@@ -1,7 +1,13 @@
 /// <reference lib="webworker" />
 import { PrecacheController, PrecacheRoute } from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
-import { resolveTag } from "./lib/sw-notification-format"
+import {
+  resolveTag,
+  planNotificationAction,
+  countNotifiedMessages,
+  resolveLatestMessageId,
+} from "./lib/sw-notification-format"
+import { ACCOUNT_ASSERTION_HEADER, type PushAction } from "@threahq/types"
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
 import { isDevicePresent } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
@@ -37,6 +43,7 @@ import { stashShareTarget } from "./lib/share-target-storage"
 declare const self: ServiceWorkerGlobalScope
 declare const __APP_VERSION__: string
 declare const __APP_BUILD_ID__: string
+declare const __E2E_BUILD__: boolean
 
 const BUILD_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "unknown"
 const BUILD_ID = typeof __APP_BUILD_ID__ === "string" ? __APP_BUILD_ID__ : BUILD_VERSION
@@ -48,6 +55,7 @@ const PRECACHE_LOCK = "threa-precache"
 interface ExtendedNotificationOptions extends NotificationOptions {
   renotify?: boolean
   vibrate?: number[]
+  actions?: Array<{ action: string; title: string }>
 }
 
 const THREA_VIBRATION_PATTERN = [30, 10, 100]
@@ -207,8 +215,9 @@ self.addEventListener("message", (event) => {
         self.registration.getNotifications({ tag: streamId }),
         self.registration.getNotifications({ tag: `${streamId}:mention` }),
         self.registration.getNotifications({ tag: `rewrap:${streamId}` }),
-      ]).then((groups) => {
+      ]).then(async (groups) => {
         for (const n of groups.flat()) n.close()
+        await syncAppBadge()
       })
     )
     return
@@ -445,8 +454,14 @@ interface PushData {
   contentPreview?: string
   streamName?: string
   authorName?: string
+  authorAvatarUrl?: string
+  pushActions?: PushAction[]
+  pushReminderMinutes?: number
+  pushQuickReaction?: string
   emoji?: string
   messages?: Array<{ authorName?: string; contentPreview?: string; emoji?: string }>
+  /** Newest message of a grouped card; `messageId` stays the oldest for the deep link. */
+  latestMessageId?: string
   action?: "clear" | "session_expired"
   kind?: "test" | "saved_reminder" | "rewrap_needed" | "call_ring" | "call_ring_cancel" | "missed_call"
   attemptId?: string
@@ -474,8 +489,9 @@ self.addEventListener("push", (event) => {
       Promise.all([
         self.registration.getNotifications({ tag: data.streamId }),
         self.registration.getNotifications({ tag: `${data.streamId}:mention` }),
-      ]).then(([streamNotifs, mentionNotifs]) => {
+      ]).then(async ([streamNotifs, mentionNotifs]) => {
         for (const n of [...streamNotifs, ...mentionNotifs]) n.close()
+        await syncAppBadge()
       })
     )
     return
@@ -577,7 +593,11 @@ self.addEventListener("push", (event) => {
 
   event.waitUntil(
     Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()]).then(
-      async ([{ appendMessage, formatTitle, formatBody, isViewingStream }, clients, visibleStreams]) => {
+      async ([
+        { appendMessage, formatTitle, formatBody, isViewingStream, resolveActions },
+        clients,
+        visibleStreams,
+      ]) => {
         const focusedClients = clients.filter((c) => c.focused && new URL(c.url).origin === self.location.origin)
         const viewingThisStream =
           focusedClients.some((c) => isViewingStream(c.url, data.workspaceId, data.streamId)) ||
@@ -597,19 +617,28 @@ self.addEventListener("push", (event) => {
 
         // A grouped banner deep-links to the oldest message it covers so a tap
         // lands where reading resumes instead of past everything unread.
+        // The avatar route is unauthenticated (S3 keys carry unguessable ULIDs),
+        // so the OS can fetch the icon without a session.
         const options: ExtendedNotificationOptions = {
           body,
-          icon: "/threa-logo-192.png",
+          icon: data.authorAvatarUrl ?? "/threa-logo-192.png",
           badge: "/threa-logo-192.png",
-          data: { ...data, messageId: previous?.messageId ?? data.messageId, messages },
+          data: {
+            ...data,
+            messageId: previous?.messageId ?? data.messageId,
+            latestMessageId: resolveLatestMessageId(previous, data),
+            messages,
+          },
           tag,
           renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,
+          actions: resolveActions(data.activityType, data),
         }
 
         for (const n of existing) n.close()
 
         await self.registration.showNotification(title, options)
+        await syncAppBadge()
 
         if (data.workspaceId) {
           await queueBootstrapSync(
@@ -627,34 +656,77 @@ self.addEventListener("push", (event) => {
   )
 })
 
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close()
+/**
+ * App-icon badge = messages behind the cards still in the shade, so it clears
+ * exactly when the last card does. Browsers without the Badging API skip
+ * silently. The E2E build skips too: Playwright's chrome-headless-shell has the
+ * API but crashes the renderer on any worker-side call (full Chromium is fine).
+ */
+async function syncAppBadge(): Promise<void> {
+  if (typeof __E2E_BUILD__ === "boolean" && __E2E_BUILD__) return
+  if (!("setAppBadge" in self.navigator)) return
+  const notifications = await self.registration.getNotifications()
+  const count = countNotifiedMessages(notifications.map((notification) => notification.data as PushData | undefined))
+  await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge()).catch(() => {})
+}
 
-  const data = event.notification.data as PushData | undefined
-  let targetUrl = "/"
+/**
+ * Run an action button's API call from the worker. False means the server did
+ * not accept it (parked account, expired cookie, offline) and the caller opens
+ * the app at the deep link instead, so a tap never silently does nothing.
+ */
+async function performNotificationAction(action: string, data: PushData): Promise<boolean> {
+  const plan = planNotificationAction(action, data)
+  if (!plan) return false
+  const headers: Record<string, string> = { "content-type": "application/json" }
+  if (data.workosUserId) headers[ACCOUNT_ASSERTION_HEADER] = data.workosUserId
+  try {
+    const response = await fetch(plan.url, {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: JSON.stringify(plan.body),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
 
+function resolveNotificationTargetUrl(data: PushData | undefined): string {
   if (data?.workspaceId && data?.callId && data.kind === "call_ring") {
-    targetUrl = data.streamId
+    return data.streamId
       ? `/w/${data.workspaceId}/s/${data.streamId}?call=${data.callId}`
       : `/w/${data.workspaceId}?call=${data.callId}`
-  } else if (data?.workspaceId && data?.conversationId) {
+  }
+  if (data?.workspaceId && data?.conversationId) {
     const params = new URLSearchParams({ panel: `conv:${data.conversationId}` })
     if (data.messageId) params.set("m", data.messageId)
-    targetUrl = `/w/${data.workspaceId}/board?${params.toString()}`
-  } else if (data?.workspaceId && data?.streamId) {
-    targetUrl = data.messageId
+    return `/w/${data.workspaceId}/board?${params.toString()}`
+  }
+  if (data?.workspaceId && data?.streamId) {
+    return data.messageId
       ? `/w/${data.workspaceId}/s/${data.streamId}?m=${data.messageId}`
       : `/w/${data.workspaceId}/s/${data.streamId}`
-  } else if (data?.workspaceId && data.kind === "saved_reminder") {
-    targetUrl = `/w/${data.workspaceId}/saved`
-  } else if (data?.workspaceId) {
-    targetUrl = `/w/${data.workspaceId}`
   }
+  if (data?.workspaceId && data.kind === "saved_reminder") return `/w/${data.workspaceId}/saved`
+  if (data?.workspaceId) return `/w/${data.workspaceId}`
+  return "/"
+}
 
+self.addEventListener("notificationclick", (event) => {
+  const data = event.notification.data as PushData | undefined
+  const targetUrl = resolveNotificationTargetUrl(data)
   const absoluteUrl = new URL(targetUrl, self.location.origin).href
 
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
+    (async () => {
+      const acted = event.action && data ? await performNotificationAction(event.action, data) : false
+      event.notification.close()
+      await syncAppBadge()
+      if (acted) return
+
+      const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
       for (const client of clients) {
         if (new URL(client.url).origin === self.location.origin) {
           await client.focus()
@@ -667,8 +739,12 @@ self.addEventListener("notificationclick", (event) => {
         }
       }
       await self.clients.openWindow(absoluteUrl)
-    })
+    })()
   )
+})
+
+self.addEventListener("notificationclose", (event) => {
+  event.waitUntil(syncAppBadge())
 })
 
 self.addEventListener("pushsubscriptionchange", (event) => {
