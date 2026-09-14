@@ -151,6 +151,17 @@ describe("PushService delivery options", () => {
     })
   })
 
+  it("ships the body as plain text with emoji resolved, since the SW renders it verbatim (INV-60)", async () => {
+    const payload = makeActivityPayload()
+    payload.activity.activityType = ActivityTypes.REACTION
+    payload.activity.context = { contentPreview: "**ship it** :rocket: [@kris](user:usr_1)", emoji: ":+1:" }
+    await makeService(false).deliverPushForActivity(payload)
+
+    const [, body] = sendNotification.mock.calls[0] as [unknown, string]
+    const { data } = JSON.parse(body) as { data: Record<string, unknown> }
+    expect(data).toMatchObject({ contentPreview: "ship it 🚀 @kris", emoji: "👍" })
+  })
+
   it("keeps mention pushes on a distinct topic so they don't collapse into message pushes", async () => {
     const payload = makeActivityPayload()
     payload.activity.activityType = ActivityTypes.MENTION
