@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useRef } from "react"
-import { useLocation, useNavigate, useNavigationType, useSearchParams } from "react-router-dom"
+import { useCallback, useContext, useEffect, useRef } from "react"
+import {
+  UNSAFE_DataRouterContext,
+  useLocation,
+  useNavigate,
+  useNavigationType,
+  useSearchParams,
+  type Location,
+  type NavigationType,
+} from "react-router-dom"
 import type { Cover, PopsToCloseState } from "@/lib/covers"
 
 /**
@@ -21,6 +29,13 @@ import type { Cover, PopsToCloseState } from "@/lib/covers"
  * commit, so the previous location never sees the entry it pushed on top of;
  * its hops carry `popsToClose: <param>` as the attestation instead.
  *
+ * Navigations are observed from the data router's own state, not only from
+ * the committed location: react-router commits inside a transition, so a
+ * replace and a push issued in one tick (the workspace root redirecting to
+ * its default stream while a cover opens on top) reach the committed location
+ * as a single change, and the entry beneath the push is never seen there.
+ * The committed location remains the feed under a plain `<MemoryRouter>`.
+ *
  * The entry beneath must carry NONE of the cover's params, not merely other
  * values: closing means "cover gone" (a nested thread's affordance reads
  * "Return to #channel"), so a cover opened over another instance of itself
@@ -34,24 +49,38 @@ export function useCoverClose(cover: Cover): () => void {
 
   const claimed = useRef(new Set<string>())
   const previous = useRef<{ key: string; url: string } | null>(null)
+  const observe = useCallback(
+    (at: Location, action: NavigationType) => {
+      if (at.key === previous.current?.key) return
+      const params = new URLSearchParams(at.search)
+      const url = `${at.pathname}?${params.toString()}`
+      const open = params.has(cover[0])
+      for (const param of cover) params.delete(param)
+      const beneath = `${at.pathname}?${params.toString()}`
+      const before = previous.current
+      previous.current = { key: at.key, url }
+      if (!open) return
+      // An attested entry stays attested however it is reached: the rebuild's
+      // inner hops are first seen by popping back onto them.
+      const attested = (at.state as PopsToCloseState | null)?.popsToClose === cover[0]
+      const pushedOverBeneath = action === "PUSH" && before?.url === beneath
+      const onTop = before !== null && (action === "REPLACE" || url === before.url) && claimed.current.has(before.key)
+      if (attested || pushedOverBeneath || onTop) claimed.current.add(at.key)
+    },
+    [cover]
+  )
+
+  const router = useContext(UNSAFE_DataRouterContext)?.router ?? null
   useEffect(() => {
-    if (location.key === previous.current?.key) return
-    const params = new URLSearchParams(location.search)
-    const url = `${location.pathname}?${params.toString()}`
-    const open = params.has(cover[0])
-    for (const param of cover) params.delete(param)
-    const beneath = `${location.pathname}?${params.toString()}`
-    const before = previous.current
-    previous.current = { key: location.key, url }
-    if (!open) return
-    // An attested entry stays attested however it is reached: the rebuild's
-    // inner hops are first seen by popping back onto them.
-    const attested = (location.state as PopsToCloseState | null)?.popsToClose === cover[0]
-    const pushedOverBeneath = navigationType === "PUSH" && before?.url === beneath
-    const onTop =
-      before !== null && (navigationType === "REPLACE" || url === before.url) && claimed.current.has(before.key)
-    if (attested || pushedOverBeneath || onTop) claimed.current.add(location.key)
-  }, [cover, location.key, location.pathname, location.search, location.state, navigationType])
+    if (!router) return
+    observe(router.state.location, router.state.historyAction)
+    return router.subscribe((state) => observe(state.location, state.historyAction))
+  }, [observe, router])
+
+  useEffect(() => {
+    if (router) return
+    observe(location, navigationType)
+  }, [location, navigationType, observe, router])
 
   return useCallback(() => {
     if (claimed.current.delete(location.key)) {

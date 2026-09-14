@@ -72,50 +72,53 @@ async function ensureMinioBucketExists(): Promise<void> {
 }
 
 /**
- * Cleans up stale jobs from previous test runs to prevent test pollution.
+ * Empties the mutable tables so a run never sees the previous run's rows. Runs
+ * before migrations, so only tables that already exist are truncated; a fresh
+ * database has nothing to clean.
  */
+const MUTABLE_TABLES = [
+  "outbox",
+  "outbox_listeners",
+  "stream_events",
+  "stream_members",
+  "streams",
+  "workspaces",
+  "users",
+  "messages",
+  "reactions",
+  "conversations",
+  "memos",
+  "attachments",
+  "agent_sessions",
+  "agent_session_steps",
+  "emoji_usage",
+  "ai_usage_records",
+  "ai_budgets",
+  "queue_messages",
+  "queue_tokens",
+  "user_activity",
+  "bots",
+  "calls",
+  "call_participants",
+  "call_endpoints",
+  "call_invitations",
+  "call_transport_policy_states",
+  "call_transport_transfers",
+  "call_transport_sessions",
+  "call_transfer_obligations",
+]
+
 async function cleanupStaleData(): Promise<void> {
   const testPool = new Pool({ connectionString: getTestDatabaseTarget().connectionUrl })
-
   try {
-    // TRUNCATE all mutable tables to prevent test pollution between runs.
-    // CASCADE handles FK-like dependencies even though we don't use formal FKs.
-    await testPool.query(`
-      TRUNCATE
-        outbox,
-        outbox_listeners,
-        stream_events,
-        stream_members,
-        streams,
-        workspaces,
-        users,
-        messages,
-        reactions,
-        conversations,
-        conversation_messages,
-        memos,
-        memo_source_messages,
-        memo_batches,
-        memo_batch_messages,
-        attachments,
-        agent_sessions,
-        agent_session_steps,
-        search_embeddings,
-        emoji_usage,
-        ai_usage_records,
-        ai_budgets,
-        user_preferences,
-        queue_messages,
-        queue_tokens,
-        schedules,
-        schedule_ticks,
-        user_activity,
-        api_key_channel_access,
-        bots
-      CASCADE
-    `)
-  } catch {
-    // Ignore errors if tables don't exist yet (first run before migrations)
+    const existing = await testPool.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name = ANY($1)`,
+      [MUTABLE_TABLES]
+    )
+    if (existing.rows.length > 0)
+      await testPool.query(
+        `TRUNCATE ${existing.rows.map((row) => quoteDatabaseIdentifier(row.table_name)).join(", ")} CASCADE`
+      )
   } finally {
     await testPool.end()
   }
@@ -165,6 +168,10 @@ export async function startTestServer(): Promise<TestServer> {
   // Disable rate limits for tests (prevent flaky 429s)
   process.env.GLOBAL_RATE_LIMIT_MAX = "10000"
   process.env.AUTH_RATE_LIMIT_MAX = "10000"
+
+  // Call tests drive every sweep themselves; a 15 s background sweeper would
+  // race their hand-built call states (rollout_safety transfers mid-assert).
+  process.env.CALL_SWEEP_INTERVAL_MS = String(60 * 60 * 1000)
 
   // CORS: allow test origin
   process.env.CORS_ALLOWED_ORIGINS = `http://localhost:${port},http://127.0.0.1:${port}`
