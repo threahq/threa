@@ -13,13 +13,21 @@ import {
   PrefNotificationLevels,
   ActivityTypes,
   StreamTypes,
+  DEFAULT_PUSH_ACTIONS,
+  DEFAULT_PUSH_REMINDER_MINUTES,
+  DEFAULT_PUSH_QUICK_REACTION,
   type PrefNotificationLevel,
   type StreamType,
 } from "@threahq/types"
 import type { ActivityCreatedOutboxPayload } from "../../src/lib/outbox"
 
 function pushPreferences(notificationLevel: PrefNotificationLevel): PushPreferences {
-  return { notificationLevel, pushActions: ["mark_read", "remind"], pushReminderMinutes: 5, pushQuickReaction: "👍" }
+  return {
+    notificationLevel,
+    pushActions: [...DEFAULT_PUSH_ACTIONS],
+    pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
+    pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
+  }
 }
 
 // Stub web-push to avoid real HTTP calls
