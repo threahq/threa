@@ -254,7 +254,10 @@ describe("resolveActions", () => {
 
   it("honours an empty slot list and never exceeds two buttons", () => {
     expect(resolveActions("message", { pushActions: [] })).toEqual([])
-    expect(resolveActions("message", { pushActions: ["mark_read", "remind", "react"] })).toHaveLength(2)
+    expect(resolveActions("message", { pushActions: ["mark_read", "remind", "react"] })).toEqual([
+      { action: "mark_read", title: "Mark read" },
+      { action: "remind", title: "Remind me in 5m" },
+    ])
   })
 })
 
