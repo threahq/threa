@@ -14,6 +14,7 @@ import {
   type PrefNotificationLevel,
   type StreamType,
 } from "@threahq/types"
+import { toEmoji } from "../emoji"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
 import type {
@@ -147,18 +148,17 @@ interface PushServiceDeps {
 }
 
 /**
- * Resolve the `contentPreview` for a saved-reminder push. E2E messages store a
- * zero-width placeholder on the wire (the server holds no key), so surfacing
- * the raw markdown produces a blank notification — substitute a generic,
- * leak-free label instead (E2EE-19), mirroring the saved-list/sidebar
- * treatment. Normal messages are stripped to plain text before truncation so
- * the OS notification never shows literal markdown syntax (INV-60 — the SW
- * renders this verbatim, there is no later strip step). Missing content → null.
+ * Plain text for a push body. E2E messages store a zero-width placeholder on
+ * the wire (the server holds no key), so surfacing it would produce a blank
+ * notification — substitute a generic, leak-free label instead (E2EE-19).
+ * The SW renders this verbatim, so markdown is stripped and `:shortcode:`
+ * emoji resolved here (INV-60); custom workspace emoji have no character and
+ * stay as their shortcode. Missing content → null.
  */
-export function resolveSavedReminderPreview(contentMarkdown: string | null | undefined): string | null {
+export function resolvePushPreview(contentMarkdown: string | null | undefined): string | null {
   if (contentMarkdown === E2E_PLACEHOLDER_CONTENT_MARKDOWN) return ENCRYPTED_MESSAGE_PREVIEW_LABEL
   if (contentMarkdown == null) return null
-  return stripMarkdownToInline(contentMarkdown).slice(0, 200)
+  return stripMarkdownToInline(contentMarkdown, toEmoji).slice(0, 200)
 }
 
 /**
@@ -407,12 +407,14 @@ export class PushService {
         streamId: activity.streamId,
         messageId: activity.messageId,
         activityType: activity.activityType,
-        contentPreview: context?.contentPreview?.slice(0, 200),
+        contentPreview: resolvePushPreview(context?.contentPreview) ?? undefined,
         streamName: context?.streamName,
         authorName: context?.authorName,
         // Reaction emoji — lets the SW render "Alice reacted 👍 to …" instead of
-        // formatting a reaction like a plain incoming message. Absent for non-reactions.
-        emoji: context?.emoji,
+        // formatting a reaction like a plain incoming message. Absent for
+        // non-reactions. Reactions are stored as shortcodes; a custom emoji
+        // has no character and stays as its shortcode.
+        emoji: context?.emoji ? (toEmoji(context.emoji) ?? context.emoji) : undefined,
       },
     })
 
@@ -477,7 +479,7 @@ export class PushService {
         conversationId: saved.conversationId ?? undefined,
         streamName: saved.message?.streamName ?? null,
         // Standalone (message-less) items preview their own title.
-        contentPreview: resolveSavedReminderPreview(saved.message?.contentMarkdown) ?? saved.title,
+        contentPreview: resolvePushPreview(saved.message?.contentMarkdown) ?? saved.title,
         unavailableReason: saved.unavailableReason ?? null,
       },
     })
