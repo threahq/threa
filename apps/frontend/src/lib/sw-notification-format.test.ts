@@ -158,12 +158,13 @@ describe("formatBody", () => {
     expect(formatBody(messages)).toBe("New message")
   })
 
-  it("multiple messages joined by newlines", () => {
+  it("lists the newest message first so the collapsed banner shows it", () => {
     const messages: NotificationMessage[] = [
       { authorName: "Alice", contentPreview: "hello" },
       { authorName: "Bob", contentPreview: "world" },
+      { authorName: "Carol", contentPreview: "latest" },
     ]
-    expect(formatBody(messages)).toBe("Alice: hello\nBob: world")
+    expect(formatBody(messages)).toBe("Carol: latest\nBob: world\nAlice: hello")
   })
 
   it("truncates long previews at 80 chars", () => {
@@ -194,6 +195,6 @@ describe("formatBody", () => {
       { authorName: "Alice", contentPreview: "hello" },
       { authorName: "Pierre", contentPreview: "hello", emoji: "🫡" },
     ]
-    expect(formatBody(messages)).toBe('Alice: hello\nPierre reacted 🫡 to "hello"')
+    expect(formatBody(messages)).toBe('Pierre reacted 🫡 to "hello"\nAlice: hello')
   })
 })

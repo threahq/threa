@@ -585,8 +585,8 @@ self.addEventListener("push", (event) => {
         if (viewingThisStream && (await isDevicePresent())) return
 
         const existing = await self.registration.getNotifications({ tag })
-        const previousMessages = (existing[0]?.data as PushData | undefined)?.messages ?? []
-        const messages = appendMessage(previousMessages, {
+        const previous = existing[0]?.data as PushData | undefined
+        const messages = appendMessage(previous?.messages ?? [], {
           authorName: data.authorName,
           contentPreview: data.contentPreview,
           emoji: data.emoji,
@@ -595,11 +595,13 @@ self.addEventListener("push", (event) => {
         const title = formatTitle(messages, data.streamName, data.activityType)
         const body = formatBody(messages)
 
+        // A grouped banner deep-links to the oldest message it covers so a tap
+        // lands where reading resumes instead of past everything unread.
         const options: ExtendedNotificationOptions = {
           body,
           icon: "/threa-logo-192.png",
           badge: "/threa-logo-192.png",
-          data: { ...data, messages },
+          data: { ...data, messageId: previous?.messageId ?? data.messageId, messages },
           tag,
           renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,

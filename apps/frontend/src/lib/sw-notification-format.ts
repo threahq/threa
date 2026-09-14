@@ -106,10 +106,11 @@ function formatLine(msg: NotificationMessage): string {
 }
 
 /**
- * Format the notification body from the accumulated message list.
- * For a single message, returns a single line. For multiple, returns
- * newline-joined lines that OS notification centers can expand.
+ * Format the notification body from the accumulated message list, newest
+ * first. Collapsed OS banners show only the first body line, so the line the
+ * user sees without expanding must be the message that just arrived; the
+ * older entries follow for the expanded view.
  */
 export function formatBody(messages: NotificationMessage[]): string {
-  return messages.map(formatLine).join("\n")
+  return messages.map(formatLine).reverse().join("\n")
 }
