@@ -43,6 +43,7 @@ import { stashShareTarget } from "./lib/share-target-storage"
 declare const self: ServiceWorkerGlobalScope
 declare const __APP_VERSION__: string
 declare const __APP_BUILD_ID__: string
+declare const __E2E_BUILD__: boolean
 
 const BUILD_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "unknown"
 const BUILD_ID = typeof __APP_BUILD_ID__ === "string" ? __APP_BUILD_ID__ : BUILD_VERSION
@@ -657,10 +658,12 @@ self.addEventListener("push", (event) => {
 
 /**
  * App-icon badge = messages behind the cards still in the shade, so it clears
- * exactly when the last card does. iOS installs and Chrome Android both honour
- * it; browsers without the Badging API skip silently.
+ * exactly when the last card does. Browsers without the Badging API skip
+ * silently. The E2E build skips too: Playwright's chrome-headless-shell has the
+ * API but crashes the renderer on any worker-side call (full Chromium is fine).
  */
 async function syncAppBadge(): Promise<void> {
+  if (typeof __E2E_BUILD__ === "boolean" && __E2E_BUILD__) return
   if (!("setAppBadge" in self.navigator)) return
   const notifications = await self.registration.getNotifications()
   const count = countNotifiedMessages(notifications.map((notification) => notification.data as PushData | undefined))
