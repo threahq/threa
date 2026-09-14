@@ -392,7 +392,14 @@ export class PushService {
     const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
 
     const context = activity.context as
-      | { contentPreview?: string; streamName?: string; authorName?: string; emoji?: string; mode?: string }
+      | {
+          contentPreview?: string
+          streamName?: string
+          authorName?: string
+          authorAvatarUrl?: string
+          emoji?: string
+          mode?: string
+        }
       | null
       | undefined
     // A missed call renders with its own SW branch ("Missed call from …"): the
@@ -410,6 +417,7 @@ export class PushService {
         contentPreview: resolvePushPreview(context?.contentPreview) ?? undefined,
         streamName: context?.streamName,
         authorName: context?.authorName,
+        authorAvatarUrl: context?.authorAvatarUrl,
         // Reaction emoji — lets the SW render "Alice reacted 👍 to …" instead of
         // formatting a reaction like a plain incoming message. Absent for
         // non-reactions. Reactions are stored as shortcodes; a custom emoji

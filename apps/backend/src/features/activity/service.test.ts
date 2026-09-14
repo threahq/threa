@@ -92,7 +92,7 @@ describe("ActivityService author name resolution", () => {
     mock.restore()
   })
 
-  it("resolves user author name from UserRepository", async () => {
+  it("resolves user author name and avatar path from UserRepository", async () => {
     const service = setupService()
     const stream = fakeStream()
 
@@ -114,7 +114,7 @@ describe("ActivityService author name resolution", () => {
       role: "owner",
       slug: "alice",
       description: null,
-      avatarUrl: null,
+      avatarUrl: `avatars/${WORKSPACE_ID}/${USER_ID}/1700`,
       timezone: null,
       locale: null,
       pronouns: null,
@@ -146,7 +146,10 @@ describe("ActivityService author name resolution", () => {
       excludeUserIds: new Set(),
     })
 
-    expect(capturedContext?.authorName).toBe("Alice")
+    expect(capturedContext).toMatchObject({
+      authorName: "Alice",
+      authorAvatarUrl: `/api/workspaces/${WORKSPACE_ID}/users/${USER_ID}/avatar/1700.64.webp`,
+    })
     expect(UserRepository.findById).toHaveBeenCalled()
   })
 

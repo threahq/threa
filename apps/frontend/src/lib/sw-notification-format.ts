@@ -114,3 +114,76 @@ function formatLine(msg: NotificationMessage): string {
 export function formatBody(messages: NotificationMessage[]): string {
   return messages.map(formatLine).reverse().join("\n")
 }
+
+export const NOTIFICATION_ACTION_MARK_READ = "mark_read"
+export const NOTIFICATION_ACTION_REACT = "react"
+
+/** Emoji character the quick-reaction button sends; the API maps it to its shortcode. */
+export const QUICK_REACTION_EMOJI = "👍"
+
+export interface NotificationActionButton {
+  action: string
+  title: string
+}
+
+/**
+ * Buttons for a message notification. A reaction push points at the reader's
+ * own message, so reacting back is nonsense and only "Mark read" is offered.
+ * Chrome Android renders these; iOS Safari ignores `actions` entirely.
+ */
+export function resolveActions(activityType?: string): NotificationActionButton[] {
+  const markRead = { action: NOTIFICATION_ACTION_MARK_READ, title: "Mark read" }
+  if (activityType === ActivityTypes.REACTION) return [markRead]
+  return [markRead, { action: NOTIFICATION_ACTION_REACT, title: QUICK_REACTION_EMOJI }]
+}
+
+export interface NotificationActionTarget {
+  workspaceId?: string
+  streamId?: string
+  /** Deep-link target: the oldest message of a grouped card. */
+  messageId?: string
+  /** The message that arrived last, what an action button should act on. */
+  latestMessageId?: string
+}
+
+export interface NotificationActionRequest {
+  url: string
+  body: Record<string, string>
+}
+
+/**
+ * The API call behind an action button, or null when the notification lacks
+ * the ids to make one (the caller then opens the app instead). Both act on the
+ * newest message of the card: reading through it clears the whole group, and a
+ * quick reaction answers what the user just saw in the banner.
+ */
+export function planNotificationAction(
+  action: string,
+  data: NotificationActionTarget
+): NotificationActionRequest | null {
+  const messageId = data.latestMessageId ?? data.messageId
+  if (!data.workspaceId || !messageId) return null
+  if (action === NOTIFICATION_ACTION_MARK_READ) {
+    if (!data.streamId) return null
+    return {
+      url: `/api/workspaces/${data.workspaceId}/streams/${data.streamId}/read`,
+      body: { lastEventId: messageId },
+    }
+  }
+  if (action === NOTIFICATION_ACTION_REACT) {
+    return {
+      url: `/api/workspaces/${data.workspaceId}/messages/${messageId}/reactions`,
+      body: { emoji: QUICK_REACTION_EMOJI },
+    }
+  }
+  return null
+}
+
+/**
+ * Messages represented by the notifications currently in the shade — the app
+ * icon badge. Only message cards carry `messages`; rings, reminders and the
+ * session-expired card count for nothing.
+ */
+export function countNotifiedMessages(notificationData: Array<{ messages?: unknown[] } | undefined>): number {
+  return notificationData.reduce((total, data) => total + (data?.messages?.length ?? 0), 0)
+}

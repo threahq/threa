@@ -5,6 +5,9 @@ import {
   formatTitle,
   formatBody,
   isViewingStream,
+  resolveActions,
+  planNotificationAction,
+  countNotifiedMessages,
   type NotificationMessage,
 } from "./sw-notification-format"
 
@@ -196,5 +199,56 @@ describe("formatBody", () => {
       { authorName: "Pierre", contentPreview: "hello", emoji: "🫡" },
     ]
     expect(formatBody(messages)).toBe('Pierre reacted 🫡 to "hello"\nAlice: hello')
+  })
+})
+
+describe("resolveActions", () => {
+  it("offers mark read and a quick reaction for a message", () => {
+    expect(resolveActions("message")).toEqual([
+      { action: "mark_read", title: "Mark read" },
+      { action: "react", title: "👍" },
+    ])
+  })
+
+  it("offers only mark read for a reaction, since the message is the reader's own", () => {
+    expect(resolveActions("reaction")).toEqual([{ action: "mark_read", title: "Mark read" }])
+  })
+})
+
+describe("planNotificationAction", () => {
+  const data = { workspaceId: "ws_1", streamId: "stream_1", messageId: "msg_oldest", latestMessageId: "msg_newest" }
+
+  it("marks the stream read through the newest message of the card", () => {
+    expect(planNotificationAction("mark_read", data)).toEqual({
+      url: "/api/workspaces/ws_1/streams/stream_1/read",
+      body: { lastEventId: "msg_newest" },
+    })
+  })
+
+  it("reacts to the newest message of the card", () => {
+    expect(planNotificationAction("react", data)).toEqual({
+      url: "/api/workspaces/ws_1/messages/msg_newest/reactions",
+      body: { emoji: "👍" },
+    })
+  })
+
+  it("falls back to the deep-link message when no newer one is recorded", () => {
+    expect(planNotificationAction("react", { ...data, latestMessageId: undefined })?.url).toBe(
+      "/api/workspaces/ws_1/messages/msg_oldest/reactions"
+    )
+  })
+
+  it("returns null without the ids to act on, or for an unknown action", () => {
+    expect(planNotificationAction("mark_read", { ...data, streamId: undefined })).toBeNull()
+    expect(planNotificationAction("react", { workspaceId: "ws_1" })).toBeNull()
+    expect(planNotificationAction("mute", data)).toBeNull()
+  })
+})
+
+describe("countNotifiedMessages", () => {
+  it("sums the messages behind every card and ignores cards without any", () => {
+    expect(
+      countNotifiedMessages([{ messages: [{}, {}, {}] }, { messages: [{}] }, { kind: "call_ring" } as never, undefined])
+    ).toBe(4)
   })
 })

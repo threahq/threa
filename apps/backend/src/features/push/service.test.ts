@@ -151,15 +151,23 @@ describe("PushService delivery options", () => {
     })
   })
 
-  it("ships the body as plain text with emoji resolved, since the SW renders it verbatim (INV-60)", async () => {
+  it("ships a plain-text body with emoji resolved and the actor avatar path for the notification icon", async () => {
     const payload = makeActivityPayload()
     payload.activity.activityType = ActivityTypes.REACTION
-    payload.activity.context = { contentPreview: "**ship it** :rocket: [@kris](user:usr_1)", emoji: ":+1:" }
+    payload.activity.context = {
+      contentPreview: "**ship it** :rocket: [@kris](user:usr_1)",
+      emoji: ":+1:",
+      authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
+    }
     await makeService(false).deliverPushForActivity(payload)
 
     const [, body] = sendNotification.mock.calls[0] as [unknown, string]
     const { data } = JSON.parse(body) as { data: Record<string, unknown> }
-    expect(data).toMatchObject({ contentPreview: "ship it 🚀 @kris", emoji: "👍" })
+    expect(data).toMatchObject({
+      contentPreview: "ship it 🚀 @kris",
+      emoji: "👍",
+      authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
+    })
   })
 
   it("keeps mention pushes on a distinct topic so they don't collapse into message pushes", async () => {
