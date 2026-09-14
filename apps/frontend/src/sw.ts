@@ -1,8 +1,13 @@
 /// <reference lib="webworker" />
 import { PrecacheController, PrecacheRoute } from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
-import { resolveTag, planNotificationAction, countNotifiedMessages } from "./lib/sw-notification-format"
-import { ACCOUNT_ASSERTION_HEADER } from "@threahq/types"
+import {
+  resolveTag,
+  planNotificationAction,
+  countNotifiedMessages,
+  resolveLatestMessageId,
+} from "./lib/sw-notification-format"
+import { ACCOUNT_ASSERTION_HEADER, type PushAction } from "@threahq/types"
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
 import { isDevicePresent } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
@@ -449,6 +454,9 @@ interface PushData {
   streamName?: string
   authorName?: string
   authorAvatarUrl?: string
+  pushActions?: PushAction[]
+  pushReminderMinutes?: number
+  pushQuickReaction?: string
   emoji?: string
   messages?: Array<{ authorName?: string; contentPreview?: string; emoji?: string }>
   /** Newest message of a grouped card; `messageId` stays the oldest for the deep link. */
@@ -617,13 +625,13 @@ self.addEventListener("push", (event) => {
           data: {
             ...data,
             messageId: previous?.messageId ?? data.messageId,
-            latestMessageId: data.messageId,
+            latestMessageId: resolveLatestMessageId(previous, data),
             messages,
           },
           tag,
           renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,
-          actions: resolveActions(data.activityType),
+          actions: resolveActions(data.activityType, data),
         }
 
         for (const n of existing) n.close()
@@ -655,7 +663,7 @@ self.addEventListener("push", (event) => {
 async function syncAppBadge(): Promise<void> {
   if (!("setAppBadge" in self.navigator)) return
   const notifications = await self.registration.getNotifications()
-  const count = countNotifiedMessages(notifications.map((n) => n.data as PushData | undefined))
+  const count = countNotifiedMessages(notifications.map((notification) => notification.data as PushData | undefined))
   await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge()).catch(() => {})
 }
 

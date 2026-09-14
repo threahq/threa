@@ -1,4 +1,12 @@
-import { ActivityTypes } from "@threahq/types"
+import {
+  ActivityTypes,
+  DEFAULT_PUSH_ACTIONS,
+  DEFAULT_PUSH_QUICK_REACTION,
+  DEFAULT_PUSH_REMINDER_MINUTES,
+  PUSH_ACTIONS_MAX,
+  PushActions,
+  type PushAction,
+} from "@threahq/types"
 
 /** A single message entry accumulated by the service worker for grouped notifications. */
 export interface NotificationMessage {
@@ -115,35 +123,72 @@ export function formatBody(messages: NotificationMessage[]): string {
   return messages.map(formatLine).reverse().join("\n")
 }
 
-export const NOTIFICATION_ACTION_MARK_READ = "mark_read"
-export const NOTIFICATION_ACTION_REACT = "react"
-
-/** Emoji character the quick-reaction button sends; the API maps it to its shortcode. */
-export const QUICK_REACTION_EMOJI = "👍"
-
 export interface NotificationActionButton {
-  action: string
+  action: PushAction
   title: string
 }
 
-/**
- * Buttons for a message notification. A reaction push points at the reader's
- * own message, so reacting back is nonsense and only "Mark read" is offered.
- * Chrome Android renders these; iOS Safari ignores `actions` entirely.
- */
-export function resolveActions(activityType?: string): NotificationActionButton[] {
-  const markRead = { action: NOTIFICATION_ACTION_MARK_READ, title: "Mark read" }
-  if (activityType === ActivityTypes.REACTION) return [markRead]
-  return [markRead, { action: NOTIFICATION_ACTION_REACT, title: QUICK_REACTION_EMOJI }]
+export interface NotificationActionPrefs {
+  pushActions?: PushAction[]
+  pushReminderMinutes?: number
+  pushQuickReaction?: string
 }
 
-export interface NotificationActionTarget {
+function actionTitle(action: PushAction, prefs: NotificationActionPrefs): string {
+  switch (action) {
+    case PushActions.MARK_READ:
+      return "Mark read"
+    case PushActions.REMIND:
+      return `Remind me in ${formatReminderDelay(prefs.pushReminderMinutes ?? DEFAULT_PUSH_REMINDER_MINUTES)}`
+    case PushActions.REACT:
+      return prefs.pushQuickReaction ?? DEFAULT_PUSH_QUICK_REACTION
+  }
+}
+
+/** "5m", "2h", "3d": the button label has room for little more. */
+export function formatReminderDelay(minutes: number): string {
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}d`
+  if (minutes % 60 === 0) return `${minutes / 60}h`
+  return `${minutes}m`
+}
+
+/**
+ * Buttons for a message notification, from the user's preferences (default
+ * Mark read + Remind me). A reaction push points at the reader's own message,
+ * so reacting back is nonsense and that slot is dropped. Chrome renders
+ * these; iOS Safari ignores `actions` entirely.
+ */
+export function resolveActions(
+  activityType: string | undefined,
+  prefs: NotificationActionPrefs
+): NotificationActionButton[] {
+  const actions = (prefs.pushActions ?? DEFAULT_PUSH_ACTIONS).slice(0, PUSH_ACTIONS_MAX)
+  return actions
+    .filter((action) => !(action === PushActions.REACT && activityType === ActivityTypes.REACTION))
+    .map((action) => ({ action, title: actionTitle(action, prefs) }))
+}
+
+export interface NotificationActionTarget extends NotificationActionPrefs {
   workspaceId?: string
   streamId?: string
   /** Deep-link target: the oldest message of a grouped card. */
   messageId?: string
   /** The message that arrived last, what an action button should act on. */
   latestMessageId?: string
+}
+
+/**
+ * The message an action button acts on after this push joins the card. A
+ * reaction push carries the reader's own older message, so it must not pull
+ * the pointer back behind a newer message already on the card.
+ */
+export function resolveLatestMessageId(
+  previous: { latestMessageId?: string; messageId?: string } | undefined,
+  incoming: { activityType?: string; messageId?: string }
+): string | undefined {
+  const current = previous?.latestMessageId ?? previous?.messageId
+  if (incoming.activityType === ActivityTypes.REACTION) return current ?? incoming.messageId
+  return incoming.messageId ?? current
 }
 
 export interface NotificationActionRequest {
@@ -153,30 +198,39 @@ export interface NotificationActionRequest {
 
 /**
  * The API call behind an action button, or null when the notification lacks
- * the ids to make one (the caller then opens the app instead). Both act on the
- * newest message of the card: reading through it clears the whole group, and a
- * quick reaction answers what the user just saw in the banner.
+ * the ids to make one (the caller then opens the app instead). All act on the
+ * newest message of the card: reading through it clears the whole group, a
+ * quick reaction answers what the banner showed, a reminder brings it back.
  */
 export function planNotificationAction(
   action: string,
-  data: NotificationActionTarget
+  data: NotificationActionTarget,
+  now: number = Date.now()
 ): NotificationActionRequest | null {
   const messageId = data.latestMessageId ?? data.messageId
   if (!data.workspaceId || !messageId) return null
-  if (action === NOTIFICATION_ACTION_MARK_READ) {
-    if (!data.streamId) return null
-    return {
-      url: `/api/workspaces/${data.workspaceId}/streams/${data.streamId}/read`,
-      body: { lastEventId: messageId },
+  switch (action) {
+    case PushActions.MARK_READ:
+      if (!data.streamId) return null
+      return {
+        url: `/api/workspaces/${data.workspaceId}/streams/${data.streamId}/read`,
+        body: { lastEventId: messageId },
+      }
+    case PushActions.REACT:
+      return {
+        url: `/api/workspaces/${data.workspaceId}/messages/${messageId}/reactions`,
+        body: { emoji: data.pushQuickReaction ?? DEFAULT_PUSH_QUICK_REACTION },
+      }
+    case PushActions.REMIND: {
+      const minutes = data.pushReminderMinutes ?? DEFAULT_PUSH_REMINDER_MINUTES
+      return {
+        url: `/api/workspaces/${data.workspaceId}/saved`,
+        body: { messageId, remindAt: new Date(now + minutes * 60_000).toISOString() },
+      }
     }
+    default:
+      return null
   }
-  if (action === NOTIFICATION_ACTION_REACT) {
-    return {
-      url: `/api/workspaces/${data.workspaceId}/messages/${messageId}/reactions`,
-      body: { emoji: QUICK_REACTION_EMOJI },
-    }
-  }
-  return null
 }
 
 /**

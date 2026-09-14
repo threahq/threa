@@ -721,9 +721,10 @@ export async function startServer(): Promise<ServerInstance> {
         }
       : null,
     lookups: {
-      getUserNotificationLevel: async (workspaceId, userId) => {
-        const prefs = await userPreferencesService.getPreferences(workspaceId, userId)
-        return prefs.notificationLevel
+      getUserPushPreferences: async (workspaceId, userId) => {
+        const { notificationLevel, pushActions, pushReminderMinutes, pushQuickReaction } =
+          await userPreferencesService.getPreferences(workspaceId, userId)
+        return { notificationLevel, pushActions, pushReminderMinutes, pushQuickReaction }
       },
       isNotificationPaused: async (workspaceId, userId) => {
         // Single query (INV-30): the mapped user already masks an expired status

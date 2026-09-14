@@ -519,7 +519,11 @@ describe("ActivityService.processReactionAdded", () => {
 
     spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage() as any)
     spyOn(StreamRepository, "findById").mockResolvedValue(stream)
-    spyOn(UserRepository, "findById").mockResolvedValue({ id: REACTOR_ID, name: "Bob" } as any)
+    spyOn(UserRepository, "findById").mockResolvedValue({
+      id: REACTOR_ID,
+      name: "Bob",
+      avatarUrl: `avatars/${WORKSPACE_ID}/${REACTOR_ID}/1700`,
+    } as any)
     spyOn(StreamMemberRepository, "findByStreamAndMember").mockResolvedValue({
       memberId: MESSAGE_AUTHOR_ID,
     } as any)
@@ -557,6 +561,10 @@ describe("ActivityService.processReactionAdded", () => {
     expect(authorCall.activityType).toBe(ActivityTypes.REACTION)
     expect(authorCall.isSelf).toBeFalsy()
     expect(authorCall.emoji).toBe(":eyes:")
+    expect(authorCall.context).toMatchObject({
+      authorName: "Bob",
+      authorAvatarUrl: `/api/workspaces/${WORKSPACE_ID}/users/${REACTOR_ID}/avatar/1700.64.webp`,
+    })
 
     const selfCall = calls.find((c) => c.userIds[0] === REACTOR_ID)
     expect(selfCall).toBeDefined()

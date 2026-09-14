@@ -6,10 +6,37 @@ import {
   formatBody,
   isViewingStream,
   resolveActions,
+  formatReminderDelay,
   planNotificationAction,
   countNotifiedMessages,
+  resolveLatestMessageId,
   type NotificationMessage,
 } from "./sw-notification-format"
+
+describe("resolveLatestMessageId", () => {
+  it("advances to each new message", () => {
+    expect(resolveLatestMessageId(undefined, { activityType: "message", messageId: "msg_1" })).toBe("msg_1")
+    expect(
+      resolveLatestMessageId(
+        { messageId: "msg_1", latestMessageId: "msg_1" },
+        { activityType: "message", messageId: "msg_2" }
+      )
+    ).toBe("msg_2")
+  })
+
+  it("keeps the newer message when a reaction to an older one joins the card", () => {
+    expect(
+      resolveLatestMessageId(
+        { messageId: "msg_1", latestMessageId: "msg_2" },
+        { activityType: "reaction", messageId: "msg_0" }
+      )
+    ).toBe("msg_2")
+  })
+
+  it("acts on the reacted message when the card holds nothing else", () => {
+    expect(resolveLatestMessageId(undefined, { activityType: "reaction", messageId: "msg_0" })).toBe("msg_0")
+  })
+})
 
 describe("resolveTag", () => {
   it("returns streamId for message activity", () => {
@@ -203,15 +230,37 @@ describe("formatBody", () => {
 })
 
 describe("resolveActions", () => {
-  it("offers mark read and a quick reaction for a message", () => {
-    expect(resolveActions("message")).toEqual([
+  it("defaults to mark read and a 5m reminder for a message", () => {
+    expect(resolveActions("message", {})).toEqual([
       { action: "mark_read", title: "Mark read" },
-      { action: "react", title: "👍" },
+      { action: "remind", title: "Remind me in 5m" },
     ])
   })
 
-  it("offers only mark read for a reaction, since the message is the reader's own", () => {
-    expect(resolveActions("reaction")).toEqual([{ action: "mark_read", title: "Mark read" }])
+  it("follows the user's slots, duration, and quick reaction", () => {
+    expect(
+      resolveActions("message", { pushActions: ["react", "remind"], pushReminderMinutes: 120, pushQuickReaction: "🎉" })
+    ).toEqual([
+      { action: "react", title: "🎉" },
+      { action: "remind", title: "Remind me in 2h" },
+    ])
+  })
+
+  it("drops the reaction button on a reaction push, since the message is the reader's own", () => {
+    expect(resolveActions("reaction", { pushActions: ["mark_read", "react"] })).toEqual([
+      { action: "mark_read", title: "Mark read" },
+    ])
+  })
+
+  it("honours an empty slot list and never exceeds two buttons", () => {
+    expect(resolveActions("message", { pushActions: [] })).toEqual([])
+    expect(resolveActions("message", { pushActions: ["mark_read", "remind", "react"] })).toHaveLength(2)
+  })
+})
+
+describe("formatReminderDelay", () => {
+  it("picks the largest whole unit", () => {
+    expect([5, 90, 60, 1440, 4320].map(formatReminderDelay)).toEqual(["5m", "90m", "1h", "1d", "3d"])
   })
 })
 
@@ -225,11 +274,21 @@ describe("planNotificationAction", () => {
     })
   })
 
-  it("reacts to the newest message of the card", () => {
-    expect(planNotificationAction("react", data)).toEqual({
+  it("reacts to the newest message of the card with the user's quick reaction", () => {
+    expect(planNotificationAction("react", { ...data, pushQuickReaction: "🎉" })).toEqual({
       url: "/api/workspaces/ws_1/messages/msg_newest/reactions",
-      body: { emoji: "👍" },
+      body: { emoji: "🎉" },
     })
+    expect(planNotificationAction("react", data)?.body).toEqual({ emoji: "👍" })
+  })
+
+  it("saves the newest message with a reminder the configured minutes ahead", () => {
+    const now = Date.UTC(2026, 8, 14, 12, 0, 0)
+    expect(planNotificationAction("remind", { ...data, pushReminderMinutes: 30 }, now)).toEqual({
+      url: "/api/workspaces/ws_1/saved",
+      body: { messageId: "msg_newest", remindAt: "2026-09-14T12:30:00.000Z" },
+    })
+    expect(planNotificationAction("remind", data, now)?.body.remindAt).toBe("2026-09-14T12:05:00.000Z")
   })
 
   it("falls back to the deep-link message when no newer one is recorded", () => {

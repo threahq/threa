@@ -39,7 +39,12 @@ function makeService(
     pool: fakePool,
     vapidConfig: { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: "mailto:test@example.com" },
     lookups: {
-      getUserNotificationLevel: async () => level,
+      getUserPushPreferences: async () => ({
+        notificationLevel: level,
+        pushActions: ["mark_read", "remind"],
+        pushReminderMinutes: 5,
+        pushQuickReaction: "👍",
+      }),
       isNotificationPaused: async () => isNotificationPaused,
       getStreamType: async () => "channel",
       getWorkosUserId: async () => "workos_1",
@@ -151,7 +156,7 @@ describe("PushService delivery options", () => {
     })
   })
 
-  it("ships a plain-text body with emoji resolved and the actor avatar path for the notification icon", async () => {
+  it("ships a plain-text body, the actor avatar path, and the user's button preferences", async () => {
     const payload = makeActivityPayload()
     payload.activity.activityType = ActivityTypes.REACTION
     payload.activity.context = {
@@ -167,6 +172,9 @@ describe("PushService delivery options", () => {
       contentPreview: "ship it 🚀 @kris",
       emoji: "👍",
       authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
+      pushActions: ["mark_read", "remind"],
+      pushReminderMinutes: 5,
+      pushQuickReaction: "👍",
     })
   })
 

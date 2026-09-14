@@ -15,6 +15,10 @@ import {
   LINK_PREVIEW_DEFAULT_OPTIONS,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   UNREAD_OPEN_POSITION_OPTIONS,
+  PUSH_ACTION_OPTIONS,
+  PUSH_ACTIONS_MAX,
+  PUSH_REMINDER_MINUTES_MIN,
+  PUSH_REMINDER_MINUTES_MAX,
   VOICE_POLISH_LEVEL_OPTIONS,
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
@@ -64,6 +68,13 @@ const updatePreferencesSchema = z.object({
   linkPreviewDefault: z.enum(LINK_PREVIEW_DEFAULT_OPTIONS).optional(),
   labelRemoveOnMove: z.enum(LABEL_REMOVE_ON_MOVE_OPTIONS).optional(),
   unreadOpenPosition: z.enum(UNREAD_OPEN_POSITION_OPTIONS).optional(),
+  pushActions: z
+    .array(z.enum(PUSH_ACTION_OPTIONS))
+    .max(PUSH_ACTIONS_MAX)
+    .refine((actions) => new Set(actions).size === actions.length, { message: "Repeated push action" })
+    .optional(),
+  pushReminderMinutes: z.number().int().min(PUSH_REMINDER_MINUTES_MIN).max(PUSH_REMINDER_MINUTES_MAX).optional(),
+  pushQuickReaction: z.string().min(1).max(64).optional(),
   scratchpadCustomPrompt: z.string().max(8000).nullable().optional(),
   codeBlockCollapseThreshold: z
     .number()

@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import type { UserPreferences } from "@threahq/types"
 import webpush from "web-push"
 import { withTransaction, withClient } from "../../db"
 import { PushSubscriptionRepository, type PushSubscription, type InsertPushSubscriptionParams } from "./repository"
@@ -117,10 +118,15 @@ const RECENT_INTERACTION_WINDOW_MS = PRESENCE_INTERACTION_WINDOW_MS
  */
 const SESSION_EXPIRY_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000 // 30 days (matches cookie TTL)
 
+export type PushPreferences = Pick<
+  UserPreferences,
+  "notificationLevel" | "pushActions" | "pushReminderMinutes" | "pushQuickReaction"
+>
+
 /** Callbacks for resolving cross-feature data (INV-52: access via service layer, not repos) */
 interface CrossFeatureLookups {
-  /** Resolve a user's notification level preference. */
-  getUserNotificationLevel: (workspaceId: string, userId: string) => Promise<PrefNotificationLevel>
+  /** Resolve the user's notification level and the push button preferences that ride the payload. */
+  getUserPushPreferences: (workspaceId: string, userId: string) => Promise<PushPreferences>
   /**
    * Whether the user currently has notifications paused (do-not-disturb) — via
    * a do-not-disturb status or a manual pause. Evaluated at delivery time so an
@@ -351,7 +357,8 @@ export class PushService {
     // Member-added activities notify via the feed only, not push.
     if (activity.activityType === ActivityTypes.MEMBER_ADDED) return
 
-    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    const prefs = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
+    const prefLevel = prefs.notificationLevel
 
     if (prefLevel === PrefNotificationLevels.NONE) {
       return
@@ -418,6 +425,10 @@ export class PushService {
         streamName: context?.streamName,
         authorName: context?.authorName,
         authorAvatarUrl: context?.authorAvatarUrl,
+        // Button preferences ride every card so the worker renders them without a fetch.
+        pushActions: prefs.pushActions,
+        pushReminderMinutes: prefs.pushReminderMinutes,
+        pushQuickReaction: prefs.pushQuickReaction,
         // Reaction emoji — lets the SW render "Alice reacted 👍 to …" instead of
         // formatting a reaction like a plain incoming message. Absent for
         // non-reactions. Reactions are stored as shortcodes; a custom emoji
@@ -447,7 +458,7 @@ export class PushService {
 
     const { workspaceId, targetUserId, savedId, messageId, streamId, saved } = payload
 
-    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
     if (prefLevel === PrefNotificationLevels.NONE) {
       return
     }
@@ -514,7 +525,7 @@ export class PushService {
 
     const { workspaceId, targetUserId, rootStreamId } = payload
 
-    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
     if (prefLevel === PrefNotificationLevels.NONE) return
     if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
 
@@ -596,7 +607,7 @@ export class PushService {
     if (!this.canSend) return
     const { workspaceId, targetUserId, attemptId, callId, streamId, inviter, mode, expiresAt } = payload
 
-    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
     if (prefLevel === PrefNotificationLevels.NONE) return
     if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
 
@@ -640,7 +651,7 @@ export class PushService {
     if (!this.canSend) return
     const { workspaceId, targetUserId, attemptId, inviterName } = payload
 
-    const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
+    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
     if (prefLevel === PrefNotificationLevels.NONE) return
     if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
 

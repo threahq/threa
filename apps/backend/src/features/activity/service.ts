@@ -379,11 +379,11 @@ export class ActivityService {
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = (message.contentMarkdown ?? "").slice(0, 200)
-      const { authorName: actorName } = await this.resolveAuthor(client, workspaceId, actorId, actorType)
+      const actor = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const context = {
         contentPreview,
-        authorName: actorName,
+        ...actor,
         emoji,
         ...streamContext,
       }
@@ -610,7 +610,7 @@ export class ActivityService {
 
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
-      const { authorName: actorName } = await this.resolveAuthor(client, workspaceId, addedBy, addedByType)
+      const actor = await this.resolveAuthor(client, workspaceId, addedBy, addedByType)
 
       const rows = await ActivityRepository.insertBatch(client, {
         workspaceId,
@@ -620,7 +620,7 @@ export class ActivityService {
         messageId: event.id,
         actorId: addedBy,
         actorType: addedByType,
-        context: { authorName: actorName, ...streamContext },
+        context: { ...actor, ...streamContext },
       })
 
       return rows

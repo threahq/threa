@@ -5,7 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
 import type { CreateStreamInput } from "@/api"
-import { DEFAULT_SIDEBAR_CONFIG, DEFAULT_WORKSPACE_SETTINGS, type Stream, type WorkspaceBootstrap } from "@threahq/types"
+import {
+  DEFAULT_SIDEBAR_CONFIG,
+  DEFAULT_WORKSPACE_SETTINGS,
+  type Stream,
+  type WorkspaceBootstrap,
+} from "@threahq/types"
 import { workspaceKeys } from "./use-workspaces"
 import { useCreateStream } from "./use-streams"
 import * as syncEngineModule from "@/sync/sync-engine"
@@ -75,6 +80,9 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       linkPreviewDefault: "open",
       labelRemoveOnMove: "ask",
       unreadOpenPosition: "latest",
+      pushActions: ["mark_read", "remind"],
+      pushReminderMinutes: 5,
+      pushQuickReaction: "👍",
       scratchpadCustomPrompt: null,
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,

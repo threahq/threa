@@ -315,3 +315,37 @@ describe("updatePreferencesSchema code block wrapping", () => {
     expect(DEFAULT_USER_PREFERENCES.codeBlockWrapOverrides).toEqual({})
   })
 })
+
+describe("updatePreferencesSchema push buttons", () => {
+  it("accepts two distinct ordered slots, a reminder duration, and a quick reaction", () => {
+    expect(
+      updatePreferencesSchema.parse({
+        pushActions: ["remind", "react"],
+        pushReminderMinutes: 30,
+        pushQuickReaction: "🎉",
+      })
+    ).toEqual({ pushActions: ["remind", "react"], pushReminderMinutes: 30, pushQuickReaction: "🎉" })
+    expect(updatePreferencesSchema.parse({ pushActions: [] }).pushActions).toEqual([])
+  })
+
+  it("rejects a repeated slot, a third slot, and an unknown action", () => {
+    expect(updatePreferencesSchema.safeParse({ pushActions: ["remind", "remind"] }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ pushActions: ["mark_read", "remind", "react"] }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ pushActions: ["snooze"] }).success).toBe(false)
+  })
+
+  it("keeps the reminder between one minute and a week, whole minutes only", () => {
+    expect(updatePreferencesSchema.safeParse({ pushReminderMinutes: 0 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ pushReminderMinutes: 7 * 24 * 60 + 1 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ pushReminderMinutes: 2.5 }).success).toBe(false)
+    expect(updatePreferencesSchema.safeParse({ pushReminderMinutes: 7 * 24 * 60 }).success).toBe(true)
+  })
+
+  it("defaults to Mark read + a 5m reminder with 👍", () => {
+    expect(DEFAULT_USER_PREFERENCES).toMatchObject({
+      pushActions: ["mark_read", "remind"],
+      pushReminderMinutes: 5,
+      pushQuickReaction: "👍",
+    })
+  })
+})
