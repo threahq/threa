@@ -54,9 +54,23 @@ COPY packages/types/package.json packages/types/
 error: lockfile had changes, but lockfile is frozen
 ```
 
-This bit prod once during the backoffice rollout (PR #338) — adding `apps/backoffice` and `apps/backoffice-router` to the workspace set without updating the Dockerfiles took both backend and control-plane down at the next Railway rebuild.
+This bit prod once during the backoffice rollout ([PR #338](https://github.com/threahq/threa/pull/338)) — adding `apps/backoffice` and `apps/backoffice-router` to the workspace set without updating the Dockerfiles took both backend and control-plane down at the next Railway rebuild.
 
 A lint check enforces this from CI now: `bun run check:dockerfiles` (also part of the root `lint` script and the `lint` job in `.github/workflows/ci.yml`) compares the workspace package.json set on disk against each Dockerfile's `COPY` block and fails with the exact missing line if there's a mismatch. **When you add a new workspace under `apps/` or `packages/`, the lint will tell you which Dockerfiles need a new COPY line.**
+
+#### Runtime image pins
+
+The backend, control-plane, db-read-proxy, and enclave Dockerfiles pin application base images by exact version tag and multi-platform registry digest. Rebuilds cannot silently pick up a newer base image. Keep their Bun pins synchronized. The enclave uses Bun to bundle and a separate Node image to run the result. PostgreSQL image changes require a separate recovery-aware review.
+
+To bump a runtime:
+
+```sh
+docker buildx imagetools inspect oven/bun:<new-version>
+# For the enclave runtime:
+docker buildx imagetools inspect node:<new-version>-slim
+```
+
+Use the reported index digest in each affected `FROM` line, rebuild the affected Dockerfiles, and run `bun run check:dockerfiles`. Verify frozen-lockfile installation under the new Bun version and X25519 `deriveBits` under the new Node version before shipping the pins.
 
 ### Migrations
 
