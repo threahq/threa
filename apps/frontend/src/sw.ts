@@ -718,13 +718,10 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     (async () => {
-      if (event.action && data && (await performNotificationAction(event.action, data))) {
-        event.notification.close()
-        await syncAppBadge()
-        return
-      }
+      const acted = event.action && data ? await performNotificationAction(event.action, data) : false
       event.notification.close()
       await syncAppBadge()
+      if (acted) return
 
       const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
       for (const client of clients) {

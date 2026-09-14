@@ -97,20 +97,13 @@ describe("PushActionsSection", () => {
     expect(updatePreference).toHaveBeenCalledWith("pushQuickReaction", "🎉")
   })
 
-  it("commits the reminder duration in minutes on blur and clamps it to a week", async () => {
+  it("writes the picked reminder duration in minutes", async () => {
     const user = userEvent.setup()
-    const { updatePreference } = mount({ pushReminderMinutes: 120 })
-    const amount = screen.getByRole("spinbutton", { name: "Reminder amount" })
-    expect(amount).toHaveValue(2)
-    expect(screen.getByRole("combobox", { name: "Reminder unit" })).toHaveTextContent("hours")
-    await user.clear(amount)
-    await user.type(amount, "3")
-    await user.tab()
-    expect(updatePreference).toHaveBeenCalledWith("pushReminderMinutes", 180)
-    await user.clear(amount)
-    await user.type(amount, "999")
-    await user.tab()
-    expect(updatePreference).toHaveBeenCalledWith("pushReminderMinutes", 7 * 24 * 60)
+    const { updatePreference } = mount({ pushReminderMinutes: 180 })
+    expect(screen.getByRole("combobox", { name: "Remind me after" })).toHaveTextContent("3 hours")
+    await user.click(screen.getByRole("combobox", { name: "Remind me after" }))
+    await user.click(await screen.findByRole("option", { name: "1 day" }))
+    expect(updatePreference).toHaveBeenCalledWith("pushReminderMinutes", 24 * 60)
   })
 })
 

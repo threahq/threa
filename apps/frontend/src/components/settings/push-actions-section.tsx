@@ -1,6 +1,4 @@
-import { useEffect, useState } from "react"
 import { Smile } from "lucide-react"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -16,8 +14,6 @@ import {
   DEFAULT_PUSH_REMINDER_MINUTES,
   PUSH_ACTION_OPTIONS,
   PUSH_ACTIONS_MAX,
-  PUSH_REMINDER_MINUTES_MAX,
-  PUSH_REMINDER_MINUTES_MIN,
   PushActions,
   getAvatarUrl,
   type PushAction,
@@ -32,14 +28,14 @@ const ACTION_LABELS: Record<PushAction, string> = {
   react: "React",
 }
 
-type DurationUnit = "minutes" | "hours" | "days"
-const UNIT_MINUTES: Record<DurationUnit, number> = { minutes: 1, hours: 60, days: 24 * 60 }
-
-function splitMinutes(minutes: number): { amount: number; unit: DurationUnit } {
-  if (minutes % UNIT_MINUTES.days === 0) return { amount: minutes / UNIT_MINUTES.days, unit: "days" }
-  if (minutes % UNIT_MINUTES.hours === 0) return { amount: minutes / UNIT_MINUTES.hours, unit: "hours" }
-  return { amount: minutes, unit: "minutes" }
-}
+const REMINDER_OPTIONS = [
+  { minutes: 5, label: "5 minutes" },
+  { minutes: 15, label: "15 minutes" },
+  { minutes: 30, label: "30 minutes" },
+  { minutes: 60, label: "1 hour" },
+  { minutes: 3 * 60, label: "3 hours" },
+  { minutes: 24 * 60, label: "1 day" },
+]
 
 /**
  * Chrome (Android and desktop) renders up to `Notification.maxActions`
@@ -60,66 +56,6 @@ export function assignSlot(actions: readonly PushAction[], index: number, action
   }
   slots[index] = action
   return slots.filter((slot): slot is PushAction => slot !== null)
-}
-
-function ReminderDurationField({ minutes, onCommit }: { minutes: number; onCommit: (minutes: number) => void }) {
-  const initial = splitMinutes(minutes)
-  const [amount, setAmount] = useState(String(initial.amount))
-  const [unit, setUnit] = useState<DurationUnit>(initial.unit)
-
-  useEffect(() => {
-    const next = splitMinutes(minutes)
-    setAmount(String(next.amount))
-    setUnit(next.unit)
-  }, [minutes])
-
-  const commit = (nextAmount: string, nextUnit: DurationUnit) => {
-    const parsed = Math.round(Number(nextAmount))
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setAmount(String(splitMinutes(minutes).amount))
-      return
-    }
-    const clamped = Math.min(
-      PUSH_REMINDER_MINUTES_MAX,
-      Math.max(PUSH_REMINDER_MINUTES_MIN, parsed * UNIT_MINUTES[nextUnit])
-    )
-    if (clamped !== minutes) onCommit(clamped)
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <Input
-        type="number"
-        inputMode="numeric"
-        min={1}
-        aria-label="Reminder amount"
-        value={amount}
-        onChange={(event) => setAmount(event.target.value)}
-        onBlur={() => commit(amount, unit)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") commit(amount, unit)
-        }}
-        className="h-9 w-20"
-      />
-      <Select
-        value={unit}
-        onValueChange={(value) => {
-          const nextUnit = value as DurationUnit
-          setUnit(nextUnit)
-          commit(amount, nextUnit)
-        }}
-      >
-        <SelectTrigger aria-label="Reminder unit" className="h-9 w-28">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="minutes">minutes</SelectItem>
-          <SelectItem value="hours">hours</SelectItem>
-          <SelectItem value="days">days</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
-  )
 }
 
 function NotificationPreview({
@@ -228,11 +164,22 @@ export function PushActionsSection({ workspaceId }: { workspaceId: string }) {
 
       {actions.includes(PushActions.REMIND) && (
         <div className="space-y-1.5">
-          <Label>Remind me after</Label>
-          <ReminderDurationField
-            minutes={reminderMinutes}
-            onCommit={(minutes) => updatePreference("pushReminderMinutes", minutes)}
-          />
+          <Label htmlFor="push-reminder-minutes">Remind me after</Label>
+          <Select
+            value={String(reminderMinutes)}
+            onValueChange={(value) => updatePreference("pushReminderMinutes", Number(value))}
+          >
+            <SelectTrigger id="push-reminder-minutes" aria-label="Remind me after" className="h-9 w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {REMINDER_OPTIONS.map((option) => (
+                <SelectItem key={option.minutes} value={String(option.minutes)}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       )}
 
