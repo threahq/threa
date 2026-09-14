@@ -1,18 +1,8 @@
 import type { EnclaveConfig } from "./config"
 import type { OpenAiMessage, OpenAiTool } from "./agent/openai-format"
 
-/**
- * The enclave's LLM transport.
- *
- * Deliberately NOT the backend's `createAI` wrapper (INV-28): the whole point
- * of the enclave is isolation —
- * decrypted prompts and replies must never leave this process except to the LLM
- * provider. A raw, dependency-free OpenRouter chat-completions client keeps the
- * egress surface to exactly one host and emits no telemetry carrying message
- * content. This is the one place in the codebase that calls a model without
- * `createAI`, by design. The agent loop drives this via a thin `AgentRuntimeAI`
- * adapter (see `agent/enclave-ai.ts`).
- */
+// This transport bypasses the backend's createAI wrapper so decrypted model
+// payloads cannot enter its telemetry (INV-28). Web tools manage their own egress.
 
 export interface RawChatRequest {
   model: string
@@ -69,11 +59,6 @@ interface OpenRouterResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }
 }
 
-/**
- * OpenRouter chat-completions client restricted to zero-retention providers via
- * `provider.data_collection: "deny"` — OpenRouter only routes to upstreams that
- * don't persist request data. The enclave never sets a data-retaining fallback.
- */
 export function createOpenRouterChat(config: EnclaveConfig): RawChatFn {
   return async (req) => {
     const res = await fetch(`${config.openRouterBaseUrl}/chat/completions`, {
@@ -94,7 +79,7 @@ export function createOpenRouterChat(config: EnclaveConfig): RawChatFn {
         // Ask OpenRouter to return billed cost (USD) alongside token counts so the
         // backend can record the turn's spend. Accounting only — no message content.
         usage: { include: true },
-        // Restrict routing to providers that do not retain request data.
+        // No-training routing does not enforce ZDR; retention is a separate policy.
         provider: { data_collection: "deny" },
       }),
       // Compose the caller's Stop signal with the per-call timeout: whichever
