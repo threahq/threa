@@ -299,6 +299,10 @@ export function formatInvocationContent(invocation: ClaimedInvocation): string {
   return [prompt, "", "Earlier in this scratchpad (oldest first, for context):", ...history].join("\n")
 }
 
+export function withInboundAttachments(content: string, manifest: string): string {
+  return manifest ? `${content}\n\n${manifest}` : content
+}
+
 /** Fold the steer text + any swept queued messages into one prompt (most recent last). */
 export function buildSteerContent(parts: string[]): string {
   if (parts.length === 1) return parts[0]!
@@ -1213,7 +1217,7 @@ export class RemoteSession {
    * turn, not become a line in its prompt — so it is handed back to the caller.
    */
   private async startFoldedTurn(invocation: ClaimedInvocation): Promise<ClaimedInvocation[]> {
-    const parts = [await this.buildTurnContent(invocation)]
+    const primary = await this.buildTurnContent(invocation)
     if (this.isClaimCancelled(invocation)) return []
     const folded: ClaimedInvocation[] = []
     const control: ClaimedInvocation[] = []
@@ -1236,12 +1240,12 @@ export class RemoteSession {
           break
         }
         folded.push(extra)
-        // formatInvocationContent, not buildTurnContent: the latter downloads
-        // attachments, and nothing claimed during the sweep is renewed yet, so
-        // a slow queue would expire every claim it is holding. The steer sweep
-        // folds prompt text only for the same reason.
-        parts.push(formatInvocationContent(extra))
       }
+      // A folded source can change while a later scoped claim or download is
+      // awaited. Its callback requests a restart for that claim; omit its stale
+      // snapshot from this turn and leave it for backend replacement rather
+      // than executing content that is no longer canonical.
+      const foldedParts = await this.foldedTurnParts(folded)
       // An archive can land while the sweep awaits; delivering into a detached
       // link publishes busy for a turn whose reply cannot arrive.
       if (this.stopped || this.archive.detached) {
@@ -1252,12 +1256,8 @@ export class RemoteSession {
         return control
       }
       if (this.isClaimCancelled(invocation)) return control
-      // A folded source can change while a later scoped claim is awaited. Its
-      // callback requests a restart for that claim; omit its stale snapshot from
-      // this turn and leave it for backend replacement rather than executing
-      // content that is no longer canonical.
-      const liveFolded = folded.filter((item) => !this.isClaimCancelled(item))
-      const content = buildSteerContent([parts[0]!, ...liveFolded.map((item) => formatInvocationContent(item))])
+      const liveFolded = foldedParts.map(({ invocation: item }) => item)
+      const content = buildSteerContent([primary, ...foldedParts.map((part) => part.content)])
       this.bindRunningOwner(invocation.id, liveFolded)
       await this.deliverTurn(invocation, content, liveFolded)
     } catch (error) {
@@ -1275,6 +1275,23 @@ export class RemoteSession {
       await Promise.all(folded.map((item) => this.failInvocation(item, reason).catch(() => undefined)))
     }
     return control
+  }
+
+  /**
+   * The content each folded message contributes, attachments included, for the
+   * ones still live once every download has landed. Every claim here is under
+   * `observeClaim`, which renews it on its own timer, so a slow download cannot
+   * expire the claims the sweep is holding.
+   */
+  private async foldedTurnParts(
+    folded: ClaimedInvocation[]
+  ): Promise<Array<{ invocation: ClaimedInvocation; content: string }>> {
+    const parts: Array<{ invocation: ClaimedInvocation; content: string }> = []
+    for (const item of folded) {
+      if (this.isClaimCancelled(item)) continue
+      parts.push({ invocation: item, content: await this.buildTurnContent(item) })
+    }
+    return parts.filter((part) => !this.isClaimCancelled(part.invocation))
   }
 
   private bindRunningOwner(ownerInvocationId: string, dependencies: ClaimedInvocation[]): void {
@@ -1554,7 +1571,7 @@ export class RemoteSession {
     steer: (text: string) => Promise<boolean> | boolean,
     text: string
   ): Promise<void> {
-    const { parts, swept, interceptedCount } = await this.sweepQueuedForSteer(text)
+    const { parts, swept, contents, interceptedCount } = await this.sweepQueuedForSteer(text)
     if (this.isClaimCancelled(invocation)) return
     if (parts.length === 0) {
       // The sweep can still have claimed foldless invocations (a queued control
@@ -1595,7 +1612,7 @@ export class RemoteSession {
     }
     if (this.isClaimCancelled(invocation)) return
     const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    const currentParts = this.steerParts(liveSwept, text)
+    const currentParts = this.steerParts(liveSwept, text, contents)
     if (currentParts.length === 0) {
       await Promise.all(liveSwept.map((item) => this.completeNoResponse(item)))
       await this.completeAck(invocation, "Nothing to steer with; the turn continues.")
@@ -1681,9 +1698,12 @@ export class RemoteSession {
    * Unscoped when nothing is in flight — there is no turn whose stream to
    * inherit, and the steer itself is then the only thing being folded into.
    */
-  private async sweepQueuedForSteer(
-    text: string
-  ): Promise<{ parts: string[]; swept: ClaimedInvocation[]; interceptedCount: number }> {
+  private async sweepQueuedForSteer(text: string): Promise<{
+    parts: string[]
+    swept: ClaimedInvocation[]
+    contents: Map<string, string>
+    interceptedCount: number
+  }> {
     const swept: ClaimedInvocation[] = []
     let interceptedCount = 0
     const running = [...this.inflight.values()][0]?.invocation.responseStreamId
@@ -1703,16 +1723,18 @@ export class RemoteSession {
       // update while a later claim awaited is omitted rather than injected stale.
       swept.push(extra)
     }
+    const contents = new Map<string, string>()
+    for (const item of swept) {
+      if (this.isClaimCancelled(item)) continue
+      contents.set(item.id, await this.foldedSteerContent(item))
+    }
     const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    return { parts: this.steerParts(liveSwept, text), swept: liveSwept, interceptedCount }
+    return { parts: this.steerParts(liveSwept, text, contents), swept: liveSwept, contents, interceptedCount }
   }
 
-  private steerParts(liveSwept: ClaimedInvocation[], text: string): string[] {
-    const parts = liveSwept.map((item) => {
-      if (!isSessionControlInvocation(item)) return item.promptMarkdown.trim() || "(empty message)"
-      const queued = parseSessionControlCommand(item)
-      return queued?.name === "steer" ? queued.args : ""
-    })
+  /** Fold the swept messages' prepared content (steer text last); a claim cancelled since its download contributes nothing. */
+  private steerParts(liveSwept: ClaimedInvocation[], text: string, contents: Map<string, string>): string[] {
+    const parts = liveSwept.map((item) => contents.get(item.id) ?? "")
     if (text) parts.push(text)
     return parts.filter(Boolean)
   }
@@ -1913,18 +1935,47 @@ export class RemoteSession {
     invocation: ClaimedInvocation,
     options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
   ): Promise<string> {
+    return withInboundAttachments(
+      formatInvocationContent(invocation),
+      await this.inboundAttachmentManifest(invocation, options)
+    )
+  }
+
+  /**
+   * The text a message folded into a running turn contributes: its prompt and
+   * the manifest of its own attachments — no history and no history
+   * attachments, the running turn already has them. A control command
+   * contributes its /steer args, or nothing.
+   */
+  private async foldedSteerContent(invocation: ClaimedInvocation): Promise<string> {
+    if (isSessionControlInvocation(invocation)) {
+      const queued = parseSessionControlCommand(invocation)
+      return queued?.name === "steer" ? queued.args : ""
+    }
+    const prompt = invocation.promptMarkdown.trim() || "(empty message)"
+    return withInboundAttachments(prompt, await this.inboundAttachmentManifest(invocation, { sourceOnly: true }))
+  }
+
+  /**
+   * Download the turn's inbound attachments and return the manifest listing
+   * where they landed ("" when none). `sourceOnly` skips the history messages'
+   * attachments and takes the source message's alone.
+   */
+  private async inboundAttachmentManifest(
+    invocation: ClaimedInvocation,
+    options: { strictAttachments?: boolean; signal?: AbortSignal; sourceOnly?: boolean } = {}
+  ): Promise<string> {
     if (options.signal?.aborted) throw options.signal.reason
-    const base = formatInvocationContent(invocation)
     // A sealed turn's attachments come from the refs hydration opened out of the
     // sealed payloads — the plaintext message list only holds ciphertext
     // placeholders, so there is nothing to scan there. The S3 object is opaque
     // ciphertext; the ref's key decrypts it locally.
     if (invocation.sealing) {
       const refs = invocation.sealedAttachments
-      if (!refs) return base
+      if (!refs) return ""
       try {
         const downloaded = await downloadSealedInboundAttachments(this.client, {
-          refs: selectSealedInboundRefs(refs.prompt, refs.history),
+          refs: selectSealedInboundRefs(refs.prompt, options.sourceOnly ? [] : refs.history),
           invocationId: invocation.id,
           cwd: process.cwd(),
           log: this.log,
@@ -1932,12 +1983,11 @@ export class RemoteSession {
           signal: options.signal,
         })
         if (options.signal?.aborted) throw options.signal.reason
-        const manifest = formatInboundAttachmentManifest(downloaded)
-        return manifest ? `${base}\n\n${manifest}` : base
+        return formatInboundAttachmentManifest(downloaded)
       } catch (error) {
         if (options.strictAttachments || options.signal?.aborted) throw error
         this.log(`sealed inbound attachment fetch failed: ${this.summarize(error)}`)
-        return base
+        return ""
       }
     }
     // Best-effort: a discovery/download failure (e.g. a key without
@@ -1946,7 +1996,9 @@ export class RemoteSession {
       const downloaded = await downloadInboundAttachments(this.client, {
         streamId: invocation.activeStreamId,
         sourceMessageId: invocation.sourceMessageId,
-        contextMessageIds: (invocation.context?.messages ?? []).map((message) => message.messageId),
+        contextMessageIds: options.sourceOnly
+          ? []
+          : (invocation.context?.messages ?? []).map((message) => message.messageId),
         invocationId: invocation.id,
         cwd: process.cwd(),
         scanLimit: ATTACHMENT_SCAN_LIMIT,
@@ -1955,12 +2007,11 @@ export class RemoteSession {
         signal: options.signal,
       })
       if (options.signal?.aborted) throw options.signal.reason
-      const manifest = formatInboundAttachmentManifest(downloaded)
-      return manifest ? `${base}\n\n${manifest}` : base
+      return formatInboundAttachmentManifest(downloaded)
     } catch (error) {
       if (options.strictAttachments || options.signal?.aborted) throw error
       this.log(`inbound attachment scan failed: ${this.summarize(error)}`)
-      return base
+      return ""
     }
   }
 
