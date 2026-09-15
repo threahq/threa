@@ -4,6 +4,8 @@ import { NavigationRoute, registerRoute } from "workbox-routing"
 import {
   resolveTag,
   planNotificationAction,
+  NOTIFICATION_ACTION_DEBUG_KEY,
+  describeNotificationActionTap,
   withNotificationActionFailure,
   countNotifiedMessages,
   resolveLatestMessageId,
@@ -728,12 +730,19 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const outcome = event.action ? await performNotificationAction(event.action, data ?? {}) : null
+      const shown = event.notification as Notification & { actions?: ReadonlyArray<{ action: string; title: string }> }
+      const buttons = (shown.actions ?? []).map(({ action, title }) => ({ action, title }))
       event.notification.close()
       await syncAppBadge()
-      if (outcome?.ok) return
 
       const deepLink = resolveNotificationTargetUrl(data)
-      const targetUrl = outcome ? withNotificationActionFailure(deepLink, event.action, outcome.reason) : deepLink
+      const targetUrl = outcome
+        ? withNotificationActionFailure(
+            deepLink,
+            NOTIFICATION_ACTION_DEBUG_KEY,
+            describeNotificationActionTap(event.action, buttons, outcome.ok ? "ok" : outcome.reason)
+          )
+        : deepLink
       const absoluteUrl = new URL(targetUrl, self.location.origin).href
       const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
       for (const client of clients) {
