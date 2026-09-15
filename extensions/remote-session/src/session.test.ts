@@ -2943,6 +2943,58 @@ describe("steer into the running turn (native steer support)", () => {
     for (const close of sweptCloses) expect(close.body.noResponse).toBe(true)
   })
 
+  test("folds a queued message's attachments into the injected steer, not just its text", async () => {
+    // The bug: an image sent while the session was busy reached the model as
+    // prompt text only — the sweep never downloaded what the message carried.
+    const dir = mkdtempSync(join(tmpdir(), "remote-steer-attach-"))
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const steered: string[] = []
+    const queued = [makeInvocation({ id: "binv_q_img", sourceMessageId: "src_img", promptMarkdown: "see this" })]
+    const session = makeSession(client, transport, {
+      sessionControl: {
+        commands: ["stop", "steer"],
+        interrupt: () => true,
+        steer: (text) => {
+          steered.push(text)
+          return true
+        },
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    })
+    seedInflight(session, makeInvocation({ id: "binv_running" }))
+    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
+      queued.shift() ?? null
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => [
+      { id: "src_img", attachments: [{ id: "att_img", filename: "shot.png", mimeType: "image/png", sizeBytes: 4 }] },
+    ]
+    ;(client as unknown as { getAttachmentDownloadUrl: (id: string) => Promise<string> }).getAttachmentDownloadUrl =
+      async (id) => `https://signed.example/${id}`
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(dir)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response("png!")) as unknown as typeof fetch
+    )
+    try {
+      await (
+        session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
+      ).handleSessionControl(makeSteerInvocation("the steer text"))
+
+      expect(steered).toHaveLength(1)
+      const combined = steered[0]!
+      expect(combined).toContain("see this")
+      expect(combined).toContain("[attached to the message you just received]")
+      expect(combined).toContain(join(".threa-attachments", "binv_q_img", "att_img", "shot.png"))
+      expect(combined.indexOf("shot.png")).toBeLessThan(combined.indexOf("the steer text"))
+      expect(calls.complete.find((entry) => entry.id === "binv_q_img")).toBeUndefined()
+    } finally {
+      ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+      await session.shutdown()
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test("acks without steering when there is no text and nothing queued", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -3732,8 +3784,40 @@ describe("folding queued messages into one turn", () => {
         runCommand: async () => ({ ok: true, message: "ok" }),
       },
     })
-    return { session, delivered, completed, failed, claims, interrupts, observations: fake.observations }
+    return { session, client, delivered, completed, failed, claims, interrupts, observations: fake.observations }
   }
+
+  test("a folded message brings its attachments into the turn", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "remote-fold-attach-"))
+    const { session, client, delivered } = makeFoldSession([
+      makeInvocation({ id: "binv_1", promptMarkdown: "first" }),
+      makeInvocation({ id: "binv_2", sourceMessageId: "src_img", promptMarkdown: "and this screenshot" }),
+    ])
+    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => [
+      { id: "src_img", attachments: [{ id: "att_img", filename: "shot.png", mimeType: "image/png", sizeBytes: 4 }] },
+      { id: "src", attachments: [] },
+    ]
+    ;(client as unknown as { getAttachmentDownloadUrl: (id: string) => Promise<string> }).getAttachmentDownloadUrl =
+      async (id) => `https://signed.example/${id}`
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(dir)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response("png!")) as unknown as typeof fetch
+    )
+    try {
+      await asInternal(session).claimDrain()
+
+      expect(delivered).toHaveLength(1)
+      const content = delivered[0]!.content
+      expect(content).toContain("and this screenshot")
+      expect(content).toContain("[attached to the message you just received]")
+      expect(content).toContain(join(".threa-attachments", "binv_2", "att_img", "shot.png"))
+    } finally {
+      await session.shutdown()
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   test("N messages queued behind one become a single turn that sees all of them", async () => {
     // The lag this fixes: each queued message used to become its own turn, so
