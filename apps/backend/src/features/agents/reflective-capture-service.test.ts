@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { Pool } from "pg"
+import { MemoryModes, StreamTypes } from "@threahq/types"
 import type { Message } from "../messaging"
 import { MessageRepository } from "../messaging"
 import type { MemoServiceLike, CaptureSessionReflectionResult } from "../memos"
+import { StreamRepository, type Stream } from "../streams"
 import { AgentSessionRepository, SessionStatuses, type AgentSession, type AgentSessionStep } from "./session-repository"
 import { ReflectiveCaptureService } from "./reflective-capture-service"
 
@@ -79,6 +81,18 @@ function digestStep(findings: string): AgentSessionStep {
   }
 }
 
+/** The stream the session ran in, as the memory-mode gate resolves it. */
+function makeStream(overrides?: Partial<Stream>): Stream {
+  return {
+    id: "stream_1",
+    workspaceId: "ws_1",
+    type: StreamTypes.SCRATCHPAD,
+    rootStreamId: null,
+    memoryMode: MemoryModes.AUTO,
+    ...overrides,
+  } as Stream
+}
+
 function makeMemoService(result: CaptureSessionReflectionResult) {
   const captureSessionReflection = mock(async () => result)
   const service = {
@@ -92,6 +106,12 @@ function makeMemoService(result: CaptureSessionReflectionResult) {
 
 describe("ReflectiveCaptureService", () => {
   afterEach(() => mock.restore())
+
+  // Every test resolves the memory-mode gate to an ordinary auto stream; the
+  // gate's own tests re-spy this with an off one.
+  beforeEach(() => {
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(makeStream())
+  })
 
   function service(memoService: MemoServiceLike) {
     return new ReflectiveCaptureService({ pool: {} as Pool, memoService })
@@ -182,6 +202,53 @@ describe("ReflectiveCaptureService", () => {
 
     expect(result).toEqual({ captured: 0 })
     expect(claim).toHaveBeenCalledTimes(1)
+    expect(captureSessionReflection).not.toHaveBeenCalled()
+  })
+
+  test("claims but never captures when the stream has memory automation off", async () => {
+    // An aside pins memory_mode off at creation, so a research-heavy turn there
+    // must leave no memo behind — the reason this gate exists.
+    const { service: memoService, captureSessionReflection } = makeMemoService({
+      classified: false,
+      captured: 0,
+      deduped: 0,
+    })
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(
+      makeStream({ type: StreamTypes.ASIDE, memoryMode: MemoryModes.OFF })
+    )
+    const digestSteps = spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([
+      digestStep("Deploys run Fridays after the smoke suite."),
+    ])
+    const claim = spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
+
+    const result = await service(memoService).capture({ workspaceId: "ws_1", sessionId: "session_1" })
+
+    expect(result).toEqual({ captured: 0 })
+    expect(claim).toHaveBeenCalledTimes(1)
+    expect(captureSessionReflection).not.toHaveBeenCalled()
+    // Gated before the digest reads, not after.
+    expect(digestSteps).not.toHaveBeenCalled()
+  })
+
+  test("a thread follows its root's memory mode (INV-62)", async () => {
+    const { service: memoService, captureSessionReflection } = makeMemoService({
+      classified: false,
+      captured: 0,
+      deduped: 0,
+    })
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession({ streamId: "stream_thread" }))
+    // The thread's own row says auto; its root says off.
+    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(async (_db, id) =>
+      id === "stream_thread"
+        ? makeStream({ id: "stream_thread", type: StreamTypes.THREAD, rootStreamId: "stream_root" })
+        : makeStream({ id: "stream_root", memoryMode: MemoryModes.OFF })
+    )
+    spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
+
+    const result = await service(memoService).capture({ workspaceId: "ws_1", sessionId: "session_1" })
+
+    expect(result).toEqual({ captured: 0 })
     expect(captureSessionReflection).not.toHaveBeenCalled()
   })
 
