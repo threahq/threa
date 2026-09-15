@@ -257,10 +257,25 @@ const ACTION_FAILURE_LABELS: Record<string, string> = {
 export function describeNotificationActionFailure(value: string): string | null {
   const separator = value.indexOf(":")
   if (separator === -1) return null
-  const label = ACTION_FAILURE_LABELS[value.slice(0, separator)]
+  const key = value.slice(0, separator)
   const reason = value.slice(separator + 1)
+  if (key === NOTIFICATION_ACTION_DEBUG_KEY) return reason ? `Push button debug: ${reason}` : null
+  const label = ACTION_FAILURE_LABELS[key]
   if (!label || !reason) return null
   return `Couldn't ${label} from the notification (${reason}).`
+}
+
+/** Temporary Android diagnosis: the worker reports every button tap through the toast under this key. */
+export const NOTIFICATION_ACTION_DEBUG_KEY = "debug"
+
+/** What the click event handed the worker versus the buttons the card carries, plus the request outcome. */
+export function describeNotificationActionTap(
+  action: string,
+  buttons: ReadonlyArray<{ action: string; title: string }>,
+  outcome: string
+): string {
+  const list = buttons.map((button) => `${button.action}=${button.title}`).join(", ")
+  return `tapped=${action} buttons=[${list}] result=${outcome}`
 }
 
 /**

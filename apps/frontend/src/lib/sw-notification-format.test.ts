@@ -10,6 +10,7 @@ import {
   planNotificationAction,
   withNotificationActionFailure,
   describeNotificationActionFailure,
+  describeNotificationActionTap,
   countNotifiedMessages,
   resolveLatestMessageId,
   type NotificationMessage,
@@ -334,5 +335,19 @@ describe("notification action failure", () => {
     expect(describeNotificationActionFailure("bogus")).toBeNull()
     expect(describeNotificationActionFailure("mark_read:")).toBeNull()
     expect(describeNotificationActionFailure("open:http 500")).toBeNull()
+  })
+
+  it("reports every tap under the debug key with the card's own button ids", () => {
+    const detail = describeNotificationActionTap(
+      "remind",
+      [
+        { action: "mark_read", title: "Mark read" },
+        { action: "remind", title: "Remind me in 5m" },
+      ],
+      "ok"
+    )
+    expect(detail).toBe("tapped=remind buttons=[mark_read=Mark read, remind=Remind me in 5m] result=ok")
+    expect(describeNotificationActionFailure(`debug:${detail}`)).toBe(`Push button debug: ${detail}`)
+    expect(describeNotificationActionFailure("debug:")).toBeNull()
   })
 })
