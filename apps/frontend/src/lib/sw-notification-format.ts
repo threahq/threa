@@ -153,16 +153,28 @@ export function formatReminderDelay(minutes: number): string {
 }
 
 /**
+ * How many buttons a card may carry on this device. Chrome on Android hands
+ * `notificationclick` the LAST action's id whichever button was pressed
+ * (verified on a WebAPK Sep 2026: [remind, react] fired `react` from both
+ * buttons, [mark_read, remind] fired `remind` from both), so a second button
+ * only makes the first one misfire. One button is the whole usable set there.
+ */
+export function resolvePushActionLimit(userAgent: string): number {
+  return /\bAndroid\b/.test(userAgent) ? 1 : PUSH_ACTIONS_MAX
+}
+
+/**
  * Buttons for a message notification, from the user's preferences (default
- * Mark read + Remind me). A reaction push points at the reader's own message,
- * so reacting back is nonsense and that slot is dropped. Chrome renders
- * these; iOS Safari ignores `actions` entirely.
+ * Mark read + Remind me), capped at `limit`. A reaction push points at the
+ * reader's own message, so reacting back is nonsense and that slot is
+ * dropped. Chrome renders these; iOS Safari ignores `actions` entirely.
  */
 export function resolveActions(
   activityType: string | undefined,
-  prefs: NotificationActionPrefs
+  prefs: NotificationActionPrefs,
+  limit: number = PUSH_ACTIONS_MAX
 ): NotificationActionButton[] {
-  const actions = (prefs.pushActions ?? DEFAULT_PUSH_ACTIONS).slice(0, PUSH_ACTIONS_MAX)
+  const actions = (prefs.pushActions ?? DEFAULT_PUSH_ACTIONS).slice(0, limit)
   return actions
     .filter((action) => !(action === PushActions.REACT && activityType === ActivityTypes.REACTION))
     .map((action) => ({ action, title: actionTitle(action, prefs) }))
@@ -257,25 +269,10 @@ const ACTION_FAILURE_LABELS: Record<string, string> = {
 export function describeNotificationActionFailure(value: string): string | null {
   const separator = value.indexOf(":")
   if (separator === -1) return null
-  const key = value.slice(0, separator)
+  const label = ACTION_FAILURE_LABELS[value.slice(0, separator)]
   const reason = value.slice(separator + 1)
-  if (key === NOTIFICATION_ACTION_DEBUG_KEY) return reason ? `Push button debug: ${reason}` : null
-  const label = ACTION_FAILURE_LABELS[key]
   if (!label || !reason) return null
   return `Couldn't ${label} from the notification (${reason}).`
-}
-
-/** Temporary Android diagnosis: the worker reports every button tap through the toast under this key. */
-export const NOTIFICATION_ACTION_DEBUG_KEY = "debug"
-
-/** What the click event handed the worker versus the buttons the card carries, plus the request outcome. */
-export function describeNotificationActionTap(
-  action: string,
-  buttons: ReadonlyArray<{ action: string; title: string }>,
-  outcome: string
-): string {
-  const list = buttons.map((button) => `${button.action}=${button.title}`).join(", ")
-  return `tapped=${action} buttons=[${list}] result=${outcome}`
 }
 
 /**

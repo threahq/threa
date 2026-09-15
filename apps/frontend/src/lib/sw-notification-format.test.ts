@@ -6,11 +6,11 @@ import {
   formatBody,
   isViewingStream,
   resolveActions,
+  resolvePushActionLimit,
   formatReminderDelay,
   planNotificationAction,
   withNotificationActionFailure,
   describeNotificationActionFailure,
-  describeNotificationActionTap,
   countNotifiedMessages,
   resolveLatestMessageId,
   type NotificationMessage,
@@ -262,6 +262,23 @@ describe("resolveActions", () => {
       { action: "remind", title: "Remind me in 5m" },
     ])
   })
+
+  it("keeps only the first slot under a one-button limit", () => {
+    expect(resolveActions("message", { pushActions: ["remind", "react"] }, 1)).toEqual([
+      { action: "remind", title: "Remind me in 5m" },
+    ])
+  })
+})
+
+describe("resolvePushActionLimit", () => {
+  const android =
+    "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+  const mac =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
+  it("allows one button on Android and two elsewhere", () => {
+    expect([android, mac].map(resolvePushActionLimit)).toEqual([1, 2])
+  })
 })
 
 describe("formatReminderDelay", () => {
@@ -335,19 +352,5 @@ describe("notification action failure", () => {
     expect(describeNotificationActionFailure("bogus")).toBeNull()
     expect(describeNotificationActionFailure("mark_read:")).toBeNull()
     expect(describeNotificationActionFailure("open:http 500")).toBeNull()
-  })
-
-  it("reports every tap under the debug key with the card's own button ids", () => {
-    const detail = describeNotificationActionTap(
-      "remind",
-      [
-        { action: "mark_read", title: "Mark read" },
-        { action: "remind", title: "Remind me in 5m" },
-      ],
-      "ok"
-    )
-    expect(detail).toBe("tapped=remind buttons=[mark_read=Mark read, remind=Remind me in 5m] result=ok")
-    expect(describeNotificationActionFailure(`debug:${detail}`)).toBe(`Push button debug: ${detail}`)
-    expect(describeNotificationActionFailure("debug:")).toBeNull()
   })
 })
