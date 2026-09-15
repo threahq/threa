@@ -27,10 +27,10 @@ import {
   type JSONContent,
 } from "@threahq/types"
 import { withClient, withTransaction } from "../../db"
-
-const ARIADNE_PUSH_ICON_URL = "/ariadne-192.png"
 import { OutboxRepository, type ActivityReadOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
+
+const ARIADNE_PUSH_ICON_URL = "/ariadne-192.png"
 
 /** activity:read batches at most this many ids per event (mark-all is unbounded). */
 const ACTIVITY_READ_EVENT_CHUNK = 500
