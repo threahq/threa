@@ -4,8 +4,6 @@ import { NavigationRoute, registerRoute } from "workbox-routing"
 import {
   resolveTag,
   planNotificationAction,
-  NOTIFICATION_ACTION_DEBUG_KEY,
-  describeNotificationActionTap,
   withNotificationActionFailure,
   countNotifiedMessages,
   resolveLatestMessageId,
@@ -597,7 +595,7 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()]).then(
       async ([
-        { appendMessage, formatTitle, formatBody, isViewingStream, resolveActions },
+        { appendMessage, formatTitle, formatBody, isViewingStream, resolveActions, resolvePushActionLimit },
         clients,
         visibleStreams,
       ]) => {
@@ -635,7 +633,7 @@ self.addEventListener("push", (event) => {
           tag,
           renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,
-          actions: resolveActions(data.activityType, data),
+          actions: resolveActions(data.activityType, data, resolvePushActionLimit(self.navigator.userAgent)),
         }
 
         for (const n of existing) n.close()
@@ -730,19 +728,12 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const outcome = event.action ? await performNotificationAction(event.action, data ?? {}) : null
-      const shown = event.notification as Notification & { actions?: ReadonlyArray<{ action: string; title: string }> }
-      const buttons = (shown.actions ?? []).map(({ action, title }) => ({ action, title }))
       event.notification.close()
       await syncAppBadge()
+      if (outcome?.ok) return
 
       const deepLink = resolveNotificationTargetUrl(data)
-      const targetUrl = outcome
-        ? withNotificationActionFailure(
-            deepLink,
-            NOTIFICATION_ACTION_DEBUG_KEY,
-            describeNotificationActionTap(event.action, buttons, outcome.ok ? "ok" : outcome.reason)
-          )
-        : deepLink
+      const targetUrl = outcome ? withNotificationActionFailure(deepLink, event.action, outcome.reason) : deepLink
       const absoluteUrl = new URL(targetUrl, self.location.origin).href
       const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
       for (const client of clients) {
