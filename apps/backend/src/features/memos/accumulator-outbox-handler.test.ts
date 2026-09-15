@@ -92,11 +92,12 @@ describe("MemoAccumulatorHandler memory gate", () => {
       memoryMode: MemoryModes.AUTO,
     })
     const root = makeStream({ id: "stream_root", memoryMode: MemoryModes.OFF })
-    const { handler, queue } = arrange((id) => (id === "stream_thread" ? thread : root))
+    const { handler, queue, activity } = arrange((id) => (id === "stream_thread" ? thread : root))
 
     await handler.run(conversationEvent("stream_thread"))
 
     expect(queue).not.toHaveBeenCalled()
+    expect(activity).not.toHaveBeenCalled()
   })
 
   it("skips queueing when a thread's root stream is gone", async () => {
