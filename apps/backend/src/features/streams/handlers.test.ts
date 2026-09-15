@@ -626,7 +626,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       lastReadOrdinal: 7,
       readMessageIds: [],
     })
-    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
+    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", { eventId: "evt_1" })
   })
 
   it("returns null membership for a non-member unread — the same-class 404 is gone", async () => {
@@ -715,6 +715,6 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       lastReadOrdinal: 7,
       readMessageIds: [],
     })
-    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
+    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", { eventId: "evt_1" })
   })
 })
