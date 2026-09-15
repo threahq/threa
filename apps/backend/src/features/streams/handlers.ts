@@ -255,7 +255,10 @@ const setNotificationLevelSchema = z.object({
   notificationLevel: notificationLevelSchema.nullable(),
 })
 
-const markAsReadSchema = z.union([z.object({ lastEventId: z.string() }), z.object({ lastMessageId: z.string() })])
+const markAsReadSchema = z.union([
+  z.object({ lastEventId: z.string() }).strict(),
+  z.object({ lastMessageId: z.string() }).strict(),
+])
 
 const markUnreadSchema = z.object({
   messageId: z.string(),
