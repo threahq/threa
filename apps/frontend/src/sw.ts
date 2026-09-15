@@ -4,6 +4,7 @@ import { NavigationRoute, registerRoute } from "workbox-routing"
 import {
   resolveTag,
   planNotificationAction,
+  withNotificationActionFailure,
   countNotifiedMessages,
   resolveLatestMessageId,
 } from "./lib/sw-notification-format"
@@ -670,14 +671,20 @@ async function syncAppBadge(): Promise<void> {
   await (count > 0 ? self.navigator.setAppBadge(count) : self.navigator.clearAppBadge()).catch(() => {})
 }
 
+type NotificationActionOutcome = { ok: true } | { ok: false; reason: string }
+
 /**
- * Run an action button's API call from the worker. False means the server did
- * not accept it (parked account, expired cookie, offline) and the caller opens
- * the app at the deep link instead, so a tap never silently does nothing.
+ * Run an action button's API call from the worker. A failure (no ids to act
+ * on, the server refusing it, no network) carries its reason to the caller,
+ * which opens the app at the deep link with that reason in the URL so the tap
+ * never silently does nothing and the user can see why.
  */
-async function performNotificationAction(action: string, data: PushData): Promise<boolean> {
+async function performNotificationAction(action: string, data: PushData): Promise<NotificationActionOutcome> {
   const plan = planNotificationAction(action, data)
-  if (!plan) return false
+  if (!plan) {
+    const missing = (["workspaceId", "streamId", "latestMessageId"] as const).filter((key) => !data[key])
+    return { ok: false, reason: `no target, missing ${missing.join("+") || "nothing"}` }
+  }
   const headers: Record<string, string> = { "content-type": "application/json" }
   if (data.workosUserId) headers[ACCOUNT_ASSERTION_HEADER] = data.workosUserId
   try {
@@ -687,9 +694,9 @@ async function performNotificationAction(action: string, data: PushData): Promis
       headers,
       body: JSON.stringify(plan.body),
     })
-    return response.ok
-  } catch {
-    return false
+    return response.ok ? { ok: true } : { ok: false, reason: `http ${response.status}` }
+  } catch (error) {
+    return { ok: false, reason: `network ${error instanceof Error ? error.message : String(error)}` }
   }
 }
 
@@ -716,16 +723,17 @@ function resolveNotificationTargetUrl(data: PushData | undefined): string {
 
 self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data as PushData | undefined
-  const targetUrl = resolveNotificationTargetUrl(data)
-  const absoluteUrl = new URL(targetUrl, self.location.origin).href
 
   event.waitUntil(
     (async () => {
-      const acted = event.action && data ? await performNotificationAction(event.action, data) : false
+      const outcome = event.action && data ? await performNotificationAction(event.action, data) : null
       event.notification.close()
       await syncAppBadge()
-      if (acted) return
+      if (outcome?.ok) return
 
+      const deepLink = resolveNotificationTargetUrl(data)
+      const targetUrl = outcome ? withNotificationActionFailure(deepLink, event.action, outcome.reason) : deepLink
+      const absoluteUrl = new URL(targetUrl, self.location.origin).href
       const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
       for (const client of clients) {
         if (new URL(client.url).origin === self.location.origin) {
