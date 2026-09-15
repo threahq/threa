@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import type { Pool, PoolClient } from "pg"
 import * as dbModule from "../../db"
 import { StreamReadService } from "./read-service"
+import { StreamEventRepository } from "./event-repository"
 
 const client = {} as PoolClient
 
@@ -38,7 +39,7 @@ describe("StreamReadService.markAsRead", () => {
       activityService: { markStreamActivityAsReadInTransaction },
     })
 
-    const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_1")
+    const result = await service.markAsRead("ws_1", "stream_1", "usr_1", { eventId: "evt_1" })
 
     expect(result).toBe(markResult)
     expect(markAsReadInTransaction).toHaveBeenCalledWith(client, "ws_1", "stream_1", "usr_1", "evt_1")
@@ -58,6 +59,41 @@ describe("StreamReadService.markAsRead", () => {
       },
     })
 
-    await expect(service.markAsRead("ws_1", "stream_1", "usr_1", "evt_1")).rejects.toThrow("activity write failed")
+    await expect(service.markAsRead("ws_1", "stream_1", "usr_1", { eventId: "evt_1" })).rejects.toThrow(
+      "activity write failed"
+    )
+  })
+
+  it("resolves a message id to its message_created event before advancing", async () => {
+    const findByMessageId = spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue({ id: "evt_9" } as never)
+    const markAsReadInTransaction = mock(() =>
+      Promise.resolve({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+    )
+    const service = new StreamReadService({
+      pool: {} as never,
+      streamService: { markAsReadInTransaction } as never,
+      activityService: { markStreamActivityAsReadInTransaction: mock(() => Promise.resolve()) },
+    })
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", { messageId: "msg_9" })
+
+    expect(findByMessageId).toHaveBeenCalledWith(client, "stream_1", "msg_9")
+    expect(markAsReadInTransaction).toHaveBeenCalledWith(client, "ws_1", "stream_1", "usr_1", "evt_9")
+  })
+
+  it("passes an unknown message id through so the advance is the usual no-op", async () => {
+    spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue(null)
+    const markAsReadInTransaction = mock(() =>
+      Promise.resolve({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+    )
+    const service = new StreamReadService({
+      pool: {} as never,
+      streamService: { markAsReadInTransaction } as never,
+      activityService: { markStreamActivityAsReadInTransaction: mock(() => Promise.resolve()) },
+    })
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", { messageId: "msg_gone" })
+
+    expect(markAsReadInTransaction).toHaveBeenCalledWith(client, "ws_1", "stream_1", "usr_1", "msg_gone")
   })
 })
