@@ -8,6 +8,8 @@ import {
   resolveActions,
   formatReminderDelay,
   planNotificationAction,
+  withNotificationActionFailure,
+  describeNotificationActionFailure,
   countNotifiedMessages,
   resolveLatestMessageId,
   type NotificationMessage,
@@ -312,5 +314,25 @@ describe("countNotifiedMessages", () => {
     expect(
       countNotifiedMessages([{ messages: [{}, {}, {}] }, { messages: [{}] }, { kind: "call_ring" } as never, undefined])
     ).toBe(4)
+  })
+})
+
+describe("notification action failure", () => {
+  it("tags the deep link with the failed action and its reason, keeping the existing query", () => {
+    expect(withNotificationActionFailure("/w/ws_1/s/stream_1?m=msg_1", "mark_read", "http 401")).toBe(
+      "/w/ws_1/s/stream_1?m=msg_1&notify_failed=mark_read%3Ahttp+401"
+    )
+  })
+
+  it("turns the tag back into toast copy and ignores values the worker never writes", () => {
+    expect(describeNotificationActionFailure("mark_read:network Failed to fetch")).toBe(
+      "Couldn't mark as read from the notification (network Failed to fetch)."
+    )
+    expect(describeNotificationActionFailure("remind:http 401")).toBe(
+      "Couldn't set the reminder from the notification (http 401)."
+    )
+    expect(describeNotificationActionFailure("bogus")).toBeNull()
+    expect(describeNotificationActionFailure("mark_read:")).toBeNull()
+    expect(describeNotificationActionFailure("open:http 500")).toBeNull()
   })
 })

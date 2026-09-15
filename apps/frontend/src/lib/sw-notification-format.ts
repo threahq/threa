@@ -233,6 +233,36 @@ export function planNotificationAction(
   }
 }
 
+/** Query param the worker adds to the fallback URL when an action button's request failed. */
+export const NOTIFICATION_ACTION_FAILED_PARAM = "notify_failed"
+
+/**
+ * The deep link the worker opens after an action button failed, tagged with
+ * what failed and why. The app toasts the reason once and strips the param, so
+ * a tap that fell back to opening the app never looks like it silently worked.
+ */
+export function withNotificationActionFailure(url: string, action: string, reason: string): string {
+  const parsed = new URL(url, "https://threa.invalid")
+  parsed.searchParams.set(NOTIFICATION_ACTION_FAILED_PARAM, `${action}:${reason}`)
+  return parsed.pathname + parsed.search
+}
+
+const ACTION_FAILURE_LABELS: Record<string, string> = {
+  [PushActions.MARK_READ]: "mark as read",
+  [PushActions.REMIND]: "set the reminder",
+  [PushActions.REACT]: "react",
+}
+
+/** Toast copy for a `notify_failed` param value, null when it is not one the worker writes. */
+export function describeNotificationActionFailure(value: string): string | null {
+  const separator = value.indexOf(":")
+  if (separator === -1) return null
+  const label = ACTION_FAILURE_LABELS[value.slice(0, separator)]
+  const reason = value.slice(separator + 1)
+  if (!label || !reason) return null
+  return `Couldn't ${label} from the notification (${reason}).`
+}
+
 /**
  * Messages represented by the notifications currently in the shade — the app
  * icon badge. Only message cards carry `messages`; rings, reminders and the

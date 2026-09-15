@@ -97,6 +97,7 @@ import { AnalyticsConsentGate } from "@/lib/analytics/gate"
 import { AnalyticsConsentBanner } from "@/components/analytics-consent-banner"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
+import { useNotificationActionFailure } from "./use-notification-action-failure"
 
 /**
  * How long the tab must be backgrounded before a resume triggers the engine's
@@ -361,6 +362,7 @@ function WorkspaceSyncHandler({
   // A push for a parked account stashes its recipient id (notification-intent);
   // flip the active account in place before this deep link bootstraps wrong.
   useNotificationAccountSwitch(workspaceId)
+  useNotificationActionFailure()
 
   // Terminal workspace error (404/403): a different signed-in account may own
   // this deep link — resolve→flip in place, else bounce to the list.
