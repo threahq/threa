@@ -806,6 +806,17 @@ export interface ConversationWithStaleness extends Conversation {
 }
 
 /**
+ * A conversation as a stream's list (`GET /streams/:id/conversations`) carries
+ * it: the aggregate plus its members whose placement is still SETTLING — a
+ * send provisionally attached to the stream's warm conversation, awaiting the
+ * extractor (same semantics as {@link BoardPost.settlingMessageIds}). The
+ * timeline withholds its "continues X" chip from those rows until they settle.
+ */
+export interface StreamConversation extends ConversationWithStaleness {
+  settlingMessageIds: string[]
+}
+
+/**
  * The opening message of a board post — the conversation's first primary
  * message, rendered as the post body. A lean projection of {@link Message}: the
  * fields the board feed needs (author, content, reactions, time), not the full

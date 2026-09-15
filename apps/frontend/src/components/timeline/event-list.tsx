@@ -257,7 +257,12 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * the topic without a time tail rather than guessing.
  *
  * `membership` is the always-on `messageId → conversationId` map
- * (`buildMessageConversationMap`), including cross-stream secondary members. A
+ * (`buildMessageConversationMap`), including cross-stream secondary members.
+ * `settlingMessageIds` are members whose placement is still provisional (a send
+ * attached to the stream's warm conversation before the extractor ran) — those
+ * rows count as unassigned here: no chip, and no run break. An eager guess is
+ * wrong often enough that chipping it makes the row read "continues <some
+ * other topic>" and then jump when the extractor corrects it. A
  * message that declared its conversation at send time overrides it from its own
  * payload (`declaredConversationId`) so its membership needs no list round-trip.
  * Non-message items (session/command cards) and unassigned message rows don't
@@ -270,7 +275,8 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
 export function annotateConversationRevivals(
   items: TimelineItem[],
   membership: ReadonlyMap<string, string>,
-  conversationsById: ReadonlyMap<string, ConversationWithStaleness>
+  conversationsById: ReadonlyMap<string, ConversationWithStaleness>,
+  settlingMessageIds: ReadonlySet<string>
 ): TimelineItem[] {
   const seen = new Set<string>()
   const lastActivityByConversation = new Map<string, string>()
@@ -302,7 +308,9 @@ export function annotateConversationRevivals(
     const declaredRow = declared != null ? conversationsById.get(declared) : undefined
     const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
     const isDeclared = !declaredRetired && declared != null
-    const conversationId = (declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null
+    const conversationId = settlingMessageIds.has(messageId)
+      ? null
+      : ((declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null)
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId

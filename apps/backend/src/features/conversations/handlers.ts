@@ -230,7 +230,7 @@ export function createConversationHandlers({
       // validateStreamAccess handles public visibility + thread root membership
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const conversations = await conversationService.listByStream(streamId, query)
+      const conversations = await conversationService.listByStream(workspaceId, streamId, query)
       res.json({ conversations })
     },
 

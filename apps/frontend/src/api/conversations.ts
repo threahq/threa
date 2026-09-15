@@ -7,6 +7,7 @@ import type {
   Message,
   BoardPost,
   BoardPostMessage,
+  StreamConversation,
 } from "@threahq/types"
 import type { ReadStateSnapshot } from "@/sync/read-state"
 
@@ -101,12 +102,12 @@ export const conversationsApi = {
     workspaceId: string,
     streamId: string,
     params?: ListConversationsParams
-  ): Promise<ConversationWithStaleness[]> {
+  ): Promise<StreamConversation[]> {
     const searchParams = new URLSearchParams()
     if (params?.status) searchParams.set("status", params.status)
     if (params?.limit) searchParams.set("limit", params.limit.toString())
     const query = searchParams.toString()
-    const res = await api.get<{ conversations: ConversationWithStaleness[] }>(
+    const res = await api.get<{ conversations: StreamConversation[] }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/conversations${query ? `?${query}` : ""}`
     )
     return res.conversations

@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest"
 import type { ConversationWithStaleness, StreamEvent } from "@threahq/types"
 import { annotateConversationRows, annotateConversationRevivals, type TimelineItem } from "../event-list"
+
+const NO_SETTLING: ReadonlySet<string> = new Set()
 import {
   buildConversationOverlayModel,
   buildMessageConversationMap,
@@ -258,8 +260,8 @@ describe("annotateConversationRevivals", () => {
   ])
 
   function revivals(items: TimelineItem[], membership: Record<string, string>) {
-    return annotateConversationRevivals(items, new Map(Object.entries(membership)), conversationsById).map((item) =>
-      item.type === "event" ? (item.revival ?? null) : null
+    return annotateConversationRevivals(items, new Map(Object.entries(membership)), conversationsById, NO_SETTLING).map(
+      (item) => (item.type === "event" ? (item.revival ?? null) : null)
     )
   }
 

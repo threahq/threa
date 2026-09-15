@@ -28,6 +28,8 @@ import {
 } from "./event-list"
 import { localStartOfDayMs } from "@/lib/dates"
 
+const NO_SETTLING: ReadonlySet<string> = new Set()
+
 interface CreateEventParams {
   id: string
   sequence: string
@@ -399,7 +401,7 @@ describe("annotateConversationRevivals", () => {
   ]
 
   it("derives the revival from declared conversation ids with no async membership map (flicker-free)", () => {
-    const items = annotateConversationRevivals(scattered(true), new Map(), new Map())
+    const items = annotateConversationRevivals(scattered(true), new Map(), new Map(), NO_SETTLING)
 
     expect(revivalOf(items[2])).toEqual({
       conversationId: "conv_x",
@@ -424,7 +426,7 @@ describe("annotateConversationRevivals", () => {
   })
 
   it("resolves the topic label from the conversation list when it has loaded", () => {
-    const items = annotateConversationRevivals(scattered(true), new Map(), topics({ conv_x: "Pizza" }))
+    const items = annotateConversationRevivals(scattered(true), new Map(), topics({ conv_x: "Pizza" }), NO_SETTLING)
 
     expect(revivalOf(items[2])?.topicSummary).toBe("Pizza")
   })
@@ -435,7 +437,7 @@ describe("annotateConversationRevivals", () => {
       ["msg_b", "conv_y"],
       ["msg_c", "conv_stale"],
     ])
-    const items = annotateConversationRevivals(scattered(true), membership, new Map())
+    const items = annotateConversationRevivals(scattered(true), membership, new Map(), NO_SETTLING)
 
     expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
   })
@@ -446,7 +448,7 @@ describe("annotateConversationRevivals", () => {
       ["msg_b", "conv_y"],
       ["msg_c", "conv_x"],
     ])
-    const items = annotateConversationRevivals(scattered(false), membership, topics({ conv_x: "Pizza" }))
+    const items = annotateConversationRevivals(scattered(false), membership, topics({ conv_x: "Pizza" }), NO_SETTLING)
 
     expect(revivalOf(items[2])).toEqual({
       conversationId: "conv_x",
@@ -454,6 +456,33 @@ describe("annotateConversationRevivals", () => {
       topicSummary: "Pizza",
       previousActivityAt: "2026-02-19T00:00:00.000Z",
     })
+  })
+
+  it("withholds the chip from a still-settling member, which also never breaks a run", () => {
+    // msg_c is provisionally attached to conv_x (an eager warm-conversation
+    // guess awaiting the extractor): no chip until it settles or moves.
+    const membership = new Map([
+      ["msg_a", "conv_x"],
+      ["msg_b", "conv_y"],
+      ["msg_c", "conv_x"],
+    ])
+    const settlingLast = annotateConversationRevivals(
+      scattered(false),
+      membership,
+      topics({ conv_x: "Pizza" }),
+      new Set(["msg_c"])
+    )
+    expect(settlingLast.map(revivalOf)).toEqual([undefined, undefined, undefined])
+
+    // A settling row between two settled members of one conversation is not a
+    // topic switch either — it counts as unassigned, so msg_c stays chip-less.
+    const settlingMiddle = annotateConversationRevivals(
+      scattered(false),
+      membership,
+      topics({ conv_x: "Pizza" }),
+      new Set(["msg_b"])
+    )
+    expect(settlingMiddle.map(revivalOf)).toEqual([undefined, undefined, undefined])
   })
 
   it("falls back to the membership map when the declared conversation was merged into a retired shell", () => {
@@ -475,7 +504,7 @@ describe("annotateConversationRevivals", () => {
       ["msg_b", "conv_y"],
       ["msg_c", "conv_successor"],
     ])
-    const items = annotateConversationRevivals(scattered(true), membership, conversationsById)
+    const items = annotateConversationRevivals(scattered(true), membership, conversationsById, NO_SETTLING)
 
     expect(revivalOf(items[2])).toEqual({
       conversationId: "conv_successor",
@@ -495,7 +524,7 @@ describe("annotateConversationRevivals", () => {
       ],
     ])
     const membership = new Map([["msg_c", "conv_other"]])
-    const items = annotateConversationRevivals(scattered(true), membership, conversationsById)
+    const items = annotateConversationRevivals(scattered(true), membership, conversationsById, NO_SETTLING)
 
     expect(revivalOf(items[2])?.conversationId).toBe("conv_x")
   })
@@ -512,7 +541,7 @@ describe("annotateConversationRevivals", () => {
       messageItem("evt_b", "msg_b", "2026-02-19T05:00:00.000Z", "conv_x"),
     ]
 
-    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+    const annotated = annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING)
 
     expect(revivalOf(annotated[1])).toEqual({
       conversationId: "conv_x",
@@ -523,7 +552,7 @@ describe("annotateConversationRevivals", () => {
   })
 
   it("fills previousActivityAt when the earlier member IS locally loaded (genuine revival, real time tail)", () => {
-    const annotated = annotateConversationRevivals(scattered(true), new Map(), new Map())
+    const annotated = annotateConversationRevivals(scattered(true), new Map(), new Map(), NO_SETTLING)
 
     expect(revivalOf(annotated[2])).toEqual({
       conversationId: "conv_x",
@@ -539,7 +568,7 @@ describe("annotateConversationRevivals", () => {
       messageItem("evt_b", "msg_b", "2026-02-19T00:05:00.000Z", "conv_x"),
     ]
 
-    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+    const annotated = annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING)
 
     expect(revivalOf(annotated[0])).toBeDefined()
     expect(revivalOf(annotated[1])).toBeUndefined()
@@ -548,7 +577,7 @@ describe("annotateConversationRevivals", () => {
   it("chips even a lone message with nothing before it at all (matches annotateConversationRows' block-start convention)", () => {
     const items = [messageItem("evt_a", "msg_a", "2026-02-19T00:00:00.000Z", "conv_x")]
 
-    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+    const annotated = annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING)
 
     expect(revivalOf(annotated[0])).toEqual({
       conversationId: "conv_x",
@@ -568,7 +597,7 @@ describe("annotateConversationRevivals", () => {
     )
     const membership = new Map(items.map((_, i) => [`msg_f${i}`, `conv_f${i}`]))
 
-    const annotated = annotateConversationRevivals(items, membership, new Map())
+    const annotated = annotateConversationRevivals(items, membership, new Map(), NO_SETTLING)
 
     expect(annotated.every((item) => revivalOf(item) === undefined)).toBe(true)
   })
@@ -578,7 +607,7 @@ describe("annotateConversationRevivals", () => {
       messageItem(`evt_f${i}`, `msg_f${i}`, `2026-02-19T00:0${i}:00.000Z`, `conv_f${i}`)
     )
 
-    const annotated = annotateConversationRevivals(items, new Map(), new Map())
+    const annotated = annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING)
 
     expect(annotated.every((item) => revivalOf(item) !== undefined)).toBe(true)
   })
