@@ -10,6 +10,9 @@ export { StreamService } from "./service"
 export { StreamReadService } from "./read-service"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
+// Which stream's memoryMode governs automatic capture here (INV-62 thread → root)
+export { findMemoryModeStream, isMemoryAutomationOn } from "./memory-mode"
+
 // Canonical "can this user read this stream?" check (INV-8)
 export {
   checkStreamAccess,

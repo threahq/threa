@@ -54,7 +54,7 @@ describe("MemoAccumulatorHandler memory gate", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as typeof dbModule.withClient)
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => findById(id))
+    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(async (_db: any, id: string) => findById(id))
     const queue = spyOn(PendingItemRepository, "queue").mockResolvedValue([])
     const activity = spyOn(StreamStateRepository, "upsertActivity").mockResolvedValue(undefined as never)
     const handler = new TestableMemoAccumulatorHandler({} as any)
@@ -92,15 +92,16 @@ describe("MemoAccumulatorHandler memory gate", () => {
       memoryMode: MemoryModes.AUTO,
     })
     const root = makeStream({ id: "stream_root", memoryMode: MemoryModes.OFF })
-    const { handler, queue } = arrange((id) => (id === "stream_thread" ? thread : root))
+    const { handler, queue, activity } = arrange((id) => (id === "stream_thread" ? thread : root))
 
     await handler.run(conversationEvent("stream_thread"))
 
     expect(queue).not.toHaveBeenCalled()
+    expect(activity).not.toHaveBeenCalled()
   })
 
   it("skips queueing when a thread's root stream is gone", async () => {
-    // Root deleted: findById returns the thread but null for the root. Don't
+    // Root deleted: the lookup returns the thread but null for the root. Don't
     // queue an orphan against a non-existent top-level stream.
     const thread = makeStream({ id: "stream_thread", type: StreamTypes.THREAD, rootStreamId: "stream_root" })
     const { handler, queue, activity } = arrange((id) => (id === "stream_thread" ? thread : null))

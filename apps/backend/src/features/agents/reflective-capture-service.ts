@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import type { MemoServiceLike } from "../memos"
+import { findMemoryModeStream, isMemoryAutomationOn } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { buildSessionDigest } from "./session-digest"
 import { logger } from "../../lib/logger"
@@ -44,6 +45,16 @@ export class ReflectiveCaptureService {
       return { captured: 0 }
     }
     if (session.reflectiveCapturedAt !== null) {
+      return { captured: 0 }
+    }
+
+    // Automatic capture, so it obeys the same per-stream opt-out as the passive
+    // pipeline (INV-62 thread → root) — an aside pins `memory_mode` off.
+    const memoryModeStream = await findMemoryModeStream(pool, workspaceId, session.streamId)
+    if (!isMemoryAutomationOn(memoryModeStream)) {
+      // Claim so a redelivery doesn't re-resolve the stream on every attempt.
+      await AgentSessionRepository.setReflectiveCaptured(pool, sessionId, new Date())
+      logger.debug({ sessionId, streamId: session.streamId }, "reflective capture skipped — memory automation off")
       return { captured: 0 }
     }
 
