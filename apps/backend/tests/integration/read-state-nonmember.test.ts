@@ -8,6 +8,8 @@ import {
   ReadStateRepository,
   usersReadThroughEffective,
 } from "../../src/features/streams"
+import { StreamReadService } from "../../src/features/streams/read-service"
+import { ActivityService } from "../../src/features/activity"
 import { EventService } from "../../src/features/messaging"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
 
@@ -324,6 +326,31 @@ describe("read state — non-member unlock", () => {
       expect(row?.lastReadEventId).toBe(events[0].id)
       // Only the seeding read emitted — neither no-op did.
       expect((await outboxFor("stream:read", sid)).map((p) => p.lastReadEventId)).toEqual([events[0].id])
+    })
+
+    test("a message id (the push Mark read button) resolves to its message_created event", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const viewer = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 3)
+      const events = await StreamEventRepository.list(pool, sid)
+      const target = events[1]
+      const readService = new StreamReadService({
+        pool,
+        streamService,
+        activityService: new ActivityService({ pool }),
+      })
+
+      const byMessage = await readService.markAsRead(wid, sid, viewer, {
+        messageId: (target.payload as { messageId: string }).messageId,
+      })
+      const unknown = await readService.markAsRead(wid, sid, viewer, { messageId: "msg_does_not_exist" })
+
+      expect(byMessage.readState?.lastReadEventId).toBe(target.id)
+      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+      expect((await ReadStateRepository.get(pool, sid, viewer))?.lastReadEventId).toBe(target.id)
     })
 
     test("markUnread on the first message parks the frontier before it (null watermark)", async () => {

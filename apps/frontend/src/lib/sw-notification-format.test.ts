@@ -273,7 +273,7 @@ describe("planNotificationAction", () => {
   it("marks the stream read through the newest message of the card", () => {
     expect(planNotificationAction("mark_read", data)).toEqual({
       url: "/api/workspaces/ws_1/streams/stream_1/read",
-      body: { lastEventId: "msg_newest" },
+      body: { lastMessageId: "msg_newest" },
     })
   })
 

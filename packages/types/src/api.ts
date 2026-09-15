@@ -2087,9 +2087,8 @@ export interface ActivityReadPayload {
   streamIds: string[]
 }
 
-export interface MarkAsReadInput {
-  lastEventId: string
-}
+/** A stream event id, or a message id the server resolves to its message_created event. */
+export type MarkAsReadInput = { lastEventId: string } | { lastMessageId: string }
 
 export interface MarkAsReadResponse {
   /** Null when the viewer has access but no membership row (INV-62: non-member thread leg, unjoined public channel) — an activity-only read. */

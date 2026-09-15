@@ -255,9 +255,10 @@ const setNotificationLevelSchema = z.object({
   notificationLevel: notificationLevelSchema.nullable(),
 })
 
-const markAsReadSchema = z.object({
-  lastEventId: z.string(),
-})
+const markAsReadSchema = z.union([
+  z.object({ lastEventId: z.string() }).strict(),
+  z.object({ lastMessageId: z.string() }).strict(),
+])
 
 const markUnreadSchema = z.object({
   messageId: z.string(),
@@ -1000,7 +1001,7 @@ export function createStreamHandlers({
         workspaceId,
         streamId,
         userId,
-        data.lastEventId
+        "lastEventId" in data ? { eventId: data.lastEventId } : { messageId: data.lastMessageId }
       )
 
       res.json({ membership: membership ?? null, readState, lastReadOrdinal, readMessageIds })

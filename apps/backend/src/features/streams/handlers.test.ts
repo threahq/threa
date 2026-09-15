@@ -626,7 +626,19 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       lastReadOrdinal: 7,
       readMessageIds: [],
     })
-    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
+    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", { eventId: "evt_1" })
+  })
+
+  it("rejects a body carrying both an event id and a message id", async () => {
+    const validateStreamAccess = mock(() => Promise.resolve({ id: "stream_thread" } as never))
+    const markAsRead = mock(() => Promise.resolve({} as never))
+    const handlers = makeHandlers({ validateStreamAccess, markAsRead } as Partial<StreamService>, {
+      markStreamActivityAsRead: mock(() => Promise.resolve()),
+    })
+    const req = { ...makeReq(), body: { lastEventId: "evt_1", lastMessageId: "msg_1" } } as unknown as Request
+
+    await expect(handlers.markAsRead(req, makeRes().res)).rejects.toMatchObject({ status: 400 })
+    expect(markAsRead).not.toHaveBeenCalled()
   })
 
   it("returns null membership for a non-member unread — the same-class 404 is gone", async () => {
@@ -715,6 +727,6 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       lastReadOrdinal: 7,
       readMessageIds: [],
     })
-    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", "evt_1")
+    expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", { eventId: "evt_1" })
   })
 })

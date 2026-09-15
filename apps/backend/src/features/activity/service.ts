@@ -9,7 +9,7 @@ import {
   usersReadThroughEffective,
   type Stream,
 } from "../streams"
-import { PersonaRepository } from "../agents"
+import { ARIADNE_AGENT_ID, PersonaRepository } from "../agents"
 import { collectMentionActorRefs } from "@threahq/prosemirror"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
@@ -29,6 +29,8 @@ import {
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository, type ActivityReadOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
+
+const ARIADNE_PUSH_ICON_URL = "/ariadne-192.png"
 
 /** activity:read batches at most this many ids per event (mark-all is unbounded). */
 const ACTIVITY_READ_EVENT_CHUNK = 500
@@ -566,9 +568,12 @@ export class ActivityService {
       }
       case AuthorTypes.PERSONA: {
         const persona = await PersonaRepository.findById(client, actorId, workspaceId)
+        // Ariadne ships without an uploaded avatar; the app draws her SVG, the OS
+        // notification needs a real image, so the hosted PNG stands in.
+        const uploaded = getPersonaAvatarUrl(workspaceId, persona?.avatarUrl, 64)
         return {
           authorName: persona?.name ?? null,
-          authorAvatarUrl: getPersonaAvatarUrl(workspaceId, persona?.avatarUrl, 64),
+          authorAvatarUrl: uploaded ?? (persona?.id === ARIADNE_AGENT_ID ? ARIADNE_PUSH_ICON_URL : undefined),
         }
       }
       case AuthorTypes.SYSTEM:

@@ -38,7 +38,7 @@ describe("StreamReadService.markAsRead", () => {
       activityService: { markStreamActivityAsReadInTransaction },
     })
 
-    const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_1")
+    const result = await service.markAsRead("ws_1", "stream_1", "usr_1", { eventId: "evt_1" })
 
     expect(result).toBe(markResult)
     expect(markAsReadInTransaction).toHaveBeenCalledWith(client, "ws_1", "stream_1", "usr_1", "evt_1")
@@ -58,6 +58,8 @@ describe("StreamReadService.markAsRead", () => {
       },
     })
 
-    await expect(service.markAsRead("ws_1", "stream_1", "usr_1", "evt_1")).rejects.toThrow("activity write failed")
+    await expect(service.markAsRead("ws_1", "stream_1", "usr_1", { eventId: "evt_1" })).rejects.toThrow(
+      "activity write failed"
+    )
   })
 })

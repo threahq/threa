@@ -19,7 +19,7 @@ import {
   resolveNotificationLevelsForStream,
 } from "../streams"
 import * as streamsBarrel from "../streams"
-import { PersonaRepository } from "../agents"
+import { ARIADNE_AGENT_ID, PersonaRepository } from "../agents"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import * as dbModule from "../../db"
@@ -257,7 +257,40 @@ describe("ActivityService author name resolution", () => {
     })
 
     expect(capturedContext?.authorName).toBe("Ada")
+    expect(capturedContext?.authorAvatarUrl).toBeUndefined()
     expect(PersonaRepository.findById).toHaveBeenCalled()
+  })
+
+  it("gives Ariadne the hosted icon as her push avatar when no avatar is uploaded", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([{ memberId: TARGET_USER_ID }] as any)
+    const resolveModule = await import("../streams")
+    spyOn(resolveModule, "resolveNotificationLevelsForStream").mockResolvedValue([
+      { memberId: TARGET_USER_ID, effectiveLevel: NotificationLevels.ACTIVITY },
+    ] as any)
+    spyOn(PersonaRepository, "findById").mockResolvedValue({
+      id: ARIADNE_AGENT_ID,
+      name: "Ariadne",
+      avatarUrl: null,
+    } as any)
+    let capturedContext: Record<string, unknown> | undefined
+    spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) => {
+      capturedContext = params.context
+      return fakeActivity(params.context)
+    })
+
+    await service.processMessageNotifications({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: ARIADNE_AGENT_ID,
+      actorType: AuthorTypes.PERSONA,
+      contentMarkdown: "persona reply",
+      excludeUserIds: new Set(),
+    })
+
+    expect(capturedContext).toMatchObject({ authorName: "Ariadne", authorAvatarUrl: "/ariadne-192.png" })
   })
 
   it("resolves system author as 'Threa'", async () => {

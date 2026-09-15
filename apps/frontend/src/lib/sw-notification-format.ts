@@ -214,7 +214,7 @@ export function planNotificationAction(
       if (!data.streamId) return null
       return {
         url: `/api/workspaces/${data.workspaceId}/streams/${data.streamId}/read`,
-        body: { lastEventId: messageId },
+        body: { lastMessageId: messageId },
       }
     case PushActions.REACT:
       return {
