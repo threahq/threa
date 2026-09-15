@@ -258,8 +258,9 @@ export function describeNotificationActionFailure(value: string): string | null 
   const separator = value.indexOf(":")
   if (separator === -1) return null
   const label = ACTION_FAILURE_LABELS[value.slice(0, separator)]
-  if (!label) return null
-  return `Couldn't ${label} from the notification (${value.slice(separator + 1)}).`
+  const reason = value.slice(separator + 1)
+  if (!label || !reason) return null
+  return `Couldn't ${label} from the notification (${reason}).`
 }
 
 /**

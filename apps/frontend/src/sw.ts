@@ -696,7 +696,8 @@ async function performNotificationAction(action: string, data: PushData): Promis
     })
     return response.ok ? { ok: true } : { ok: false, reason: `http ${response.status}` }
   } catch (error) {
-    return { ok: false, reason: `network ${error instanceof Error ? error.message : String(error)}` }
+    const detail = error instanceof Error ? error.message || error.name : String(error)
+    return { ok: false, reason: `network ${detail || "unknown"}` }
   }
 }
 
@@ -726,7 +727,7 @@ self.addEventListener("notificationclick", (event) => {
 
   event.waitUntil(
     (async () => {
-      const outcome = event.action && data ? await performNotificationAction(event.action, data) : null
+      const outcome = event.action ? await performNotificationAction(event.action, data ?? {}) : null
       event.notification.close()
       await syncAppBadge()
       if (outcome?.ok) return

@@ -332,6 +332,7 @@ describe("notification action failure", () => {
       "Couldn't set the reminder from the notification (http 401)."
     )
     expect(describeNotificationActionFailure("bogus")).toBeNull()
+    expect(describeNotificationActionFailure("mark_read:")).toBeNull()
     expect(describeNotificationActionFailure("open:http 500")).toBeNull()
   })
 })
