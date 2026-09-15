@@ -3,7 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import type { Socket } from "socket.io-client"
-import { StreamTypes, type ConversationWithStaleness } from "@threahq/types"
+import { StreamTypes, type ConversationWithStaleness, type StreamConversation } from "@threahq/types"
 import * as contextsModule from "@/contexts"
 import * as syncEngineModule from "@/sync/sync-engine"
 import * as draftScratchpadsModule from "./use-draft-scratchpads"
@@ -97,7 +97,7 @@ describe("useConversations event registration", () => {
       })
     })
 
-    expect(queryClient.getQueryData(listKey())).toEqual([makeConversation("conv_1")])
+    expect(queryClient.getQueryData(listKey())).toEqual([{ ...makeConversation("conv_1"), settlingMessageIds: [] }])
 
     gate.dispose()
   })
@@ -119,7 +119,7 @@ describe("useConversations event registration", () => {
       })
     })
 
-    expect(queryClient.getQueryData(listKey())).toEqual([makeConversation("conv_1")])
+    expect(queryClient.getQueryData(listKey())).toEqual([{ ...makeConversation("conv_1"), settlingMessageIds: [] }])
   })
 
   it("still invalidates the list on socket reconnect without a sync engine", async () => {
@@ -163,7 +163,7 @@ describe("useConversations event registration", () => {
         conversation: makeConversation("conv_1"),
       })
     })
-    expect(queryClient.getQueryData(listKey())).toEqual([makeConversation("conv_1")])
+    expect(queryClient.getQueryData(listKey())).toEqual([{ ...makeConversation("conv_1"), settlingMessageIds: [] }])
 
     gate.dispose()
   })
@@ -221,6 +221,62 @@ describe("useConversations event registration", () => {
     expect(
       queryClient.getQueryData<ConversationWithStaleness[]>(listKey())!.find((c) => c.id === "conv_1")!.messageIds
     ).toEqual(["msg_1", "msg_2"])
+  })
+
+  it("tracks a provisional assignment in settlingMessageIds until a conversation:updated settles it", async () => {
+    const { socket, emit } = createTestSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue(null)
+
+    const { queryClient, wrapper } = createWrapper()
+    renderHook(() => useConversations(WORKSPACE_ID, STREAM_ID), { wrapper })
+    await waitFor(() => expect(queryClient.getQueryData(listKey())).toEqual([]))
+
+    const conv = {
+      id: "conv_1",
+      messageIds: ["msg_1"],
+      secondaryMessageIds: [],
+      settlingMessageIds: [],
+    } as unknown as StreamConversation
+    queryClient.setQueryData(listKey(), [conv])
+
+    act(() => {
+      emit("conversation:message_assigned", {
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        messageId: "msg_2",
+        conversationId: "conv_1",
+        isPrimary: true,
+        reason: "provisional",
+        settling: true,
+      })
+    })
+    expect(queryClient.getQueryData<StreamConversation[]>(listKey())![0]).toMatchObject({
+      messageIds: ["msg_1", "msg_2"],
+      settlingMessageIds: ["msg_2"],
+    })
+
+    // An update that omits the set leaves it alone; one that carries it replaces it.
+    act(() => {
+      emit("conversation:updated", {
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        conversationId: "conv_1",
+        conversation: { ...conv, messageIds: ["msg_1", "msg_2"] },
+      })
+    })
+    expect(queryClient.getQueryData<StreamConversation[]>(listKey())![0].settlingMessageIds).toEqual(["msg_2"])
+
+    act(() => {
+      emit("conversation:updated", {
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        conversationId: "conv_1",
+        conversation: { ...conv, messageIds: ["msg_1", "msg_2"] },
+        settlingMessageIds: [],
+      })
+    })
+    expect(queryClient.getQueryData<StreamConversation[]>(listKey())![0].settlingMessageIds).toEqual([])
   })
 
   it("routes a non-primary assignment to secondaryMessageIds", async () => {

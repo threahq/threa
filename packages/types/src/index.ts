@@ -444,6 +444,7 @@ export type {
   SourceItem,
   Conversation,
   ConversationWithStaleness,
+  StreamConversation,
   BoardPost,
   BoardView,
   BoardPostMessage,

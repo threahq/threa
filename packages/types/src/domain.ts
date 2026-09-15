@@ -806,6 +806,14 @@ export interface ConversationWithStaleness extends Conversation {
 }
 
 /**
+ * A conversation as a stream's list carries it: the aggregate plus its members
+ * whose placement is still settling (see {@link BoardPost.settlingMessageIds}).
+ */
+export interface StreamConversation extends ConversationWithStaleness {
+  settlingMessageIds: string[]
+}
+
+/**
  * The opening message of a board post — the conversation's first primary
  * message, rendered as the post body. A lean projection of {@link Message}: the
  * fields the board feed needs (author, content, reactions, time), not the full

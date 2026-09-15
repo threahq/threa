@@ -91,6 +91,10 @@ export interface BoardPostMessage {
   deletedAt: Date | null
 }
 
+export interface StreamConversation extends ConversationWithStaleness {
+  settlingMessageIds: string[]
+}
+
 /** A conversation surfaced as a feed post: the grouping, its origin message, and the latest replies. */
 export interface BoardPost {
   conversation: ConversationWithStaleness
@@ -240,10 +244,21 @@ export class ConversationService {
     return addStalenessFields(conversation)
   }
 
-  async listByStream(streamId: string, options?: ListConversationsOptions): Promise<ConversationWithStaleness[]> {
-    // Single query, INV-30
+  async listByStream(
+    workspaceId: string,
+    streamId: string,
+    options?: ListConversationsOptions
+  ): Promise<StreamConversation[]> {
     const conversations = await ConversationRepository.findByStreamIncludingThreads(this.pool, streamId, options)
-    return conversations.map(addStalenessFields)
+    const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+      this.pool,
+      workspaceId,
+      conversations.map((c) => c.id)
+    )
+    return conversations.map((conversation) => ({
+      ...addStalenessFields(conversation),
+      settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
+    }))
   }
 
   /**

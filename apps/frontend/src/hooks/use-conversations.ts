@@ -34,6 +34,7 @@ import type {
   ConversationWithStaleness,
   ConversationStatus,
   JSONContent,
+  StreamConversation,
 } from "@threahq/types"
 
 /**
@@ -55,7 +56,7 @@ export interface CreateBoardPostInput {
 }
 
 /** Shared stable empty list so a disabled/loading query returns one identity. */
-const EMPTY_CONVERSATIONS: ConversationWithStaleness[] = []
+const EMPTY_CONVERSATIONS: StreamConversation[] = []
 
 const conversationKeysRoot = ["conversations"] as const
 
@@ -93,6 +94,8 @@ interface ConversationCreatedPayload {
   conversation: ConversationWithStaleness
   /** For thread conversations, the parent channel's stream ID */
   parentStreamId?: string
+  /** Omitted by emitters that don't read settling state (unchanged); `[]` means none settling. */
+  settlingMessageIds?: string[]
 }
 
 interface ConversationUpdatedPayload {
@@ -102,6 +105,8 @@ interface ConversationUpdatedPayload {
   conversation: ConversationWithStaleness
   /** For thread conversations, the parent channel's stream ID */
   parentStreamId?: string
+  /** Omitted by emitters that don't read settling state (unchanged); `[]` means none settling. */
+  settlingMessageIds?: string[]
 }
 
 interface ConversationMessageAssignedPayload {
@@ -113,6 +118,8 @@ interface ConversationMessageAssignedPayload {
   reason: string
   /** For thread messages, the parent channel's stream ID. */
   parentStreamId?: string
+  /** True when the placement is provisional (a warm-conversation attach awaiting the extractor). */
+  settling?: boolean
 }
 
 interface ConversationMessageReassignedPayload {
@@ -573,12 +580,16 @@ export function useConversations(workspaceId: string, streamId: string, options?
       // Accept events for this stream OR thread conversations whose parent is this stream
       if (payload.streamId !== streamId && payload.parentStreamId !== streamId) return
 
+      const created: StreamConversation = {
+        ...payload.conversation,
+        settlingMessageIds: payload.settlingMessageIds ?? [],
+      }
       queryClient.setQueryData(
         conversationKeys.list(workspaceId, streamId, { status, limit }),
-        (old: ConversationWithStaleness[] | undefined) => {
-          if (!old) return [payload.conversation]
-          if (old.some((c) => c.id === payload.conversation.id)) return old
-          return [...old, payload.conversation]
+        (old: StreamConversation[] | undefined) => {
+          if (!old) return [created]
+          if (old.some((c) => c.id === created.id)) return old
+          return [...old, created]
         }
       )
     }
@@ -589,15 +600,20 @@ export function useConversations(workspaceId: string, streamId: string, options?
 
       queryClient.setQueryData(
         conversationKeys.list(workspaceId, streamId, { status, limit }),
-        (old: ConversationWithStaleness[] | undefined) => {
+        (old: StreamConversation[] | undefined) => {
           if (!old) return old
           // For thread conversations viewed from parent channel, add if not present
           const exists = old.some((c) => c.id === payload.conversationId)
           if (!exists) {
-            return [...old, payload.conversation]
+            return [...old, { ...payload.conversation, settlingMessageIds: payload.settlingMessageIds ?? [] }]
           }
           return old.map((c) =>
-            c.id === payload.conversationId ? mergeConversationByTitleRevision(c, payload.conversation) : c
+            c.id === payload.conversationId
+              ? mergeConversationByTitleRevision(c, {
+                  ...payload.conversation,
+                  settlingMessageIds: payload.settlingMessageIds ?? c.settlingMessageIds,
+                })
+              : c
           )
         }
       )
@@ -619,12 +635,17 @@ export function useConversations(workspaceId: string, streamId: string, options?
       // present, append to the field its primacy selects.
       queryClient.setQueryData(
         conversationKeys.list(workspaceId, streamId, { status, limit }),
-        (old: ConversationWithStaleness[] | undefined) =>
+        (old: StreamConversation[] | undefined) =>
           old?.map((c) => {
             if (c.id !== payload.conversationId) return c
             const field = payload.isPrimary ? "messageIds" : "secondaryMessageIds"
-            if (c[field].includes(payload.messageId)) return c
-            return { ...c, [field]: [...c[field], payload.messageId] }
+            const members = c[field].includes(payload.messageId) ? c[field] : [...c[field], payload.messageId]
+            const settlingMessageIds =
+              payload.settling && !c.settlingMessageIds.includes(payload.messageId)
+                ? [...c.settlingMessageIds, payload.messageId]
+                : c.settlingMessageIds
+            if (members === c[field] && settlingMessageIds === c.settlingMessageIds) return c
+            return { ...c, [field]: members, settlingMessageIds }
           })
       )
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.conversationId) })

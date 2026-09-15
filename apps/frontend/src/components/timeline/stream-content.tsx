@@ -727,6 +727,10 @@ export function StreamContent({
     () => buildMessageConversationMap(streamConversations),
     [streamConversations]
   )
+  const settlingMessageIds = useMemo(
+    () => new Set(streamConversations.flatMap((conversation) => conversation.settlingMessageIds)),
+    [streamConversations]
+  )
   const closeConversationOverlay = useCoverClose(CONVERSATION_OVERLAY_COVER)
   // Move-to-thread batch mode suspends the whole overlay (legend, rails, chips,
   // correction swatch) — batch turns every row into a selection toggle, and the
@@ -1022,7 +1026,7 @@ export function StreamContent({
         // timeline (never threads — thread replies are contiguous by construction,
         // so nothing reads as a revival there).
         if (supportsConversationOverlay) {
-          items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById)
+          items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById, settlingMessageIds)
         }
         return injectGapItems(items, holes)
       }),
@@ -1034,6 +1038,7 @@ export function StreamContent({
       supportsConversationOverlay,
       conversationIdByMessageId,
       conversationsById,
+      settlingMessageIds,
     ]
   )
 
