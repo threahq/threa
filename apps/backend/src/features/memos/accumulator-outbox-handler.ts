@@ -62,14 +62,11 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
     }
 
     await withClient(this.db, async (client) => {
-      // Per-stream opt-out (INV-62 inheritance): memory automation is gated on
-      // the resolved top-level stream, so a thread follows its root. `off`
-      // excludes the stream from memo extraction *and* passive to-do capture
-      // (both ride processBatch, which never runs without queued items).
+      // `off` excludes the stream from memo extraction *and* passive to-do
+      // capture (both ride processBatch, which never runs without queued items).
       const topLevelStream = await findMemoryModeStream(client, workspaceId, streamId)
       if (!topLevelStream) {
-        // Stream (or a thread's root) gone: nothing to attribute memos to, so
-        // don't queue an orphan.
+        // Nothing to attribute memos to, so don't queue an orphan.
         logger.warn({ workspaceId, streamId }, "Stream not found for memo accumulator")
         return
       }

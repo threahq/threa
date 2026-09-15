@@ -48,10 +48,8 @@ export class ReflectiveCaptureService {
       return { captured: 0 }
     }
 
-    // Reflective capture IS automatic capture, so it obeys the same per-stream
-    // opt-out as the passive pipeline (INV-62 thread → root): an aside pins
-    // `memory_mode` off at creation and a research-heavy turn there would
-    // otherwise be the one path that still writes memos into it.
+    // Automatic capture, so it obeys the same per-stream opt-out as the passive
+    // pipeline (INV-62 thread → root) — an aside pins `memory_mode` off.
     const memoryModeStream = await findMemoryModeStream(pool, workspaceId, session.streamId)
     if (!isMemoryAutomationOn(memoryModeStream)) {
       // Claim so a redelivery doesn't re-resolve the stream on every attempt.
