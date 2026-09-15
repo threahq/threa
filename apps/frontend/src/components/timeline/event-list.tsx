@@ -258,12 +258,9 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  *
  * `membership` is the always-on `messageId → conversationId` map
  * (`buildMessageConversationMap`), including cross-stream secondary members.
- * `settlingMessageIds` are members whose placement is still provisional (a send
- * attached to the stream's warm conversation before the extractor ran) — those
- * rows count as unassigned here: no chip, and no run break. An eager guess is
- * wrong often enough that chipping it makes the row read "continues <some
- * other topic>" and then jump when the extractor corrects it. A
- * message that declared its conversation at send time overrides it from its own
+ * `settlingMessageIds` (provisional placements awaiting the extractor) count as
+ * unassigned: the eager guess is often wrong, and a chip that later jumps is
+ * worse than none. A message that declared its conversation at send time overrides it from its own
  * payload (`declaredConversationId`) so its membership needs no list round-trip.
  * Non-message items (session/command cards) and unassigned message rows don't
  * break a run — only a different real conversation does. This diverges from

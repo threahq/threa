@@ -94,7 +94,7 @@ interface ConversationCreatedPayload {
   conversation: ConversationWithStaleness
   /** For thread conversations, the parent channel's stream ID */
   parentStreamId?: string
-  /** Omitted by emitters that don't read settling state; `[]` means none settling. */
+  /** Omitted by emitters that don't read settling state (unchanged); `[]` means none settling. */
   settlingMessageIds?: string[]
 }
 
@@ -105,7 +105,7 @@ interface ConversationUpdatedPayload {
   conversation: ConversationWithStaleness
   /** For thread conversations, the parent channel's stream ID */
   parentStreamId?: string
-  /** Omitted by emitters that don't read settling state; `[]` means none settling. */
+  /** Omitted by emitters that don't read settling state (unchanged); `[]` means none settling. */
   settlingMessageIds?: string[]
 }
 
@@ -607,7 +607,6 @@ export function useConversations(workspaceId: string, streamId: string, options?
           if (!exists) {
             return [...old, { ...payload.conversation, settlingMessageIds: payload.settlingMessageIds ?? [] }]
           }
-          // An emitter that omitted the settling set didn't change it — keep ours.
           return old.map((c) =>
             c.id === payload.conversationId
               ? mergeConversationByTitleRevision(c, {
@@ -640,16 +639,13 @@ export function useConversations(workspaceId: string, streamId: string, options?
           old?.map((c) => {
             if (c.id !== payload.conversationId) return c
             const field = payload.isPrimary ? "messageIds" : "secondaryMessageIds"
-            // A provisional attach also joins the settling set, so the timeline
-            // withholds its chip until the extractor decides.
+            const members = c[field].includes(payload.messageId) ? c[field] : [...c[field], payload.messageId]
             const settlingMessageIds =
               payload.settling && !c.settlingMessageIds.includes(payload.messageId)
                 ? [...c.settlingMessageIds, payload.messageId]
                 : c.settlingMessageIds
-            if (c[field].includes(payload.messageId)) {
-              return settlingMessageIds === c.settlingMessageIds ? c : { ...c, settlingMessageIds }
-            }
-            return { ...c, [field]: [...c[field], payload.messageId], settlingMessageIds }
+            if (members === c[field] && settlingMessageIds === c.settlingMessageIds) return c
+            return { ...c, [field]: members, settlingMessageIds }
           })
       )
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.conversationId) })

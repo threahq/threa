@@ -91,7 +91,6 @@ export interface BoardPostMessage {
   deletedAt: Date | null
 }
 
-/** A conversation as a stream's list carries it: the aggregate plus its still-settling member ids. */
 export interface StreamConversation extends ConversationWithStaleness {
   settlingMessageIds: string[]
 }
