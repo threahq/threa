@@ -2944,13 +2944,31 @@ describe("steer into the running turn (native steer support)", () => {
   })
 
   test("folds a queued message's attachments into the injected steer, not just its text", async () => {
-    // The bug: an image sent while the session was busy reached the model as
-    // prompt text only — the sweep never downloaded what the message carried.
     const dir = mkdtempSync(join(tmpdir(), "remote-steer-attach-"))
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
     const steered: string[] = []
-    const queued = [makeInvocation({ id: "binv_q_img", sourceMessageId: "src_img", promptMarkdown: "see this" })]
+    const queued = [
+      makeInvocation({
+        id: "binv_q_img",
+        sourceMessageId: "src_img",
+        promptMarkdown: "see this",
+        context: {
+          kind: "inline",
+          messages: [
+            {
+              messageId: "src_earlier",
+              role: "user",
+              authorId: "u",
+              authorType: "user",
+              authorDisplayName: "Alice",
+              contentMarkdown: "earlier",
+              createdAt: "t1",
+            },
+          ],
+        },
+      }),
+    ]
     const session = makeSession(client, transport, {
       sessionControl: {
         commands: ["stop", "steer"],
@@ -2967,6 +2985,10 @@ describe("steer into the running turn (native steer support)", () => {
       queued.shift() ?? null
     ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => [
       { id: "src_img", attachments: [{ id: "att_img", filename: "shot.png", mimeType: "image/png", sizeBytes: 4 }] },
+      {
+        id: "src_earlier",
+        attachments: [{ id: "att_old", filename: "old.txt", mimeType: "text/plain", sizeBytes: 3 }],
+      },
     ]
     ;(client as unknown as { getAttachmentDownloadUrl: (id: string) => Promise<string> }).getAttachmentDownloadUrl =
       async (id) => `https://signed.example/${id}`
@@ -2985,6 +3007,8 @@ describe("steer into the running turn (native steer support)", () => {
       expect(combined).toContain("[attached to the message you just received]")
       expect(combined).toContain(join(".threa-attachments", "binv_q_img", "att_img", "shot.png"))
       expect(combined.indexOf("shot.png")).toBeLessThan(combined.indexOf("the steer text"))
+      // The running turn already holds the history and its attachments.
+      expect(combined).not.toContain("old.txt")
       expect(calls.complete.find((entry) => entry.id === "binv_q_img")).toBeUndefined()
     } finally {
       ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")

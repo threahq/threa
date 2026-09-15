@@ -1943,8 +1943,9 @@ export class RemoteSession {
 
   /**
    * The text a message folded into a running turn contributes: its prompt and
-   * the manifest of its own attachments — no history, the running turn already
-   * has it. A control command contributes its /steer args, or nothing.
+   * the manifest of its own attachments — no history and no history
+   * attachments, the running turn already has them. A control command
+   * contributes its /steer args, or nothing.
    */
   private async foldedSteerContent(invocation: ClaimedInvocation): Promise<string> {
     if (isSessionControlInvocation(invocation)) {
@@ -1952,13 +1953,17 @@ export class RemoteSession {
       return queued?.name === "steer" ? queued.args : ""
     }
     const prompt = invocation.promptMarkdown.trim() || "(empty message)"
-    return withInboundAttachments(prompt, await this.inboundAttachmentManifest(invocation))
+    return withInboundAttachments(prompt, await this.inboundAttachmentManifest(invocation, { sourceOnly: true }))
   }
 
-  /** Download the turn's inbound attachments and return the manifest listing where they landed ("" when none). */
+  /**
+   * Download the turn's inbound attachments and return the manifest listing
+   * where they landed ("" when none). `sourceOnly` skips the history messages'
+   * attachments and takes the source message's alone.
+   */
   private async inboundAttachmentManifest(
     invocation: ClaimedInvocation,
-    options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
+    options: { strictAttachments?: boolean; signal?: AbortSignal; sourceOnly?: boolean } = {}
   ): Promise<string> {
     if (options.signal?.aborted) throw options.signal.reason
     // A sealed turn's attachments come from the refs hydration opened out of the
@@ -1970,7 +1975,7 @@ export class RemoteSession {
       if (!refs) return ""
       try {
         const downloaded = await downloadSealedInboundAttachments(this.client, {
-          refs: selectSealedInboundRefs(refs.prompt, refs.history),
+          refs: selectSealedInboundRefs(refs.prompt, options.sourceOnly ? [] : refs.history),
           invocationId: invocation.id,
           cwd: process.cwd(),
           log: this.log,
@@ -1991,7 +1996,9 @@ export class RemoteSession {
       const downloaded = await downloadInboundAttachments(this.client, {
         streamId: invocation.activeStreamId,
         sourceMessageId: invocation.sourceMessageId,
-        contextMessageIds: (invocation.context?.messages ?? []).map((message) => message.messageId),
+        contextMessageIds: options.sourceOnly
+          ? []
+          : (invocation.context?.messages ?? []).map((message) => message.messageId),
         invocationId: invocation.id,
         cwd: process.cwd(),
         scanLimit: ATTACHMENT_SCAN_LIMIT,
