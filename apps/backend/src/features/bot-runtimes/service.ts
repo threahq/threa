@@ -588,6 +588,9 @@ export class BotRuntimeService {
         runtimeKind: link.runtimeKind,
         instanceId: params.newInstanceId,
         runtimeSessionId: params.runtimeSessionId,
+        // The new instance usually said hello (with its own capabilities)
+        // before rebinding; merge the bootstrap set instead of replacing it.
+        mergeCapabilities: true,
       })
       return link
     })
@@ -601,9 +604,11 @@ export class BotRuntimeService {
       runtimeKind: BotRuntimeKind
       instanceId: string
       runtimeSessionId: string
+      mergeCapabilities?: boolean
     }
   ): Promise<void> {
     await BotRuntimeInstanceRepository.upsertPresence(db, {
+      mergeCapabilities: params.mergeCapabilities,
       id: botRuntimeInstanceId(),
       workspaceId: params.workspaceId,
       botId: params.botId,
