@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import {
   DecisionAbandonedError,
   type DecisionOutcome,
@@ -7,6 +7,7 @@ import {
   type RuntimeDescriptor,
   type SendResult,
   type StepFrame,
+  toolTraceContent,
 } from "@threahq/remote-session"
 import {
   HermesApiError,
@@ -41,7 +42,6 @@ export const HERMES_RUNTIME: RuntimeDescriptor = {
   kind: "hermes",
   manifest: { output: { reply: true, trace: true, sources: false } },
   busyStatusText: "Working in Hermes…",
-  forwardedNote: "Forwarded to Hermes.",
   shutdownErrorMessage: "Hermes connector shut down",
 }
 
@@ -61,6 +61,8 @@ const APPROVAL_OPTION_LABELS: Record<string, { label: string; tone?: "primary" |
   always: { label: "Always allow" },
   deny: { label: "Deny", tone: "destructive" },
 }
+const PROVIDER_FAILURE_REASON =
+  "Hermes run failed after its model provider errored; details are in the Hermes gateway log"
 const MEDIA_LINE_RE = /^MEDIA:[ \t]*(.+)$/gm
 
 export interface HermesTurnRunnerOptions {
@@ -84,6 +86,7 @@ interface ConsumedRun {
   batcher: StepBatcher
   signal: AbortSignal
   answered: Set<string>
+  tools: ToolPairing
 }
 
 interface OpenRun {
@@ -106,6 +109,11 @@ class StepBatcher {
   add(frame: StepFrame): void {
     this.frames.push(frame)
     this.timer ??= setTimeout(() => void this.flush(), FLUSH_DELAY_MS)
+  }
+
+  addNow(frame: StepFrame): Promise<void> {
+    this.frames.push(frame)
+    return this.flush()
   }
 
   flush(): Promise<void> {
@@ -161,24 +169,41 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 }
 
-function seconds(value: unknown): string | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(1) : undefined
+/**
+ * Open tool calls per tool name, oldest first. Hermes events carry no tool_call_id,
+ * so parallel calls of the same tool pair FIFO and can swap durations and previews.
+ */
+export type ToolPairing = Map<string, Array<{ id: string; preview?: string }>>
+
+function toolContent(tool: string, preview: string | undefined): string {
+  return toolTraceContent({ headline: preview ? `${tool}: ${preview}` : tool, sections: [] })
 }
 
-export function frameForEvent(event: HermesRunEvent): StepFrame | undefined {
+export function frameForEvent(event: HermesRunEvent, tools: ToolPairing): StepFrame | undefined {
   switch (event.event) {
     case "tool.started": {
       const tool = text(event.tool) ?? "tool"
       const preview = text(event.preview)
-      return { stepType: "tool_call", content: preview ? `${tool}: ${preview}` : tool }
+      const clientStepId = `step_${randomUUID()}`
+      const open = tools.get(tool) ?? []
+      open.push({ id: clientStepId, ...(preview ? { preview } : {}) })
+      tools.set(tool, open)
+      return { stepType: "tool_call", phase: "started", clientStepId, content: toolContent(tool, preview) }
     }
     case "tool.completed": {
       const tool = text(event.tool) ?? "tool"
-      const outcome = event.error === true ? "failed" : "done"
-      const duration = seconds(event.duration)
-      const head = duration ? `${tool} ${outcome} (${duration}s)` : `${tool} ${outcome}`
-      const preview = text(event.preview)
-      return { stepType: "tool_call", content: preview ? `${head}: ${preview}` : head }
+      const started = tools.get(tool)?.shift()
+      const duration = event.duration
+      const durationMs =
+        typeof duration === "number" && Number.isFinite(duration) && duration >= 0
+          ? Math.round(duration * 1000)
+          : undefined
+      return {
+        stepType: event.error === true ? "tool_error" : "tool_call",
+        clientStepId: started?.id ?? `step_${randomUUID()}`,
+        content: toolContent(tool, text(event.preview) ?? started?.preview),
+        ...(durationMs === undefined ? {} : { durationMs }),
+      }
     }
     case "subagent.start": {
       const label = text(event.summary) ?? text(event.delegation_id)
@@ -478,7 +503,15 @@ export class HermesTurnRunner {
     replayed: boolean
   ): Promise<void> {
     const batcher = new StepBatcher(invocationId, this.session)
-    const run: ConsumedRun = { runId, streamId, sealed, batcher, signal: abort.signal, answered: new Set() }
+    const run: ConsumedRun = {
+      runId,
+      streamId,
+      sealed,
+      batcher,
+      signal: abort.signal,
+      answered: new Set(),
+      tools: new Map(),
+    }
     let terminal: HermesRunEvent | undefined
     try {
       terminal = replayed ? undefined : await this.drain(run)
@@ -546,8 +579,10 @@ export class HermesTurnRunner {
           break
         }
         void this.flushRunSteers(runId)
-        const frame = frameForEvent(event)
-        if (frame && frame.content.length > 0) batcher.add(frame)
+        const frame = frameForEvent(event, run.tools)
+        if (!frame || frame.content.length === 0) continue
+        if (frame.phase === "started") void batcher.addNow(frame)
+        else batcher.add(frame)
       }
     } catch (error) {
       if (signal.aborted) return undefined
@@ -558,7 +593,8 @@ export class HermesTurnRunner {
 
   private async settle(invocationId: string, terminal: HermesRunEvent): Promise<void> {
     if (terminal.event === "run.failed") {
-      const reason = text(terminal.error) ?? "Hermes run failed"
+      const error = text(terminal.error)
+      const reason = error === undefined || error.toLowerCase() === "agent run failed" ? PROVIDER_FAILURE_REASON : error
       if (!(await this.session.failTurn(invocationId, reason))) {
         this.log(`turn ${invocationId} was already closed; run failure not recorded: ${reason}`)
       }

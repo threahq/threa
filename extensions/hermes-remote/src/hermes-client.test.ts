@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { HermesApiError, HermesRunsClient, parseSseEvents } from "./hermes-client"
+import { HERMES_INSTRUCTIONS, HermesApiError, HermesRunsClient, parseSseEvents } from "./hermes-client"
 
 function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
@@ -53,7 +53,7 @@ describe("HermesRunsClient.createRun", () => {
       auth: "Bearer hermes-key",
       idempotency: "binv_1",
       sessionKey: "threa:ws_1:stream_root",
-      body: { input: "Do the thing", session_id: "stream_1" },
+      body: { input: "Do the thing", session_id: "stream_1", instructions: HERMES_INSTRUCTIONS },
     })
   })
 

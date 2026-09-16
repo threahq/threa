@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test"
 import type { DecisionOutcome, DecisionRequestInput, DeliveredTurn, StepFrame } from "@threahq/remote-session"
 import { HermesApiError, type HermesRunEvent, type HermesRunsClient, type RunStatus } from "./hermes-client"
 import {
+  HERMES_RUNTIME,
   HermesTurnRunner,
+  frameForEvent,
   idempotencyKeyFor,
   type BridgeSession,
+  type ToolPairing,
   type ConversationState,
   type ConversationStore,
 } from "./run-bridge"
@@ -135,6 +138,15 @@ function makeRunner(client: HermesRunsClient, session: BridgeSession): HermesTur
   })
 }
 
+/** A tool frame with its trace content reduced to the headline. */
+function readable(frame: StepFrame): Record<string, unknown> {
+  if (frame.stepType === "thinking") return { ...frame }
+  const { content, ...rest } = frame
+  const parsed = JSON.parse(content) as { format: string; headline: string; sections: unknown[] }
+  expect({ format: parsed.format, sections: parsed.sections }).toEqual({ format: "pi_tool_trace", sections: [] })
+  return { ...rest, headline: parsed.headline }
+}
+
 /** deliverTurn resolves at admission; let the background consumer settle. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setTimeout(resolve, 5))
@@ -157,15 +169,15 @@ describe("HermesTurnRunner", () => {
     ])
   })
 
-  test("maps tool events to trace frames and replies with the run output", async () => {
+  test("maps tool events to phased trace frames and replies with the run output", async () => {
     const { session, calls } = makeSession()
     const { client } = makeClient([
       [
         { event: "run.started", run_id: "run_1" },
-        { event: "tool.started", run_id: "run_1", tool: "Bash", preview: "ls -la" },
-        { event: "tool.started", run_id: "run_1", tool: "Read", preview: "" },
-        { event: "tool.completed", run_id: "run_1", tool: "Bash", duration: 1.234, error: false, preview: "3 files" },
-        { event: "tool.completed", run_id: "run_1", tool: "Read", duration: 0.5, error: true, preview: "" },
+        { event: "tool.started", run_id: "run_1", tool: "read_file", preview: "a.ts" },
+        { event: "tool.completed", run_id: "run_1", tool: "read_file", duration: 1.234, error: false },
+        { event: "tool.started", run_id: "run_1", tool: "read_file", preview: "b.ts" },
+        { event: "tool.completed", run_id: "run_1", tool: "read_file", duration: 0.5, preview: "b.ts (2 lines)" },
         { event: "subagent.start", run_id: "run_1", delegation_id: "del_1" },
         { event: "subagent.complete", run_id: "run_1", status: "completed", summary: "found it" },
         { event: "message.delta", run_id: "run_1", delta: "ignored" },
@@ -175,15 +187,67 @@ describe("HermesTurnRunner", () => {
     await makeRunner(client, session).deliverTurn(TURN)
     await settle()
 
-    expect(calls.steps.flatMap((call) => call.frames)).toEqual([
-      { stepType: "tool_call", content: "Bash: ls -la" },
-      { stepType: "tool_call", content: "Read" },
-      { stepType: "tool_call", content: "Bash done (1.2s): 3 files" },
-      { stepType: "tool_call", content: "Read failed (0.5s)" },
+    const frames = calls.steps.flatMap((call) => call.frames)
+    const ids = frames.map((frame) => frame.clientStepId)
+    expect(frames.map(readable)).toEqual([
+      { stepType: "tool_call", phase: "started", clientStepId: ids[0], headline: "read_file: a.ts" },
+      { stepType: "tool_call", clientStepId: ids[0], headline: "read_file: a.ts", durationMs: 1234 },
+      { stepType: "tool_call", phase: "started", clientStepId: ids[2], headline: "read_file: b.ts" },
+      { stepType: "tool_call", clientStepId: ids[2], headline: "read_file: b.ts (2 lines)", durationMs: 500 },
       { stepType: "thinking", content: "Subagent started: del_1" },
       { stepType: "thinking", content: "Subagent completed: found it" },
     ])
+    expect(ids[0]).not.toBe(ids[2])
+    expect(ids[0]).toMatch(/^step_/)
     expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "All done." }])
+  })
+
+  test("pairs interleaved tool events by tool name", () => {
+    const tools: ToolPairing = new Map()
+    const frames = [
+      frameForEvent({ event: "tool.started", run_id: "run_1", tool: "read_file", preview: "a.ts" }, tools),
+      frameForEvent({ event: "tool.started", run_id: "run_1", tool: "terminal", preview: "ls" }, tools),
+      frameForEvent({ event: "tool.completed", run_id: "run_1", tool: "read_file", duration: 0.1 }, tools),
+      frameForEvent({ event: "tool.completed", run_id: "run_1", tool: "terminal", error: true }, tools),
+    ].map((frame) => readable(frame!))
+    expect(frames).toEqual([
+      { stepType: "tool_call", phase: "started", clientStepId: frames[0]!.clientStepId, headline: "read_file: a.ts" },
+      { stepType: "tool_call", phase: "started", clientStepId: frames[1]!.clientStepId, headline: "terminal: ls" },
+      { stepType: "tool_call", clientStepId: frames[0]!.clientStepId, headline: "read_file: a.ts", durationMs: 100 },
+      { stepType: "tool_error", clientStepId: frames[1]!.clientStepId, headline: "terminal: ls" },
+    ])
+  })
+
+  test("a completion with no start is one finish frame with a fresh id", () => {
+    const frame = frameForEvent(
+      { event: "tool.completed", run_id: "run_1", tool: "terminal", duration: -1 },
+      new Map()
+    )!
+    expect(readable(frame)).toEqual({ stepType: "tool_call", clientStepId: frame.clientStepId, headline: "terminal" })
+    expect(frame.clientStepId).toMatch(/^step_/)
+  })
+
+  test("posts no forwarded note", () => {
+    expect(HERMES_RUNTIME.forwardedNote).toBeUndefined()
+  })
+
+  test("a started frame is recorded before the batch window closes", async () => {
+    const { session, calls } = makeSession()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => (release = resolve))
+    const client = {
+      ...makeClient([]).client,
+      streamEvents: async function* (): AsyncIterable<HermesRunEvent> {
+        yield { event: "tool.started", run_id: "run_1", tool: "terminal" }
+        await held
+        yield { event: "run.completed", run_id: "run_1", output: "ok" }
+      },
+    } as unknown as HermesRunsClient
+    await makeRunner(client, session).deliverTurn(TURN)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(calls.steps.flatMap((call) => call.frames).map((frame) => frame.phase)).toEqual(["started"])
+    release()
+    await settle()
   })
 
   test("flushes 120 tool events in order before the reply", async () => {
@@ -198,7 +262,7 @@ describe("HermesTurnRunner", () => {
     await makeRunner(client, session).deliverTurn(TURN)
     await settle()
 
-    expect(calls.steps.flatMap((call) => call.frames.map((frame) => frame.content))).toEqual(
+    expect(calls.steps.flatMap((call) => call.frames.map((frame) => readable(frame).headline))).toEqual(
       events.slice(0, 120).map((_, index) => `Tool${index}`)
     )
     expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "done" }])
@@ -228,14 +292,33 @@ describe("HermesTurnRunner", () => {
 
   test("run.failed fails the turn with the run's error text", async () => {
     const { session, calls } = makeSession()
-    const { client } = makeClient([[{ event: "run.failed", run_id: "run_1", error: "Provider authentication failed" }]])
+    const { client } = makeClient([[{ event: "run.failed", run_id: "run_1", error: "rate limited by provider" }]])
     await makeRunner(client, session).deliverTurn(TURN)
     await settle()
 
     expect({ fails: calls.fails, replies: calls.replies }).toEqual({
-      fails: [{ invocationId: "binv_1", errorMessage: "Provider authentication failed" }],
+      fails: [{ invocationId: "binv_1", errorMessage: "rate limited by provider" }],
       replies: [],
     })
+  })
+
+  test("a generic run failure is replaced with a reason that points at the gateway log", async () => {
+    const reasons: string[] = []
+    for (const error of ["Agent run failed ", undefined]) {
+      const { session, calls } = makeSession()
+      const { client } = makeClient([[{ event: "run.failed", run_id: "run_1", ...(error ? { error } : {}) }]])
+      await makeRunner(client, session).deliverTurn(TURN)
+      await settle()
+      reasons.push(...calls.fails.map((fail) => fail.errorMessage))
+    }
+    const { session, calls } = makeSession()
+    const { client } = makeClient([[]], [{ runId: "run_1", status: "failed", error: "agent run failed" }])
+    await makeRunner(client, session).deliverTurn(TURN)
+    await settle()
+    reasons.push(...calls.fails.map((fail) => fail.errorMessage))
+
+    const clear = "Hermes run failed after its model provider errored; details are in the Hermes gateway log"
+    expect(reasons).toEqual([clear, clear, clear])
   })
 
   test("run.cancelled closes the turn without posting text", async () => {

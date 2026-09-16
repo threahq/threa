@@ -1,3 +1,6 @@
+export const HERMES_INSTRUCTIONS =
+  "Threa renders GitHub-flavored markdown; use it. For mentions, channel links and attachments load the `threa` skill."
+
 export interface HermesRunEvent {
   event: string
   run_id: string
@@ -126,7 +129,7 @@ export class HermesRunsClient {
           "Idempotency-Key": input.idempotencyKey,
           "X-Hermes-Session-Key": input.sessionKey,
         },
-        body: JSON.stringify({ input: input.input, session_id: input.sessionId }),
+        body: JSON.stringify({ input: input.input, session_id: input.sessionId, instructions: HERMES_INSTRUCTIONS }),
       },
       signal
     )
