@@ -195,6 +195,7 @@ export class HermesTurnRunner {
   // Steer text for an open run that was not `running` when it arrived (queued,
   // parked on an approval): sent once the run resumes, else carried to the next turn.
   private readonly runSteers = new Map<string, string[]>()
+  private readonly steerFlushes = new Map<string, Promise<void>>()
   // Turns inside createRun: an interrupt or shutdown that lands during admission
   // marks them here, and the run is stopped the moment Hermes returns its id.
   private readonly admitting = new Map<string, AbortController>()
@@ -273,25 +274,32 @@ export class HermesTurnRunner {
     }
   }
 
-  /** Send the steer text a run held while it was not `running`, in arrival order. */
-  private async flushRunSteers(runId: string): Promise<void> {
+  /**
+   * Send the steer text a run held while it was not `running`, in arrival order.
+   * One send at a time per run: text stays held until Hermes takes it, so a steer
+   * arriving mid-flush queues behind it and a run that ends mid-flush keeps the rest.
+   */
+  private flushRunSteers(runId: string): Promise<void> {
+    const inFlight = this.steerFlushes.get(runId)
+    if (inFlight) return inFlight
+    const flush = this.sendHeldSteers(runId).finally(() => this.steerFlushes.delete(runId))
+    this.steerFlushes.set(runId, flush)
+    return flush
+  }
+
+  private async sendHeldSteers(runId: string): Promise<void> {
     const held = this.runSteers.get(runId)
     if (!held) return
-    this.runSteers.delete(runId)
-    for (const [index, text] of held.entries()) {
+    while (held.length > 0) {
       try {
-        await this.client.steerRun(runId, text)
+        await this.client.steerRun(runId, held[0]!)
       } catch (error) {
-        if (!(error instanceof HermesApiError && error.code === STEER_REJECTED_CODE)) {
-          this.log(`run ${runId} held steer failed: ${this.summarize(error)}`)
-          continue
-        }
-        // Still not running: put the rest back ahead of anything that arrived meanwhile.
-        const rest = held.slice(index)
-        this.runSteers.set(runId, [...rest, ...(this.runSteers.get(runId) ?? [])])
-        return
+        if (error instanceof HermesApiError && error.code === STEER_REJECTED_CODE) return
+        this.log(`run ${runId} held steer failed: ${this.summarize(error)}`)
       }
+      held.shift()
     }
+    if (this.runSteers.get(runId) === held) this.runSteers.delete(runId)
   }
 
   /**
@@ -395,6 +403,7 @@ export class HermesTurnRunner {
       await batcher.flush()
       // A settled run can still hold an unanswered approval card; aborting withdraws it.
       abort.abort()
+      await this.steerFlushes.get(runId)
       const pendingSteer = text(terminal?.pending_steer)
       const unsent = [...(this.runSteers.get(runId) ?? []), ...(pendingSteer === undefined ? [] : [pendingSteer])]
       this.runSteers.delete(runId)

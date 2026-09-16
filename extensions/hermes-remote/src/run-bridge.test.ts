@@ -734,6 +734,40 @@ describe("HermesTurnRunner control", () => {
     runner.shutdown()
   })
 
+  test("a held steer whose send is still out when the run completes is folded into the next turn", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    let answerSteer: ((error: Error) => void) | undefined
+    const sends: string[] = []
+    const client = {
+      ...(gate.client as unknown as Record<string, unknown>),
+      steerRun: async (_runId: string, input: string) => {
+        sends.push(input)
+        if (sends.length === 1) throw steerRejected()
+        throw await new Promise<Error>((resolve) => (answerSteer = resolve))
+      },
+    } as unknown as HermesRunsClient
+    const runner = makeRunner(client, session)
+    await runner.deliverTurn(TURN)
+    await runner.steer("go left")
+
+    gate.push({ event: "tool.started", run_id: "run_1", tool: "Bash", preview: "ls" })
+    await settle()
+    await runner.steer("then right")
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    await settle()
+    answerSteer?.(steerRejected())
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
+    gate.close()
+
+    expect({ sends, nextInput: gate.created[1]?.input }).toEqual({
+      sends: ["go left", "go left"],
+      nextInput: "Next\n\n[Steer that arrived between turns]\ngo left\nthen right",
+    })
+    runner.shutdown()
+  })
+
   test("an approval seen only through the status poll gets one card and is answered", async () => {
     const { session, calls, setOutcome } = makeSession()
     setOutcome(resolvedWith("once"))
