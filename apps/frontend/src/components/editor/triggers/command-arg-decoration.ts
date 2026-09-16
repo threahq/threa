@@ -54,9 +54,12 @@ export const CommandArgDecoration = Extension.create<CommandArgDecorationOptions
             // value cannot nest inside its flag's span: the pair sits adjacent
             // and drops padding and rounding at the seam to read as one chip.
             const valueClass = `${chipBase} bg-muted font-mono ${commandValueStyle}`
+            // The leading positional value joins the command's own chip, space
+            // included, the way `mention-renderer` draws `/spawn pi` as one block.
             const lead = leadingValueSpan(text, args)
             if (lead) {
-              decorations.push(Decoration.inline(anchorPos + lead.from, anchorPos + lead.to, { class: valueClass }))
+              decorations.push(Decoration.node(1, anchorPos, { class: "pr-0 rounded-r-none" }))
+              decorations.push(Decoration.inline(anchorPos, anchorPos + lead.to, { class: `${valueClass} pl-0 rounded-l-none` }))
             }
             for (const span of scanCommandArgs(text, args)) {
               const valueStart = anchorPos + span.to - (span.value?.length ?? 0)

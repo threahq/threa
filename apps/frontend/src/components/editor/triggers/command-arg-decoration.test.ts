@@ -68,10 +68,15 @@ function spansWithClass(editor: Editor, className: string): string[] {
     .map((el) => el.textContent ?? "")
 }
 
+const valueChipClass = `${chipBase} bg-muted font-mono ${commandValueStyle} pl-0 rounded-l-none`
+
 function flagChips(editor: Editor): { flag: string; value: string }[] {
-  const flags = spansWithClass(editor, `${chipBase} ${commandFlagChipStyle} pr-0 rounded-r-none`)
-  const values = spansWithClass(editor, `${chipBase} bg-muted font-mono ${commandValueStyle} pl-0 rounded-l-none`)
-  return flags.map((flag, index) => ({ flag: flag.trim(), value: values[index] ?? "" }))
+  return [...editor.view.dom.querySelectorAll("span")]
+    .filter((el) => el.className === `${chipBase} ${commandFlagChipStyle} pr-0 rounded-r-none`)
+    .map((el) => {
+      const next = el.nextElementSibling
+      return { flag: el.textContent?.trim() ?? "", value: next?.className === valueChipClass ? (next.textContent ?? "") : "" }
+    })
 }
 
 describe("CommandArgDecoration", () => {
@@ -85,9 +90,18 @@ describe("CommandArgDecoration", () => {
     for (const chip of flagChips(editor)) expect(`${chip.flag} ${chip.value}`).not.toContain("fix it")
   })
 
-  it("chips the leading positional value the command advertises", () => {
+  it("joins the leading positional value to the command chip, space included", () => {
     const editor = openWith("spawn", " pi /thinking medium")
-    expect(spansWithClass(editor, `${chipBase} bg-muted font-mono ${commandValueStyle}`)).toEqual(["pi"])
+    const chip = editor.view.dom.querySelector("[data-type='slashCommand']")
+    expect(chip?.className).toContain("pr-0 rounded-r-none")
+    expect(chip?.nextElementSibling?.className).toBe(valueChipClass)
+    expect(chip?.nextElementSibling?.textContent).toBe(" pi")
+    expect(flagChips(editor)).toEqual([{ flag: "/thinking", value: "medium" }])
+  })
+
+  it("leaves the command chip whole when no positional value follows", () => {
+    const editor = openWith("spawn", " /thinking medium")
+    expect(editor.view.dom.querySelector("[data-type='slashCommand']")?.className).not.toContain("rounded-r-none")
   })
 
   it("keeps its spans aligned across an inline leaf node", () => {
