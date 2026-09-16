@@ -38,6 +38,7 @@ const GREETING = [
   "You were just started as `fix-sidebar` and nobody has asked you for anything yet.",
   "You are working in `/repo/fix-sidebar` on branch `fix/sidebar` (tmux window `fix-sidebar`).",
   "Say hello in a sentence or two, name where you are, and ask what they want done. Do not start any work yet.",
+  "Send it with the channel `reply` tool, passing this event's `invocation_id`. Text you write in the terminal never reaches the person who spawned you, and this request stays open until you reply.",
 ].join("\n\n")
 
 interface Recorded {

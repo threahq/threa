@@ -13,6 +13,13 @@ interface CommandArgPickerProps {
   placement?: Placement
   /** Open with no row armed, so Enter still sends when the typed text is free-form (an optional argument). */
   deferSelection?: boolean
+  /**
+   * The typed filter. The highlight resets when it changes and survives every
+   * other re-render: the hook recomputes `items` on each editor tick, so
+   * keying the reset on the array would drop the row an arrow just armed
+   * before the Enter that follows it.
+   */
+  query: string
 }
 
 function CommandArgContent({ item }: { item: CommandArgumentSuggestion }) {
@@ -38,7 +45,7 @@ function CommandArgContent({ item }: { item: CommandArgumentSuggestion }) {
  * `SuggestionList` as the @mention / #channel / /command popovers.
  */
 export const CommandArgPicker = forwardRef<CommandArgPickerRef, CommandArgPickerProps>(function CommandArgPicker(
-  { items, clientRect, command, placement, deferSelection },
+  { items, clientRect, command, placement, deferSelection, query },
   ref
 ) {
   return (
@@ -53,6 +60,7 @@ export const CommandArgPicker = forwardRef<CommandArgPickerRef, CommandArgPicker
       renderItem={(item) => <CommandArgContent item={item} />}
       placement={placement}
       deferSelection={deferSelection}
+      highlightResetKey={query}
     />
   )
 })

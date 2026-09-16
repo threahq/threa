@@ -55,6 +55,15 @@ describe("claudeModelSuggestions", () => {
     expect(suggestions.every((suggestion) => suggestion.label && suggestion.description)).toBe(true)
   })
 
+  it("keeps version numbers out of the baseline copy", () => {
+    // The alias is stable, the model behind it is not; the dedupe keeps baseline
+    // copy over the client's own fresher entry.
+    const copy = claudeModelSuggestions("/nonexistent/claude.json")
+      .map((suggestion) => `${suggestion.label} ${suggestion.description}`)
+      .join(" ")
+    expect(copy).not.toMatch(/\d/)
+  })
+
   it("dedupes a discovered model whose label collides with a baseline alias", () => {
     const path = writeConfig({
       additionalModelOptionsCache: [{ value: "claude-opus-9", label: "Opus", description: "future" }],
