@@ -220,7 +220,7 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
       let meta: string
       if (deleted) meta = "deleted"
       else if (completed) meta = `${stepsLabel(completed.stepCount)} · ${formatDuration(completed.duration)}`
-      else if (failed) meta = `${stepsLabel(failed.stepCount)} · failed`
+      else if (failed) meta = failed.spendingStop ? "AI stopped" : `${stepsLabel(failed.stepCount)} · failed`
       else if (interrupted) meta = "retrying"
       else meta = "running"
       return {

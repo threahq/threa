@@ -6,7 +6,6 @@
  * - Automatic repair for generateObject
  * - Unified `{ value, response }` return type
  * - Extended model ID parsing (extracts modelProvider)
- * - LangChain integration for LangGraph
  */
 
 import {
@@ -14,19 +13,28 @@ import {
   generateObject as aiGenerateObject,
   embed as aiEmbed,
   embedMany as aiEmbedMany,
+  RetryError,
 } from "ai"
 import type { Embedding, LanguageModel, EmbeddingModel, ModelMessage, Tool } from "ai"
 import type { z } from "zod"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
-import { ChatOpenAI } from "@langchain/openai"
 import { stripMarkdownFences } from "./text-utils"
-import { CostTracker } from "./openrouter-cost-interceptor"
+import {
+  SpendingDeniedError,
+  SpendingOutcomeUnknownError,
+  SpendingResultUnavailableError,
+  assertSpendingRequest,
+  createGuardedFetch,
+  createLegacyFetch,
+  providerRouting,
+  quoteAttempt,
+  type FetchLike,
+  type SpendingAttemptOutcome,
+  type SpendingRequest,
+  type SpendingGate,
+  type SpendingPolicyMode,
+} from "./spending"
 import { logger } from "../logger"
-
-export { CostTracker, type CapturedUsage } from "./openrouter-cost-interceptor"
-export { getCostTrackingCallbacks, CostTrackingCallback } from "./cost-tracking-callback"
-
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 export interface ParsedModel {
   /** The provider (e.g., "openrouter", "anthropic") */
@@ -56,7 +64,9 @@ export interface CostRecorder {
     /** Wall time of the provider call. Absent when the caller did not time it. */
     latencyMs?: number
     metadata?: Record<string, unknown>
+    costStatus?: "settled" | "unconfirmed"
   }): Promise<void>
+  observeUsage?(params: Parameters<CostRecorder["recordUsage"]>[0]): Promise<void>
 }
 
 /**
@@ -77,7 +87,8 @@ export interface AccessLogSink {
 }
 
 export interface AIConfig {
-  openrouter?: { apiKey: string }
+  /** `fetch` overrides the transport for every OpenRouter request (tests, local fakes). */
+  openrouter?: { apiKey: string; fetch?: FetchLike }
   defaults?: {
     repair?: RepairFunction
   }
@@ -87,6 +98,18 @@ export interface AIConfig {
   budgetEnforcer?: BudgetEnforcer
   /** When provided, a `disclose` access-log row is emitted for each AI call (design §7.3) */
   accessLogSink?: AccessLogSink
+  /**
+   * When provided, every call first reads its workspace's policy mode. Only an
+   * explicitly unprotected workspace keeps the legacy path (budget policy, SDK
+   * retries), rechecked before each physical request. Missing, disabled and
+   * emergency policies are denied before egress. An enforced call is a bounded
+   * ledger attempt: it needs a `spending` context and an approved route,
+   * egresses through `createGuardedFetch`, and never retries; only text
+   * generation (with or without tools) is supported there. Model handles given
+   * out directly are sealed in every mode.
+   * Absent for isolated tests and evals, which stay explicitly unmetered.
+   */
+  spendingGate?: SpendingGate
 }
 
 /**
@@ -200,6 +223,8 @@ export interface GenerateTextOptions {
   telemetry?: TelemetryConfig
   /** When provided, usage will be recorded to the database */
   context?: CostContext
+  /** Funding identity and logical request key for a spending-gated call; required when the workspace's spending policy is enforced. */
+  spending?: SpendingRequest
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -231,6 +256,8 @@ export interface GenerateTextWithToolsOptions {
   telemetry?: TelemetryConfig
   /** When provided with `modelString`, usage will be recorded to the database */
   context?: CostContext
+  /** Funding identity and logical request key for a spending-gated call; required when the workspace's spending policy is enforced. */
+  spending?: SpendingRequest
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
   /**
@@ -265,6 +292,8 @@ export interface GenerateTextWithToolsResult {
    * not compute usage (the enclave AI).
    */
   usage?: UsageWithCost
+  /** Ledger outcome of each physical attempt, present only on an enforced (guarded) call. */
+  spendingAttempts?: SpendingAttemptOutcome[]
 }
 
 export interface GenerateObjectOptions<T extends z.ZodType> {
@@ -331,6 +360,8 @@ export interface TextResult {
   response: GenerateTextResponse
   /** Usage with cost extracted from provider metadata */
   usage: UsageWithCost
+  /** Ledger outcome of each physical attempt, present only on an enforced (guarded) call. */
+  spendingAttempts?: SpendingAttemptOutcome[]
 }
 
 export interface ObjectResult<T> {
@@ -362,12 +393,6 @@ export interface ManyEmbedResult {
 
 export type RepairFunction = (args: { text: string }) => Promise<string> | string
 
-export interface LangChainModelResult {
-  model: ChatOpenAI
-  effectiveModel: string
-  budgetMetadata: Record<string, string | number | boolean>
-}
-
 export interface AI {
   // Generation
   generateText(options: GenerateTextOptions): Promise<TextResult>
@@ -381,11 +406,6 @@ export interface AI {
   // Model access (for advanced use cases)
   getLanguageModel(modelString: string): LanguageModel
   getEmbeddingModel(modelString: string): EmbeddingModel
-  getLangChainModel(modelString: string, context?: CostContext): Promise<LangChainModelResult>
-
-  // Cost tracking for LangChain/LangGraph calls
-  /** CostTracker instance for this AI wrapper - use with getCostTrackingCallbacks */
-  costTracker: CostTracker
 
   // Parsing
   parseModel(modelString: string): ParsedModel
@@ -626,55 +646,239 @@ export function extractUsageWithCost(response: {
   }
 }
 
-export function createAI(config: AIConfig): AI {
-  const providers = {
-    openrouter: config.openrouter ? createOpenRouter({ apiKey: config.openrouter.apiKey }) : null,
-  }
+type OpenRouterProvider = ReturnType<typeof createOpenRouter>
 
-  // Store API keys for LangChain (needs raw key, not provider instance)
-  const apiKeys = {
-    openrouter: config.openrouter?.apiKey ?? null,
+interface CallIdentity {
+  context?: CostContext
+  spending?: SpendingRequest
+}
+
+type Egress =
+  | { kind: "ungated" | "legacy"; openrouter: OpenRouterProvider | null }
+  | { kind: "guarded"; gate: SpendingGate; spending: SpendingRequest }
+
+const POLICY_DENIALS: ReadonlySet<unknown> = new Set(["NOT_PROVISIONED", "DISABLED", "EMERGENCY"])
+
+export function createAI(config: AIConfig): AI {
+  const gate = config.spendingGate
+  const baseFetch = config.openrouter?.fetch ?? globalThis.fetch
+  // Under a gate, models handed out directly (`getLanguageModel`, `getEmbeddingModel`)
+  // are sealed in every policy mode: raw SDK egress is denied at fetch.
+  const sealedFetch: FetchLike = async () => {
+    throw new SpendingDeniedError("MISSING_CONTEXT", { reason: "egress outside a guarded attempt" })
+  }
+  const providers = {
+    openrouter: config.openrouter
+      ? createOpenRouter({
+          apiKey: config.openrouter.apiKey,
+          fetch: (gate ? sealedFetch : config.openrouter.fetch) as typeof fetch | undefined,
+        })
+      : null,
   }
 
   const defaultRepair = config.defaults?.repair ?? stripMarkdownFences
 
-  // Used for LangChain/LangGraph calls via getCostTrackingCallbacks.
-  const costTracker = new CostTracker()
+  // Handles this instance handed out, keyed to the model string they were built
+  // from with default settings. Under a gate the tools path rebuilds only these.
+  const ownedLanguageModels = new WeakMap<object, string>()
 
   function getLanguageModel(modelString: string): LanguageModel {
+    const model = createLanguageModel(providers.openrouter, modelString)
+    ownedLanguageModels.set(model as object, modelString)
+    return model
+  }
+
+  function createLanguageModel(openrouter: OpenRouterProvider | null, modelString: string): LanguageModel {
     const { provider, modelId } = parseModelId(modelString)
 
     switch (provider) {
       case "openrouter":
-        if (!providers.openrouter) {
+        if (!openrouter) {
           throw new Error("OpenRouter not configured. Set OPENROUTER_API_KEY or provide openrouter.apiKey in config.")
         }
         logger.debug({ provider, modelId }, "Creating language model instance")
         // Enable usage tracking to get cost from OpenRouter response
-        return providers.openrouter.chat(modelId, { usage: { include: true } })
+        return openrouter.chat(modelId, { usage: { include: true } })
       default:
         throw new Error(`Unsupported provider: "${provider}". Currently supported: openrouter`)
     }
   }
 
   function getEmbeddingModel(modelString: string): EmbeddingModel {
+    return createEmbeddingModel(providers.openrouter, modelString)
+  }
+
+  function createEmbeddingModel(openrouter: OpenRouterProvider | null, modelString: string): EmbeddingModel {
     const { provider, modelId } = parseModelId(modelString)
 
     switch (provider) {
       case "openrouter":
-        if (!providers.openrouter) {
+        if (!openrouter) {
           throw new Error("OpenRouter not configured. Set OPENROUTER_API_KEY or provide openrouter.apiKey in config.")
         }
         logger.debug({ provider, modelId }, "Creating embedding model instance")
         // Enable usage tracking to get cost from OpenRouter response
-        return providers.openrouter.textEmbeddingModel(modelId, { usage: { include: true } })
+        return openrouter.textEmbeddingModel(modelId, { usage: { include: true } })
       default:
         throw new Error(`Unsupported embedding provider: "${provider}". Currently supported: openrouter`)
     }
   }
 
-  // Create cost-capturing fetch from our CostTracker instance
-  const costCapturingFetch = costTracker.createInterceptingFetch()
+  /**
+   * Copy and freeze the call's identity synchronously, before its first await, so
+   * neither the caller nor an injected sink can change which policy is read or who is charged.
+   * Under a gate a supplied funding context must be complete and name the same
+   * workspace as the telemetry context.
+   */
+  function snapshotCall(
+    functionId: string,
+    options: { context?: CostContext; spending?: SpendingRequest }
+  ): CallIdentity {
+    const context = options.context ? Object.freeze({ ...options.context }) : undefined
+    if (!gate) return { context }
+    const spending = options.spending === undefined ? undefined : assertSpendingRequest(options.spending, functionId)
+    if (spending && context && context.workspaceId !== spending.workspaceId) {
+      throw new SpendingDeniedError("MISSING_CONTEXT", { functionId, reason: "workspace mismatch" })
+    }
+    return { context, spending }
+  }
+
+  /**
+   * The one per-call mode decision for every paid method. The telemetry
+   * workspace only selects which policy to read when no funding context is
+   * supplied; it never becomes a payer, sponsor, purpose or stage.
+   */
+  async function resolveEgress(functionId: string, call: CallIdentity): Promise<Egress>
+  async function resolveEgress(
+    functionId: string,
+    call: CallIdentity,
+    unsupportedWhenEnforced: string
+  ): Promise<Exclude<Egress, { kind: "guarded" }>>
+  async function resolveEgress(
+    functionId: string,
+    call: CallIdentity,
+    unsupportedWhenEnforced?: string
+  ): Promise<Egress> {
+    if (!gate) return { kind: "ungated", openrouter: providers.openrouter }
+    const workspaceId = call.spending?.workspaceId ?? call.context?.workspaceId
+    if (!workspaceId) throw new SpendingDeniedError("MISSING_CONTEXT", { functionId, fields: ["workspaceId"] })
+    const policy: SpendingPolicyMode | undefined = await gate.policyMode(workspaceId)
+    if (policy?.mode === "unprotected") {
+      // The legacy hard budget and usage recording both key on the cost context; without it they would silently skip.
+      if (!call.context) {
+        throw new SpendingDeniedError("MISSING_CONTEXT", {
+          functionId,
+          fields: ["costContext"],
+          reason: "legacy egress requires a cost context",
+        })
+      }
+      return {
+        kind: "legacy",
+        openrouter: config.openrouter
+          ? createOpenRouter({
+              apiKey: config.openrouter.apiKey,
+              fetch: createLegacyFetch({ gate, workspaceId, baseFetch }) as typeof fetch,
+            })
+          : null,
+      }
+    }
+    if (policy?.mode !== "protected" || (policy.denial !== null && !POLICY_DENIALS.has(policy.denial))) {
+      throw new SpendingDeniedError("NOT_PROVISIONED", { workspaceId, reason: "unrecognized policy mode" })
+    }
+    if (policy.denial !== null) throw new SpendingDeniedError(policy.denial, { workspaceId })
+    if (unsupportedWhenEnforced) {
+      throw new SpendingDeniedError("UNSUPPORTED_OPERATION", { operation: unsupportedWhenEnforced })
+    }
+    if (!call.spending) throw new SpendingDeniedError("MISSING_CONTEXT", { functionId, fields: ["context"] })
+    return { kind: "guarded", gate, spending: call.spending }
+  }
+
+  /** A legacy retry refused by the recheck surfaces as the typed denial, not the SDK's retry wrapper. */
+  async function withLegacyDenial<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run()
+    } catch (error) {
+      if (RetryError.isInstance(error) && error.lastError instanceof SpendingDeniedError) throw error.lastError
+      throw error
+    }
+  }
+
+  /**
+   * The model a text call sends through. Unguarded egress builds its model and
+   * discloses now. A guarded call needs an approved route for its funding
+   * context; the returned model egresses only through a fresh
+   * `createGuardedFetch` carrying the quote, which discloses at dispatch, and
+   * `spendingAttempts` collects each physical attempt's ledger outcome.
+   */
+  async function resolveTextModel(params: {
+    egress: Egress
+    functionId: string
+    modelString: string | undefined
+    maxTokens: number | undefined
+    unguardedModel: (egress: Exclude<Egress, { kind: "guarded" }>) => LanguageModel
+    disclose: () => void
+  }): Promise<{ model: LanguageModel; maxTokens: number | undefined; spendingAttempts?: SpendingAttemptOutcome[] }> {
+    const { egress } = params
+    if (egress.kind !== "guarded") {
+      const model = params.unguardedModel(egress)
+      params.disclose()
+      return { model, maxTokens: params.maxTokens }
+    }
+    const { spending } = egress
+    if (!config.openrouter) throw new SpendingDeniedError("UNKNOWN_ROUTE", { reason: "OpenRouter not configured" })
+    if (!params.modelString) throw new SpendingDeniedError("UNKNOWN_ROUTE", { reason: "modelString required" })
+    let parsed: ParsedModel
+    try {
+      parsed = parseModelId(params.modelString)
+    } catch {
+      throw new SpendingDeniedError("UNKNOWN_ROUTE", { model: params.modelString })
+    }
+    if (parsed.provider !== "openrouter") throw new SpendingDeniedError("UNKNOWN_ROUTE", { model: params.modelString })
+    const profile = await egress.gate.routeFor({ context: spending, modelId: parsed.modelId })
+    if (!profile || profile.model !== parsed.modelId) {
+      throw new SpendingDeniedError("UNKNOWN_ROUTE", { model: params.modelString })
+    }
+    const quote = quoteAttempt(profile, params.maxTokens)
+    const spendingAttempts: SpendingAttemptOutcome[] = []
+    const guardedFetch = createGuardedFetch({
+      functionId: params.functionId,
+      gate: egress.gate,
+      context: spending,
+      profile,
+      quote,
+      baseFetch,
+      onDispatch: params.disclose,
+      onOutcome: (outcome) => spendingAttempts.push(outcome),
+    })
+    const model = createOpenRouter({
+      apiKey: config.openrouter.apiKey,
+      fetch: guardedFetch as typeof fetch,
+    }).chat(parsed.modelId, {
+      usage: { include: true },
+      provider: providerRouting(profile),
+      maxTokens: quote.maxTokens,
+    })
+    return { model, maxTokens: quote.maxTokens, spendingAttempts }
+  }
+
+  /** A failure after any attempt was held may have been billed: surface it as unknown so nothing replays it. */
+  async function withSpendingOutcomes<T>(
+    outcomes: SpendingAttemptOutcome[] | undefined,
+    run: () => Promise<T>
+  ): Promise<T> {
+    try {
+      return await run()
+    } catch (error) {
+      if (!outcomes) throw error
+      if (outcomes.some((outcome) => outcome.status === "held")) {
+        throw new SpendingOutcomeUnknownError([...outcomes], error)
+      }
+      if (outcomes.some((outcome) => outcome.status === "settled")) {
+        throw new SpendingResultUnavailableError(error)
+      }
+      throw error
+    }
+  }
 
   async function resolveBudgetPolicy(params: {
     modelString: string
@@ -750,114 +954,6 @@ export function createAI(config: AIConfig): AI {
     }
   }
 
-  function buildBudgetTelemetryMetadata(
-    decision: BudgetPolicyDecision
-  ): Record<string, string | number | boolean | undefined> {
-    return {
-      budget_policy_checked: decision.policyChecked,
-      budget_policy_reason: decision.reason,
-      budget_model_requested: decision.requestedModel,
-      budget_model_effective: decision.effectiveModel,
-      budget_model_degraded: decision.modelDegraded,
-      budget_percent_used: decision.percentUsed,
-      budget_current_usage_usd: decision.currentUsageUsd,
-      budget_limit_usd: decision.budgetUsd,
-    }
-  }
-
-  function compactMetadata(
-    metadata: Record<string, string | number | boolean | undefined>
-  ): Record<string, string | number | boolean> {
-    const compact: Record<string, string | number | boolean> = {}
-    for (const [key, value] of Object.entries(metadata)) {
-      if (value !== undefined) {
-        compact[key] = value
-      }
-    }
-    return compact
-  }
-
-  function createBudgetAwareLangChainFetch(params: {
-    context?: CostContext
-    fallbackModelString: string
-  }): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
-    return async (input, init) => {
-      let requestBodyObject: Record<string, unknown> | null = null
-      let requestedModelString = params.fallbackModelString
-
-      if (typeof init?.body === "string") {
-        try {
-          const parsed = JSON.parse(init.body)
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            requestBodyObject = parsed as Record<string, unknown>
-            const bodyModel = requestBodyObject.model
-            if (typeof bodyModel === "string" && bodyModel.length > 0) {
-              requestedModelString = bodyModel.includes(":") ? bodyModel : `openrouter:${bodyModel}`
-            }
-          }
-        } catch (error) {
-          logger.warn({ error }, "Failed to parse LangChain request body for budget enforcement")
-        }
-      }
-
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: requestedModelString,
-        context: params.context,
-        functionId: "langchain-model-invoke",
-      })
-
-      let nextInit = init
-      if (requestBodyObject && budgetDecision.effectiveModel !== requestedModelString) {
-        const { modelId: effectiveModelId } = parseModelId(budgetDecision.effectiveModel)
-        nextInit = {
-          ...init,
-          body: JSON.stringify({
-            ...requestBodyObject,
-            model: effectiveModelId,
-          }),
-        }
-      }
-
-      return costCapturingFetch(input, nextInit)
-    }
-  }
-
-  async function getLangChainModel(modelString: string, context?: CostContext): Promise<LangChainModelResult> {
-    const initialBudgetDecision = await resolveBudgetPolicy({
-      modelString,
-      context,
-      functionId: "langchain-model",
-    })
-
-    const { provider, modelId } = parseModelId(initialBudgetDecision.effectiveModel)
-
-    switch (provider) {
-      case "openrouter":
-        if (!apiKeys.openrouter) {
-          throw new Error("OpenRouter not configured. Set OPENROUTER_API_KEY or provide openrouter.apiKey in config.")
-        }
-        logger.debug({ provider, modelId, requestedModel: modelString }, "Creating LangChain model instance")
-        return {
-          model: new ChatOpenAI({
-            model: modelId,
-            apiKey: apiKeys.openrouter,
-            configuration: {
-              baseURL: OPENROUTER_BASE_URL,
-              // Intercept every request to enforce budget policy and capture usage
-              fetch: createBudgetAwareLangChainFetch({
-                context,
-                fallbackModelString: initialBudgetDecision.effectiveModel,
-              }),
-            },
-          }),
-          effectiveModel: initialBudgetDecision.effectiveModel,
-          budgetMetadata: compactMetadata(buildBudgetTelemetryMetadata(initialBudgetDecision)),
-        }
-      default:
-        throw new Error(`Unsupported LangChain provider: "${provider}". Currently supported: openrouter`)
-    }
-  }
-
   // ai@7 removed built-in OpenTelemetry: TelemetryOptions carries no metadata.
   // Our own TelemetryConfig.metadata still flows to the access-log disclose sink
   // and the cost recorder; only the SDK channel is gone.
@@ -916,6 +1012,7 @@ export function createAI(config: AIConfig): AI {
   }
 
   async function maybeRecordUsage(params: {
+    spendingAttempts?: SpendingAttemptOutcome[]
     context?: CostContext
     functionId: string
     modelString: string
@@ -928,7 +1025,8 @@ export function createAI(config: AIConfig): AI {
     const parsed = parseModelId(params.modelString)
 
     try {
-      await config.costRecorder.recordUsage({
+      const held = params.spendingAttempts?.some((attempt) => attempt.status === "held")
+      const usageRecord: Parameters<CostRecorder["recordUsage"]>[0] = {
         workspaceId: params.context.workspaceId,
         userId: params.context.userId,
         sessionId: params.context.sessionId,
@@ -936,10 +1034,13 @@ export function createAI(config: AIConfig): AI {
         model: parsed.modelId,
         provider: parsed.provider,
         origin: params.context.origin ?? "system",
-        usage: params.usage,
+        usage: held ? { ...params.usage, cost: undefined } : params.usage,
         latencyMs: params.latencyMs,
         metadata: params.metadata,
-      })
+        costStatus: params.spendingAttempts ? (held ? "unconfirmed" : "settled") : undefined,
+      }
+      if (params.spendingAttempts) await config.costRecorder.observeUsage?.(usageRecord)
+      else await config.costRecorder.recordUsage(usageRecord)
     } catch (error) {
       logger.error(
         { error, functionId: params.functionId, model: params.modelString },
@@ -952,40 +1053,54 @@ export function createAI(config: AIConfig): AI {
     parseModel: parseModelId,
     getLanguageModel,
     getEmbeddingModel,
-    getLangChainModel,
-    costTracker,
 
     async generateText(options) {
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateText",
-      })
-      const effectiveModel = budgetDecision.effectiveModel
-      const model = getLanguageModel(effectiveModel)
-      maybeDisclose({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateText",
+      const functionId = options.telemetry?.functionId ?? "generateText"
+      const call = snapshotCall(functionId, options)
+      const egress = await resolveEgress(functionId, call)
+      // Under enforcement the ledger is the only budget authority: the legacy policy's
+      // soft-limit degradation would silently switch the model the caller asked for.
+      const effectiveModel =
+        egress.kind === "guarded"
+          ? options.model
+          : (await resolveBudgetPolicy({ modelString: options.model, context: call.context, functionId }))
+              .effectiveModel
+      const { model, maxTokens, spendingAttempts } = await resolveTextModel({
+        egress,
+        functionId,
         modelString: effectiveModel,
-        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+        maxTokens: options.maxTokens,
+        unguardedModel: (unguarded) => createLanguageModel(unguarded.openrouter, effectiveModel),
+        disclose: () =>
+          maybeDisclose({
+            context: call.context,
+            functionId,
+            modelString: effectiveModel,
+            metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+          }),
       })
       const startedAt = Date.now()
-      const response = await aiGenerateText({
-        model,
-        // Our Message type is compatible with AI SDK's ModelMessage at runtime
-        // The cast is needed because our role type is a union while SDK uses discriminated types
-        messages: options.messages as ModelMessage[],
-        // ai@7 throws AI_InvalidPromptError on any role: "system" message unless this is set;
-        // our callers express system prompts as system-role messages.
-        allowSystemInMessages: true,
-        maxOutputTokens: options.maxTokens,
-        temperature: options.temperature,
-        abortSignal: options.abortSignal,
-        ...(options.reasoningEffort
-          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
-          : {}),
-        experimental_telemetry: buildTelemetry(options.telemetry),
-      })
+      const response = await withSpendingOutcomes(spendingAttempts, () =>
+        withLegacyDenial(() =>
+          aiGenerateText({
+            model,
+            // Our Message type is compatible with AI SDK's ModelMessage at runtime
+            // The cast is needed because our role type is a union while SDK uses discriminated types
+            messages: options.messages as ModelMessage[],
+            // ai@7 throws AI_InvalidPromptError on any role: "system" message unless this is set;
+            // our callers express system prompts as system-role messages.
+            allowSystemInMessages: true,
+            maxOutputTokens: maxTokens,
+            temperature: options.temperature,
+            abortSignal: options.abortSignal,
+            ...(spendingAttempts ? { maxRetries: 0 } : {}),
+            ...(options.reasoningEffort
+              ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
+              : {}),
+            experimental_telemetry: buildTelemetry(options.telemetry),
+          })
+        )
+      )
 
       const usage = extractUsageWithCost(response)
       logger.debug(
@@ -994,8 +1109,9 @@ export function createAI(config: AIConfig): AI {
       )
 
       await maybeRecordUsage({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateText",
+        spendingAttempts,
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         usage,
         latencyMs: Date.now() - startedAt,
@@ -1006,6 +1122,7 @@ export function createAI(config: AIConfig): AI {
         value: response.text,
         response,
         usage,
+        ...(spendingAttempts ? { spendingAttempts } : {}),
       }
     },
 
@@ -1013,11 +1130,36 @@ export function createAI(config: AIConfig): AI {
       // Disclose fires even without `modelString`: the egress happened, so a
       // provider/model `unknown` row beats silence. Cost recording below stays
       // gated on `modelString` (the recorder needs the parseable identifier).
-      maybeDisclose({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateTextWithTools",
-        modelString: options.modelString,
-        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      const functionId = options.telemetry?.functionId ?? "generateTextWithTools"
+      const call = snapshotCall(functionId, options)
+      let ownedModelString: string | undefined
+      if (gate) {
+        // In either policy mode only a default handle from this instance can be rebuilt onto a
+        // checked transport; any other LanguageModel carries a fetch and routing we cannot see.
+        ownedModelString = ownedLanguageModels.get(options.model as object)
+        if (ownedModelString === undefined || ownedModelString !== options.modelString) {
+          throw new SpendingDeniedError("UNSUPPORTED_OPERATION", {
+            operation: "generateTextWithTools",
+            reason: ownedModelString === undefined ? "model handle not issued by this AI" : "modelString mismatch",
+            modelString: options.modelString,
+          })
+        }
+      }
+      const egress = await resolveEgress(functionId, call)
+      const { model, maxTokens, spendingAttempts } = await resolveTextModel({
+        egress,
+        functionId,
+        modelString: ownedModelString,
+        maxTokens: options.maxTokens,
+        unguardedModel: (unguarded) =>
+          unguarded.kind === "legacy" ? createLanguageModel(unguarded.openrouter, ownedModelString!) : options.model,
+        disclose: () =>
+          maybeDisclose({
+            context: call.context,
+            functionId,
+            modelString: options.modelString,
+            metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+          }),
       })
       const { system, messages } = options.cachePrefix
         ? applyCacheBreakpoints({
@@ -1032,17 +1174,22 @@ export function createAI(config: AIConfig): AI {
           }
 
       const startedAt = Date.now()
-      const response = await aiGenerateText({
-        model: options.model,
-        system,
-        messages,
-        allowSystemInMessages: true,
-        tools: options.tools,
-        maxOutputTokens: options.maxTokens,
-        temperature: options.temperature,
-        abortSignal: options.abortSignal,
-        experimental_telemetry: buildTelemetry(options.telemetry),
-      })
+      const response = await withSpendingOutcomes(spendingAttempts, () =>
+        withLegacyDenial(() =>
+          aiGenerateText({
+            model,
+            system,
+            messages,
+            allowSystemInMessages: true,
+            tools: options.tools,
+            maxOutputTokens: maxTokens,
+            temperature: options.temperature,
+            abortSignal: options.abortSignal,
+            ...(spendingAttempts ? { maxRetries: 0 } : {}),
+            experimental_telemetry: buildTelemetry(options.telemetry),
+          })
+        )
+      )
 
       // Usage recording requires the original model string because the resolved
       // LanguageModel instance does not carry the provider:model prefix the cost
@@ -1057,8 +1204,9 @@ export function createAI(config: AIConfig): AI {
         )
 
         await maybeRecordUsage({
-          context: options.context,
-          functionId: options.telemetry?.functionId ?? "generateTextWithTools",
+          spendingAttempts,
+          context: call.context,
+          functionId,
           modelString: options.modelString,
           usage,
           latencyMs: Date.now() - startedAt,
@@ -1075,42 +1223,48 @@ export function createAI(config: AIConfig): AI {
         })),
         response: { messages: response.response.messages },
         usage,
+        ...(spendingAttempts ? { spendingAttempts } : {}),
       }
     },
 
     async generateObject<T extends z.ZodType>(options: GenerateObjectOptions<T>): Promise<ObjectResult<z.infer<T>>> {
+      const functionId = options.telemetry?.functionId ?? "generateObject"
+      const call = snapshotCall(functionId, options)
+      const egress = await resolveEgress(functionId, call, "generateObject")
       const budgetDecision = await resolveBudgetPolicy({
         modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateObject",
+        context: call.context,
+        functionId,
       })
       const effectiveModel = budgetDecision.effectiveModel
-      const model = getLanguageModel(effectiveModel)
+      const model = createLanguageModel(egress.openrouter, effectiveModel)
       const repair = options.repair === false ? undefined : (options.repair ?? defaultRepair)
 
       maybeDisclose({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateObject",
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
       const startedAt = Date.now()
-      // @ts-expect-error AI SDK generateObject has complex generics; we validate schema type at our interface level
-      const response = await aiGenerateObject({
-        model,
-        schema: options.schema,
-        // Our Message type is compatible with AI SDK's ModelMessage at runtime
-        messages: options.messages as ModelMessage[],
-        allowSystemInMessages: true,
-        maxOutputTokens: options.maxTokens,
-        temperature: options.temperature,
-        abortSignal: options.abortSignal,
-        ...(options.reasoningEffort
-          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
-          : {}),
-        experimental_repairText: repair,
-        experimental_telemetry: buildTelemetry(options.telemetry),
-      })
+      const response = await withLegacyDenial(() =>
+        // @ts-expect-error AI SDK generateObject has complex generics; we validate schema type at our interface level
+        aiGenerateObject({
+          model,
+          schema: options.schema,
+          // Our Message type is compatible with AI SDK's ModelMessage at runtime
+          messages: options.messages as ModelMessage[],
+          allowSystemInMessages: true,
+          maxOutputTokens: options.maxTokens,
+          temperature: options.temperature,
+          abortSignal: options.abortSignal,
+          ...(options.reasoningEffort
+            ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
+            : {}),
+          experimental_repairText: repair,
+          experimental_telemetry: buildTelemetry(options.telemetry),
+        })
+      )
 
       const usage = extractUsageWithCost(response)
       logger.debug(
@@ -1119,8 +1273,8 @@ export function createAI(config: AIConfig): AI {
       )
 
       await maybeRecordUsage({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateObject",
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         usage,
         latencyMs: Date.now() - startedAt,
@@ -1137,33 +1291,38 @@ export function createAI(config: AIConfig): AI {
     },
 
     async embed(options) {
+      const functionId = options.telemetry?.functionId ?? "embed"
+      const call = snapshotCall(functionId, options)
+      const egress = await resolveEgress(functionId, call, "embed")
       const budgetDecision = await resolveBudgetPolicy({
         modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embed",
+        context: call.context,
+        functionId,
       })
       const effectiveModel = budgetDecision.effectiveModel
-      const model = getEmbeddingModel(effectiveModel)
+      const model = createEmbeddingModel(egress.openrouter, effectiveModel)
       maybeDisclose({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embed",
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
       const startedAt = Date.now()
-      const response = await aiEmbed({
-        model,
-        value: options.value,
-        abortSignal: options.abortSignal,
-        experimental_telemetry: buildTelemetry(options.telemetry),
-      })
+      const response = await withLegacyDenial(() =>
+        aiEmbed({
+          model,
+          value: options.value,
+          abortSignal: options.abortSignal,
+          experimental_telemetry: buildTelemetry(options.telemetry),
+        })
+      )
 
       const usage = extractUsageWithCost(response)
       logger.debug({ usage, requestedModel: options.model, model: effectiveModel }, "AI embed completed with usage")
 
       await maybeRecordUsage({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embed",
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         usage,
         latencyMs: Date.now() - startedAt,
@@ -1178,30 +1337,35 @@ export function createAI(config: AIConfig): AI {
     },
 
     async embedMany(options) {
+      const functionId = options.telemetry?.functionId ?? "embedMany"
+      const call = snapshotCall(functionId, options)
+      const egress = await resolveEgress(functionId, call, "embedMany")
       const budgetDecision = await resolveBudgetPolicy({
         modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embedMany",
+        context: call.context,
+        functionId,
       })
       const effectiveModel = budgetDecision.effectiveModel
-      const model = getEmbeddingModel(effectiveModel)
+      const model = createEmbeddingModel(egress.openrouter, effectiveModel)
       const embedManyMetadata = { ...options.telemetry?.metadata, count: options.values.length } as Record<
         string,
         unknown
       >
       maybeDisclose({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embedMany",
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         metadata: embedManyMetadata,
       })
       const startedAt = Date.now()
-      const response = await aiEmbedMany({
-        model,
-        values: options.values,
-        abortSignal: options.abortSignal,
-        experimental_telemetry: buildTelemetry(options.telemetry),
-      })
+      const response = await withLegacyDenial(() =>
+        aiEmbedMany({
+          model,
+          values: options.values,
+          abortSignal: options.abortSignal,
+          experimental_telemetry: buildTelemetry(options.telemetry),
+        })
+      )
 
       const usage = extractUsageWithCost(response)
       logger.debug(
@@ -1210,8 +1374,8 @@ export function createAI(config: AIConfig): AI {
       )
 
       await maybeRecordUsage({
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embedMany",
+        context: call.context,
+        functionId,
         modelString: effectiveModel,
         usage,
         latencyMs: Date.now() - startedAt,

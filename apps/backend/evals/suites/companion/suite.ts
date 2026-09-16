@@ -82,7 +82,7 @@ import { insertEvalPersona } from "../../framework/eval-persona"
  * Get model configuration from context.
  * Uses permutation override if provided, otherwise production defaults.
  */
-function getModelConfig(ctx: EvalContext): { model: string; temperature: number } {
+function getModelConfig(ctx: EvalContext): { model: string; temperature: number | undefined } {
   const override = ctx.componentOverrides?.["companion"]
   return {
     model: override?.model ?? ctx.permutation.model,
@@ -496,6 +496,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       createMalwareScanner(stubStorage, { malwareScanEnabled: false })
     )
     const personaAgent = new PersonaAgent({
+      spendingPolicy: { assertUnprotected: async () => {} },
       configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,

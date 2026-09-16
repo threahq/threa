@@ -118,12 +118,6 @@ describe("API behavior", () => {
     expect(() => ai.getEmbeddingModel("openrouter:test")).toThrow(/OPENROUTER_API_KEY.*openrouter\.apiKey/)
   })
 
-  it("should have consistent error messages mentioning env var and config for LangChain models", async () => {
-    const ai = createAI({})
-
-    await expect(ai.getLangChainModel("openrouter:test")).rejects.toThrow(/OPENROUTER_API_KEY.*openrouter\.apiKey/)
-  })
-
   it("should list supported providers in error for unsupported provider", () => {
     const ai = createAI({ openrouter: { apiKey: "test-key" } })
 
@@ -156,62 +150,6 @@ describe("budget enforcement", () => {
     ).rejects.toBeInstanceOf(AIBudgetExceededError)
 
     expect(checkBudget).toHaveBeenCalledWith("ws_123", "openrouter:openai/gpt-5")
-  })
-
-  it("should apply soft-limit recommended model for LangChain calls", async () => {
-    const checkBudget = mock(async () => ({
-      allowed: true as const,
-      reason: "soft_limit" as const,
-      currentUsageUsd: 80,
-      budgetUsd: 100,
-      percentUsed: 0.8,
-      recommendedModel: "unsupported:model",
-    }))
-
-    const ai = createAI({
-      openrouter: { apiKey: "test-key" },
-      budgetEnforcer: {
-        checkBudget,
-      },
-    })
-
-    await expect(ai.getLangChainModel("openrouter:openai/gpt-5-mini", { workspaceId: "ws_123" })).rejects.toThrow(
-      'Unsupported LangChain provider: "unsupported"'
-    )
-    expect(checkBudget).toHaveBeenCalledWith("ws_123", "openrouter:openai/gpt-5-mini")
-  })
-
-  it("should expose the effective model chosen for LangChain calls", async () => {
-    const checkBudget = mock(async () => ({
-      allowed: true as const,
-      reason: "soft_limit" as const,
-      currentUsageUsd: 85,
-      budgetUsd: 100,
-      percentUsed: 0.85,
-      recommendedModel: "openrouter:openai/gpt-5-mini",
-    }))
-
-    const ai = createAI({
-      openrouter: { apiKey: "test-key" },
-      budgetEnforcer: {
-        checkBudget,
-      },
-    })
-
-    const { effectiveModel, budgetMetadata } = await ai.getLangChainModel("openrouter:openai/gpt-5", {
-      workspaceId: "ws_999",
-    })
-    expect(effectiveModel).toBe("openrouter:openai/gpt-5-mini")
-    expect(budgetMetadata).toMatchObject({
-      budget_policy_checked: true,
-      budget_policy_reason: "soft_limit",
-      budget_model_requested: "openrouter:openai/gpt-5",
-      budget_model_effective: "openrouter:openai/gpt-5-mini",
-      budget_model_degraded: true,
-      budget_percent_used: 0.85,
-      budget_current_usage_usd: 85,
-      budget_limit_usd: 100,
-    })
   })
 })
 

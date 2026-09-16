@@ -17,6 +17,9 @@ export interface OrphanSessionCleanup {
 
 const ORPHAN_ERROR = "Session orphaned (stale heartbeat)"
 
+/** A RUNNING session whose heartbeat is older than this is orphaned; companion executions may take it over. */
+export const ORPHAN_SESSION_STALE_SECONDS = 60
+
 /**
  * Mark one RUNNING session FAILED and emit the failure lifecycle (stream event +
  * outbox + session-room socket), mirroring the in-process failure path. Returns
@@ -31,7 +34,8 @@ const ORPHAN_ERROR = "Session orphaned (stale heartbeat)"
  */
 export async function failSessionWithLifecycleInTransaction(
   tx: Querier,
-  session: { id: string; streamId: string; personaId: string },
+  /** `executionGeneration`, when read before this call, pins the write to that execution. */
+  session: { id: string; streamId: string; personaId: string; executionGeneration?: number },
   stream: Awaited<ReturnType<typeof StreamRepository.findById>>,
   error: string,
   onFailed?: (tx: Querier) => Promise<void>
@@ -40,6 +44,7 @@ export async function failSessionWithLifecycleInTransaction(
   const failed = await AgentSessionRepository.updateStatus(tx, sessionId, SessionStatuses.FAILED, {
     error,
     onlyIfStatus: SessionStatuses.RUNNING,
+    onlyIfGeneration: session.executionGeneration,
   })
   if (!failed) return false
   if (onFailed) await onFailed(tx)
@@ -73,7 +78,7 @@ export async function failSessionWithLifecycleInTransaction(
 export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
-  session: { id: string; streamId: string; personaId: string; triggerMessageId: string },
+  session: { id: string; streamId: string; personaId: string; triggerMessageId: string; executionGeneration?: number },
   error: string,
   onFailed?: (tx: Querier) => Promise<void>
 ): Promise<boolean> {
@@ -92,13 +97,18 @@ export async function failSessionWithLifecycle(
   // Live-update an open trace dialog (session room) the way the in-process
   // `trace.notifyFailed()` does — the outbox does not reach the session room.
   if (won && stream) {
-    io.to(`ws:${stream.workspaceId}:agent_session:${sessionId}`).emit("agent_session:failed", { sessionId })
+    const executionGeneration = session.executionGeneration
+    io.to(`ws:${stream.workspaceId}:agent_session:${sessionId}`).emit("agent_session:failed", {
+      sessionId,
+      executionGeneration,
+    })
     emitAgentActivityEnded(io, {
       workspaceId: stream.workspaceId,
       streamId: stream.id,
       parentStreamId: stream.rootStreamId,
       sessionId,
       triggerMessageId: session.triggerMessageId,
+      executionGeneration,
     })
   }
   return won
@@ -134,7 +144,7 @@ export function createOrphanSessionCleanup(
     onSessionFailed?: (tx: Querier, session: { id: string; streamId: string; workspaceId: string }) => Promise<void>
   } = {}
 ): OrphanSessionCleanup {
-  const { intervalMs = 15_000, staleThresholdSeconds = 60, onSessionFailed } = options
+  const { intervalMs = 15_000, staleThresholdSeconds = ORPHAN_SESSION_STALE_SECONDS, onSessionFailed } = options
 
   let timer: ReturnType<typeof setInterval> | null = null
 

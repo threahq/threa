@@ -20,6 +20,8 @@ export {
   aiBudgetId,
   aiQuotaId,
   aiAlertId,
+  aiSpendPeriodId,
+  aiSpendAttemptId,
   researcherCacheId,
   queueId,
   tokenId,

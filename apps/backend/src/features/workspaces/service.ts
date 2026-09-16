@@ -10,6 +10,7 @@ import { workspaceId, userId as generateUserId, streamId, avatarUploadId } from 
 import { generateSlug, generateUniqueSlug, serializeBigInt } from "@threahq/backend-common"
 import { WORKSPACE_ROLE_SLUGS, type WorkspaceSettings } from "@threahq/types"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
+import { provisionUnprotectedSpendingPolicies } from "../ai-usage"
 import { isValidIanaTimezone } from "../../lib/temporal"
 import { HttpError, isUniqueViolation } from "../../lib/errors"
 import { logger } from "../../lib/logger"
@@ -103,6 +104,7 @@ export class WorkspaceService {
           slug: params.slug,
           createdBy: ownerUserId,
         })
+        await provisionUnprotectedSpendingPolicies(client, [params.id])
 
         await this.createUserInTransaction(client, {
           id: ownerUserId,
@@ -151,6 +153,7 @@ export class WorkspaceService {
         slug,
         createdBy: ownerUserId,
       })
+      await provisionUnprotectedSpendingPolicies(client, [id])
 
       await this.createUserInTransaction(client, {
         id: ownerUserId,

@@ -211,7 +211,14 @@ export function TraceDialog() {
           onSteerSession={status === "running" ? handleSteerSession : undefined}
         />
 
-        {status && <TraceFooter status={status} stepCount={steps.length} messageCount={messageCount} />}
+        {status && (
+          <TraceFooter
+            status={status}
+            spendingStopped={Boolean(session?.stopReason)}
+            stepCount={steps.length}
+            messageCount={messageCount}
+          />
+        )}
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
@@ -390,16 +397,18 @@ function TraceBody({
 
 function TraceFooter({
   status,
+  spendingStopped,
   stepCount,
   messageCount,
 }: {
   status: AgentSessionStatus
+  spendingStopped: boolean
   stepCount: number
   messageCount: number
 }) {
   return (
     <div className="px-4 sm:px-6 py-4 border-t shrink-0 flex items-center justify-between text-xs text-muted-foreground">
-      <span>{STATUS_TEXT[status]}</span>
+      <span>{spendingStopped ? "AI stopped" : STATUS_TEXT[status]}</span>
       <span>
         {stepCount} {stepCount === 1 ? "step" : "steps"} • {messageCount} {messageCount === 1 ? "message" : "messages"}{" "}
         sent
@@ -427,7 +436,7 @@ function buildSessionOptions(sessions: AgentSession[]): SessionOption[] {
 
   return newestFirst.map((session) => {
     const version = versionById.get(session.id) ?? 1
-    const status = STATUS_TEXT[session.status].replace(/^Session\s+/, "")
+    const status = session.stopReason ? "AI stopped" : STATUS_TEXT[session.status].replace(/^Session\s+/, "")
     return {
       id: session.id,
       label: version > 1 ? `Version ${version} • ${status}` : status,

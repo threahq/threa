@@ -7,7 +7,8 @@ import {
   type EnclaveSessionAssignment,
   type EnclaveStreamEnvelope,
 } from "@threahq/types"
-import { TURN_DIGEST_INJECT_COUNT } from "@threahq/agent-runtime"
+import { SpendingDeniedError, TURN_DIGEST_INJECT_COUNT } from "@threahq/agent-runtime"
+import type { AISpendingService } from "../ai-usage"
 import { sessionId as newSessionId, eventId, enclaveInvocationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { withTransaction, type Querier } from "../../db"
@@ -27,6 +28,7 @@ import {
 import { AttachmentRepository } from "../attachments"
 import {
   AgentSessionRepository,
+  withCompanionSession,
   ConversationSummaryRepository,
   CONTEXT_WINDOW_CANDIDATE_CEILING,
   DEFAULT_CONTEXT_WINDOW_CHARS,
@@ -116,6 +118,7 @@ type BuildOutcome = { kind: "assignment"; assignment: EnclaveSessionAssignment }
 
 export interface EnclaveClaimServiceDeps {
   pool: Pool
+  spendingPolicy: Pick<AISpendingService, "assertUnprotected">
   /**
    * Reads attachment ciphertext from S3 to ship inline with the assignment.
    * The backend can't decrypt it (the per-file key is sealed in the prompt) —
@@ -143,7 +146,7 @@ export class EnclaveClaimService {
   private readonly storage: StorageProvider
   private readonly userPreferencesService: UserPreferencesService
 
-  constructor(deps: EnclaveClaimServiceDeps) {
+  constructor(private readonly deps: EnclaveClaimServiceDeps) {
     this.pool = deps.pool
     this.storage = deps.storage
     this.userPreferencesService = deps.userPreferencesService
@@ -361,6 +364,7 @@ export class EnclaveClaimService {
     // trigger. A FAILED session is allowed to re-assign — a fresh session id
     // is minted below, so the retry is clean.
     const existing = await AgentSessionRepository.findByTriggerMessage(pool, triggerId)
+    if (existing?.stopReason) return completeAsNoOp("session stopped")
     if (existing?.status === SessionStatuses.COMPLETED) {
       return completeAsNoOp("session already completed")
     }
@@ -388,6 +392,38 @@ export class EnclaveClaimService {
 
     const trigger = await MessageRepository.findById(pool, triggerId)
     if (!trigger || !trigger.ciphertext) return completeAsNoOp("trigger message gone or not E2E")
+
+    try {
+      await this.deps.spendingPolicy.assertUnprotected(workspaceId)
+    } catch (error) {
+      if (!(error instanceof SpendingDeniedError)) throw error
+      await withCompanionSession(
+        {
+          pool,
+          workspaceId,
+          streamId,
+          rootStreamId: e2eStreamId,
+          triggerMessageId: triggerId,
+          personaId: ARIADNE_AGENT_ID,
+          personaName: persona.name,
+          initiatingUserId: trigger.authorId,
+          serverId: keyId,
+          initialSequence: trigger.sequence,
+          onTerminalFailure: async (db) => {
+            await EnclaveInvocationsRepository.failClaimed(db, {
+              id: invocation.id,
+              keyId,
+              claimToken,
+              errorMessage: `AI_SPENDING_DENIED:${error.code}`,
+            })
+          },
+        },
+        async () => {
+          throw error
+        }
+      )
+      return { kind: "no_op" }
+    }
 
     const [wraps, surrounding, rootStream, preferences, authors, allowedToolCategories] = await Promise.all([
       // Root's wraps — the thread shares the root's SSK and has no wraps of its own.

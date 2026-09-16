@@ -76,6 +76,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
           supersedesSessionId: s.supersedesSessionId,
           rerunContext: rerunContextBySessionId.get(s.id) ?? null,
           status: s.status,
+          stopReason: s.stopReason,
           currentStepType: s.currentStepType as AgentStepType | undefined,
           sentMessageIds: s.sentMessageIds,
           createdAt: s.createdAt.toISOString(),

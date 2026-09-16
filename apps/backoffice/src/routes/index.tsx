@@ -8,6 +8,7 @@ import { WorkspaceDetailLayout } from "@/pages/workspace-detail-layout"
 import { WorkspaceDetailOverviewPage } from "@/pages/workspace-detail-overview"
 import { WorkspaceDetailMembersPage } from "@/pages/workspace-detail-members"
 import { WorkspaceDetailFlagsPage } from "@/pages/workspace-detail-flags"
+import { WorkspaceDetailSpendingPage } from "@/pages/workspace-detail-spending"
 import { NotAuthorizedPage } from "@/pages/not-authorized"
 
 export const router = createBrowserRouter([
@@ -29,6 +30,7 @@ export const router = createBrowserRouter([
           { index: true, element: <WorkspaceDetailOverviewPage /> },
           { path: "members", element: <WorkspaceDetailMembersPage /> },
           { path: "flags", element: <WorkspaceDetailFlagsPage /> },
+          { path: "spending", element: <WorkspaceDetailSpendingPage /> },
         ],
       },
       { path: "invites/workspace-owners", element: <InviteWorkspaceOwnerPage /> },

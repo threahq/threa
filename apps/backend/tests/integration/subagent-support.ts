@@ -8,10 +8,10 @@ import type { Pool } from "pg"
 import { withTransaction } from "../../src/db"
 import { userId, workspaceId as newWorkspaceId } from "../../src/lib/id"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamService } from "../../src/features/streams"
+import { StreamService, type Stream } from "../../src/features/streams"
 import { PersonaRepository, type Persona } from "../../src/features/agents"
 import { addTestMember } from "./setup"
-import { Visibilities, type Stream } from "@threahq/types"
+import { Visibilities } from "@threahq/types"
 
 export interface SubagentTestContext {
   pool: Pool

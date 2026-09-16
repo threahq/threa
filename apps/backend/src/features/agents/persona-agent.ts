@@ -22,13 +22,20 @@ import { UserRepository } from "../workspaces"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
 import { PersonaRepository, resolveDraftTestPersona, type Persona } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
-import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
+import {
+  AgentSessionRepository,
+  CompanionExecutionLostError,
+  SessionStatuses,
+  type AgentSession,
+  type CompanionExecutionRef,
+} from "./session-repository"
 import { StreamEventRepository } from "../streams"
 import { AttachmentRepository } from "../attachments"
 import { awaitAttachmentProcessing } from "../attachments"
 import type { TraceEmitter } from "./trace-emitter"
 import type { SessionAbortRegistry } from "./session-abort-registry"
 import type { AI, CostContext } from "@threahq/agent-runtime"
+import type { AISpendingService } from "../ai-usage"
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
@@ -96,6 +103,7 @@ const STUB_EFFECTS_CONTENT = "update_user_settings, delegate_task, schedule_foll
 export interface PersonaAgentDeps {
   pool: Pool
   ai: AI
+  spendingPolicy: Pick<AISpendingService, "assertUnprotected">
   traceEmitter: TraceEmitter
   /**
    * Registry of per-session AbortControllers for cooperative, graceful tool cancellation.
@@ -122,6 +130,8 @@ export interface PersonaAgentDeps {
   stubResponse?: string
   createMessage: (params: {
     initiatingUserId: string
+    /** The claimed execution this write belongs to; the write commits only while it still holds the session. */
+    execution: CompanionExecutionRef
     workspaceId: string
     streamId: string
     authorId: string
@@ -149,6 +159,8 @@ export interface PersonaAgentDeps {
   }) => Promise<{ id: string }>
   editMessage: (params: {
     initiatingUserId: string
+    /** The claimed execution this write belongs to; the write commits only while it still holds the session. */
+    execution: CompanionExecutionRef
     workspaceId: string
     streamId: string
     messageId: string
@@ -159,6 +171,8 @@ export interface PersonaAgentDeps {
   }) => Promise<{ id: string } | null>
   deleteMessage: (params: {
     initiatingUserId: string
+    /** The claimed execution this write belongs to; the write commits only while it still holds the session. */
+    execution: CompanionExecutionRef
     workspaceId: string
     streamId: string
     messageId: string
@@ -411,6 +425,8 @@ export interface PersonaAgentResult {
   retryable?: boolean
   streamId?: string
   personaId?: string
+  /** Set with skipReason `session_busy`: the live execution's last heartbeat, which the caller defers against. */
+  busyHeartbeatAt?: Date
 }
 
 interface SupersededMessagePlan {
@@ -496,7 +512,7 @@ export class PersonaAgent {
       }
 
       const stream = await StreamRepository.findById(client, streamId)
-      if (!stream) {
+      if (!stream || stream.workspaceId !== workspaceId) {
         return { skip: true as const, reason: "stream not found" }
       }
 
@@ -630,6 +646,7 @@ export class PersonaAgent {
       personaId: persona.id,
       personaName: persona.name,
       workspaceId,
+      initiatingUserId: input.initiatingUserId,
       serverId,
       initialSequence: targetInitialSequence,
       triggerMessageRevision,
@@ -703,14 +720,19 @@ export class PersonaAgent {
     }
 
     const finalizeSessionResult = (result: WithSessionResult): PersonaAgentResult => {
-      // Notify trace rooms about terminal status
+      // Socket notifies come only from a lifecycle write this execution committed,
+      // or from a terminal row no generation can claim again (see WithSessionResult).
+      // A newer generation can claim the row between that commit and these emits,
+      // so the frames carry the committed generation and clients drop them once
+      // they have seen the newer one.
       if (
         result.status === "completed" ||
-        result.status === "failed" ||
+        (result.status === "failed" && result.committedGeneration !== null) ||
         (result.status === "skipped" && result.sessionId)
       ) {
         const trace = traceEmitter.forSession({
           sessionId: result.sessionId!,
+          executionGeneration: result.status === "skipped" ? null : result.committedGeneration,
           workspaceId,
           streamId: sessionStreamId,
           triggerMessageId: messageId,
@@ -730,6 +752,16 @@ export class PersonaAgent {
       }
 
       switch (result.status) {
+        case "busy":
+          return {
+            sessionId: result.sessionId,
+            messagesSent: 0,
+            sentMessageIds: [],
+            status: "skipped",
+            skipReason: "session_busy",
+            busyHeartbeatAt: result.heartbeatAt,
+          }
+
         case "skipped":
           return {
             sessionId: result.sessionId,
@@ -768,6 +800,7 @@ export class PersonaAgent {
       async (session, db) => {
         const trace = traceEmitter.forSession({
           sessionId: session.id,
+          executionGeneration: session.executionGeneration,
           workspaceId,
           streamId: sessionStreamId,
           triggerMessageId: messageId,
@@ -776,6 +809,7 @@ export class PersonaAgent {
           parentMessageId,
         })
         trace.notifyActivityStarted()
+        const execution: CompanionExecutionRef = { sessionId: session.id, generation: session.executionGeneration }
 
         // The worker intentionally does not preflight authority: this durable
         // session must own denial bookkeeping. Reject before context hydration
@@ -840,7 +874,9 @@ export class PersonaAgent {
         // Persist which message IDs are in the agent's context window
         // so edit-triggered reruns can check exact membership
         const contextMessageIds = agentContext.streamContext.conversationHistory.map((m) => m.id)
-        await AgentSessionRepository.updateContextMessageIds(pool, session.id, contextMessageIds)
+        if (!(await AgentSessionRepository.updateContextMessageIds(pool, execution, contextMessageIds))) {
+          throw new CompanionExecutionLostError(execution)
+        }
 
         // Initial context for the leading CONTEXT_RECEIVED trace step — the
         // runtime emits it as a `context:received` event at run start, through
@@ -1000,11 +1036,6 @@ export class PersonaAgent {
         // `sources` is required on the commit payload (empty array = none) so a
         // caller can't silently drop citations — see TurnCommit.
         const doSendMessage = async (msgInput: { content: string; sources: SourceItem[] }) => {
-          const latestSession = await AgentSessionRepository.findById(db, session.id)
-          if (!latestSession || latestSession.status !== SessionStatuses.RUNNING) {
-            throw new Error(`Session ${session.id} is no longer running`)
-          }
-
           const reusableMessageId = supersededMessagePlan?.messageIds[supersededMessagePlan.nextIndex]
           if (reusableMessageId) {
             supersededMessagePlan.nextIndex += 1
@@ -1019,6 +1050,7 @@ export class PersonaAgent {
               // createMessage, which seals sources into the payload.
               const editedMessage = await editMessage({
                 initiatingUserId: input.initiatingUserId,
+                execution,
                 workspaceId,
                 streamId: targetStreamId,
                 messageId: reusableMessageId,
@@ -1030,6 +1062,7 @@ export class PersonaAgent {
                 return { messageId: editedMessage.id, operation: "edited" as const }
               }
             } catch (err) {
+              if (err instanceof CompanionExecutionLostError) throw err
               logger.warn(
                 { err, sessionId: session.id, supersedesSessionId, messageId: reusableMessageId },
                 "Failed to edit superseded message; creating a new message instead"
@@ -1050,6 +1083,7 @@ export class PersonaAgent {
           const declaredConversationId = await resolveTriggerConversationId()
           const message = await createMessage({
             initiatingUserId: input.initiatingUserId,
+            execution,
             workspaceId,
             streamId: targetStreamId,
             authorId: persona.id,
@@ -1345,6 +1379,7 @@ export class PersonaAgent {
             tools: buildToolSet({
               enabledTools: researcherEnabledTools,
               tavilyApiKey,
+              beforeWebSearch: () => this.deps.spendingPolicy.assertUnprotected(workspaceId),
               currentTime: agentContext.streamContext.temporal?.currentTime,
               timezone: agentContext.streamContext.temporal?.timezone,
               workspace: workspaceDeps,
@@ -1388,6 +1423,7 @@ export class PersonaAgent {
           tools: buildToolSet({
             enabledTools: persona.enabledTools,
             tavilyApiKey,
+            beforeWebSearch: () => this.deps.spendingPolicy.assertUnprotected(workspaceId),
             currentTime: agentContext.streamContext.temporal?.currentTime,
             timezone: agentContext.streamContext.temporal?.timezone,
             runWorkspaceAgent,
@@ -1467,13 +1503,23 @@ export class PersonaAgent {
           delivery: TurnDeliveries.PLAINTEXT,
           model,
           modelString: turnModel.model,
+          spending: session.initiatingUserId
+            ? {
+                workspaceId,
+                userId: session.initiatingUserId,
+                sessionId: session.id,
+                executionGeneration: session.executionGeneration,
+                operationId: session.id,
+                purpose: "assistant_turn",
+              }
+            : undefined,
           // Origin is "user" for mention-triggered runs where we can attribute
           // cost to the invoking user; otherwise fall back to "system".
           costContext: {
             workspaceId,
-            userId: agentContext.invokingUserId,
+            userId: session.initiatingUserId ?? undefined,
             sessionId: session.id,
-            origin: agentContext.invokingUserId ? "user" : "system",
+            origin: session.initiatingUserId ? "user" : "system",
           },
           // The purpose's prompt section (mention/follow-up early, supersede
           // reconciliation last) is composed here from the effective purpose —
@@ -1567,10 +1613,11 @@ export class PersonaAgent {
         // in-flight tool fetch (via toolSignalProvider). The socket handler
         // aborts it; `finally` unregisters. This is the session-abort channel,
         // distinct from shouldAbort (which fails the session).
-        const sessionAbortController = sessionAbortRegistry.register(session.id, {
-          workspaceId,
-          streamId: sessionStreamId,
-        })
+        const sessionAbortController = sessionAbortRegistry.register(
+          session.id,
+          { workspaceId, streamId: sessionStreamId },
+          session.executionGeneration
+        )
 
         // The host edges this turn runs against: the commit path, the trace
         // observers, and the abort + interjection channels that used to be
@@ -1599,6 +1646,7 @@ export class PersonaAgent {
           shouldAbort: async () => {
             const latestSession = await AgentSessionRepository.findById(db, session.id)
             if (!latestSession) return "session missing"
+            if (latestSession.executionGeneration !== session.executionGeneration) return "execution superseded"
             if (latestSession.status === SessionStatuses.RUNNING) return null
             if (latestSession.status === SessionStatuses.DELETED) return "session deleted"
             if (latestSession.status === SessionStatuses.SUPERSEDED) return "session superseded"
@@ -1711,7 +1759,10 @@ export class PersonaAgent {
               })
             },
             updateSequence: async (updateSessionId, sequence) => {
-              await AgentSessionRepository.updateLastSeenSequence(db, updateSessionId, sequence)
+              const updated =
+                updateSessionId === execution.sessionId &&
+                (await AgentSessionRepository.updateLastSeenSequence(db, execution, sequence))
+              if (!updated) throw new CompanionExecutionLostError(execution)
             },
             awaitAttachments: async (messageIds) => {
               const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
@@ -1770,7 +1821,7 @@ export class PersonaAgent {
               streamId: targetStreamId,
               initiatingUserId: input.initiatingUserId,
               personaId: persona.id,
-              sessionId: session.id,
+              execution,
               supersedesSessionId,
               supersededMessageIds: supersededMessagePlan.messageIds,
               retainedMessageIds,
@@ -1809,7 +1860,7 @@ export class PersonaAgent {
           }
         } finally {
           // Release the session-abort controller registered at turn start.
-          sessionAbortRegistry.unregister(session.id)
+          sessionAbortRegistry.unregister(session.id, session.executionGeneration)
         }
       }
     )
@@ -1933,7 +1984,7 @@ export class PersonaAgent {
     streamId: string
     initiatingUserId: string
     personaId: string
-    sessionId: string
+    execution: CompanionExecutionRef
     supersedesSessionId?: string
     supersededMessageIds: string[]
     retainedMessageIds: string[]
@@ -1944,7 +1995,7 @@ export class PersonaAgent {
       streamId,
       initiatingUserId,
       personaId,
-      sessionId,
+      execution,
       supersedesSessionId,
       supersededMessageIds,
       retainedMessageIds,
@@ -1957,14 +2008,16 @@ export class PersonaAgent {
       try {
         await deleteMessage({
           initiatingUserId,
+          execution,
           workspaceId,
           streamId,
           messageId,
           actorId: personaId,
         })
       } catch (err) {
+        if (err instanceof CompanionExecutionLostError) throw err
         logger.error(
-          { err, sessionId, supersedesSessionId, messageId },
+          { err, sessionId: execution.sessionId, supersedesSessionId, messageId },
           "Failed deleting stale superseded message during reconciliation"
         )
       }

@@ -42,6 +42,8 @@ interface AgentSessionEventProps {
   onSteerSession?: () => Promise<void>
 }
 
+import { spendingStopDescription } from "@/lib/agent-spending"
+
 type SessionStatus = "running" | "retrying" | "completed" | "failed" | "deleted"
 
 interface StatusConfig {
@@ -213,13 +215,15 @@ function buildStatusConfig(
       if (failedPayload) {
         parts.push(`${failedPayload.stepCount} ${failedPayload.stepCount === 1 ? "step" : "steps"}`)
       }
-      parts.push("Error during execution")
+      parts.push(
+        failedPayload?.spendingStop ? spendingStopDescription(failedPayload.spendingStop) : "Error during execution"
+      )
       const failedChanges = formatMarkerEffectCount(markerEffectCount)
       if (failedChanges) {
         parts.push(failedChanges)
       }
       return {
-        title: "Session failed",
+        title: failedPayload?.spendingStop ? "AI stopped" : "Session failed",
         subtitle: parts.join(" • "),
         icon: (
           <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(0_84%_60%/0.15)]">

@@ -1,5 +1,6 @@
 import type {
   AgentSessionStatus,
+  AgentSessionStopReason,
   AgentStepType,
   AgentToolEffect,
   ToolVerificationStatus,
@@ -40,6 +41,9 @@ interface SessionRow {
   episode_summary: string | null
   response_validation_failed: boolean
   reflective_captured_at: Date | null
+  initiating_user_id: string | null
+  execution_generation: number
+  stop_reason: string | null
   created_at: Date
   completed_at: Date | null
 }
@@ -126,6 +130,12 @@ export interface AgentSession {
    * not-worthy session isn't re-classified on every redelivery.
    */
   reflectiveCapturedAt: Date | null
+  /** The user whose turn this is and who sponsors its spend. NULL only on rows created before sponsors were recorded; never inferred. */
+  initiatingUserId: string | null
+  /** Bumped by every companion execution claim; lifecycle writes pin the value they claimed (INV-66). */
+  executionGeneration: number
+  /** Set once by a persisted financial stop and never cleared; a stopped session is never resumed. */
+  stopReason: AgentSessionStopReason | null
   createdAt: Date
   completedAt: Date | null
 }
@@ -174,6 +184,22 @@ export interface RecentEpisodeSummary {
   summary: string
   sessionCreatedAt: Date
   sessionCompletedAt: Date | null
+}
+
+/** A companion execution's claimed identity, captured when it claimed the session and never re-read. */
+export interface CompanionExecutionRef {
+  sessionId: string
+  generation: number
+}
+
+/** The execution no longer holds its session: a newer generation or a terminal state owns the row. */
+export class CompanionExecutionLostError extends Error {
+  readonly code = "AGENT_EXECUTION_LOST"
+
+  constructor(readonly execution: CompanionExecutionRef) {
+    super(`Agent session ${execution.sessionId} is no longer held by execution generation ${execution.generation}`)
+    this.name = "CompanionExecutionLostError"
+  }
 }
 
 // Insert params
@@ -250,6 +276,9 @@ function mapRowToSession(row: SessionRow): AgentSession {
     episodeSummary: row.episode_summary,
     responseValidationFailed: row.response_validation_failed,
     reflectiveCapturedAt: row.reflective_captured_at,
+    initiatingUserId: row.initiating_user_id,
+    executionGeneration: row.execution_generation,
+    stopReason: row.stop_reason as AgentSessionStopReason | null,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   }
@@ -284,7 +313,7 @@ const SESSION_SELECT_FIELDS = `
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   abort_requested_at, response_message_id, error, last_seen_sequence,
   sent_message_ids, context_message_ids, episode_summary, response_validation_failed,
-  reflective_captured_at, created_at, completed_at
+  reflective_captured_at, initiating_user_id, execution_generation, stop_reason, created_at, completed_at
 `
 
 const STEP_SELECT_FIELDS = `
@@ -340,6 +369,8 @@ export const AgentSessionRepository = {
       initialSequence: bigint
       callbackTokenHash?: string
       replyKeyGeneration?: number
+      /** Required by companion turns; bot-invocation and enclave claims have no human sponsor here. */
+      initiatingUserId?: string | null
     }
   ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
@@ -347,7 +378,8 @@ export const AgentSessionRepository = {
         INSERT INTO agent_sessions (
           id, stream_id, persona_id, trigger_message_id,
           trigger_message_revision, supersedes_session_id,
-          status, server_id, callback_token_hash, reply_key_generation, heartbeat_at, last_seen_sequence
+          status, server_id, callback_token_hash, reply_key_generation, heartbeat_at, last_seen_sequence,
+          initiating_user_id, execution_generation
         ) VALUES (
           ${params.id},
           ${params.streamId},
@@ -360,7 +392,9 @@ export const AgentSessionRepository = {
           ${params.callbackTokenHash ?? null},
           ${params.replyKeyGeneration ?? null},
           ${params.serverId ? new Date() : null},
-          ${params.initialSequence.toString()}
+          ${params.initialSequence.toString()},
+          ${params.initiatingUserId ?? null},
+          1
         )
         ON CONFLICT DO NOTHING
         RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
@@ -409,6 +443,131 @@ export const AgentSessionRepository = {
       `
     )
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
+   * Serialize setup of one companion turn (target stream, trigger, persona) for
+   * the rest of the transaction, then return that turn's latest session locked.
+   * Without the advisory lock, a duplicate delivery could look up nothing, let
+   * the first owner insert and complete, then insert a second row once the
+   * running-per-stream index is free again. Other personas answering the same
+   * trigger are separate turns and never share a session.
+   */
+  async lockCompanionTurn(
+    db: Querier,
+    turn: { streamId: string; triggerMessageId: string; personaId: string }
+  ): Promise<AgentSession | null> {
+    await db.query(
+      sql`SELECT pg_advisory_xact_lock(hashtext(${turn.streamId}), hashtext(${turn.triggerMessageId + ":" + turn.personaId}))`
+    )
+    const result = await db.query<SessionRow>(
+      sql`
+        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
+        FROM agent_sessions
+        WHERE trigger_message_id = ${turn.triggerMessageId}
+          AND stream_id = ${turn.streamId}
+          AND persona_id = ${turn.personaId}
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+        FOR UPDATE
+      `
+    )
+    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
+   * Take the next execution generation of an existing session. A stopped row is
+   * never claimed, and a RUNNING row only once its heartbeat is older than
+   * `staleThresholdSeconds`, so a live executor keeps its turn. Returns null when
+   * the claim is refused; nothing is written then.
+   */
+  async claimExecution(
+    db: Querier,
+    id: string,
+    params: { serverId: string; staleThresholdSeconds: number }
+  ): Promise<AgentSession | null> {
+    const result = await db.query<SessionRow>(
+      sql`
+        UPDATE agent_sessions
+        SET
+          status = ${SessionStatuses.RUNNING},
+          server_id = ${params.serverId},
+          heartbeat_at = NOW(),
+          completed_at = NULL,
+          execution_generation = execution_generation + 1
+        WHERE id = ${id}
+          AND stop_reason IS NULL
+          AND (
+            status = ANY(${[SessionStatuses.PENDING, SessionStatuses.FAILED]})
+            OR (
+              status = ${SessionStatuses.RUNNING}
+              AND heartbeat_at < NOW() - make_interval(secs => ${params.staleThresholdSeconds}::double precision)
+            )
+          )
+        RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
+      `
+    )
+    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
+   * Fail the execution holding `generation`. A FAILED row at the same generation
+   * (orphan cleanup got there first) is still this execution's to finish; a newer
+   * generation, a completed/deleted/superseded row or an existing stop is not.
+   * `stopReason` makes the failure a persisted financial stop.
+   */
+  async failExecution(
+    db: Querier,
+    id: string,
+    params: { generation: number; error: string; stopReason?: AgentSessionStopReason }
+  ): Promise<AgentSession | null> {
+    const result = await db.query<SessionRow>(
+      sql`
+        UPDATE agent_sessions
+        SET
+          status = ${SessionStatuses.FAILED},
+          error = ${params.error},
+          stop_reason = ${params.stopReason ?? null},
+          completed_at = NOW()
+        WHERE id = ${id}
+          AND execution_generation = ${params.generation}
+          AND status = ANY(${[SessionStatuses.RUNNING, SessionStatuses.FAILED]})
+          AND stop_reason IS NULL
+        RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
+      `
+    )
+    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
+   * Row-lock the session for a durable write on behalf of `execution`, or throw
+   * `CompanionExecutionLostError`. Call it first in the write's transaction: a
+   * takeover's claim waits for the write to commit, and a write waiting behind a
+   * committed claim re-evaluates and loses. Session before stream locks, matching
+   * the lifecycle order.
+   */
+  async lockHeldExecution(
+    db: Querier,
+    execution: CompanionExecutionRef,
+    expected: { workspaceId: string; streamId?: string; personaId?: string; sponsorUserId?: string }
+  ): Promise<void> {
+    const result = await db.query(
+      sql`
+        SELECT session.id
+        FROM agent_sessions session
+        JOIN streams stream ON stream.id = session.stream_id
+        WHERE session.id = ${execution.sessionId}
+          AND session.execution_generation = ${execution.generation}
+          AND session.status = ${SessionStatuses.RUNNING}
+          AND session.stop_reason IS NULL
+          AND stream.workspace_id = ${expected.workspaceId}
+          AND (${expected.streamId ?? null}::text IS NULL OR session.stream_id = ${expected.streamId ?? null})
+          AND (${expected.personaId ?? null}::text IS NULL OR session.persona_id = ${expected.personaId ?? null})
+          AND (${expected.sponsorUserId ?? null}::text IS NULL OR session.initiating_user_id = ${expected.sponsorUserId ?? null})
+        FOR UPDATE OF session
+      `
+    )
+    if (result.rowCount === 0) throw new CompanionExecutionLostError(execution)
   },
 
   async listByTriggerMessage(db: Querier, triggerMessageId: string): Promise<AgentSession[]> {
@@ -479,6 +638,8 @@ export const AgentSessionRepository = {
       error?: string
       onlyIfStatus?: SessionStatus
       onlyIfStatusIn?: SessionStatus[]
+      /** Pins the execution generation read before this write, so a replacement execution is never clobbered. */
+      onlyIfGeneration?: number
     }
   ): Promise<AgentSession | null> {
     const now = new Date()
@@ -514,6 +675,10 @@ export const AgentSessionRepository = {
     } else if (extras?.onlyIfStatus) {
       values.push(extras.onlyIfStatus)
       whereClause += ` AND status = $${values.length}`
+    }
+    if (extras?.onlyIfGeneration !== undefined) {
+      values.push(extras.onlyIfGeneration)
+      whereClause += ` AND execution_generation = $${values.length}`
     }
 
     const query = `
@@ -553,12 +718,17 @@ export const AgentSessionRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  async updateHeartbeat(db: Querier, id: string): Promise<void> {
+  /** With `expectedGeneration`, only a RUNNING row still held by that execution is refreshed, so a fenced executor cannot keep a takeover out. */
+  async updateHeartbeat(db: Querier, id: string, expectedGeneration?: number): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET heartbeat_at = NOW()
         WHERE id = ${id}
+          AND (
+            ${expectedGeneration ?? null}::int IS NULL
+            OR (execution_generation = ${expectedGeneration ?? null}::int AND status = ${SessionStatuses.RUNNING})
+          )
       `
     )
   },
@@ -759,14 +929,18 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
-  async updateContextMessageIds(db: Querier, id: string, messageIds: string[]): Promise<void> {
-    await db.query(
+  /** Written only while `execution` still holds the session; false when it no longer does. */
+  async updateContextMessageIds(db: Querier, execution: CompanionExecutionRef, messageIds: string[]): Promise<boolean> {
+    const result = await db.query(
       sql`
         UPDATE agent_sessions
         SET context_message_ids = ${messageIds}
-        WHERE id = ${id}
+        WHERE id = ${execution.sessionId}
+          AND execution_generation = ${execution.generation}
+          AND status = ${SessionStatuses.RUNNING}
       `
     )
+    return (result.rowCount ?? 0) > 0
   },
 
   /**
@@ -843,14 +1017,18 @@ export const AgentSessionRepository = {
    * Update the last seen sequence for a session.
    * Called during agent loop when new messages are processed.
    */
-  async updateLastSeenSequence(db: Querier, id: string, sequence: bigint): Promise<void> {
-    await db.query(
+  /** Written only while `execution` still holds the session; false when it no longer does. */
+  async updateLastSeenSequence(db: Querier, execution: CompanionExecutionRef, sequence: bigint): Promise<boolean> {
+    const result = await db.query(
       sql`
         UPDATE agent_sessions
         SET last_seen_sequence = ${sequence.toString()}, heartbeat_at = NOW()
-        WHERE id = ${id}
+        WHERE id = ${execution.sessionId}
+          AND execution_generation = ${execution.generation}
+          AND status = ${SessionStatuses.RUNNING}
       `
     )
+    return (result.rowCount ?? 0) > 0
   },
 
   /**
@@ -874,6 +1052,8 @@ export const AgentSessionRepository = {
        * UPDATE keeps this race-safe against a concurrent cleanup (INV-20).
        */
       recoverFromFailed?: boolean
+      /** Companion executions complete only while still holding the generation they claimed. */
+      expectedGeneration?: number
     }
   ): Promise<AgentSession | null> {
     const allowedStatuses = params.recoverFromFailed
@@ -892,6 +1072,7 @@ export const AgentSessionRepository = {
           completed_at = NOW()
         WHERE id = ${id}
           AND status = ANY(${allowedStatuses})
+          AND (${params.expectedGeneration ?? null}::int IS NULL OR execution_generation = ${params.expectedGeneration ?? null}::int)
         RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
       `
     )

@@ -9,6 +9,7 @@
 
 import { beforeAll, afterAll, setDefaultTimeout } from "bun:test"
 import { startTestServer, type TestServer } from "./test-server"
+import type { MockRegionalBackend } from "./mock-regional-backend"
 
 // Server startup can take a few seconds (DB creation + migrations)
 setDefaultTimeout(30_000)
@@ -20,6 +21,13 @@ export function getBaseUrl(): string {
     throw new Error("Test server not started. Ensure setup.ts is loaded via --preload")
   }
   return testServer.url
+}
+
+export function getMockRegionalBackend(): MockRegionalBackend {
+  if (!testServer) {
+    throw new Error("Test server not started. Ensure setup.ts is loaded via --preload")
+  }
+  return testServer.mockRegionalBackend
 }
 
 beforeAll(async () => {

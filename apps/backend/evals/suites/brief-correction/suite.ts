@@ -69,7 +69,7 @@ import { insertEvalPersona } from "../../framework/eval-persona"
 /** Fixed clock for the agent's temporal grounding so a run is reproducible. */
 const EVAL_CLOCK = new Date("2026-07-01T12:00:00Z")
 
-function getModelConfig(ctx: EvalContext): { model: string; temperature: number } {
+function getModelConfig(ctx: EvalContext): { model: string; temperature: number | undefined } {
   const override = ctx.componentOverrides?.["companion"]
   return {
     model: override?.model ?? ctx.permutation.model,
@@ -266,6 +266,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
     const editMessage: PersonaAgentDeps["editMessage"] = async () => null
     const deleteMessage: PersonaAgentDeps["deleteMessage"] = async () => null
     const personaAgent = new PersonaAgent({
+      spendingPolicy: { assertUnprotected: async () => {} },
       configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,

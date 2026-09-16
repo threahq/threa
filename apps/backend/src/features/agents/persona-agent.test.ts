@@ -9,7 +9,12 @@ import { SearchRepository } from "../search"
 import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
 import { DraftsRepository, type Draft } from "../drafts"
 import { PersonaRepository, type Persona } from "./persona-repository"
-import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
+import {
+  AgentSessionRepository,
+  CompanionExecutionLostError,
+  SessionStatuses,
+  type AgentSession,
+} from "./session-repository"
 import type { SubagentRun } from "../subagents"
 import { SessionAbortRegistry } from "./session-abort-registry"
 import { TraceEmitter } from "./trace-emitter"
@@ -111,6 +116,9 @@ function makeSession(overrides?: Partial<AgentSession>): AgentSession {
     episodeSummary: null,
     responseValidationFailed: false,
     reflectiveCapturedAt: null,
+    initiatingUserId: null,
+    executionGeneration: 1,
+    stopReason: null,
     createdAt: new Date("2026-02-19T12:00:00Z"),
     completedAt: null,
     ...overrides,
@@ -168,15 +176,29 @@ async function runSupersedeRerun(params: {
   firstTurnToolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>
   subagentRun?: SubagentRun
   finalText?: string
+  /** Replies the superseded session sent, offered to the rerun for in-place edits. */
+  supersededMessageIds?: string[]
+  editMessage?: PersonaAgentDeps["editMessage"]
 }) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
     status: SessionStatuses.SUPERSEDED,
     responseValidationFailed: params.supersededFailedValidation,
+    sentMessageIds: params.supersededMessageIds ?? [],
     completedAt: new Date("2026-02-19T11:59:00Z"),
   })
   const runningSession = makeSession({ supersedesSessionId: SUPERSEDED_SESSION_ID })
 
+  if (params.supersededMessageIds) {
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
+      new Map(
+        params.supersededMessageIds.map((id) => [
+          id,
+          { id, streamId: STREAM_ID, authorType: AuthorTypes.PERSONA, authorId: PERSONA_ID, deletedAt: null } as never,
+        ])
+      )
+    )
+  }
   spyOn(dbModule, "withClient").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
 
@@ -199,12 +221,14 @@ async function runSupersedeRerun(params: {
   )
   spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
 
-  spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+  spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(null)
   spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(runningSession)
   spyOn(AgentSessionRepository, "findById").mockImplementation(async (_db, id: string) =>
     id === SUPERSEDED_SESSION_ID ? supersededSession : runningSession
   )
-  spyOn(AgentSessionRepository, "updateContextMessageIds").mockResolvedValue(undefined as any)
+  spyOn(AgentSessionRepository, "updateContextMessageIds").mockResolvedValue(true)
+  spyOn(AgentSessionRepository, "updateLastSeenSequence").mockResolvedValue(true)
+  spyOn(AgentSessionRepository, "lockHeldExecution").mockResolvedValue(undefined)
   spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(
     makeSession({ status: SessionStatuses.COMPLETED, completedAt: new Date() })
   )
@@ -230,7 +254,7 @@ async function runSupersedeRerun(params: {
   const markResponseValidationFailed = spyOn(AgentSessionRepository, "markResponseValidationFailed").mockResolvedValue(
     undefined as any
   )
-  const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
+  const failExecution = spyOn(AgentSessionRepository, "failExecution").mockResolvedValue(
     makeSession({
       status: SessionStatuses.FAILED,
       error: (params.authorityError ?? params.threadError)?.message ?? null,
@@ -305,7 +329,7 @@ async function runSupersedeRerun(params: {
     storage: {},
     modelRegistry: { supportsVision: () => false },
     createMessage,
-    editMessage: async () => null,
+    editMessage: params.editMessage ?? (async () => null),
     deleteMessage: async () => null,
     addReaction: async () => ({ id: "reaction_1" }),
     removeReaction: async () => null,
@@ -347,7 +371,7 @@ async function runSupersedeRerun(params: {
     markResponseValidationFailed,
     createMessage,
     createThread,
-    updateStatus,
+    failExecution,
     assertInitiatorWritable,
   }
 }
@@ -564,13 +588,38 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     expect(lookup.mock.calls).toContainEqual([expect.anything(), WORKSPACE_ID, [referencedId], [STREAM_ID]])
   })
 
+  it("a reply edit that lost the session stops the turn instead of posting a new reply", async () => {
+    const lost = new CompanionExecutionLostError({ sessionId: RUNNING_SESSION_ID, generation: 1 })
+    const editMessage = mock(async () => {
+      throw lost
+    })
+    const { result, createMessage, failExecution } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      supersededMessageIds: ["msg_previous_reply"],
+      editMessage,
+    })
+
+    expect(editMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "msg_previous_reply",
+        execution: { sessionId: RUNNING_SESSION_ID, generation: 1 },
+      })
+    )
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(failExecution).toHaveBeenCalledWith(expect.anything(), RUNNING_SESSION_ID, {
+      generation: 1,
+      error: String(lost),
+    })
+    expect(result).toMatchObject({ status: "failed", messagesSent: 0 })
+  })
+
   it("terminalizes a denied channel-mention thread creation on the parent stream", async () => {
     const denial = new HttpError("read only", {
       status: 403,
       code: "STREAM_READ_ONLY",
       details: { reason: "archived" },
     })
-    const { result, capturedModelStrings, createMessage, createThread, updateStatus } = await runSupersedeRerun({
+    const { result, capturedModelStrings, createMessage, createThread, failExecution } = await runSupersedeRerun({
       supersededFailedValidation: false,
       threadError: denial,
       streamOverride: { type: StreamTypes.CHANNEL },
@@ -578,8 +627,9 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     })
 
     expect(createThread).toHaveBeenCalledTimes(1)
-    expect(updateStatus).toHaveBeenCalledTimes(1)
-    expect(updateStatus).toHaveBeenCalledWith(expect.anything(), RUNNING_SESSION_ID, SessionStatuses.FAILED, {
+    expect(failExecution).toHaveBeenCalledTimes(1)
+    expect(failExecution).toHaveBeenCalledWith(expect.anything(), RUNNING_SESSION_ID, {
+      generation: 1,
       error: "HttpError: read only",
     })
     expect(result).toMatchObject({ status: "failed", retryable: false, messagesSent: 0, sentMessageIds: [] })

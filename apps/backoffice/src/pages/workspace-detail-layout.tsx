@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
-import { Link, NavLink, Outlet, useParams } from "react-router-dom"
+import { useLayoutEffect, useRef } from "react"
+import { Link, NavLink, Outlet, useLocation, useParams } from "react-router-dom"
 import { ChevronLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { PageHeader } from "@/components/layout/page-header"
@@ -80,18 +81,45 @@ function Body({
   )
 }
 
+/** Scrolls the tab row sideways only, so a clipped tab comes into view without moving the page. */
+function revealTab(tab: Element | null | undefined) {
+  const row = tab?.closest("nav")
+  if (!tab || !row) return
+  const tabBox = tab.getBoundingClientRect()
+  const rowBox = row.getBoundingClientRect()
+  if (tabBox.left < rowBox.left) row.scrollLeft -= rowBox.left - tabBox.left
+  else if (tabBox.right > rowBox.right) row.scrollLeft += tabBox.right - rowBox.right
+}
+
 function TabNav({ id }: { id: string }) {
+  const navRef = useRef<HTMLElement>(null)
+  const { pathname } = useLocation()
+
+  useLayoutEffect(() => {
+    revealTab(navRef.current?.querySelector('[aria-current="page"]'))
+  }, [pathname])
+
   return (
-    <nav className="-mt-2 flex gap-6 border-b text-sm">
-      <TabLink to={`/workspaces/${id}`} end>
-        Overview
-      </TabLink>
-      <TabLink to={`/workspaces/${id}/members`} end>
-        Members
-      </TabLink>
-      <TabLink to={`/workspaces/${id}/flags`} end>
-        Feature flags
-      </TabLink>
+    <nav
+      ref={navRef}
+      aria-label="Workspace sections"
+      className="-mt-2 overflow-x-auto text-sm"
+      onFocus={(event) => revealTab(event.target)}
+    >
+      <div className="flex w-max min-w-full gap-5 shadow-[inset_0_-1px_0_hsl(var(--border))] sm:gap-6">
+        <TabLink to={`/workspaces/${id}`} end>
+          Overview
+        </TabLink>
+        <TabLink to={`/workspaces/${id}/members`} end>
+          Members
+        </TabLink>
+        <TabLink to={`/workspaces/${id}/flags`} end>
+          Feature flags
+        </TabLink>
+        <TabLink to={`/workspaces/${id}/spending`} end>
+          AI spending
+        </TabLink>
+      </div>
     </nav>
   )
 }
@@ -103,7 +131,7 @@ function TabLink({ to, end, children }: { to: string; end?: boolean; children: R
       end={end}
       className={({ isActive }) =>
         cn(
-          "-mb-px border-b-2 pb-2.5 transition-colors",
+          "whitespace-nowrap border-b-2 pb-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           isActive
             ? "border-foreground font-medium text-foreground"
             : "border-transparent text-muted-foreground hover:text-foreground"

@@ -59,7 +59,7 @@ export interface GeneralResearcherConfig {
 }
 
 export interface CompanionAgentConfig extends ComponentConfig {
-  temperature: number
+  temperature?: number
 }
 
 export interface ImageCaptionConfig extends ComponentConfig {

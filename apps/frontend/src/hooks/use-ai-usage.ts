@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { aiUsageApi } from "@/api"
 import type { UpdateAIBudgetInput, AIBudgetResponse } from "@threahq/types"
+import { ApiError } from "@/api/client"
 
 // Usage and budget responses are bucketed into days and a month window by the
 // timezone the caller asks for, so the zone is part of the identity of the
@@ -50,6 +51,11 @@ export function useUpdateAIBudget(workspaceId: string, timezone: string | null) 
       // an unresolved zone — so this is a wiring bug, not a user-reachable state.
       if (timezone === null) throw new Error("Cannot update the budget before the reporting timezone resolves")
       return aiUsageApi.updateBudget(workspaceId, timezone, input)
+    },
+    onError: (error) => {
+      if (ApiError.isApiError(error) && error.code === "AI_SPENDING_DENIED") {
+        void queryClient.invalidateQueries({ queryKey: [...aiUsageKeys.all, "budget", workspaceId] })
+      }
     },
     onSuccess: (data: AIBudgetResponse) => {
       queryClient.setQueryData(aiUsageKeys.budget(workspaceId, timezone ?? "unresolved"), data)

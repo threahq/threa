@@ -1430,29 +1430,38 @@ export function registerWorkspaceSocketHandlers(
       // wide). Once the session is tracked only the live counts change, so fold them
       // in without paying the IDB lookup per step.
       if (hasAgentSession(workspaceId, payload.sessionId)) {
-        updateAgentSessionProgress(workspaceId, payload.sessionId, {
-          stepCount: payload.stepCount,
-          messageCount: payload.messageCount,
-          currentStepType: payload.currentStepType,
-        })
+        updateAgentSessionProgress(
+          workspaceId,
+          payload.sessionId,
+          {
+            stepCount: payload.stepCount,
+            messageCount: payload.messageCount,
+            currentStepType: payload.currentStepType,
+          },
+          payload.executionGeneration
+        )
         return
       }
       // Same race as `activity_started`: a thread's row can still be missing from
       // IDB here, and the payload's own anchor is the only one we get.
       const anchor = await resolveStreamAnchor(payload.streamId)
-      upsertAgentSession(workspaceId, {
-        sessionId: payload.sessionId,
-        streamId: payload.streamId,
-        rootStreamId: anchor?.rootStreamId ?? payload.streamId,
-        parentAnchorId: anchor?.parentAnchorId ?? payload.parentMessageId ?? null,
-        triggerMessageId: payload.triggerMessageId,
-        personaName: payload.personaName,
-        // Progress carries no start time; anchor sort order to arrival.
-        startedAt: new Date().toISOString(),
-        currentStepType: payload.currentStepType,
-        stepCount: payload.stepCount,
-        messageCount: payload.messageCount,
-      })
+      upsertAgentSession(
+        workspaceId,
+        {
+          sessionId: payload.sessionId,
+          streamId: payload.streamId,
+          rootStreamId: anchor?.rootStreamId ?? payload.streamId,
+          parentAnchorId: anchor?.parentAnchorId ?? payload.parentMessageId ?? null,
+          triggerMessageId: payload.triggerMessageId,
+          personaName: payload.personaName,
+          // Progress carries no start time; anchor sort order to arrival.
+          startedAt: new Date().toISOString(),
+          currentStepType: payload.currentStepType,
+          stepCount: payload.stepCount,
+          messageCount: payload.messageCount,
+        },
+        payload.executionGeneration
+      )
     })
 
   const handleAgentActivityStarted = (payload: AgentActivityStartedPayload) =>
@@ -1461,15 +1470,19 @@ export function registerWorkspaceSocketHandlers(
       // light up immediately — the thread's row is regularly not in IDB yet, so the
       // payload's own ids stand in rather than dropping the only start signal.
       const anchor = await resolveStreamAnchor(payload.threadStreamId)
-      upsertAgentSession(workspaceId, {
-        sessionId: payload.sessionId,
-        streamId: payload.threadStreamId,
-        rootStreamId: anchor?.rootStreamId ?? payload.threadStreamId,
-        parentAnchorId: anchor?.parentAnchorId ?? payload.parentMessageId ?? null,
-        triggerMessageId: payload.triggerMessageId,
-        personaName: payload.personaName,
-        startedAt: new Date().toISOString(),
-      })
+      upsertAgentSession(
+        workspaceId,
+        {
+          sessionId: payload.sessionId,
+          streamId: payload.threadStreamId,
+          rootStreamId: anchor?.rootStreamId ?? payload.threadStreamId,
+          parentAnchorId: anchor?.parentAnchorId ?? payload.parentMessageId ?? null,
+          triggerMessageId: payload.triggerMessageId,
+          personaName: payload.personaName,
+          startedAt: new Date().toISOString(),
+        },
+        payload.executionGeneration
+      )
     })
 
   // `updatedAt` of the substep currently applied per session. Decrypts run outside
@@ -1513,7 +1526,7 @@ export function registerWorkspaceSocketHandlers(
   const handleAgentActivityEnded = (payload: AgentActivityEndedPayload) =>
     enqueueAgentActivity(() => {
       appliedSubstepAt.delete(payload.sessionId)
-      clearAgentSession(workspaceId, payload.sessionId)
+      clearAgentSession(workspaceId, payload.sessionId, payload.executionGeneration)
     })
 
   // agent_session:completed/failed reach this socket in two shapes: the
@@ -1527,13 +1540,14 @@ export function registerWorkspaceSocketHandlers(
     streamId?: string
     event?: StreamEvent
     sessionId?: string
+    executionGeneration?: number
   }) =>
     enqueueAgentActivity(() => {
       if (payload.workspaceId !== undefined && payload.workspaceId !== workspaceId) return
       const sessionId = (payload.event?.payload as { sessionId?: string } | undefined)?.sessionId ?? payload.sessionId
       if (!sessionId) return
       appliedSubstepAt.delete(sessionId)
-      removeAgentSession(workspaceId, sessionId)
+      removeAgentSession(workspaceId, sessionId, payload.executionGeneration)
     })
 
   // Handle stream display name updated (from auto-naming service)

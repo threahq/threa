@@ -5,11 +5,13 @@ import { UserRepository } from "../workspaces"
 import { UserPreferencesService } from "../user-preferences"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
 import { voiceConfig, parseModelProvider, type VoiceSessionStatus } from "./config"
+import type { AISpendingService } from "../ai-usage"
 
 export class VoiceTranscriptionService {
   constructor(
     private pool: Pool,
-    private userPreferencesService: UserPreferencesService
+    private userPreferencesService: UserPreferencesService,
+    private spendingPolicy: Pick<AISpendingService, "assertUnprotected">
   ) {}
 
   /**
@@ -23,6 +25,7 @@ export class VoiceTranscriptionService {
     model?: string
     language?: string
   }): Promise<VoiceSessionRow> {
+    await this.spendingPolicy.assertUnprotected(params.workspaceId)
     let model = params.model
     if (!model) {
       const prefs = await this.userPreferencesService.getPreferences(params.workspaceId, params.userId)
@@ -81,6 +84,7 @@ export class VoiceTranscriptionService {
     if (row.expiresAt.getTime() <= Date.now()) {
       throw new HttpError("Voice session has expired", { status: 409, code: "VOICE_SESSION_EXPIRED" })
     }
+    await this.spendingPolicy.assertUnprotected(params.workspaceId)
     return row
   }
 

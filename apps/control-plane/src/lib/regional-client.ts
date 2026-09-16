@@ -1,5 +1,13 @@
 import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threahq/backend-common"
-import type { FeatureFlagScope } from "@threahq/types"
+import {
+  aiSpendingOverviewSchema,
+  aiSpendingPolicyUpdateResultSchema,
+  type AISpendingInternalPolicyUpdate,
+  type AISpendingOverview,
+  type AISpendingPolicyUpdateResult,
+  type FeatureFlagScope,
+} from "@threahq/types"
+import type { z } from "zod/v4"
 import type { RegionConfig } from "../config"
 
 const REGIONAL_REQUEST_TIMEOUT_MS = 15_000
@@ -150,28 +158,91 @@ export class RegionalClient {
     body: Record<string, unknown>,
     logContext: string
   ): Promise<void> {
+    const res = await this.fetchInternal(region, "POST", path, body, logContext)
+    if (!res.ok) {
+      const responseBody = await res.text().catch(() => "")
+      logger.error({ region, status: res.status, body: responseBody }, `${logContext} failed`)
+      throw new Error(`Regional backend returned ${res.status}: ${responseBody}`)
+    }
+  }
+
+  private async fetchInternal(
+    region: string,
+    method: "GET" | "POST" | "PUT",
+    path: string,
+    body: Record<string, unknown> | undefined,
+    logContext: string
+  ): Promise<Response> {
     const url = `${this.getRegionUrl(region)}${path}`
-    let res: Response
     try {
-      res = await fetch(url, {
-        method: "POST",
+      return await fetch(url, {
+        method,
         headers: {
-          "Content-Type": "application/json",
+          ...(body !== undefined && { "Content-Type": "application/json" }),
           [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
         },
-        body: JSON.stringify(body),
+        body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
       logger.error({ err, region, url }, `${logContext} request failed`)
       throw err
     }
+  }
 
+  /**
+   * Internal command whose acknowledgement carries data. A non-2xx response
+   * throws `RegionalResponseError` with the upstream status and code; a 2xx
+   * body that does not match `schema` throws, since it acknowledges nothing.
+   */
+  private async requestInternalJson<T>(
+    region: string,
+    method: "GET" | "PUT",
+    path: string,
+    body: Record<string, unknown> | undefined,
+    schema: z.ZodType<T>,
+    logContext: string
+  ): Promise<T> {
+    const res = await this.fetchInternal(region, method, path, body, logContext)
+    const text = await res.text()
     if (!res.ok) {
-      const responseBody = await res.text().catch(() => "")
-      logger.error({ region, status: res.status, body: responseBody }, `${logContext} failed`)
-      throw new Error(`Regional backend returned ${res.status}: ${responseBody}`)
+      logger.warn({ region, status: res.status, body: text }, `${logContext} rejected`)
+      throw new RegionalResponseError(res.status, text)
     }
+    const parsed = schema.safeParse(JSON.parse(text))
+    if (!parsed.success) {
+      logger.error({ region, issues: parsed.error.issues }, `${logContext} returned an unexpected body`)
+      throw new Error(`${logContext} returned an unexpected body`)
+    }
+    return parsed.data
+  }
+
+  /** The owning region's authoritative AI spending policy and current period. */
+  async getAISpending(region: string, workspaceId: string): Promise<AISpendingOverview> {
+    return this.requestInternalJson(
+      region,
+      "GET",
+      `/internal/ai-spending/workspaces/${encodeURIComponent(workspaceId)}`,
+      undefined,
+      aiSpendingOverviewSchema,
+      "Regional AI spending read"
+    )
+  }
+
+  /** Versioned policy command; resolves only with the policy the region acknowledged storing. */
+  async setAISpendingPolicy(
+    region: string,
+    workspaceId: string,
+    command: AISpendingInternalPolicyUpdate
+  ): Promise<AISpendingPolicyUpdateResult> {
+    return this.requestInternalJson(
+      region,
+      "PUT",
+      `/internal/ai-spending/workspaces/${encodeURIComponent(workspaceId)}`,
+      command,
+      aiSpendingPolicyUpdateResultSchema,
+      "Regional AI spending policy update"
+    )
   }
 
   /**
@@ -272,5 +343,27 @@ export class RegionalInvitationError extends Error {
     } catch {
       return null
     }
+  }
+}
+
+/** A regional internal endpoint answered with a non-2xx status; `code` and `error` come from its HttpError body. */
+export class RegionalResponseError extends Error {
+  readonly code: string | null
+  readonly upstreamMessage: string | null
+
+  constructor(
+    public readonly status: number,
+    body: string
+  ) {
+    super(`Regional backend returned ${status}`)
+    this.name = "RegionalResponseError"
+    let parsed: { code?: unknown; error?: unknown } = {}
+    try {
+      parsed = JSON.parse(body) as typeof parsed
+    } catch {
+      // Non-JSON bodies (proxies, crashes) carry no structured code.
+    }
+    this.code = typeof parsed?.code === "string" ? parsed.code : null
+    this.upstreamMessage = typeof parsed?.error === "string" ? parsed.error : null
   }
 }

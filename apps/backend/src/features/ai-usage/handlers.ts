@@ -6,7 +6,7 @@ import { AIUsageRepository } from "./usage-repository"
 import { AIBudgetRepository } from "./budget-repository"
 import { categorizeFunction, aggregateUsageByDay } from "./categories"
 import { resolveBudgetMonthRange } from "./billing-window"
-import { aiBudgetId } from "../../lib/id"
+import type { AISpendingService } from "./spend-service"
 import { validateRequest } from "../../lib/validation"
 import { isValidIanaTimezone, monthRangeInTimezone } from "../../lib/temporal"
 
@@ -22,6 +22,7 @@ const updateBudgetSchema = z.object({
 
 interface Dependencies {
   pool: Pool
+  aiSpendingService: AISpendingService
 }
 
 // The dashboard's day buckets and month window follow whatever zone the caller
@@ -40,7 +41,7 @@ const timezoneQuerySchema = z.object({
     .default("UTC"),
 })
 
-export function createAIUsageHandlers({ pool }: Dependencies) {
+export function createAIUsageHandlers({ pool, aiSpendingService }: Dependencies) {
   return {
     async getUsage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -101,6 +102,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
 
     async getBudget(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
+      const spendingControlsActive = (await aiSpendingService.getPolicy(workspaceId))?.status !== "unprotected"
 
       const { tz } = validateRequest(timezoneQuerySchema, req.query)
       const { start, end } = monthRangeInTimezone(tz)
@@ -116,6 +118,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       if (!budget) {
         return res.json({
           budget: null,
+          spendingControlsActive,
           currentUsage: usage,
           percentUsed: 0,
           nextReset,
@@ -137,6 +140,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
         nextReset,
+        spendingControlsActive,
       })
     },
 
@@ -147,17 +151,11 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
       const { tz } = validateRequest(timezoneQuerySchema, req.query)
       const { start, end } = monthRangeInTimezone(tz)
 
-      const [budget, usage, nextReset] = await withClient(pool, async (client) => {
-        // Creates with defaults if absent; otherwise updates only provided fields.
-        const updatedBudget = await AIBudgetRepository.upsertPartial(client, {
-          id: aiBudgetId(),
-          workspaceId,
-          ...updates,
-        })
-
-        const currentUsage = await AIUsageRepository.getWorkspaceUsage(client, workspaceId, start, end)
-        return [updatedBudget, currentUsage, await resolveNextReset(client, workspaceId)] as const
-      })
+      const budget = await aiSpendingService.updateLegacyBudget(workspaceId, updates)
+      const [usage, nextReset] = await Promise.all([
+        AIUsageRepository.getWorkspaceUsage(pool, workspaceId, start, end),
+        resolveNextReset(pool, workspaceId),
+      ])
 
       if (!budget) {
         return res.status(500).json({ error: "Failed to update budget" })
@@ -178,6 +176,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
         nextReset,
+        spendingControlsActive: false,
       })
     },
   }

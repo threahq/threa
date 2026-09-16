@@ -177,7 +177,8 @@ export {
   assertReplyKeyGeneration,
 } from "./sealed-session-guards"
 
-export { AgentSessionRepository, SessionStatuses } from "./session-repository"
+export { AgentSessionRepository, SessionStatuses, CompanionExecutionLostError } from "./session-repository"
+export type { CompanionExecutionRef } from "./session-repository"
 export type {
   AgentSession,
   AgentSessionStep,

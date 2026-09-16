@@ -39,6 +39,7 @@ interface TavilySearchResponse {
 
 export interface CreateWebSearchToolParams {
   tavilyApiKey: string
+  beforeRequest?: () => Promise<void>
   maxResults?: number
   /** Invocation time from the agent context, used to ground recency-sensitive searches. */
   currentTime?: string
@@ -97,6 +98,7 @@ ${recencyGroundingBullet}
     inputSchema: WebSearchSchema,
 
     execute: async (input, { signal }): Promise<AgentToolResult> => {
+      await params.beforeRequest?.()
       // Compose the per-request timeout with the session Stop signal so a user
       // abort cuts the fetch immediately instead of waiting out the timeout.
       const { signal: fetchSignal, cleanup } = composeAbortSignal({

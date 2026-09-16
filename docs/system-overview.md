@@ -251,14 +251,14 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 **Key subsystems:**
 
-| Subsystem               | What it does                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| Express HTTP API        | REST endpoints for all domain features, validated with Zod                       |
-| Socket.io               | Real-time event delivery, room-based broadcasting, cookie auth                   |
-| Outbox dispatcher       | PostgreSQL NOTIFY/LISTEN; fans out committed events to 14 handlers               |
-| Job queue               | PostgreSQL-backed background processing (AI, embeddings, file processing)        |
-| Event sourcing          | `stream_events` as append-only log, `messages` as read projection                |
-| AI wrapper (`createAI`) | Unified interface over Vercel AI SDK + LangChain, with cost tracking and budgets |
+| Subsystem               | What it does                                                              |
+| ----------------------- | ------------------------------------------------------------------------- |
+| Express HTTP API        | REST endpoints for all domain features, validated with Zod                |
+| Socket.io               | Real-time event delivery, room-based broadcasting, cookie auth            |
+| Outbox dispatcher       | PostgreSQL NOTIFY/LISTEN; fans out committed events to 14 handlers        |
+| Job queue               | PostgreSQL-backed background processing (AI, embeddings, file processing) |
+| Event sourcing          | `stream_events` as append-only log, `messages` as read projection         |
+| AI wrapper (`createAI`) | Vercel AI SDK over OpenRouter, with cost tracking and budgets             |
 
 **Feature domains:** messaging, streams, agents (companion/persona/researcher), subagents (a thread pinned to a stronger model; `SubagentService`, `subagent_runs`, `subagent:created` / `subagent:status_changed` events), memos (GAM), search (semantic + text), attachments, conversations, invitations, activity feed, commands, emoji, AI usage tracking, user preferences, workspaces.
 

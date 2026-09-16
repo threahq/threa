@@ -10,6 +10,7 @@ on:
       - "packages/**"
       - "tests/browser/**"
       - "playwright.config.ts"
+      - "playwright.spending.config.ts"
       - "scripts/test-silent.ts"
       - "package.json"
       - "bun.lock"
@@ -227,10 +228,21 @@ jobs:
           PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}
           PLAYWRIGHT_FRONTEND_PREBUILT: "true"
 
+      - name: Verify protected assistant spending
+        id: spending-run
+        if: matrix.shard_index == 1 && !cancelled()
+        run: bun run test:browser tests/browser/ai-spending.spec.ts --config playwright.spending.config.ts --workers=1 --reporter=line
+        env:
+          CI: true
+          PLAYWRIGHT_TEST_DB_NAME: ${{ env.PLAYWRIGHT_TEST_DB_NAME }}_spending
+          PLAYWRIGHT_FRONTEND_PREBUILT: "true"
+
       - name: Write shard result marker
         if: always()
         run: |
-          if [[ "${{ steps.initial-run.outcome }}" == "success" ]]; then
+          if [[ "${{ steps.spending-run.outcome }}" == "failure" ]]; then
+            result="failed"
+          elif [[ "${{ steps.initial-run.outcome }}" == "success" ]]; then
             result="passed"
           elif [[ "${{ steps.retry-run.outcome }}" == "success" ]]; then
             result="flaky"

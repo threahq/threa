@@ -339,6 +339,7 @@ describe("the card's waiting state", () => {
         personaId: ctx.persona.id,
         personaName: ctx.persona.name,
         workspaceId: ctx.workspaceId,
+        initiatingUserId: ctx.owner,
         serverId: "test-server",
         initialSequence: BigInt(0),
         onCompletedWithMessages: (client, at) =>
@@ -376,6 +377,7 @@ describe("the card's waiting state", () => {
         personaId: ctx.persona.id,
         personaName: ctx.persona.name,
         workspaceId: ctx.workspaceId,
+        initiatingUserId: ctx.owner,
         serverId: "test-server",
         initialSequence: BigInt(0),
         onCompletedWithMessages: stamp,
@@ -631,6 +633,7 @@ async function runKickoffTurn(threadStreamId: string, triggerMessageId: string) 
       personaId: ctx.persona.id,
       personaName: ctx.persona.name,
       workspaceId: ctx.workspaceId,
+      initiatingUserId: ctx.owner,
       serverId: "test-server",
       initialSequence: BigInt(0),
     },

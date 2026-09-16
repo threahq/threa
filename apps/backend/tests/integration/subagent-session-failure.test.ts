@@ -61,6 +61,7 @@ describe("terminal turn failure", () => {
         personaId: ctx.persona.id,
         personaName: ctx.persona.name,
         workspaceId: ctx.workspaceId,
+        initiatingUserId: ctx.owner,
         serverId: "test-server",
         initialSequence: 0n,
         // The wiring from `PersonaAgent.run`: present only because this stream
@@ -109,6 +110,7 @@ describe("terminal turn failure", () => {
         personaId: ctx.persona.id,
         personaName: ctx.persona.name,
         workspaceId: ctx.workspaceId,
+        initiatingUserId: ctx.owner,
         serverId: "test-server",
         initialSequence: 0n,
         attempt: 1,

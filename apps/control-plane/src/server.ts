@@ -62,6 +62,7 @@ import {
   OUTBOX_FEATURE_FLAGS_SYNC,
   type FeatureFlagsSyncPayload,
 } from "./features/feature-flags"
+import { ControlPlaneAISpendingService } from "./features/ai-spending"
 import {
   PlatformAdminSyncService,
   OUTBOX_PLATFORM_ADMIN_SYNC,
@@ -166,6 +167,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
 
   const authzFanOut = new RegionalAuthzFanOut({ pool, regionalClient })
   const featureFlagService = new ControlPlaneFeatureFlagService({ pool, regionalClient })
+  const aiSpendingService = new ControlPlaneAISpendingService({ pool, regionalClient })
   const githubWebhookDispatch = new GithubWebhookDispatchService({ pool, regionalClient })
   const githubWebhookRetention = new GithubWebhookRetentionSweeper({ pool })
 
@@ -310,6 +312,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       backofficeService,
       workosAuthzAdminService,
       featureFlagService,
+      aiSpendingService,
       authLogService,
       internalApiKey: config.internalApiKey,
       allowDevAuthRoutes: config.useStubAuth && !isProduction,

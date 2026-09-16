@@ -165,7 +165,11 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        await AgentSessionRepository.updateLastSeenSequence(client, testSessionId, BigInt(42))
+        await AgentSessionRepository.updateLastSeenSequence(
+          client,
+          { sessionId: testSessionId, generation: 0 },
+          BigInt(42)
+        )
 
         const session = await AgentSessionRepository.findById(client, testSessionId)
 
@@ -194,7 +198,11 @@ describe("Agent Session Repository", () => {
         // Small delay
         await new Promise((r) => setTimeout(r, 10))
 
-        await AgentSessionRepository.updateLastSeenSequence(client, testSessionId, BigInt(1))
+        await AgentSessionRepository.updateLastSeenSequence(
+          client,
+          { sessionId: testSessionId, generation: 0 },
+          BigInt(1)
+        )
 
         const session = await AgentSessionRepository.findById(client, testSessionId)
 

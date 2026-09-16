@@ -1,5 +1,15 @@
-import type { FeatureFlagScope, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threahq/types"
-import { api } from "./client"
+import {
+  aiSpendingOverviewSchema,
+  aiSpendingPolicyUpdateResultSchema,
+  aiSpendingPolicyUpdateSchema,
+  type AISpendingOverview,
+  type AISpendingPolicyUpdate,
+  type AISpendingPolicyUpdateResult,
+  type FeatureFlagScope,
+  type WorkspaceInvitableRole,
+  type WorkspaceRoleSlug,
+} from "@threahq/types"
+import { ApiError, api } from "./client"
 
 /**
  * Typed fetchers + query keys for the `/api/backoffice/*` surface. Keeping all
@@ -149,6 +159,7 @@ export const backofficeKeys = {
   workspaceMembers: (id: string) => ["backoffice", "workspaces", id, "members"] as const,
   workspaceInvitations: (id: string) => ["backoffice", "workspaces", id, "invitations"] as const,
   workspaceFeatureFlags: (id: string) => ["backoffice", "workspaces", id, "feature-flags"] as const,
+  workspaceAISpending: (id: string) => ["backoffice", "workspaces", id, "ai-spending"] as const,
   invitations: ["backoffice", "invitations"] as const,
   waitlist: ["backoffice", "waitlist"] as const,
   config: ["backoffice", "config"] as const,
@@ -273,4 +284,33 @@ export function removeWorkspaceMember(workspaceId: string, workosUserId: string)
   return api.delete<void>(
     `/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(workosUserId)}`
   )
+}
+
+/** A 2xx body that doesn't match the shared contract is not an acknowledgement. */
+function malformedAISpendingResponse(): ApiError {
+  return new ApiError(502, "MALFORMED_RESPONSE", "Response did not match the AI spending contract")
+}
+
+export function getWorkspaceAISpending(workspaceId: string): Promise<AISpendingOverview> {
+  return api.get<unknown>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/ai-spending`).then((body) => {
+    const parsed = aiSpendingOverviewSchema.safeParse(body)
+    if (!parsed.success) throw malformedAISpendingResponse()
+    return parsed.data
+  })
+}
+
+export function setWorkspaceAISpendingPolicy(
+  workspaceId: string,
+  update: AISpendingPolicyUpdate
+): Promise<AISpendingPolicyUpdateResult> {
+  return api
+    .put<unknown>(
+      `/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/ai-spending`,
+      aiSpendingPolicyUpdateSchema.parse(update)
+    )
+    .then((body) => {
+      const parsed = aiSpendingPolicyUpdateResultSchema.safeParse(body)
+      if (!parsed.success) throw malformedAISpendingResponse()
+      return parsed.data
+    })
 }

@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
 import pLimit from "p-limit"
 import type { QueueRepository } from "./repository"
@@ -37,6 +37,7 @@ export interface TierConfig {
 }
 
 export interface QueueManagerConfig {
+  admission?: { getPauseReason(queueName: string, workspaceId: string, db: PoolClient): Promise<string | null> }
   pool: Pool
   queueRepository: typeof QueueRepository
   tokenPoolRepository: typeof TokenPoolRepository
@@ -108,6 +109,7 @@ interface TierRuntimeState {
  */
 export class QueueManager {
   private readonly pool: Pool
+  private readonly admission: QueueManagerConfig["admission"]
   private readonly queueRepo: typeof QueueRepository
   private readonly tokenPoolRepo: typeof TokenPoolRepository
   private readonly lockDurationMs: number
@@ -162,6 +164,7 @@ export class QueueManager {
     } = config
 
     this.pool = pool
+    this.admission = config.admission
     this.queueRepo = queueRepository
     this.tokenPoolRepo = tokenPoolRepository
     this.lockDurationMs = lockDurationMs
@@ -723,6 +726,25 @@ export class QueueManager {
     const maxRetries = this.handlerMaxRetries.get(message.queueName) ?? this.maxRetries
 
     try {
+      const admission = this.admission
+      const pauseReason = admission
+        ? await withTransaction(this.pool, async (db) => {
+            const reason = await admission.getPauseReason(message.queueName, workspaceId, db)
+            if (reason)
+              await this.queueRepo.pause(db, { messageId: message.id, workspaceId, claimedBy: workerId, reason })
+            return reason
+          })
+        : null
+      if (pauseReason) {
+        completedMessageIds.add(message.id)
+        queueMessagesInFlight.dec({ queue: message.queueName })
+        queueMessagesProcessed.inc({ queue: message.queueName, status: "paused", workspace_id: workspaceId })
+        logger.info(
+          { messageId: message.id, queueName: message.queueName, workspaceId, reason: pauseReason },
+          "Queue work paused before execution"
+        )
+        return
+      }
       await handler({
         id: message.id,
         name: message.queueName,

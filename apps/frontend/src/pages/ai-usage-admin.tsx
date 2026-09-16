@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, DollarSign } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { cn } from "@/lib/utils"
 import { useAIBudget, useAIUsage, useUpdateAIBudget } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
@@ -187,9 +188,17 @@ export function AIUsageAdminPage() {
       </header>
       <main className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="mx-auto max-w-6xl space-y-6">
-          <BudgetHealthHero metrics={metrics} timezone={timezone ?? deviceTimezone} isLoading={isLoading} />
+          {budget?.spendingControlsActive ? (
+            <Alert>
+              <AlertDescription>
+                This workspace uses AI spending controls. The previous budget settings are inactive.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <BudgetHealthHero metrics={metrics} timezone={timezone ?? deviceTimezone} isLoading={isLoading} />
+          )}
 
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className={cn("grid gap-6", !budget?.spendingControlsActive && "lg:grid-cols-[minmax(0,1fr)_360px]")}>
             <div className="space-y-6">
               <DailySpendChart
                 byDay={usage?.byDay ?? []}
@@ -218,22 +227,24 @@ export function AIUsageAdminPage() {
               />
             </div>
 
-            <div className="lg:sticky lg:top-6 lg:self-start">
-              <BudgetControlsPanel
-                workspaceId={workspaceId}
-                budget={budget?.budget ?? null}
-                nextReset={budget?.nextReset ?? new Date().toISOString()}
-                reportingTimezone={timezone ?? deviceTimezone}
-                metrics={metrics}
-                localBudget={localBudget}
-                onBudgetChange={setLocalBudget}
-                onBudgetCommit={handleBudgetCommit}
-                localHardLimit={localHardLimit}
-                onHardLimitChange={setLocalHardLimit}
-                onHardLimitCommit={handleHardLimitCommit}
-                isLoading={budgetLoading}
-              />
-            </div>
+            {!budget?.spendingControlsActive && (
+              <div className="lg:sticky lg:top-6 lg:self-start">
+                <BudgetControlsPanel
+                  workspaceId={workspaceId}
+                  budget={budget?.budget ?? null}
+                  nextReset={budget?.nextReset ?? new Date().toISOString()}
+                  reportingTimezone={timezone ?? deviceTimezone}
+                  metrics={metrics}
+                  localBudget={localBudget}
+                  onBudgetChange={setLocalBudget}
+                  onBudgetCommit={handleBudgetCommit}
+                  localHardLimit={localHardLimit}
+                  onHardLimitChange={setLocalHardLimit}
+                  onHardLimitCommit={handleHardLimitCommit}
+                  isLoading={budgetLoading}
+                />
+              </div>
+            )}
           </div>
         </div>
       </main>

@@ -4,11 +4,7 @@ import type { Persona } from "../persona-repository"
 
 export const COMPANION_MODEL_ID = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].model
 
-const ariadneTemperature = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].temperature
-if (ariadneTemperature == null) {
-  throw new Error("Built-in Ariadne configuration is missing temperature (expected a number).")
-}
-export const COMPANION_TEMPERATURE = ariadneTemperature
+export const COMPANION_TEMPERATURE = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].temperature ?? undefined
 
 export const COMPANION_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 

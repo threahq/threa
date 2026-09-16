@@ -132,6 +132,31 @@ const SELECT_FIELDS = `
 `
 
 export const AIUsageRepository = {
+  async projectSpendingSettlement(
+    db: Querier,
+    params: { id: string; workspaceId: string; attemptId: string }
+  ): Promise<void> {
+    const result = await db.query(sql`
+      INSERT INTO ai_usage_records (
+        id, workspace_id, user_id, session_id, function_id, model, provider,
+        prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens,
+        cost_usd, origin, metadata, created_at
+      )
+      SELECT ${params.id}, a.workspace_id, a.sponsor_user_id, a.session_id, a.function_id, a.model, a.provider,
+        COALESCE((a.receipt->'usage'->>'prompt_tokens')::integer, 0),
+        COALESCE((a.receipt->'usage'->>'cached_tokens')::integer, 0),
+        COALESCE((a.receipt->'usage'->>'completion_tokens')::integer, 0),
+        COALESCE((a.receipt->'usage'->>'total_tokens')::integer, 0),
+        a.actual_cost_usd, 'user',
+        jsonb_build_object('spendingAttemptId', a.id, 'spendingPeriodId', a.period_id,
+          'incompleteTokenUsage', NOT (a.receipt->'usage' ?& ARRAY['prompt_tokens', 'completion_tokens', 'total_tokens'])),
+        a.created_at
+      FROM ai_spending_attempts a
+      WHERE a.workspace_id = ${params.workspaceId} AND a.id = ${params.attemptId} AND a.state = 'settled'
+    `)
+    if (result.rowCount !== 1) throw new Error(`Settled spending attempt ${params.attemptId} is missing`)
+  },
+
   async insert(db: Querier, params: InsertAIUsageRecordParams): Promise<AIUsageRecord> {
     const result = await db.query<AIUsageRecordRow>(sql`
       INSERT INTO ai_usage_records (

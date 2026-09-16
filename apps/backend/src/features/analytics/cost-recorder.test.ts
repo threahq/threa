@@ -30,6 +30,19 @@ function usageParams(overrides: Record<string, unknown> = {}) {
 }
 
 describe("AnalyticsCostRecorder", () => {
+  it("should observe ledger-accounted work without writing another cost record", async () => {
+    const { recorder, captureEvent, inner } = createRecorder()
+    await recorder.observeUsage({
+      ...usageParams(),
+      costStatus: "unconfirmed",
+      usage: { promptTokens: 10, totalTokens: 10 },
+    })
+    expect(inner.recordUsage).not.toHaveBeenCalled()
+    const event = captureEvent.mock.calls[0]![0] as { properties: Record<string, unknown> }
+    expect(event.properties).toMatchObject({ ai_cost_status: "unconfirmed", $ai_input_tokens: 10 })
+    expect(event.properties).not.toHaveProperty("$ai_total_cost_usd")
+  })
+
   it("should report a generation with the model, tokens, cost and latency when a chat call is recorded", async () => {
     const { recorder, captureEvent } = createRecorder()
 

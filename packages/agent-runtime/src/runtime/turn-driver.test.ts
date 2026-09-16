@@ -150,6 +150,110 @@ describe("InProcessTurnDriver", () => {
   })
 })
 
+describe("per-iteration spending requests", () => {
+  it("funds each loop iteration as its own logical request under the root operation, identically on replay", async () => {
+    const root = {
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      sessionId: "sess_1",
+      executionGeneration: 1,
+      operationId: "op_turn",
+      purpose: "assistant_turn",
+    } as const
+    const runOnce = async () => {
+      const seen: unknown[] = []
+      const ai = {
+        generateTextWithTools: async ({ spending }: { spending?: unknown }) => {
+          seen.push(spending)
+          const content = seen.length === 1 ? "draft" : "final"
+          return {
+            text: "",
+            toolCalls: [
+              { toolCallId: `tool_${seen.length}`, toolName: AgentToolNames.SEND_MESSAGE, input: { content } },
+            ],
+            response: { messages: [{ role: "assistant", content: "Sending." } as any] },
+          }
+        },
+      } as any
+      const driver = new InProcessTurnDriver({ ai })
+      await driver.runTurn(
+        plaintextRequest({
+          spending: root,
+          validateFinalResponse: (content) => (content === "draft" ? "revise" : null),
+        }),
+        { commitMessage: async () => ({ messageId: "msg_1" }) }
+      )
+      return seen
+    }
+
+    const first = await runOnce()
+    expect(first).toEqual([
+      { ...root, requestKey: "agent-loop:iteration:0" },
+      { ...root, requestKey: "agent-loop:iteration:1" },
+    ])
+    expect(await runOnce()).toEqual(first)
+  })
+
+  it("binds the root context when the turn starts, so a sink mutating it before the first model call changes nothing", async () => {
+    const root = {
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      sessionId: "sess_1",
+      executionGeneration: 1,
+      operationId: "op_turn",
+      purpose: "assistant_turn" as const,
+    }
+    const request = plaintextRequest({ spending: root })
+    const seen: unknown[] = []
+    const ai = {
+      generateTextWithTools: async ({ spending }: { spending?: unknown }) => {
+        seen.push(spending)
+        return commitOnceAI("hi").generateTextWithTools()
+      },
+    } as any
+    await new InProcessTurnDriver({ ai }).runTurn(request, {
+      commitMessage: async () => ({ messageId: "msg_1" }),
+      observers: [
+        {
+          handle: async (event: AgentEvent) => {
+            if (event.type !== "session:start") return
+            await Promise.resolve()
+            root.operationId = "op_forged"
+            root.userId = "usr_forged"
+            root.executionGeneration = 99
+            request.spending = { ...root, workspaceId: "ws_forged" }
+          },
+        },
+      ],
+    })
+    expect(seen).toEqual([
+      {
+        workspaceId: "ws_1",
+        userId: "usr_1",
+        sessionId: "sess_1",
+        executionGeneration: 1,
+        operationId: "op_turn",
+        purpose: "assistant_turn",
+        requestKey: "agent-loop:iteration:0",
+      },
+    ])
+  })
+
+  it("passes no spending request when the host binds no root context", async () => {
+    const seen: unknown[] = []
+    const ai = {
+      generateTextWithTools: async (options: Record<string, unknown>) => {
+        seen.push("spending" in options)
+        return commitOnceAI("hi").generateTextWithTools()
+      },
+    } as any
+    await new InProcessTurnDriver({ ai }).runTurn(plaintextRequest(), {
+      commitMessage: async () => ({ messageId: "msg_1" }),
+    })
+    expect(seen).toEqual([false])
+  })
+})
+
 describe("EnclaveTurnDriver", () => {
   it("runs a sealed turn through the SAME loop and commits via the sealing sink", async () => {
     const commits: TurnCommit[] = []

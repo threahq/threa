@@ -20,19 +20,13 @@ function generationProperties(params: RecordUsageParams, isEmbedding: boolean): 
     ...(params.latencyMs === undefined ? {} : { $ai_latency: params.latencyMs / 1000 }),
     ...(params.sessionId === undefined ? {} : { $ai_session_id: params.sessionId }),
     ai_origin: params.origin,
+    ...(params.costStatus ? { ai_cost_status: params.costStatus } : {}),
     // The distinct id is a workspace, not a person, and must not become one.
     $process_person_profile: false,
   }
 }
 
-/**
- * Reports each AI call to PostHog on the way to the real cost recorder, so both
- * see exactly the calls `createAI` makes. Prompts, completions and telemetry
- * metadata are deliberately absent: PostHog gets the model, the token counts,
- * the cost and the latency, never the content or who asked for it. Attribution
- * is the workspace group, so no person profile is created and no user consent
- * is implicated.
- */
+/** Content and user identity stay out of analytics; ledger observations never write a second usage record. */
 export class AnalyticsCostRecorder implements CostRecorder {
   constructor(
     private readonly inner: CostRecorder,
@@ -40,7 +34,7 @@ export class AnalyticsCostRecorder implements CostRecorder {
     private readonly modelRegistry: ModelRegistry
   ) {}
 
-  async recordUsage(params: RecordUsageParams): Promise<void> {
+  async observeUsage(params: RecordUsageParams): Promise<void> {
     const isEmbedding = this.modelRegistry.supportsOutputModality(`${params.provider}:${params.model}`, "embedding")
     this.reporter.captureEvent({
       distinctId: `workspace:${params.workspaceId}`,
@@ -48,6 +42,10 @@ export class AnalyticsCostRecorder implements CostRecorder {
       properties: generationProperties(params, isEmbedding),
       groups: { workspace: params.workspaceId },
     })
+  }
+
+  async recordUsage(params: RecordUsageParams): Promise<void> {
+    await this.observeUsage(params)
     await this.inner.recordUsage(params)
   }
 }

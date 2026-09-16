@@ -49,8 +49,11 @@ import { E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../src/fea
 import { DelegationService } from "../../src/features/delegations"
 import { createDelegationPublicApiHandlers } from "../../src/features/public-api"
 import { createEnclaveSessionHandlers } from "../../src/features/enclave-runtimes/session-handlers"
+import { createNoOpCostService } from "../../src/features/ai-usage"
 import { EnclaveClaimService, EnclaveInvocationsRepository } from "../../src/features/enclave-runtimes"
 import { JobQueues } from "../../src/lib/queue"
+
+const DENIAL_REASON = { archived: "archived", system: "system_stream", public_nonmember: "not_a_member" } as const
 
 const rejection = (reason: string) => ({ code: "STREAM_READ_ONLY", details: { reason } })
 
@@ -92,6 +95,23 @@ describe("deferred generated output authority", () => {
       await StreamMemberRepository.insert(client, id, member)
     })
     return id
+  }
+
+  async function scheduledTargetOverrides(
+    scenario: "archived" | "inherited" | "system" | "public_leave" | "removed"
+  ): Promise<Partial<Parameters<typeof StreamRepository.insert>[1]>> {
+    switch (scenario) {
+      case "inherited": {
+        const root = await seed()
+        return { type: "thread", rootStreamId: root, parentStreamId: root }
+      }
+      case "system":
+        return { type: "system", createdBy: `system_sched_${crypto.randomUUID()}` }
+      case "public_leave":
+        return { visibility: "public" }
+      default:
+        return {}
+    }
   }
 
   async function generatedSend(target: string, initiatingUserId: string) {
@@ -263,6 +283,7 @@ describe("deferred generated output authority", () => {
       attachmentService: {} as PublicApiDeps["attachmentService"],
       labelService: {} as PublicApiDeps["labelService"],
       labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],
+      featureFlagService: {} as PublicApiDeps["featureFlagService"],
     })
   }
 
@@ -377,17 +398,8 @@ describe("deferred generated output authority", () => {
     const eventService = new EventService(pool)
     const service = new ScheduledMessagesService({ pool, eventService })
     for (const scenario of ["archived", "inherited", "system", "public_leave", "removed"] as const) {
-      const root = scenario === "inherited" ? await seed() : null
-      const target =
-        scenario === "inherited"
-          ? await seed({ type: "thread", rootStreamId: root, parentStreamId: root })
-          : await seed(
-              scenario === "system"
-                ? { type: "system", createdBy: `system_sched_${crypto.randomUUID()}` }
-                : scenario === "public_leave"
-                  ? { visibility: "public" }
-                  : {}
-            )
+      const overrides = await scheduledTargetOverrides(scenario)
+      const target = await seed(overrides)
       const id = `sched_deferred_${scenario}`
       await withTransaction(pool, async (client) => {
         await ScheduledMessagesRepository.insert(client, {
@@ -396,6 +408,7 @@ describe("deferred generated output authority", () => {
           userId: member,
           streamId: target,
           parentMessageId: null,
+          conversationDirective: null,
           contentJson: { type: "doc", content: [] },
           contentMarkdown: "late",
           attachmentIds: [],
@@ -407,7 +420,7 @@ describe("deferred generated output authority", () => {
       if (scenario === "archived") {
         await pool.query("UPDATE streams SET archived_at=NOW() WHERE id=$1", [target])
       } else if (scenario === "inherited") {
-        await pool.query("UPDATE streams SET archived_at=NOW() WHERE id=$1", [root])
+        await pool.query("UPDATE streams SET archived_at=NOW() WHERE id=$1", [overrides.rootStreamId])
       } else if (scenario === "public_leave" || scenario === "removed") {
         await pool.query("DELETE FROM stream_members WHERE stream_id=$1 AND member_id=$2", [target, member])
       }
@@ -424,11 +437,13 @@ describe("deferred generated output authority", () => {
       expect(row.rows[0]).toEqual({
         status: "failed",
         last_error: `STREAM_READ_ONLY:${
-          scenario === "archived" || scenario === "inherited"
-            ? "archived"
-            : scenario === "system"
-              ? "system_stream"
-              : "not_a_member"
+          {
+            archived: "archived",
+            inherited: "archived",
+            system: "system_stream",
+            public_leave: "not_a_member",
+            removed: "not_a_member",
+          }[scenario]
         }`,
       })
       const outputs = await pool.query(
@@ -453,6 +468,7 @@ describe("deferred generated output authority", () => {
         userId: member,
         streamId: target,
         parentMessageId: null,
+        conversationDirective: null,
         contentJson: { type: "doc", content: [] },
         contentMarkdown: "cancel",
         attachmentIds: [],
@@ -673,6 +689,7 @@ describe("deferred generated output authority", () => {
         personaId: "persona_generated",
         personaName: "Generated persona",
         workspaceId: workspace,
+        initiatingUserId: member,
         serverId: "deferred-test",
         initialSequence: trigger.sequence,
         attempt: 0,
@@ -816,7 +833,7 @@ describe("deferred generated output authority", () => {
       }
       const initiatingUserId = scenario === "public_nonmember" ? outsider : member
       const expected = rejection(
-        scenario === "public_nonmember" ? "not_a_member" : scenario === "system" ? "system_stream" : "archived"
+        scenario === "public_nonmember" || scenario === "system" ? DENIAL_REASON[scenario] : "archived"
       )
       const before = await pool.query(
         `SELECT
@@ -1249,14 +1266,11 @@ describe("deferred generated output authority", () => {
       authorUserId: member,
     } as const
     await expect(service.createInvocation(createParams)).rejects.toMatchObject(rejection("not_a_member"))
-    expect(
-      (
-        await pool.query("SELECT count(*) FROM bot_invocations WHERE actor_id=$1 AND source_message_id=$2", [
-          botId,
-          trigger.id,
-        ])
-      ).rows[0].count
-    ).toBe("0")
+    const invocations = await pool.query(
+      "SELECT count(*) FROM bot_invocations WHERE actor_id=$1 AND source_message_id=$2",
+      [botId, trigger.id]
+    )
+    expect(invocations.rows[0].count).toBe("0")
 
     await BotChannelAccessRepository.grantAccess(pool, {
       id: botChannelAccessId(),
@@ -1377,7 +1391,7 @@ describe("deferred generated output authority", () => {
       } else {
         await BotChannelAccessRepository.revokeAccess(pool, workspace, fixture.botId, fixture.target)
       }
-      const reason = scenario === "archived" ? "archived" : scenario === "system" ? "system_stream" : "not_a_member"
+      const reason = scenario === "archived" || scenario === "system" ? DENIAL_REASON[scenario] : "not_a_member"
       await expect(completePlaintextCallback(handlers, fixture)).rejects.toMatchObject(rejection(reason))
       await expect(completePlaintextCallback(handlers, fixture)).rejects.toMatchObject({ status: 404 })
       const rows = await pool.query(
@@ -1585,7 +1599,7 @@ describe("deferred generated output authority", () => {
       } else {
         await BotChannelAccessRepository.revokeAccess(pool, workspace, fixture.botId, fixture.target)
       }
-      const reason = scenario === "archived" ? "archived" : scenario === "system" ? "system_stream" : "not_a_member"
+      const reason = scenario === "archived" || scenario === "system" ? DENIAL_REASON[scenario] : "not_a_member"
       await expect(completeSealedCallback(handlers, fixture)).rejects.toMatchObject(rejection(reason))
       const rows = await pool.query(
         `SELECT
@@ -1722,6 +1736,7 @@ describe("deferred generated output authority", () => {
       pool,
       storage: { getObject: async () => Buffer.alloc(0) } as never,
       userPreferencesService: { getPreferences: async () => ({}) } as never,
+      spendingPolicy: { assertUnprotected: async () => {} },
     })
     expect(await service.claimTurn(keyId)).toBeNull()
 
@@ -1782,14 +1797,11 @@ describe("deferred generated output authority", () => {
       claimToken: "token_old",
       errorMessage: "stale denial",
     })
-    expect(
-      (
-        await pool.query(
-          "SELECT status, claimed_by_key_id, claim_token, error_message FROM enclave_invocations WHERE id=$1",
-          [invocationId]
-        )
-      ).rows[0]
-    ).toEqual({
+    const afterStale = await pool.query(
+      "SELECT status, claimed_by_key_id, claim_token, error_message FROM enclave_invocations WHERE id=$1",
+      [invocationId]
+    )
+    expect(afterStale.rows[0]).toEqual({
       status: "claimed",
       claimed_by_key_id: "eik_new",
       claim_token: "token_new",
@@ -1802,9 +1814,10 @@ describe("deferred generated output authority", () => {
       claimToken: "token_new",
       errorMessage: "current denial",
     })
-    expect(
-      (await pool.query("SELECT status, error_message FROM enclave_invocations WHERE id=$1", [invocationId])).rows[0]
-    ).toEqual({ status: "failed", error_message: "current denial" })
+    const afterCurrent = await pool.query("SELECT status, error_message FROM enclave_invocations WHERE id=$1", [
+      invocationId,
+    ])
+    expect(afterCurrent.rows[0]).toEqual({ status: "failed", error_message: "current denial" })
   })
 
   test("enclave sealed output denial and missing trigger identity fail the session once", async () => {
@@ -1858,7 +1871,7 @@ describe("deferred generated output authority", () => {
         pool,
         io,
         eventService: new EventService(pool),
-        costService: { recordUsage: async () => undefined },
+        costService: createNoOpCostService(),
       })
       const { res } = responseRecorder()
       const req = {
@@ -1886,7 +1899,7 @@ describe("deferred generated output authority", () => {
       expect(rows.rows[0]).toEqual({
         session_status: "failed",
         session_error: `STREAM_READ_ONLY:${
-          scenario === "archived" ? "archived" : scenario === "removed" ? "not_a_member" : "missing_initiating_user"
+          { archived: "archived", removed: "not_a_member", missing_identity: "missing_initiating_user" }[scenario]
         }`,
         persona_messages: "0",
         failed_events: "1",
@@ -1936,7 +1949,7 @@ describe("deferred generated output authority", () => {
       pool,
       io: { to: () => ({ emit: () => undefined }) } as unknown as PublicApiDeps["io"],
       eventService: new EventService(pool),
-      costService: { recordUsage: async () => undefined },
+      costService: createNoOpCostService(),
     })
     const { res } = responseRecorder()
     const request = {
@@ -2032,10 +2045,11 @@ describe("deferred generated output authority", () => {
       await writer.query("COMMIT")
       await revoke
       await revoker.query("COMMIT")
-      expect(
-        (await pool.query("SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id=$2", [target, botId])).rows[0]
-          .count
-      ).toBe("1")
+      const botMessages = await pool.query("SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id=$2", [
+        target,
+        botId,
+      ])
+      expect(botMessages.rows[0].count).toBe("1")
       await expect(
         new EventService(pool).createGeneratedMessage(
           { kind: "bot", botId },
@@ -2092,14 +2106,11 @@ describe("deferred generated output authority", () => {
       await writer.query("COMMIT")
       await removal
       await remover.query("COMMIT")
-      expect(
-        (
-          await pool.query(
-            "SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id='persona_member_contention'",
-            [target]
-          )
-        ).rows[0].count
-      ).toBe("1")
+      const personaMessages = await pool.query(
+        "SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id='persona_member_contention'",
+        [target]
+      )
+      expect(personaMessages.rows[0].count).toBe("1")
       await expect(generatedSend(target, member)).rejects.toMatchObject({ code: "STREAM_NOT_FOUND" })
     } finally {
       await writer.query("ROLLBACK").catch(() => {})
@@ -2143,13 +2154,11 @@ describe("deferred generated output authority", () => {
       await writer.query("COMMIT")
       await archive
       await archiver.query("COMMIT")
-      expect(
-        (
-          await pool.query("SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id='persona_contended'", [
-            target,
-          ])
-        ).rows[0].count
-      ).toBe("1")
+      const personaMessages = await pool.query(
+        "SELECT count(*) FROM messages WHERE stream_id=$1 AND author_id='persona_contended'",
+        [target]
+      )
+      expect(personaMessages.rows[0].count).toBe("1")
       await expect(generatedSend(target, member)).rejects.toMatchObject(rejection("archived"))
     } finally {
       await writer.query("ROLLBACK").catch(() => {})

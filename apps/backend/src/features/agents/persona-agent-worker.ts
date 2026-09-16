@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { Pool } from "pg"
 import type { PersonaAgentJobData, JobHandler } from "../../lib/queue"
 import { JobQueues } from "../../lib/queue"
@@ -7,6 +8,10 @@ import type { PersonaAgentInput, PersonaAgentResult } from "./persona-agent"
 import { resolveTurnPurpose } from "./turn-purpose"
 import { StreamEventRepository } from "../streams"
 import { logger } from "../../lib/logger"
+import { ORPHAN_SESSION_STALE_SECONDS } from "./orphan-session-cleanup"
+
+/** Past the stale threshold, so the deferred job either takes over a dead executor or finds the session finished; also the minimum deferral. */
+const BUSY_DEFER_MARGIN_MS = 5_000
 
 export interface PersonaAgentLike {
   run(input: PersonaAgentInput): Promise<PersonaAgentResult>
@@ -65,6 +70,29 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
       attempt: job.attempt,
       maxAttempts: job.maxAttempts,
     })
+
+    if (result.status === "skipped" && result.skipReason === "session_busy" && result.busyHeartbeatAt) {
+      // Another live execution owns this session. Throwing would burn the fast
+      // queue retries against a turn that takes minutes; returning would drop
+      // the trigger if that executor dies. Re-send the same payload once the
+      // owner would count as orphaned, never sooner than the margin so clock
+      // skew between the queue and the heartbeat cannot spin. The id derives
+      // from this job, so its redelivery enqueues nothing new while the deferred
+      // copy, a different job, can still defer again.
+      const processAfter = new Date(
+        Math.max(
+          result.busyHeartbeatAt.getTime() + ORPHAN_SESSION_STALE_SECONDS * 1000 + BUSY_DEFER_MARGIN_MS,
+          Date.now() + BUSY_DEFER_MARGIN_MS
+        )
+      )
+      const deferredId = `queue_busy_${createHash("sha256").update(job.id).digest("hex").slice(0, 32)}`
+      await jobQueue.send(JobQueues.PERSONA_AGENT, job.data, { processAfter, messageId: deferredId })
+      logger.info(
+        { jobId: job.id, deferredId, sessionId: result.sessionId, processAfter },
+        "Persona agent session busy, deferred"
+      )
+      return
+    }
 
     if (result.status === "failed") {
       // A retryable failure re-throws so the queue retries the same session. When the

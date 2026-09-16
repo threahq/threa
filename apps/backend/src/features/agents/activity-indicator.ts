@@ -37,6 +37,7 @@ export function emitAgentActivityStarted(
     /** The session's own stream — the thread the parent row links to. */
     threadStreamId: string
     target: ParentActivityTarget
+    executionGeneration?: number
   }
 ): void {
   io.to(`ws:${params.workspaceId}:stream:${params.target.parentStreamId}`).emit("agent_session:activity_started", {
@@ -45,6 +46,7 @@ export function emitAgentActivityStarted(
     personaName: params.personaName,
     threadStreamId: params.threadStreamId,
     parentMessageId: params.target.parentMessageId,
+    executionGeneration: params.executionGeneration,
   })
 }
 
@@ -66,11 +68,13 @@ export function emitAgentActivityEnded(
     parentStreamId: string | null | undefined
     sessionId: string
     triggerMessageId: string
+    executionGeneration?: number
   }
 ): void {
   if (!params.parentStreamId || params.parentStreamId === params.streamId) return
   io.to(`ws:${params.workspaceId}:stream:${params.parentStreamId}`).emit("agent_session:activity_ended", {
     sessionId: params.sessionId,
     triggerMessageId: params.triggerMessageId,
+    executionGeneration: params.executionGeneration,
   })
 }

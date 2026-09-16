@@ -1,7 +1,8 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
 import type { AgentStepType, AgentToolEffect, ToolVerificationStatus, TraceSource } from "@threahq/types"
-import { AgentSessionRepository } from "./session-repository"
+import { withTransaction } from "../../db"
+import { AgentSessionRepository, CompanionExecutionLostError, type CompanionExecutionRef } from "./session-repository"
 import { emitAgentActivityEnded, emitAgentActivityStarted } from "./activity-indicator"
 import { stepId as generateStepId } from "../../lib/id"
 
@@ -15,7 +16,8 @@ interface TraceEmitterDeps {
  * Handles step lifecycle (start → progress → complete) with:
  * - DB persistence for start and complete (crash-resilient)
  * - Socket emission for real-time UI updates
- * - No held connections (each DB write is a single query via pool)
+ * - No held connections (each DB write is one short transaction)
+ * - Durable writes commit only while the claimed execution still holds the session
  */
 export class TraceEmitter {
   constructor(private readonly deps: TraceEmitterDeps) {}
@@ -26,6 +28,13 @@ export class TraceEmitter {
     streamId: string
     triggerMessageId: string
     personaName: string
+    /**
+     * The generation this execution claimed; every socket frame carries it so
+     * clients can drop a replaced generation's late frames. Null only for a
+     * terminal row no generation can reclaim: its frames apply unconditionally
+     * and it never persists a step.
+     */
+    executionGeneration: number | null
     /**
      * When the session runs in a thread: the parent stream's id, so inline
      * indicator events (activity/progress/substeps) also reach viewers of the
@@ -63,6 +72,7 @@ export class SessionTrace {
       streamId: string
       triggerMessageId: string
       personaName: string
+      executionGeneration: number | null
       parentStreamId?: string
       parentMessageId?: string
     }
@@ -80,24 +90,29 @@ export class SessionTrace {
     this.stepNumber++
     if (params.stepType === "message_sent" || params.stepType === "message_edited") this.messageCount++
     const now = new Date()
+    if (this.params.executionGeneration === null) {
+      throw new Error(`Trace handle for session ${this.params.sessionId} has no execution to persist steps for`)
+    }
+    const execution = { sessionId: this.params.sessionId, generation: this.params.executionGeneration }
 
-    const step = await AgentSessionRepository.upsertStep(this.deps.pool, {
-      id: generateStepId(),
-      sessionId: this.params.sessionId,
-      stepNumber: this.stepNumber,
-      stepType: params.stepType,
-      content: params.content,
-      startedAt: now,
+    const step = await writeForExecution(this.deps.pool, execution, this.params.workspaceId, async (tx) => {
+      const upserted = await AgentSessionRepository.upsertStep(tx, {
+        id: generateStepId(),
+        sessionId: this.params.sessionId,
+        stepNumber: this.stepNumber,
+        stepType: params.stepType,
+        content: params.content,
+        startedAt: now,
+      })
+      // Current step type for cross-stream display, from the persisted row.
+      await AgentSessionRepository.updateCurrentStepType(tx, this.params.sessionId, upserted.stepType)
+      return upserted
     })
     const stepId = step.id
     const startedAt = step.startedAt ?? now
     const stepNumber = step.stepNumber
     const stepType = step.stepType
     const stepContent = step.content ?? params.content
-
-    // Update session's current step type for cross-stream display
-    // Use DB-returned stepType for consistency with persisted value
-    await AgentSessionRepository.updateCurrentStepType(this.deps.pool, this.params.sessionId, stepType)
 
     // Emit to session room (detailed, for trace dialog)
     this.deps.io.to(this.sessionRoom).emit("agent_session:step:started", {
@@ -126,6 +141,7 @@ export class SessionTrace {
       currentStepType: stepType,
       threadStreamId: this.params.parentStreamId ? this.params.streamId : undefined,
       parentMessageId: this.params.parentMessageId,
+      executionGeneration: this.generationOnWire(),
     }
     let target = this.deps.io.to(this.streamRoom)
     if (this.parentRoom) {
@@ -135,7 +151,8 @@ export class SessionTrace {
 
     return new ActiveStep(this.deps, {
       stepId,
-      sessionId: this.params.sessionId,
+      execution,
+      workspaceId: this.params.workspaceId,
       sessionRoom: this.sessionRoom,
       startedAt,
     })
@@ -173,10 +190,15 @@ export class SessionTrace {
     this.deps.io.to(this.sessionRoom).emit("agent_session:substep", payload)
   }
 
+  private generationOnWire(): number | undefined {
+    return this.params.executionGeneration ?? undefined
+  }
+
   /** Notify session room that session completed. Socket only. */
   notifyCompleted(): void {
     this.deps.io.to(this.sessionRoom).emit("agent_session:completed", {
       sessionId: this.params.sessionId,
+      executionGeneration: this.generationOnWire(),
     })
   }
 
@@ -184,6 +206,7 @@ export class SessionTrace {
   notifyFailed(): void {
     this.deps.io.to(this.sessionRoom).emit("agent_session:failed", {
       sessionId: this.params.sessionId,
+      executionGeneration: this.generationOnWire(),
     })
   }
 
@@ -197,6 +220,7 @@ export class SessionTrace {
       personaName: this.params.personaName,
       threadStreamId: this.params.streamId,
       target: { parentStreamId: this.params.parentStreamId, parentMessageId: this.params.parentMessageId },
+      executionGeneration: this.generationOnWire(),
     })
   }
 
@@ -208,8 +232,22 @@ export class SessionTrace {
       parentStreamId: this.params.parentStreamId,
       sessionId: this.params.sessionId,
       triggerMessageId: this.params.triggerMessageId,
+      executionGeneration: this.generationOnWire(),
     })
   }
+}
+
+/** One short transaction that commits `write` only while `execution` holds the session. */
+function writeForExecution<T>(
+  pool: Pool,
+  execution: CompanionExecutionRef,
+  workspaceId: string,
+  write: (tx: PoolClient) => Promise<T>
+): Promise<T> {
+  return withTransaction(pool, async (tx) => {
+    await AgentSessionRepository.lockHeldExecution(tx, execution, { workspaceId })
+    return write(tx)
+  })
 }
 
 /**
@@ -221,16 +259,21 @@ export class ActiveStep {
     private readonly deps: TraceEmitterDeps,
     private readonly params: {
       stepId: string
-      sessionId: string
+      execution: CompanionExecutionRef
+      workspaceId: string
       sessionRoom: string
       startedAt: Date
     }
   ) {}
 
+  private write<T>(update: (tx: PoolClient) => Promise<T>): Promise<T> {
+    return writeForExecution(this.deps.pool, this.params.execution, this.params.workspaceId, update)
+  }
+
   /** Ephemeral progress update. Socket only, not persisted. */
   progress(data: { content?: string }): void {
     this.deps.io.to(this.params.sessionRoom).emit("agent_session:step:progress", {
-      sessionId: this.params.sessionId,
+      sessionId: this.params.execution.sessionId,
       stepId: this.params.stepId,
       content: data.content,
     })
@@ -263,10 +306,18 @@ export class ActiveStep {
     // `complete()` finalized the row — it must not overwrite the final
     // content with a mid-run partial. Once finalized this no-ops, the same
     // guard the enclave's substep-snapshot path uses.
-    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
-      content: JSON.stringify({ substeps }),
-      requireRunning: true,
-    })
+    // A snapshot from an execution that lost the session is dropped, never written over the replacement's step.
+    try {
+      await this.write((tx) =>
+        AgentSessionRepository.updateStep(tx, this.params.stepId, {
+          content: JSON.stringify({ substeps }),
+          requireRunning: true,
+        })
+      )
+    } catch (err) {
+      if (err instanceof CompanionExecutionLostError) return
+      throw err
+    }
   }
 
   /**
@@ -278,12 +329,14 @@ export class ActiveStep {
    * moves through both states rather than two rows.
    */
   async verify(params: { status: ToolVerificationStatus; reason?: string }): Promise<void> {
-    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
-      verification: { status: params.status, ...(params.reason ? { reason: params.reason } : {}) },
-    })
+    await this.write((tx) =>
+      AgentSessionRepository.updateStep(tx, this.params.stepId, {
+        verification: { status: params.status, ...(params.reason ? { reason: params.reason } : {}) },
+      })
+    )
 
     this.deps.io.to(this.params.sessionRoom).emit("agent_session:step:verification", {
-      sessionId: this.params.sessionId,
+      sessionId: this.params.execution.sessionId,
       stepId: this.params.stepId,
       verification: { status: params.status, reason: params.reason },
     })
@@ -297,7 +350,7 @@ export class ActiveStep {
    * the `agent_session:step:completed` frame the live trace already consumes.
    */
   async effects(effects: AgentToolEffect[]): Promise<void> {
-    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, { effects })
+    await this.write((tx) => AgentSessionRepository.updateStep(tx, this.params.stepId, { effects }))
   }
 
   /** Complete the step. Persists to DB + emits to socket. */
@@ -313,15 +366,17 @@ export class ActiveStep {
     const completedAt =
       params?.durationMs !== undefined ? new Date(this.params.startedAt.getTime() + params.durationMs) : new Date()
 
-    const updated = await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
-      content: params?.content,
-      sources: params?.sources,
-      messageId: params?.messageId,
-      completedAt,
-    })
+    const updated = await this.write((tx) =>
+      AgentSessionRepository.updateStep(tx, this.params.stepId, {
+        content: params?.content,
+        sources: params?.sources,
+        messageId: params?.messageId,
+        completedAt,
+      })
+    )
 
     this.deps.io.to(this.params.sessionRoom).emit("agent_session:step:completed", {
-      sessionId: this.params.sessionId,
+      sessionId: this.params.execution.sessionId,
       step: updated
         ? {
             id: updated.id,

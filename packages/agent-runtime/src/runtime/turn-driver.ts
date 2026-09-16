@@ -1,6 +1,7 @@
 import type { LanguageModel, ModelMessage } from "ai"
 import type { AuthorType, BotInvocationCapability, BotInvocationTrigger, SourceItem } from "@threahq/types"
 import type { CostContext } from "../ai/ai"
+import type { SpendingContext } from "../ai/spending"
 import {
   AgentRuntime,
   type AgentRuntimeAI,
@@ -124,6 +125,8 @@ export interface TurnRequest {
   initialContext?: AgentRuntimeConfig["initialContext"]
   telemetry?: AgentRuntimeConfig["telemetry"]
   costContext?: CostContext
+  /** Root funding context for a spending-gated host; the loop derives each call's request key. */
+  spending?: SpendingContext
   allowNoMessageOutput?: boolean
   validateFinalResponse?: AgentRuntimeConfig["validateFinalResponse"]
   /**
@@ -288,6 +291,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
     initialContext: request.initialContext,
     telemetry: request.telemetry,
     costContext: request.costContext,
+    spending: request.spending,
     allowNoMessageOutput: request.allowNoMessageOutput,
     validateFinalResponse: composeOutputValidator(
       request.tools.map((t) => t.name),

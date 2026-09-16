@@ -10,6 +10,7 @@ import {
   type VoiceTranscriptReplacementV4,
 } from "@threahq/types"
 import { voiceApi } from "@/api/voice"
+import { ApiError } from "@/api/client"
 import { parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
@@ -1043,10 +1044,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         // The user already stopped this take while we were setting up — don't
         // surface a late setup error against a session they've abandoned.
         if (generation !== startGenerationRef.current) return
-        const message =
-          err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError")
-            ? "Microphone access was denied"
-            : "Couldn't start dictation"
+        let message = "Couldn't start dictation"
+        if (ApiError.isApiError(err) && err.code === "AI_SPENDING_DENIED") {
+          message = "Dictation is unavailable with this workspace's current AI spending controls."
+        } else if (err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
+          message = "Microphone access was denied"
+        }
         fail(message)
       }
     })()

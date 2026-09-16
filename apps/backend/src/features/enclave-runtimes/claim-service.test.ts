@@ -105,7 +105,12 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
 }
 
 function service() {
-  return new EnclaveClaimService({ pool, storage: FAKE_STORAGE, userPreferencesService: FAKE_PREFERENCES })
+  return new EnclaveClaimService({
+    pool,
+    storage: FAKE_STORAGE,
+    userPreferencesService: FAKE_PREFERENCES,
+    spendingPolicy: { assertUnprotected: async () => {} },
+  })
 }
 
 describe("EnclaveClaimService.claimTurn", () => {
@@ -298,6 +303,7 @@ describe("EnclaveClaimService.claimTurn", () => {
       pool,
       storage: { getObject } as unknown as StorageProvider,
       userPreferencesService: FAKE_PREFERENCES,
+      spendingPolicy: { assertUnprotected: async () => {} },
     })
     const assignment = await svc.claimTurn("eik_live")
 

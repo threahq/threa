@@ -149,7 +149,7 @@ export default defineConfig({
       name: "chromium",
       // The calls suite needs fake-media launch flags + granted mic/camera, so it
       // runs as its own project below; keep it out of the default project.
-      testIgnore: ["**/calls.spec.ts", "**/calls-p2p-groups.spec.ts", "**/p2p-rtc.spec.ts"],
+      testIgnore: ["**/calls.spec.ts", "**/calls-p2p-groups.spec.ts", "**/p2p-rtc.spec.ts", "**/ai-spending.spec.ts"],
       use: { ...devices["Desktop Chrome"] },
     },
     {

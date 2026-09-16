@@ -31,6 +31,9 @@ function makeRunningSession(overrides?: Partial<AgentSession>): AgentSession {
     episodeSummary: null,
     responseValidationFailed: false,
     reflectiveCapturedAt: null,
+    initiatingUserId: null,
+    executionGeneration: 1,
+    stopReason: null,
     createdAt: new Date("2026-02-19T12:00:00.000Z"),
     completedAt: null,
     ...overrides,
@@ -55,13 +58,16 @@ describe("withCompanionSession", () => {
       episodeSummary: null,
       responseValidationFailed: false,
       reflectiveCapturedAt: null,
+      initiatingUserId: null,
+      executionGeneration: 1,
+      stopReason: null,
       responseMessageId: "msg_agent_1",
       lastSeenSequence: 11n,
       completedAt: new Date("2026-02-19T12:01:00.000Z"),
     })
 
     mockTransactions()
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(session)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(completedSession)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
@@ -92,6 +98,7 @@ describe("withCompanionSession", () => {
         personaId: "persona_1",
         personaName: "Ariadne",
         workspaceId: "ws_1",
+        initiatingUserId: "usr_1",
         serverId: "server_1",
         initialSequence: 10n,
       },
@@ -108,6 +115,7 @@ describe("withCompanionSession", () => {
       messagesSent: 1,
       sentMessageIds: ["msg_agent_1"],
       lastSeenSequence: 11n,
+      committedGeneration: 1,
     })
     expect(findByIdSpy).not.toHaveBeenCalled()
   })
@@ -117,7 +125,7 @@ describe("withCompanionSession", () => {
     const stepsSpy = spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
 
     mockTransactions()
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(session)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(
@@ -147,6 +155,7 @@ describe("withCompanionSession", () => {
         personaId: "persona_1",
         personaName: "Ariadne",
         workspaceId: "ws_1",
+        initiatingUserId: "usr_1",
         serverId: "server_1",
         initialSequence: 10n,
       },
@@ -168,13 +177,13 @@ describe("withCompanionSession", () => {
   it("does not resume when guarded RUNNING transition loses to terminal status change", async () => {
     mockTransactions()
 
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(
+    spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(
       makeRunningSession({
         status: SessionStatuses.FAILED,
         completedAt: new Date("2026-02-19T12:01:00.000Z"),
       })
     )
-    const updateStatusSpy = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
+    const claimSpy = spyOn(AgentSessionRepository, "claimExecution").mockResolvedValue(null)
     const insertRunningSpy = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null)
     const insertEventSpy = spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
     const insertOutboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
@@ -187,6 +196,7 @@ describe("withCompanionSession", () => {
         personaId: "persona_1",
         personaName: "Ariadne",
         workspaceId: "ws_1",
+        initiatingUserId: "usr_1",
         serverId: "server_1",
         initialSequence: 10n,
       },
@@ -202,14 +212,7 @@ describe("withCompanionSession", () => {
       sessionId: null,
       reason: "failed to resume session",
     })
-    expect(updateStatusSpy).toHaveBeenCalledWith(
-      {},
-      "session_1",
-      SessionStatuses.RUNNING,
-      expect.objectContaining({
-        onlyIfStatusIn: [SessionStatuses.RUNNING, SessionStatuses.PENDING, SessionStatuses.FAILED],
-      })
-    )
+    expect(claimSpy).toHaveBeenCalledWith({}, "session_1", { serverId: "server_1", staleThresholdSeconds: 60 })
     expect(insertRunningSpy).not.toHaveBeenCalled()
     expect(insertEventSpy).not.toHaveBeenCalled()
     expect(insertOutboxSpy).not.toHaveBeenCalled()
@@ -221,11 +224,12 @@ describe("withCompanionSession", () => {
   ) {
     const session = makeRunningSession()
     mockTransactions()
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(session)
     // The catch checks the latest status (not DELETED/SUPERSEDED) before failing.
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(session)
-    spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
+    spyOn(AgentSessionRepository, "findByIdForUpdate").mockResolvedValue(session)
+    spyOn(AgentSessionRepository, "failExecution").mockResolvedValue(
       makeRunningSession({ status: SessionStatuses.FAILED })
     )
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
@@ -240,6 +244,7 @@ describe("withCompanionSession", () => {
         personaId: "persona_1",
         personaName: "Ariadne",
         workspaceId: "ws_1",
+        initiatingUserId: "usr_1",
         serverId: "server_1",
         initialSequence: 10n,
         ...retryAccounting,
@@ -254,7 +259,13 @@ describe("withCompanionSession", () => {
   it("emits a non-terminal agent_session:interrupted on a retryable failure", async () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 0, maxAttempts: 5 })
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: true, retryable: true })
+    expect(result).toEqual({
+      status: "failed",
+      sessionId: "session_1",
+      willRetry: true,
+      retryable: true,
+      committedGeneration: 1,
+    })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -274,7 +285,13 @@ describe("withCompanionSession", () => {
         denial
       )
 
-      expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: false })
+      expect(result).toEqual({
+        status: "failed",
+        sessionId: "session_1",
+        willRetry: false,
+        retryable: false,
+        committedGeneration: 1,
+      })
       expect(insertEventSpy.mock.calls.filter(([, event]) => event.eventType === "agent_session:failed")).toHaveLength(
         1
       )
@@ -286,7 +303,13 @@ describe("withCompanionSession", () => {
   it("emits terminal agent_session:failed on the last attempt", async () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 4, maxAttempts: 5 })
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: true })
+    expect(result).toEqual({
+      status: "failed",
+      sessionId: "session_1",
+      willRetry: false,
+      retryable: true,
+      committedGeneration: 1,
+    })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ eventType: "agent_session:failed" })
@@ -307,7 +330,13 @@ describe("withCompanionSession", () => {
       providerError
     )
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: false })
+    expect(result).toEqual({
+      status: "failed",
+      sessionId: "session_1",
+      willRetry: false,
+      retryable: false,
+      committedGeneration: 1,
+    })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ eventType: "agent_session:failed" })
@@ -322,7 +351,13 @@ describe("withCompanionSession", () => {
   it("treats a failure as terminal when retry accounting is absent (non-queue callers)", async () => {
     const { result, insertEventSpy } = await runFailingSession()
 
-    expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: true })
+    expect(result).toEqual({
+      status: "failed",
+      sessionId: "session_1",
+      willRetry: false,
+      retryable: true,
+      committedGeneration: 1,
+    })
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ eventType: "agent_session:failed" })
@@ -345,7 +380,7 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
 
   it("keys each session on its addressed stream id, so a channel and its thread occupy distinct slots and both run", async () => {
     mockTransactions()
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(null)
     const insertSpy = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockImplementation(async (_db, params) =>
       makeRunningSession({ id: `session_${params.streamId}`, streamId: params.streamId })
     )
@@ -361,6 +396,7 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
       personaId: "persona_1",
       personaName: "Ariadne",
       workspaceId: "ws_1",
+      initiatingUserId: "usr_1",
       serverId: "server_1",
       initialSequence: 10n,
     }
@@ -404,8 +440,10 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
     // No prior session for this trigger message, but a concurrent turn already
     // holds the thread's running slot, so INSERT ... ON CONFLICT DO NOTHING
     // returns no row.
-    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "lockCompanionTurn").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null)
+    // The slot belongs to another trigger's turn, not a concurrent delivery of this one.
+    spyOn(AgentSessionRepository, "listByTriggerMessage").mockResolvedValue([])
     const eventSpy = spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
@@ -417,6 +455,7 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
         personaId: "persona_1",
         personaName: "Ariadne",
         workspaceId: "ws_1",
+        initiatingUserId: "usr_1",
         serverId: "server_1",
         initialSequence: 10n,
       },

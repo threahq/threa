@@ -53,6 +53,7 @@ import {
 export interface ToolSetConfig {
   enabledTools: string[] | null
   tavilyApiKey?: string
+  beforeWebSearch?: () => Promise<void>
   /** Invocation time used to ground current/latest/recent web searches. */
   currentTime?: string
   timezone?: string
@@ -184,7 +185,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
 
     tavilyApiKey && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
-      ? createWebSearchTool({ tavilyApiKey, currentTime, timezone })
+      ? createWebSearchTool({ tavilyApiKey, currentTime, timezone, beforeRequest: config.beforeWebSearch })
       : null,
     isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision }) : null,
 

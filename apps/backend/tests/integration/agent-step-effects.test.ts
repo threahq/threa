@@ -38,9 +38,15 @@ describe("agent step effects", () => {
   })
 
   async function seedSession(client: Parameters<typeof AgentSessionRepository.insert>[0], id: string) {
+    const sessionStreamId = streamId()
+    // Trace writes lock the session through its stream's workspace, so the stream row must exist.
+    await client.query(
+      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, 'ws_1', 'scratchpad', 'private', 'usr_1')",
+      [sessionStreamId]
+    )
     await AgentSessionRepository.insert(client, {
       id,
-      streamId: streamId(),
+      streamId: sessionStreamId,
       personaId: personaId(),
       triggerMessageId: messageId(),
       status: SessionStatuses.RUNNING,
@@ -276,6 +282,7 @@ describe("agent step effects", () => {
         streamId: "stream_1",
         triggerMessageId: "msg_1",
         personaName: "Ariadne",
+        executionGeneration: 0,
       })
       const active = await trace.startStep({ stepType: AgentStepTypes.TOOL_CALL })
       const [started] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
@@ -321,6 +328,7 @@ describe("agent step effects", () => {
         streamId: "stream_1",
         triggerMessageId: "msg_1",
         personaName: "Ariadne",
+        executionGeneration: 0,
       })
       const projector = createSessionTraceProjector(trace)
 
@@ -359,6 +367,7 @@ describe("agent step effects", () => {
         streamId: "stream_1",
         triggerMessageId: "msg_1",
         personaName: "Ariadne",
+        executionGeneration: 0,
       })
       const projector = createSessionTraceProjector(trace)
 

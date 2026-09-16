@@ -2293,6 +2293,7 @@ export interface AIBudgetConfig {
 }
 
 export interface AIBudgetResponse {
+  spendingControlsActive: boolean
   budget: AIBudgetConfig | null
   currentUsage: AIUsageSummary
   percentUsed: number

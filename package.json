@@ -78,12 +78,12 @@
   },
   "lint-staged": {
     "!(.agents|.claude)/**/*.{js,jsx,ts,tsx,json,css,md,html}": "prettier --write",
-    "apps/backend/{src,tests}/**/*.{ts,tsx}": "apps/backend/node_modules/.bin/eslint",
-    "apps/frontend/{src,tests}/**/*.{ts,tsx}": "apps/frontend/node_modules/.bin/eslint",
-    "apps/enclave/{src,tests}/**/*.{ts,tsx}": "apps/enclave/node_modules/.bin/eslint",
-    "apps/backoffice/{src,tests}/**/*.{ts,tsx}": "apps/backoffice/node_modules/.bin/eslint",
-    "apps/control-plane/{src,tests}/**/*.{ts,tsx}": "apps/control-plane/node_modules/.bin/eslint",
-    "apps/db-read-proxy/{src,tests}/**/*.{ts,tsx}": "apps/db-read-proxy/node_modules/.bin/eslint"
+    "apps/backend/{src,tests}/**/*.{ts,tsx}": "sh -c 'cd apps/backend && exec node_modules/.bin/eslint \"$@\"' --",
+    "apps/frontend/{src,tests}/**/*.{ts,tsx}": "sh -c 'cd apps/frontend && exec node_modules/.bin/eslint \"$@\"' --",
+    "apps/enclave/{src,tests}/**/*.{ts,tsx}": "sh -c 'cd apps/enclave && exec node_modules/.bin/eslint \"$@\"' --",
+    "apps/backoffice/{src,tests}/**/*.{ts,tsx}": "sh -c 'cd apps/backoffice && exec node_modules/.bin/eslint \"$@\"' --",
+    "apps/control-plane/{src,tests}/**/*.{ts,tsx}": "sh -c 'cd apps/control-plane && exec node_modules/.bin/eslint \"$@\"' --",
+    "apps/db-read-proxy/{src,tests}/**/*.{ts,tsx}": "sh -c 'cd apps/db-read-proxy && exec node_modules/.bin/eslint \"$@\"' --"
   },
   "dependencies": {
     "limax": "^4.2.2",

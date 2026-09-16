@@ -1,4 +1,11 @@
-import type { AgentSessionStatus, AgentStepType, AuthoredByKind, ToolVerificationStatus } from "./constants"
+import type {
+  AgentSessionStatus,
+  AgentSessionStopReason,
+  AgentStepType,
+  AuthoredByKind,
+  ToolVerificationStatus,
+} from "./constants"
+import type { AISpendingDenialCode, AISpendingStage } from "./ai-spending"
 import type { AgentToolEffect } from "./tool-effects"
 
 export const TRACE_SOURCE_TYPES = ["web", "workspace", "workspace_message", "workspace_memo", "github"] as const
@@ -97,6 +104,7 @@ export interface AgentSessionStep {
 
 // Agent session (wire format for API responses)
 export interface AgentSession {
+  stopReason?: AgentSessionStopReason | null
   id: string
   streamId: string
   personaId: string
@@ -150,6 +158,13 @@ export interface AgentSessionProgressPayload {
    * inside the thread), so the inline indicator keys off this instead.
    */
   parentMessageId?: string
+  /**
+   * The execution generation that emitted this ephemeral frame. A newer generation
+   * can reclaim the same session id after a failure, so clients drop a frame older
+   * than the newest generation they have seen for the session. Hosts without
+   * generations omit it, and such frames apply unconditionally.
+   */
+  executionGeneration?: number
 }
 
 // Stream event payloads for agent session lifecycle
@@ -180,6 +195,17 @@ export interface AgentSessionCompletedPayload {
   completedAt: string
 }
 
+/**
+ * Public cause of a spending stop. It rides a stream-broadcast event, so it is a
+ * closed shape: never amounts, attempt ids, receipts or other ledger detail.
+ */
+export interface AgentSessionSpendingStop {
+  reason: AgentSessionStopReason
+  /** Only for `spending_denied`. */
+  code?: AISpendingDenialCode
+  stage?: AISpendingStage
+}
+
 export interface AgentSessionFailedPayload {
   sessionId: string
   stepCount: number
@@ -187,6 +213,8 @@ export interface AgentSessionFailedPayload {
   traceId: string
   effects?: AgentToolEffect[]
   failedAt: string
+  /** Present only when the session stopped for a spending reason; redelivery never reopens it. */
+  spendingStop?: AgentSessionSpendingStop
 }
 
 /**
@@ -250,6 +278,8 @@ export interface StepVerificationPayload {
 
 export interface SessionTerminalPayload {
   sessionId: string
+  /** Emitting execution generation; see AgentSessionProgressPayload. */
+  executionGeneration?: number
 }
 
 /**
@@ -296,10 +326,14 @@ export interface AgentActivityStartedPayload {
   threadStreamId: string
   /** The thread's parent message id — keys the indicator in the parent stream's timeline (see AgentSessionProgressPayload). */
   parentMessageId?: string
+  /** Emitting execution generation; see AgentSessionProgressPayload. */
+  executionGeneration?: number
 }
 
 // Emitted to channel room when agent session ends (for inline indicator cleanup)
 export interface AgentActivityEndedPayload {
   sessionId: string
   triggerMessageId: string
+  /** Emitting execution generation; see AgentSessionProgressPayload. */
+  executionGeneration?: number
 }

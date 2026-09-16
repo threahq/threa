@@ -8,6 +8,7 @@ export interface SessionAbortContext {
 interface RegistryEntry {
   controller: AbortController
   context: SessionAbortContext
+  generation: number
 }
 
 /**
@@ -33,16 +34,21 @@ export class SessionAbortRegistry {
    * caller can pass its signal to the tool. If an entry already exists for the
    * session, the existing entry is returned (idempotent) — this allows the tool
    * layer's `toolSignalProvider` and the `runWorkspaceAgent` closure to both call
-   * `register` without racing.
+   * `register` without racing. The entry belongs to one execution generation: a
+   * newer generation replaces an older entry, and an older one never takes over
+   * a newer entry.
    */
-  register(sessionId: string, context: SessionAbortContext): AbortController {
+  register(sessionId: string, context: SessionAbortContext, generation: number): AbortController {
     const existing = this.entries.get(sessionId)
-    if (existing && !existing.controller.signal.aborted) {
+    if (existing && existing.generation > generation) {
+      return new AbortController()
+    }
+    if (existing && existing.generation === generation && !existing.controller.signal.aborted) {
       return existing.controller
     }
 
     const controller = new AbortController()
-    this.entries.set(sessionId, { controller, context })
+    this.entries.set(sessionId, { controller, context, generation })
     return controller
   }
 
@@ -69,10 +75,10 @@ export class SessionAbortRegistry {
   }
 
   /**
-   * Remove the registry entry for a session. Safe to call multiple times.
-   * Should be called once the session ends so the registry doesn't leak entries.
+   * Remove the registry entry for a session if `generation` still owns it. Safe
+   * to call multiple times; a replaced execution's cleanup leaves the newer entry.
    */
-  unregister(sessionId: string): void {
-    this.entries.delete(sessionId)
+  unregister(sessionId: string, generation: number): void {
+    if (this.entries.get(sessionId)?.generation === generation) this.entries.delete(sessionId)
   }
 }

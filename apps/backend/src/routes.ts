@@ -33,7 +33,12 @@ import { createWorkspaceSettingsHandlers } from "./features/workspace-settings"
 import { createSidebarConfigHandlers } from "./features/sidebar-config"
 import { createBoardViewHandlers, BoardViewService } from "./features/board-views"
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
-import { createAIUsageHandlers } from "./features/ai-usage"
+import {
+  createAIUsageHandlers,
+  createAISpendingInternalHandlers,
+  spendingErrorHandler,
+  type AISpendingService,
+} from "./features/ai-usage"
 import type { AICostServiceLike } from "./features/ai-usage"
 import type { AI } from "@threahq/agent-runtime"
 import { createInvitationHandlers } from "./features/invitations"
@@ -208,6 +213,7 @@ interface Dependencies {
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
   costService: AICostServiceLike
+  aiSpendingService: AISpendingService
   accessLogService: AccessLogService
   analyticsReporter: AnalyticsReporter
   posthog: PostHogConfig | null
@@ -368,7 +374,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
   const boardView = createBoardViewHandlers({ boardViewService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
-  const aiUsage = createAIUsageHandlers({ pool })
+  const aiUsage = createAIUsageHandlers({ pool, aiSpendingService: deps.aiSpendingService })
   const debug = createDebugHandlers({ pool, poolMonitor })
   const invitation = createInvitationHandlers({ invitationService })
   const activity = createActivityHandlers({ activityService })
@@ -415,6 +421,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     const internalAuth = createInternalAuthMiddleware(internalApiKey)
     const internal = createInternalHandlers({ workspaceService, invitationService })
     const githubWebhook = createGithubWebhookHandlers({ jobQueue })
+    const aiSpending = createAISpendingInternalHandlers({ aiSpendingService: deps.aiSpendingService })
 
     app.post("/internal/workspaces", internalAuth, internal.createWorkspace)
     app.post("/internal/invitations/:id/accept", internalAuth, internal.acceptInvitation)
@@ -423,6 +430,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
     app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
+    app.get("/internal/ai-spending/workspaces/:workspaceId", internalAuth, aiSpending.getWorkspace)
+    app.put("/internal/ai-spending/workspaces/:workspaceId", internalAuth, aiSpending.setWorkspacePolicy)
   }
 
   // Enclave runtime registry — gated by the dedicated enclave credential
@@ -2089,5 +2098,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // ships un-logged access.
   assertAuditCoverage(app)
 
+  app.use(spendingErrorHandler)
   app.use(createErrorHandler({ analyticsReporter }))
 }

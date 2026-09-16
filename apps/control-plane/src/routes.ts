@@ -21,6 +21,7 @@ import { createWaitlistHandlers, type WaitlistService } from "./features/waitlis
 import { createBotConnectHandlers, type BotConnectService } from "./features/bot-connect"
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
 import { createFeatureFlagHandlers, type ControlPlaneFeatureFlagService } from "./features/feature-flags"
+import { createAISpendingHandlers, type ControlPlaneAISpendingService } from "./features/ai-spending"
 import {
   createBackofficeAuthzAdminHandlers,
   createInternalAuthzAdminHandlers,
@@ -47,6 +48,7 @@ interface Dependencies {
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
   featureFlagService: ControlPlaneFeatureFlagService
+  aiSpendingService: ControlPlaneAISpendingService
   authLogService: AuthLogService
   internalApiKey: string
   allowDevAuthRoutes: boolean
@@ -70,6 +72,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     backofficeService,
     workosAuthzAdminService,
     featureFlagService,
+    aiSpendingService,
     authLogService,
     internalApiKey,
     allowDevAuthRoutes,
@@ -141,6 +144,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const integrationRoutes = createIntegrationRouteHandlers({ pool })
   const backoffice = createBackofficeHandlers({ backofficeService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
+  const aiSpending = createAISpendingHandlers({ aiSpendingService })
   const backofficeAuthz = createBackofficeAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const internalAuthz = createInternalAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const accounts = createAccountsHandlers({ accountsService })
@@ -246,6 +250,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/backoffice/outbox-events/status", auth, requirePlatformAdmin, backoffice.getOutboxEventsStatus)
   app.get("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.listWorkspaceFlags)
   app.put("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.setWorkspaceFlag)
+  app.get("/api/backoffice/workspaces/:id/ai-spending", auth, requirePlatformAdmin, aiSpending.getWorkspaceSpending)
+  app.put("/api/backoffice/workspaces/:id/ai-spending", auth, requirePlatformAdmin, aiSpending.setWorkspacePolicy)
   app.get("/api/backoffice/waitlist", auth, requirePlatformAdmin, backoffice.listWaitlist)
   app.get("/api/backoffice/workspaces/:id/invitations", auth, requirePlatformAdmin, backoffice.listWorkspaceInvitations)
   app.get(

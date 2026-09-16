@@ -2,6 +2,7 @@ import type { LanguageModel, ModelMessage, Tool, ToolResultPart } from "ai"
 import type { SourceItem, TraceSource } from "@threahq/types"
 import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview, resolveToolEffects } from "@threahq/types"
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
+import type { SpendingContext, SpendingRequest } from "../ai/spending"
 import { logger } from "../logger"
 import { protectToolOutputText } from "./tool-trust-boundary"
 import { stripEchoedPointerTag } from "./output-guard"
@@ -73,6 +74,13 @@ export interface AgentRuntimeConfig {
   telemetry?: { functionId: string; metadata?: Record<string, TelemetryMetadataValue> }
   /** Cost context forwarded to every AI call the runtime makes (enables usage recording). */
   costContext?: CostContext
+  /**
+   * Root funding context for a spending-gated host. Each model call funds a
+   * logical request keyed by its loop iteration, so a replay of the same turn
+   * operation reaches the same ledger attempts instead of buying them again.
+   * Hosts without a gate (the enclave, evals) omit it.
+   */
+  spending?: SpendingContext
 
   /**
    * Terminal action — sends a message to the conversation.
@@ -241,14 +249,22 @@ function makeToolResult(tc: { toolCallId: string; toolName: string }, value: str
   }
 }
 
+/** The loop's only paid step per iteration is its model call, so the iteration index names the logical request. */
+function agentLoopSpendingRequest(root: SpendingContext, iteration: number): SpendingRequest {
+  return { ...root, requestKey: `agent-loop:iteration:${iteration}` }
+}
+
 export class AgentRuntime {
   private readonly maxIterations: number
   private readonly observers: AgentObserver[]
   private readonly toolMap: Map<string, AgentTool>
   private readonly toolDefs: Record<string, Tool<any, any>>
+  /** Copied at construction: observers and the host run before the loop and must not re-point who pays. */
+  private readonly rootSpending: Readonly<SpendingContext> | undefined
 
   constructor(private readonly config: AgentRuntimeConfig) {
     this.maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS
+    this.rootSpending = config.spending ? Object.freeze({ ...config.spending }) : undefined
     this.observers = config.observers ?? []
     this.toolMap = new Map(config.tools.map((t) => [t.name, t]))
     this.toolDefs = this.buildToolDefs()
@@ -371,6 +387,7 @@ export class AgentRuntime {
     }
 
     let iterationsRun = 0
+    const { rootSpending } = this
     for (let iteration = 0; iteration < this.maxIterations; iteration++) {
       iterationsRun = iteration + 1
       const abortReason = await this.config.shouldAbort?.()
@@ -405,6 +422,7 @@ export class AgentRuntime {
           temperature: this.config.temperature ?? undefined,
           telemetry: this.config.telemetry,
           context: this.config.costContext,
+          ...(rootSpending ? { spending: agentLoopSpendingRequest(rootSpending, iteration) } : {}),
           abortSignal: this.config.runAbortSignal,
           // The loop re-sends tools + system prompt + conversation once per
           // iteration, so from the second iteration onward the prefix is read

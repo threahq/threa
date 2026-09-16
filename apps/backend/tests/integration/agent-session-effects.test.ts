@@ -68,6 +68,7 @@ describe("session lifecycle payloads carry the turn's effects", () => {
         personaId: personaId(),
         personaName: "Ariadne",
         workspaceId: workspaceId(),
+        initiatingUserId: userId(),
         serverId: "test-server",
         initialSequence: 1n,
         ...params,
@@ -178,6 +179,7 @@ describe("an orphaned session's terminal event carries its effects", () => {
     const testWorkspaceId = workspaceId()
     const testSessionId = sessionId()
     const testPersonaId = personaId()
+    const testTriggerId = messageId()
 
     await pool.query(
       `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
@@ -187,7 +189,7 @@ describe("an orphaned session's terminal event carries its effects", () => {
       id: testSessionId,
       streamId: testStreamId,
       personaId: testPersonaId,
-      triggerMessageId: messageId(),
+      triggerMessageId: testTriggerId,
       status: SessionStatuses.RUNNING,
     })
 
@@ -208,7 +210,7 @@ describe("an orphaned session's terminal event carries its effects", () => {
     const won = await failSessionWithLifecycle(
       pool,
       io,
-      { id: testSessionId, streamId: testStreamId, personaId: testPersonaId },
+      { id: testSessionId, streamId: testStreamId, personaId: testPersonaId, triggerMessageId: testTriggerId },
       "Session abandoned"
     )
     expect(won).toBe(true)

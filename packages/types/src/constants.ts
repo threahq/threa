@@ -1009,6 +1009,22 @@ export const AgentSessionStatuses = {
   SUPERSEDED: "superseded",
 } as const satisfies Record<string, AgentSessionStatus>
 
+/** Why a session stopped for good: a spending outcome no queue redelivery may reopen. */
+export const AGENT_SESSION_STOP_REASONS = [
+  "spending_denied",
+  "spending_outcome_unknown",
+  "spending_replay_blocked",
+  "spending_result_unavailable",
+] as const
+export type AgentSessionStopReason = (typeof AGENT_SESSION_STOP_REASONS)[number]
+
+export const AgentSessionStopReasons = {
+  SPENDING_DENIED: "spending_denied",
+  SPENDING_OUTCOME_UNKNOWN: "spending_outcome_unknown",
+  SPENDING_REPLAY_BLOCKED: "spending_replay_blocked",
+  SPENDING_RESULT_UNAVAILABLE: "spending_result_unavailable",
+} as const satisfies Record<string, AgentSessionStopReason>
+
 // PDF page classifications
 export const PDF_PAGE_CLASSIFICATIONS = ["text_rich", "scanned", "complex_layout", "mixed", "empty"] as const
 export type PdfPageClassification = (typeof PDF_PAGE_CLASSIFICATIONS)[number]

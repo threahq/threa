@@ -222,6 +222,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
     }
 
     const personaAgent = new PersonaAgent({
+      spendingPolicy: { assertUnprotected: async () => {} },
       configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,

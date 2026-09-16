@@ -25,12 +25,14 @@ function fakeIo() {
 }
 
 function sessionTrace(io: Server, overrides?: Partial<{ parentStreamId: string; parentMessageId: string }>) {
-  return new TraceEmitter({ io, pool: {} as Pool }).forSession({
+  const pool = { connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => {} }) }
+  return new TraceEmitter({ io, pool: pool as unknown as Pool }).forSession({
     sessionId: "session_1",
     workspaceId: "ws_1",
     streamId: "thread_1",
     triggerMessageId: "msg_trigger",
     personaName: "Ariadne",
+    executionGeneration: 1,
     ...overrides,
   })
 }
@@ -50,6 +52,7 @@ describe("SessionTrace parent-stream routing", () => {
       startedAt: new Date("2026-07-09T10:00:00.000Z"),
     } as never)
     spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined as never)
+    spyOn(AgentSessionRepository, "lockHeldExecution").mockResolvedValue(undefined)
 
     const { io, emits } = fakeIo()
     const trace = sessionTrace(io, { parentStreamId: "stream_dm_1", parentMessageId: "msg_parent" })
@@ -77,6 +80,7 @@ describe("SessionTrace parent-stream routing", () => {
         event: "agent_session:activity_started",
         payload: {
           sessionId: "session_1",
+          executionGeneration: 1,
           triggerMessageId: "msg_trigger",
           personaName: "Ariadne",
           threadStreamId: "thread_1",

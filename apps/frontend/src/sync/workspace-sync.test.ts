@@ -4655,6 +4655,69 @@ describe("agent-activity sidebar socket handlers", () => {
     cleanup()
   })
 
+  it("a replaced generation's late frames leave the replacement's indicator lit", async () => {
+    await putStream("stream_ch", null)
+    await putStream("stream_thr", "stream_ch")
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+    const started = (executionGeneration: number) => ({
+      sessionId: "sess_reclaimed",
+      triggerMessageId: "msg_1",
+      personaName: "Ariadne",
+      threadStreamId: "stream_thr",
+      parentMessageId: "msg_anchor",
+      executionGeneration,
+    })
+    const lit = () =>
+      getAgentActivityForAnchor("ws_1", "msg_anchor").map((s) => ({ id: s.sessionId, steps: s.stepCount }))
+
+    // Frame order the backend produces when generation 2 claims between generation 1's
+    // failure commit and its notifications.
+    await emitAsync("agent_session:activity_started", started(1))
+    await emitAsync("agent_session:activity_started", started(2))
+    await emitAsync("agent_session:failed", { sessionId: "sess_reclaimed", executionGeneration: 1 })
+    await emitAsync("agent_session:activity_ended", {
+      sessionId: "sess_reclaimed",
+      triggerMessageId: "msg_1",
+      executionGeneration: 1,
+    })
+    await emitAsync("agent_session:progress", {
+      workspaceId: "ws_1",
+      streamId: "stream_thr",
+      sessionId: "sess_reclaimed",
+      triggerMessageId: "msg_1",
+      personaName: "Ariadne",
+      stepCount: 9,
+      messageCount: 0,
+      currentStepType: "thinking",
+      executionGeneration: 1,
+    })
+    expect(lit()).toEqual([{ id: "sess_reclaimed", steps: undefined }])
+
+    await emitAsync("agent_session:progress", {
+      workspaceId: "ws_1",
+      streamId: "stream_thr",
+      sessionId: "sess_reclaimed",
+      triggerMessageId: "msg_1",
+      personaName: "Ariadne",
+      stepCount: 1,
+      messageCount: 0,
+      currentStepType: "thinking",
+      executionGeneration: 2,
+    })
+    expect(lit()).toEqual([{ id: "sess_reclaimed", steps: 1 }])
+
+    await emitAsync("agent_session:activity_ended", {
+      sessionId: "sess_reclaimed",
+      triggerMessageId: "msg_1",
+      executionGeneration: 2,
+    })
+    expect(lit()).toEqual([])
+
+    cleanup()
+  })
+
   it("keeps a thread session on the thread and honors the cross-workspace guard", async () => {
     await putStream("stream_ch", null)
     await putStream("stream_thr", "stream_ch")

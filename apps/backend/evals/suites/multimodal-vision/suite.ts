@@ -82,7 +82,7 @@ const VISION_MODEL_ID = "openrouter:anthropic/claude-sonnet-4.5"
  * Get model configuration from context.
  * Uses permutation override if provided, otherwise production defaults.
  */
-function getModelConfig(ctx: EvalContext): { model: string; temperature: number } {
+function getModelConfig(ctx: EvalContext): { model: string; temperature: number | undefined } {
   const override = ctx.componentOverrides?.["companion"]
   return {
     model: override?.model ?? ctx.permutation.model,
@@ -396,6 +396,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       temperature: COMPANION_SUMMARY_TEMPERATURE,
     })
     const personaAgent = new PersonaAgent({
+      spendingPolicy: { assertUnprotected: async () => {} },
       configResolver: ctx.configResolver,
       pool: ctx.pool,
       ai: ctx.ai,

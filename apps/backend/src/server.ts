@@ -5,7 +5,7 @@ import { Pool } from "pg"
 import { createApp } from "./app"
 import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
 import { SubagentService, createSubagentExpirySweep, startSubagent, resolveSubagentModels } from "./features/subagents"
-import { SubagentFailureReasons } from "@threahq/types"
+import { AI_SPENDING_COVERAGE, SubagentFailureReasons } from "@threahq/types"
 import { registerRoutes } from "./routes"
 import { registerSocketHandlers } from "./socket"
 import { createDatabasePools, warmPool, type DatabasePools } from "./db"
@@ -182,6 +182,7 @@ import {
   EPISODE_SUMMARY_TEMPERATURE,
   EPISODE_SUMMARY_MAX_TOKENS,
   stripInaccessibleAgentRefs,
+  type CompanionExecutionRef,
 } from "./features/agents"
 import { EmojiUsageHandler } from "./features/emoji"
 import { AnalyticsCostRecorder, AnalyticsOutboxHandler } from "./features/analytics"
@@ -203,7 +204,14 @@ import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
-import { AICostService, AIBudgetService } from "./features/ai-usage"
+import {
+  AICostService,
+  AIBudgetService,
+  AISpendingService,
+  AISpendingJobAdmission,
+  createSpendingGate,
+  registerAISpendingPolicySeedBackfill,
+} from "./features/ai-usage"
 import { CommandRegistry, InviteCommand, createCommandWorker, CommandHandler } from "./features/commands"
 import {
   createImageCaptionWorker,
@@ -257,7 +265,7 @@ import type { AuthorType, ConversationDirective } from "@threahq/types"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
-import { createAI } from "@threahq/agent-runtime"
+import { createAI, type FetchLike } from "@threahq/agent-runtime"
 import { createModelRegistry } from "@threahq/agent-runtime"
 import { createStaticConfigResolver } from "./lib/ai/static-config-resolver"
 import {
@@ -291,7 +299,7 @@ export interface ServerInstance {
   stop: () => Promise<void>
 }
 
-export async function startServer(): Promise<ServerInstance> {
+export async function startServer(options: { aiFetch?: FetchLike } = {}): Promise<ServerInstance> {
   const config = loadConfig()
   const sessionCookies = new SessionCookies(sessionCookieConfigFromEnv())
 
@@ -358,6 +366,7 @@ export async function startServer(): Promise<ServerInstance> {
   await attachmentService.recoverStalePendingScans()
 
   const costService = new AICostService({ pool })
+  const aiSpendingService = new AISpendingService({ pool })
   const budgetService = new AIBudgetService({ pool })
   const accessLogService = new AccessLogService({ pool })
   const modelRegistry = createModelRegistry()
@@ -366,11 +375,15 @@ export async function startServer(): Promise<ServerInstance> {
     : new DisabledAnalyticsReporter()
 
   const ai = createAI({
-    openrouter: { apiKey: config.ai.openRouterApiKey },
+    openrouter: { apiKey: config.ai.openRouterApiKey, fetch: options.aiFetch },
     // The enclave reports its own usage straight to `costService`, so wrapping
     // here is what keeps enclave AI calls out of PostHog.
     costRecorder: new AnalyticsCostRecorder(costService, analyticsReporter, modelRegistry),
     budgetEnforcer: budgetService,
+    spendingGate: createSpendingGate({
+      spendingService: aiSpendingService,
+      routes: [AI_SPENDING_COVERAGE.route],
+    }),
     accessLogSink: createAiAccessLogSink(accessLogService),
   })
   const configResolver = createStaticConfigResolver()
@@ -419,6 +432,7 @@ export async function startServer(): Promise<ServerInstance> {
   // defaults to `none` because region sharding already isolates tenants, so a
   // single workspace may use a tier's full budget.
   const jobQueue = new QueueManager({
+    admission: new AISpendingJobAdmission(aiSpendingService),
     pool,
     queueRepository: QueueRepository,
     tokenPoolRepository: TokenPoolRepository,
@@ -539,16 +553,20 @@ export async function startServer(): Promise<ServerInstance> {
       conversation: params.conversation,
     }
   }
-  const createMessage = async (params: Parameters<typeof buildMessageParams>[0] & { initiatingUserId: string }) =>
+  const createMessage = async (
+    params: Parameters<typeof buildMessageParams>[0] & { initiatingUserId: string; execution: CompanionExecutionRef }
+  ) =>
     eventService.createGeneratedMessage(
       { kind: "user", userId: params.initiatingUserId },
-      await buildMessageParams(params)
+      await buildMessageParams(params),
+      params.execution
     )
   const createInternalMessage = async (params: Parameters<typeof buildMessageParams>[0]) =>
     eventService.createMessage(await buildMessageParams(params))
 
   const editMessage = async (params: {
     initiatingUserId: string
+    execution: CompanionExecutionRef
     workspaceId: string
     streamId: string
     messageId: string
@@ -589,11 +607,13 @@ export async function startServer(): Promise<ServerInstance> {
         actorType: "persona",
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         accessibleStreamIds: params.accessibleStreamIds,
-      }
+      },
+      params.execution
     )
   }
   const deleteMessage = (params: {
     initiatingUserId: string
+    execution: CompanionExecutionRef
     workspaceId: string
     streamId: string
     messageId: string
@@ -607,7 +627,8 @@ export async function startServer(): Promise<ServerInstance> {
         messageId: params.messageId,
         actorId: params.actorId,
         actorType: "persona",
-      }
+      },
+      params.execution
     )
   const addReaction = (params: {
     initiatingUserId: string
@@ -780,7 +801,7 @@ export async function startServer(): Promise<ServerInstance> {
   // The factory only registers a provider strategy when its key is present
   // (empty string disables that provider); fail loudly later if a session is
   // opened with a model whose provider isn't configured (INV-11).
-  const voiceTranscriptionService = new VoiceTranscriptionService(pool, userPreferencesService)
+  const voiceTranscriptionService = new VoiceTranscriptionService(pool, userPreferencesService, aiSpendingService)
   const transcription = createTranscription({
     elevenlabs: config.ai.elevenLabsApiKey ? { apiKey: config.ai.elevenLabsApiKey } : undefined,
     deepgram: config.ai.deepgramApiKey ? { apiKey: config.ai.deepgramApiKey } : undefined,
@@ -818,7 +839,12 @@ export async function startServer(): Promise<ServerInstance> {
   // the oldest claimable E2E turn it can decrypt, building the sealed
   // assignment at claim time. Routes mount only when the enclave credential
   // is configured.
-  const enclaveClaimService = new EnclaveClaimService({ pool, storage, userPreferencesService })
+  const enclaveClaimService = new EnclaveClaimService({
+    pool,
+    storage,
+    userPreferencesService,
+    spendingPolicy: aiSpendingService,
+  })
 
   // Wake-up nudge for the claim long-poll (§2.7): holds one LISTEN connection
   // on `pools.listen` and fans each "invocation available" NOTIFY out to the
@@ -953,6 +979,7 @@ export async function startServer(): Promise<ServerInstance> {
     ai,
     controlPlaneClient,
     costService,
+    aiSpendingService,
     accessLogService,
     analyticsReporter,
     posthog: config.posthog,
@@ -1071,6 +1098,7 @@ export async function startServer(): Promise<ServerInstance> {
     configResolver,
     pool,
     ai,
+    spendingPolicy: aiSpendingService,
     traceEmitter,
     sessionAbortRegistry,
     userPreferencesService,
@@ -1606,6 +1634,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMemoSearchConfigBackfill()
   registerAttachmentExtractionSearchConfigBackfill()
   registerStreamContextBackfill()
+  registerAISpendingPolicySeedBackfill()
   registerMessageEmbeddingBackfill({ embeddingService })
   registerConversationEmbeddingBackfill({ embeddingService })
   registerGithubInstallationBackfill({ workspaceIntegrationService })

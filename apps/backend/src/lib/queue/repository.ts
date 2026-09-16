@@ -276,6 +276,30 @@ export const QueueRepository = {
     return result.rowCount ?? 0
   },
 
+  async pause(
+    db: Querier,
+    params: { messageId: string; workspaceId: string; claimedBy: string; reason: string }
+  ): Promise<void> {
+    const result = await db.query(sql`
+      UPDATE queue_messages
+      SET paused_reason = ${params.reason}, process_after = NULL, claimed_by = NULL, claimed_until = NULL
+      WHERE id = ${params.messageId} AND workspace_id = ${params.workspaceId}
+        AND claimed_by = ${params.claimedBy} AND completed_at IS NULL AND cancelled_at IS NULL
+    `)
+    if (result.rowCount !== 1) throw new Error(`Failed to pause message ${params.messageId}: claim no longer held`)
+  },
+
+  async resumePaused(db: Querier, params: { workspaceIds: string[]; reasonPrefix: string }): Promise<number> {
+    if (params.workspaceIds.length === 0) return 0
+    const result = await db.query(sql`
+      UPDATE queue_messages
+      SET paused_reason = NULL, process_after = NOW()
+      WHERE workspace_id = ANY(${params.workspaceIds}::text[]) AND starts_with(paused_reason, ${params.reasonPrefix})
+        AND claimed_by IS NULL AND completed_at IS NULL AND cancelled_at IS NULL AND dlq_at IS NULL
+    `)
+    return result.rowCount ?? 0
+  },
+
   /** Verifies claimedBy so only the claiming worker completes the message. */
   async complete(db: Querier, params: CompleteParams): Promise<void> {
     const result = await db.query(

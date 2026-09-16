@@ -26,6 +26,10 @@ const workspaces = new Map<string, Map<string, ActiveAgentSession>>()
 // in-flight snapshots and duplicate delivery without retaining page-lifetime history.
 const TERMINAL_FENCE_LIMIT = 1024
 const terminalSessions = new Map<string, Set<string>>()
+// `${workspaceId}:${sessionId}` -> newest execution generation a live frame carried.
+// A failed session can be reclaimed under the same id by a newer generation, and
+// the replaced executor's late started/progress/ended frames must not touch it.
+const liveGenerations = new Map<string, number>()
 
 // `${workspaceId}:${sessionId}` -> listeners subscribed to that one session
 const sessionListeners = new Map<string, Set<() => void>>()
@@ -151,6 +155,16 @@ function markTerminalSession(workspaceId: string, sessionId: string): void {
   if (oldest !== undefined) sessions.delete(oldest)
 }
 
+/** Records `generation` and reports whether its frame may apply: frames without one always do. */
+function acceptGeneration(workspaceId: string, sessionId: string, generation: number | undefined): boolean {
+  if (generation === undefined) return true
+  const key = subKey(workspaceId, sessionId)
+  const newest = liveGenerations.get(key)
+  if (newest !== undefined && generation < newest) return false
+  liveGenerations.set(key, generation)
+  return true
+}
+
 /** Recompute the cached snapshot for one key and notify iff its content changed. */
 function recompute(index: SessionIndex, workspaceId: string, id: string): void {
   const key = subKey(workspaceId, id)
@@ -222,8 +236,13 @@ export function seedAgentActivity(workspaceId: string, sessions: ActiveAgentSess
  * by an older bundle carries neither anchor field, so a reconcile off that row
  * must not null out an anchor the workspace bootstrap already resolved.
  */
-export function upsertAgentSession(workspaceId: string, session: ActiveAgentSession): void {
+export function upsertAgentSession(
+  workspaceId: string,
+  session: ActiveAgentSession,
+  executionGeneration?: number
+): void {
   if (isTerminalSession(workspaceId, session.sessionId)) return
+  if (!acceptGeneration(workspaceId, session.sessionId, executionGeneration)) return
   let ws = workspaces.get(workspaceId)
   if (!ws) {
     ws = new Map()
@@ -265,8 +284,10 @@ export function updateAgentSessionProgress(
     messageCount?: number
     substep?: string | null
     currentStepType?: AgentStepType
-  }
+  },
+  executionGeneration?: number
 ): void {
+  if (!acceptGeneration(workspaceId, sessionId, executionGeneration)) return
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
@@ -289,7 +310,8 @@ export function updateAgentSessionProgress(
 }
 
 /** Stop the live indicator without fencing a retry that reuses the session id. */
-export function clearAgentSession(workspaceId: string, sessionId: string): void {
+export function clearAgentSession(workspaceId: string, sessionId: string, executionGeneration?: number): void {
+  if (!acceptGeneration(workspaceId, sessionId, executionGeneration)) return
   const ws = workspaces.get(workspaceId)
   const existing = ws?.get(sessionId)
   if (!ws || !existing) return
@@ -299,8 +321,10 @@ export function clearAgentSession(workspaceId: string, sessionId: string): void 
 }
 
 /** Remove a session by id on any terminal signal. */
-export function removeAgentSession(workspaceId: string, sessionId: string): void {
+export function removeAgentSession(workspaceId: string, sessionId: string, executionGeneration?: number): void {
+  if (!acceptGeneration(workspaceId, sessionId, executionGeneration)) return
   markTerminalSession(workspaceId, sessionId)
+  liveGenerations.delete(subKey(workspaceId, sessionId))
   clearAgentSession(workspaceId, sessionId)
 }
 

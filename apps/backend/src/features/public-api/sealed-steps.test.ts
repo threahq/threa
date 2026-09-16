@@ -41,6 +41,9 @@ const session: AgentSession = {
   episodeSummary: null,
   responseValidationFailed: false,
   reflectiveCapturedAt: null,
+  initiatingUserId: null,
+  executionGeneration: 1,
+  stopReason: null,
   createdAt: new Date("2026-06-12T09:00:00.000Z"),
   completedAt: null,
 }

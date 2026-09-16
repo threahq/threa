@@ -133,7 +133,6 @@ export {
   type GenerateTextWithToolsOptions,
   type GenerateTextWithToolsResult,
   type ImageContentPart,
-  type LangChainModelResult,
   type ManyEmbedResult,
   type Message,
   type MessageContent,
@@ -149,8 +148,24 @@ export {
   type TextResult,
   type UsageWithCost,
 } from "./ai/ai"
-export { CostTracker, type CapturedUsage } from "./ai/openrouter-cost-interceptor"
-export { getCostTrackingCallbacks, CostTrackingCallback } from "./ai/cost-tracking-callback"
+export {
+  SpendingDeniedError,
+  SpendingDuplicateRequestError,
+  SpendingExecutionLostError,
+  SpendingOutcomeUnknownError,
+  SpendingResultUnavailableError,
+  type SpendingAttemptOutcome,
+  type SpendingHoldReason,
+  type SpendingContext,
+  type SpendingRequest,
+  type SpendingDispatchOutcome,
+  type SpendingGate,
+  type SpendingPolicyMode,
+  type SpendingReserveOutcome,
+  type SpendingRouteProfile,
+  type FetchLike,
+} from "./ai/spending"
+export { usd, usdUnits, usdString, compareUsd, InvalidUsdError } from "./ai/money"
 export { DebugCallback, getDebugCallbacks, isDebugEnabled } from "./ai/debug-callback"
 
 export { stripMarkdownFences, createJsonRepair, type SemanticFieldMapping } from "./ai/text-utils"

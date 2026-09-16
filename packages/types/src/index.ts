@@ -1,3 +1,35 @@
+export {
+  AI_SPENDING_STAGES,
+  AI_SPENDING_COVERAGE,
+  type SpendingRouteProfile,
+  AI_SPENDING_PURPOSES,
+  aiSpendingPurpose,
+  aiSpendingPolicyUpdateSchema,
+  aiSpendingInternalPolicyUpdateSchema,
+  aiSpendingOverviewSchema,
+  aiSpendingPolicyUpdateResultSchema,
+} from "./ai-spending"
+export type {
+  AISpendingStage,
+  AISpendingPurpose,
+  AISpendingLimits,
+  AISpendingPolicy,
+  AISpendingPolicyInput,
+  AISpendingPeriod,
+  AISpendingAttemptState,
+  AISpendingAttemptRequest,
+  AISpendingReceipt,
+  AISpendingAttempt,
+  AISpendingDenialReason,
+  AISpendingDenialCode,
+  AISpendingPolicyUpdate,
+  AISpendingInternalPolicyUpdate,
+  AISpendingPolicyWire,
+  AISpendingPeriodWire,
+  AISpendingOverview,
+  AISpendingPolicyUpdateResult,
+} from "./ai-spending"
+
 // Branded ID types
 export type { UserId, MemberId, WorkspaceId } from "./ids"
 
@@ -223,6 +255,9 @@ export {
   AGENT_SESSION_STATUSES,
   type AgentSessionStatus,
   AgentSessionStatuses,
+  AGENT_SESSION_STOP_REASONS,
+  type AgentSessionStopReason,
+  AgentSessionStopReasons,
   // PDF processing
   PDF_PAGE_CLASSIFICATIONS,
   type PdfPageClassification,
@@ -1295,6 +1330,7 @@ export {
   type AgentSessionStartedPayload,
   type AgentSessionCompletedPayload,
   type AgentSessionFailedPayload,
+  type AgentSessionSpendingStop,
   type AgentSessionInterruptedPayload,
   type AgentSessionDeletedPayload,
   type AgentSessionProgressPayload,

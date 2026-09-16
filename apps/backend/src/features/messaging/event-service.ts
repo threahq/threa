@@ -31,7 +31,7 @@ import {
   type AttachmentUpload,
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
-import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
+import { AgentSessionRepository, StreamPersonaParticipantRepository, type CompanionExecutionRef } from "../agents"
 import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -102,7 +102,13 @@ const resolveEffectiveStreamAdapter: ResolveEffectiveStream = async (db, source)
 
 type MessageMutationAuthority =
   | { kind: "internal" }
-  | { kind: "principal"; principal: StreamWritePrincipal; presentationOwnerId?: string }
+  | {
+      kind: "principal"
+      principal: StreamWritePrincipal
+      presentationOwnerId?: string
+      /** A companion turn's claimed generation; its write commits only while that generation still holds the session. */
+      execution?: CompanionExecutionRef
+    }
 
 export interface MessageCreatedPayload {
   messageId: string
@@ -499,6 +505,21 @@ function isThreadReplyStream(
   return stream?.type === StreamTypes.THREAD && !!stream.parentStreamId && !!stream.parentAnchorId
 }
 
+/** A companion's generated-message write commits only while its claimed execution still holds the session for this sponsor. */
+function lockGeneratedMessageExecution(
+  client: PoolClient,
+  principal: StreamWritePrincipal,
+  execution: CompanionExecutionRef,
+  target: { workspaceId: string; streamId: string; personaId: string }
+): Promise<void> {
+  return AgentSessionRepository.lockHeldExecution(client, execution, {
+    workspaceId: target.workspaceId,
+    streamId: target.streamId,
+    personaId: target.personaId,
+    sponsorUserId: principal.kind === "user" ? principal.userId : undefined,
+  })
+}
+
 export class EventService {
   constructor(
     private pool: Pool,
@@ -625,11 +646,21 @@ export class EventService {
     }
   }
 
-  async createGeneratedMessage(principal: StreamWritePrincipal, params: CreateMessageParams): Promise<Message> {
-    return withTransaction(
-      this.pool,
-      async (client) => (await this.createMessageForPrincipalInTransaction(client, principal, params)).message
-    )
+  async createGeneratedMessage(
+    principal: StreamWritePrincipal,
+    params: CreateMessageParams,
+    execution?: CompanionExecutionRef
+  ): Promise<Message> {
+    return withTransaction(this.pool, async (client) => {
+      if (execution) {
+        await lockGeneratedMessageExecution(client, principal, execution, {
+          workspaceId: params.workspaceId,
+          streamId: params.streamId,
+          personaId: params.authorId,
+        })
+      }
+      return (await this.createMessageForPrincipalInTransaction(client, principal, params)).message
+    })
   }
 
   async createMessageForPrincipalInTransaction(
@@ -1214,14 +1245,23 @@ export class EventService {
     return this.editMessageWithAuthority({ kind: "principal", principal }, params)
   }
 
-  async editGeneratedMessage(principal: StreamWritePrincipal, params: EditMessageParams): Promise<Message | null> {
-    return this.editMessageWithAuthority({ kind: "principal", principal, presentationOwnerId: params.actorId }, params)
+  async editGeneratedMessage(
+    principal: StreamWritePrincipal,
+    params: EditMessageParams,
+    execution?: CompanionExecutionRef
+  ): Promise<Message | null> {
+    return this.editMessageWithAuthority(
+      { kind: "principal", principal, presentationOwnerId: params.actorId, execution },
+      params
+    )
   }
 
   private async editMessageWithAuthority(
     authority: MessageMutationAuthority,
     params: EditMessageParams
   ): Promise<Message | null> {
+    // The companion's target stream, before placement recovery follows a moved message.
+    const executionStreamId = params.streamId
     let streamId =
       authority.kind === "principal"
         ? ((await MessageRepository.findById(this.pool, params.messageId))?.streamId ?? params.streamId)
@@ -1229,6 +1269,13 @@ export class EventService {
     for (let attempt = 0; attempt < 3; attempt++) {
       params = { ...params, streamId }
       const result = await this.withPlacementRecovery(params.messageId, streamId, async (client) => {
+        if (authority.kind === "principal" && authority.execution) {
+          await lockGeneratedMessageExecution(client, authority.principal, authority.execution, {
+            workspaceId: params.workspaceId,
+            streamId: executionStreamId,
+            personaId: params.actorId,
+          })
+        }
         if (authority.kind === "principal") {
           await assertStreamWritable(client, {
             workspaceId: params.workspaceId,
@@ -1570,9 +1617,13 @@ export class EventService {
     return this.deleteMessageWithAuthority({ kind: "principal", principal }, params)
   }
 
-  async deleteGeneratedMessage(principal: StreamWritePrincipal, params: DeleteMessageParams): Promise<Message | null> {
+  async deleteGeneratedMessage(
+    principal: StreamWritePrincipal,
+    params: DeleteMessageParams,
+    execution?: CompanionExecutionRef
+  ): Promise<Message | null> {
     return this.deleteMessageWithAuthority(
-      { kind: "principal", principal, presentationOwnerId: params.actorId },
+      { kind: "principal", principal, presentationOwnerId: params.actorId, execution },
       params
     )
   }
@@ -1581,6 +1632,8 @@ export class EventService {
     authority: MessageMutationAuthority,
     params: DeleteMessageParams
   ): Promise<Message | null> {
+    // The companion's target stream, before placement recovery follows a moved message.
+    const executionStreamId = params.streamId
     let streamId =
       authority.kind === "principal"
         ? ((await MessageRepository.findById(this.pool, params.messageId))?.streamId ?? params.streamId)
@@ -1588,6 +1641,13 @@ export class EventService {
     for (let attempt = 0; attempt < 3; attempt++) {
       params = { ...params, streamId }
       const result = await this.withPlacementRecovery(params.messageId, streamId, async (client) => {
+        if (authority.kind === "principal" && authority.execution) {
+          await lockGeneratedMessageExecution(client, authority.principal, authority.execution, {
+            workspaceId: params.workspaceId,
+            streamId: executionStreamId,
+            personaId: params.actorId,
+          })
+        }
         if (authority.kind === "principal") {
           await assertStreamWritable(client, {
             workspaceId: params.workspaceId,

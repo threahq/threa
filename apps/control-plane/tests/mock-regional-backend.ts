@@ -10,6 +10,10 @@ export interface MockRegionalBackend {
   port: number
   /** All requests received by the mock */
   requests: Array<{ method: string; url: string; body: unknown }>
+  /** Scripted answer for `/internal/ai-spending/*`; unset paths fall through to 404. */
+  aiSpendingResponse:
+    | ((request: { method: string; url: string; body: unknown }) => { status: number; body: unknown })
+    | null
   /** Reset recorded requests */
   reset: () => void
   stop: () => Promise<void>
@@ -32,6 +36,7 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
 
 export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
   const requests: MockRegionalBackend["requests"] = []
+  const mock = { aiSpendingResponse: null as MockRegionalBackend["aiSpendingResponse"] }
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const body = await parseBody(req)
@@ -63,6 +68,13 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
+    if (url.startsWith("/internal/ai-spending/") && mock.aiSpendingResponse) {
+      const answer = mock.aiSpendingResponse({ method: req.method || "GET", url, body })
+      res.writeHead(answer.status, { "Content-Type": "application/json" })
+      res.end(JSON.stringify(answer.body))
+      return
+    }
+
     // Fallback 404
     res.writeHead(404, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "Not found" }))
@@ -84,6 +96,12 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
     url: `http://localhost:${port}`,
     port,
     requests,
+    get aiSpendingResponse() {
+      return mock.aiSpendingResponse
+    },
+    set aiSpendingResponse(respond) {
+      mock.aiSpendingResponse = respond
+    },
     reset: () => {
       requests.length = 0
     },
