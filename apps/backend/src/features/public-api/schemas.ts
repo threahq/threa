@@ -149,10 +149,10 @@ export const upsertPresenceSchema = z
 export const createRuntimeSessionSchema = z
   .object({
     // The runtime kinds that may own a scratchpad (see runtime-kind-config):
-    // Pi and the Claude Code channel require a link, `custom` may take one.
+    // Pi, the Claude Code channel and Hermes require a link, `custom` may take one.
     // The remaining kinds dispatch untargeted and never create a link, so they
     // have no business calling this endpoint.
-    runtimeKind: z.enum(["pi-local", "claude-code-channel", "custom"]),
+    runtimeKind: z.enum(["pi-local", "claude-code-channel", "hermes", "custom"]),
     instanceId: z.string().min(1).max(128),
     runtimeSessionId: z.string().min(1).max(256),
     displayName: z.string().min(1).max(100),
