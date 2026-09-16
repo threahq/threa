@@ -503,7 +503,7 @@ export function BoardEventRowItem({
       // in px-3 sm:px-6) — bare, its hover highlight bleeds past the content column.
       return (
         <div className="px-3 sm:px-6">
-          <CommandEvent events={row.events as StreamEvent[]} />
+          <CommandEvent events={row.events as StreamEvent[]} workspaceId={workspaceId} />
         </div>
       )
     case "memo":

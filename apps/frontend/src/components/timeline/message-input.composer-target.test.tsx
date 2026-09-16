@@ -31,7 +31,7 @@ import {
   resetShareHandoffStoreCache,
 } from "@/stores/composer-handoff-store"
 // eslint-disable-next-line no-restricted-imports -- seeds/asserts the real draft + composer-target rows
-import { db } from "@/db"
+import { db, sequenceToNum } from "@/db"
 import { MessageInput } from "./message-input"
 import type { JSONContent } from "@threahq/types"
 
@@ -82,6 +82,7 @@ beforeEach(async () => {
   await db.composerLoaded.clear()
   await db.composerTarget.clear()
   await db.pendingOperations.clear()
+  await db.events.clear()
   registeredConversationReplyHandler = null
   notFound = false
   loadFailed = false
@@ -199,10 +200,12 @@ beforeEach(async () => {
     content,
     onContentChange,
     composerRef,
+    onSubmit,
   }: {
     content: JSONContent
     onContentChange: (value: JSONContent) => void
     composerRef?: { current: unknown }
+    onSubmit: (value?: JSONContent) => void
   }) => {
     renderedBodies.push(docText(content))
     if (composerRef) {
@@ -236,6 +239,7 @@ beforeEach(async () => {
         <span data-testid="editor-body">{docText(content)}</span>
         <span data-testid="editor-json">{JSON.stringify(content)}</span>
         <button onClick={() => onContentChange(makeDoc("typed here"))}>type</button>
+        <button onClick={() => onSubmit()}>send</button>
         <button onClick={() => onContentChange({ type: "doc", content: [{ type: "paragraph" }] })}>clear</button>
       </div>
     )
@@ -523,6 +527,69 @@ describe("the timeline composer's durable target", () => {
       stashedAt: expect.any(Number),
     })
   }, 10_000)
+
+  it("gives a failed command's content back to the composer that sent it, stashing what was typed meanwhile", async () => {
+    const commandDoc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "slashCommand", attrs: { name: "spawn" } },
+            { type: "text", text: " x" },
+          ],
+        },
+      ],
+    }
+    spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
+      { name: "spawn", description: "Spawn a coding session" },
+    ]) as never)
+    vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_1" } as unknown as ReturnType<
+      typeof authModule.useUser
+    >)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+      { id: "usr_1", workosUserId: "workos_1" },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
+    await upsertLoadedDraft(workspaceId, hostScope, { contentJson: commandDoc, attachments: [] })
+    await act(async () => {
+      await seedDraftCacheFromIdb(workspaceId)
+    })
+
+    mount()
+    await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"slashCommand"'))
+    await userEvent.click(screen.getByRole("button", { name: "send" }))
+
+    const dispatched = await waitFor(async () => {
+      const rows = await db.events.where("eventType").equals("command_dispatched").toArray()
+      expect(rows).toHaveLength(1)
+      return rows[0]
+    })
+    await waitFor(() => expect(screen.getByTestId("editor-json")).not.toHaveTextContent('"slashCommand"'))
+
+    await userEvent.click(screen.getByRole("button", { name: "type" }))
+    await waitFor(async () => expect(await bodyOf(hostScope)).toContain("typed here"))
+
+    await db.events.put({
+      id: `${dispatched.id}:failed`,
+      workspaceId,
+      streamId,
+      sequence: "1001",
+      _sequenceNum: sequenceToNum("1001"),
+      eventType: "command_failed",
+      payload: { commandId: dispatched.id, error: "no runtime" },
+      actorId: dispatched.actorId,
+      actorType: dispatched.actorType,
+      createdAt: new Date().toISOString(),
+      _status: "failed",
+      _cachedAt: Date.now(),
+    })
+
+    await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"slashCommand"'), {
+      timeout: 7000,
+    })
+    const stashed = await db.drafts.filter((row) => row.stashedAt != null).toArray()
+    expect(stashed.map((row) => docText(row.contentJson))).toContain("typed here")
+  }, 15_000)
 
   it("edits the targeted board draft, not the stream's own — and a keystroke lands there", async () => {
     await seedDrafts()

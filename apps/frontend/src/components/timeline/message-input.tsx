@@ -821,7 +821,7 @@ function MessageInputComponent({
         composer.resolveDraft()
         setExpanded(false)
         try {
-          await dispatchCommand(sendPlan)
+          await dispatchCommand(sendPlan, normalizedContent)
         } catch {
           setError("Failed to queue command. Please try again.")
         } finally {

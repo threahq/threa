@@ -1,11 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
-import { renderHook } from "@testing-library/react"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react"
 import { toast } from "sonner"
 import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threahq/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"
 import * as openAsideModule from "@/hooks/use-open-aside"
+// eslint-disable-next-line no-restricted-imports -- seeds the real command events the restore observes
+import { db, sequenceToNum, type CachedEvent } from "@/db"
+import { peekShareHandoffBatch, resetShareHandoffStoreCache } from "@/stores/composer-handoff-store"
 import { useComposerCommandSend } from "./use-composer-command-send"
 
 const COMMANDS: CommandInfo[] = [
@@ -13,12 +16,16 @@ const COMMANDS: CommandInfo[] = [
   { name: "steer", description: "Steer the agent" },
 ]
 
+const optimisticId = "temp_cmd_1"
+
 let queueCommand: ReturnType<typeof vi.fn>
 let queuedFor: Array<string | undefined>
 let openAside: ReturnType<typeof vi.fn>
 
-beforeEach(() => {
-  queueCommand = vi.fn().mockResolvedValue(undefined)
+beforeEach(async () => {
+  resetShareHandoffStoreCache()
+  await db.events.clear()
+  queueCommand = vi.fn().mockResolvedValue(optimisticId)
   queuedFor = []
   spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => COMMANDS) as never)
   spyOnExport(dispatchQueueModule, "useCommandDispatchQueue").mockReturnValue(((
@@ -31,6 +38,27 @@ beforeEach(() => {
   openAside = vi.fn().mockResolvedValue(undefined)
   spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((() => openAside) as never)
 })
+
+afterEach(() => {
+  cleanup()
+  resetShareHandoffStoreCache()
+})
+
+function commandEvent(id: string, eventType: CachedEvent["eventType"], payload: Record<string, unknown>): CachedEvent {
+  return {
+    id,
+    workspaceId: "ws_1",
+    streamId: "stream_conversation",
+    sequence: "1000",
+    _sequenceNum: sequenceToNum("1000"),
+    eventType,
+    payload,
+    actorId: "usr_1",
+    actorType: "user",
+    createdAt: "2026-09-16T10:00:00.000Z",
+    _cachedAt: 1,
+  }
+}
 
 function doc(...content: JSONContent[]): JSONContent {
   return { type: "doc", content: [{ type: "paragraph", content }] }
@@ -78,12 +106,15 @@ describe("useComposerCommandSend planSend", () => {
 describe("useComposerCommandSend dispatchCommand", () => {
   it("queues the command against the supplied stream", async () => {
     const result = hook()
-    await result.current.dispatchCommand({
-      kind: "command",
-      commandName: "compact",
-      clientActionId: null,
-      commandMarkdown: "/compact",
-    })
+    await result.current.dispatchCommand(
+      {
+        kind: "command",
+        commandName: "compact",
+        clientActionId: null,
+        commandMarkdown: "/compact",
+      },
+      doc({ type: "slashCommand", attrs: { name: "compact" } })
+    )
     expect({ queuedFor: queuedFor[0], call: queueCommand.mock.calls[0][0] }).toEqual({
       queuedFor: "stream_conversation",
       call: { commandMarkdown: "/compact", commandName: "compact" },
@@ -92,12 +123,15 @@ describe("useComposerCommandSend dispatchCommand", () => {
 
   it("stamps the composer's conversation on the dispatch so the card can draw the chip", async () => {
     const result = hook("stream_conversation", "conv_1")
-    await result.current.dispatchCommand({
-      kind: "command",
-      commandName: "compact",
-      clientActionId: null,
-      commandMarkdown: "/compact",
-    })
+    await result.current.dispatchCommand(
+      {
+        kind: "command",
+        commandName: "compact",
+        clientActionId: null,
+        commandMarkdown: "/compact",
+      },
+      doc({ type: "slashCommand", attrs: { name: "compact" } })
+    )
     expect(queueCommand.mock.calls[0][0]).toEqual({
       commandMarkdown: "/compact",
       commandName: "compact",
@@ -106,12 +140,15 @@ describe("useComposerCommandSend dispatchCommand", () => {
   })
 
   it("should open an aside beside the host stream for /aside from a timeline composer, never queueing a dispatch", async () => {
-    await hook("stream_host").current.dispatchCommand({
-      kind: "command",
-      commandName: ASIDE_COMMAND,
-      clientActionId: ASIDE_COMMAND,
-      commandMarkdown: "/aside",
-    })
+    await hook("stream_host").current.dispatchCommand(
+      {
+        kind: "command",
+        commandName: ASIDE_COMMAND,
+        clientActionId: ASIDE_COMMAND,
+        commandMarkdown: "/aside",
+      },
+      doc({ type: "slashCommand", attrs: { name: "aside" } })
+    )
     expect({ origin: openAside.mock.calls[0][0], queued: queueCommand.mock.calls.length }).toEqual({
       origin: { kind: "stream", hostStreamId: "stream_host" },
       queued: 0,
@@ -119,12 +156,15 @@ describe("useComposerCommandSend dispatchCommand", () => {
   })
 
   it("should anchor /aside to the conversation from a board or panel composer", async () => {
-    await hook("stream_root", "conv_1").current.dispatchCommand({
-      kind: "command",
-      commandName: ASIDE_COMMAND,
-      clientActionId: ASIDE_COMMAND,
-      commandMarkdown: "/aside",
-    })
+    await hook("stream_root", "conv_1").current.dispatchCommand(
+      {
+        kind: "command",
+        commandName: ASIDE_COMMAND,
+        clientActionId: ASIDE_COMMAND,
+        commandMarkdown: "/aside",
+      },
+      doc({ type: "slashCommand", attrs: { name: "aside" } })
+    )
     expect(openAside.mock.calls[0][0]).toEqual({
       kind: "conversation",
       hostStreamId: "stream_root",
@@ -132,14 +172,44 @@ describe("useComposerCommandSend dispatchCommand", () => {
     })
   })
 
+  it("hands the command content back to this composer when the dispatch later fails", async () => {
+    const content = doc({ type: "slashCommand", attrs: { name: "compact" } })
+    const result = hook()
+    await act(async () => {
+      await result.current.dispatchCommand(
+        { kind: "command", commandName: "compact", clientActionId: null, commandMarkdown: "/compact" },
+        content
+      )
+    })
+
+    await db.events.bulkPut([
+      commandEvent(optimisticId, "command_dispatched", {
+        commandId: optimisticId,
+        name: "compact",
+        args: "",
+        status: "dispatched",
+      }),
+      commandEvent(`${optimisticId}:failed`, "command_failed", { commandId: optimisticId, error: "no runtime" }),
+    ])
+
+    await waitFor(() =>
+      expect(peekShareHandoffBatch("stream_conversation")?.handoffs).toEqual([
+        { kind: "content", content: content.content, attachments: [] },
+      ])
+    )
+  })
+
   it("refuses a client action this build no longer has, instead of queueing it to the backend", async () => {
     const error = vi.spyOn(toast, "error").mockImplementation(() => "")
-    await hook("stream_host").current.dispatchCommand({
-      kind: "command",
-      commandName: "discuss-with-ariadne",
-      clientActionId: "discuss-with-ariadne",
-      commandMarkdown: "/discuss-with-ariadne",
-    })
+    await hook("stream_host").current.dispatchCommand(
+      {
+        kind: "command",
+        commandName: "discuss-with-ariadne",
+        clientActionId: "discuss-with-ariadne",
+        commandMarkdown: "/discuss-with-ariadne",
+      },
+      doc({ type: "slashCommand", attrs: { name: "discuss-with-ariadne" } })
+    )
     expect({ queued: queueCommand.mock.calls, toasts: error.mock.calls }).toEqual({
       queued: [],
       toasts: [["/discuss-with-ariadne isn't available any more."]],

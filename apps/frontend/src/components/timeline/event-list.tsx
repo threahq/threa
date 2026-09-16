@@ -959,7 +959,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
       {item.type === "day_divider" && <DayDivider dayStartMs={item.dayStartMs} />}
       {item.type === "command_group" && (
         <div className="px-3 sm:px-6" data-event-id={item.events[0]?.id}>
-          <CommandEvent events={item.events} />
+          <CommandEvent events={item.events} workspaceId={ctx.workspaceId} />
         </div>
       )}
       {item.type === "gap" && (

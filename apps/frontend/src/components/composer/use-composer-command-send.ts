@@ -4,6 +4,7 @@ import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threahq/type
 import { serializeToMarkdown } from "@threahq/prosemirror"
 import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
+import { useCommandFailureRestore } from "@/hooks/use-command-failure-restore"
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
 
@@ -43,6 +44,7 @@ export function useComposerCommandSend(
   const availableCommands = useStreamCommands(workspaceId, streamId)
   const openAside = useOpenAside(workspaceId)
   const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "")
+  const rememberDispatchedCommand = useCommandFailureRestore(streamId ?? "")
 
   const availableCommandByName = useMemo(() => {
     const map = new Map<string, CommandInfo>()
@@ -88,9 +90,14 @@ export function useComposerCommandSend(
    * opens an aside beside this surface) and swallow their failure — the hook
    * already toasts, so a second inline error would render the same failure
    * twice. A runtime dispatch throws, leaving the surface to report.
+   *
+   * `content` is the doc the command was sent as, held so a later failure can
+   * hand it back to this composer. `null` declines the restore: the hand-off
+   * is keyed by stream, so only a stream-level composer can receive it — a
+   * conversation composer's restore would surface in the timeline instead.
    */
   const dispatchCommand = useCallback(
-    async (plan: ComposerCommandPlan) => {
+    async (plan: ComposerCommandPlan, content: JSONContent | null) => {
       if (plan.clientActionId === ASIDE_COMMAND) {
         if (!streamId) return
         try {
@@ -111,13 +118,14 @@ export function useComposerCommandSend(
         toast.error(`/${plan.commandName} isn't available any more.`)
         return
       }
-      await queueCommand({
+      const optimisticEventId = await queueCommand({
         commandMarkdown: plan.commandMarkdown,
         commandName: plan.commandName,
         ...(conversationId && { conversationId }),
       })
+      if (streamId && content) rememberDispatchedCommand(optimisticEventId, content)
     },
-    [conversationId, queueCommand, openAside, streamId]
+    [conversationId, queueCommand, openAside, rememberDispatchedCommand, streamId]
   )
 
   // The foot's aside button is the `/aside` command by another handle: it

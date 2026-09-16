@@ -126,3 +126,25 @@ export function extractCommandFromRawText(content: JSONContent): RawTextCommand 
     args: (match[2] ?? "").trim(),
   }
 }
+
+/**
+ * Rebuild a dispatched command as composer content: the `slashCommand` node
+ * the editor materializes, followed by its args as text. The inverse of
+ * {@link extractCommandNode}, so the rebuilt doc dispatches the same command
+ * when sent again.
+ */
+export function commandDoc(name: string, args: string): JSONContent {
+  const trimmed = args.trim()
+  return {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "slashCommand", attrs: { name } },
+          ...(trimmed.length > 0 ? [{ type: "text", text: ` ${trimmed}` }] : []),
+        ],
+      },
+    ],
+  }
+}

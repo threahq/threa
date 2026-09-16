@@ -97,7 +97,7 @@ function parseCommandArgs(commandMarkdown: string): string {
  *
  * @param workspaceId - Workspace receiving the command.
  * @param streamId - Stream receiving the command.
- * @returns A callback that queues a slash command.
+ * @returns A callback that queues a slash command and resolves its optimistic event id.
  * @example
  * const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId)
  */
@@ -111,7 +111,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
   )
 
   const queueCommand = useCallback(
-    async (params: { commandMarkdown: string; commandName: string; conversationId?: string }) => {
+    async (params: { commandMarkdown: string; commandName: string; conversationId?: string }): Promise<string> => {
       if (!currentUserId) {
         throw new Error("Cannot dispatch command: user identity not resolved yet")
       }
@@ -158,6 +158,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
       })
 
       syncEngine?.kickOperationQueue()
+      return optimisticEventId
     },
     [currentUserId, streamId, syncEngine, workspaceId]
   )

@@ -481,7 +481,7 @@ export function InlineComposerForm({
       composer.setIsSending(true)
       composer.setContent(EMPTY_DOC)
       try {
-        await dispatchCommand(sendPlan)
+        await dispatchCommand(sendPlan, null)
         await composer.resolveDraft()
         finishSend()
       } catch {
