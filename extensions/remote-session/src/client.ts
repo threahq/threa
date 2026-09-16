@@ -1,5 +1,6 @@
 import {
   THREA_CALLBACK_TOKEN_HEADER,
+  type CreateDecisionRequestBody,
   type DecisionRequest,
   type AttachmentRef,
   type ProvisionedWrap,
@@ -286,7 +287,7 @@ export class ThreaClient {
   }
 
   /** Open a decision card on a stream and return the created request. Bot key only. */
-  async requestDecision(streamId: string, body: Record<string, unknown>): Promise<DecisionRequest> {
+  async requestDecision(streamId: string, body: CreateDecisionRequestBody): Promise<DecisionRequest> {
     const result = await this.request<{ data: DecisionRequest }>(this.workspacePath(`/streams/${streamId}/decisions`), {
       method: "POST",
       body: JSON.stringify(body),

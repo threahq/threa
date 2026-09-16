@@ -24,6 +24,7 @@ export type {
   BotRuntimeTransportOptions,
   DelegationAvailableNudge,
   BotDecisionPayload,
+  CreateDecisionRequestBody,
   DecisionOption,
   DecisionRequest,
   DecisionRequestStatus,

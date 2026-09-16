@@ -1,6 +1,7 @@
 import { describe, expect, jest, spyOn, test } from "bun:test"
 import type {
   BotRuntimeHello,
+  CreateDecisionRequestBody,
   DecisionRequest,
   BotRuntimeTransport,
   InvocationInputUpdate,
@@ -4567,7 +4568,7 @@ describe("RemoteSession decisions", () => {
   /** A session whose client records decision calls; the socket push is delivered through the transport callback. */
   function decisionSession(
     overrides: {
-      requestDecision?: (streamId: string, body: Record<string, unknown>) => Promise<DecisionRequest>
+      requestDecision?: (streamId: string, body: CreateDecisionRequestBody) => Promise<DecisionRequest>
       getDecision?: (id: string) => Promise<DecisionRequest>
       cancelDecision?: (id: string) => Promise<DecisionRequest>
       config?: Partial<RemoteSessionConfig>
@@ -4575,17 +4576,17 @@ describe("RemoteSession decisions", () => {
     } = {}
   ) {
     const calls = {
-      request: [] as Array<{ streamId: string; body: Record<string, unknown> }>,
+      request: [] as Array<{ streamId: string; body: CreateDecisionRequestBody }>,
       get: [] as string[],
       cancel: [] as string[],
     }
     const { client, calls: base } = makeFakeClient()
     Object.assign(client as unknown as Record<string, unknown>, {
-      requestDecision: async (streamId: string, body: Record<string, unknown>) => {
+      requestDecision: async (streamId: string, body: CreateDecisionRequestBody) => {
         calls.request.push({ streamId, body })
         return overrides.requestDecision
           ? await overrides.requestDecision(streamId, body)
-          : makeDecision({ externalRef: body.externalRef as string | undefined })
+          : makeDecision({ externalRef: body.externalRef })
       },
       getDecision: async (id: string) => {
         calls.get.push(id)
@@ -4746,13 +4747,38 @@ describe("RemoteSession decisions", () => {
     await session.shutdown()
   })
 
-  test("shutdown abandons every pending decision", async () => {
-    const { session, pendingCount } = decisionSession()
+  test("shutdown abandons every pending decision and withdraws its card", async () => {
+    const { session, calls, pendingCount } = decisionSession()
     const pending = session.requestDecision(input)
     await Promise.resolve()
     await session.shutdown()
     await expect(pending).rejects.toMatchObject({ name: "DecisionAbandonedError", decisionId: "dreq_1" })
-    expect(pendingCount()).toBe(0)
+    expect({ pending: pendingCount(), cancelled: calls.cancel }).toEqual({ pending: 0, cancelled: ["dreq_1"] })
+  })
+
+  test("interrupting a turn withdraws only the cards that turn opened", async () => {
+    let next = 0
+    const { session, calls, internals } = decisionSession({
+      requestDecision: async () =>
+        next++ === 0
+          ? makeDecision({ id: "dreq_stopped", requesterInvocationId: "binv_stopped" })
+          : makeDecision({ id: "dreq_other", requesterInvocationId: "binv_other" }),
+    })
+    seedInflight(session, makeInvocation({ id: "binv_stopped" }))
+    const stopped = session.requestDecision(input)
+    const other = session.requestDecision(input)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await internals.completeInterruptedTurns()
+
+    await expect(stopped).rejects.toMatchObject({ name: "DecisionAbandonedError", decisionId: "dreq_stopped" })
+    expect({ cancelled: calls.cancel, pending: [...internals.pendingDecisions.keys()] }).toEqual({
+      cancelled: ["dreq_stopped"],
+      pending: ["dreq_other"],
+    })
+    void other.catch(() => {})
+    await session.shutdown()
   })
 
   test("a transport disconnect pulls the backstop poll in to the HTTP cadence", async () => {

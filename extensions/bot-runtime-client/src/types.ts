@@ -100,6 +100,18 @@ export interface DecisionResolution {
   decidedAt?: string
 }
 
+/** Body of `POST /streams/:streamId/decisions`. */
+export interface CreateDecisionRequestBody {
+  title: string
+  bodyMarkdown?: string
+  options: DecisionOption[]
+  allowNote?: boolean
+  externalRef?: string
+  expiresInMs?: number
+  runtimeSessionId: string
+  invocationId?: string
+}
+
 /** Minimal mirror of the server's `DecisionRequest` wire shape — what the SDK reads. */
 export interface DecisionRequest {
   id: string

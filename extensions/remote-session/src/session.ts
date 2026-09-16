@@ -16,6 +16,7 @@ import {
   sealStep,
   type BotDecisionPayload,
   type BotRuntimeHello,
+  type DecisionOption,
   type DecisionRequest,
   type DelegationAvailableNudge,
   type InvocationInputUpdate,
@@ -397,7 +398,7 @@ export interface DecisionRequestInput {
   title: string
   /** Markdown body shown under the title on the card. */
   body?: string
-  options: Array<{ id: string; label: string; tone?: "primary" | "neutral" | "destructive" }>
+  options: DecisionOption[]
   allowNote?: boolean
   externalRef?: string
   expiresInMs?: number
@@ -660,7 +661,7 @@ export class RemoteSession {
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer)
     this.claimRetryTimer = undefined
     this.archive.stop()
-    this.abandonPendingDecisions()
+    const withdrawals = this.abandonPendingDecisions()
     this.resetReconnectHandoff()
     await this.reconnectFallbackTask
     // Fast, idempotent teardown first so SIGTERM cleanup isn't held hostage by
@@ -671,7 +672,7 @@ export class RemoteSession {
     // Fence before awaits so an in-flight completion cannot resurrect the route or presence.
     const routes = this.revokeAllRoutes()
     await this.waitForClaimDrain()
-    await this.enqueueOfflinePresence(() => this.stopped)
+    await Promise.all([this.enqueueOfflinePresence(() => this.stopped), withdrawals])
     if (options.hostGone && routes.length > 0) {
       // Renewal stopped above, so the claims expire on the server and the
       // next runtime on this scratchpad — the revival — claims the same
@@ -1888,6 +1889,10 @@ export class RemoteSession {
    */
   private async completeInterruptedTurns(): Promise<void> {
     const routes = [...this.inflight.values()]
+    const interrupted = new Set(routes.map((route) => route.invocation.id))
+    const withdrawals = this.abandonPendingDecisions(
+      (decision) => !!decision.requesterInvocationId && interrupted.has(decision.requesterInvocationId)
+    )
     const closes = routes.map((route) => {
       route.revoke()
       if (route.state === "open") route.beginClosing()
@@ -1914,7 +1919,7 @@ export class RemoteSession {
       })
       return route.trackClosing(task)
     })
-    await Promise.all(closes)
+    await Promise.all([...closes, withdrawals])
   }
 
   /** The prompt + history the runtime reads, with any downloaded attachments appended as a manifest. */
@@ -2759,11 +2764,18 @@ export class RemoteSession {
   }
 
   /** Teardown: nobody is left to answer, so no connector may keep awaiting one. */
-  private abandonPendingDecisions(): void {
-    for (const decisionId of [...this.pendingDecisions.keys()]) {
-      this.failDecision(decisionId, new DecisionAbandonedError(decisionId))
-    }
+  /** Reject the matching awaiters and withdraw their cards, so no answerable card outlives its asker. */
+  private async abandonPendingDecisions(matches: (decision: DecisionRequest) => boolean = () => true): Promise<void> {
+    const abandoned = [...this.pendingDecisions.values()].map((pending) => pending.decision).filter(matches)
+    for (const decision of abandoned) this.failDecision(decision.id, new DecisionAbandonedError(decision.id))
     this.stopDecisionPollWhenIdle()
+    await Promise.all(
+      abandoned.map((decision) =>
+        this.cancelDecision(decision.id).catch((error) =>
+          this.log(`decision ${decision.id} withdraw failed: ${this.summarize(error)}`)
+        )
+      )
+    )
   }
 
   /** Queue timeout closure behind posts so in-flight output cannot be overtaken. */
