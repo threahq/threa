@@ -263,7 +263,10 @@ export class HermesTurnRunner {
 
   private async settle(invocationId: string, terminal: HermesRunEvent): Promise<void> {
     if (terminal.event === "run.failed") {
-      await this.session.failTurn(invocationId, text(terminal.error) ?? "Hermes run failed")
+      const reason = text(terminal.error) ?? "Hermes run failed"
+      if (!(await this.session.failTurn(invocationId, reason))) {
+        this.log(`turn ${invocationId} was already closed; run failure not recorded: ${reason}`)
+      }
       return
     }
     const replyText =

@@ -2494,15 +2494,16 @@ export class RemoteSession {
    * what the delivery catch path does after `registerTurn` — the route dies,
    * presence frees up, and the next claim drain runs. Tracked as the route's
    * closing task so a shutdown mid-fail awaits it instead of failing the turn
-   * a second time. Returns false when this session holds no route for the id.
+   * a second time. Returns false when this session holds no route for the id or
+   * the turn already closed, so nothing was failed.
    */
   async failTurn(invocationId: string, errorMessage: string): Promise<boolean> {
     const route = this.route(invocationId)
     if (!route) return false
-    await route.enqueue(() =>
+    return route.enqueue(() =>
       route.trackClosing(
         (async () => {
-          if (route.state === "closed" || route.terminal) return
+          if (route.state === "closed" || route.terminal) return false
           route.beginClosing()
           await this.failContributors(route, errorMessage)
           await this.failInvocation(route.invocation, errorMessage)
@@ -2512,10 +2513,10 @@ export class RemoteSession {
           await this.syncPresence()
           this.claimDrainRequested = true
           this.scheduleRequestedClaimDrain()
+          return true
         })()
       )
     )
-    return true
   }
 
   /**

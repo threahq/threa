@@ -4888,4 +4888,20 @@ describe("RemoteSession.failTurn", () => {
     expect(await session.failTurn("binv_unknown", "boom")).toBe(false)
     expect(calls.fail).toEqual([])
   })
+
+  test("returns false for a turn that already closed and fails it only once", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_twice" }))
+
+    const first = await session.failTurn("binv_twice", "first")
+    const second = await session.failTurn("binv_twice", "second")
+
+    expect({ first, second, fails: calls.fail.map(({ id }) => id) }).toEqual({
+      first: true,
+      second: false,
+      fails: ["binv_twice"],
+    })
+  })
 })
