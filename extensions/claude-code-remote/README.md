@@ -126,12 +126,9 @@ Sealed turns still use full trace detail by default because the trace content is
 
 ## Permission relay
 
-Away from the terminal, a tool that needs approval would normally stall the session. With `THREA_PERMISSION_RELAY=1` (default), the approval prompt is posted into the scratchpad as a message:
+Away from the terminal, a tool that needs approval would normally stall the session. With `THREA_PERMISSION_RELAY=1` (default), the approval is posted into the scratchpad as a decision card: the tool name, the description, a preview of the input, and Allow/Deny buttons with an optional note. Answer it there and the channel forwards the verdict to Claude Code. The note stays on the card; Claude Code's permission notification carries only the request id and the verdict, so it never receives the note. The local terminal dialog also stays open, so whichever answer arrives first wins. A withdrawn or expired card denies the call. Anyone who can post in the scratchpad can approve, so only relay in workspaces you trust.
 
-> **Claude Code wants to run `Bash`**: list the project files
-> Reply `yes abcde` to allow or `no abcde` to deny.
-
-Reply `yes <id>` or `no <id>` in the scratchpad and the channel forwards your verdict to Claude Code. The local terminal dialog also stays open, so whichever answer arrives first wins. Anyone who can post in the scratchpad can approve, so only relay in workspaces you trust.
+Decision cards need a plaintext stream. On a sealed turn the channel posts a notice saying the approval has to be answered in the terminal, and leaves it there unanswered.
 
 For fully unattended use you can instead skip prompts entirely:
 
@@ -175,7 +172,7 @@ Push delivery needs `THREA_BASE_URL` to be the app origin — the workspace rout
 | `THREA_COLD_START_IF_ARCHIVED`  | `coldStartIfArchived`  | `replace`              | Archived-link behavior on cold start; harness revival sets `wait` to prevent replacement |
 | `THREA_COLD_START_IF_MISSING`   | `coldStartIfMissing`   | `create`               | Missing-link behavior on cold start; harness revival sets `error` to prevent creation    |
 | `THREA_EXPECTED_ROOT_STREAM_ID` | `expectedRootStreamId` | (none)                 | Reject a returned session link to another root; set by harness revival                   |
-| `THREA_PERMISSION_RELAY`        | `permissionRelay`      | `true`                 | Relay tool-approval prompts into the scratchpad                                          |
+| `THREA_PERMISSION_RELAY`        | `permissionRelay`      | `true`                 | Relay tool approvals into the scratchpad as decision cards                               |
 | `THREA_TRACE_MODE`              | `traceMode`            | `headline`             | `headline` hides commands; `commands` includes only Bash commands in plaintext traces    |
 | `THREA_SEALED_FULL_TRACE`       | `sealedFullTrace`      | `true`                 | Full encrypted traces; `false` uses `traceMode` for sealed turns                         |
 | `THREA_POLL_MS`                 | `pollMs`               | `3000`                 | Backstop claim poll (the socket pushes faster)                                           |
@@ -209,7 +206,7 @@ Sealed-turn differences: `THREA_ATTACH:` files are encrypted locally under a fre
 
 - The per-tool trace comes from tailing the session transcript (`~/.claude/projects/<cwd>/<session>.jsonl`), not from lifecycle hooks like Pi's. Plaintext turns use the configured `traceMode`; thinking bodies and tool results stay hidden in both plaintext modes. Claude's narration (including a final message on a turn that ends without `reply`) ships in full, matching Pi. Sealed turns ship full tool detail unless `sealedFullTrace` is false.
 - Claude can't `send` a heartbeat while blocked on a single long tool call (e.g. a 40-minute test run). The idle timeout must exceed your longest single operation — raise `THREA_IDLE_TIMEOUT_MS` if needed. A turn that goes idle without a `reply` is force-closed (silently if it already `send`-ed something, otherwise with a short "ended without a reply" notice).
-- One turn at a time: a message sent while Claude is still working is handled after the current reply (a permission verdict is the exception and goes through immediately).
+- One turn at a time: a message sent while Claude is still working is handled after the current reply.
 
 ## Troubleshooting
 

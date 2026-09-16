@@ -1,6 +1,8 @@
 import { describe, expect, jest, spyOn, test } from "bun:test"
 import type {
   BotRuntimeHello,
+  CreateDecisionRequestBody,
+  DecisionRequest,
   BotRuntimeTransport,
   InvocationInputUpdate,
   ObserveClaimParams,
@@ -1408,6 +1410,7 @@ describe("RemoteSession status snapshot", () => {
       socketConnected: false,
       inflightCount: 0,
       activeTurnStreamId: undefined,
+      pendingDecisionCount: 0,
     })
 
     seedInflight(session, makeInvocation({ id: "binv_status" }))
@@ -3167,85 +3170,6 @@ describe("steer into the running turn (native steer support)", () => {
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
-  test("a swept message the intercept consumes is routed, not folded into the steer text", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const intercepted: string[] = []
-    const queued = [
-      makeInvocation({ id: "binv_verdict", promptMarkdown: "yes abcde" }),
-      makeInvocation({ id: "binv_q1", promptMarkdown: "also bump the deps" }),
-    ]
-    const session = makeSession(client, transport, {
-      interceptClaimed: async (invocation) => {
-        if (invocation.promptMarkdown !== "yes abcde") return false
-        intercepted.push(invocation.id)
-        return true
-      },
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation("the steer text"))
-
-    expect(intercepted).toEqual(["binv_verdict"])
-    expect(steered).toHaveLength(1)
-    expect(steered[0]).toContain("also bump the deps")
-    expect(steered[0]).toContain("the steer text")
-    expect(steered[0]).not.toContain("yes abcde")
-    const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
-    expect(verdictClose?.body.noResponse).toBe(true)
-    expect(calls.complete.some((entry) => entry.id === "binv_q1")).toBe(false)
-    await session.reply("binv_running", "done")
-    expect(calls.complete.find((entry) => entry.id === "binv_q1")?.body.noResponse).toBe(true)
-  })
-
-  test("an empty steer whose sweep only intercepts a reply acks the routing, not 'nothing to steer'", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const queued = [makeInvocation({ id: "binv_verdict", promptMarkdown: "yes abcde" })]
-    const session = makeSession(client, transport, {
-      interceptClaimed: async (invocation) => invocation.promptMarkdown === "yes abcde",
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation(""))
-
-    expect(steered).toEqual([])
-    const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
-    expect(verdictClose?.body.noResponse).toBe(true)
-    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
-    expect(ack?.body.summary).toContain("Routed your reply")
-    expect(ack?.body.summary).not.toContain("Nothing to steer with")
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
-  })
-
   test("failed actuation leaves the running turn alone and reports the failure", async () => {
     const { client, calls } = makeFakeClient()
     const { transport } = makeFakeTransport()
@@ -3313,71 +3237,6 @@ describe("steer into the running turn (native steer support)", () => {
     expect(interrupted).toBe(true)
     expect(delivered).toEqual(["start with the readme"])
     ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_steer")
-  })
-})
-
-describe("claimDrain intercept routing", () => {
-  test("an intercepted steer invocation closes silently — never actuated as steering text", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const intercepted: string[] = []
-    const queue = [
-      makeInvocation({
-        id: "binv_verdict",
-        trigger: "session-control",
-        promptMarkdown: "/steer yes abcde",
-        metadata: { command: { executionKind: "bot-runtime", id: "cmd_v", name: "steer", args: "yes abcde" } },
-      }),
-    ]
-    const session = makeSession(client, transport, {
-      interceptClaimed: async (invocation) => {
-        intercepted.push(invocation.id)
-        return true
-      },
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () => queue.shift() ?? null
-
-    await (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
-
-    expect({
-      intercepted,
-      steered,
-      verdictClose: calls.complete.find((entry) => entry.id === "binv_verdict")?.body.noResponse,
-    }).toEqual({ intercepted: ["binv_verdict"], steered: [], verdictClose: true })
-  })
-
-  test("an intercepted ordinary message closes silently instead of becoming a turn", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const delivered: string[] = []
-    const queue = [
-      makeInvocation({ id: "binv_verdict", promptMarkdown: "yes abcde" }),
-      makeInvocation({ id: "binv_normal", promptMarkdown: "hello there" }),
-    ]
-    const session = makeSession(client, transport, {
-      deliverTurn: async (turn) => {
-        delivered.push(turn.invocationId)
-      },
-      interceptClaimed: async (invocation) => invocation.promptMarkdown === "yes abcde",
-    })
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () => queue.shift() ?? null
-
-    await (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
-
-    expect(delivered).toEqual(["binv_normal"])
-    const verdictClose = calls.complete.find((entry) => entry.id === "binv_verdict")
-    expect(verdictClose?.body.noResponse).toBe(true)
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_normal")
   })
 })
 
@@ -4611,46 +4470,6 @@ describe("invocation source controls", () => {
     await session.shutdown()
   })
 
-  test("cancellation while an interceptor returns false prevents session-control actuation", async () => {
-    const command = makeInvocation({
-      id: "binv_command",
-      trigger: "session-control",
-      requiredCapability: "session-control",
-      promptMarkdown: "/model opus",
-      sourceRevision: 0,
-      metadata: { command: { executionKind: "bot-runtime", name: "model", args: "opus" } },
-    })
-    let release!: () => void
-    let entered = false
-    const commands: string[] = []
-    const { session, fake, calls } = makeObservedControlSession([command], {
-      interceptClaimed: async () => {
-        entered = true
-        await new Promise<void>((resolve) => {
-          release = resolve
-        })
-        return false
-      },
-      sessionControl: {
-        commands: ["model"],
-        interrupt: () => true,
-        runCommand: async (name) => {
-          commands.push(name)
-          return { ok: true, message: "ok" }
-        },
-      },
-    })
-
-    const draining = claimDrain(session)
-    await waitUntil(() => entered)
-    await fake.observations.get("binv_command")!.cancel()
-    release()
-    await draining
-
-    expect({ commands, complete: calls.complete, fail: calls.fail }).toEqual({ commands: [], complete: [], fail: [] })
-    await session.shutdown()
-  })
-
   test("cancellation while an awaited runtime command is executing suppresses its acknowledgement", async () => {
     const command = makeInvocation({
       id: "binv_awaited_command",
@@ -4723,6 +4542,316 @@ describe("invocation source controls", () => {
     expect(session.isInflight("binv_stale")).toBe(false)
     expect(fake.observations.get("binv_stale")?.unregistered).toBe(true)
     expect((await session.reply("binv_stale", "retry")).retryable).not.toBe(true)
+    await session.shutdown()
+  })
+})
+
+describe("RemoteSession decisions", () => {
+  function makeDecision(overrides: Partial<DecisionRequest> = {}): DecisionRequest {
+    return {
+      id: "dreq_1",
+      workspaceId: "ws_1",
+      streamId: "stream_root",
+      requesterBotId: "bot_1",
+      status: "open",
+      title: "Run `Bash`?",
+      options: [
+        { id: "allow", label: "Allow", tone: "primary" },
+        { id: "deny", label: "Deny", tone: "destructive" },
+      ],
+      allowNote: true,
+      version: 1,
+      ...overrides,
+    }
+  }
+
+  /** A session whose client records decision calls; the socket push is delivered through the transport callback. */
+  function decisionSession(
+    overrides: {
+      requestDecision?: (streamId: string, body: CreateDecisionRequestBody) => Promise<DecisionRequest>
+      getDecision?: (id: string) => Promise<DecisionRequest>
+      cancelDecision?: (id: string) => Promise<DecisionRequest>
+      config?: Partial<RemoteSessionConfig>
+      socketConnected?: boolean
+    } = {}
+  ) {
+    const calls = {
+      request: [] as Array<{ streamId: string; body: CreateDecisionRequestBody }>,
+      get: [] as string[],
+      cancel: [] as string[],
+    }
+    const { client, calls: base } = makeFakeClient()
+    Object.assign(client as unknown as Record<string, unknown>, {
+      requestDecision: async (streamId: string, body: CreateDecisionRequestBody) => {
+        calls.request.push({ streamId, body })
+        return overrides.requestDecision
+          ? await overrides.requestDecision(streamId, body)
+          : makeDecision({ externalRef: body.externalRef })
+      },
+      getDecision: async (id: string) => {
+        calls.get.push(id)
+        return overrides.getDecision ? await overrides.getDecision(id) : makeDecision()
+      },
+      cancelDecision: async (id: string) => {
+        calls.cancel.push(id)
+        return overrides.cancelDecision ? await overrides.cancelDecision(id) : makeDecision({ status: "cancelled" })
+      },
+    })
+    const { transport } = makeFakeTransport()
+    Object.assign(transport, { socketConnected: overrides.socketConnected ?? false })
+    const session = new RemoteSession({
+      config: makeConfig(overrides.config),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = session as any
+    const push = (payload: Record<string, unknown>) => internals.handleDecisionPush(payload)
+    const poll = (): Promise<void> => internals.pollPendingDecisions()
+    const pendingCount = (): number => internals.pendingDecisions.size
+    const disconnect = () => {
+      Object.assign(transport, { socketConnected: false })
+      internals.handleTransportDisconnected()
+    }
+    return { session, calls, base, push, poll, pendingCount, transport, internals, disconnect }
+  }
+
+  const resolvedPush = (overrides: Record<string, unknown> = {}) => ({
+    workspaceId: "ws_1",
+    botId: "bot_1",
+    streamId: "stream_root",
+    runtimeSessionId: "rts-test",
+    decisionId: "dreq_1",
+    status: "resolved",
+    optionId: "allow",
+    note: "go ahead",
+    version: 2,
+    ...overrides,
+  })
+
+  const input = {
+    title: "Run `Bash`?",
+    body: "Run a command",
+    options: [
+      { id: "allow", label: "Allow", tone: "primary" as const },
+      { id: "deny", label: "Deny", tone: "destructive" as const },
+    ],
+    allowNote: true,
+    externalRef: "krjtt",
+    streamId: "stream_root",
+  }
+
+  test("posts the card with the session's runtime session id and resolves from the socket push", async () => {
+    const { session, calls, push, pendingCount } = decisionSession()
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    expect(calls.request).toEqual([
+      {
+        streamId: "stream_root",
+        body: {
+          title: "Run `Bash`?",
+          bodyMarkdown: "Run a command",
+          options: input.options,
+          allowNote: true,
+          externalRef: "krjtt",
+          runtimeSessionId: "rts-test",
+        },
+      },
+    ])
+    expect(pendingCount()).toBe(1)
+
+    push(resolvedPush())
+    // A second push for the settled decision is a no-op (the entry is gone).
+    push(resolvedPush({ optionId: "deny" }))
+
+    const outcome = await pending
+    expect({
+      status: outcome.status,
+      ...(outcome.status === "resolved" ? { optionId: outcome.optionId, note: outcome.note } : {}),
+    }).toEqual({
+      status: "resolved",
+      optionId: "allow",
+      note: "go ahead",
+    })
+    expect(outcome.decision.version).toBe(2)
+    expect(pendingCount()).toBe(0)
+    await session.shutdown()
+  })
+
+  test("a cancelled push settles as cancelled", async () => {
+    const { session, push } = decisionSession()
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    push(resolvedPush({ status: "cancelled", optionId: null, note: null }))
+    expect(await pending).toEqual({
+      status: "cancelled",
+      decision: expect.objectContaining({ id: "dreq_1", status: "cancelled" }),
+    })
+    await session.shutdown()
+  })
+
+  test("ignores pushes for another runtime session or an unknown decision", async () => {
+    const { session, push, pendingCount } = decisionSession()
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    push(resolvedPush({ runtimeSessionId: "rts-other" }))
+    push(resolvedPush({ decisionId: "dreq_other" }))
+    expect(pendingCount()).toBe(1)
+    push(resolvedPush())
+    expect((await pending).status).toBe("resolved")
+    await session.shutdown()
+  })
+
+  test("the GET backstop settles a decision whose push never arrived", async () => {
+    const { session, calls, poll } = decisionSession({
+      getDecision: async () =>
+        makeDecision({ status: "resolved", version: 3, resolution: { optionId: "deny", decidedBy: "usr_1" } }),
+    })
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    await poll()
+    expect(calls.get).toEqual(["dreq_1"])
+    expect(await pending).toEqual({
+      status: "resolved",
+      optionId: "deny",
+      note: null,
+      decision: expect.objectContaining({ status: "resolved", version: 3 }),
+    })
+    await session.shutdown()
+  })
+
+  test("a 404 from the backstop rejects the awaiting caller", async () => {
+    const { session, poll } = decisionSession({
+      getDecision: async () => {
+        throw new ThreaApiError("Threa API 404", 404, "NOT_FOUND")
+      },
+    })
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    await poll()
+    await expect(pending).rejects.toMatchObject({ name: "ThreaApiError", status: 404 })
+    await session.shutdown()
+  })
+
+  test("an aborted signal cancels the card and rejects with an AbortError", async () => {
+    const { session, calls, pendingCount } = decisionSession()
+    const controller = new AbortController()
+    const pending = session.requestDecision(input, { signal: controller.signal })
+    await Promise.resolve()
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" })
+    expect(calls.cancel).toEqual(["dreq_1"])
+    expect(pendingCount()).toBe(0)
+    await session.shutdown()
+  })
+
+  test("shutdown abandons every pending decision and withdraws its card", async () => {
+    const { session, calls, pendingCount } = decisionSession()
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    await session.shutdown()
+    await expect(pending).rejects.toMatchObject({ name: "DecisionAbandonedError", decisionId: "dreq_1" })
+    expect({ pending: pendingCount(), cancelled: calls.cancel }).toEqual({ pending: 0, cancelled: ["dreq_1"] })
+  })
+
+  test("interrupting a turn withdraws only the cards that turn opened", async () => {
+    let next = 0
+    const { session, calls, internals } = decisionSession({
+      requestDecision: async () =>
+        next++ === 0
+          ? makeDecision({ id: "dreq_stopped", requesterInvocationId: "binv_stopped" })
+          : makeDecision({ id: "dreq_other", requesterInvocationId: "binv_other" }),
+    })
+    seedInflight(session, makeInvocation({ id: "binv_stopped" }))
+    const stopped = session.requestDecision(input)
+    const other = session.requestDecision(input)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    await internals.completeInterruptedTurns()
+
+    await expect(stopped).rejects.toMatchObject({ name: "DecisionAbandonedError", decisionId: "dreq_stopped" })
+    expect({ cancelled: calls.cancel, pending: [...internals.pendingDecisions.keys()] }).toEqual({
+      cancelled: ["dreq_stopped"],
+      pending: ["dreq_other"],
+    })
+    void other.catch(() => {})
+    await session.shutdown()
+  })
+
+  test("a transport disconnect pulls the backstop poll in to the HTTP cadence", async () => {
+    jest.useFakeTimers()
+    try {
+      const { session, calls, disconnect } = decisionSession({ socketConnected: true })
+      const pending = session.requestDecision(input)
+      await Promise.resolve()
+      expect(calls.get).toEqual([])
+
+      disconnect()
+      jest.advanceTimersByTime(3000)
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(calls.get).toEqual(["dreq_1"])
+
+      void pending.catch(() => {})
+      await session.shutdown()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test("the backstop keeps the blocked turn alive inside an idle timeout shorter than the socket cadence", async () => {
+    jest.useFakeTimers()
+    try {
+      const { session, internals } = decisionSession({ socketConnected: true, config: { idleTimeoutMs: 600_000 } })
+      seedInflight(session, makeInvocation({ id: "binv_blocked" }))
+      internals.activeTurnStream = "stream_root"
+      const pending = session.requestDecision(input)
+      await Promise.resolve()
+
+      // Half the idle window: the backstop tick is also the sign of life.
+      jest.advanceTimersByTime(300_000)
+      await Promise.resolve()
+      await Promise.resolve()
+      jest.advanceTimersByTime(300_001)
+      await Promise.resolve()
+
+      expect(session.isInflight("binv_blocked")).toBe(true)
+      void pending.catch(() => {})
+      await session.shutdown()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test("a shutdown during the POST abandons the caller and withdraws the card", async () => {
+    let release!: (decision: DecisionRequest) => void
+    const { session, calls } = decisionSession({
+      requestDecision: async () => await new Promise<DecisionRequest>((resolve) => (release = resolve)),
+    })
+    const pending = session.requestDecision(input)
+    await Promise.resolve()
+    await session.shutdown()
+    release(makeDecision({ status: "open" }))
+
+    await expect(pending).rejects.toMatchObject({ name: "DecisionAbandonedError", decisionId: "dreq_1" })
+    expect(calls.cancel).toEqual(["dreq_1"])
+  })
+
+  test("a refused request propagates the API error and leaves nothing pending", async () => {
+    const { session, pendingCount } = decisionSession({
+      requestDecision: async () => {
+        throw new ThreaApiError("Threa API 409", 409, "DECISION_REQUESTER_NOT_ACTIVE")
+      },
+    })
+    await expect(session.requestDecision(input)).rejects.toMatchObject({
+      name: "ThreaApiError",
+      status: 409,
+      code: "DECISION_REQUESTER_NOT_ACTIVE",
+    })
+    expect(pendingCount()).toBe(0)
     await session.shutdown()
   })
 })

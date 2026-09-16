@@ -102,6 +102,38 @@ same directory lands in the same scratchpad), opens the socket, and begins
 claiming. `deliverTurn` receives each turn with the prompt, any hydrated
 history, and downloaded attachments listed in the content.
 
+## Asking the user a question
+
+When the runtime hits a call it cannot make for itself — a tool approval, a
+fork in the plan — `requestDecision` posts it to the scratchpad as a decision
+card and resolves when the user answers it there:
+
+```ts
+const outcome = await session.requestDecision({
+  title: "Run `Bash`?",
+  body: "Delete the build directory",
+  options: [
+    { id: "allow", label: "Allow", tone: "primary" },
+    { id: "deny", label: "Deny", tone: "destructive" },
+  ],
+  allowNote: true,
+  externalRef: requestId,
+  expiresInMs: 15 * 60 * 1000,
+})
+if (outcome.status === "resolved" && outcome.optionId === "allow") run()
+```
+
+The card lands on the active turn's stream (override with `streamId`) and is
+attributed to the in-flight invocation when there is one (`invocationId`). The
+answer arrives over the bot socket, with a poll as the missed-push backstop.
+`status` is `"resolved"` (with `optionId` and the optional `note`),
+`"cancelled"` or `"expired"`. Pass a `signal` to withdraw the card and reject
+with an `AbortError`; `session.cancelDecision(id)` withdraws it directly. A
+shutdown rejects every awaiting call with `DecisionAbandonedError`, and the
+turn blocked on a decision stays alive while the card is open. Decisions on an
+end-to-end encrypted scratchpad are not supported yet — the request is refused
+with `E2E_STREAM_PLAINTEXT_UNSUPPORTED`.
+
 ## What the SDK decides for you
 
 - One normal turn at a time. While a turn is in flight the session claims

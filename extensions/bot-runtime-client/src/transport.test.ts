@@ -386,6 +386,41 @@ describe("socket self-heal (the wedge that burns the edge quota)", () => {
     }
   })
 
+  it("routes decision:resolved and decision:cancelled to their callbacks", async () => {
+    const fake = fakeSocket()
+    const ioSpy = spyOn(socketIoClient, "io").mockReturnValue(fake as unknown as ReturnType<typeof socketIoClient.io>)
+    try {
+      stubHintFetch()
+      const resolved: unknown[] = []
+      const cancelled: unknown[] = []
+      const transport = new BotRuntimeTransport(
+        testTransportOptions(HELLO, {
+          callbacks: {
+            onDecisionResolved: (payload) => void resolved.push(payload),
+            onDecisionCancelled: (payload) => void cancelled.push(payload),
+          },
+        })
+      )
+      await transport.connect()
+
+      const base = {
+        workspaceId: "ws_1",
+        botId: "bot_1",
+        streamId: "stream_1",
+        runtimeSessionId: "rts_1",
+        decisionId: "dreq_1",
+        version: 2,
+      }
+      fake.handlers["decision:resolved"]!({ ...base, status: "resolved", optionId: "allow", note: "go" })
+      fake.handlers["decision:cancelled"]!({ ...base, status: "cancelled", optionId: null, note: null })
+
+      expect(resolved).toEqual([{ ...base, status: "resolved", optionId: "allow", note: "go" }])
+      expect(cancelled).toEqual([{ ...base, status: "cancelled", optionId: null, note: null }])
+    } finally {
+      ioSpy.mockRestore()
+    }
+  })
+
   it("connect() leaves a fresh outage to Socket.IO but tears down and redials a stale one", async () => {
     const first = fakeSocket()
     const second = fakeSocket()

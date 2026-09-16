@@ -75,7 +75,7 @@ The channel reports `runtimeKind: "claude-code-channel"`. Originally only `pi-lo
 
 A claim holds a lease (`claimTtlSeconds`, max 300) that expires if not renewed, so the channel renews every in-flight claim on a timer for as long as Claude is still working.
 
-The channel handles one turn at a time. A message you send while Claude is still working waits in Threa until the current turn completes, then gets claimed and pushed. The one exception is a permission verdict (below), which is pulled through immediately so a blocked turn can continue.
+The channel handles one turn at a time. A message you send while Claude is still working waits in Threa until the current turn completes, then gets claimed and pushed.
 
 ## Outbound: send for progress, reply to finish
 
@@ -106,9 +106,11 @@ Attachments cross in both directions, but the claim response doesn't carry them,
 
 When Claude calls a tool that needs approval and you're not at the terminal, the session would normally stall. The channel opts into permission relay (`claude/channel/permission`). The loop:
 
-1. Claude Code sends the channel a `notifications/claude/channel/permission_request` with a five-letter `request_id`, the tool name, and a short description.
-2. The channel posts that into the scratchpad as a normal message: _"Claude Code wants to run `Bash`… Reply `yes abcde` or `no abcde`."_
-3. You reply in the scratchpad. That reply is itself a scratchpad message, so it comes back to the channel as another claimed invocation. The channel recognizes the `yes <id>` / `no <id>` shape against its open requests and, instead of pushing it to Claude as a new prompt, sends Claude Code the verdict (`notifications/claude/channel/permission`) and silently closes that invocation.
+1. Claude Code sends the channel a `notifications/claude/channel/permission_request` with a `request_id`, the tool name, a description, and a preview of the input.
+2. The channel opens a decision card on the scratchpad titled "Run `<tool>`?" with **Allow** and **Deny**.
+3. Your answer goes back to Claude Code as the permission verdict (`notifications/claude/channel/permission`). A note you leave on the card stays on the card: Claude Code's permission notification carries only `request_id` and `behavior`, so the note is never forwarded.
+
+A sealed (E2EE) stream cannot show a card yet, and neither can a card that fails to open. The approval then stays in the terminal, and the channel says so on the stream instead of leaving you waiting.
 
 The local terminal dialog stays open the whole time, so whichever answer arrives first wins. Because anyone who can post in the scratchpad can approve, only enable relay in workspaces you trust. Disable it with `THREA_PERMISSION_RELAY=0`, or skip prompts entirely with `--dangerously-skip-permissions` for unattended use.
 
