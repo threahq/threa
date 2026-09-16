@@ -387,7 +387,7 @@ export class HermesTurnRunner {
       for await (const event of this.client.streamEvents(runId, abort.signal)) {
         if (abort.signal.aborted) return undefined
         if (event.event === "approval.request") {
-          batcher.add({ stepType: "status", content: `Waiting for approval: ${text(event.command) ?? "a command"}` })
+          batcher.add({ stepType: "tool_call", content: `Waiting for approval: ${text(event.command) ?? "a command"}` })
           // The run is parked until it is answered, so the card is resolved
           // off the drain loop; blocking here would stall nothing but would
           // also never see the resume events.

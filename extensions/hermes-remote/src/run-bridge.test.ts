@@ -618,7 +618,7 @@ describe("HermesTurnRunner control", () => {
     gate.close()
     await settle()
     expect(calls.steps.flatMap((call) => call.frames)).toEqual([
-      { stepType: "status", content: "Waiting for approval: rm -rf build" },
+      { stepType: "tool_call", content: "Waiting for approval: rm -rf build" },
     ])
     expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "removed" }])
   })
