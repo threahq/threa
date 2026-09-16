@@ -82,7 +82,7 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
     return rows
   }, [metrics.daysTotal, metrics.daysElapsed, metrics.dailyAvg, metrics.totalCost])
 
-  const maxY = Math.max(metrics.budgetAmount * 1.25, metrics.projectedTotal * 1.12, 0.01)
+  const maxY = Math.max(metrics.enforcedLimit * 1.25, metrics.projectedTotal * 1.12, 0.01)
 
   const config = useMemo<ChartConfig>(
     () => ({
@@ -175,7 +175,7 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
 
           {/* Over-budget zone */}
           <ReferenceArea
-            y1={metrics.budgetAmount}
+            y1={metrics.enforcedLimit}
             y2={maxY}
             fill="#d97706"
             fillOpacity={0.09 * dim("overBudget")}
@@ -185,7 +185,7 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
 
           {/* Budget reference line */}
           <ReferenceLine
-            y={metrics.budgetAmount}
+            y={metrics.enforcedLimit}
             stroke="currentColor"
             strokeOpacity={0.5 * dim("budget")}
             strokeWidth={1}

@@ -56,15 +56,15 @@ export function BudgetHealthHero({
           <Stat
             label="Spent"
             value={formatCurrency(metrics.totalCost)}
-            hint={`${metrics.percentUsed.toFixed(0)}% of ${formatCurrency(metrics.budgetAmount, 0)} budget`}
+            hint={`${metrics.percentUsed.toFixed(0)}% of ${formatCurrency(metrics.enforcedLimit, 0)} limit`}
           />
           <Stat
             label="Projected"
             value={formatCurrency(metrics.projectedTotal)}
             hint={
               metrics.projectedOverage > 0
-                ? `${formatCurrency(metrics.projectedOverage)} over budget`
-                : `${formatCurrency(Math.max(0, metrics.budgetAmount - metrics.projectedTotal))} headroom`
+                ? `${formatCurrency(metrics.projectedOverage)} over limit`
+                : `${formatCurrency(Math.max(0, metrics.enforcedLimit - metrics.projectedTotal))} headroom`
             }
             info={
               <>

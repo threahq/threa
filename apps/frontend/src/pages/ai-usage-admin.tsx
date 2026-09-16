@@ -107,7 +107,6 @@ export function AIUsageAdminPage() {
         totalCost: usage?.total.totalCostUsd ?? 0,
         budgetAmount: optimisticBudget,
         operatorCeilingUsd: budget?.budget.operatorCeilingUsd,
-        percentUsed: optimisticBudget > 0 ? ((usage?.total.totalCostUsd ?? 0) / optimisticBudget) * 100 : 0,
         periodStart: usage?.period.start ?? new Date().toISOString(),
         periodEnd: usage?.period.end ?? new Date().toISOString(),
       }),

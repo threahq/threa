@@ -95,11 +95,9 @@ describe("TopSpendersCard user limits", () => {
   })
 
   it("should open limits for a member who has not used AI when they are picked from the member list", async () => {
-    const setUserLimits = vi
-      .spyOn(aiUsageApi, "setUserLimits")
-      .mockResolvedValue({
-        limits: { userId: "usr_grace", monthlyQuotaUsd: 3, agentAllowanceUsd: null, aiDisabled: false },
-      })
+    const setUserLimits = vi.spyOn(aiUsageApi, "setUserLimits").mockResolvedValue({
+      limits: { userId: "usr_grace", monthlyQuotaUsd: 3, agentAllowanceUsd: null, aiDisabled: false },
+    })
     const user = userEvent.setup()
     mount([])
 

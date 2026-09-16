@@ -121,7 +121,7 @@ export function BudgetControlsPanel({
           </div>
           <p className="text-xs text-muted-foreground">
             Hard monthly limit · resets {resetDateStr} · currently {formatCurrency(metrics.totalCost)} of{" "}
-            {formatCurrency(metrics.budgetAmount, 0)} used
+            {formatCurrency(metrics.enforcedLimit, 0)} used
           </p>
           {budget && budget.operatorCeilingUsd < metrics.budgetAmount && (
             <p className="text-xs text-amber-700 dark:text-amber-400">
@@ -223,7 +223,7 @@ export function BudgetControlsPanel({
               },
             ].map((t) => {
               const hit = thresholdHit(t.pct)
-              const thresholdAmount = metrics.budgetAmount * (t.pct / 100)
+              const thresholdAmount = metrics.enforcedLimit * (t.pct / 100)
               return (
                 <div
                   key={t.id}
