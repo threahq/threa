@@ -1,11 +1,10 @@
-import type { AIUsageByDay, AIUsageCategory } from "@threahq/types"
+import type { AISpendStage, AIUsageByDay, AIUsageCategory } from "@threahq/types"
 import type { DayFunctionBreakdown } from "./usage-repository"
 
 /**
  * The order AI work stops in as a workspace approaches its limit: agents first,
  * embeddings last, so search and memory keep working longest.
  */
-export type AISpendStage = "agents" | "enrichment" | "core" | "embeddings"
 
 interface AIFunction {
   category: AIUsageCategory

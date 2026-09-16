@@ -1,29 +1,22 @@
 import type { Pool } from "pg"
+import { AI_SPEND_STAGE_CUTOFFS, type AISpendStage } from "@threahq/types"
 import type { SpendAdmissionRequest, SpendDecision, SpendGate } from "@threahq/agent-runtime"
 import { withClient } from "../../db"
 import { logger } from "../../lib/logger"
 import { AIBudgetRepository, type SpendPosition } from "./budget-repository"
-import { AI_FUNCTIONS, type AISpendStage } from "./categories"
+import { AI_FUNCTIONS } from "./categories"
 import { resolveBudgetMonthRange } from "./billing-window"
 
 const AGENT_FUNCTION_IDS = Object.entries(AI_FUNCTIONS)
   .filter(([, fn]) => fn.stage === "agents")
   .map(([functionId]) => functionId)
 
-/** Fraction of the workspace limit at which each stage stops. */
-const STAGE_CUTOFFS: Record<AISpendStage, number> = {
-  agents: 0.7,
-  enrichment: 0.85,
-  core: 0.95,
-  embeddings: 1,
-}
-
 function decideSpend(position: SpendPosition, stage: AISpendStage): SpendDecision {
   if (position.operatorAiDisabled) return { allowed: false, reason: "operator_disabled" }
   if (position.workspaceAiDisabled) return { allowed: false, reason: "workspace_disabled" }
 
   const workspaceLimitUsd = Math.min(position.monthlyBudgetUsd, position.operatorCeilingUsd)
-  if (position.workspaceSpendUsd >= workspaceLimitUsd * STAGE_CUTOFFS[stage]) {
+  if (position.workspaceSpendUsd >= workspaceLimitUsd * AI_SPEND_STAGE_CUTOFFS[stage]) {
     return { allowed: false, reason: "workspace_limit" }
   }
 

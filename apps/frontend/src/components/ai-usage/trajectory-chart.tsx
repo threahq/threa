@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react"
+import { AI_SPEND_STAGE_CUTOFFS } from "@threahq/types"
 import { Area, AreaChart, CartesianGrid, ReferenceArea, ReferenceDot, ReferenceLine, XAxis, YAxis } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { cn } from "@/lib/utils"
@@ -188,6 +189,15 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
             stroke="currentColor"
             strokeOpacity={0.5 * dim("budget")}
             strokeWidth={1}
+          />
+
+          <ReferenceLine
+            y={metrics.budgetAmount * AI_SPEND_STAGE_CUTOFFS.agents}
+            stroke="currentColor"
+            strokeOpacity={0.35 * dim("budget")}
+            strokeWidth={1}
+            strokeDasharray="4 3"
+            label={{ value: "Agents stop", position: "insideTopLeft", fontSize: 10, fill: "currentColor", opacity: 0.6 }}
           />
 
           {/* Today vertical marker */}

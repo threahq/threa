@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useUpdateAIBudget } from "@/hooks"
-import type { UpdateAIBudgetInput } from "@threahq/types"
+import { AI_SPEND_STAGE_CUTOFFS, type UpdateAIBudgetInput } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { formatCurrency, type BudgetMetrics } from "./metrics"
 import { SectionLabel } from "./primitives"
@@ -107,6 +107,10 @@ export function BudgetControlsPanel({
           <p className="text-xs text-muted-foreground">
             Hard monthly limit · resets {resetDateStr} · currently {formatCurrency(metrics.totalCost)} of{" "}
             {formatCurrency(metrics.budgetAmount, 0)} used
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Agents stop at {formatCurrency(metrics.budgetAmount * AI_SPEND_STAGE_CUTOFFS.agents, 0)}, background AI
+            winds down after that, and everything stops at {formatCurrency(metrics.budgetAmount, 0)}.
           </p>
         </div>
 
