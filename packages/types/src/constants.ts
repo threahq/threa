@@ -1016,6 +1016,24 @@ export const AgentStepTypes = {
   MODEL_ESCALATED: "model_escalated",
 } as const satisfies Record<string, AgentStepType>
 
+/**
+ * Lifecycle phase of a plaintext runtime step frame. An unphased frame is a
+ * completed step; a `started` frame opens a tool step that a later frame with
+ * the same `clientStepId` finalizes in place.
+ */
+export const STEP_FRAME_PHASES = ["started"] as const
+export type StepFramePhase = (typeof STEP_FRAME_PHASES)[number]
+
+export const StepFramePhases = {
+  STARTED: "started",
+} as const satisfies Record<string, StepFramePhase>
+
+/** Step types a phased frame may carry: only tool steps have a lifecycle. */
+export const PHASED_STEP_TYPES = [
+  AgentStepTypes.TOOL_CALL,
+  AgentStepTypes.TOOL_ERROR,
+] as const satisfies readonly AgentStepType[]
+
 export const AGENT_RECONSIDERATION_DECISIONS = ["kept_previous_response"] as const
 export type AgentReconsiderationDecision = (typeof AGENT_RECONSIDERATION_DECISIONS)[number]
 

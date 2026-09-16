@@ -4,6 +4,7 @@ import type {
   BotRuntimeManifest,
   BotRuntimeStatus,
   InvocationControlState,
+  StepFramePhase,
 } from "@threahq/types"
 import type { BotRuntimeInstance } from "./repository"
 
@@ -91,6 +92,9 @@ export interface RecordStepFrame {
   content: string
   /** Client idempotency key — a re-send under the same key dedups to the first row. */
   clientStepId?: string
+  /** `started` opens a tool step that a later frame under the same `clientStepId` finalizes. */
+  phase?: StepFramePhase
+  durationMs?: number
 }
 
 export interface RecordStepsParams {

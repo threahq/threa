@@ -571,6 +571,31 @@ describe("bot:invocation:steps", () => {
     expect((botRuntimeWriteOps.recordSteps as ReturnType<typeof mock>).mock.calls.length).toBe(0)
   })
 
+  it("hands a phased tool frame to the write ops and rejects a phase without clientStepId", async () => {
+    const { socket, botRuntimeWriteOps } = setup({
+      recordSteps: async () => ({
+        invocationId: "binv_1",
+        sessionId: "binv_1",
+        steps: [{ stepId: "step_1", stepNumber: 1 }],
+      }),
+    })
+    const phased = { stepType: "tool_call", content: "bash: ls", clientStepId: "call-1", phase: "started" }
+    const ack = mock((_r: BotWriteAck) => {})
+
+    await socket.trigger("bot:invocation:steps", { ...VALID_STEPS, steps: [phased] }, ack)
+    await socket.trigger(
+      "bot:invocation:steps",
+      { ...VALID_STEPS, steps: [{ stepType: "tool_call", content: "bash: ls", phase: "started" }] },
+      ack
+    )
+
+    const calls = (botRuntimeWriteOps.recordSteps as ReturnType<typeof mock>).mock.calls
+    expect({ steps: calls.map((call) => call[0].steps), secondAck: ack.mock.calls[1]?.[0] }).toEqual({
+      steps: [[phased]],
+      secondAck: { ok: false, code: "INVALID_PAYLOAD", message: "Invalid bot:invocation:steps payload" },
+    })
+  })
+
   it("maps an HttpError from the write ops to a terminal ack code", async () => {
     const { socket } = setup({
       recordSteps: async () => {

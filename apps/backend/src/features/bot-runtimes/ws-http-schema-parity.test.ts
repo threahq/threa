@@ -51,6 +51,28 @@ describe("WS ↔ HTTP schema parity", () => {
       parity(wsStep({ content: "" }).success, httpStep({ content: "" }).success, false)
       parity(wsStep({ stepType: "bogus" }).success, httpStep({ stepType: "bogus" }).success, false)
     })
+
+    it("accepts a phased tool frame and rejects a phase without clientStepId or on a non-tool step identically", () => {
+      const tool = { stepType: "tool_call", clientStepId: "call-1" }
+      parity(wsStep({ ...tool, phase: "started" }).success, httpStep({ ...tool, phase: "started" }).success, true)
+      parity(wsStep({ ...tool, durationMs: 120 }).success, httpStep({ ...tool, durationMs: 120 }).success, true)
+      parity(
+        wsStep({ stepType: "tool_call", phase: "started" }).success,
+        httpStep({ stepType: "tool_call", phase: "started" }).success,
+        false
+      )
+      parity(
+        wsStep({ stepType: "tool_call", durationMs: 5 }).success,
+        httpStep({ stepType: "tool_call", durationMs: 5 }).success,
+        false
+      )
+      parity(
+        wsStep({ clientStepId: "t-1", phase: "started" }).success,
+        httpStep({ clientStepId: "t-1", phase: "started" }).success,
+        false
+      )
+      parity(wsStep({ ...tool, durationMs: -1 }).success, httpStep({ ...tool, durationMs: -1 }).success, false)
+    })
   })
 
   describe("renew: claimTtlSeconds default + bounds", () => {

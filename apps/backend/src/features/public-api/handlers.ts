@@ -1733,7 +1733,15 @@ export function createPublicApiHandlers({
         invocationId: req.params.invocationId,
         instanceId: data.instanceId,
         claimToken: data.claimToken,
-        steps: [{ stepType: data.stepType, content: data.content, clientStepId: data.clientStepId }],
+        steps: [
+          {
+            stepType: data.stepType,
+            content: data.content,
+            clientStepId: data.clientStepId,
+            phase: data.phase,
+            durationMs: data.durationMs,
+          },
+        ],
         statusText: data.statusText,
       })
       res.json({

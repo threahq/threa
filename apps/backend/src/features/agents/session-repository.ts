@@ -6,7 +6,6 @@ import type {
   TraceSource,
 } from "@threahq/types"
 import { AgentSessionStatuses, AgentStepTypes, BotInvocationStatuses, StreamTypes } from "@threahq/types"
-import { isUniqueViolation } from "@threahq/backend-common"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
@@ -294,6 +293,17 @@ const STEP_SELECT_FIELDS = `
   started_at, completed_at
 `
 
+// A runtime that dies between a step's start and finish leaves the row open;
+// ending the session closes it so the trace never spins on a finished session.
+const CLOSE_OPEN_STEPS_CTE = `closed_steps AS (
+  UPDATE agent_session_steps step
+  SET completed_at = updated.completed_at
+  FROM updated
+  WHERE step.session_id = updated.id
+    AND step.completed_at IS NULL
+    AND updated.completed_at IS NOT NULL
+)`
+
 export const AgentSessionRepository = {
   // ----- Sessions -----
 
@@ -517,6 +527,7 @@ export const AgentSessionRepository = {
     }
 
     const query = `
+      WITH updated AS (
       UPDATE agent_sessions
       SET
         status = $1,
@@ -529,6 +540,8 @@ export const AgentSessionRepository = {
         completed_at = $8
       ${whereClause}
       RETURNING ${SESSION_SELECT_FIELDS}
+      ), ${CLOSE_OPEN_STEPS_CTE}
+      SELECT * FROM updated
     `
 
     const result = await db.query<SessionRow>({ text: query, values })
@@ -881,6 +894,7 @@ export const AgentSessionRepository = {
       : [SessionStatuses.RUNNING]
     const result = await db.query<SessionRow>(
       sql`
+        WITH updated AS (
         UPDATE agent_sessions
         SET
           status = ${SessionStatuses.COMPLETED},
@@ -893,6 +907,8 @@ export const AgentSessionRepository = {
         WHERE id = ${id}
           AND status = ANY(${allowedStatuses})
         RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
+        ), ${sql.raw(CLOSE_OPEN_STEPS_CTE)}
+        SELECT * FROM updated
       `
     )
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
@@ -915,9 +931,8 @@ export const AgentSessionRepository = {
     }
 
     while (true) {
-      try {
-        const result = await db.query<StepRow>(
-          sql`
+      const result = await db.query<StepRow>(
+        sql`
             INSERT INTO agent_session_steps (
               id, session_id, step_number, step_type, content,
               content_ciphertext, content_envelope, sources,
@@ -939,27 +954,28 @@ export const AgentSessionRepository = {
               ${params.clientStepId ?? null}
             FROM agent_session_steps
             WHERE session_id = ${params.sessionId}
-            ON CONFLICT (session_id, step_number) DO NOTHING
+            ON CONFLICT DO NOTHING
             RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
           `
-        )
-        if (result.rows[0]) return mapRowToStep(result.rows[0])
-        // No row: a concurrent insert took this step_number. Recompute MAX+1 and retry.
-      } catch (error) {
-        // A re-send under the same idempotency key hits the partial-unique index
-        // (step_number is free, so the step_number ON CONFLICT didn't fire — the
-        // client_step_id collision surfaces as a raw 23505). Return the row the
-        // first append created rather than appending a duplicate trace step.
-        if (params.clientStepId && isUniqueViolation(error, "agent_session_steps_client_step_id_key")) {
-          const existing = await db.query<StepRow>(
-            sql`
+      )
+      if (result.rows[0]) return mapRowToStep(result.rows[0])
+      // No row: either a re-send under the same idempotency key hit the
+      // partial-unique client_step_id index, or a concurrent insert took this
+      // step_number. The conflict is absorbed rather than raised so a caller's
+      // enclosing transaction stays usable for the lookup and the retry.
+      if (params.clientStepId) {
+        const existing = await db.query<StepRow>(
+          sql`
               SELECT ${sql.raw(STEP_SELECT_FIELDS)} FROM agent_session_steps
               WHERE session_id = ${params.sessionId} AND client_step_id = ${params.clientStepId}
             `
-          )
-          if (existing.rows[0]) return mapRowToStep(existing.rows[0])
-        }
-        throw error
+        )
+        if (existing.rows[0]) return mapRowToStep(existing.rows[0])
+      }
+      // A caller-supplied id that already exists would conflict on every retry.
+      const sameId = await db.query(sql`SELECT 1 FROM agent_session_steps WHERE id = ${params.id}`)
+      if ((sameId.rowCount ?? 0) > 0) {
+        throw new Error(`agent_session_steps row already exists for step id ${params.id}`)
       }
     }
   },
@@ -1005,6 +1021,41 @@ export const AgentSessionRepository = {
       `
     )
     return mapRowToStep(result.rows[0])
+  },
+
+  /**
+   * Finalize the open row a `started` frame inserted under `clientStepId`. The
+   * `completed_at IS NULL` predicate is the compare-and-set (INV-20): a replayed
+   * finish, or a finish racing another, matches nothing and returns null.
+   */
+  async finalizeStepByClientStepId(
+    db: Querier,
+    params: {
+      sessionId: string
+      clientStepId: string
+      stepType: StepType
+      content: unknown
+      completedAt: Date
+      durationMs?: number
+    }
+  ): Promise<AgentSessionStep | null> {
+    const startedAt =
+      params.durationMs !== undefined ? new Date(params.completedAt.getTime() - params.durationMs) : null
+    const result = await db.query<StepRow>(
+      sql`
+        UPDATE agent_session_steps
+        SET
+          step_type = ${params.stepType},
+          content = ${JSON.stringify(params.content)},
+          completed_at = ${params.completedAt},
+          started_at = COALESCE(${startedAt}::timestamptz, started_at)
+        WHERE session_id = ${params.sessionId}
+          AND client_step_id = ${params.clientStepId}
+          AND completed_at IS NULL
+        RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
+      `
+    )
+    return result.rows[0] ? mapRowToStep(result.rows[0]) : null
   },
 
   async completeStep(db: Querier, stepId: string, tokensUsed?: number): Promise<AgentSessionStep | null> {

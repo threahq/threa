@@ -1,7 +1,13 @@
 import { randomUUID } from "crypto"
 import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
-import { AgentStepTypes, type AgentStepType, type AuthorType } from "@threahq/types"
+import {
+  AgentStepTypes,
+  StepFramePhases,
+  type AgentStepType,
+  type AuthorType,
+  type StepFramePhase,
+} from "@threahq/types"
 import {
   TraceProjector,
   type AgentEvent,
@@ -116,9 +122,11 @@ interface BotInvocationTraceSinkDeps {
  * The external-bot sink for the shared `TraceProjector`: normalized invocation
  * frames land as completed `agent_session_steps` rows plus the same
  * `agent_session:step:completed` / `agent_session:progress` emits the other
- * runtimes drive. Today's wire delivers steps post-hoc (already completed), so
- * `open` is deferred — the row is written once, at `complete` — and no
- * `step:started` frame is emitted, exactly as before normalization.
+ * runtimes drive. `open` is deferred and the row is written at `complete`: an
+ * unphased frame lands completed, a `started` frame lands open (emitting
+ * `step:started`), and a later frame under the same `clientStepId` finalizes
+ * that row in place. A finish that beats its start inserts completed, so the
+ * late start dedups and emits nothing.
  */
 export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
   /** The last persisted step row — the `/steps` handler's response body needs its id. */
@@ -134,22 +142,46 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
 
   constructor(private readonly deps: BotInvocationTraceSinkDeps) {}
 
+  /**
+   * Lifecycle of the NEXT step, set and consumed alongside `pendingClientStepId`:
+   * `started` inserts an open row; a later frame under the same key finalizes it
+   * and `pendingDurationMs` back-dates its start.
+   */
+  pendingPhase: StepFramePhase | undefined = undefined
+  pendingDurationMs: number | undefined = undefined
+
   async record(step: TraceStepRecord): Promise<void> {
-    const { pool, io, workspaceId, sessionId, streamId, triggerMessageId, personaName, parent } = this.deps
+    const { pool, sessionId } = this.deps
     const completedAt = new Date()
-    const startedAt = new Date(completedAt.getTime() - (step.durationMs ?? 0))
     // Consume the idempotency key as a one-shot: clear it before the insert so a
     // frame that ever produces two `record()` calls can't carry the first call's
     // key into the second (which would dedup to the first row and silently drop
     // the second step). Today's wire is one step per frame, but this keeps the
     // invariant from depending on that.
     const clientStepId = this.pendingClientStepId
+    const phase = this.pendingPhase
+    const frameDurationMs = this.pendingDurationMs
+    const durationMs = frameDurationMs ?? step.durationMs ?? 0
     this.pendingClientStepId = undefined
+    this.pendingPhase = undefined
+    this.pendingDurationMs = undefined
+    const started = phase === StepFramePhases.STARTED
     const stepId = generateStepId()
     // Append + currentStepType must run in one transaction. appendStep is
     // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
     // append distinct rows instead of clobbering each other.
-    const persisted = await withTransaction(pool, async (client) => {
+    const outcome = await withTransaction(pool, async (client) => {
+      if (clientStepId && !started) {
+        const finalized = await AgentSessionRepository.finalizeStepByClientStepId(client, {
+          sessionId,
+          clientStepId,
+          stepType: step.stepType,
+          content: step.content,
+          completedAt,
+          durationMs: frameDurationMs,
+        })
+        if (finalized) return { step: finalized, event: "finalized" as const }
+      }
       const inserted = await AgentSessionRepository.appendStep(client, {
         id: stepId,
         sessionId,
@@ -157,43 +189,49 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         content: step.content,
         sources: step.sources,
         messageId: step.messageId,
-        startedAt,
-        completedAt,
+        startedAt: started ? completedAt : new Date(completedAt.getTime() - durationMs),
+        completedAt: started ? undefined : completedAt,
         clientStepId,
       })
       // Only advance current_step_type on a real insert. On an idempotent dedup
       // appendStep returns the pre-existing row (a different id than the one we
       // generated); its type was set when it first landed, and re-setting it from
       // this replay would write the replay's type and regress to an older step.
-      if (inserted.id === stepId) {
-        await AgentSessionRepository.updateCurrentStepType(client, sessionId, inserted.stepType)
-      }
-      return inserted
+      if (inserted.id !== stepId) return { step: inserted, event: null }
+      await AgentSessionRepository.updateCurrentStepType(client, sessionId, inserted.stepType)
+      return { step: inserted, event: started ? ("started" as const) : ("inserted" as const) }
     })
-    this.lastStep = persisted
+    this.lastStep = outcome.step
     // A deduped replay was already broadcast when it first landed — re-emitting it
     // (with its older stepNumber/type) would flicker the live indicators backward,
-    // so the broadcast is gated on the row being freshly inserted by this call.
-    if (persisted.id === stepId) {
-      io.to(`ws:${workspaceId}:agent_session:${sessionId}`).emit("agent_session:step:completed", {
-        sessionId,
-        step: serializeTraceStep(persisted),
-      })
-      let progress = io.to(`ws:${workspaceId}:stream:${streamId}`)
-      if (parent) progress = progress.to(`ws:${workspaceId}:stream:${parent.parentStreamId}`)
-      progress.emit("agent_session:progress", {
-        workspaceId,
-        streamId,
-        sessionId,
-        triggerMessageId,
-        personaName,
-        stepCount: persisted.stepNumber,
-        messageCount: 0,
-        currentStepType: persisted.stepType,
-        threadStreamId: parent ? streamId : undefined,
-        parentMessageId: parent?.parentMessageId,
-      })
+    // so the broadcast is gated on the row being changed by this call.
+    if (outcome.event === null) return
+    const room = `ws:${this.deps.workspaceId}:agent_session:${sessionId}`
+    const payload = { sessionId, step: serializeTraceStep(outcome.step) }
+    if (outcome.event === "started") {
+      this.deps.io.to(room).emit("agent_session:step:started", payload)
+    } else {
+      this.deps.io.to(room).emit("agent_session:step:completed", payload)
     }
+    if (outcome.event !== "finalized") this.emitProgress(outcome.step)
+  }
+
+  private emitProgress(step: AgentSessionStep): void {
+    const { io, workspaceId, sessionId, streamId, triggerMessageId, personaName, parent } = this.deps
+    let progress = io.to(`ws:${workspaceId}:stream:${streamId}`)
+    if (parent) progress = progress.to(`ws:${workspaceId}:stream:${parent.parentStreamId}`)
+    progress.emit("agent_session:progress", {
+      workspaceId,
+      streamId,
+      sessionId,
+      triggerMessageId,
+      personaName,
+      stepCount: step.stepNumber,
+      messageCount: 0,
+      currentStepType: step.stepType,
+      threadStreamId: parent ? streamId : undefined,
+      parentMessageId: parent?.parentMessageId,
+    })
   }
 
   async open(params: { stepType: AgentStepType }): Promise<BotOpenStep> {
