@@ -10,7 +10,7 @@ import {
   useAsideOpenDraft,
   useAsidePendingAgentBlocks,
 } from "@/stores/aside-store"
-import { useAsideHandoff } from "@/hooks/use-aside-handoff"
+import { useHostComposerHandoff } from "@/hooks/use-host-composer-handoff"
 import type { AsideDraftHandoff } from "@/hooks/use-aside-draft-actions"
 import { useDeleteAsideDraft } from "./use-aside-drafts"
 
@@ -61,7 +61,7 @@ export function useAsideDraftSurface(params: {
   )
   const consumePendingAgentBlocks = useCallback(() => clearAsideAgentBlocks(asideId), [asideId])
 
-  const handoff = useAsideHandoff(workspaceId)
+  const handoff = useHostComposerHandoff(workspaceId)
   const sendToComposer = useCallback(
     async ({ content, attachments }: AsideDraftHandoff) => {
       const queued = await handoff({ hostStreamId, originScope, content, attachments })

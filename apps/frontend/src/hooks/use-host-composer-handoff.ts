@@ -12,7 +12,7 @@ function hostComposerMounted(hostStreamId: string): boolean {
 }
 
 /**
- * Send an aside draft to the composer it was opened from. The blocks ride the
+ * Send content to a stream's own composer. The blocks ride the
  * same hand-off queue a share does, so the destination's own draft is stashed
  * rather than replaced (INV-43); a conversation origin additionally points the
  * host composer at that conversation's reply scope first, so the send files
@@ -27,7 +27,7 @@ function hostComposerMounted(hostStreamId: string): boolean {
  * once it has persisted the blocks and files, false if it could not (or the
  * hand-off expired) — the caller decides what to let go of on that.
  */
-export function useAsideHandoff(workspaceId: string) {
+export function useHostComposerHandoff(workspaceId: string) {
   const navigate = useNavigate()
   return useCallback(
     async (params: {

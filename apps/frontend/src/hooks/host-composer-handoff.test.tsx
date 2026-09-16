@@ -11,7 +11,7 @@ import {
   queueShareHandoff,
   settleShareHandoffBatch,
 } from "@/stores/composer-handoff-store"
-import { useAsideHandoff } from "./use-aside-handoff"
+import { useHostComposerHandoff } from "./use-host-composer-handoff"
 
 const CONTENT: JSONContent[] = [
   {
@@ -29,7 +29,7 @@ function Probe({ children }: { children: ReactNode }) {
 
 /** The hook inside a router parked on the board; `pathname` tracks where it sends the user. */
 function handoff() {
-  return renderHook(() => useAsideHandoff("ws_1"), {
+  return renderHook(() => useHostComposerHandoff("ws_1"), {
     wrapper: ({ children }) => (
       <MemoryRouter initialEntries={["/w/ws_1/board"]}>
         <Routes>
@@ -53,7 +53,7 @@ beforeEach(async () => {
   await db.composerTarget.clear()
 })
 
-describe("useAsideHandoff", () => {
+describe("useHostComposerHandoff", () => {
   it("queues the blocks for the mounted host composer and stays on the page", async () => {
     const unmount = mountHostScroller("stream_host")
     try {

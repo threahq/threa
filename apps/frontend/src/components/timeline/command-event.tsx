@@ -1,12 +1,13 @@
 import { useState } from "react"
-import type {
-  StreamEvent,
-  CommandDispatchedPayload,
-  CommandCompletedPayload,
-  CommandFailedPayload,
-  CommandProgressPayload,
+import {
+  draftStreamScope,
+  type StreamEvent,
+  type CommandDispatchedPayload,
+  type CommandCompletedPayload,
+  type CommandFailedPayload,
+  type CommandProgressPayload,
 } from "@threahq/types"
-import { Loader2, CheckCircle, XCircle, ChevronRight, X } from "lucide-react"
+import { Loader2, CheckCircle, XCircle, ChevronRight, X, Undo2 } from "lucide-react"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useFormattedDate } from "@/hooks"
 import { stripMarkdownToInline } from "@/lib/markdown"
@@ -14,10 +15,13 @@ import { commandChipStyle } from "@/lib/markdown/chip-styles"
 import { cn } from "@/lib/utils"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { useCommandDispatchCancellation } from "@/hooks/use-command-dispatch-queue"
+import { useHostComposerHandoff } from "@/hooks/use-host-composer-handoff"
+import { commandDoc } from "@/lib/commands"
 
 interface CommandEventProps {
   /** All events for this command, grouped by commandId */
   events: StreamEvent[]
+  workspaceId: string
 }
 
 type CommandStatus = "running" | "completed" | "failed"
@@ -26,7 +30,7 @@ type CommandStatus = "running" | "completed" | "failed"
  * Renders grouped command events as a collapsible lifecycle timeline.
  * Command events are author-only — filtering happens in EventItem.
  */
-export function CommandEvent({ events }: CommandEventProps) {
+export function CommandEvent({ events, workspaceId }: CommandEventProps) {
   const [isOpen, setIsOpen] = useState(false)
   const { formatTime } = useFormattedDate()
 
@@ -45,6 +49,8 @@ export function CommandEvent({ events }: CommandEventProps) {
     (dispatchedEvent?.payload as CommandDispatchedPayload | undefined)?.commandId ?? "",
     localStatus
   )
+  const streamId = dispatchedEvent?.streamId ?? ""
+  const handoff = useHostComposerHandoff(workspaceId)
 
   if (!dispatchedEvent) return null
 
@@ -78,6 +84,23 @@ export function CommandEvent({ events }: CommandEventProps) {
             <span className="text-xs text-muted-foreground/50">{formatTime(new Date(dispatchedEvent.createdAt))}</span>
           </button>
         </CollapsibleTrigger>
+        {status === "failed" && (
+          <button
+            type="button"
+            className="mr-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Put back in composer"
+            title="Put back in composer"
+            onClick={() =>
+              void handoff({
+                hostStreamId: streamId,
+                originScope: draftStreamScope(streamId),
+                content: commandDoc(dispatchedPayload.name, dispatchedPayload.args).content ?? [],
+              })
+            }
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+          </button>
+        )}
         {cancellation.canCancel && (
           <button
             type="button"

@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter } from "react-router-dom"
+import type { ReactNode } from "react"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import type { StreamEvent } from "@threahq/types"
 import * as hooksModule from "@/hooks"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"
+import { peekShareHandoffBatch, resetShareHandoffStoreCache } from "@/stores/composer-handoff-store"
 import { CommandEvent } from "./command-event"
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  resetShareHandoffStoreCache()
   vi.spyOn(hooksModule, "useFormattedDate").mockReturnValue({
     formatTime: () => "10:00",
   } as unknown as ReturnType<typeof hooksModule.useFormattedDate>)
@@ -17,6 +20,38 @@ beforeEach(() => {
     cancel: async () => false,
   })
 })
+
+let pathname = ""
+function Probe({ children }: { children: ReactNode }) {
+  pathname = useLocation().pathname
+  return <>{children}</>
+}
+
+function renderChip(events: StreamEvent[]) {
+  pathname = ""
+  return render(
+    <MemoryRouter initialEntries={["/w/ws_1/board"]}>
+      <Routes>
+        <Route
+          path="*"
+          element={
+            <Probe>
+              <CommandEvent events={events} workspaceId="ws_1" />
+            </Probe>
+          }
+        />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
+/** The mounted host timeline: the scroller `StreamContent` stamps. */
+function mountHostScroller(streamId: string): () => void {
+  const el = document.createElement("div")
+  el.setAttribute("data-stream-scroller", streamId)
+  document.body.appendChild(el)
+  return () => el.remove()
+}
 
 function event(id: string, eventType: StreamEvent["eventType"], payload: Record<string, unknown>): StreamEvent {
   return {
@@ -40,6 +75,7 @@ describe("CommandEvent", () => {
     render(
       <MemoryRouter>
         <CommandEvent
+          workspaceId="ws_1"
           events={[
             event("1", "command_dispatched", { commandId: "cmd_1", name: "spawn", args: "" }),
             event("2", "command_failed", { commandId: "cmd_1", error: USAGE }),
@@ -64,6 +100,7 @@ describe("CommandEvent", () => {
     render(
       <MemoryRouter>
         <CommandEvent
+          workspaceId="ws_1"
           events={[
             event("1", "command_dispatched", { commandId: "cmd_1", name: "done", args: "" }),
             event("2", "command_progress", { commandId: "cmd_1", step: "Committing and pushing" }),
@@ -88,6 +125,7 @@ describe("CommandEvent", () => {
     render(
       <MemoryRouter>
         <CommandEvent
+          workspaceId="ws_1"
           events={[
             event("1", "command_dispatched", { commandId: "cmd_1", name: "stop", args: "" }),
             event("2", "command_completed", {
@@ -113,6 +151,7 @@ describe("CommandEvent", () => {
     render(
       <MemoryRouter>
         <CommandEvent
+          workspaceId="ws_1"
           events={[
             event("1", "command_dispatched", { commandId: "cmd_1", name: "invite", args: "@ada" }),
             event("2", "command_completed", { commandId: "cmd_1" }),
@@ -128,6 +167,7 @@ describe("CommandEvent", () => {
     render(
       <MemoryRouter>
         <CommandEvent
+          workspaceId="ws_1"
           events={[
             event("1", "command_dispatched", { commandId: "cmd_1", name: "done", args: "" }),
             event("2", "command_failed", { commandId: "cmd_1", error: "Worktree is dirty.\n\n- foo.ts\n- bar.ts" }),
@@ -138,5 +178,66 @@ describe("CommandEvent", () => {
 
     expect(screen.getByRole("button", { name: /done/ }).textContent).toContain("failed: Worktree is dirty.")
     expect(screen.getByRole("button", { name: /done/ }).textContent).not.toContain("foo.ts")
+  })
+
+  it("should queue the command doc for the host stream when the composer is mounted", async () => {
+    const unmount = mountHostScroller("stream_1")
+    try {
+      renderChip([
+        event("1", "command_dispatched", { commandId: "cmd_1", name: "spawn", args: "claude fixer" }),
+        event("2", "command_failed", { commandId: "cmd_1", error: "boom" }),
+      ])
+
+      await userEvent.click(screen.getByRole("button", { name: "Put back in composer" }))
+
+      expect(peekShareHandoffBatch("stream_1")?.handoffs).toEqual([
+        {
+          kind: "content",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "slashCommand", attrs: { name: "spawn" } },
+                { type: "text", text: " claude fixer" },
+              ],
+            },
+          ],
+          attachments: [],
+        },
+      ])
+      expect(pathname).toBe("/w/ws_1/board")
+    } finally {
+      unmount()
+    }
+  })
+
+  it("should navigate to the stream when its composer is not mounted", async () => {
+    renderChip([
+      event("1", "command_dispatched", { commandId: "cmd_1", name: "done", args: "" }),
+      event("2", "command_failed", { commandId: "cmd_1", error: "boom" }),
+    ])
+
+    await userEvent.click(screen.getByRole("button", { name: "Put back in composer" }))
+
+    expect(peekShareHandoffBatch("stream_1")?.handoffs).toEqual([
+      {
+        kind: "content",
+        content: [{ type: "paragraph", content: [{ type: "slashCommand", attrs: { name: "done" } }] }],
+        attachments: [],
+      },
+    ])
+    expect(pathname).toBe("/w/ws_1/s/stream_1")
+  })
+
+  it("should hide the restore button when the command is running or completed", () => {
+    const running = renderChip([event("1", "command_dispatched", { commandId: "cmd_1", name: "spawn", args: "" })])
+    expect(screen.queryByRole("button", { name: "Put back in composer" })).not.toBeInTheDocument()
+    running.unmount()
+
+    renderChip([
+      event("1", "command_dispatched", { commandId: "cmd_1", name: "spawn", args: "" }),
+      event("2", "command_completed", { commandId: "cmd_1" }),
+    ])
+    expect(screen.queryByRole("button", { name: "Put back in composer" })).not.toBeInTheDocument()
   })
 })

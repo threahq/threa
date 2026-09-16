@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { JSONContent } from "@threahq/types"
-import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "./commands"
+import { extractCommandNode, extractCommandFromRawText, extractSteerDirective, commandDoc } from "./commands"
 
 describe("extractCommandNode", () => {
   it("extracts name + clientActionId from the first slashCommand node", () => {
@@ -342,5 +342,33 @@ describe("extractCommandFromRawText", () => {
       content: [{ type: "paragraph", content: [{ type: "text", text: "I tried /model" }] }],
     }
     expect(extractCommandFromRawText(doc)).toBeNull()
+  })
+})
+
+describe("commandDoc", () => {
+  it("should build a slash command node with its args when args are present", () => {
+    expect(commandDoc("spawn", "claude fixer")).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "slashCommand", attrs: { name: "spawn" } },
+            { type: "text", text: " claude fixer" },
+          ],
+        },
+      ],
+    })
+  })
+
+  it("should omit the text node when there are no args", () => {
+    expect(commandDoc("done", "  ")).toEqual({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "slashCommand", attrs: { name: "done" } }] }],
+    })
+  })
+
+  it("should round-trip through extractCommandNode", () => {
+    expect(extractCommandNode(commandDoc("spawn", "x"))).toEqual({ name: "spawn", clientActionId: null })
   })
 })

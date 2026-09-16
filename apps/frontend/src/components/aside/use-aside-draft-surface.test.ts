@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, renderHook } from "@testing-library/react"
 import { spyOnExport } from "@/test"
-import * as handoffModule from "@/hooks/use-aside-handoff"
+import * as handoffModule from "@/hooks/use-host-composer-handoff"
 import * as draftsModule from "./use-aside-drafts"
 import { asideOpenDraft, asidePendingAgentBlocksForTest, openAside, resetAsideStoreCache } from "@/stores/aside-store"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
@@ -22,7 +22,7 @@ beforeEach(() => {
     asideId: ASIDE,
     originScope: "stream:stream_host",
   })
-  spyOnExport(handoffModule, "useAsideHandoff").mockReturnValue((() => async () => null) as never)
+  spyOnExport(handoffModule, "useHostComposerHandoff").mockReturnValue((() => async () => null) as never)
 })
 
 afterEach(() => vi.restoreAllMocks())
