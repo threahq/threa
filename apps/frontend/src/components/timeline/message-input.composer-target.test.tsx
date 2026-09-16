@@ -299,7 +299,11 @@ function SearchParamsProbe() {
 
 async function bodyOf(scope: string): Promise<string> {
   const rows = await db.drafts.where("scope").equals(scope).toArray()
-  return rows.map((row) => docText(row.contentJson)).join("|")
+  // Sorted: rows come back in draft-id order, and two ids minted in the same millisecond order at random.
+  return rows
+    .map((row) => docText(row.contentJson))
+    .sort()
+    .join("|")
 }
 
 describe("the timeline composer's durable target", () => {
