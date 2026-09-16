@@ -217,10 +217,6 @@ export class HermesTurnRunner {
     }))
   }
 
-  hasOpenRunOn(streamId: string): boolean {
-    return [...this.runs.values()].some((run) => run.streamId === streamId)
-  }
-
   /**
    * Fold text into every open run. A run Hermes will not steer right now
    * (queued, or already finishing) is not a failure: the text is held and

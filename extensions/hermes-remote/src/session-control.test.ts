@@ -26,7 +26,6 @@ function makeRunner(open: Array<{ runId: string; streamId: string }> = []) {
       return `${streamId}.${generation}`
     },
     openRuns: () => open.map((run, index) => ({ invocationId: `binv_${index}`, ...run })),
-    hasOpenRunOn: (streamId: string) => open.some((run) => run.streamId === streamId),
     steer: async () => true,
     interrupt: () => true,
   }
@@ -184,8 +183,8 @@ describe("createHermesSessionControl", () => {
     })
   })
 
-  test("clear is refused while a run is open on the root stream", async () => {
-    const { runner, bumps } = makeRunner([{ runId: "run_1", streamId: "stream_root" }])
+  test("clear is refused while a run is open anywhere in the session, a thread included", async () => {
+    const { runner, bumps } = makeRunner([{ runId: "run_1", streamId: "stream_thread" }])
     const control = createHermesSessionControl(runner, makeClient().client)
     expect({ result: await control.runCommand("clear", "", CONTEXT), bumps }).toEqual({
       result: { ok: false, message: "Stop the running turn first (/stop)." },
@@ -193,13 +192,44 @@ describe("createHermesSessionControl", () => {
     })
   })
 
-  test("clear drops the model lock, which belonged to the old conversation", async () => {
+  test("clear carries the model lock onto the new conversation", async () => {
     const { runner } = makeRunner()
-    const control = createHermesSessionControl(runner, makeClient().client)
+    const { client, locks } = makeClient()
+    const control = createHermesSessionControl(runner, client)
     await control.runCommand("model", "local::hermes-4", CONTEXT)
-    await control.runCommand("clear", "", CONTEXT)
+    const result = await control.runCommand("clear", "", CONTEXT)
     const status = await control.runCommand("status", "", CONTEXT)
-    expect(status.message?.includes("Model:")).toBe(false)
+    expect({ result, locks, model: status.message?.includes("Model: `local::hermes-4`") }).toEqual({
+      result: { ok: true, summary: "Started a new conversation, model stays local::hermes-4" },
+      locks: [
+        { id: "stream_root", provider: "local", model: "hermes-4" },
+        { id: "stream_root.1", provider: "local", model: "hermes-4" },
+      ],
+      model: true,
+    })
+  })
+
+  test("clear says so when the lock cannot follow, instead of silently running on the default", async () => {
+    const { runner } = makeRunner()
+    let calls = 0
+    const { client } = makeClient({
+      lockSessionModel: async () => {
+        calls += 1
+        if (calls > 1) throw new Error("gateway down")
+      },
+    })
+    const control = createHermesSessionControl(runner, client)
+    await control.runCommand("model", "local::hermes-4", CONTEXT)
+    const result = await control.runCommand("clear", "", CONTEXT)
+    const status = await control.runCommand("status", "", CONTEXT)
+    expect({ result, model: status.message?.includes("Model:") }).toEqual({
+      result: {
+        ok: true,
+        message:
+          "Started a new conversation, but it runs on the gateway default model. Could not set the model: gateway down",
+      },
+      model: false,
+    })
   })
 
   test("clear bumps the conversation generation", async () => {
