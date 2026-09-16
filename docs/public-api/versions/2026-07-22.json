@@ -3503,7 +3503,7 @@
                                 "threadStreamId": { "type": "string" },
                                 "clientMessageId": { "type": "string" },
                                 "sentVia": {
-                                  "description": "Present when message was sent via API on behalf of a user",
+                                  "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
                                   "type": "string"
                                 },
                                 "metadata": {
@@ -5171,7 +5171,7 @@
                           "threadStreamId": { "type": "string" },
                           "clientMessageId": { "type": "string" },
                           "sentVia": {
-                            "description": "Present when message was sent via API on behalf of a user",
+                            "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
                             "type": "string"
                           },
                           "metadata": {
@@ -5365,7 +5365,7 @@
                         "threadStreamId": { "type": "string" },
                         "clientMessageId": { "type": "string" },
                         "sentVia": {
-                          "description": "Present when message was sent via API on behalf of a user",
+                          "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
                           "type": "string"
                         },
                         "metadata": {
@@ -5765,7 +5765,7 @@
                           "threadStreamId": { "type": "string" },
                           "clientMessageId": { "type": "string" },
                           "sentVia": {
-                            "description": "Present when message was sent via API on behalf of a user",
+                            "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
                             "type": "string"
                           },
                           "metadata": {
@@ -5943,7 +5943,7 @@
                           "threadStreamId": { "type": "string" },
                           "clientMessageId": { "type": "string" },
                           "sentVia": {
-                            "description": "Present when message was sent via API on behalf of a user",
+                            "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
                             "type": "string"
                           },
                           "metadata": {
@@ -6106,7 +6106,7 @@
                         "threadStreamId": { "type": "string" },
                         "clientMessageId": { "type": "string" },
                         "sentVia": {
-                          "description": "Present when message was sent via API on behalf of a user",
+                          "description": "Present when the message was sent through the API with a user or bot key; \"api_key:<id>\" names the key",
                           "type": "string"
                         },
                         "metadata": {
