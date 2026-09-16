@@ -1,7 +1,9 @@
 import { Extension } from "@tiptap/core"
 import { Plugin, PluginKey } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
-import { chipBase, commandFlagChipStyle, commandValueStyle } from "@/lib/markdown/chip-styles"
+import { commandFlagChipStyle, commandValueStyle } from "@/lib/markdown/chip-styles"
+import { commandNodeTextSize } from "./command-extension"
+import { pillBaseClassName } from "./create-trigger-extension"
 import { leadingValueSpan, scanCommandArgs } from "@/lib/markdown/command-args"
 import type { CommandArgNames } from "@/lib/markdown/command-list-context"
 
@@ -53,7 +55,11 @@ export const CommandArgDecoration = Extension.create<CommandArgDecorationOptions
             // ProseMirror splits a range at every decoration boundary, so a
             // value cannot nest inside its flag's span: the pair sits adjacent
             // and drops padding and rounding at the seam to read as one chip.
-            const valueClass = `${chipBase} bg-muted font-mono ${commandValueStyle}`
+            // The node's own box (`pillBaseClassName` + its type size), not the
+            // message renderer's `chipBase`: a shorter value box against the
+            // command node shows a step at the seam instead of one chip.
+            const box = `${pillBaseClassName} ${commandNodeTextSize}`
+            const valueClass = `${box} bg-muted font-mono ${commandValueStyle}`
             // The leading positional value joins the command's own chip, space
             // included, the way `mention-renderer` draws `/spawn pi` as one block.
             const lead = leadingValueSpan(text, args)
@@ -65,7 +71,7 @@ export const CommandArgDecoration = Extension.create<CommandArgDecorationOptions
               const valueStart = anchorPos + span.to - (span.value?.length ?? 0)
               decorations.push(
                 Decoration.inline(anchorPos + span.from, valueStart, {
-                  class: `${chipBase} ${commandFlagChipStyle}${span.value ? " pr-0 rounded-r-none" : ""}`,
+                  class: `${box} ${commandFlagChipStyle}${span.value ? " pr-0 rounded-r-none" : ""}`,
                 })
               )
               if (span.value) {

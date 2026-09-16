@@ -82,7 +82,7 @@ export interface TriggerExtensionOptions<TItem> {
 // No text-sm - inherit font size from parent (important for headers)
 // No font-medium - inherit font weight from parent (important for bold)
 // Use inline (not inline-flex) to properly propagate text-decoration (strikethrough, underline)
-const baseClassName = "inline rounded px-1 py-0.5"
+export const pillBaseClassName = "inline rounded px-1 py-0.5"
 
 /**
  * `setAttribute` stringifies, so an unset attribute would land on the element as
@@ -174,7 +174,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
         "span",
         mergeAttributes(HTMLAttributes, {
           "data-type": name,
-          class: `${baseClassName} ${getClassName(attrs)}`,
+          class: `${pillBaseClassName} ${getClassName(attrs)}`,
         }),
         getText(attrs),
       ]
