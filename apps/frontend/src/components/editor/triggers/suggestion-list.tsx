@@ -64,34 +64,48 @@ function SuggestionListInner<T>(
   ref: React.ForwardedRef<SuggestionListRef>
 ) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // Mirrors `selectedKey` synchronously. The key handler runs from a native
+  // ProseMirror listener, so React may not have re-rendered between an arrow
+  // and the Enter that follows it; the handler reads the highlight from here so
+  // the second key sees the row the first one armed, instead of falling
+  // through to the editor and sending the message.
+  const selectedKeyRef = useRef<string | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const keys = items.map(getKey)
   // The highlight follows the row's key, not its position, so a recompute that
   // only changes array identity can't move it. A key no longer in the list
   // resolves to the first row.
-  const explicitIndex = selectedKey === null ? -1 : keys.indexOf(selectedKey)
-  const selectedIndex = deferSelection && explicitIndex < 0 ? -1 : Math.max(0, explicitIndex)
+  const indexOfKey = (key: string | null) => {
+    const explicitIndex = key === null ? -1 : keys.indexOf(key)
+    return deferSelection && explicitIndex < 0 ? -1 : Math.max(0, explicitIndex)
+  }
+  const selectedIndex = indexOfKey(selectedKey)
   const keysRef = useRef<string[]>(keys)
   keysRef.current = keys
   const keySignature = keys.join("\u0000")
+  const arm = (key: string | null) => {
+    selectedKeyRef.current = key
+    setSelectedKey(key)
+  }
 
   const followsKey = highlightResetKey !== undefined
 
   useEffect(() => {
     if (followsKey) return
-    setSelectedKey(null)
+    arm(null)
   }, [items, followsKey])
 
   useEffect(() => {
     if (!followsKey) return
-    setSelectedKey(null)
+    arm(null)
   }, [highlightResetKey, followsKey])
 
   // Drop a highlight whose row is gone, so the state matches what is painted.
   useEffect(() => {
     if (!followsKey) return
-    setSelectedKey((prev) => (prev !== null && keysRef.current.includes(prev) ? prev : null))
+    const prev = selectedKeyRef.current
+    arm(prev !== null && keysRef.current.includes(prev) ? prev : null)
   }, [keySignature, followsKey])
 
   useEffect(() => {
@@ -117,14 +131,15 @@ function SuggestionListInner<T>(
     onKeyDown: (event: KeyboardEvent) => {
       if (items.length === 0) return false
 
+      const selectedIndex = indexOfKey(selectedKeyRef.current)
       switch (event.key) {
         case "ArrowUp":
           event.preventDefault()
-          setSelectedKey(keys[selectedIndex < 0 ? items.length - 1 : (selectedIndex - 1 + items.length) % items.length])
+          arm(keys[selectedIndex < 0 ? items.length - 1 : (selectedIndex - 1 + items.length) % items.length])
           return true
         case "ArrowDown":
           event.preventDefault()
-          setSelectedKey(keys[selectedIndex < 0 ? 0 : (selectedIndex + 1) % items.length])
+          arm(keys[selectedIndex < 0 ? 0 : (selectedIndex + 1) % items.length])
           return true
         // Tab completes, armed row or not: falling through reaches the
         // editor's indent keymap, which types a literal tab into the message

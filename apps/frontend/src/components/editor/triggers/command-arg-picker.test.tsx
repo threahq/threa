@@ -16,6 +16,7 @@ describe("CommandArgPicker", () => {
         ]}
         clientRect={() => new DOMRect()}
         command={() => {}}
+        query=""
       />
     )
     const rows = screen.getAllByRole("option").map((row) => row.textContent)
@@ -35,6 +36,7 @@ describe("CommandArgPicker", () => {
         clientRect={() => new DOMRect()}
         command={(item) => picked.push(item.value)}
         deferSelection
+        query=""
       />
     )
     const armed = () => screen.getAllByRole("option").map((row) => row.getAttribute("aria-selected"))
@@ -50,6 +52,67 @@ describe("CommandArgPicker", () => {
     })
   })
 
+  it("should pick on an Enter that lands before the arrow's re-render, rather than send the message", () => {
+    const ref = createRef<CommandArgPickerRef>()
+    const picked: string[] = []
+    render(
+      <CommandArgPicker
+        ref={ref}
+        items={[
+          { value: "claude", label: "Claude Code" },
+          { value: "pi", label: "Pi" },
+        ]}
+        clientRect={() => new DOMRect()}
+        command={(item) => picked.push(item.value)}
+        deferSelection
+        query=""
+      />
+    )
+    // Both keys inside one act: the keydown listener is ProseMirror's, not
+    // React's, so under load Enter can arrive before the arrow has painted.
+    let consumed: boolean[] = []
+    act(() => {
+      consumed = ["ArrowDown", "Enter"].map((key) => ref.current!.onKeyDown(new KeyboardEvent("keydown", { key })))
+    })
+    expect({ consumed, picked }).toEqual({ consumed: [true, true], picked: ["claude"] })
+  })
+
+  it("should keep the armed row through a host re-render that only rebuilt the items array", () => {
+    const ref = createRef<CommandArgPickerRef>()
+    const picked: string[] = []
+    const models = () => [
+      { value: "opus", label: "Claude Opus 4" },
+      { value: "sonnet", label: "Claude Sonnet 4" },
+    ]
+    const view = render(
+      <CommandArgPicker
+        ref={ref}
+        items={models()}
+        clientRect={() => new DOMRect()}
+        command={(item) => picked.push(item.value)}
+        query="claude"
+      />
+    )
+    act(() => {
+      ref.current!.onKeyDown(new KeyboardEvent("keydown", { key: "ArrowDown" }))
+    })
+    // The hook recomputes `items` on every editor tick; a tick between the
+    // arrow and the Enter must not send the highlight back to the first row.
+    view.rerender(
+      <CommandArgPicker
+        ref={ref}
+        items={models()}
+        clientRect={() => new DOMRect()}
+        command={(item) => picked.push(item.value)}
+        query="claude"
+      />
+    )
+    act(() => {
+      ref.current!.onKeyDown(new KeyboardEvent("keydown", { key: "Enter" }))
+    })
+    expect(picked).toEqual(["sonnet"])
+  })
+
   it("should complete on Tab even with no row armed, rather than let the editor indent", () => {
     const ref = createRef<CommandArgPickerRef>()
     const picked: string[] = []
@@ -63,6 +126,7 @@ describe("CommandArgPicker", () => {
         clientRect={() => new DOMRect()}
         command={(item) => picked.push(item.value)}
         deferSelection
+        query=""
       />
     )
     const tab = new KeyboardEvent("keydown", { key: "Tab", cancelable: true })
@@ -81,6 +145,7 @@ describe("CommandArgPicker", () => {
         items={[{ value: "pi", label: "Pi" }]}
         clientRect={() => new DOMRect()}
         command={(item) => picked.push(item.value)}
+        query=""
       />
     )
     // The picker's session is focus-gated on the editor: an option that took

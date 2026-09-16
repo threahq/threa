@@ -306,6 +306,7 @@ export function useCommandArgPicker(
         clientRect={() => posClientRect(editorRef.current, session.anchorPos)}
         command={(suggestion) => select(suggestion.value, active.query, session.anchorPos)}
         deferSelection={defersSelection(active)}
+        query={active.query}
       />,
       document.body
     )
