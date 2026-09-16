@@ -13,6 +13,7 @@ const remote: RemoteSessionStatusSnapshot = {
   pendingDecisionCount: 0,
   inflightCount: 1,
   activeTurnStreamId: "stream_1",
+  inflightStreamIds: ["stream_1"],
 }
 
 const context: ClaudeChannelStatusContext = {
