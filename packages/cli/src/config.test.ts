@@ -4,7 +4,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { loadConfig } from "./config"
 
-const ENV_KEYS = ["THREA_API_KEY", "THREA_WORKSPACE_ID", "THREA_BASE_URL", "THREA_CONFIG", "HOME"] as const
+const ENV_KEYS = [
+  "THREA_API_KEY",
+  "THREA_WORKSPACE_ID",
+  "THREA_BASE_URL",
+  "THREA_CONFIG",
+  "THREA_PRINCIPAL",
+  "HOME",
+] as const
 
 let saved: Record<string, string | undefined>
 let home: string
@@ -105,6 +112,13 @@ test("env wins over file per key", () => {
   expect(config.baseUrl).toBe("https://remote.threa.test")
 })
 
+test("a blank THREA_API_KEY in the environment falls back to the file", () => {
+  writeConfigFile({ apiKey: "threa_bk_file", workspaceId: "ws_file", principal: "bot" })
+  process.env.THREA_API_KEY = ""
+  process.env.THREA_WORKSPACE_ID = ""
+  expect(loadConfig()).toMatchObject({ apiKey: "threa_bk_file", workspaceId: "ws_file", principal: "bot" })
+})
+
 test("THREA_CONFIG points at an explicit file", () => {
   const dir = mkdtempSync(join(tmpdir(), "threa-cli-cfg-"))
   const path = join(dir, "custom.json")
@@ -139,4 +153,25 @@ test("loadConfig allows http for localhost", () => {
   process.env.THREA_WORKSPACE_ID = "ws_x"
   process.env.THREA_BASE_URL = "http://localhost:4471"
   expect(loadConfig().baseUrl).toBe("http://localhost:4471")
+})
+
+test("a declared principal in the config file is carried through", () => {
+  writeConfigFile({ apiKey: "threa_bk_file", workspaceId: "ws_file", principal: "bot" })
+  expect(loadConfig().principal).toBe("bot")
+})
+
+test("THREA_PRINCIPAL wins over the file", () => {
+  writeConfigFile({ apiKey: "threa_uk_file", workspaceId: "ws_file", principal: "bot" })
+  process.env.THREA_PRINCIPAL = "user"
+  expect(loadConfig().principal).toBe("user")
+})
+
+test("an invalid principal fails loudly", () => {
+  writeConfigFile({ apiKey: "threa_uk_file", workspaceId: "ws_file", principal: "robot" })
+  expect(() => loadConfig()).toThrow('[threa] Config "principal" must be one of bot, user — got "robot".')
+})
+
+test("no declaration leaves principal undefined", () => {
+  writeConfigFile({ apiKey: "threa_uk_file", workspaceId: "ws_file" })
+  expect(loadConfig().principal).toBeUndefined()
 })

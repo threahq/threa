@@ -119,7 +119,7 @@ export interface MessageCreatedPayload {
   sessionId?: string
   /** Client-generated ID for deterministic optimistic→real event dedup on the frontend */
   clientMessageId?: string
-  /** Present when message was sent via an API key on behalf of a user */
+  /** Present when the message was sent through the API with a user or bot key: "api_key:<id>" */
   sentVia?: string
   /** External references attached by the sender (string->string). Omitted when empty. */
   metadata?: Record<string, string>

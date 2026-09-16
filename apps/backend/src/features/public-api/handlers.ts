@@ -3213,8 +3213,8 @@ export function createPublicApiHandlers({
     },
 
     /**
-     * Send a message. User-scoped keys send as the user (with sentVia indicator);
-     * workspace-scoped keys send as a bot entity.
+     * Send a message. User-scoped keys send as the user, bot keys as the bot entity;
+     * both record the key in sentVia.
      */
     async sendMessage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -3301,6 +3301,7 @@ export function createPublicApiHandlers({
             contentMarkdown,
             attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
             clientMessageId,
+            sentVia: sentViaApiKey(req.botApiKey.id),
             metadata,
             conversation,
             sessionId,

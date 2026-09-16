@@ -395,6 +395,9 @@ test("socket retry interval is bounded and unavailable catch-up backs off with j
   expect(unavailableBackoffMs(60_000, 10, () => 1)).toBe(900_000)
 })
 
+// The legacy channel server is itself keyed `threa`, the same key the session's
+// own CLI server uses now; it is still a channel registration to migrate because
+// it carries no THREA_CONFIG.
 test("migrates a legacy MCP registration to the current channel name and gate", () => {
   const path = join(mkdtempSync(join(tmpdir(), "harnessd-mcp-")), "agent.json")
   writeFileSync(

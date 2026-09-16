@@ -122,7 +122,10 @@ const messageSchema = z.object({
   replyCount: z.number().int(),
   threadStreamId: z.string().optional(),
   clientMessageId: z.string().optional(),
-  sentVia: z.string().optional().describe("Present when message was sent via API on behalf of a user"),
+  sentVia: z
+    .string()
+    .optional()
+    .describe('Present when the message was sent through the API with a user or bot key; "api_key:<id>" names the key'),
   metadata: z
     .record(z.string(), z.string())
     .describe("External references attached by the sender. Always present; empty when unset."),

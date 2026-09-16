@@ -41,6 +41,7 @@ import {
   normalizeChannelMcpConfig,
   prepareClaudeChannel,
   readThreaChannelConfig,
+  sessionThreaMcpServer,
   writeChannelMcpConfig,
 } from "./spawners"
 import { capturePane, createWindow, ensureTmuxSession, pickTmuxWindow, tmuxSession } from "./tmux"
@@ -684,9 +685,11 @@ async function launchTakeover(params: {
   const claudeBin = requireRuntimeBinary(runtimeDefinition("claude"))
   const channel = process.env.THREA_HARNESSD_CLAUDE_CHANNEL || "threa-channel"
   const channelEntry = prepareClaudeChannel()
+  const config = readThreaChannelConfig()
   const mcpConfig = mcpConfigPath(params.identity.runtimeSessionId)
-  if (!existsSync(mcpConfig)) writeChannelMcpConfig(params.identity.runtimeSessionId, channel, channelEntry)
-  normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
+  const threaCli = sessionThreaMcpServer(params.identity.runtimeSessionId, config)
+  if (!existsSync(mcpConfig)) writeChannelMcpConfig(params.identity.runtimeSessionId, channel, channelEntry, threaCli)
+  normalizeChannelMcpConfig(mcpConfig, channel, channelEntry, threaCli)
 
   const session = params.tmux ?? tmuxSession({ runtime: "claude", name: params.name })
   ensureTmuxSession(session, true)
@@ -705,10 +708,12 @@ async function launchTakeover(params: {
         resumeSessionId: params.resumeSessionId,
       }),
       params.identity,
-      readThreaChannelConfig(),
+      config,
       "wait",
       "error",
-      params.rootStreamId
+      params.rootStreamId,
+      undefined,
+      threaCli?.configPath
     )
   )
   console.log(`harnessd: took over Claude Code in tmux ${session}:${window} (${windowId})`)

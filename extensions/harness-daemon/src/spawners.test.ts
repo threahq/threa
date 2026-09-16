@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -14,7 +14,10 @@ import {
   piLaunchCommand,
   prelinkThreadSession,
   requireThreadSessionTarget,
+  cliConfigPath,
+  normalizeChannelMcpConfig,
   writeChannelMcpConfig,
+  writeSessionCliConfig,
 } from "./spawners"
 import { parseClaudeLaunch } from "./discovery"
 import { profileForWorktree, recordProfileSnapshot } from "./identity-store"
@@ -141,6 +144,34 @@ test("an attached Claude launch ignores an ambient parent key without recording 
   expect(parseClaudeLaunch(attached.replace("THREA_API_KEY=", "THREA_API_KEY=secret"))).toBeUndefined()
   expect(standalone).not.toContain("THREA_API_KEY")
   expect(resumedRoot).not.toContain("THREA_API_KEY")
+})
+
+test("a session with its own CLI config points the pane at it, and panes without one carry nothing", () => {
+  const identity = { instanceId: "cc-child", runtimeSessionId: "11111111-2222-4333-8444-555555555555" }
+  const args = ["claude", "--dangerously-load-development-channels", "server:threa-channel"]
+
+  const withConfig = claudeLaunchCommand(args, identity, {}, "wait", "error", "stream_root", undefined, "/cfg/a.json")
+  const withoutConfig = claudeLaunchCommand(args, identity, {}, "wait", "error", "stream_root")
+
+  const attached = claudeLaunchCommand(
+    args,
+    identity,
+    {},
+    "wait",
+    "error",
+    "stream_root",
+    "stream_child",
+    "/cfg/a.json"
+  )
+
+  expect(withConfig).toContain("'THREA_CONFIG=/cfg/a.json'")
+  expect(withoutConfig).not.toContain("THREA_CONFIG")
+  expect(parseClaudeLaunch(attached)?.environment).toEqual(
+    expect.arrayContaining([
+      { name: "THREA_API_KEY", value: "" },
+      { name: "THREA_CONFIG", value: "/cfg/a.json" },
+    ])
+  )
 })
 
 test("Pi remote linking retries a command lost during startup and stops after the link is persisted", async () => {
@@ -440,4 +471,87 @@ test("Pi remote linking rejects a link that landed on another scratchpad than th
       }),
     })
   ).rejects.toThrow("Pi remote link scratchpad stream_elsewhere does not match the attached scratchpad stream_attached")
+})
+
+const THREA_CLI = { cliEntry: "/repo/packages/cli/src/cli.ts", configPath: "/cfg/ccs-threa.json" }
+
+function threaServerEntry(): Record<string, unknown> {
+  return {
+    type: "stdio",
+    command: "bun",
+    args: [THREA_CLI.cliEntry, "mcp", "serve"],
+    env: { THREA_CONFIG: THREA_CLI.configPath },
+  }
+}
+
+function channelServerEntry(entry: string): Record<string, unknown> {
+  return {
+    type: "stdio",
+    command: "bun",
+    args: [entry],
+    env: { THREA_CHANNEL_SERVER_KEY: "threa-channel" },
+  }
+}
+
+test("a session registers its own threa server alongside the channel, and only when asked", () => {
+  guardDir()
+  const withCli = writeChannelMcpConfig("ccs-cli", "threa-channel", "/entry/one.ts", THREA_CLI)
+  const withoutCli = writeChannelMcpConfig("ccs-nocli", "threa-channel", "/entry/one.ts")
+
+  expect(JSON.parse(readFileSync(withCli, "utf8"))).toEqual({
+    mcpServers: { "threa-channel": channelServerEntry("/entry/one.ts"), threa: threaServerEntry() },
+  })
+  expect(JSON.parse(readFileSync(withoutCli, "utf8"))).toEqual({
+    mcpServers: { "threa-channel": channelServerEntry("/entry/one.ts") },
+  })
+})
+
+test("normalizing keeps the threa server current and drops it when a session has no credentials", () => {
+  guardDir()
+  const path = writeChannelMcpConfig("ccs-normalize", "threa-channel", "/old/entry.ts", {
+    cliEntry: "/stale/cli.ts",
+    configPath: "/stale/config.json",
+  })
+
+  normalizeChannelMcpConfig(path, "threa-channel", "/new/entry.ts", THREA_CLI)
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+    mcpServers: { "threa-channel": channelServerEntry("/new/entry.ts"), threa: threaServerEntry() },
+  })
+
+  normalizeChannelMcpConfig(path, "threa-channel", "/new/entry.ts")
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+    mcpServers: { "threa-channel": channelServerEntry("/new/entry.ts") },
+  })
+})
+
+test("normalizing still dies when two channel servers claim the session", () => {
+  guardDir()
+  const path = mcpConfigPath("ccs-two-channels")
+  mkdirSync(mcpConfigDir(), { recursive: true })
+  writeFileSync(
+    path,
+    JSON.stringify({ mcpServers: { "threa-channel": { args: ["/a.ts"] }, other: { args: ["/b.ts"] } } })
+  )
+
+  expect(() => normalizeChannelMcpConfig(path, "threa-channel", "/new/entry.ts", THREA_CLI)).toThrow(
+    "MCP config must contain exactly one channel server"
+  )
+})
+
+test("a session CLI config declares the bot principal and is readable only by its owner", () => {
+  guardDir()
+  const path = writeSessionCliConfig("ccs-secret", {
+    apiKey: "threa_bk_secret",
+    workspaceId: "ws_1",
+    baseUrl: "https://app.threa.io",
+  })
+
+  expect(path).toBe(cliConfigPath("ccs-secret"))
+  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+    apiKey: "threa_bk_secret",
+    workspaceId: "ws_1",
+    baseUrl: "https://app.threa.io",
+    principal: "bot",
+  })
+  expect(statSync(path).mode & 0o777).toBe(0o600)
 })
