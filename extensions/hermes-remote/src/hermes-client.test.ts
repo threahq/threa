@@ -206,3 +206,199 @@ describe("HermesRunsClient.getRun", () => {
     }
   })
 })
+
+describe("HermesRunsClient.getRun fields", () => {
+  test("reads a parked approval and a completed run's unconsumed steer", async () => {
+    const { client } = clientWith((url) =>
+      Response.json(
+        url.endsWith("run_parked")
+          ? {
+              run_id: "run_parked",
+              status: "waiting_for_approval",
+              approval: { event: "approval.request", run_id: "run_parked", request_id: "req_1" },
+            }
+          : { run_id: "run_done", status: "completed", output: "ok", pending_steer: "tighten the ending" }
+      )
+    )
+    expect({ parked: await client.getRun("run_parked"), done: await client.getRun("run_done") }).toEqual({
+      parked: {
+        runId: "run_parked",
+        status: "waiting_for_approval",
+        approval: { event: "approval.request", run_id: "run_parked", request_id: "req_1" },
+      },
+      done: { runId: "run_done", status: "completed", output: "ok", pendingSteer: "tighten the ending" },
+    })
+  })
+})
+
+function clientWith(handler: (url: string, init?: RequestInit) => Response): {
+  client: HermesRunsClient
+  seen: () => { url: string; body: unknown } | undefined
+} {
+  let seen: { url: string; body: unknown } | undefined
+  const client = new HermesRunsClient({
+    baseUrl: "http://127.0.0.1:8642",
+    apiKey: "hermes-key",
+    fetch: async (url, init) => {
+      seen = {
+        url: String(url),
+        body: init?.body === undefined ? undefined : (JSON.parse(String(init.body)) as unknown),
+      }
+      return handler(String(url), init)
+    },
+  })
+  return { client, seen: () => seen }
+}
+
+function errorResponse(status: number, code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: { message, code } }), { status })
+}
+
+async function caught(promise: Promise<unknown>): Promise<HermesApiError> {
+  return (await promise.catch((error: unknown) => error)) as HermesApiError
+}
+
+describe("HermesRunsClient control endpoints", () => {
+  test("steerRun posts the input and maps the accepted ack", async () => {
+    const { client, seen } = clientWith(
+      () => new Response(JSON.stringify({ object: "hermes.run.steer", run_id: "run_1", accepted: true }))
+    )
+    const result = await client.steerRun("run_1", "go left")
+    expect({ result, seen: seen() }).toEqual({
+      result: { runId: "run_1", accepted: true },
+      seen: { url: "http://127.0.0.1:8642/v1/runs/run_1/steer", body: { input: "go left" } },
+    })
+  })
+
+  test("steerRun surfaces run_not_accepting_steer", async () => {
+    const { client } = clientWith(() => errorResponse(409, "run_not_accepting_steer", "Run is not accepting steer"))
+    const error = await caught(client.steerRun("run_1", "go left"))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 409, code: "run_not_accepting_steer" })
+  })
+
+  test("steerRun surfaces invalid_steer_input", async () => {
+    const { client } = clientWith(() => errorResponse(400, "invalid_steer_input", "input must be a non-empty string"))
+    const error = await caught(client.steerRun("run_1", ""))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 400, code: "invalid_steer_input" })
+  })
+
+  test("stopRun reports the run's new status", async () => {
+    const { client, seen } = clientWith(() => new Response(JSON.stringify({ run_id: "run_1", status: "stopping" })))
+    const result = await client.stopRun("run_1")
+    expect({ result, url: seen()?.url }).toEqual({
+      result: { runId: "run_1", status: "stopping" },
+      url: "http://127.0.0.1:8642/v1/runs/run_1/stop",
+    })
+  })
+
+  test("stopRun surfaces run_not_active", async () => {
+    const { client } = clientWith(() => errorResponse(409, "run_not_active", "No agent is attached to this run"))
+    const error = await caught(client.stopRun("run_1"))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 409, code: "run_not_active" })
+  })
+
+  test("respondApproval posts the choice and the request id", async () => {
+    const { client, seen } = clientWith(
+      () =>
+        new Response(
+          JSON.stringify({
+            object: "hermes.run.approval_response",
+            run_id: "run_1",
+            choice: "once",
+            request_id: "req_1",
+            resolved: true,
+          })
+        )
+    )
+    const result = await client.respondApproval("run_1", { choice: "once", requestId: "req_1" })
+    expect({ result, seen: seen() }).toEqual({
+      result: { runId: "run_1", choice: "once", resolved: true },
+      seen: {
+        url: "http://127.0.0.1:8642/v1/runs/run_1/approval",
+        body: { choice: "once", request_id: "req_1" },
+      },
+    })
+  })
+
+  test("respondApproval surfaces approval_not_pending", async () => {
+    const { client } = clientWith(() => errorResponse(409, "approval_not_pending", "No approval is pending"))
+    const error = await caught(client.respondApproval("run_1", { choice: "once" }))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 409, code: "approval_not_pending" })
+  })
+
+  test("respondApproval surfaces invalid_approval_choice", async () => {
+    const { client } = clientWith(() => errorResponse(400, "invalid_approval_choice", "choice must be one of …"))
+    const error = await caught(client.respondApproval("run_1", { choice: "maybe" }))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 400, code: "invalid_approval_choice" })
+  })
+
+  test("listModelOptions keeps only providers with a slug", async () => {
+    const { client, seen } = clientWith(
+      () =>
+        new Response(
+          JSON.stringify({
+            provider: "openrouter",
+            model: "hermes-4",
+            providers: [
+              { slug: "openrouter", name: "OpenRouter", models: ["hermes-4", "glm-4.6"] },
+              { name: "Nameless", models: ["x"] },
+            ],
+          })
+        )
+    )
+    const options = await client.listModelOptions()
+    expect({ options, url: seen()?.url }).toEqual({
+      options: {
+        provider: "openrouter",
+        model: "hermes-4",
+        providers: [{ slug: "openrouter", name: "OpenRouter", models: ["hermes-4", "glm-4.6"] }],
+      },
+      url: "http://127.0.0.1:8642/api/model/options",
+    })
+  })
+
+  test("listModelOptions surfaces model_options_failed", async () => {
+    const { client } = clientWith(() => errorResponse(500, "model_options_failed", "Failed to list model options."))
+    const error = await caught(client.listModelOptions())
+    expect({ status: error.status, code: error.code }).toEqual({ status: 500, code: "model_options_failed" })
+  })
+
+  test("createSession posts the id", async () => {
+    const { client, seen } = clientWith(() => new Response(JSON.stringify({ id: "stream_1" }), { status: 201 }))
+    await client.createSession("stream_1")
+    expect(seen()).toEqual({ url: "http://127.0.0.1:8642/api/sessions", body: { id: "stream_1" } })
+  })
+
+  test("createSession surfaces a conflicting id", async () => {
+    const { client } = clientWith(() => errorResponse(409, "session_exists", "Session already exists"))
+    const error = await caught(client.createSession("stream_1"))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 409, code: "session_exists" })
+  })
+
+  test("lockSessionModel posts the runtime and reads back what was locked", async () => {
+    const { client, seen } = clientWith(
+      () =>
+        new Response(
+          JSON.stringify({
+            object: "hermes.session.model_lock",
+            session_id: "stream_1",
+            runtime: { provider: "openrouter", model: "hermes-4" },
+          })
+        )
+    )
+    const locked = await client.lockSessionModel("stream_1", { provider: "openrouter", model: "hermes-4" })
+    expect({ locked, seen: seen() }).toEqual({
+      locked: { sessionId: "stream_1", provider: "openrouter", model: "hermes-4" },
+      seen: {
+        url: "http://127.0.0.1:8642/api/sessions/stream_1/model",
+        body: { provider: "openrouter", model: "hermes-4" },
+      },
+    })
+  })
+
+  test("lockSessionModel surfaces a missing session", async () => {
+    const { client } = clientWith(() => errorResponse(404, "session_not_found", "Session not found"))
+    const error = await caught(client.lockSessionModel("stream_1", { provider: "openrouter", model: "hermes-4" }))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 404, code: "session_not_found" })
+  })
+})

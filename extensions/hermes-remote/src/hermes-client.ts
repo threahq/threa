@@ -22,6 +22,44 @@ export interface RunStatus {
   status: string
   output?: string
   error?: string
+  /** Steer text Hermes accepted but the run finished before consuming. */
+  pendingSteer?: string
+  /** The parked `approval.request` event, present only while `waiting_for_approval`. */
+  approval?: HermesRunEvent
+}
+
+export interface SteerAccepted {
+  runId: string
+  accepted: boolean
+}
+
+export interface StopResult {
+  runId: string
+  status: string
+}
+
+export interface ApprovalResult {
+  runId: string
+  choice: string
+  resolved: boolean
+}
+
+export interface ModelProviderOptions {
+  slug: string
+  name?: string
+  models: string[]
+}
+
+export interface ModelOptions {
+  providers: ModelProviderOptions[]
+  model?: string
+  provider?: string
+}
+
+export interface SessionModelLock {
+  sessionId: string
+  provider: string
+  model: string
 }
 
 export class HermesApiError extends Error {
@@ -52,12 +90,16 @@ export interface HermesRunsClientOptions {
 const SUBSCRIBE_ATTEMPTS = 3
 const SUBSCRIBE_BACKOFF_MS = 250
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
 
 export class HermesRunsClient {
-  private readonly baseUrl: string
+  readonly baseUrl: string
   private readonly apiKey: string
   private readonly fetchImpl: FetchLike
   private readonly sleep: (ms: number) => Promise<void>
@@ -99,6 +141,101 @@ export class HermesRunsClient {
       status: str(payload.status) ?? "unknown",
       ...(str(payload.output) === undefined ? {} : { output: payload.output as string }),
       ...(str(payload.error) === undefined ? {} : { error: payload.error as string }),
+      ...(str(payload.pending_steer) === undefined ? {} : { pendingSteer: payload.pending_steer as string }),
+      ...(isRecord(payload.approval) ? { approval: payload.approval as HermesRunEvent } : {}),
+    }
+  }
+
+  /** Fold text into a run that is still `running`; a queued or finishing run answers 409 `run_not_accepting_steer`. */
+  async steerRun(runId: string, input: string, signal?: AbortSignal): Promise<SteerAccepted> {
+    const response = await this.request(
+      `/v1/runs/${encodeURIComponent(runId)}/steer`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }) },
+      signal
+    )
+    const payload = (await this.readJson(response)) as { run_id?: unknown; accepted?: unknown }
+    return { runId: str(payload.run_id) ?? runId, accepted: payload.accepted !== false }
+  }
+
+  async stopRun(runId: string, signal?: AbortSignal): Promise<StopResult> {
+    const response = await this.request(`/v1/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" }, signal)
+    const payload = (await this.readJson(response)) as { run_id?: unknown; status?: unknown }
+    return { runId: str(payload.run_id) ?? runId, status: str(payload.status) ?? "unknown" }
+  }
+
+  async respondApproval(
+    runId: string,
+    answer: { choice: string; requestId?: string },
+    signal?: AbortSignal
+  ): Promise<ApprovalResult> {
+    const response = await this.request(
+      `/v1/runs/${encodeURIComponent(runId)}/approval`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          choice: answer.choice,
+          ...(answer.requestId ? { request_id: answer.requestId } : {}),
+        }),
+      },
+      signal
+    )
+    const payload = (await this.readJson(response)) as { run_id?: unknown; choice?: unknown; resolved?: unknown }
+    return {
+      runId: str(payload.run_id) ?? runId,
+      choice: str(payload.choice) ?? answer.choice,
+      resolved: payload.resolved !== false,
+    }
+  }
+
+  async listModelOptions(signal?: AbortSignal): Promise<ModelOptions> {
+    const response = await this.request("/api/model/options", { method: "GET" }, signal)
+    const payload = (await this.readJson(response)) as {
+      providers?: unknown
+      model?: unknown
+      provider?: unknown
+    }
+    const providers = Array.isArray(payload.providers)
+      ? payload.providers.flatMap((entry): ModelProviderOptions[] => {
+          const record = (entry ?? {}) as { slug?: unknown; name?: unknown; models?: unknown }
+          const slug = str(record.slug)
+          if (!slug) return []
+          const models = Array.isArray(record.models) ? record.models.flatMap((m) => str(m) ?? []) : []
+          return [{ slug, ...(str(record.name) === undefined ? {} : { name: record.name as string }), models }]
+        })
+      : []
+    return {
+      providers,
+      ...(str(payload.model) === undefined ? {} : { model: payload.model as string }),
+      ...(str(payload.provider) === undefined ? {} : { provider: payload.provider as string }),
+    }
+  }
+
+  /** Sessions are created lazily by the first run, so a model lock has to create the row first. */
+  async createSession(id: string, signal?: AbortSignal): Promise<void> {
+    await this.request(
+      "/api/sessions",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) },
+      signal
+    )
+  }
+
+  async lockSessionModel(
+    id: string,
+    runtime: { provider: string; model: string },
+    signal?: AbortSignal
+  ): Promise<SessionModelLock> {
+    const response = await this.request(
+      `/api/sessions/${encodeURIComponent(id)}/model`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(runtime) },
+      signal
+    )
+    const payload = (await this.readJson(response)) as { session_id?: unknown; runtime?: unknown }
+    const locked = (payload.runtime ?? {}) as { provider?: unknown; model?: unknown }
+    return {
+      sessionId: str(payload.session_id) ?? id,
+      provider: str(locked.provider) ?? runtime.provider,
+      model: str(locked.model) ?? runtime.model,
     }
   }
 

@@ -35,5 +35,25 @@ environment variables win.
 Hermes' `MEDIA: <path>` output lines are rewritten to `THREA_ATTACH: <path>`, so the SDK uploads them as attachments;
 an output of exactly `THREA_NO_RESPONSE` closes the turn silently.
 
-Control (`/steer`, `/stop`, `/model`), approvals as decision cards, threads, Hermes-side config, E2EE specifics and the
-installer land in later chunks.
+## Commands and approvals
+
+The scratchpad offers five session-control commands:
+
+`/stop` stops every open run and closes its turn. `/steer` folds text into the running run; if Hermes will not take it
+right now (the run is queued or already finishing) the text is held and prepended to the next turn instead. `/status`
+reports the conversation id, every open run with its status, the model this process locked, and the gateway URL.
+`/model` locks the conversation to one of the gateway's models, given as `provider::model`, a model id, or any
+substring that matches exactly one of them. `/clear` starts a fresh conversation on the scratchpad, which is refused
+while any run is open in the session; a model set with `/model` is locked onto the new conversation too, and the
+command says so if that lock fails. Commands act on the scratchpad's conversation even when typed in a thread. The
+generation counter lives in `~/.threa/hermes-remote/work/conversations.json`, so a new conversation survives a restart.
+
+When Hermes asks to run a command, the request arrives in the scratchpad as a decision card with the command, its
+description and the choices Hermes offered (allow once, allow this session, always allow, deny). Answering resolves the
+run. A denial with a note sends the note back to the run as a steer. An unanswered card runs into the gateway's own
+approval timeout, which denies it. Under Hermes's default `approvals.mode: smart`, its guardian model approves the
+flagged commands it judges safe without a card, and only the ones it escalates become cards. Set `approvals.mode:
+manual` for a card on every flagged command. The card expires at 5 minutes to match Hermes's default
+`approvals.timeout`, and a run that ends withdraws any card still open.
+
+Threads, Hermes-side config, E2EE specifics and the installer land in later chunks.
