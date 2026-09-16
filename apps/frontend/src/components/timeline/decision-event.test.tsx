@@ -88,7 +88,7 @@ describe("DecisionEvent", () => {
     expect(screen.getByText(/The rebase dropped/)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Force-push" }).className).toContain("bg-primary")
     expect(screen.getByRole("button", { name: "Wait for me" }).className).toContain("border-input")
-    expect(screen.getByRole("button", { name: "Abort" }).className).toContain("bg-destructive")
+    expect(screen.getByRole("button", { name: "Abort" }).className).toContain("text-destructive")
   })
 
   it("falls back to 'A bot' when the requester is not a bot this viewer knows", () => {
