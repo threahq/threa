@@ -16,6 +16,8 @@ import {
   DECISION_OPTION_LABEL_MAX_CHARS,
   DECISION_TITLE_MAX_CHARS,
 } from "../decisions/config"
+// Deep import, not the barrel: `decisions/index.ts` re-exports the service,
+// which imports this feature's public-api types back — the barrel would cycle.
 // Deep import: the bot-runtimes barrel imports public-api, so the barrel would form a cycle here.
 import { botRuntimeManifestSchema } from "../bot-runtimes/manifest-schema"
 import {

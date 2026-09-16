@@ -162,6 +162,43 @@ describe("DecisionService.request", () => {
     )
   })
 
+  it("refuses a runtime session id that did not claim the named invocation", async () => {
+    stubTransaction()
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
+    spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue({
+      id: "binv_1",
+      rootStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      claimedRuntimeSessionId: "sess_1",
+    } as never)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+
+    await expect(
+      makeService().request({ ...REQUEST_PARAMS, invocationId: "binv_1", runtimeSessionId: "sess_other" })
+    ).rejects.toMatchObject({ status: 409, code: "DECISION_REQUESTER_NOT_ACTIVE" })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("refuses a requester with no runtime session to deliver the answer to", async () => {
+    stubTransaction()
+    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
+    spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue({
+      id: "binv_1",
+      rootStreamId: "stream_1",
+      sourceMessageId: "msg_1",
+      claimedRuntimeSessionId: null,
+    } as never)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+
+    await expect(makeService().request({ ...REQUEST_PARAMS, invocationId: "binv_1" })).rejects.toMatchObject({
+      status: 409,
+      code: "DECISION_REQUESTER_NOT_ACTIVE",
+    })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
   it("hides a stream the bot cannot act on as a 404", async () => {
     stubTransaction()
     await expect(makeService(false).request(REQUEST_PARAMS)).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" })

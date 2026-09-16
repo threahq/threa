@@ -111,6 +111,17 @@ export class DecisionService {
         })
       }
 
+      if (
+        invocation?.claimedRuntimeSessionId &&
+        params.runtimeSessionId &&
+        invocation.claimedRuntimeSessionId !== params.runtimeSessionId
+      ) {
+        throw new HttpError("The named runtime session did not claim this invocation", {
+          status: 409,
+          code: "DECISION_REQUESTER_NOT_ACTIVE",
+        })
+      }
+
       const link = await BotRuntimeSessionLinkRepository.findActiveByStream(client, {
         workspaceId: params.workspaceId,
         botId: params.botId,
@@ -132,6 +143,15 @@ export class DecisionService {
 
       const runtimeSessionId =
         params.runtimeSessionId ?? link?.runtimeSessionId ?? invocation?.claimedRuntimeSessionId ?? null
+      // The answer is pushed to the requester's session room; with no session
+      // there is nobody to deliver it to, so the card would block its runtime
+      // until expiry. Refuse up front instead of dropping the push later.
+      if (!runtimeSessionId) {
+        throw new HttpError("This bot has no runtime session to deliver the answer to", {
+          status: 409,
+          code: "DECISION_REQUESTER_NOT_ACTIVE",
+        })
+      }
 
       const decision = await DecisionRequestRepository.insert(client, {
         id: decisionRequestId(),
