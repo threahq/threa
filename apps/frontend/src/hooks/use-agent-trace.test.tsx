@@ -154,6 +154,24 @@ describe("useAgentTrace", () => {
     expect(result.current.steps.filter((s) => s.id === "step_2")).toEqual([completed])
   })
 
+  it("keeps a bootstrap-completed step when its started event arrives late", async () => {
+    const { socket, fire } = makeFakeSocket()
+    vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
+    vi.spyOn(socketRoomModule, "joinRoomWithAck").mockResolvedValue(undefined)
+    const started: AgentSessionStep = { ...makeStep(1), stepType: "tool_call" }
+    const completed = { ...started, completedAt: "2026-07-09T10:00:02.000Z", duration: 1500 }
+    vi.spyOn(agentSessionsApi, "getSession").mockResolvedValue(makeSessionResponse([completed]))
+
+    const { result } = renderHook(() => useAgentTrace(WORKSPACE_ID, SESSION_ID), { wrapper: createWrapper() })
+    await waitFor(() => expect(result.current.steps).toHaveLength(1))
+
+    act(() => {
+      fire("agent_session:step:started", { sessionId: SESSION_ID, step: started })
+    })
+
+    expect(result.current.steps).toEqual([completed])
+  })
+
   it("re-joins the session room and refetches bootstrap after a socket reconnect (INV-53)", async () => {
     const { socket, fire } = makeFakeSocket()
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(socket)
