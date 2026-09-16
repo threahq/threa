@@ -11,6 +11,7 @@ import { useIsKnownCommand, useCommandArgs, NO_ARGS, type CommandArgNames } from
 import { StreamChip } from "./stream-chip"
 import { MENTION_PATTERN, isValidSlug } from "@threahq/types"
 import { STEER_DIRECTIVE_PATTERN } from "@/lib/commands"
+import { COMMAND_TOKEN, scanCommandArgs } from "./command-args"
 
 interface TriggerChipProps {
   type: "mention" | "channel" | "command" | "command-flag"
@@ -158,17 +159,9 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
   )
 }
 
-// A `/name` and the value it takes (`/thinking high`), the grammar both the
-// leading command and its flag arguments follow. `(?=\s|$)` keeps the name a
-// whole token, so the `/model` in `/model/checkpoints` is a path segment, not a
-// command; a value never starts with `/`, so the next flag is never eaten as
-// this one's value.
-const COMMAND_TOKEN = /\/([\w-]+)(?:(\s+)([^\s/]\S*))?(?=\s|$)/.source
-
-// Both anchor the same token, so their groups line up: 1 the leading
-// whitespace, 2 the name, 3 the separator, 4 the value.
+// Groups line up with the shared token: 1 the leading whitespace, 2 the name,
+// 3 the separator, 4 the value.
 const COMMAND_PATTERN = new RegExp(`^(\\s*)${COMMAND_TOKEN}`)
-const COMMAND_FLAG_PATTERN = new RegExp(`(^|\\s)${COMMAND_TOKEN}`, "g")
 
 const CHANNEL_PATTERN = /(?<![a-z0-9])#([a-z][a-z0-9-]*[a-z0-9]|[a-z])(?![a-z0-9_.-])/g
 
@@ -228,25 +221,14 @@ export function renderMentions(
     | { index: number; length: number; type: "emoji"; shortcode: string; emoji: string }
   const triggers: TriggerMatch[] = []
 
-  if (args.flags.size > 0) {
-    const flagPattern = new RegExp(COMMAND_FLAG_PATTERN.source, COMMAND_FLAG_PATTERN.flags)
-    let flagMatch
-    while ((flagMatch = flagPattern.exec(processText)) !== null) {
-      const [whole, space, name, , taken] = flagMatch
-      const advertised = args.flags.get(name.toLowerCase())
-      if (!advertised) continue
-      // Same rule as the leading command: only a value the flag advertises joins
-      // its chip, so `/spawn claude /thinking fix the bug` chips `/thinking`
-      // alone and leaves the session name prose.
-      const value = taken && advertised.has(taken.toLowerCase()) ? taken : undefined
-      triggers.push({
-        index: flagMatch.index + space.length,
-        length: value ? whole.length - space.length : name.length + 1,
-        type: "command-flag",
-        slug: name,
-        value,
-      })
-    }
+  for (const span of scanCommandArgs(processText, args)) {
+    triggers.push({
+      index: span.from,
+      length: span.to - span.from,
+      type: "command-flag",
+      slug: span.name,
+      value: span.value,
+    })
   }
 
   // Gold like a leading command, because it dispatches like one.

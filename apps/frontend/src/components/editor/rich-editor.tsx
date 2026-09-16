@@ -415,6 +415,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     renderCommandList,
     isKnownCommand: isKnownSlashCommand,
     pickableArgsFor,
+    commandArgsFor,
   } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
     includeGiphy: giphyEnabled,
@@ -546,6 +547,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         mentionSuggestion: enableMentions ? mentionConfig : undefined,
         channelSuggestion: enableChannels ? channelConfig : undefined,
         commandSuggestion: enableCommands ? commandConfig : undefined,
+        commandArgsFor: enableCommands ? commandArgsFor : undefined,
         emojiSuggestion: enableEmoji ? emojiConfig : undefined,
         memoSearchSuggestion: enableMemoEmbed ? memoConfig : undefined,
         toEmoji: enableEmoji ? toEmoji : undefined,
@@ -561,6 +563,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       mentionConfig,
       channelConfig,
       commandConfig,
+      commandArgsFor,
       emojiConfig,
       memoConfig,
       toEmoji,

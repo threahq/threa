@@ -14,6 +14,7 @@ import { rankMatches } from "@/lib/match-score"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
 import { useSuggestion } from "./use-suggestion"
 import { pickableArgs } from "./use-command-arg-picker"
+import { argNames } from "@/lib/markdown/command-list-context"
 
 /**
  * True when the `/` that opened the palette starts the message — the first
@@ -239,11 +240,17 @@ export function useCommandSuggestion({
     return item ? pickableArgs(item) : null
   }, [])
 
+  const commandArgsFor = useCallback((name: string) => {
+    const item = commandsRef.current.find((cmd) => cmd.name === name)
+    return item ? argNames(item.args) : null
+  }, [])
+
   return {
     suggestionConfig,
     renderCommandList: renderSuggestionList,
     isActive,
     isKnownCommand,
     pickableArgsFor,
+    commandArgsFor,
   }
 }

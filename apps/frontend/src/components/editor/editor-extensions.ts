@@ -25,6 +25,7 @@ import { MarkdownTableInputRule } from "./markdown-table-input-rule"
 import { MentionExtension, type MentionOptions } from "./triggers/mention-extension"
 import { ChannelExtension, type ChannelOptions } from "./triggers/channel-extension"
 import { CommandExtension, type CommandOptions } from "./triggers/command-extension"
+import { CommandArgDecoration, type CommandArgDecorationOptions } from "./triggers/command-arg-decoration"
 import { EmojiExtension, type EmojiExtensionOptions } from "./triggers/emoji-extension"
 import { AttachmentReferenceExtension } from "./attachment-reference-extension"
 import HorizontalRule from "@tiptap/extension-horizontal-rule"
@@ -46,6 +47,8 @@ interface CreateEditorExtensionsOptions {
   mentionSuggestion?: MentionOptions["suggestion"]
   channelSuggestion?: ChannelOptions["suggestion"]
   commandSuggestion?: CommandOptions["suggestion"]
+  /** Arguments of a composer command, drawn as chips beside its own (view-only). */
+  commandArgsFor?: CommandArgDecorationOptions["commandArgsFor"]
   emojiSuggestion?: EmojiExtensionOptions["suggestion"]
   memoSearchSuggestion?: MemoSearchOptions["suggestion"]
   /** Look up emoji by shortcode - used for input rule auto-convert */
@@ -150,6 +153,9 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     config.mentionSuggestion ? MentionExtension.configure({ suggestion: config.mentionSuggestion }) : MentionExtension,
     config.channelSuggestion ? ChannelExtension.configure({ suggestion: config.channelSuggestion }) : ChannelExtension,
     config.commandSuggestion ? CommandExtension.configure({ suggestion: config.commandSuggestion }) : CommandExtension,
+    config.commandArgsFor
+      ? CommandArgDecoration.configure({ commandArgsFor: config.commandArgsFor })
+      : CommandArgDecoration,
     config.emojiSuggestion && config.toEmoji
       ? EmojiExtension.configure({ suggestion: config.emojiSuggestion, toEmoji: config.toEmoji })
       : EmojiExtension,
