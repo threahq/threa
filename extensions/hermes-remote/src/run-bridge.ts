@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto"
-import type { DeliveredTurn, RuntimeDescriptor, StepFrame } from "@threahq/remote-session"
+import type { DeliveredTurn, RuntimeDescriptor, SendResult, StepFrame } from "@threahq/remote-session"
 import type { HermesRunEvent, HermesRunsClient, RunStatus } from "./hermes-client"
 
 /** The slice of `RemoteSession` the bridge drives, so tests can stand in a fake. */
 export interface BridgeSession {
   readonly rootStreamId?: string
   recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean>
-  reply(invocationId: string, text: string): Promise<unknown>
+  reply(invocationId: string, text: string): Promise<SendResult>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
 }
 
@@ -266,11 +266,13 @@ export class HermesTurnRunner {
       await this.session.failTurn(invocationId, text(terminal.error) ?? "Hermes run failed")
       return
     }
-    if (terminal.event === "run.cancelled") {
-      await this.session.reply(invocationId, "")
-      return
-    }
-    await this.session.reply(invocationId, replyTextFor(typeof terminal.output === "string" ? terminal.output : ""))
+    const replyText =
+      terminal.event === "run.cancelled" ? "" : replyTextFor(typeof terminal.output === "string" ? terminal.output : "")
+    const result = await this.session.reply(invocationId, replyText)
+    // The SDK returns refusals instead of throwing; a run that outlived its turn
+    // (idle timeout, superseded) would otherwise vanish without a trace.
+    if (!result.ok)
+      this.log(`run ${terminal.run_id} reply ${result.retryable ? "deferred" : "refused"}: ${result.message}`)
   }
 
   private summarize(error: unknown): string {

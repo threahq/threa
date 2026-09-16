@@ -17,6 +17,7 @@ function makeSession() {
     },
     reply: async (invocationId, text) => {
       calls.replies.push({ invocationId, text })
+      return { ok: true, message: "" }
     },
     failTurn: async (invocationId, errorMessage) => {
       calls.fails.push({ invocationId, errorMessage })
@@ -275,6 +276,40 @@ describe("HermesTurnRunner", () => {
       subscribe: 0,
       getRunCalls: 1,
       replies: [{ invocationId: "binv_1", text: "from the status" }],
+    })
+  })
+
+  test("a reply the SDK refuses is logged, not dropped", async () => {
+    const { session, calls } = makeSession()
+    session.reply = async (invocationId, text) => {
+      calls.replies.push({ invocationId, text })
+      return {
+        ok: false,
+        retryable: false,
+        message: "No open request with invocation_id binv_1 (already answered, expired, or unknown).",
+      }
+    }
+    const logs: string[] = []
+    const { client } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "late answer" }]])
+    const runner = new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: () => "key",
+      sleep: async () => {},
+      log: (message) => logs.push(message),
+    })
+    await runner.deliverTurn(TURN)
+    await settle()
+    expect({
+      replies: calls.replies,
+      fails: calls.fails,
+      refused: logs.filter((line) => line.includes("reply refused")),
+    }).toEqual({
+      replies: [{ invocationId: "binv_1", text: "late answer" }],
+      fails: [],
+      refused: [
+        "run run_1 reply refused: No open request with invocation_id binv_1 (already answered, expired, or unknown).",
+      ],
     })
   })
 
