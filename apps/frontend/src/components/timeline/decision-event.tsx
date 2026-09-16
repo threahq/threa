@@ -1,14 +1,16 @@
 import { useRef, useState } from "react"
 import { toast } from "sonner"
 import { Check, CircleHelp, Loader2 } from "lucide-react"
-import type {
-  DecisionOption,
-  DecisionRequestedEventPayload,
-  DecisionResolution,
-  DecisionResolvedEventPayload,
-  DecisionRequestStatus,
-  StreamEvent,
-  ThreadSummary,
+import {
+  DECISION_NOTE_MAX_CHARS,
+  type DecisionOption,
+  type DecisionRequest,
+  type DecisionRequestedEventPayload,
+  type DecisionResolution,
+  type DecisionResolvedEventPayload,
+  type DecisionRequestStatus,
+  type StreamEvent,
+  type ThreadSummary,
 } from "@threahq/types"
 import { decisionsApi } from "@/api"
 import { ApiError } from "@/api/client"
@@ -21,13 +23,6 @@ import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
 import { useHostArchived } from "./host-archived-context"
 import { useThreadAnchor } from "./use-thread-anchor"
-
-/**
- * The backend's own bound (`features/decisions/config.ts`), mirrored here because
- * it is not exported from `@threahq/types`: the note field stops the viewer at the
- * length the API would reject.
- */
-const DECISION_NOTE_MAX_CHARS = 2000
 
 interface DecisionEventProps {
   event: StreamEvent
@@ -68,8 +63,8 @@ function buttonVariantFor(tone: DecisionOption["tone"]): "default" | "outline" |
  * Anyone who can see the stream may answer — the backend gates on
  * `checkStreamAccess` (INV-62), so there is no membership gate here. Every click
  * sends the version the card is showing, so a second answer loses the CAS race
- * (409 `DECISION_NOT_OPEN`) and the card re-reads the row to show what actually
- * happened. INV-63: no success toast — the card flips.
+ * (409 `DECISION_NOT_OPEN`) whose body carries the winning row, which the card
+ * shows instead. INV-63: no success toast — the card flips.
  */
 export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThreadParent }: DecisionEventProps) {
   const payload = event.payload as
@@ -79,8 +74,8 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   const [note, setNote] = useState("")
   const [pendingOptionId, setPendingOptionId] = useState<string | null>(null)
   // What this client learned first-hand: the row the resolve call returned, or
-  // the row re-read after losing the CAS race. Carries its own version, so it
-  // never walks a newer patch back.
+  // the winning row the 409 handed back after losing the CAS race. Carries its
+  // own version, so it never walks a newer patch back.
   const [local, setLocal] = useState<DecisionSnapshot | null>(null)
   // The highest-version patch this card has seen. Patch delivery is not ordered
   // across a socket append and a window re-read, so a lower version is stale and
@@ -133,12 +128,9 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
     } catch (error) {
       if (ApiError.isApiError(error) && error.code === "DECISION_NOT_OPEN") {
         toast.info("This decision was already answered")
-        try {
-          const { decision: current } = await decisionsApi.get(workspaceId, decision.id)
-          setLocal({ status: current.status, resolution: current.resolution, version: current.version })
-        } catch {
-          // The re-read is best effort: the toast already told the viewer their
-          // answer didn't land, and the authoritative patch still arrives.
+        const winner = error.details as Partial<DecisionRequest> | undefined
+        if (winner && typeof winner.version === "number" && typeof winner.status === "string") {
+          setLocal({ status: winner.status, resolution: winner.resolution, version: winner.version })
         }
       } else {
         toast.error("Couldn't record your answer")

@@ -16,4 +16,4 @@ export const DECISION_OPTIONS_MAX = 8
 export const DECISION_OPTION_ID_MAX_CHARS = 64
 export const DECISION_OPTION_LABEL_MAX_CHARS = 80
 export const DECISION_EXTERNAL_REF_MAX_CHARS = 256
-export const DECISION_NOTE_MAX_CHARS = 2000
+export { DECISION_NOTE_MAX_CHARS } from "@threahq/types"

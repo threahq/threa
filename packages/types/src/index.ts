@@ -210,6 +210,7 @@ export {
   DecisionRequestStatuses,
   DECISION_OPTION_TONES,
   type DecisionOptionTone,
+  DECISION_NOTE_MAX_CHARS,
   // Agent session events
   AGENT_SESSION_EVENT_TYPES,
   type AgentSessionEventType,

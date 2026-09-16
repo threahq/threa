@@ -145,14 +145,18 @@ describe("DecisionEvent", () => {
   })
 
   it("reconciles from the server when the resolve lost the race", async () => {
-    vi.spyOn(decisionsApi, "resolve").mockRejectedValue(new ApiError(409, "DECISION_NOT_OPEN", "Decision is not open"))
-    vi.spyOn(decisionsApi, "get").mockResolvedValue({
-      decision: decision({
-        status: "resolved",
-        version: 4,
-        resolution: { optionId: "opt_abort", decidedBy: "usr_kris", decidedAt: "2026-09-16T09:05:00.000Z" },
-      }),
-    })
+    vi.spyOn(decisionsApi, "resolve").mockRejectedValue(
+      new ApiError(
+        409,
+        "DECISION_NOT_OPEN",
+        "Decision is not open",
+        decision({
+          status: "resolved",
+          version: 4,
+          resolution: { optionId: "opt_abort", decidedBy: "usr_kris", decidedAt: "2026-09-16T09:05:00.000Z" },
+        }) as unknown as Record<string, unknown>
+      )
+    )
     const info = vi.spyOn(toast, "info").mockImplementation(() => "")
 
     renderCard()
@@ -163,9 +167,8 @@ describe("DecisionEvent", () => {
     expect(info).toHaveBeenCalledTimes(1)
   })
 
-  it("keeps the card open with one toast when the reconciling read also fails", async () => {
+  it("keeps the card open with one toast when the 409 carries no row", async () => {
     vi.spyOn(decisionsApi, "resolve").mockRejectedValue(new ApiError(409, "DECISION_NOT_OPEN", "Decision is not open"))
-    vi.spyOn(decisionsApi, "get").mockRejectedValue(new Error("offline"))
     const info = vi.spyOn(toast, "info").mockImplementation(() => "")
     const error = vi.spyOn(toast, "error").mockImplementation(() => "")
 
