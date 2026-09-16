@@ -15,7 +15,7 @@ const OPTIONS: ModelOptions = {
   ],
 }
 
-function makeRunner(open: Array<{ runId: string; streamId: string }> = []) {
+function makeRunner(open: Array<{ runId: string; streamId: string }> = [], admitting = 0) {
   const bumps: string[] = []
   let generation = 0
   const runner = {
@@ -26,6 +26,7 @@ function makeRunner(open: Array<{ runId: string; streamId: string }> = []) {
       return `${streamId}.${generation}`
     },
     openRuns: () => open.map((run, index) => ({ invocationId: `binv_${index}`, ...run })),
+    hasOpenTurns: () => open.length > 0 || admitting > 0,
     steer: async () => true,
     interrupt: () => true,
   }
@@ -185,6 +186,15 @@ describe("createHermesSessionControl", () => {
 
   test("clear is refused while a run is open anywhere in the session, a thread included", async () => {
     const { runner, bumps } = makeRunner([{ runId: "run_1", streamId: "stream_thread" }])
+    const control = createHermesSessionControl(runner, makeClient().client)
+    expect({ result: await control.runCommand("clear", "", CONTEXT), bumps }).toEqual({
+      result: { ok: false, message: "Stop the running turn first (/stop)." },
+      bumps: [],
+    })
+  })
+
+  test("clear is refused while a turn is still being admitted", async () => {
+    const { runner, bumps } = makeRunner([], 1)
     const control = createHermesSessionControl(runner, makeClient().client)
     expect({ result: await control.runCommand("clear", "", CONTEXT), bumps }).toEqual({
       result: { ok: false, message: "Stop the running turn first (/stop)." },

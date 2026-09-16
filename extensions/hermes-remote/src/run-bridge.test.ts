@@ -9,6 +9,7 @@ function makeSession() {
     replies: [] as Array<{ invocationId: string; text: string }>,
     fails: [] as Array<{ invocationId: string; errorMessage: string }>,
     decisions: [] as DecisionRequestInput[],
+    decisionSignals: [] as Array<AbortSignal | undefined>,
   }
   let outcome: DecisionOutcome = {
     status: "cancelled",
@@ -28,8 +29,9 @@ function makeSession() {
       calls.fails.push({ invocationId, errorMessage })
       return true
     },
-    requestDecision: async (input) => {
+    requestDecision: async (input, opts) => {
       calls.decisions.push(input)
+      calls.decisionSignals.push(opts?.signal)
       return outcome
     },
   }
@@ -538,6 +540,24 @@ describe("HermesTurnRunner control", () => {
     })
   })
 
+  test("a turn still in admission counts as open before Hermes returns its run", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    const release = gate.holdAdmission()
+    const delivered = runner.deliverTurn(TURN)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    const during = { open: runner.hasOpenTurns(), runs: runner.openRuns().length }
+    release()
+    await delivered
+    gate.push({ event: "run.completed", run_id: "run_1", output: "done" })
+    gate.close()
+    await settle()
+
+    expect({ during, after: runner.hasOpenTurns() }).toEqual({ during: { open: true, runs: 0 }, after: false })
+  })
+
   test("a held steer survives a failed admission and rides the retry", async () => {
     const { session } = makeSession()
     const gate = makeGatedClient()
@@ -599,6 +619,25 @@ describe("HermesTurnRunner control", () => {
       { stepType: "status", content: "Waiting for approval: rm -rf build" },
     ])
     expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "removed" }])
+  })
+
+  test("stopping the run cancels its open approval card", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.push(APPROVAL_EVENT)
+    await settle()
+
+    const before = calls.decisionSignals.map((signal) => signal?.aborted)
+    runner.interrupt()
+    gate.close()
+    await settle()
+
+    expect({ before, after: calls.decisionSignals.map((signal) => signal?.aborted) }).toEqual({
+      before: [false],
+      after: [true],
+    })
   })
 
   test("a denial with a note is posted as a deny and steered in as the reason", async () => {

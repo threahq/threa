@@ -63,7 +63,7 @@ export function createHermesConnector(
       recordSteps: (id, frames, statusText) => session.recordSteps(id, frames, statusText),
       reply: (id, text) => session.reply(id, text),
       failTurn: (id, message) => session.failTurn(id, message),
-      requestDecision: (input) => session.requestDecision(input),
+      requestDecision: (input, opts) => session.requestDecision(input, opts),
     },
     // Long-term memory scope (X-Hermes-Session-Key): one per Threa scratchpad. The
     // conversation itself is selected by session_id, the stream the turn arrived on.

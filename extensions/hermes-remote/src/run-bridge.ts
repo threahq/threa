@@ -16,7 +16,7 @@ export interface BridgeSession {
   recordSteps(invocationId: string, frames: StepFrame[], statusText?: string): Promise<boolean>
   reply(invocationId: string, text: string): Promise<SendResult>
   failTurn(invocationId: string, errorMessage: string): Promise<boolean>
-  requestDecision(input: DecisionRequestInput): Promise<DecisionOutcome>
+  requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
 
 /** Where the per-stream conversation generation (`/clear` count) survives a restart. */
@@ -209,6 +209,11 @@ export class HermesTurnRunner {
     return this.conversationFor(streamId)
   }
 
+  /** Runs still inside admission count too: they have no run id yet but will. */
+  hasOpenTurns(): boolean {
+    return this.runs.size > 0 || this.admitting.size > 0
+  }
+
   openRuns(): Array<{ invocationId: string; runId: string; streamId: string }> {
     return [...this.runs.entries()].map(([invocationId, run]) => ({
       invocationId,
@@ -382,7 +387,7 @@ export class HermesTurnRunner {
           // The run is parked until it is answered, so the card is resolved
           // off the drain loop; blocking here would stall nothing but would
           // also never see the resume events.
-          void this.resolveApproval(runId, streamId, event)
+          void this.resolveApproval(runId, streamId, event, abort.signal)
           continue
         }
         if (TERMINAL_EVENTS.has(event.event)) {
@@ -421,7 +426,12 @@ export class HermesTurnRunner {
    * except a successful answer leaves the gateway's own approval timeout to
    * deny the command, so a lost card never parks the run forever.
    */
-  private async resolveApproval(runId: string, streamId: string, event: HermesRunEvent): Promise<void> {
+  private async resolveApproval(
+    runId: string,
+    streamId: string,
+    event: HermesRunEvent,
+    signal: AbortSignal
+  ): Promise<void> {
     const choices = Array.isArray(event.choices) ? event.choices.flatMap((c) => text(c) ?? []) : []
     const options = approvalOptions(choices)
     if (options.length === 0) {
@@ -432,13 +442,16 @@ export class HermesTurnRunner {
     const command = text(event.command) ?? "(command withheld)"
     let outcome: DecisionOutcome
     try {
-      outcome = await this.session.requestDecision({
-        title: "Hermes wants to run a command",
-        body: approvalBody(command, text(event.description)),
-        options,
-        allowNote: true,
-        streamId,
-      })
+      outcome = await this.session.requestDecision(
+        {
+          title: "Hermes wants to run a command",
+          body: approvalBody(command, text(event.description)),
+          options,
+          allowNote: true,
+          streamId,
+        },
+        { signal }
+      )
     } catch (error) {
       if (error instanceof DecisionAbandonedError) return
       this.log(`run ${runId} approval card failed: ${this.summarize(error)}`)

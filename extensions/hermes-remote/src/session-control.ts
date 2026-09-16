@@ -121,7 +121,7 @@ export function createHermesSessionControl(
   // Commands act on the root conversation: the SDK hands a command only its root
   // stream, so a /clear typed in a thread clears the scratchpad's conversation.
   async function clear(rootStreamId: string): Promise<{ ok: boolean; summary?: string; message?: string }> {
-    if (runner.openRuns().length > 0) {
+    if (runner.hasOpenTurns()) {
       return { ok: false, message: "Stop the running turn first (/stop)." }
     }
     const previous = lockedModels.get(runner.conversationFor(rootStreamId))
