@@ -3,7 +3,8 @@
 A Threa connector for a local [Hermes Agent](https://github.com/NousResearch/hermes-agent) gateway. It links a Threa scratchpad to one Hermes
 conversation: every turn the scratchpad hands it becomes one Hermes run (`POST /v1/runs`), the run's tool and
 subagent events are traced back as steps on the turn, and the run's terminal event closes the turn: the final
-output as the reply, a failure as a failed invocation, a cancellation as no response.
+output as the reply, a failure as a failed invocation, a cancellation as no response. Each run carries a short
+`instructions` note (write markdown, load the `threa` skill); the skill holds Threa's markdown reference.
 
 ## Running it
 
