@@ -160,6 +160,33 @@ export const CHANNEL_TOOLS = [
   },
 ] as const
 
+const PERMISSION_PREVIEW_MAX_CHARS = 1500
+
+/**
+ * Claude Code sends the tool input as one line of JSON. A shell command reads
+ * best as the command itself; anything else is shown as formatted JSON, and a
+ * preview that is not JSON at all goes into a plain fenced block.
+ */
+export function permissionPreviewBlock(inputPreview: string): string {
+  let lang = ""
+  let text = inputPreview
+  try {
+    const parsed: unknown = JSON.parse(inputPreview)
+    if (parsed && typeof parsed === "object" && typeof (parsed as { command?: unknown }).command === "string") {
+      lang = "sh"
+      text = (parsed as { command: string }).command
+    } else {
+      lang = "json"
+      text = JSON.stringify(parsed, null, 2)
+    }
+  } catch {
+    // not JSON: shown verbatim
+  }
+  if (text.length > PERMISSION_PREVIEW_MAX_CHARS) text = `${text.slice(0, PERMISSION_PREVIEW_MAX_CHARS)}…`
+  const fence = text.includes("```") ? "````" : "```"
+  return `${fence}${lang}\n${text}\n${fence}`
+}
+
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
   params: z.object({
@@ -958,7 +985,7 @@ export class ChannelServer {
       await this.postTerminalApprovalNotice(params, "Approvals on a sealed stream cannot be shown as a card yet.")
       return
     }
-    const preview = params.input_preview ? `\n\n\`${params.input_preview.slice(0, 200)}\`` : ""
+    const preview = params.input_preview ? `\n\n${permissionPreviewBlock(params.input_preview)}` : ""
     let outcome
     try {
       outcome = await this.session.requestDecision({

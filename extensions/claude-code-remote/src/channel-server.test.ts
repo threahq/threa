@@ -21,6 +21,7 @@ import {
   ChannelServer,
   buildInstructions,
   formatDelegationContent,
+  permissionPreviewBlock,
   runClaudeCommand,
 } from "./channel-server"
 
@@ -415,7 +416,7 @@ const PERMISSION = {
   request_id: "krjtt",
   tool_name: "Bash",
   description: "Run a command",
-  input_preview: "bun run test",
+  input_preview: '{"command":"bun run test","description":"Run the unit tests"}',
 }
 
 describe("ChannelServer permission decisions", () => {
@@ -426,7 +427,7 @@ describe("ChannelServer permission decisions", () => {
 
     expect(decisionRequests[0]?.input).toEqual({
       title: "Run `Bash`?",
-      body: "Run a command\n\n`bun run test`",
+      body: "Run a command\n\n```sh\nbun run test\n```",
       options: [
         { id: "allow", label: "Allow", tone: "primary" },
         { id: "deny", label: "Deny", tone: "destructive" },
@@ -522,5 +523,23 @@ describe("ChannelServer permission decisions", () => {
     await internals.handlePermissionRequest(PERMISSION)
     expect(decisionRequests[0]?.input.invocationId).toBeUndefined()
     await server.shutdown()
+  })
+})
+
+describe("permissionPreviewBlock", () => {
+  test("a JSON input with a command renders as a shell block", () => {
+    expect(permissionPreviewBlock('{"command":"git push --force","timeout":5000}')).toBe("```sh\ngit push --force\n```")
+  })
+
+  test("other JSON input renders pretty-printed", () => {
+    expect(permissionPreviewBlock('{"file_path":"/a.ts","content":"x"}')).toBe(
+      '```json\n{\n  "file_path": "/a.ts",\n  "content": "x"\n}\n```'
+    )
+  })
+
+  test("a non-JSON preview is fenced verbatim and long previews are cut", () => {
+    expect(permissionPreviewBlock("plain text")).toBe("```\nplain text\n```")
+    const long = "x".repeat(2000)
+    expect(permissionPreviewBlock(long)).toBe(`\`\`\`\n${"x".repeat(1500)}…\n\`\`\``)
   })
 })
