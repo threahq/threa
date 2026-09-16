@@ -1,13 +1,18 @@
 import { describe, expect, test } from "bun:test"
-import type { DeliveredTurn, StepFrame } from "@threahq/remote-session"
-import type { HermesRunEvent, HermesRunsClient, RunStatus } from "./hermes-client"
-import { HermesTurnRunner, idempotencyKeyFor, type BridgeSession } from "./run-bridge"
+import type { DecisionOutcome, DecisionRequestInput, DeliveredTurn, StepFrame } from "@threahq/remote-session"
+import { HermesApiError, type HermesRunEvent, type HermesRunsClient, type RunStatus } from "./hermes-client"
+import { HermesTurnRunner, idempotencyKeyFor, type BridgeSession, type ConversationStore } from "./run-bridge"
 
 function makeSession() {
   const calls = {
     steps: [] as Array<{ invocationId: string; frames: StepFrame[] }>,
     replies: [] as Array<{ invocationId: string; text: string }>,
     fails: [] as Array<{ invocationId: string; errorMessage: string }>,
+    decisions: [] as DecisionRequestInput[],
+  }
+  let outcome: DecisionOutcome = {
+    status: "cancelled",
+    decision: { id: "dec_1" } as DecisionOutcome["decision"],
   }
   const session: BridgeSession = {
     rootStreamId: "stream_root",
@@ -23,8 +28,22 @@ function makeSession() {
       calls.fails.push({ invocationId, errorMessage })
       return true
     },
+    requestDecision: async (input) => {
+      calls.decisions.push(input)
+      return outcome
+    },
   }
-  return { session, calls }
+  return {
+    session,
+    calls,
+    setOutcome: (next: DecisionOutcome) => {
+      outcome = next
+    },
+  }
+}
+
+function resolvedWith(optionId: string, note: string | null = null): DecisionOutcome {
+  return { status: "resolved", optionId, note, decision: { id: "dec_1" } as DecisionOutcome["decision"] }
 }
 
 function makeClient(
@@ -33,9 +52,27 @@ function makeClient(
   admission: { status?: string; replayed?: boolean } = {}
 ) {
   const created: Array<Record<string, unknown>> = []
+  const steers: Array<{ runId: string; input: string }> = []
+  const stops: string[] = []
+  const approvals: Array<{ runId: string; choice: string; requestId?: string }> = []
+  const steerErrors: Error[] = []
   let getRunCalls = 0
   let subscribe = 0
   const client = {
+    steerRun: async (runId: string, input: string) => {
+      const failure = steerErrors.shift()
+      if (failure) throw failure
+      steers.push({ runId, input })
+      return { runId, accepted: true }
+    },
+    stopRun: async (runId: string) => {
+      stops.push(runId)
+      return { runId, status: "stopping" }
+    },
+    respondApproval: async (runId: string, answer: { choice: string; requestId?: string }) => {
+      approvals.push({ runId, ...answer })
+      return { runId, choice: answer.choice, resolved: true }
+    },
     createRun: async (input: Record<string, unknown>) => {
       created.push(input)
       return { runId: "run_1", status: admission.status ?? "queued", replayed: admission.replayed ?? false }
@@ -51,7 +88,15 @@ function makeClient(
       for (const event of events) yield event
     },
   }
-  return { client: client as unknown as HermesRunsClient, created, counts: () => ({ getRunCalls, subscribe }) }
+  return {
+    client: client as unknown as HermesRunsClient,
+    created,
+    steers,
+    stops,
+    approvals,
+    failNextSteer: (error: Error) => steerErrors.push(error),
+    counts: () => ({ getRunCalls, subscribe }),
+  }
 }
 
 const TURN: DeliveredTurn = {
@@ -87,7 +132,7 @@ describe("HermesTurnRunner", () => {
       {
         input: "Do the thing",
         sessionId: "stream_thread",
-        idempotencyKey: idempotencyKeyFor(TURN),
+        idempotencyKey: idempotencyKeyFor(TURN.invocationId, TURN.content),
         sessionKey: "threa:ws_1:stream_root",
       },
     ])
@@ -312,16 +357,325 @@ describe("HermesTurnRunner", () => {
   })
 
   test("the idempotency key changes with the content so a rebuilt redelivery is not a 409", () => {
-    const same = idempotencyKeyFor({ ...TURN })
-    const other = idempotencyKeyFor({ ...TURN, content: "Do the other thing" })
+    const same = idempotencyKeyFor(TURN.invocationId, TURN.content)
+    const other = idempotencyKeyFor(TURN.invocationId, "Do the other thing")
     expect({
-      stable: same === idempotencyKeyFor(TURN),
+      stable: same === idempotencyKeyFor(TURN.invocationId, TURN.content),
       prefix: same.startsWith("binv_1."),
       differs: same !== other,
     }).toEqual({
       stable: true,
       prefix: true,
       differs: true,
+    })
+  })
+})
+
+/** An event stream the test drives frame by frame, so a run can stay open across assertions. */
+function makeGatedClient() {
+  const created: Array<Record<string, unknown>> = []
+  const steers: Array<{ runId: string; input: string }> = []
+  const stops: string[] = []
+  const approvals: Array<{ runId: string; choice: string; requestId?: string }> = []
+  const steerErrors: Error[] = []
+  const queue: HermesRunEvent[] = []
+  const admissionErrors: Error[] = []
+  let closed = false
+  let releaseAdmission: (() => void) | undefined
+  const client = {
+    createRun: async (input: Record<string, unknown>) => {
+      created.push(input)
+      if (releaseAdmission) await new Promise<void>((resolve) => (releaseAdmission = resolve))
+      const failure = admissionErrors.shift()
+      if (failure) throw failure
+      return { runId: "run_1", status: "running", replayed: false }
+    },
+    getRun: async (): Promise<RunStatus> => ({ runId: "run_1", status: "running" }),
+    steerRun: async (runId: string, input: string) => {
+      const failure = steerErrors.shift()
+      if (failure) throw failure
+      steers.push({ runId, input })
+      return { runId, accepted: true }
+    },
+    stopRun: async (runId: string) => {
+      stops.push(runId)
+      return { runId, status: "stopping" }
+    },
+    respondApproval: async (runId: string, answer: { choice: string; requestId?: string }) => {
+      approvals.push({ runId, ...answer })
+      return { runId, choice: answer.choice, resolved: true }
+    },
+    streamEvents: async function* (_runId: string, signal?: AbortSignal): AsyncIterable<HermesRunEvent> {
+      for (;;) {
+        if (signal?.aborted) return
+        const next = queue.shift()
+        if (next) {
+          yield next
+          continue
+        }
+        if (closed) return
+        await new Promise((resolve) => setTimeout(resolve, 1))
+      }
+    },
+  }
+  return {
+    client: client as unknown as HermesRunsClient,
+    created,
+    steers,
+    stops,
+    approvals,
+    push: (event: HermesRunEvent) => queue.push(event),
+    close: () => {
+      closed = true
+    },
+    failNextSteer: (error: Error) => steerErrors.push(error),
+    failNextAdmission: (error: Error) => admissionErrors.push(error),
+    /** Park the next createRun until `release` is called. */
+    holdAdmission: () => {
+      releaseAdmission = () => {}
+      return () => releaseAdmission?.()
+    },
+  }
+}
+
+function steerRejected(): HermesApiError {
+  return new HermesApiError("run is not accepting steer", { status: 409, code: "run_not_accepting_steer" })
+}
+
+const APPROVAL_EVENT: HermesRunEvent = {
+  event: "approval.request",
+  run_id: "run_1",
+  request_id: "req_1",
+  command: "rm -rf build",
+  description: "Clear the build directory",
+  choices: ["once", "session", "always", "deny"],
+}
+
+describe("HermesTurnRunner control", () => {
+  test("steer folds the text into the running run", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+
+    expect(await runner.steer("go left")).toBe(true)
+    expect(gate.steers).toEqual([{ runId: "run_1", input: "go left" }])
+    gate.close()
+    runner.shutdown()
+  })
+
+  test("with no open run there is nothing to steer", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    expect(await makeRunner(gate.client, session).steer("go left")).toBe(false)
+  })
+
+  test("a steer Hermes rejects is held and folded into the next turn on that stream", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.failNextSteer(steerRejected())
+
+    expect(await runner.steer("go left")).toBe(true)
+    expect(gate.steers).toEqual([])
+
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
+    gate.close()
+
+    const second = gate.created[1]
+    expect({
+      input: second?.input,
+      differentKey: second?.idempotencyKey !== idempotencyKeyFor("binv_2", "Next"),
+    }).toEqual({
+      input: "Next\n\n[Steer that arrived between turns]\ngo left",
+      differentKey: true,
+    })
+    runner.shutdown()
+  })
+
+  test("interrupt stops the run and closes its consumer without a reply", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+
+    expect(runner.interrupt()).toBe(true)
+    gate.push({ event: "run.cancelled", run_id: "run_1", interrupted: true })
+    gate.close()
+    await settle()
+
+    expect({ stops: gate.stops, open: runner.runs.size, replies: calls.replies, fails: calls.fails }).toEqual({
+      stops: ["run_1"],
+      open: 0,
+      replies: [],
+      fails: [],
+    })
+  })
+
+  test("an interrupt that lands during admission stops the run Hermes returns", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    const release = gate.holdAdmission()
+    const delivered = runner.deliverTurn(TURN)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(runner.interrupt()).toBe(true)
+    release()
+    await delivered
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ran anyway" })
+    gate.close()
+    await settle()
+
+    expect({ stops: gate.stops, open: runner.runs.size, replies: calls.replies, fails: calls.fails }).toEqual({
+      stops: ["run_1"],
+      open: 0,
+      replies: [],
+      fails: [],
+    })
+  })
+
+  test("a held steer survives a failed admission and rides the retry", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.failNextSteer(steerRejected())
+    await runner.steer("go left")
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    await settle()
+
+    gate.failNextAdmission(new Error("gateway restarting"))
+    const retry = { ...TURN, invocationId: "binv_2", content: "Next" }
+    await expect(runner.deliverTurn(retry)).rejects.toThrow("gateway restarting")
+    await runner.deliverTurn(retry)
+    gate.close()
+
+    expect(gate.created.slice(1).map((input) => input.input)).toEqual([
+      "Next\n\n[Steer that arrived between turns]\ngo left",
+      "Next\n\n[Steer that arrived between turns]\ngo left",
+    ])
+    runner.shutdown()
+  })
+
+  test("interrupt with nothing running is not a failure", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    expect(makeRunner(gate.client, session).interrupt()).toBe(true)
+  })
+
+  test("an approval request becomes a decision card and its answer is posted back", async () => {
+    const { session, calls, setOutcome } = makeSession()
+    setOutcome(resolvedWith("once"))
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.push(APPROVAL_EVENT)
+    await settle()
+
+    expect(calls.decisions).toEqual([
+      {
+        title: "Hermes wants to run a command",
+        body: "```sh\nrm -rf build\n```\n\nClear the build directory",
+        options: [
+          { id: "once", label: "Allow once", tone: "primary" },
+          { id: "session", label: "Allow this session" },
+          { id: "always", label: "Always allow" },
+          { id: "deny", label: "Deny", tone: "destructive" },
+        ],
+        allowNote: true,
+        streamId: "stream_thread",
+      },
+    ])
+    expect(gate.approvals).toEqual([{ runId: "run_1", choice: "once", requestId: "req_1" }])
+
+    gate.push({ event: "run.completed", run_id: "run_1", output: "removed" })
+    gate.close()
+    await settle()
+    expect(calls.steps.flatMap((call) => call.frames)).toEqual([
+      { stepType: "status", content: "Waiting for approval: rm -rf build" },
+    ])
+    expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "removed" }])
+  })
+
+  test("a denial with a note is posted as a deny and steered in as the reason", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome(resolvedWith("deny", "use the make target instead"))
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.push(APPROVAL_EVENT)
+    await settle()
+    gate.close()
+
+    expect({ approvals: gate.approvals, steers: gate.steers }).toEqual({
+      approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
+      steers: [{ runId: "run_1", input: "The user denied this and said: use the make target instead" }],
+    })
+    runner.shutdown()
+  })
+
+  test("a denial note Hermes will not steer is held for the next turn", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome(resolvedWith("deny", "no"))
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.failNextSteer(steerRejected())
+    gate.push(APPROVAL_EVENT)
+    await settle()
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
+    gate.close()
+
+    expect(gate.created[1]?.input).toBe("Next\n\n[Steer that arrived between turns]\nThe user denied this and said: no")
+    runner.shutdown()
+  })
+
+  test("an expired decision denies the approval", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome({ status: "expired", decision: { id: "dec_1" } as DecisionOutcome["decision"] })
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.push(APPROVAL_EVENT)
+    await settle()
+    gate.close()
+
+    expect(gate.approvals).toEqual([{ runId: "run_1", choice: "deny", requestId: "req_1" }])
+    runner.shutdown()
+  })
+
+  test("a bumped conversation generation is persisted and used as the next run's session id", async () => {
+    const { session } = makeSession()
+    const saved: Array<Record<string, number>> = []
+    const store: ConversationStore = {
+      load: () => ({}),
+      save: (generations) => {
+        saved.push(generations)
+      },
+    }
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const runner = new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: () => "threa:ws_1:stream_root",
+      sleep: async () => {},
+      conversationStore: store,
+    })
+
+    expect(runner.conversationFor("stream_thread")).toBe("stream_thread")
+    expect(runner.bumpConversation("stream_thread")).toBe("stream_thread.1")
+    await runner.deliverTurn(TURN)
+    await settle()
+
+    expect({ saved, sessionId: created[0]?.sessionId }).toEqual({
+      saved: [{ stream_thread: 1 }],
+      sessionId: "stream_thread.1",
     })
   })
 })
