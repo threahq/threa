@@ -207,7 +207,6 @@ describe("decision requests", () => {
       expiresAt: null,
     })
 
-    expect(await service.getForUser({ workspaceId: workspace, id: decision.id, userId: outsider })).toBeNull()
     await expect(
       service.resolve({
         workspaceId: workspace,

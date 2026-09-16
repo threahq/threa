@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
-import { withClient, withTransaction } from "../../db"
+import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { decisionRequestId, eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
@@ -198,16 +198,6 @@ export class DecisionService {
   /** Bot-plane read: workspace-scoped only; the public API narrows to the requester bot. */
   async getById(params: { workspaceId: string; id: string }): Promise<DecisionRequestRecord | null> {
     return DecisionRequestRepository.findById(this.pool, params.workspaceId, params.id)
-  }
-
-  /** Member read: null for a decision the user cannot reach (INV-62). */
-  async getForUser(params: { workspaceId: string; id: string; userId: string }): Promise<DecisionRequestRecord | null> {
-    return withClient(this.pool, async (client) => {
-      const decision = await DecisionRequestRepository.findById(client, params.workspaceId, params.id)
-      if (!decision) return null
-      const access = await checkStreamAccess(client, decision.streamId, params.workspaceId, params.userId)
-      return access ? decision : null
-    })
   }
 
   /**

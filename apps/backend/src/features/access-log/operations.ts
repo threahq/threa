@@ -222,7 +222,6 @@ export const ACCESS_LOG_OPERATIONS = [
   "bot_access_requests.approve",
   "bot_access_requests.deny",
   "decisions.resolve",
-  "decisions.get",
   // Drafts
   "drafts.list",
   "drafts.upsert",

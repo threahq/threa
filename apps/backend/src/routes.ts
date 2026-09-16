@@ -1535,7 +1535,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("decisions.resolve", "write"),
     decisions.resolve
   )
-  app.get("/api/workspaces/:workspaceId/decisions/:id", ...authed, audit("decisions.get", "read"), decisions.get)
 
   // Drafts — centralized, local-first composer payloads that roam across the
   // author's devices. Private to the author; never timeline-broadcast.
