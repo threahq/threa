@@ -1010,6 +1010,19 @@ describe("HermesTurnRunner threads", () => {
     await expect(delivery).rejects.toThrow("Hermes could not fork stream_root: Fork failed")
     expect({ created, fails: calls.fails }).toEqual({ created: [], fails: [] })
   })
+
+  test("a routing 404 is a gateway without the fork endpoint, not a missing source", async () => {
+    const { session } = makeSession()
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    client.forkSession = async () => {
+      throw new HermesApiError("Not Found", { status: 404, code: "not_found" })
+    }
+    const { store, saved } = storeOf({ generations: {}, forked: [] })
+    const delivery = threadRunner(client, session, store).deliverTurn(TURN)
+
+    await expect(delivery).rejects.toThrow("Hermes could not fork stream_root: Not Found")
+    expect({ created, saved }).toEqual({ created: [], saved: [] })
+  })
 })
 
 describe("HermesTurnRunner sealed turns", () => {

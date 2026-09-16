@@ -348,8 +348,9 @@ export class HermesTurnRunner {
    * A stream that is not the scratchpad root runs in its own Hermes conversation,
    * forked once from the root's so a thread starts with the scratchpad's context.
    * A later `/clear` on the root bumps the root only; an existing fork stays.
-   * Throws on any fork failure other than a missing source, and the SDK's
-   * delivery catch fails the turn once with that message.
+   * Throws on any fork failure other than a missing source (a routing 404 is a gateway
+   * without the fork endpoint, not a missing source), and the SDK's delivery catch fails the
+   * turn once with that message.
    */
   private async ensureConversation(turn: DeliveredTurn): Promise<void> {
     const root = this.session.rootStreamId
@@ -360,7 +361,7 @@ export class HermesTurnRunner {
     try {
       await this.client.forkSession(sourceId, forkId)
     } catch (error) {
-      if (error instanceof HermesApiError && error.status === 404) {
+      if (error instanceof HermesApiError && error.status === 404 && error.code === "session_not_found") {
         this.log(`conversation ${sourceId} does not exist yet; ${forkId} starts fresh instead of forking`)
       } else if (error instanceof HermesApiError && error.code === "session_exists") {
         this.log(`conversation ${forkId} was already forked`)
