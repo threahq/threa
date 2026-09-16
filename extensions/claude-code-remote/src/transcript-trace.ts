@@ -40,6 +40,7 @@ const SECTION_LABELS = {
   DETAILS: "Details",
 } as const
 type SectionLabel = (typeof SECTION_LABELS)[keyof typeof SECTION_LABELS]
+type Section = { label: SectionLabel; body: string; lang: string | null }
 
 const TRACE_CONTENT_MAX_CHARS = 9_500
 const COMMAND_TRACE_MAX_CHARS = 2_000
@@ -61,6 +62,9 @@ export type RedactionMode = "headline" | "commands" | "full"
 export interface TraceFrame {
   stepType: string
   content: string
+  clientStepId?: string
+  phase?: "started"
+  durationMs?: number
 }
 
 export interface MappedStep extends TraceFrame {
@@ -68,14 +72,20 @@ export interface MappedStep extends TraceFrame {
   statusText: string
 }
 
+export interface PendingToolCall {
+  headline: string
+  arguments: Section
+  startedAt?: number
+}
+
 export interface MapContext {
   mode: RedactionMode
   /**
-   * tool_use id → headline, so a result renders under the same headline as its
-   * call. An empty-string sentinel marks a call whose result must be skipped
-   * (the channel's own send/reply tools).
+   * tool_use id → pending call, so a result finalizes its call's row with the
+   * same headline and arguments. `null` marks a call whose result must be
+   * skipped (the channel's own send/reply tools).
    */
-  toolHeadlines: Map<string, string>
+  toolCalls: Map<string, PendingToolCall | null>
 }
 
 /** Claude Code's project-dir encoding: every non-alphanumeric character becomes '-'. */
@@ -115,10 +125,7 @@ function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
  * largest section first (ported from pi-remote so both runtimes emit the same
  * shape the trace dialog parses).
  */
-function formatStructuredToolTrace(params: {
-  headline: string
-  sections: Array<{ label: SectionLabel; body: string; lang: string | null }>
-}): string {
+function formatStructuredToolTrace(params: { headline: string; sections: Section[] }): string {
   const sections = params.sections.map((section) => ({ ...section, originalBody: section.body }))
 
   for (let attempt = 0; attempt < 24; attempt++) {
@@ -265,21 +272,20 @@ function sanitizeNarration(text: string): string {
 /** The channel's own MCP tools — their payloads land in the stream as real messages, so trace rows would be noise. */
 const OWN_TOOL_RE = /^mcp__threa__(send|reply)$/i
 
-function toolUseStep(part: Record<string, unknown>, ctx: MapContext): MappedStep | null {
+function toolUseStep(part: Record<string, unknown>, ctx: MapContext, timestamp?: number): MappedStep | null {
   const name = typeof part.name === "string" ? part.name : ""
   const id = typeof part.id === "string" ? part.id : ""
   if (!name) return null
   if (OWN_TOOL_RE.test(name)) {
-    if (id) ctx.toolHeadlines.set(id, "")
+    if (id) ctx.toolCalls.set(id, null)
     return null
   }
   const described = describeClaudeTool(name, part.input)
   const command = name.toLowerCase() === "bash" ? bashCommand(part.input) : undefined
   const headline =
     ctx.mode === "commands" && command ? commandHeadline(command, described.headline) : described.headline
-  if (id) ctx.toolHeadlines.set(id, headline)
 
-  let section: { label: SectionLabel; body: string; lang: string | null }
+  let section: Section
   if (ctx.mode === "full") {
     section = {
       label: SECTION_LABELS.ARGUMENTS,
@@ -298,32 +304,41 @@ function toolUseStep(part: Record<string, unknown>, ctx: MapContext): MappedStep
     section = { label: SECTION_LABELS.ARGUMENTS, body: safeToolArgumentSummary(name, part.input), lang: null }
   }
 
-  return {
-    stepType: "tool_call",
-    content: formatStructuredToolTrace({ headline, sections: [section] }),
-    statusText: described.statusText,
-  }
+  const content = formatStructuredToolTrace({ headline, sections: [section] })
+  if (!id) return { stepType: "tool_call", content, statusText: described.statusText }
+  ctx.toolCalls.set(id, { headline, arguments: section, startedAt: timestamp })
+  return { stepType: "tool_call", phase: "started", clientStepId: id, content, statusText: described.statusText }
 }
 
-function toolResultStep(part: Record<string, unknown>, ctx: MapContext): MappedStep | null {
+function toolResultStep(part: Record<string, unknown>, ctx: MapContext, timestamp?: number): MappedStep | null {
   const id = typeof part.tool_use_id === "string" ? part.tool_use_id : ""
-  const headline = ctx.toolHeadlines.get(id)
-  ctx.toolHeadlines.delete(id)
-  if (headline === "") return null
+  const call = ctx.toolCalls.get(id)
+  ctx.toolCalls.delete(id)
+  if (call === null) return null
   const isError = part.is_error === true
   const output = textFromToolResult(part.content)
   const body =
     ctx.mode === "full"
       ? truncateForTrace(output.trim() || "(no textual output)")
       : `${summarizeToolOutput(output)}${isError ? " Error details omitted for safety." : ""}`
-  return {
+  const outputSection: Section = {
+    label: isError ? SECTION_LABELS.ERROR_OUTPUT : SECTION_LABELS.OUTPUT,
+    body,
+    lang: null,
+  }
+  const step: MappedStep = {
     stepType: isError ? "tool_error" : "tool_call",
     content: formatStructuredToolTrace({
-      headline: headline ?? "Used tool",
-      sections: [{ label: isError ? SECTION_LABELS.ERROR_OUTPUT : SECTION_LABELS.OUTPUT, body, lang: null }],
+      headline: call?.headline ?? "Used tool",
+      sections: call ? [call.arguments, outputSection] : [outputSection],
     }),
     statusText: isError ? "Tool failed" : "Tool finished",
   }
+  if (id) step.clientStepId = id
+  if (call?.startedAt !== undefined && timestamp !== undefined) {
+    step.durationMs = Math.max(0, Math.round(timestamp - call.startedAt))
+  }
+  return step
 }
 
 /**
@@ -370,6 +385,8 @@ export function mapTranscriptLine(raw: string, ctx: MapContext): MappedStep[] {
   if (!isObject(message)) return []
   const content = message.content
   if (!Array.isArray(content)) return []
+  const parsedTimestamp = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : Number.NaN
+  const timestamp = Number.isNaN(parsedTimestamp) ? undefined : parsedTimestamp
 
   const steps: MappedStep[] = []
   for (const part of content) {
@@ -395,10 +412,10 @@ export function mapTranscriptLine(raw: string, ctx: MapContext): MappedStep[] {
         statusText: "Composing response…",
       })
     } else if (type === "assistant" && part.type === "tool_use") {
-      const step = toolUseStep(part, ctx)
+      const step = toolUseStep(part, ctx, timestamp)
       if (step) steps.push(step)
     } else if (type === "user" && part.type === "tool_result") {
-      const step = toolResultStep(part, ctx)
+      const step = toolResultStep(part, ctx, timestamp)
       if (step) steps.push(step)
     }
   }
@@ -462,9 +479,16 @@ export class TranscriptTracer {
   private bound: Candidate | undefined
   private candidates: Candidate[] = []
   private turn:
-    | { invocationId: string; mode?: RedactionMode; emitted: number; truncationNoted: boolean; bindDeadline: number }
+    | {
+        invocationId: string
+        mode?: RedactionMode
+        emitted: number
+        truncationNoted: boolean
+        bindDeadline: number
+        openStarts: Set<string>
+      }
     | undefined
-  private readonly toolHeadlines = new Map<string, string>()
+  private readonly toolCalls = new Map<string, PendingToolCall | null>()
   private timer: ReturnType<typeof setTimeout> | undefined
   private polling = false
 
@@ -492,13 +516,14 @@ export class TranscriptTracer {
     // Orphaned tool_use ids (a call whose result never streamed before the
     // turn ended) must not accumulate across a long-lived session; pairing is
     // per-turn, so a fresh turn starts with an empty map.
-    this.toolHeadlines.clear()
+    this.toolCalls.clear()
     this.turn = {
       invocationId,
       mode,
       emitted: 0,
       truncationNoted: false,
       bindDeadline: Date.now() + this.bindTimeoutMs,
+      openStarts: new Set(),
     }
     if (this.bound) {
       const fresh = this.snapshotCandidate(this.bound.path)
@@ -599,7 +624,7 @@ export class TranscriptTracer {
   private async emitLines(lines: string[]): Promise<void> {
     const turn = this.turn
     if (!turn) return
-    const ctx: MapContext = { mode: turn.mode ?? this.mode, toolHeadlines: this.toolHeadlines }
+    const ctx: MapContext = { mode: turn.mode ?? this.mode, toolCalls: this.toolCalls }
     let frames: TraceFrame[] = []
     let statusText: string | undefined
     for (const line of lines) {
@@ -608,12 +633,33 @@ export class TranscriptTracer {
         if (errorText) this.onApiError(turn.invocationId, errorText)
       }
       for (const step of mapTranscriptLine(line, ctx)) {
-        frames.push({ stepType: step.stepType, content: step.content })
+        const { statusText: _statusText, ...frame } = step
+        frames.push(frame)
         statusText = step.statusText
       }
     }
     if (frames.length === 0) return
-    if (turn.emitted >= this.maxFramesPerTurn) {
+    // Only finished frames count toward the cap. Past it, new starts are dropped,
+    // but the finish of an already emitted start always goes out so no row is left
+    // spinning, even if that overshoots the cap.
+    let emitted = turn.emitted
+    const kept: TraceFrame[] = []
+    for (const frame of frames) {
+      if (frame.phase === "started") {
+        if (emitted >= this.maxFramesPerTurn || !frame.clientStepId) continue
+        turn.openStarts.add(frame.clientStepId)
+        kept.push(frame)
+      } else if (frame.clientStepId && turn.openStarts.delete(frame.clientStepId)) {
+        kept.push(frame)
+        emitted += 1
+      } else if (emitted < this.maxFramesPerTurn) {
+        kept.push(frame)
+        emitted += 1
+      }
+    }
+    if (kept.length > 0) {
+      frames = kept
+    } else {
       if (!turn.truncationNoted) {
         turn.truncationNoted = true
         frames = [
@@ -625,10 +671,8 @@ export class TranscriptTracer {
       } else {
         return
       }
-    } else if (turn.emitted + frames.length > this.maxFramesPerTurn) {
-      frames = frames.slice(0, this.maxFramesPerTurn - turn.emitted)
     }
-    turn.emitted += frames.length
+    turn.emitted = emitted
     const open = await this.emit(turn.invocationId, frames, statusText)
     if (!open && this.turn?.invocationId === turn.invocationId) {
       // Turn closed server-side (reply landed, timeout, or supersede).

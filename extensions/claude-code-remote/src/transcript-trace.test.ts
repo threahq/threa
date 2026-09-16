@@ -13,16 +13,17 @@ import {
 } from "./transcript-trace"
 
 function ctx(mode: "headline" | "commands" | "full" = "headline"): MapContext {
-  return { mode, toolHeadlines: new Map() }
+  return { mode, toolCalls: new Map() }
 }
 
-function assistantLine(parts: unknown[]): string {
-  return JSON.stringify({ type: "assistant", message: { role: "assistant", content: parts } })
+function assistantLine(parts: unknown[], timestamp?: string): string {
+  return JSON.stringify({ type: "assistant", timestamp, message: { role: "assistant", content: parts } })
 }
 
-function toolResultLine(toolUseId: string, content: unknown, isError = false): string {
+function toolResultLine(toolUseId: string, content: unknown, isError = false, timestamp?: string): string {
   return JSON.stringify({
     type: "user",
+    timestamp,
     message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, content, is_error: isError }] },
   })
 }
@@ -292,6 +293,109 @@ describe("describeClaudeTool", () => {
   })
 })
 
+describe("mapTranscriptLine tool lifecycle", () => {
+  const bashArguments = { label: "Arguments", body: "Shell command omitted for safety.", lang: null }
+  const trace = (headline: string, sections: unknown[]) =>
+    JSON.stringify({ format: "pi_tool_trace", headline, sections })
+
+  test("a call opens a started row and its result finalizes it with arguments, output and duration", () => {
+    const context = ctx()
+    const started = mapTranscriptLine(
+      assistantLine(
+        [{ type: "tool_use", id: "toolu_l1", name: "Bash", input: { command: "ls" } }],
+        "2026-09-16T10:00:00.000Z"
+      ),
+      context
+    )
+    const finished = mapTranscriptLine(toolResultLine("toolu_l1", "a\nb", false, "2026-09-16T10:00:01.500Z"), context)
+
+    expect(started).toEqual([
+      {
+        stepType: "tool_call",
+        phase: "started",
+        clientStepId: "toolu_l1",
+        content: trace("Running shell command", [bashArguments]),
+        statusText: "Running shell command…",
+      },
+    ])
+    expect(finished).toEqual([
+      {
+        stepType: "tool_call",
+        clientStepId: "toolu_l1",
+        durationMs: 1500,
+        content: trace("Running shell command", [
+          bashArguments,
+          {
+            label: "Output",
+            body: "Tool output omitted for safety. Captured locally: 3 characters across 2 lines.",
+            lang: null,
+          },
+        ]),
+        statusText: "Tool finished",
+      },
+    ])
+  })
+
+  test("an errored result finalizes the same row as tool_error", () => {
+    const context = ctx()
+    mapTranscriptLine(
+      assistantLine([{ type: "tool_use", id: "toolu_l2", name: "Bash", input: { command: "false" } }]),
+      context
+    )
+    const finished = mapTranscriptLine(toolResultLine("toolu_l2", "boom", true), context)
+
+    expect(finished).toEqual([
+      {
+        stepType: "tool_error",
+        clientStepId: "toolu_l2",
+        content: trace("Running shell command", [
+          bashArguments,
+          {
+            label: "Error output",
+            body: "Tool output omitted for safety. Captured locally: 4 characters across 1 line. Error details omitted for safety.",
+            lang: null,
+          },
+        ]),
+        statusText: "Tool failed",
+      },
+    ])
+  })
+
+  test("a result without a known call ships a finish only, keyed by its tool_use_id", () => {
+    const finished = mapTranscriptLine(toolResultLine("toolu_l3", "", false, "2026-09-16T10:00:01.500Z"), ctx())
+
+    expect(finished).toEqual([
+      {
+        stepType: "tool_call",
+        clientStepId: "toolu_l3",
+        content: trace("Used tool", [{ label: "Output", body: "Tool produced no textual output.", lang: null }]),
+        statusText: "Tool finished",
+      },
+    ])
+  })
+
+  test("the channel's own reply tool opens and finishes nothing", () => {
+    const context = ctx()
+    const call = mapTranscriptLine(
+      assistantLine(
+        [{ type: "tool_use", id: "toolu_l4", name: "mcp__threa__reply", input: { text: "hi" } }],
+        "2026-09-16T10:00:00.000Z"
+      ),
+      context
+    )
+    const result = mapTranscriptLine(toolResultLine("toolu_l4", "sent", false, "2026-09-16T10:00:01.000Z"), context)
+    expect([...call, ...result]).toEqual([])
+  })
+
+  test("missing timestamps leave the duration off", () => {
+    const context = ctx()
+    mapTranscriptLine(assistantLine([{ type: "tool_use", id: "toolu_l5", name: "Grep", input: {} }]), context)
+    const [finished] = mapTranscriptLine(toolResultLine("toolu_l5", "x", false, "2026-09-16T10:00:01.000Z"), context)
+    expect(finished?.durationMs).toBeUndefined()
+    expect(finished?.clientStepId).toBe("toolu_l5")
+  })
+})
+
 describe("TranscriptTracer", () => {
   test("binds to the transcript that echoes the invocation id and emits only its steps", async () => {
     const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
@@ -462,5 +566,102 @@ describe("TranscriptTracer", () => {
     await new Promise((resolve) => setTimeout(resolve, 120))
     tracer.stop()
     expect(calls).toBe(1)
+  }, 10_000)
+
+  test("started frames do not consume the frame cap, and no start is emitted past it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
+    const cwd = "/tmp/fake-worktree-cap"
+    const projectDir = join(root, encodeProjectDir(cwd))
+    mkdirSync(projectDir, { recursive: true })
+    const file = join(projectDir, "cap.jsonl")
+    writeFileSync(file, "")
+
+    const frames: TraceFrame[] = []
+    const tracer = new TranscriptTracer({
+      projectsRoot: root,
+      cwd,
+      pollMs: 20,
+      maxFramesPerTurn: 2,
+      emit: async (_invocationId, batch) => {
+        frames.push(...batch)
+        return true
+      },
+    })
+    tracer.beginTurn("binv_cap")
+    const call = (id: string) => assistantLine([{ type: "tool_use", id, name: "Grep", input: {} }])
+    appendFileSync(
+      file,
+      [
+        "echo binv_cap",
+        call("c1"),
+        toolResultLine("c1", "x"),
+        call("c2"),
+        toolResultLine("c2", "x"),
+        call("c3"),
+        toolResultLine("c3", "x"),
+        "",
+      ].join("\n")
+    )
+    const deadline = Date.now() + 3_000
+    while (frames.length < 4 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    tracer.stop()
+
+    expect(frames.map((frame) => [frame.clientStepId, frame.phase])).toEqual([
+      ["c1", "started"],
+      ["c1", undefined],
+      ["c2", "started"],
+      ["c2", undefined],
+    ])
+  }, 10_000)
+
+  test("the finish of an emitted start passes the frame cap", async () => {
+    const root = mkdtempSync(join(tmpdir(), "trace-projects-"))
+    const cwd = "/tmp/fake-worktree-cap-parallel"
+    const projectDir = join(root, encodeProjectDir(cwd))
+    mkdirSync(projectDir, { recursive: true })
+    const file = join(projectDir, "cap-parallel.jsonl")
+    writeFileSync(file, "")
+
+    const frames: TraceFrame[] = []
+    const tracer = new TranscriptTracer({
+      projectsRoot: root,
+      cwd,
+      pollMs: 20,
+      maxFramesPerTurn: 1,
+      emit: async (_invocationId, batch) => {
+        frames.push(...batch)
+        return true
+      },
+    })
+    tracer.beginTurn("binv_cap_parallel")
+    const call = (id: string) => assistantLine([{ type: "tool_use", id, name: "Grep", input: {} }])
+    appendFileSync(
+      file,
+      [
+        "echo binv_cap_parallel",
+        call("p1"),
+        call("p2"),
+        toolResultLine("p1", "x"),
+        toolResultLine("p2", "x"),
+        call("p3"),
+        "",
+      ].join("\n")
+    )
+    const deadline = Date.now() + 3_000
+    while (frames.length < 4 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    tracer.stop()
+
+    expect(frames.map((frame) => [frame.clientStepId, frame.phase])).toEqual([
+      ["p1", "started"],
+      ["p2", "started"],
+      ["p1", undefined],
+      ["p2", undefined],
+    ])
   }, 10_000)
 })
