@@ -51,13 +51,25 @@ describe("STREAM_ROW_SPEC", () => {
     // The v1 set the substrate ships: a thread may anchor on a message, a
     // delegation card, a subagent card, or a call card — nothing else.
     expect(typesWhere((t) => STREAM_ROW_SPEC[t].threadable)).toEqual(
-      new Set<EventType>(["message_created", "delegation:created", "subagent:created", "call_started"])
+      new Set<EventType>([
+        "message_created",
+        "delegation:created",
+        "subagent:created",
+        "call_started",
+        "decision:requested",
+      ])
     )
   })
 
   test("THREAD_ANCHORABLE_EVENT_TYPES derives from the threadable flag", () => {
     expect(new Set(THREAD_ANCHORABLE_EVENT_TYPES)).toEqual(
-      new Set<EventType>(["message_created", "delegation:created", "subagent:created", "call_started"])
+      new Set<EventType>([
+        "message_created",
+        "delegation:created",
+        "subagent:created",
+        "call_started",
+        "decision:requested",
+      ])
     )
     // Every anchorable card is a standalone row — a patch/grouped row has no
     // card to hang a thread under.

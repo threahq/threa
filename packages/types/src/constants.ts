@@ -197,6 +197,8 @@ export const EVENT_TYPES = [
   "subagent:status_changed",
   "bot_access:requested",
   "bot_access:status_changed",
+  "decision:requested",
+  "decision:resolved",
   "call_started",
   "call_ended",
   "aside:anchored",
@@ -278,6 +280,11 @@ export const TIMELINE_BROADCAST_EVENT_TYPES = [
   // is deliberately NOT here — it is a patch on the request card, like the
   // delegation status change below.
   "bot_access:requested",
+  // A bot asked its human to decide (Hermes): every member sees the decision
+  // card, so it takes a broadcast slot like `delegation:created`.
+  // `decision:resolved` is deliberately NOT here — it is a patch on the decision
+  // card, like the bot-access status change above.
+  "decision:requested",
   // A call started on this stream (roadmap 1.4): every member sees the live call
   // card, so it takes a broadcast slot like `delegation:created`. `call_ended` is
   // deliberately NOT here — it is a patch on the call card (carrying the end
@@ -914,6 +921,23 @@ export const BotAccessRequestStatuses = {
   APPROVED: "approved",
   DENIED: "denied",
 } as const satisfies Record<string, BotAccessRequestStatus>
+
+// Decision requests (Hermes): a bot runtime asks its human for a call it cannot
+// make itself, as a titled question with a fixed option set. Statuses are TEXT validated in code (INV-3); `open` is the
+// only non-terminal one, and every write CASes on the row's `version` (INV-66).
+export const DECISION_REQUEST_STATUSES = ["open", "resolved", "cancelled", "expired"] as const
+export type DecisionRequestStatus = (typeof DECISION_REQUEST_STATUSES)[number]
+
+export const DecisionRequestStatuses = {
+  OPEN: "open",
+  RESOLVED: "resolved",
+  CANCELLED: "cancelled",
+  EXPIRED: "expired",
+} as const satisfies Record<string, DecisionRequestStatus>
+
+/** How an option renders on the card: the default action, a plain one, or a destructive one. */
+export const DECISION_OPTION_TONES = ["primary", "neutral", "destructive"] as const
+export type DecisionOptionTone = (typeof DECISION_OPTION_TONES)[number]
 
 // Agent session event types (stream events for session lifecycle)
 export const AGENT_SESSION_EVENT_TYPES = [

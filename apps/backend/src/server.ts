@@ -4,6 +4,7 @@ import { createAdapter } from "@socket.io/postgres-adapter"
 import { Pool } from "pg"
 import { createApp } from "./app"
 import { DelegationService, createDelegationExpirySweep, validateDelegationContextRefs } from "./features/delegations"
+import { DecisionService, createDecisionExpirySweep } from "./features/decisions"
 import { SubagentService, createSubagentExpirySweep, startSubagent, resolveSubagentModels } from "./features/subagents"
 import { SubagentFailureReasons } from "@threahq/types"
 import { registerRoutes } from "./routes"
@@ -772,6 +773,7 @@ export async function startServer(): Promise<ServerInstance> {
   // through channel grants (users resolve through stream membership).
   const labelAssignmentService = new LabelAssignmentService({ pool, labelService, botChannelService })
   const labelMessageService = new LabelMessageService({ pool, botChannelService })
+  const decisionService = new DecisionService({ pool, botChannelService })
 
   // User-scoped API keys are managed by Threa, not WorkOS.
   const userApiKeyService = new UserApiKeyServiceImpl(pool)
@@ -915,6 +917,7 @@ export async function startServer(): Promise<ServerInstance> {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    decisionService,
     subagentService,
     draftsService,
     labelService,
@@ -1862,6 +1865,8 @@ export async function startServer(): Promise<ServerInstance> {
 
   const delegationExpirySweep = createDelegationExpirySweep(delegationService)
   delegationExpirySweep.start()
+  const decisionExpirySweep = createDecisionExpirySweep(decisionService)
+  decisionExpirySweep.start()
 
   const subagentExpirySweep = createSubagentExpirySweep(subagentService)
   subagentExpirySweep.start()
@@ -1895,6 +1900,7 @@ export async function startServer(): Promise<ServerInstance> {
     poolMonitor.stop()
     orphanSessionCleanup.stop()
     delegationExpirySweep.stop()
+    decisionExpirySweep.stop()
     subagentExpirySweep.stop()
     pushSessionCleanup.stop()
     voiceSessionSweeper.stop()

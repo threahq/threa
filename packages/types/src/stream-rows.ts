@@ -303,6 +303,24 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
   // A patch that advances the matching request card to approved/denied — not its own row.
   "bot_access:status_changed": PATCH,
 
+  // A bot asked its human to decide (Hermes). Its own broadcast row — the
+  // decision card. Threadable so the back and forth about the call hangs off
+  // the card itself. `none` until the board can draw it: the board projection
+  // and its guard fixtures switch this to `trigger-message` together.
+  "decision:requested": {
+    rendersAsOwnRow: true,
+    grouping: null,
+    authorGroupable: false,
+    patchesRow: false,
+    broadcastSlot: true,
+    conversationRef: "none",
+    bumps: false,
+    threadable: true,
+    readBlocking: false,
+  },
+  // A patch that advances the matching decision card to resolved/cancelled/expired.
+  "decision:resolved": PATCH,
+
   // A call started on this stream (roadmap 1.4). Its own broadcast row — the live
   // call card — mirroring `memos:captured`'s shape (own row, broadcast slot, no
   // author-grouping). `conversationRef: "none"` and `bumps: false` because a call

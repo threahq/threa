@@ -1585,6 +1585,20 @@ export const BotInvocationRepository = {
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
+  /**
+   * The invocation as a liveness check, without a claim token: the caller is
+   * already authenticated as the bot and only needs to know whether this
+   * invocation is still its in-flight work.
+   */
+  async findLiveClaimedForBot(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claim_expires_at > NOW()`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
   async findActiveClaim(
     db: Querier,
     params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
