@@ -1,0 +1,22 @@
+{
+  "name": "@threahq/hermes-remote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Hermes connector that bridges a local Hermes gateway to a Threa scratchpad: each Threa turn becomes one Hermes run, with its tool events traced back as steps.",
+  "bin": {
+    "threa-hermes": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run ./src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@threahq/remote-session": "file:../remote-session"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}

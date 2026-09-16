@@ -2489,6 +2489,36 @@ export class RemoteSession {
   }
 
   /**
+   * Close an in-flight turn as failed: the runtime reported the work itself
+   * failed, so nothing is posted and the invocation carries the reason. Mirrors
+   * what the delivery catch path does after `registerTurn` — the route dies,
+   * presence frees up, and the next claim drain runs. Tracked as the route's
+   * closing task so a shutdown mid-fail awaits it instead of failing the turn
+   * a second time. Returns false when this session holds no route for the id.
+   */
+  async failTurn(invocationId: string, errorMessage: string): Promise<boolean> {
+    const route = this.route(invocationId)
+    if (!route) return false
+    await route.enqueue(() =>
+      route.trackClosing(
+        (async () => {
+          if (route.state === "closed" || route.terminal) return
+          route.beginClosing()
+          await this.failContributors(route, errorMessage)
+          await this.failInvocation(route.invocation, errorMessage)
+          route.markClosed()
+          this.clearInflight(invocationId)
+          if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
+          await this.syncPresence()
+          this.claimDrainRequested = true
+          this.scheduleRequestedClaimDrain()
+        })()
+      )
+    )
+    return true
+  }
+
+  /**
    * Record trace steps against an in-flight turn. Fire-and-forget: a failed
    * frame is logged and dropped, not retried — steps are ephemeral progress,
    * not state. Returns false when the invocation is no longer taking work

@@ -4855,3 +4855,37 @@ describe("RemoteSession decisions", () => {
     await session.shutdown()
   })
 })
+
+describe("RemoteSession.failTurn", () => {
+  test("fails the in-flight turn with the runtime's reason and releases the route", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_failturn" }))
+
+    const handled = await session.failTurn("binv_failturn", "Hermes run failed: provider auth")
+
+    expect({
+      handled,
+      inflight: session.isInflight("binv_failturn"),
+      inflightCount: session.statusSnapshot.inflightCount,
+      complete: calls.complete,
+      fails: calls.fail.map(({ id, body }) => ({ id, errorMessage: body.errorMessage })),
+    }).toEqual({
+      handled: true,
+      inflight: false,
+      inflightCount: 0,
+      complete: [],
+      fails: [{ id: "binv_failturn", errorMessage: "Hermes run failed: provider auth" }],
+    })
+  })
+
+  test("returns false for an id this session holds no route for", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+
+    expect(await session.failTurn("binv_unknown", "boom")).toBe(false)
+    expect(calls.fail).toEqual([])
+  })
+})
