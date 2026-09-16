@@ -11,11 +11,16 @@ const AGENT_FUNCTION_IDS = Object.entries(AI_FUNCTIONS)
   .filter(([, fn]) => fn.stage === "agents")
   .map(([functionId]) => functionId)
 
+/** The workspace budget as enforced: the admin's own budget, never above the operator ceiling. */
+export function workspaceSpendLimitUsd(limits: Pick<SpendPosition, "monthlyBudgetUsd" | "operatorCeilingUsd">): number {
+  return Math.min(limits.monthlyBudgetUsd, limits.operatorCeilingUsd)
+}
+
 function decideSpend(position: SpendPosition, stage: AISpendStage): SpendDecision {
   if (position.operatorAiDisabled) return { allowed: false, reason: "operator_disabled" }
   if (position.workspaceAiDisabled) return { allowed: false, reason: "workspace_disabled" }
 
-  const workspaceLimitUsd = Math.min(position.monthlyBudgetUsd, position.operatorCeilingUsd)
+  const workspaceLimitUsd = workspaceSpendLimitUsd(position)
   if (position.workspaceSpendUsd >= workspaceLimitUsd * AI_SPEND_STAGE_CUTOFFS[stage]) {
     return { allowed: false, reason: "workspace_limit" }
   }

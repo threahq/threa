@@ -1,7 +1,9 @@
 import type { Pool, PoolClient } from "pg"
-import { withClient, withTransaction } from "../../db"
-import { AIUsageRepository, type UsageSummary, type AIUsageOrigin } from "./usage-repository"
-import { AIBudgetRepository } from "./budget-repository"
+import { withTransaction } from "../../db"
+import { AIUsageRepository, type AIUsageOrigin } from "./usage-repository"
+import { AIBudgetRepository, DEFAULT_AI_ALERT_THRESHOLDS } from "./budget-repository"
+import { resolveBudgetMonthRange } from "./billing-window"
+import { workspaceSpendLimitUsd } from "./spend-gate"
 import { OutboxRepository } from "../../lib/outbox"
 import { aiUsageId, aiAlertId } from "../../lib/id"
 import { logger } from "../../lib/logger"
@@ -31,8 +33,6 @@ export interface AICostServiceConfig {
 
 export interface AICostServiceLike {
   recordUsage(params: RecordUsageParams): Promise<void>
-  getWorkspaceUsage(workspaceId: string): Promise<UsageSummary>
-  getCurrentMonthUsage(workspaceId: string): Promise<UsageSummary>
 }
 
 export class AICostService implements AICostServiceLike {
@@ -88,20 +88,21 @@ export class AICostService implements AICostServiceLike {
   }
 
   private async checkAndFireAlerts(client: PoolClient, workspaceId: string): Promise<void> {
-    const budget = await AIBudgetRepository.findByWorkspace(client, workspaceId)
-    if (!budget) {
-      return
-    }
+    const { start: periodStart, end: periodEnd } = await resolveBudgetMonthRange(client, workspaceId)
+    const position = await AIBudgetRepository.findSpendPosition(client, {
+      workspaceId,
+      periodStart,
+      periodEnd,
+      agentFunctionIds: [],
+    })
+    const alertSettings = (await AIBudgetRepository.findByWorkspace(client, workspaceId)) ?? DEFAULT_AI_ALERT_THRESHOLDS
 
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-    const usage = await AIUsageRepository.getWorkspaceUsage(client, workspaceId, periodStart, periodEnd)
-
-    const currentUsageUsd = Number(usage.totalCostUsd)
-    const budgetUsd = Number(budget.monthlyBudgetUsd)
+    const currentUsageUsd = position.workspaceSpendUsd
+    const budgetUsd = workspaceSpendLimitUsd(position)
     const percentUsed = budgetUsd > 0 ? (currentUsageUsd / budgetUsd) * 100 : 0
 
     for (const threshold of ALERT_THRESHOLDS) {
-      if (!budget[threshold.alertField]) {
+      if (!alertSettings[threshold.alertField]) {
         continue
       }
 
@@ -153,87 +154,12 @@ export class AICostService implements AICostServiceLike {
       provider: params.parsedModel.provider,
     })
   }
-
-  async getCurrentMonthUsage(workspaceId: string): Promise<UsageSummary> {
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-
-    return AIUsageRepository.getWorkspaceUsage(this.pool, workspaceId, periodStart, periodEnd)
-  }
-
-  async getWorkspaceUsage(workspaceId: string): Promise<UsageSummary> {
-    return this.getCurrentMonthUsage(workspaceId)
-  }
-
-  async getUserCurrentMonthUsage(workspaceId: string, userId: string): Promise<UsageSummary> {
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-
-    return withClient(this.pool, (client) =>
-      AIUsageRepository.getUserUsage(client, workspaceId, userId, periodStart, periodEnd)
-    )
-  }
-
-  async getUsageByModel(workspaceId: string) {
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-
-    return AIUsageRepository.getUsageByModel(this.pool, workspaceId, periodStart, periodEnd)
-  }
-
-  async getUsageByFunction(workspaceId: string) {
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-
-    return AIUsageRepository.getUsageByFunction(this.pool, workspaceId, periodStart, periodEnd)
-  }
-
-  async getUsageByUser(workspaceId: string) {
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-
-    return withClient(this.pool, (client) =>
-      AIUsageRepository.getUsageByUser(client, workspaceId, periodStart, periodEnd)
-    )
-  }
-
-  async getUsageByOrigin(workspaceId: string) {
-    const { periodStart, periodEnd } = this.getCurrentMonthPeriod()
-
-    return AIUsageRepository.getUsageByOrigin(this.pool, workspaceId, periodStart, periodEnd)
-  }
-
-  async getRecentUsage(workspaceId: string, options?: { limit?: number; userId?: string }) {
-    return withClient(this.pool, (client) => AIUsageRepository.listRecent(client, workspaceId, options))
-  }
-
-  private getCurrentMonthPeriod(): { periodStart: Date; periodEnd: Date } {
-    const now = new Date()
-    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-    return { periodStart, periodEnd }
-  }
 }
 
 export function createNoOpCostService(): AICostServiceLike {
   return {
     async recordUsage() {
       // No-op
-    },
-    async getWorkspaceUsage() {
-      return {
-        totalCostUsd: 0,
-        totalTokens: 0,
-        promptTokens: 0,
-        cachedPromptTokens: 0,
-        completionTokens: 0,
-        recordCount: 0,
-      }
-    },
-    async getCurrentMonthUsage() {
-      return {
-        totalCostUsd: 0,
-        totalTokens: 0,
-        promptTokens: 0,
-        cachedPromptTokens: 0,
-        completionTokens: 0,
-        recordCount: 0,
-      }
     },
   }
 }
