@@ -109,12 +109,14 @@ export function createHermesSessionControl(
         return `Could not create the Hermes session: ${errorText(error)}`
       }
     }
+    let locked: ModelChoice
     try {
-      await client.lockSessionModel(conversationId, choice)
+      const runtime = await client.lockSessionModel(conversationId, choice)
+      locked = { provider: runtime.provider, model: runtime.model }
     } catch (error) {
       return `Could not set the model: ${errorText(error)}`
     }
-    lockedModels.set(conversationId, choice)
+    lockedModels.set(conversationId, locked)
     return undefined
   }
 

@@ -739,4 +739,25 @@ describe("HermesTurnRunner control", () => {
       sessionId: "stream_thread.1",
     })
   })
+
+  test("a generation that fails to persist is not used", () => {
+    const { session } = makeSession()
+    const store: ConversationStore = {
+      load: () => ({}),
+      save: () => {
+        throw new Error("disk full")
+      },
+    }
+    const { client } = makeClient([])
+    const runner = new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: () => "threa:ws_1:stream_root",
+      sleep: async () => {},
+      conversationStore: store,
+    })
+
+    expect(() => runner.bumpConversation("stream_root")).toThrow("disk full")
+    expect(runner.conversationFor("stream_root")).toBe("stream_root")
+  })
 })

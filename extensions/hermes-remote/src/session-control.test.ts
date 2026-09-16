@@ -146,6 +146,19 @@ describe("createHermesSessionControl", () => {
     })
   })
 
+  test("status reports the runtime Hermes locked, not the one requested", async () => {
+    const { runner } = makeRunner()
+    const { client } = makeClient({
+      lockSessionModel: async (id: string) => ({ sessionId: id, provider: "local", model: "hermes-4-0715" }),
+    })
+    const control = createHermesSessionControl(runner, client)
+
+    await control.runCommand("model", "local::hermes-4", CONTEXT)
+    const status = await control.runCommand("status", "", CONTEXT)
+
+    expect(status.message?.includes("Model: `local::hermes-4-0715`")).toBe(true)
+  })
+
   test("a session that already exists is not a failure", async () => {
     const { runner } = makeRunner()
     const { client, locks } = makeClient({
@@ -223,9 +236,10 @@ describe("createHermesSessionControl", () => {
     const { runner } = makeRunner()
     let calls = 0
     const { client } = makeClient({
-      lockSessionModel: async () => {
+      lockSessionModel: async (id: string, runtime: { provider: string; model: string }) => {
         calls += 1
         if (calls > 1) throw new Error("gateway down")
+        return { sessionId: id, ...runtime }
       },
     })
     const control = createHermesSessionControl(runner, client)

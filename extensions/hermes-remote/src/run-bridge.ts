@@ -181,7 +181,7 @@ export class HermesTurnRunner {
   private readonly log: (message: string) => void
   private readonly sleep: (ms: number) => Promise<void>
   private readonly conversationStore: ConversationStore | undefined
-  private readonly generations: Record<string, number>
+  private generations: Record<string, number>
   private readonly pendingSteers = new Map<string, string[]>()
   // Turns inside createRun: an interrupt or shutdown that lands during admission
   // marks them here, and the run is stopped the moment Hermes returns its id.
@@ -206,8 +206,9 @@ export class HermesTurnRunner {
 
   /** Start a fresh conversation on a stream; returns the new conversation id. */
   bumpConversation(streamId: string): string {
-    this.generations[streamId] = (this.generations[streamId] ?? 0) + 1
-    this.conversationStore?.save({ ...this.generations })
+    const next = { ...this.generations, [streamId]: (this.generations[streamId] ?? 0) + 1 }
+    this.conversationStore?.save(next)
+    this.generations = next
     return this.conversationFor(streamId)
   }
 
