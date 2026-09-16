@@ -538,6 +538,17 @@ test("normalizing still dies when two channel servers claim the session", () => 
   )
 })
 
+test("a legacy channel name of threa cannot share its key with the CLI server", () => {
+  guardDir()
+  expect(() => writeChannelMcpConfig("ccs-collide", "threa", "/entry/one.ts", THREA_CLI)).toThrow(
+    "collides with the threa CLI server"
+  )
+  const path = writeChannelMcpConfig("ccs-collide-legacy", "threa", "/entry/one.ts")
+  expect(() => normalizeChannelMcpConfig(path, "threa", "/new/entry.ts", THREA_CLI)).toThrow(
+    "collides with the threa CLI server"
+  )
+})
+
 test("a session CLI config declares the bot principal and is readable only by its owner", () => {
   guardDir()
   const path = writeSessionCliConfig("ccs-secret", {

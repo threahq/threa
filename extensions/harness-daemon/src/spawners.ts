@@ -252,6 +252,7 @@ export function writeChannelMcpConfig(
   channelEntry: string,
   threa?: ThreaCliMcpServer
 ): string {
+  if (threa) assertChannelKeyFree(channel)
   const path = mcpConfigPath(runtimeSessionId)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(
@@ -281,6 +282,7 @@ export function normalizeChannelMcpConfig(
   channelEntry: string,
   threa?: ThreaCliMcpServer
 ): void {
+  if (threa) assertChannelKeyFree(channel)
   const parsed = JSON.parse(readFileSync(path, "utf8"))
   const servers = parsed.mcpServers
   const entries = servers && typeof servers === "object" ? Object.entries(servers) : []
@@ -305,6 +307,16 @@ export function normalizeChannelMcpConfig(
 }
 
 const THREA_CLI_SERVER_KEY = "threa"
+
+// A legacy THREA_HARNESSD_CLAUDE_CHANNEL=threa would collapse both servers onto
+// one key and the CLI entry would silently replace the channel.
+function assertChannelKeyFree(channel: string): void {
+  if (channel === THREA_CLI_SERVER_KEY) {
+    die(
+      `channel server name "${channel}" collides with the threa CLI server; set THREA_HARNESSD_CLAUDE_CHANNEL=threa-channel`
+    )
+  }
+}
 
 export interface ThreaCliMcpServer {
   cliEntry: string
