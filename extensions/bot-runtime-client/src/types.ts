@@ -106,7 +106,8 @@ export interface DecisionRequest {
   workspaceId: string
   streamId: string
   requesterBotId?: string
-  runtimeSessionId?: string
+  requesterRuntimeSessionId?: string
+  requesterInvocationId?: string
   status: DecisionRequestStatus
   title: string
   options: DecisionOption[]
