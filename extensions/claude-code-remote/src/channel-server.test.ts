@@ -493,6 +493,21 @@ describe("ChannelServer permission decisions", () => {
     await server.shutdown()
   })
 
+  test("a sealed turn already replied to still posts the terminal notice through its invocation", async () => {
+    const { server, internals, notifications, invocationPosts, streamPosts, requestDecisionSpy, deliver } =
+      permissionServer()
+    await deliver("binv_sealed", true)
+    await server.session.reply("binv_sealed", "done")
+    await internals.handlePermissionRequest(PERMISSION)
+
+    expect(requestDecisionSpy).not.toHaveBeenCalled()
+    expect(notifications).toEqual([])
+    expect(streamPosts).toEqual([])
+    expect(invocationPosts[0]?.invocationId).toBe("binv_sealed")
+    expect(invocationPosts[0]?.body.content).toContain("Answer it in the terminal")
+    await server.shutdown()
+  })
+
   test("a card that cannot be opened leaves the approval in the terminal, unanswered", async () => {
     const { server, internals, notifications, streamPosts } = permissionServer({
       error: new Error("Threa API 409 (DECISION_REQUESTER_NOT_ACTIVE)"),

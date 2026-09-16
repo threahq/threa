@@ -1021,12 +1021,18 @@ export class ChannelServer {
     return invocationId && this.session.isInflight(invocationId) ? invocationId : undefined
   }
 
-  /** The approval cannot become a card: tell the stream where it is instead of leaving the user waiting. */
+  /**
+   * The approval cannot become a card: tell the stream where it is instead of
+   * leaving the user waiting. A sealed turn keeps posting through its
+   * invocation even after `reply` closed it (the closed route still seals as a
+   * follow-up); a plaintext stream post would be refused on an E2EE stream.
+   */
   private async postTerminalApprovalNotice(
     params: z.infer<typeof PermissionRequestSchema>["params"],
     reason: string
   ): Promise<void> {
-    const invocationId = this.inflightRuntimeInvocationId()
+    const invocationId =
+      this.inflightRuntimeInvocationId() ?? (this.currentTurnSealed ? this.currentRuntimeInvocationId : undefined)
     const rootStreamId = this.session.rootStreamId
     const body = {
       content: `Claude Code is waiting for approval to run \`${params.tool_name}\`. Answer it in the terminal. ${reason}`,
