@@ -5,7 +5,8 @@ import type { Querier } from "../../db"
 // Unit-level coverage of the client_step_id dedup control flow. The real
 // partial-unique enforcement is a DB concern (integration); here we verify that
 // appendStep, on a client_step_id collision, returns the existing row instead of
-// looping or throwing — and only when a key was supplied.
+// looping or throwing — and only when a key was supplied. The INSERT uses
+// ON CONFLICT DO NOTHING, so a collision surfaces as an empty result.
 
 interface FakeStepRow {
   id: string
@@ -40,17 +41,12 @@ function stepRow(overrides: Partial<FakeStepRow>): FakeStepRow {
   }
 }
 
-function uniqueViolation(constraint: string): Error {
-  return Object.assign(new Error("duplicate key"), { code: "23505", constraint })
-}
-
-/** A Querier whose `query` returns/throws the queued responses in call order. */
-function makeDb(responses: Array<{ rowCount?: number; rows: unknown[] } | Error>): Querier {
+/** A Querier whose `query` returns the queued responses in call order. */
+function makeDb(responses: Array<{ rowCount?: number; rows: unknown[] }>): Querier {
   let i = 0
   return {
     query: async () => {
       const next = responses[i++]
-      if (next instanceof Error) throw next
       return next as never
     },
   } as unknown as Querier
@@ -63,7 +59,7 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
     const existing = stepRow({ id: "step_orig", step_number: 5 })
     const db = makeDb([
       { rowCount: 1, rows: [{}] }, // session existence check
-      uniqueViolation("agent_session_steps_client_step_id_key"), // INSERT collides on the key
+      { rows: [] }, // INSERT collides on the key
       { rows: [existing] }, // SELECT by (session_id, client_step_id)
     ])
 
@@ -80,9 +76,13 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
     expect({ id: result.id, stepNumber: result.stepNumber }).toEqual({ id: "step_new", stepNumber: 2 })
   })
 
-  it("rethrows a unique violation when no client_step_id was supplied (no dedup escape hatch)", async () => {
-    const db = makeDb([{ rowCount: 1, rows: [{}] }, uniqueViolation("agent_session_steps_pkey")])
+  it("throws on a colliding step id when no client_step_id was supplied (no dedup escape hatch)", async () => {
+    const db = makeDb([
+      { rowCount: 1, rows: [{}] }, // session existence check
+      { rows: [] }, // INSERT collides
+      { rowCount: 1, rows: [{}] }, // the supplied step id already exists
+    ])
 
-    await expect(AgentSessionRepository.appendStep(db, baseParams)).rejects.toThrow()
+    await expect(AgentSessionRepository.appendStep(db, baseParams)).rejects.toThrow("already exists")
   })
 })

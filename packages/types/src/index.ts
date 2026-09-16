@@ -218,6 +218,10 @@ export {
   AGENT_STEP_TYPES,
   type AgentStepType,
   AgentStepTypes,
+  STEP_FRAME_PHASES,
+  type StepFramePhase,
+  StepFramePhases,
+  PHASED_STEP_TYPES,
   // Guardian verification state on a guarded tool call's step
   TOOL_VERIFICATION_STATUSES,
   type ToolVerificationStatus,

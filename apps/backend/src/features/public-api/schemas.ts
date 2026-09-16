@@ -6,7 +6,7 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
-import { DECISION_OPTION_TONES } from "@threahq/types"
+import { DECISION_OPTION_TONES, PHASED_STEP_TYPES, STEP_FRAME_PHASES } from "@threahq/types"
 import {
   DECISION_BODY_MAX_CHARS,
   DECISION_EXTERNAL_REF_MAX_CHARS,
@@ -377,15 +377,29 @@ export const sendInvocationMessageSchema = z.object({
   metadata: messageMetadataSchema.optional(),
 })
 
-export const recordInvocationStepSchema = z.object({
-  instanceId: z.string().min(1).max(128),
-  claimToken: z.string().min(1).max(256),
-  stepType: z.enum(AGENT_STEP_TYPES),
-  content: z.string().min(1).max(10_000),
-  statusText: z.string().max(200).optional(),
-  // Client idempotency key: a step re-sent under the same id dedups server-side.
-  clientStepId: z.string().min(1).max(128).optional(),
-})
+export const recordInvocationStepSchema = z
+  .object({
+    instanceId: z.string().min(1).max(128),
+    claimToken: z.string().min(1).max(256),
+    stepType: z.enum(AGENT_STEP_TYPES),
+    content: z.string().min(1).max(10_000),
+    statusText: z.string().max(200).optional(),
+    // Client idempotency key: a step re-sent under the same id dedups server-side.
+    clientStepId: z.string().min(1).max(128).optional(),
+    phase: z.enum(STEP_FRAME_PHASES).optional(),
+    durationMs: z.number().int().min(0).optional(),
+  })
+  .refine(
+    (frame) => (frame.phase === undefined && frame.durationMs === undefined) || frame.clientStepId !== undefined,
+    {
+      message: "phase and durationMs require clientStepId",
+      path: ["clientStepId"],
+    }
+  )
+  .refine((frame) => frame.phase === undefined || (PHASED_STEP_TYPES as readonly string[]).includes(frame.stepType), {
+    message: "Only tool steps may carry a phase",
+    path: ["phase"],
+  })
 
 // One sealed trace step a sealed-capable bot harness finalized (the external
 // sibling of the enclave's `/steps`). `stepType` + `messageId` + timing are

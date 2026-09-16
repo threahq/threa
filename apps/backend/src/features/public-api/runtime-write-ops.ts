@@ -409,6 +409,8 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
           // driving its events through the projector (today's wire writes one step per
           // frame, so a single pending value is consumed by the one `record` call).
           sink.pendingClientStepId = frame.clientStepId
+          sink.pendingPhase = frame.phase
+          sink.pendingDurationMs = frame.durationMs
           for (const event of botInvocationStepEvents({
             stepType: frame.stepType,
             content: sanitizeInvocationStepContent(frame.content),

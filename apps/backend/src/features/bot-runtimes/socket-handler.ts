@@ -1,6 +1,13 @@
 import type { Server } from "socket.io"
 import { z } from "zod"
-import { AGENT_STEP_TYPES, BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } from "@threahq/types"
+import {
+  AGENT_STEP_TYPES,
+  BOT_INVOCATION_CAPABILITIES,
+  BOT_RUNTIME_KINDS,
+  BOT_RUNTIME_STATUSES,
+  PHASED_STEP_TYPES,
+  STEP_FRAME_PHASES,
+} from "@threahq/types"
 import { HttpError } from "@threahq/backend-common"
 import type { BotRuntimeService } from "./service"
 import { botRuntimeManifestSchema } from "./manifest-schema"
@@ -107,12 +114,26 @@ export const invocationRenewSchema = z.object({
 // WS frame for `bot:invocation:steps` — the batched form of
 // POST /bot-invocations/:id/steps. A single step is a one-element array, so the
 // noisy per-tool-call fan-out coalesces into one frame + one ack.
-export const invocationStepFrameSchema = z.object({
-  stepType: z.enum(AGENT_STEP_TYPES),
-  content: z.string().min(1).max(10_000),
-  // Client idempotency key: a step re-sent under the same id dedups server-side.
-  clientStepId: z.string().min(1).max(128).optional(),
-})
+export const invocationStepFrameSchema = z
+  .object({
+    stepType: z.enum(AGENT_STEP_TYPES),
+    content: z.string().min(1).max(10_000),
+    // Client idempotency key: a step re-sent under the same id dedups server-side.
+    clientStepId: z.string().min(1).max(128).optional(),
+    phase: z.enum(STEP_FRAME_PHASES).optional(),
+    durationMs: z.number().int().min(0).optional(),
+  })
+  .refine(
+    (frame) => (frame.phase === undefined && frame.durationMs === undefined) || frame.clientStepId !== undefined,
+    {
+      message: "phase and durationMs require clientStepId",
+      path: ["clientStepId"],
+    }
+  )
+  .refine((frame) => frame.phase === undefined || (PHASED_STEP_TYPES as readonly string[]).includes(frame.stepType), {
+    message: "Only tool steps may carry a phase",
+    path: ["phase"],
+  })
 const invocationStepsSchema = z.object({
   invocationId: invocationIdSchema,
   instanceId: instanceIdSchema,
