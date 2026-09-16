@@ -350,6 +350,28 @@ describe("sealed claim hydration + delivery", () => {
     expect(calls.complete).toHaveLength(0)
   })
 
+  test("drops started tool frames and seals the finish with its duration", async () => {
+    const { session, calls, openSealed } = await startSealedTurn()
+    calls.sealedSteps.length = 0
+
+    await session.recordSteps("binv_sealed", [
+      { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", phase: "started" },
+      { stepType: "tool_call", content: "Read a.ts done", clientStepId: "step_a", durationMs: 1234 },
+    ])
+
+    expect(calls.sealedSteps).toHaveLength(1)
+    const frames = calls.sealedSteps[0]!.frames
+    expect(frames.map((frame) => ({ stepType: frame.stepType, durationMs: frame.durationMs }))).toEqual([
+      { stepType: "tool_call", durationMs: 1234 },
+    ])
+    expect(await openSealed(frames[0]!)).toBe("Read a.ts done")
+
+    await session.recordSteps("binv_sealed", [
+      { stepType: "tool_call", content: "Read b.ts", clientStepId: "step_b", phase: "started" },
+    ])
+    expect(calls.sealedSteps).toHaveLength(1)
+  })
+
   test("inbound refs on the trigger download, decrypt, and land in the turn manifest", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "sealed-inbound-"))
     tempDirs.push(cwd)

@@ -226,7 +226,7 @@ export interface RuntimeDescriptor {
   /** Presence status text while a turn is executing, e.g. "Working in Claude Code…". */
   busyStatusText: string
   /** Trace note recorded when a turn is handed to the runtime. */
-  forwardedNote: string
+  forwardedNote?: string
   /** Error recorded on in-flight turns when the session shuts down. */
   shutdownErrorMessage: string
 }
@@ -1387,10 +1387,12 @@ export class RemoteSession {
 
   /** The turn-handed-to-runtime trace note — sealed under the stream key on an E2E turn. */
   private async recordForwardedStep(invocation: ClaimedInvocation): Promise<void> {
+    const forwardedNote = this.runtime.forwardedNote
+    if (forwardedNote === undefined) return
     const sourceRevision = invocation.sourceRevision
     if (invocation.sealing) {
       const sealing = invocation.sealing
-      const frame = await sealStep(sealing, "thinking", this.runtime.forwardedNote)
+      const frame = await sealStep(sealing, "thinking", forwardedNote)
       if (!this.isOutputCurrent(invocation, sourceRevision)) return
       await this.transport.recordSealedSteps(invocation.id, sealing.callbackToken, [frame])
       return
@@ -1399,7 +1401,7 @@ export class RemoteSession {
     await this.transport.recordSteps(
       invocation.id,
       invocation.claimToken,
-      [{ stepType: "thinking", content: this.runtime.forwardedNote }],
+      [{ stepType: "thinking", content: forwardedNote }],
       this.runtime.busyStatusText
     )
   }
@@ -2549,8 +2551,19 @@ export class RemoteSession {
         // sealed wire. No statusText — the sealed wire deliberately carries
         // none (a plaintext status derived from sealed content would leak).
         const sealing = entry.invocation.sealing
+        const finished = chunk.filter((frame) => frame.phase !== "started")
+        if (finished.length === 0) continue
         try {
-          const sealedFrames = await Promise.all(chunk.map((frame) => sealStep(sealing, frame.stepType, frame.content)))
+          const sealedFrames = await Promise.all(
+            finished.map((frame) =>
+              sealStep(
+                sealing,
+                frame.stepType,
+                frame.content,
+                frame.durationMs !== undefined ? { durationMs: frame.durationMs } : undefined
+              )
+            )
+          )
           if (!this.isOutputCurrent(entry.invocation, sourceRevision)) return this.inflight.has(invocationId)
           await this.transport.recordSealedSteps(invocationId, sealing.callbackToken, sealedFrames)
         } catch (error) {

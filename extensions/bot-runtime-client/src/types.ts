@@ -23,6 +23,14 @@ export interface StepFrame {
    * twice under the same key (the server dedups on it).
    */
   clientStepId?: string
+  /**
+   * `started` opens a tool row before the tool finishes (tool_call/tool_error
+   * only). A started frame must carry its own clientStepId; the finishing frame
+   * reuses it.
+   */
+  phase?: "started"
+  /** Wall-clock tool runtime on the finishing frame; requires clientStepId. */
+  durationMs?: number
 }
 
 /** The `bot:hello` registration payload — mirrors the server's `helloSchema`. */

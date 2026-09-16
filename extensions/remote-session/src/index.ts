@@ -77,4 +77,5 @@ export {
   type DelegationExecutor,
   type DelegationExecutorContext,
 } from "./delegation-runner"
+export { toolTraceContent, type ToolTraceSection, type ToolTraceSectionLabel } from "./tool-trace"
 export type { DecisionRequest, StepFrame } from "@threahq/bot-runtime-client"
