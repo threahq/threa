@@ -136,6 +136,23 @@ test("THREA_CONFIG points at an explicit file", () => {
   }
 })
 
+test("a THREA_CONFIG file wins over an inherited environment key", () => {
+  const path = join(home, "bot.json")
+  writeFileSync(path, JSON.stringify({ apiKey: "threa_bk_bot", workspaceId: "ws_bot", principal: "bot" }))
+  process.env.THREA_CONFIG = path
+  process.env.THREA_API_KEY = "threa_uk_shell"
+  process.env.THREA_WORKSPACE_ID = "ws_shell"
+  process.env.THREA_PRINCIPAL = "user"
+  process.env.THREA_BASE_URL = "https://staging.threa.io"
+  expect(loadConfig()).toEqual({
+    apiKey: "threa_bk_bot",
+    workspaceId: "ws_bot",
+    baseUrl: "https://staging.threa.io",
+    output: "text",
+    principal: "bot",
+  })
+})
+
 test("explicit THREA_CONFIG that cannot be read fails loudly", () => {
   process.env.THREA_CONFIG = join(home, "does-not-exist.json")
   expect(() => loadConfig()).toThrow(/THREA_CONFIG/)

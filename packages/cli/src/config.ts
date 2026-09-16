@@ -68,11 +68,20 @@ function readFileConfig(): FileConfig {
 export function loadConfig(): ThreaConfig {
   const file = readFileConfig()
 
-  const apiKey = process.env.THREA_API_KEY || file.apiKey
-  const workspaceId = process.env.THREA_WORKSPACE_ID || file.workspaceId
-  const baseUrl = process.env.THREA_BASE_URL ?? file.baseUrl ?? DEFAULT_BASE_URL
+  // A file named by THREA_CONFIG is the caller binding an identity (a runtime's
+  // bot key), so it wins over an ambient THREA_API_KEY inherited from a shell.
+  const explicit = Boolean(process.env.THREA_CONFIG)
+  const apiKey = explicit ? file.apiKey || process.env.THREA_API_KEY : process.env.THREA_API_KEY || file.apiKey
+  const workspaceId = explicit
+    ? file.workspaceId || process.env.THREA_WORKSPACE_ID
+    : process.env.THREA_WORKSPACE_ID || file.workspaceId
+  const baseUrl =
+    (explicit ? (file.baseUrl ?? process.env.THREA_BASE_URL) : (process.env.THREA_BASE_URL ?? file.baseUrl)) ??
+    DEFAULT_BASE_URL
   const output = file.output ?? "text"
-  const principal = process.env.THREA_PRINCIPAL ?? file.principal
+  const principal = explicit
+    ? (file.principal ?? process.env.THREA_PRINCIPAL)
+    : (process.env.THREA_PRINCIPAL ?? file.principal)
 
   const missing: string[] = []
   if (!apiKey) missing.push("THREA_API_KEY")
@@ -82,7 +91,7 @@ export function loadConfig(): ThreaConfig {
       `[threa] Missing required config: ${missing.join(", ")}. ` +
         `Set them as environment variables, or provide a JSON file at ~/.threa/config.json ` +
         `(or the path in THREA_CONFIG) with { apiKey, workspaceId, baseUrl } and optionally { principal }. ` +
-        `Environment variables win over the file.`
+        `Environment variables win over ~/.threa/config.json; a THREA_CONFIG file wins over them.`
     )
   }
 

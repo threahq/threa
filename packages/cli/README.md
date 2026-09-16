@@ -25,7 +25,7 @@ If you keep the CLI on PATH for a Claude Code session, add the bin directory to 
 
 ## Configuration
 
-Config resolves from environment variables first, then from an optional JSON file. Environment variables win over the file.
+Config resolves from environment variables and an optional JSON file. Environment variables win over `~/.threa/config.json`. A file named by `THREA_CONFIG` wins over the environment instead, so a runtime that points the CLI at its bot's config cannot be overridden by a `THREA_API_KEY` inherited from a shell; the environment only fills keys that file leaves out.
 
 | Setting      | Env var              | File key      | Required | Default                |
 | ------------ | -------------------- | ------------- | -------- | ---------------------- |

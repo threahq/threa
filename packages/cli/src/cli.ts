@@ -72,7 +72,7 @@ function topHelp(): string {
     ...lines,
     "",
     "Global flags: -o json|text / --json (output mode, any position), --help (per-command help).",
-    'Config: THREA_API_KEY and THREA_WORKSPACE_ID (env, or ~/.threa/config.json); optional THREA_BASE_URL, "output": "json"|"text", and "principal": "bot"|"user" (asserted against the key at startup).',
+    'Config: THREA_API_KEY and THREA_WORKSPACE_ID (env, or ~/.threa/config.json, or the file in THREA_CONFIG, which wins over env); optional THREA_BASE_URL, THREA_PRINCIPAL / "principal": "bot"|"user" (asserted against the key at startup), and "output": "json"|"text".',
     "Run `threa <command> --help` for a command's subcommands or flags.",
   ].join("\n")
 }
