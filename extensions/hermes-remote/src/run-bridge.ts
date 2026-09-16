@@ -65,6 +65,8 @@ export interface HermesTurnRunnerOptions {
   /** Injectable for tests; paces the status poll that replaces a lost event stream. */
   sleep?: (ms: number) => Promise<void>
   conversationStore?: ConversationStore
+  /** Hermes drops a session's model lock when it forks; called once the fork exists so the lock can be re-applied. */
+  onForked?: (sourceId: string, forkId: string) => Promise<void>
 }
 
 /** A run being consumed: what the event stream and the status poll both act on. */
@@ -197,6 +199,7 @@ export class HermesTurnRunner {
   private readonly log: (message: string) => void
   private readonly sleep: (ms: number) => Promise<void>
   private readonly conversationStore: ConversationStore | undefined
+  private readonly onForked: ((sourceId: string, forkId: string) => Promise<void>) | undefined
   private generations: Record<string, number>
   private readonly forked: Set<string>
   private readonly pendingSteers = new Map<string, string[]>()
@@ -216,6 +219,7 @@ export class HermesTurnRunner {
     this.log = options.log ?? (() => {})
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.conversationStore = options.conversationStore
+    this.onForked = options.onForked
     const state = options.conversationStore?.load()
     this.generations = state?.generations ?? {}
     this.forked = new Set(state?.forked ?? [])
@@ -233,6 +237,11 @@ export class HermesTurnRunner {
     this.conversationStore?.save({ generations: next, forked: [...this.forked] })
     this.generations = next
     return this.conversationFor(streamId)
+  }
+
+  /** Thread conversations forked from the scratchpad's, which a `/model` has to lock too. */
+  forkedConversations(): string[] {
+    return [...this.forked]
   }
 
   /** Runs still inside admission count too: they have no run id yet but will. */
@@ -374,6 +383,7 @@ export class HermesTurnRunner {
     }
     this.conversationStore?.save({ generations: { ...this.generations }, forked: [...this.forked, forkId] })
     this.forked.add(forkId)
+    await this.onForked?.(sourceId, forkId)
   }
 
   async deliverTurn(turn: DeliveredTurn): Promise<void> {

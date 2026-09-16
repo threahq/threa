@@ -890,13 +890,19 @@ describe("HermesTurnRunner threads", () => {
     }
   }
 
-  function threadRunner(client: HermesRunsClient, session: BridgeSession, store?: ConversationStore): HermesTurnRunner {
+  function threadRunner(
+    client: HermesRunsClient,
+    session: BridgeSession,
+    store?: ConversationStore,
+    onForked?: (sourceId: string, forkId: string) => Promise<void>
+  ): HermesTurnRunner {
     return new HermesTurnRunner({
       client,
       session,
       sessionKeyFor: () => "threa:ws_1:stream_root",
       sleep: async () => {},
       ...(store ? { conversationStore: store } : {}),
+      ...(onForked ? { onForked } : {}),
     })
   }
 
@@ -912,6 +918,18 @@ describe("HermesTurnRunner threads", () => {
       sessionId: "stream_thread",
       saved: [{ generations: {}, forked: ["stream_thread"] }],
     })
+  })
+
+  test("the fork is handed on before its first run, so a model lock lands first", async () => {
+    const { session } = makeSession()
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const handed: Array<{ sourceId: string; forkId: string; runsBefore: number }> = []
+    await threadRunner(client, session, undefined, async (sourceId, forkId) => {
+      handed.push({ sourceId, forkId, runsBefore: created.length })
+    }).deliverTurn(TURN)
+    await settle()
+
+    expect(handed).toEqual([{ sourceId: "stream_root", forkId: "stream_thread", runsBefore: 0 }])
   })
 
   test("a mention in a channel runs its own unforked conversation under the channel's memory scope", async () => {

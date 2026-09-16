@@ -77,14 +77,45 @@ function readPackageFile(packageDir: string, ...parts: string[]): string {
   return readFileSync(join(packageDir, ...parts), "utf8")
 }
 
+interface InstallFile {
+  path: string
+  content: () => string
+  /** Set when an existing file is left alone; unset means it is always overwritten. */
+  ifExists?: { keep: boolean; reason: string }
+}
+
+/** The one list both the plan and the install walk, so a dry run shows exactly what a real run does. */
+function installFiles(options: InstallOptions, unitPath: string, unit: string): InstallFile[] {
+  const { homeDir, packageDir } = options
+  return [
+    {
+      path: unitPath,
+      content: () => unit,
+      ...(options.force
+        ? {}
+        : { ifExists: { keep: false, reason: "the unit already exists; pass --force to overwrite it" } }),
+    },
+    {
+      path: join(homeDir, ".hermes", "skills", "threa", "SKILL.md"),
+      content: () => readPackageFile(packageDir, "hermes", "skills", "threa", "SKILL.md"),
+    },
+    {
+      path: join(homeDir, ".hermes", "SOUL.md"),
+      content: () => readPackageFile(packageDir, "hermes", "SOUL.md"),
+      ifExists: { keep: true, reason: "a persona already exists there and is never overwritten" },
+    },
+  ]
+}
+
 export function planInstall(options: InstallOptions): InstallPlan {
-  const { homeDir, packageDir, bunPath } = options
+  const { homeDir, bunPath } = options
   const unitPath = join(homeDir, ".config", "systemd", "user", SERVICE_NAME)
-  const soulPath = join(homeDir, ".hermes", "SOUL.md")
-  const unitWrite: PlannedWrite =
-    existsSync(unitPath) && !options.force
-      ? { path: unitPath, skipped: "the unit already exists; pass --force to overwrite it" }
-      : { path: unitPath }
+  const unit = renderSystemdUnit({
+    bunPath,
+    entryPath: join(options.packageDir, "src", "index.ts"),
+    homeDir,
+    envFile: join(homeDir, ".config", "threa", "hermes-remote.env"),
+  })
   const commands: string[][] = [
     ["systemctl", "--user", "daemon-reload"],
     ["systemctl", "--user", "enable", SERVICE_NAME],
@@ -92,24 +123,15 @@ export function planInstall(options: InstallOptions): InstallPlan {
   if (options.start) commands.push(["systemctl", "--user", "restart", SERVICE_NAME])
   return {
     unitPath,
-    unit: renderSystemdUnit({
-      bunPath,
-      entryPath: join(packageDir, "src", "index.ts"),
-      homeDir,
-      envFile: join(homeDir, ".config", "threa", "hermes-remote.env"),
-    }),
+    unit,
     directories: [
       dirname(unitPath),
       join(homeDir, ".threa", "hermes-remote", "log"),
       join(homeDir, ".hermes", "skills", "threa"),
     ],
-    writes: [
-      unitWrite,
-      { path: join(homeDir, ".hermes", "skills", "threa", "SKILL.md") },
-      existsSync(soulPath)
-        ? { path: soulPath, skipped: "a persona already exists there and is never overwritten" }
-        : { path: soulPath },
-    ],
+    writes: installFiles(options, unitPath, unit).map((file) =>
+      file.ifExists && existsSync(file.path) ? { path: file.path, skipped: file.ifExists.reason } : { path: file.path }
+    ),
     commands,
   }
 }
@@ -117,39 +139,30 @@ export function planInstall(options: InstallOptions): InstallPlan {
 export function runInstall(options: InstallOptions): InstallPlan {
   const log = options.log ?? (() => {})
   const plan = planInstall(options)
-  const soulPath = join(options.homeDir, ".hermes", "SOUL.md")
   const unitWrite = plan.writes.find((write) => write.path === plan.unitPath)
   if (unitWrite?.skipped && !options.dryRun) {
     throw new Error(`${plan.unitPath} already exists. Pass --force to overwrite it.`)
   }
-  const contents = new Map<string, string>([
-    [plan.unitPath, plan.unit],
-    [
-      join(options.homeDir, ".hermes", "skills", "threa", "SKILL.md"),
-      readPackageFile(options.packageDir, "hermes", "skills", "threa", "SKILL.md"),
-    ],
-    [soulPath, readPackageFile(options.packageDir, "hermes", "SOUL.md")],
-  ])
 
   for (const dir of plan.directories) {
     log(`${options.dryRun ? "would create" : "creating"} ${dir}`)
     if (!options.dryRun) mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  for (const write of plan.writes) {
-    if (write.skipped) {
-      log(`keeping ${write.path}: ${write.skipped}`)
+  for (const file of installFiles(options, plan.unitPath, plan.unit)) {
+    const skipped = plan.writes.find((write) => write.path === file.path)?.skipped
+    if (skipped) {
+      log(`keeping ${file.path}: ${skipped}`)
       continue
     }
-    log(`${options.dryRun ? "would write" : "writing"} ${write.path}`)
+    log(`${options.dryRun ? "would write" : "writing"} ${file.path}`)
     if (options.dryRun) continue
-    const exclusive = write.path === soulPath || (write.path === plan.unitPath && !options.force)
     try {
-      writeFileSync(write.path, contents.get(write.path) ?? "", { mode: 0o600, flag: exclusive ? "wx" : "w" })
+      // Exclusive when an existing file matters: it may have appeared since the plan looked.
+      writeFileSync(file.path, file.content(), { mode: 0o600, flag: file.ifExists ? "wx" : "w" })
     } catch (error) {
-      const exists = (error as NodeJS.ErrnoException).code === "EEXIST"
-      if (!exists) throw error
-      if (write.path !== soulPath) throw new Error(`${write.path} already exists. Pass --force to overwrite it.`)
-      log(`keeping ${write.path}: a persona already exists there and is never overwritten`)
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || !file.ifExists) throw error
+      if (!file.ifExists.keep) throw new Error(`${file.path} already exists. Pass --force to overwrite it.`)
+      log(`keeping ${file.path}: ${file.ifExists.reason}`)
     }
   }
   const run = options.run ?? ((command, args) => spawnSync(command, args, { stdio: "inherit" }))

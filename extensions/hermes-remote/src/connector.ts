@@ -1,22 +1,19 @@
-import { readFileSync, renameSync, writeFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { RemoteSession, ThreaClient, type ShutdownOptions } from "@threahq/remote-session"
+import { RemoteSession, ThreaClient, writeFileAtomic, type ShutdownOptions } from "@threahq/remote-session"
 import { WORK_DIR, type HermesRemoteConfig } from "./config"
 import { HermesRunsClient, type FetchLike } from "./hermes-client"
 import { HERMES_RUNTIME, HermesTurnRunner, type ConversationStore } from "./run-bridge"
 import { createHermesSessionControl } from "./session-control"
 
-/** `/clear` generations and thread forks, written through a temp file so a crash cannot truncate it. */
+/** `/clear` generations and thread forks, swapped in whole so a crash cannot truncate it. */
 export function createFileConversationStore(path: string): ConversationStore {
   return {
     load: () => {
       try {
         const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-        // A file without `generations` or `forked` is a legacy bare generation map.
-        const legacy = !("generations" in parsed) && !("forked" in parsed)
-        const raw = (legacy ? parsed : (parsed.generations ?? {})) as Record<string, unknown>
         const generations = Object.fromEntries(
-          Object.entries(raw).flatMap(([key, value]) =>
+          Object.entries((parsed.generations ?? {}) as Record<string, unknown>).flatMap(([key, value]) =>
             typeof value === "number" && Number.isFinite(value) ? [[key, value] as const] : []
           )
         )
@@ -28,11 +25,7 @@ export function createFileConversationStore(path: string): ConversationStore {
         return { generations: {}, forked: [] }
       }
     },
-    save: (state) => {
-      const tmp = `${path}.tmp`
-      writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 })
-      renameSync(tmp, path)
-    },
+    save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),
   }
 }
 
@@ -77,6 +70,8 @@ export function createHermesConnector(
     // ignores it. The conversation itself is selected by session_id.
     sessionKeyFor: (rootStreamId) => `threa:${config.workspaceId}:${rootStreamId}`,
     conversationStore: createFileConversationStore(join(WORK_DIR, "conversations.json")),
+    // The session control is constructed below; a fork only happens once a turn runs.
+    onForked: (sourceId, forkId) => sessionControl.inheritModel(sourceId, forkId),
     log,
   })
 

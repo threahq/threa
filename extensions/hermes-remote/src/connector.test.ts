@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFileConversationStore } from "./connector"
@@ -9,16 +9,6 @@ function tempStorePath(): string {
 }
 
 describe("createFileConversationStore", () => {
-  test("reads the bare generation map an older connector wrote", () => {
-    const path = tempStorePath()
-    writeFileSync(path, JSON.stringify({ stream_root: 2, stream_other: 1 }))
-
-    expect(createFileConversationStore(path).load()).toEqual({
-      generations: { stream_root: 2, stream_other: 1 },
-      forked: [],
-    })
-  })
-
   test("round-trips generations and forked conversations", () => {
     const path = tempStorePath()
     const store = createFileConversationStore(path)

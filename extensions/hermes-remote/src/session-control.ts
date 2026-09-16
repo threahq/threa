@@ -10,6 +10,8 @@ const MAX_AMBIGUOUS_CANDIDATES = 8
 export interface HermesSessionControl extends SessionControlActuator {
   /** Load the model picker's options; awaited once before the session starts. */
   refresh(): Promise<void>
+  /** Give a freshly forked thread conversation the model its source was locked to. */
+  inheritModel(sourceId: string, forkId: string): Promise<void>
 }
 
 export interface ModelChoice {
@@ -96,6 +98,18 @@ export function createHermesSessionControl(
     const choice = matches[0]!
     const failure = await lockModel(runner.conversationFor(rootStreamId), choice)
     if (failure) return { ok: false, message: failure }
+    // Threads run in forks of the scratchpad conversation, each with its own lock.
+    const unlocked: string[] = []
+    for (const forkId of runner.forkedConversations()) {
+      const forkFailure = await lockModel(forkId, choice)
+      if (forkFailure) unlocked.push(`\`${forkId}\`: ${forkFailure}`)
+    }
+    if (unlocked.length > 0) {
+      return {
+        ok: true,
+        message: `Set the model to ${label(choice)}, but these threads keep their model. ${unlocked.join("; ")}`,
+      }
+    }
     return { ok: true, summary: `Set the model to ${label(choice)}` }
   }
 
@@ -146,6 +160,12 @@ export function createHermesSessionControl(
     },
     interrupt: () => runner.interrupt(),
     steer: (text) => runner.steer(text),
+    inheritModel: async (sourceId, forkId) => {
+      const lockedModel = lockedModels.get(sourceId)
+      if (!lockedModel) return
+      const failure = await lockModel(forkId, lockedModel)
+      if (failure) log(`thread conversation ${forkId} runs on the gateway default model: ${failure}`)
+    },
     refresh: async () => {
       try {
         suggestions = suggestionsFrom(await client.listModelOptions())
