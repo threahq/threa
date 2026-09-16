@@ -15,7 +15,12 @@ const OPTIONS: ModelOptions = {
   ],
 }
 
-function makeRunner(open: Array<{ runId: string; streamId: string }> = [], admitting = 0, forked: string[] = []) {
+function makeRunner(
+  open: Array<{ runId: string; streamId: string }> = [],
+  admitting = 0,
+  forked: string[] = [],
+  models: Record<string, { provider: string; model: string }> = {}
+) {
   const bumps: string[] = []
   let generation = 0
   const runner = {
@@ -28,6 +33,10 @@ function makeRunner(open: Array<{ runId: string; streamId: string }> = [], admit
     openRuns: () => open.map((run, index) => ({ invocationId: `binv_${index}`, ...run })),
     hasOpenTurns: () => open.length > 0 || admitting > 0,
     forkedConversations: () => forked,
+    lockedModel: (conversationId: string) => models[conversationId],
+    recordModel: (conversationId: string, choice: { provider: string; model: string }) => {
+      models[conversationId] = choice
+    },
     steer: async () => true,
     interrupt: () => true,
   }

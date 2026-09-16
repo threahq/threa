@@ -50,6 +50,11 @@ export interface ModelProviderOptions {
   models: string[]
 }
 
+export interface ModelChoice {
+  provider: string
+  model: string
+}
+
 export interface ModelOptions {
   providers: ModelProviderOptions[]
   model?: string
@@ -229,11 +234,7 @@ export class HermesRunsClient {
     )
   }
 
-  async lockSessionModel(
-    id: string,
-    runtime: { provider: string; model: string },
-    signal?: AbortSignal
-  ): Promise<SessionModelLock> {
+  async lockSessionModel(id: string, runtime: ModelChoice, signal?: AbortSignal): Promise<SessionModelLock> {
     const response = await this.request(
       `/api/sessions/${encodeURIComponent(id)}/model`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(runtime) },

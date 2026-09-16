@@ -8,6 +8,7 @@ import {
   type ConversationState,
   type ConversationStore,
 } from "./run-bridge"
+import { createHermesSessionControl } from "./session-control"
 
 function makeSession() {
   const calls = {
@@ -829,7 +830,7 @@ describe("HermesTurnRunner control", () => {
     const { session } = makeSession()
     const saved: ConversationState[] = []
     const store: ConversationStore = {
-      load: () => ({ generations: {}, forked: ["stream_thread.1"] }),
+      load: () => ({ generations: {}, forked: ["stream_thread.1"], models: {} }),
       save: (state) => {
         saved.push(state)
       },
@@ -849,7 +850,7 @@ describe("HermesTurnRunner control", () => {
     await settle()
 
     expect({ saved, sessionId: created[0]?.sessionId }).toEqual({
-      saved: [{ generations: { stream_thread: 1 }, forked: ["stream_thread.1"] }],
+      saved: [{ generations: { stream_thread: 1 }, forked: ["stream_thread.1"], models: {} }],
       sessionId: "stream_thread.1",
     })
   })
@@ -857,7 +858,7 @@ describe("HermesTurnRunner control", () => {
   test("a generation that fails to persist is not used", () => {
     const { session } = makeSession()
     const store: ConversationStore = {
-      load: () => ({ generations: {}, forked: [] }),
+      load: () => ({ generations: {}, forked: [], models: {} }),
       save: () => {
         throw new Error("disk full")
       },
@@ -909,14 +910,14 @@ describe("HermesTurnRunner threads", () => {
   test("the first turn on a thread forks the root conversation, and the run uses the fork", async () => {
     const { session } = makeSession()
     const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
-    const { store, saved } = storeOf({ generations: {}, forked: [] })
+    const { store, saved } = storeOf({ generations: {}, forked: [], models: {} })
     await threadRunner(client, session, store).deliverTurn(TURN)
     await settle()
 
     expect({ forks, sessionId: created[0]?.sessionId, saved }).toEqual({
       forks: [{ sourceId: "stream_root", forkId: "stream_thread" }],
       sessionId: "stream_thread",
-      saved: [{ generations: {}, forked: ["stream_thread"] }],
+      saved: [{ generations: {}, forked: ["stream_thread"], models: {} }],
     })
   })
 
@@ -978,7 +979,7 @@ describe("HermesTurnRunner threads", () => {
   test("a restart with the fork in the store does not fork again", async () => {
     const { session } = makeSession()
     const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
-    const { store, saved } = storeOf({ generations: {}, forked: ["stream_thread"] })
+    const { store, saved } = storeOf({ generations: {}, forked: ["stream_thread"], models: {} })
     await threadRunner(client, session, store).deliverTurn(TURN)
     await settle()
 
@@ -987,6 +988,42 @@ describe("HermesTurnRunner threads", () => {
       saved: [],
       sessionId: "stream_thread",
     })
+  })
+
+  test("a /model lock survives a restart, so a thread forked afterwards still inherits it", async () => {
+    let state: ConversationState = { generations: {}, forked: [], models: {} }
+    const store: ConversationStore = {
+      load: () => state,
+      save: (next) => {
+        state = next
+      },
+    }
+    const locks: Array<{ id: string; provider: string; model: string }> = []
+    const connect = () => {
+      const { session } = makeSession()
+      const { client } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+      client.createSession = async () => {}
+      client.listModelOptions = async () => ({ providers: [{ slug: "opencode-go", models: ["muse-spark"] }] })
+      client.lockSessionModel = async (id, runtime) => {
+        locks.push({ id, ...runtime })
+        return { sessionId: id, ...runtime }
+      }
+      let control: ReturnType<typeof createHermesSessionControl> | undefined
+      const runner = threadRunner(client, session, store, (sourceId, forkId) => control!.inheritModel(sourceId, forkId))
+      control = createHermesSessionControl(runner, client)
+      return { runner, control }
+    }
+
+    const before = connect()
+    await before.control.runCommand("model", "muse-spark", { rootStreamId: "stream_root", sourceMessageId: "msg_1" })
+    const after = connect()
+    await after.runner.deliverTurn(TURN)
+    await settle()
+
+    expect(locks).toEqual([
+      { id: "stream_root", provider: "opencode-go", model: "muse-spark" },
+      { id: "stream_thread", provider: "opencode-go", model: "muse-spark" },
+    ])
   })
 
   test("a root conversation that does not exist yet leaves the thread with a fresh conversation", async () => {
@@ -1055,7 +1092,7 @@ describe("HermesTurnRunner threads", () => {
     client.forkSession = async () => {
       throw new HermesApiError("Not Found", { status: 404, code: "not_found" })
     }
-    const { store, saved } = storeOf({ generations: {}, forked: [] })
+    const { store, saved } = storeOf({ generations: {}, forked: [], models: {} })
     const delivery = threadRunner(client, session, store).deliverTurn(TURN)
 
     await expect(delivery).rejects.toThrow("Hermes could not fork stream_root: Not Found")

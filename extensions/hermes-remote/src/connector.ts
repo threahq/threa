@@ -6,7 +6,7 @@ import { HermesRunsClient, type FetchLike } from "./hermes-client"
 import { HERMES_RUNTIME, HermesTurnRunner, type ConversationStore } from "./run-bridge"
 import { createHermesSessionControl } from "./session-control"
 
-/** `/clear` generations and thread forks, swapped in whole so a crash cannot truncate it. */
+/** `/clear` generations, thread forks and `/model` locks, swapped in whole so a crash cannot truncate it. */
 export function createFileConversationStore(path: string): ConversationStore {
   return {
     load: () => {
@@ -20,9 +20,17 @@ export function createFileConversationStore(path: string): ConversationStore {
         const forked = Array.isArray(parsed.forked)
           ? parsed.forked.flatMap((entry) => (typeof entry === "string" && entry.length > 0 ? [entry] : []))
           : []
-        return { generations, forked }
+        const models = Object.fromEntries(
+          Object.entries((parsed.models ?? {}) as Record<string, unknown>).flatMap(([key, value]) => {
+            const { provider, model } = (value ?? {}) as { provider?: unknown; model?: unknown }
+            return typeof provider === "string" && typeof model === "string"
+              ? [[key, { provider, model }] as const]
+              : []
+          })
+        )
+        return { generations, forked, models }
       } catch {
-        return { generations: {}, forked: [] }
+        return { generations: {}, forked: [], models: {} }
       }
     },
     save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),

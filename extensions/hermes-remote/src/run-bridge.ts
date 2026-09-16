@@ -8,7 +8,13 @@ import {
   type SendResult,
   type StepFrame,
 } from "@threahq/remote-session"
-import { HermesApiError, type HermesRunEvent, type HermesRunsClient, type RunStatus } from "./hermes-client"
+import {
+  HermesApiError,
+  type HermesRunEvent,
+  type HermesRunsClient,
+  type ModelChoice,
+  type RunStatus,
+} from "./hermes-client"
 
 /** The slice of `RemoteSession` the bridge drives, so tests can stand in a fake. */
 export interface BridgeSession {
@@ -19,10 +25,11 @@ export interface BridgeSession {
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
 
-/** What survives a restart: the per-stream `/clear` count, and which conversations were forked from the root. */
+/** What survives a restart: the per-stream `/clear` count, which conversations were forked from the root, and each conversation's `/model` lock. */
 export interface ConversationState {
   generations: Record<string, number>
   forked: string[]
+  models: Record<string, ModelChoice>
 }
 
 export interface ConversationStore {
@@ -202,6 +209,7 @@ export class HermesTurnRunner {
   private readonly onForked: ((sourceId: string, forkId: string) => Promise<void>) | undefined
   private generations: Record<string, number>
   private readonly forked: Set<string>
+  private models: Record<string, ModelChoice>
   private readonly pendingSteers = new Map<string, string[]>()
   // Steer text for an open run that was not `running` when it arrived (queued,
   // parked on an approval): sent once the run resumes, else carried to the next turn.
@@ -223,6 +231,7 @@ export class HermesTurnRunner {
     const state = options.conversationStore?.load()
     this.generations = state?.generations ?? {}
     this.forked = new Set(state?.forked ?? [])
+    this.models = state?.models ?? {}
   }
 
   /** The Hermes conversation for a stream: the stream id, suffixed once per `/clear`. */
@@ -234,9 +243,20 @@ export class HermesTurnRunner {
   /** Start a fresh conversation on a stream; returns the new conversation id. */
   bumpConversation(streamId: string): string {
     const next = { ...this.generations, [streamId]: (this.generations[streamId] ?? 0) + 1 }
-    this.conversationStore?.save({ generations: next, forked: [...this.forked] })
+    this.saveState({ generations: next })
     this.generations = next
     return this.conversationFor(streamId)
+  }
+
+  /** The model a conversation was locked to, which Hermes does not carry into a fork or a new conversation. */
+  lockedModel(conversationId: string): ModelChoice | undefined {
+    return this.models[conversationId]
+  }
+
+  recordModel(conversationId: string, choice: ModelChoice): void {
+    const next = { ...this.models, [conversationId]: choice }
+    this.saveState({ models: next })
+    this.models = next
   }
 
   /** Thread conversations forked from the scratchpad's, which a `/model` has to lock too. */
@@ -381,9 +401,19 @@ export class HermesTurnRunner {
         throw new Error(`Hermes could not fork ${sourceId}: ${this.summarize(error)}`)
       }
     }
-    this.conversationStore?.save({ generations: { ...this.generations }, forked: [...this.forked, forkId] })
+    this.saveState({ forked: [...this.forked, forkId] })
     this.forked.add(forkId)
     await this.onForked?.(sourceId, forkId)
+  }
+
+  /** Written before memory changes, so a failed write leaves both unchanged. */
+  private saveState(change: Partial<ConversationState>): void {
+    this.conversationStore?.save({
+      generations: this.generations,
+      forked: [...this.forked],
+      models: this.models,
+      ...change,
+    })
   }
 
   async deliverTurn(turn: DeliveredTurn): Promise<void> {
