@@ -426,6 +426,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
+    app.post("/internal/ai-spend-controls", internalAuth, aiUsage.syncOperatorControls)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
     app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
   }

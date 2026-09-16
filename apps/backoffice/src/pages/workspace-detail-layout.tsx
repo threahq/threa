@@ -92,6 +92,9 @@ function TabNav({ id }: { id: string }) {
       <TabLink to={`/workspaces/${id}/flags`} end>
         Feature flags
       </TabLink>
+      <TabLink to={`/workspaces/${id}/ai-spend`} end>
+        AI spend
+      </TabLink>
     </nav>
   )
 }

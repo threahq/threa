@@ -810,7 +810,12 @@ export { sharedMessageSlotKey, parseSharedMessageSlotKey } from "./slots"
 export { DEVICE_KEY_LENGTH } from "./api"
 
 // AI usage category constants
-export { AI_SPEND_DENIAL_REASONS, AI_SPEND_STAGE_CUTOFFS, AI_USAGE_CATEGORIES } from "./api"
+export {
+  AI_OPERATOR_CEILING_DEFAULT_USD,
+  AI_SPEND_DENIAL_REASONS,
+  AI_SPEND_STAGE_CUTOFFS,
+  AI_USAGE_CATEGORIES,
+} from "./api"
 
 // Command kind constants
 export { CommandKinds, CommandScopes } from "./api"

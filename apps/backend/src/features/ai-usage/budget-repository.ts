@@ -1,4 +1,4 @@
-import type { AIBudgetConfig } from "@threahq/types"
+import { AI_OPERATOR_CEILING_DEFAULT_USD, type AIBudgetConfig } from "@threahq/types"
 import { sql, type Querier } from "../../db"
 
 /** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
@@ -9,7 +9,7 @@ export const DEFAULT_AI_BUDGET_CONFIG: AIBudgetConfig = {
   alertThreshold100: true,
   aiDisabled: false,
   defaultUserAgentAllowanceUsd: null,
-  operatorCeilingUsd: 100,
+  operatorCeilingUsd: AI_OPERATOR_CEILING_DEFAULT_USD,
   operatorAiDisabled: false,
 }
 
@@ -246,6 +246,41 @@ export const AIBudgetRepository = {
           WHEN ${allowanceProvided}::boolean THEN ${defaultUserAgentAllowanceUsd}::numeric
           ELSE ai_budgets.default_user_agent_allowance_usd
         END,
+        updated_at = NOW()
+      RETURNING ${sql.raw(BUDGET_FIELDS)}
+    `)
+    return mapRowToBudget(result.rows[0])
+  },
+
+  /**
+   * Replaces the operator columns with the control plane's snapshot, creating
+   * the row with admin defaults when absent. Admin-set columns are never touched.
+   */
+  async upsertOperatorControls(
+    db: Querier,
+    params: { id: string; workspaceId: string; operatorCeilingUsd: number; operatorAiDisabled: boolean }
+  ): Promise<AIBudget> {
+    const defaults = DEFAULT_AI_BUDGET_CONFIG
+    const result = await db.query<AIBudgetRow>(sql`
+      INSERT INTO ai_budgets (
+        id, workspace_id, monthly_budget_usd,
+        alert_threshold_50, alert_threshold_80, alert_threshold_100,
+        ai_disabled, operator_ceiling_usd, operator_ai_disabled
+      )
+      VALUES (
+        ${params.id},
+        ${params.workspaceId},
+        ${defaults.monthlyBudgetUsd},
+        ${defaults.alertThreshold50},
+        ${defaults.alertThreshold80},
+        ${defaults.alertThreshold100},
+        ${defaults.aiDisabled},
+        ${params.operatorCeilingUsd},
+        ${params.operatorAiDisabled}
+      )
+      ON CONFLICT (workspace_id) DO UPDATE SET
+        operator_ceiling_usd = EXCLUDED.operator_ceiling_usd,
+        operator_ai_disabled = EXCLUDED.operator_ai_disabled,
         updated_at = NOW()
       RETURNING ${sql.raw(BUDGET_FIELDS)}
     `)

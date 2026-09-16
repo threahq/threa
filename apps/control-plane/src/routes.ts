@@ -21,6 +21,7 @@ import { createWaitlistHandlers, type WaitlistService } from "./features/waitlis
 import { createBotConnectHandlers, type BotConnectService } from "./features/bot-connect"
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
 import { createFeatureFlagHandlers, type ControlPlaneFeatureFlagService } from "./features/feature-flags"
+import { createAISpendControlsHandlers, type AISpendControlsService } from "./features/ai-spend-controls"
 import {
   createBackofficeAuthzAdminHandlers,
   createInternalAuthzAdminHandlers,
@@ -47,6 +48,7 @@ interface Dependencies {
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
   featureFlagService: ControlPlaneFeatureFlagService
+  aiSpendControlsService: AISpendControlsService
   authLogService: AuthLogService
   internalApiKey: string
   allowDevAuthRoutes: boolean
@@ -70,6 +72,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     backofficeService,
     workosAuthzAdminService,
     featureFlagService,
+    aiSpendControlsService,
     authLogService,
     internalApiKey,
     allowDevAuthRoutes,
@@ -141,6 +144,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const integrationRoutes = createIntegrationRouteHandlers({ pool })
   const backoffice = createBackofficeHandlers({ backofficeService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
+  const aiSpendControls = createAISpendControlsHandlers({ aiSpendControlsService })
   const backofficeAuthz = createBackofficeAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const internalAuthz = createInternalAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const accounts = createAccountsHandlers({ accountsService })
@@ -246,6 +250,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/backoffice/outbox-events/status", auth, requirePlatformAdmin, backoffice.getOutboxEventsStatus)
   app.get("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.listWorkspaceFlags)
   app.put("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.setWorkspaceFlag)
+  app.get("/api/backoffice/workspaces/:id/ai-spend-controls", auth, requirePlatformAdmin, aiSpendControls.get)
+  app.put("/api/backoffice/workspaces/:id/ai-spend-controls", auth, requirePlatformAdmin, aiSpendControls.set)
   app.get("/api/backoffice/waitlist", auth, requirePlatformAdmin, backoffice.listWaitlist)
   app.get("/api/backoffice/workspaces/:id/invitations", auth, requirePlatformAdmin, backoffice.listWorkspaceInvitations)
   app.get(

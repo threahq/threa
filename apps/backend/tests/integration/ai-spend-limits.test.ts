@@ -172,4 +172,68 @@ describe("AI spend limit endpoints", () => {
       restored: { allowed: true },
     })
   })
+
+  test("should create a budget row with admin defaults when the operator sync arrives first", async () => {
+    const { workspaceId: ws } = await seedWorkspace()
+    const admit = () => gate.admit({ workspaceId: ws, functionId: "message-embedding" })
+
+    const before = await admit()
+    const sync = await call(
+      handlers.syncOperatorControls,
+      mockReq(ws, { body: { workspaceId: ws, operatorCeilingUsd: 12.5, operatorAiDisabled: true } })
+    )
+    const read = ((await call(handlers.getBudget, mockReq(ws))).body as { budget: unknown }).budget
+    const after = await admit()
+
+    expect({ before, status: sync.statusCode, read, after }).toEqual({
+      before: { allowed: true },
+      status: 204,
+      read: {
+        monthlyBudgetUsd: 50,
+        alertThreshold50: true,
+        alertThreshold80: true,
+        alertThreshold100: true,
+        aiDisabled: false,
+        defaultUserAgentAllowanceUsd: null,
+        operatorCeilingUsd: 12.5,
+        operatorAiDisabled: true,
+      },
+      after: { allowed: false, reason: "operator_disabled" },
+    })
+  })
+
+  test("should update only the operator columns when the budget row exists, idempotently", async () => {
+    const { workspaceId: ws } = await seedWorkspace()
+    await call(
+      handlers.updateBudget,
+      mockReq(ws, { body: { monthlyBudgetUsd: 20, aiDisabled: true, defaultUserAgentAllowanceUsd: 4 } })
+    )
+    const body = { workspaceId: ws, operatorCeilingUsd: 500, operatorAiDisabled: false }
+
+    await call(handlers.syncOperatorControls, mockReq(ws, { body }))
+    await call(handlers.syncOperatorControls, mockReq(ws, { body }))
+    const read = ((await call(handlers.getBudget, mockReq(ws))).body as { budget: unknown }).budget
+
+    expect(read).toEqual({
+      monthlyBudgetUsd: 20,
+      alertThreshold50: true,
+      alertThreshold80: true,
+      alertThreshold100: true,
+      aiDisabled: true,
+      defaultUserAgentAllowanceUsd: 4,
+      operatorCeilingUsd: 500,
+      operatorAiDisabled: false,
+    })
+  })
+
+  test("should reject an operator sync carrying admin fields", async () => {
+    const { workspaceId: ws } = await seedWorkspace()
+
+    await expect(
+      call(
+        handlers.syncOperatorControls,
+        mockReq(ws, { body: { workspaceId: ws, operatorCeilingUsd: 1, operatorAiDisabled: false, aiDisabled: true } })
+      )
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+  })
 })
