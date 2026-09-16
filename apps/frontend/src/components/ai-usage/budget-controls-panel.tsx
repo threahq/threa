@@ -1,5 +1,5 @@
 import { useCallback } from "react"
-import { Bell, Shield } from "lucide-react"
+import { Bell } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -20,9 +20,6 @@ export function BudgetControlsPanel({
   localBudget,
   onBudgetChange,
   onBudgetCommit,
-  localHardLimit,
-  onHardLimitChange,
-  onHardLimitCommit,
   isLoading,
 }: {
   workspaceId: string
@@ -31,9 +28,6 @@ export function BudgetControlsPanel({
     alertThreshold50: boolean
     alertThreshold80: boolean
     alertThreshold100: boolean
-    degradationEnabled: boolean
-    hardLimitEnabled: boolean
-    hardLimitPercent: number
   } | null
   nextReset: string
   /**
@@ -45,9 +39,6 @@ export function BudgetControlsPanel({
   localBudget: string
   onBudgetChange: (v: string) => void
   onBudgetCommit: () => void
-  localHardLimit: string
-  onHardLimitChange: (v: string) => void
-  onHardLimitCommit: () => void
   isLoading: boolean
 }) {
   const updateBudget = useUpdateAIBudget(workspaceId, reportingTimezone)
@@ -114,7 +105,7 @@ export function BudgetControlsPanel({
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            Resets {resetDateStr} · currently {formatCurrency(metrics.totalCost)} of{" "}
+            Hard monthly limit · resets {resetDateStr} · currently {formatCurrency(metrics.totalCost)} of{" "}
             {formatCurrency(metrics.budgetAmount, 0)} used
           </p>
         </div>
@@ -183,87 +174,6 @@ export function BudgetControlsPanel({
                 </div>
               )
             })}
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Automatic guardrails
-            </h4>
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-start justify-between gap-3 rounded-md border border-border/60 p-3">
-              <Label htmlFor="degradation" className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="text-sm font-medium">Downgrade models at 80%</span>
-                <span className="text-xs font-normal text-muted-foreground">
-                  Kicks in at{" "}
-                  <span className="font-medium tabular-nums text-foreground">
-                    {formatCurrency(metrics.budgetAmount * 0.8, 0)}
-                  </span>{" "}
-                  · switches to cheaper models automatically
-                </span>
-              </Label>
-              <Switch
-                id="degradation"
-                checked={budget?.degradationEnabled ?? true}
-                onCheckedChange={(checked) => handleUpdate({ degradationEnabled: checked })}
-              />
-            </div>
-
-            <div
-              className={cn(
-                "space-y-3 rounded-md border border-border/60 p-3",
-                budget?.hardLimitEnabled && "border-red-500/30 bg-red-500/[0.03]"
-              )}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <Label htmlFor="hard-limit" className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-sm font-medium">Hard stop</span>
-                  <span className="text-xs font-normal text-muted-foreground">
-                    Block non-essential AI features once usage crosses the limit below.
-                  </span>
-                </Label>
-                <Switch
-                  id="hard-limit"
-                  checked={budget?.hardLimitEnabled ?? false}
-                  onCheckedChange={(checked) => handleUpdate({ hardLimitEnabled: checked })}
-                />
-              </div>
-              {budget?.hardLimitEnabled && (
-                <div className="flex items-end justify-between gap-4 border-t border-border/60 pt-3">
-                  <div className="space-y-1">
-                    <Label
-                      htmlFor="hard-limit-percent"
-                      className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-                    >
-                      Cap at
-                    </Label>
-                    <div className="flex items-baseline gap-1">
-                      <Input
-                        id="hard-limit-percent"
-                        type="number"
-                        min="100"
-                        max="500"
-                        step="10"
-                        value={localHardLimit}
-                        onChange={(e) => onHardLimitChange(e.target.value)}
-                        onBlur={onHardLimitCommit}
-                        className="h-auto w-16 rounded-none border-0 border-b border-border bg-transparent px-0 text-lg font-semibold tabular-nums shadow-none focus-visible:border-primary focus-visible:ring-0"
-                      />
-                      <span className="text-lg text-muted-foreground">%</span>
-                    </div>
-                  </div>
-                  <div className="text-right text-xs text-muted-foreground">
-                    <div>Blocks at</div>
-                    <div className="font-semibold tabular-nums text-foreground">
-                      {formatCurrency(metrics.budgetAmount * (parseInt(localHardLimit || "100", 10) / 100), 0)}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       </CardContent>

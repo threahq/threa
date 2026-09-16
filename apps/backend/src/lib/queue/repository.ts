@@ -75,6 +75,13 @@ export interface FailParams {
   now: Date
 }
 
+export interface DeferParams {
+  messageId: string
+  claimedBy: string
+  reason: string
+  processAfter: Date
+}
+
 export interface FailDlqParams {
   messageId: string
   claimedBy: string
@@ -350,6 +357,31 @@ export const QueueRepository = {
 
     if ((result.rowCount ?? 0) === 0) {
       throw new Error(`Failed to record failure for message ${params.messageId}: not found or wrong claimedBy`)
+    }
+  },
+
+  /**
+   * Release the claim and run again later without spending a retry: the work did
+   * not fail, it was not allowed to start yet.
+   */
+  async defer(db: Querier, params: DeferParams): Promise<void> {
+    const result = await db.query(
+      sql`
+        UPDATE queue_messages
+        SET
+          last_error = ${params.reason},
+          process_after = ${params.processAfter},
+          claimed_by = NULL,
+          claimed_until = NULL
+        WHERE id = ${params.messageId}
+          AND claimed_by = ${params.claimedBy}
+          AND completed_at IS NULL
+          AND dlq_at IS NULL
+      `
+    )
+
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error(`Failed to defer message ${params.messageId}: not found or wrong claimedBy`)
     }
   },
 

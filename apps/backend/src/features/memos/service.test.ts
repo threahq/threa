@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import type { Conversation } from "../conversations"
 import type { Message } from "../messaging"
 import { MemoService } from "./service"
@@ -1218,6 +1219,25 @@ describe("MemoService.processBatch — re-classification change gate", () => {
     expect(recordFingerprints.mock.calls[0]?.[1]).toEqual([
       { id: "pend_1", fingerprint: expect.any(String) as unknown as string },
     ])
+  })
+
+  it("should leave the item pending and unfingerprinted when a spend limit denies classification", async () => {
+    const { service, classifyConversation, recordFingerprints } = setupService({ memoContents: [memoContent] })
+    classifyConversation.mockImplementation(async () => {
+      throw new AISpendDeniedError(
+        { workspaceId: WORKSPACE_ID, functionId: "memo-classify-conversation" },
+        "workspace_limit"
+      )
+    })
+    const markProcessed = spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect({
+      result,
+      fingerprints: recordFingerprints.mock.calls[0]?.[1],
+      markProcessedCalls: markProcessed.mock.calls.length,
+    }).toEqual({ result: { processed: 0, memosCreated: 0 }, fingerprints: [], markProcessedCalls: 0 })
   })
 
   it("skips the AI call when the conversation is unchanged since that pass", async () => {

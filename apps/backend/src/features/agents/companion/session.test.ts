@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { APICallError } from "ai"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { HttpError } from "@threahq/backend-common"
 import * as dbModule from "../../../db"
 import { OutboxRepository } from "../../../lib/outbox"
@@ -282,6 +283,22 @@ describe("withCompanionSession", () => {
       expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:failed", expect.anything())
     }
   )
+
+  it("should fail terminally without a queue retry when a spend limit denies the call", async () => {
+    const denial = new AISpendDeniedError(
+      { workspaceId: "ws_1", userId: "usr_1", functionId: "companion-response" },
+      "workspace_limit"
+    )
+    const { result, insertEventSpy } = await runFailingSession({ attempt: 0, maxAttempts: 5 }, denial)
+
+    expect({
+      result,
+      eventTypes: insertEventSpy.mock.calls.map(([, event]) => event.eventType),
+    }).toEqual({
+      result: { status: "failed", sessionId: "session_1", willRetry: false, retryable: false },
+      eventTypes: ["agent_session:started", "agent_session:failed"],
+    })
+  })
 
   it("emits terminal agent_session:failed on the last attempt", async () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 4, maxAttempts: 5 })

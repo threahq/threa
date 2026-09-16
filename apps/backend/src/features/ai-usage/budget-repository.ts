@@ -1,5 +1,9 @@
 import { sql, type Querier } from "../../db"
 
+/** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
+const DEFAULT_MONTHLY_BUDGET_USD = 50
+const DEFAULT_OPERATOR_CEILING_USD = 50
+
 interface AIBudgetRow {
   id: string
   workspace_id: string
@@ -7,9 +11,6 @@ interface AIBudgetRow {
   alert_threshold_50: boolean
   alert_threshold_80: boolean
   alert_threshold_100: boolean
-  degradation_enabled: boolean
-  hard_limit_enabled: boolean
-  hard_limit_percent: number
   created_at: Date
   updated_at: Date
 }
@@ -40,9 +41,6 @@ export interface AIBudget {
   alertThreshold50: boolean
   alertThreshold80: boolean
   alertThreshold100: boolean
-  degradationEnabled: boolean
-  hardLimitEnabled: boolean
-  hardLimitPercent: number
   createdAt: Date
   updatedAt: Date
 }
@@ -73,19 +71,30 @@ export interface UpsertAIBudgetParams {
   alertThreshold50?: boolean
   alertThreshold80?: boolean
   alertThreshold100?: boolean
-  degradationEnabled?: boolean
-  hardLimitEnabled?: boolean
-  hardLimitPercent?: number
 }
 
-export interface UpdateAIBudgetParams {
-  monthlyBudgetUsd?: number
-  alertThreshold50?: boolean
-  alertThreshold80?: boolean
-  alertThreshold100?: boolean
-  degradationEnabled?: boolean
-  hardLimitEnabled?: boolean
-  hardLimitPercent?: number
+export interface SpendPosition {
+  monthlyBudgetUsd: number
+  operatorCeilingUsd: number
+  workspaceAiDisabled: boolean
+  operatorAiDisabled: boolean
+  workspaceSpendUsd: number
+  /** Null when the request carries no user. */
+  user: {
+    aiDisabled: boolean
+    monthlyQuotaUsd: number | null
+    agentAllowanceUsd: number | null
+    spendUsd: number
+    agentSpendUsd: number
+  } | null
+}
+
+export interface FindSpendPositionParams {
+  workspaceId: string
+  userId?: string
+  periodStart: Date
+  periodEnd: Date
+  agentFunctionIds: string[]
 }
 
 export interface UpsertAIUserQuotaParams {
@@ -104,6 +113,10 @@ export interface InsertAIAlertParams {
   periodStart: Date
 }
 
+function parseNullableUsd(value: string | null): number | null {
+  return value === null ? null : parseFloat(value)
+}
+
 function mapRowToBudget(row: AIBudgetRow): AIBudget {
   return {
     id: row.id,
@@ -112,9 +125,6 @@ function mapRowToBudget(row: AIBudgetRow): AIBudget {
     alertThreshold50: row.alert_threshold_50,
     alertThreshold80: row.alert_threshold_80,
     alertThreshold100: row.alert_threshold_100,
-    degradationEnabled: row.degradation_enabled,
-    hardLimitEnabled: row.hard_limit_enabled,
-    hardLimitPercent: row.hard_limit_percent,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -125,7 +135,7 @@ function mapRowToQuota(row: AIUserQuotaRow): AIUserQuota {
     id: row.id,
     workspaceId: row.workspace_id,
     userId: row.user_id,
-    monthlyQuotaUsd: row.monthly_quota_usd ? parseFloat(row.monthly_quota_usd) : null,
+    monthlyQuotaUsd: parseNullableUsd(row.monthly_quota_usd),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -146,7 +156,6 @@ function mapRowToAlert(row: AIAlertRow): AIAlert {
 const BUDGET_FIELDS = `
   id, workspace_id, monthly_budget_usd,
   alert_threshold_50, alert_threshold_80, alert_threshold_100,
-  degradation_enabled, hard_limit_enabled, hard_limit_percent,
   created_at, updated_at
 `
 
@@ -163,38 +172,6 @@ export const AIBudgetRepository = {
     return mapRowToBudget(result.rows[0])
   },
 
-  async upsert(db: Querier, params: UpsertAIBudgetParams): Promise<AIBudget> {
-    const result = await db.query<AIBudgetRow>(sql`
-      INSERT INTO ai_budgets (
-        id, workspace_id, monthly_budget_usd,
-        alert_threshold_50, alert_threshold_80, alert_threshold_100,
-        degradation_enabled, hard_limit_enabled, hard_limit_percent
-      )
-      VALUES (
-        ${params.id},
-        ${params.workspaceId},
-        ${params.monthlyBudgetUsd ?? 50.0},
-        ${params.alertThreshold50 ?? true},
-        ${params.alertThreshold80 ?? true},
-        ${params.alertThreshold100 ?? true},
-        ${params.degradationEnabled ?? true},
-        ${params.hardLimitEnabled ?? false},
-        ${params.hardLimitPercent ?? 150}
-      )
-      ON CONFLICT (workspace_id) DO UPDATE SET
-        monthly_budget_usd = EXCLUDED.monthly_budget_usd,
-        alert_threshold_50 = EXCLUDED.alert_threshold_50,
-        alert_threshold_80 = EXCLUDED.alert_threshold_80,
-        alert_threshold_100 = EXCLUDED.alert_threshold_100,
-        degradation_enabled = EXCLUDED.degradation_enabled,
-        hard_limit_enabled = EXCLUDED.hard_limit_enabled,
-        hard_limit_percent = EXCLUDED.hard_limit_percent,
-        updated_at = NOW()
-      RETURNING ${sql.raw(BUDGET_FIELDS)}
-    `)
-    return mapRowToBudget(result.rows[0])
-  },
-
   /**
    * Atomic upsert with partial update semantics: INSERT applies defaults for
    * unprovided fields, UPDATE preserves existing values for them. Avoids
@@ -205,92 +182,93 @@ export const AIBudgetRepository = {
     const alertThreshold50 = params.alertThreshold50 ?? null
     const alertThreshold80 = params.alertThreshold80 ?? null
     const alertThreshold100 = params.alertThreshold100 ?? null
-    const degradationEnabled = params.degradationEnabled ?? null
-    const hardLimitEnabled = params.hardLimitEnabled ?? null
-    const hardLimitPercent = params.hardLimitPercent ?? null
 
     const result = await db.query<AIBudgetRow>(sql`
       INSERT INTO ai_budgets (
         id, workspace_id, monthly_budget_usd,
-        alert_threshold_50, alert_threshold_80, alert_threshold_100,
-        degradation_enabled, hard_limit_enabled, hard_limit_percent
+        alert_threshold_50, alert_threshold_80, alert_threshold_100
       )
       VALUES (
         ${params.id},
         ${params.workspaceId},
-        COALESCE(${monthlyBudgetUsd}, 50.0),
+        COALESCE(${monthlyBudgetUsd}::numeric, ${DEFAULT_MONTHLY_BUDGET_USD}),
         COALESCE(${alertThreshold50}, true),
         COALESCE(${alertThreshold80}, true),
-        COALESCE(${alertThreshold100}, true),
-        COALESCE(${degradationEnabled}, true),
-        COALESCE(${hardLimitEnabled}, false),
-        COALESCE(${hardLimitPercent}, 150)
+        COALESCE(${alertThreshold100}, true)
       )
       ON CONFLICT (workspace_id) DO UPDATE SET
         monthly_budget_usd = COALESCE(${monthlyBudgetUsd}, ai_budgets.monthly_budget_usd),
         alert_threshold_50 = COALESCE(${alertThreshold50}, ai_budgets.alert_threshold_50),
         alert_threshold_80 = COALESCE(${alertThreshold80}, ai_budgets.alert_threshold_80),
         alert_threshold_100 = COALESCE(${alertThreshold100}, ai_budgets.alert_threshold_100),
-        degradation_enabled = COALESCE(${degradationEnabled}, ai_budgets.degradation_enabled),
-        hard_limit_enabled = COALESCE(${hardLimitEnabled}, ai_budgets.hard_limit_enabled),
-        hard_limit_percent = COALESCE(${hardLimitPercent}, ai_budgets.hard_limit_percent),
         updated_at = NOW()
       RETURNING ${sql.raw(BUDGET_FIELDS)}
     `)
     return mapRowToBudget(result.rows[0])
   },
 
-  async update(db: Querier, workspaceId: string, params: UpdateAIBudgetParams): Promise<AIBudget | null> {
-    const updates: string[] = []
-    const values: unknown[] = []
-    let paramIndex = 1
-
-    if (params.monthlyBudgetUsd !== undefined) {
-      updates.push(`monthly_budget_usd = $${paramIndex++}`)
-      values.push(params.monthlyBudgetUsd)
+  /** The limits and month-to-date spend a spend decision is made against, in one read. */
+  async findSpendPosition(db: Querier, params: FindSpendPositionParams): Promise<SpendPosition> {
+    const userId = params.userId ?? null
+    const result = await db.query<{
+      monthly_budget_usd: string
+      operator_ceiling_usd: string
+      workspace_ai_disabled: boolean
+      operator_ai_disabled: boolean
+      default_user_agent_allowance_usd: string | null
+      user_ai_disabled: boolean
+      monthly_quota_usd: string | null
+      agent_allowance_usd: string | null
+      workspace_spend_usd: string
+      user_spend_usd: string
+      user_agent_spend_usd: string
+    }>(sql`
+      SELECT
+        COALESCE(b.monthly_budget_usd, ${DEFAULT_MONTHLY_BUDGET_USD}) AS monthly_budget_usd,
+        COALESCE(b.operator_ceiling_usd, ${DEFAULT_OPERATOR_CEILING_USD}) AS operator_ceiling_usd,
+        COALESCE(b.ai_disabled, false) AS workspace_ai_disabled,
+        COALESCE(b.operator_ai_disabled, false) AS operator_ai_disabled,
+        b.default_user_agent_allowance_usd,
+        COALESCE(q.ai_disabled, false) AS user_ai_disabled,
+        q.monthly_quota_usd,
+        q.agent_allowance_usd,
+        spend.workspace_spend_usd,
+        spend.user_spend_usd,
+        spend.user_agent_spend_usd
+      FROM (
+        SELECT
+          COALESCE(SUM(cost_usd), 0) AS workspace_spend_usd,
+          COALESCE(SUM(cost_usd) FILTER (WHERE user_id = ${userId}), 0) AS user_spend_usd,
+          COALESCE(SUM(cost_usd) FILTER (
+            WHERE user_id = ${userId} AND function_id = ANY(${params.agentFunctionIds}::text[])
+          ), 0) AS user_agent_spend_usd
+        FROM ai_usage_records
+        WHERE workspace_id = ${params.workspaceId}
+          AND created_at >= ${params.periodStart}
+          AND created_at < ${params.periodEnd}
+      ) spend
+      LEFT JOIN ai_budgets b ON b.workspace_id = ${params.workspaceId}
+      LEFT JOIN ai_user_quotas q ON q.workspace_id = ${params.workspaceId} AND q.user_id = ${userId}
+    `)
+    const row = result.rows[0]
+    return {
+      monthlyBudgetUsd: parseFloat(row.monthly_budget_usd),
+      operatorCeilingUsd: parseFloat(row.operator_ceiling_usd),
+      workspaceAiDisabled: row.workspace_ai_disabled,
+      operatorAiDisabled: row.operator_ai_disabled,
+      workspaceSpendUsd: parseFloat(row.workspace_spend_usd),
+      user:
+        userId === null
+          ? null
+          : {
+              aiDisabled: row.user_ai_disabled,
+              monthlyQuotaUsd: parseNullableUsd(row.monthly_quota_usd),
+              agentAllowanceUsd:
+                parseNullableUsd(row.agent_allowance_usd) ?? parseNullableUsd(row.default_user_agent_allowance_usd),
+              spendUsd: parseFloat(row.user_spend_usd),
+              agentSpendUsd: parseFloat(row.user_agent_spend_usd),
+            },
     }
-    if (params.alertThreshold50 !== undefined) {
-      updates.push(`alert_threshold_50 = $${paramIndex++}`)
-      values.push(params.alertThreshold50)
-    }
-    if (params.alertThreshold80 !== undefined) {
-      updates.push(`alert_threshold_80 = $${paramIndex++}`)
-      values.push(params.alertThreshold80)
-    }
-    if (params.alertThreshold100 !== undefined) {
-      updates.push(`alert_threshold_100 = $${paramIndex++}`)
-      values.push(params.alertThreshold100)
-    }
-    if (params.degradationEnabled !== undefined) {
-      updates.push(`degradation_enabled = $${paramIndex++}`)
-      values.push(params.degradationEnabled)
-    }
-    if (params.hardLimitEnabled !== undefined) {
-      updates.push(`hard_limit_enabled = $${paramIndex++}`)
-      values.push(params.hardLimitEnabled)
-    }
-    if (params.hardLimitPercent !== undefined) {
-      updates.push(`hard_limit_percent = $${paramIndex++}`)
-      values.push(params.hardLimitPercent)
-    }
-
-    if (updates.length === 0) {
-      return this.findByWorkspace(db, workspaceId)
-    }
-
-    updates.push(`updated_at = NOW()`)
-    values.push(workspaceId)
-
-    const query = `
-      UPDATE ai_budgets
-      SET ${updates.join(", ")}
-      WHERE workspace_id = $${paramIndex}
-      RETURNING ${BUDGET_FIELDS}
-    `
-
-    const result = await db.query<AIBudgetRow>(query, values)
-    if (!result.rows[0]) return null
-    return mapRowToBudget(result.rows[0])
   },
 
   async findUserQuota(db: Querier, workspaceId: string, userId: string): Promise<AIUserQuota | null> {

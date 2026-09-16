@@ -15,9 +15,6 @@ const updateBudgetSchema = z.object({
   alertThreshold50: z.boolean().optional(),
   alertThreshold80: z.boolean().optional(),
   alertThreshold100: z.boolean().optional(),
-  degradationEnabled: z.boolean().optional(),
-  hardLimitEnabled: z.boolean().optional(),
-  hardLimitPercent: z.number().min(100).max(500).optional(),
 })
 
 interface Dependencies {
@@ -29,7 +26,7 @@ interface Dependencies {
 // is stored as timestamps, day/month lines are drawn at presentation).
 //
 // This lens governs what is *read*, never what is enforced: `nextReset` and
-// `budget-service.checkBudget` both resolve the workspace's `billingTimezone`
+// `AISpendGate` both resolve the workspace's `billingTimezone`
 // regardless of `tz`, so switching the dashboard to your device zone cannot move
 // the instant your budget rolls over.
 const timezoneQuerySchema = z.object({
@@ -130,9 +127,6 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
           alertThreshold50: budget.alertThreshold50,
           alertThreshold80: budget.alertThreshold80,
           alertThreshold100: budget.alertThreshold100,
-          degradationEnabled: budget.degradationEnabled,
-          hardLimitEnabled: budget.hardLimitEnabled,
-          hardLimitPercent: budget.hardLimitPercent,
         },
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,
@@ -171,9 +165,6 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
           alertThreshold50: budget.alertThreshold50,
           alertThreshold80: budget.alertThreshold80,
           alertThreshold100: budget.alertThreshold100,
-          degradationEnabled: budget.degradationEnabled,
-          hardLimitEnabled: budget.hardLimitEnabled,
-          hardLimitPercent: budget.hardLimitPercent,
         },
         currentUsage: usage,
         percentUsed: Math.round(percentUsed * 100) / 100,

@@ -2374,9 +2374,6 @@ export interface AIBudgetConfig {
   alertThreshold50: boolean
   alertThreshold80: boolean
   alertThreshold100: boolean
-  degradationEnabled: boolean
-  hardLimitEnabled: boolean
-  hardLimitPercent: number
 }
 
 export interface AIBudgetResponse {
@@ -2391,9 +2388,6 @@ export interface UpdateAIBudgetInput {
   alertThreshold50?: boolean
   alertThreshold80?: boolean
   alertThreshold100?: boolean
-  degradationEnabled?: boolean
-  hardLimitEnabled?: boolean
-  hardLimitPercent?: number
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { withTransaction, withClient, type Querier } from "../../db"
 import {
   assertStreamWritable,
@@ -525,6 +526,7 @@ export class MemoService implements MemoServiceLike {
               authorTimezone,
             })
           } catch (error) {
+            if (error instanceof AISpendDeniedError) throw error
             logger.error(
               { error, conversationId: conversation.id, workspaceId, streamId },
               "Saved-suggestion collection failed"
@@ -627,6 +629,14 @@ export class MemoService implements MemoServiceLike {
           "Conversation memos generated"
         )
       } catch (error) {
+        // Blocked by a spend limit: leave the item pending and unfingerprinted so
+        // it is asked again once spend allows, instead of being marked done.
+        if (error instanceof AISpendDeniedError) {
+          deferredItemIds.add(item.id)
+          const fingerprintIndex = classifiedFingerprints.findIndex((entry) => entry.id === item.id)
+          if (fingerprintIndex !== -1) classifiedFingerprints.splice(fingerprintIndex, 1)
+          continue
+        }
         itemsFailed++
         logger.error(
           { error, conversationId: item.itemId, workspaceId, streamId },

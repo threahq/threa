@@ -1,4 +1,5 @@
 import { APICallError } from "ai"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import type { Pool } from "pg"
 import type { AgentSessionRerunContext } from "@threahq/types"
 import { withTransaction, type Querier } from "../../../db"
@@ -276,7 +277,12 @@ export async function withCompanionSession(
     const errorCode =
       typeof err === "object" && err !== null && "code" in err && typeof err.code === "string" ? err.code : null
     const authorityDenial = errorCode === "STREAM_READ_ONLY" || errorCode === "STREAM_NOT_FOUND"
-    const retryable = !authorityDenial && !(APICallError.isInstance(err) && err.isRetryable === false)
+    // A spend limit holds until the month resets or an admin raises it, so a
+    // retry minutes later is denied the same way.
+    const retryable =
+      !authorityDenial &&
+      !(err instanceof AISpendDeniedError) &&
+      !(APICallError.isInstance(err) && err.isRetryable === false)
     const willRetry = retryable && attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
 
     await withTransaction(pool, async (db) => {

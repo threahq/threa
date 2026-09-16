@@ -81,7 +81,7 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
     return rows
   }, [metrics.daysTotal, metrics.daysElapsed, metrics.dailyAvg, metrics.totalCost])
 
-  const maxY = Math.max(metrics.budgetAmount * 1.25, metrics.projectedTotal * 1.12, metrics.hardLimitAmount ?? 0, 0.01)
+  const maxY = Math.max(metrics.budgetAmount * 1.25, metrics.projectedTotal * 1.12, 0.01)
 
   const config = useMemo<ChartConfig>(
     () => ({
@@ -133,16 +133,6 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
           focused={focused}
           onFocus={setFocused}
         />
-        {metrics.hardLimitAmount !== null && (
-          <ChartLegendItem
-            id="hardLimit"
-            label="Hard limit"
-            color="rgba(220, 38, 38, 0.45)"
-            kind="area"
-            focused={focused}
-            onFocus={setFocused}
-          />
-        )}
       </div>
 
       <ChartContainer config={config} className="aspect-auto h-[260px] w-full">
@@ -185,24 +175,12 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
           {/* Over-budget zone */}
           <ReferenceArea
             y1={metrics.budgetAmount}
-            y2={metrics.hardLimitAmount !== null ? metrics.hardLimitAmount : maxY}
+            y2={maxY}
             fill="#d97706"
             fillOpacity={0.09 * dim("overBudget")}
             stroke="none"
             ifOverflow="visible"
           />
-
-          {/* Above-hard-limit zone */}
-          {metrics.hardLimitAmount !== null && (
-            <ReferenceArea
-              y1={metrics.hardLimitAmount}
-              y2={maxY}
-              fill="#dc2626"
-              fillOpacity={0.11 * dim("hardLimit")}
-              stroke="none"
-              ifOverflow="visible"
-            />
-          )}
 
           {/* Budget reference line */}
           <ReferenceLine
@@ -211,17 +189,6 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
             strokeOpacity={0.5 * dim("budget")}
             strokeWidth={1}
           />
-
-          {/* Hard limit reference line */}
-          {metrics.hardLimitAmount !== null && (
-            <ReferenceLine
-              y={metrics.hardLimitAmount}
-              stroke="#dc2626"
-              strokeOpacity={0.55 * dim("hardLimit")}
-              strokeWidth={1}
-              strokeDasharray="2 3"
-            />
-          )}
 
           {/* Today vertical marker */}
           <ReferenceLine x={metrics.daysElapsed} stroke="currentColor" strokeOpacity={0.3} strokeDasharray="1 3" />

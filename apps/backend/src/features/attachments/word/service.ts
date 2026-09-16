@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import type { TextSizeTier, InjectionStrategy, TextSection, WordMetadata } from "@threahq/types"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
-import type { AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, type AI } from "@threahq/agent-runtime"
 import { TextSizeTiers, InjectionStrategies } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { processAttachment, type ExtractionData } from "../process-attachment"
@@ -206,6 +206,7 @@ export class WordProcessingService implements WordProcessingServiceLike {
 
         captions.push(result.value.caption)
       } catch (error) {
+        if (error instanceof AISpendDeniedError) throw error
         logger.warn({ error, imageIndex: image.index }, "Failed to caption embedded image")
         captions.push("Unable to process")
       }

@@ -6,7 +6,7 @@
  * - Automatic repair for generateObject
  * - Unified `{ value, response }` return type
  * - Extended model ID parsing (extracts modelProvider)
- * - LangChain integration for LangGraph
+ * - Spend admission before every provider call
  */
 
 import {
@@ -18,15 +18,8 @@ import {
 import type { Embedding, LanguageModel, EmbeddingModel, ModelMessage, Tool } from "ai"
 import type { z } from "zod"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
-import { ChatOpenAI } from "@langchain/openai"
 import { stripMarkdownFences } from "./text-utils"
-import { CostTracker } from "./openrouter-cost-interceptor"
 import { logger } from "../logger"
-
-export { CostTracker, type CapturedUsage } from "./openrouter-cost-interceptor"
-export { getCostTrackingCallbacks, CostTrackingCallback } from "./cost-tracking-callback"
-
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 export interface ParsedModel {
   /** The provider (e.g., "openrouter", "anthropic") */
@@ -83,8 +76,8 @@ export interface AIConfig {
   }
   /** When provided, usage will be recorded after each AI call (requires context in options) */
   costRecorder?: CostRecorder
-  /** When provided, model degradation and hard-stop policies are enforced before AI calls */
-  budgetEnforcer?: BudgetEnforcer
+  /** When provided, every call carrying a context is admitted or denied before it reaches the provider */
+  spendGate?: SpendGate
   /** When provided, a `disclose` access-log row is emitted for each AI call (design §7.3) */
   accessLogSink?: AccessLogSink
 }
@@ -110,44 +103,39 @@ export interface CostContext {
   origin?: AIOrigin
 }
 
-export interface BudgetStatus {
-  allowed: boolean
-  reason?: "within_budget" | "soft_limit" | "hard_limit"
-  currentUsageUsd: number
-  budgetUsd: number
-  percentUsed: number
-  recommendedModel?: string
+export type AISpendDenialReason =
+  | "operator_disabled"
+  | "workspace_disabled"
+  | "workspace_limit"
+  | "user_disabled"
+  | "user_agent_allowance"
+  | "user_limit"
+
+export type SpendDecision = { allowed: true } | { allowed: false; reason: AISpendDenialReason }
+
+export interface SpendAdmissionRequest {
+  workspaceId: string
+  userId?: string
+  functionId: string
 }
 
-export interface BudgetEnforcer {
-  checkBudget(workspaceId: string, requestedModel?: string): Promise<BudgetStatus>
+export interface SpendGate {
+  admit(request: SpendAdmissionRequest): Promise<SpendDecision>
 }
 
-export class AIBudgetExceededError extends Error {
+export class AISpendDeniedError extends Error {
   readonly workspaceId: string
-  readonly model: string
-  readonly percentUsed: number
-  readonly currentUsageUsd: number
-  readonly budgetUsd: number
-  readonly reason: "hard_limit"
+  readonly userId: string | undefined
+  readonly functionId: string
+  readonly reason: AISpendDenialReason
 
-  constructor(params: {
-    workspaceId: string
-    model: string
-    percentUsed: number
-    currentUsageUsd: number
-    budgetUsd: number
-  }) {
-    super(
-      `AI budget hard limit reached for workspace ${params.workspaceId}. Requested model "${params.model}" is blocked.`
-    )
-    this.name = "AIBudgetExceededError"
-    this.workspaceId = params.workspaceId
-    this.model = params.model
-    this.percentUsed = params.percentUsed
-    this.currentUsageUsd = params.currentUsageUsd
-    this.budgetUsd = params.budgetUsd
-    this.reason = "hard_limit"
+  constructor(request: SpendAdmissionRequest, reason: AISpendDenialReason) {
+    super(`AI call "${request.functionId}" denied for workspace ${request.workspaceId}: ${reason}`)
+    this.name = "AISpendDeniedError"
+    this.workspaceId = request.workspaceId
+    this.userId = request.userId
+    this.functionId = request.functionId
+    this.reason = reason
   }
 }
 
@@ -362,12 +350,6 @@ export interface ManyEmbedResult {
 
 export type RepairFunction = (args: { text: string }) => Promise<string> | string
 
-export interface LangChainModelResult {
-  model: ChatOpenAI
-  effectiveModel: string
-  budgetMetadata: Record<string, string | number | boolean>
-}
-
 export interface AI {
   // Generation
   generateText(options: GenerateTextOptions): Promise<TextResult>
@@ -381,25 +363,9 @@ export interface AI {
   // Model access (for advanced use cases)
   getLanguageModel(modelString: string): LanguageModel
   getEmbeddingModel(modelString: string): EmbeddingModel
-  getLangChainModel(modelString: string, context?: CostContext): Promise<LangChainModelResult>
-
-  // Cost tracking for LangChain/LangGraph calls
-  /** CostTracker instance for this AI wrapper - use with getCostTrackingCallbacks */
-  costTracker: CostTracker
 
   // Parsing
   parseModel(modelString: string): ParsedModel
-}
-
-interface BudgetPolicyDecision {
-  requestedModel: string
-  effectiveModel: string
-  reason: "within_budget" | "soft_limit" | "not_checked"
-  policyChecked: boolean
-  modelDegraded: boolean
-  currentUsageUsd?: number
-  budgetUsd?: number
-  percentUsed?: number
 }
 
 /**
@@ -631,15 +597,7 @@ export function createAI(config: AIConfig): AI {
     openrouter: config.openrouter ? createOpenRouter({ apiKey: config.openrouter.apiKey }) : null,
   }
 
-  // Store API keys for LangChain (needs raw key, not provider instance)
-  const apiKeys = {
-    openrouter: config.openrouter?.apiKey ?? null,
-  }
-
   const defaultRepair = config.defaults?.repair ?? stripMarkdownFences
-
-  // Used for LangChain/LangGraph calls via getCostTrackingCallbacks.
-  const costTracker = new CostTracker()
 
   function getLanguageModel(modelString: string): LanguageModel {
     const { provider, modelId } = parseModelId(modelString)
@@ -673,189 +631,17 @@ export function createAI(config: AIConfig): AI {
     }
   }
 
-  // Create cost-capturing fetch from our CostTracker instance
-  const costCapturingFetch = costTracker.createInterceptingFetch()
-
-  async function resolveBudgetPolicy(params: {
-    modelString: string
-    context?: CostContext
-    functionId: string
-  }): Promise<BudgetPolicyDecision> {
-    if (!config.budgetEnforcer || !params.context?.workspaceId) {
-      return {
-        requestedModel: params.modelString,
-        effectiveModel: params.modelString,
-        reason: "not_checked",
-        policyChecked: false,
-        modelDegraded: false,
-      }
-    }
-
-    const status = await config.budgetEnforcer.checkBudget(params.context.workspaceId, params.modelString)
-
-    if (!status.allowed && status.reason === "hard_limit") {
-      logger.warn(
-        {
-          workspaceId: params.context.workspaceId,
-          functionId: params.functionId,
-          requestedModel: params.modelString,
-          currentUsageUsd: status.currentUsageUsd,
-          budgetUsd: status.budgetUsd,
-          percentUsed: status.percentUsed,
-        },
-        "Blocking AI call due to workspace hard budget limit"
-      )
-
-      throw new AIBudgetExceededError({
-        workspaceId: params.context.workspaceId,
-        model: params.modelString,
-        percentUsed: status.percentUsed,
-        currentUsageUsd: status.currentUsageUsd,
-        budgetUsd: status.budgetUsd,
-      })
-    }
-
-    if (status.reason === "soft_limit" && status.recommendedModel && status.recommendedModel !== params.modelString) {
-      logger.info(
-        {
-          workspaceId: params.context.workspaceId,
-          functionId: params.functionId,
-          requestedModel: params.modelString,
-          recommendedModel: status.recommendedModel,
-          percentUsed: status.percentUsed,
-        },
-        "Applying budget-based model degradation before AI call"
-      )
-      return {
-        requestedModel: params.modelString,
-        effectiveModel: status.recommendedModel,
-        reason: "soft_limit",
-        policyChecked: true,
-        modelDegraded: true,
-        currentUsageUsd: status.currentUsageUsd,
-        budgetUsd: status.budgetUsd,
-        percentUsed: status.percentUsed,
-      }
-    }
-
-    return {
-      requestedModel: params.modelString,
-      effectiveModel: params.modelString,
-      reason: "within_budget",
-      policyChecked: true,
-      modelDegraded: false,
-      currentUsageUsd: status.currentUsageUsd,
-      budgetUsd: status.budgetUsd,
-      percentUsed: status.percentUsed,
-    }
-  }
-
-  function buildBudgetTelemetryMetadata(
-    decision: BudgetPolicyDecision
-  ): Record<string, string | number | boolean | undefined> {
-    return {
-      budget_policy_checked: decision.policyChecked,
-      budget_policy_reason: decision.reason,
-      budget_model_requested: decision.requestedModel,
-      budget_model_effective: decision.effectiveModel,
-      budget_model_degraded: decision.modelDegraded,
-      budget_percent_used: decision.percentUsed,
-      budget_current_usage_usd: decision.currentUsageUsd,
-      budget_limit_usd: decision.budgetUsd,
-    }
-  }
-
-  function compactMetadata(
-    metadata: Record<string, string | number | boolean | undefined>
-  ): Record<string, string | number | boolean> {
-    const compact: Record<string, string | number | boolean> = {}
-    for (const [key, value] of Object.entries(metadata)) {
-      if (value !== undefined) {
-        compact[key] = value
-      }
-    }
-    return compact
-  }
-
-  function createBudgetAwareLangChainFetch(params: {
-    context?: CostContext
-    fallbackModelString: string
-  }): (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> {
-    return async (input, init) => {
-      let requestBodyObject: Record<string, unknown> | null = null
-      let requestedModelString = params.fallbackModelString
-
-      if (typeof init?.body === "string") {
-        try {
-          const parsed = JSON.parse(init.body)
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            requestBodyObject = parsed as Record<string, unknown>
-            const bodyModel = requestBodyObject.model
-            if (typeof bodyModel === "string" && bodyModel.length > 0) {
-              requestedModelString = bodyModel.includes(":") ? bodyModel : `openrouter:${bodyModel}`
-            }
-          }
-        } catch (error) {
-          logger.warn({ error }, "Failed to parse LangChain request body for budget enforcement")
-        }
-      }
-
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: requestedModelString,
-        context: params.context,
-        functionId: "langchain-model-invoke",
-      })
-
-      let nextInit = init
-      if (requestBodyObject && budgetDecision.effectiveModel !== requestedModelString) {
-        const { modelId: effectiveModelId } = parseModelId(budgetDecision.effectiveModel)
-        nextInit = {
-          ...init,
-          body: JSON.stringify({
-            ...requestBodyObject,
-            model: effectiveModelId,
-          }),
-        }
-      }
-
-      return costCapturingFetch(input, nextInit)
-    }
-  }
-
-  async function getLangChainModel(modelString: string, context?: CostContext): Promise<LangChainModelResult> {
-    const initialBudgetDecision = await resolveBudgetPolicy({
-      modelString,
-      context,
-      functionId: "langchain-model",
-    })
-
-    const { provider, modelId } = parseModelId(initialBudgetDecision.effectiveModel)
-
-    switch (provider) {
-      case "openrouter":
-        if (!apiKeys.openrouter) {
-          throw new Error("OpenRouter not configured. Set OPENROUTER_API_KEY or provide openrouter.apiKey in config.")
-        }
-        logger.debug({ provider, modelId, requestedModel: modelString }, "Creating LangChain model instance")
-        return {
-          model: new ChatOpenAI({
-            model: modelId,
-            apiKey: apiKeys.openrouter,
-            configuration: {
-              baseURL: OPENROUTER_BASE_URL,
-              // Intercept every request to enforce budget policy and capture usage
-              fetch: createBudgetAwareLangChainFetch({
-                context,
-                fallbackModelString: initialBudgetDecision.effectiveModel,
-              }),
-            },
-          }),
-          effectiveModel: initialBudgetDecision.effectiveModel,
-          budgetMetadata: compactMetadata(buildBudgetTelemetryMetadata(initialBudgetDecision)),
-        }
-      default:
-        throw new Error(`Unsupported LangChain provider: "${provider}". Currently supported: openrouter`)
-    }
+  /**
+   * Denies before the provider sees the request. Calls without a context carry
+   * no workspace to charge, so there is nothing to admit them against.
+   */
+  async function admit(context: CostContext | undefined, functionId: string): Promise<void> {
+    if (!config.spendGate || !context) return
+    const request = { workspaceId: context.workspaceId, userId: context.userId, functionId }
+    const decision = await config.spendGate.admit(request)
+    if (decision.allowed) return
+    logger.warn({ ...request, reason: decision.reason }, "AI call denied by spend limit")
+    throw new AISpendDeniedError(request, decision.reason)
   }
 
   // ai@7 removed built-in OpenTelemetry: TelemetryOptions carries no metadata.
@@ -952,21 +738,14 @@ export function createAI(config: AIConfig): AI {
     parseModel: parseModelId,
     getLanguageModel,
     getEmbeddingModel,
-    getLangChainModel,
-    costTracker,
 
     async generateText(options) {
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateText",
-      })
-      const effectiveModel = budgetDecision.effectiveModel
-      const model = getLanguageModel(effectiveModel)
+      await admit(options.context, options.telemetry?.functionId ?? "generateText")
+      const model = getLanguageModel(options.model)
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateText",
-        modelString: effectiveModel,
+        modelString: options.model,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
       const startedAt = Date.now()
@@ -988,15 +767,12 @@ export function createAI(config: AIConfig): AI {
       })
 
       const usage = extractUsageWithCost(response)
-      logger.debug(
-        { usage, requestedModel: options.model, model: effectiveModel },
-        "AI generateText completed with usage"
-      )
+      logger.debug({ usage, model: options.model }, "AI generateText completed with usage")
 
       await maybeRecordUsage({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateText",
-        modelString: effectiveModel,
+        modelString: options.model,
         usage,
         latencyMs: Date.now() - startedAt,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
@@ -1010,6 +786,7 @@ export function createAI(config: AIConfig): AI {
     },
 
     async generateTextWithTools(options: GenerateTextWithToolsOptions): Promise<GenerateTextWithToolsResult> {
+      await admit(options.context, options.telemetry?.functionId ?? "generateTextWithTools")
       // Disclose fires even without `modelString`: the egress happened, so a
       // provider/model `unknown` row beats silence. Cost recording below stays
       // gated on `modelString` (the recorder needs the parseable identifier).
@@ -1079,19 +856,14 @@ export function createAI(config: AIConfig): AI {
     },
 
     async generateObject<T extends z.ZodType>(options: GenerateObjectOptions<T>): Promise<ObjectResult<z.infer<T>>> {
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "generateObject",
-      })
-      const effectiveModel = budgetDecision.effectiveModel
-      const model = getLanguageModel(effectiveModel)
+      await admit(options.context, options.telemetry?.functionId ?? "generateObject")
+      const model = getLanguageModel(options.model)
       const repair = options.repair === false ? undefined : (options.repair ?? defaultRepair)
 
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateObject",
-        modelString: effectiveModel,
+        modelString: options.model,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
       const startedAt = Date.now()
@@ -1113,15 +885,12 @@ export function createAI(config: AIConfig): AI {
       })
 
       const usage = extractUsageWithCost(response)
-      logger.debug(
-        { usage, requestedModel: options.model, model: effectiveModel },
-        "AI generateObject completed with usage"
-      )
+      logger.debug({ usage, model: options.model }, "AI generateObject completed with usage")
 
       await maybeRecordUsage({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateObject",
-        modelString: effectiveModel,
+        modelString: options.model,
         usage,
         latencyMs: Date.now() - startedAt,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
@@ -1137,17 +906,12 @@ export function createAI(config: AIConfig): AI {
     },
 
     async embed(options) {
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embed",
-      })
-      const effectiveModel = budgetDecision.effectiveModel
-      const model = getEmbeddingModel(effectiveModel)
+      await admit(options.context, options.telemetry?.functionId ?? "embed")
+      const model = getEmbeddingModel(options.model)
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "embed",
-        modelString: effectiveModel,
+        modelString: options.model,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
       })
       const startedAt = Date.now()
@@ -1159,12 +923,12 @@ export function createAI(config: AIConfig): AI {
       })
 
       const usage = extractUsageWithCost(response)
-      logger.debug({ usage, requestedModel: options.model, model: effectiveModel }, "AI embed completed with usage")
+      logger.debug({ usage, model: options.model }, "AI embed completed with usage")
 
       await maybeRecordUsage({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "embed",
-        modelString: effectiveModel,
+        modelString: options.model,
         usage,
         latencyMs: Date.now() - startedAt,
         metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
@@ -1178,13 +942,8 @@ export function createAI(config: AIConfig): AI {
     },
 
     async embedMany(options) {
-      const budgetDecision = await resolveBudgetPolicy({
-        modelString: options.model,
-        context: options.context,
-        functionId: options.telemetry?.functionId ?? "embedMany",
-      })
-      const effectiveModel = budgetDecision.effectiveModel
-      const model = getEmbeddingModel(effectiveModel)
+      await admit(options.context, options.telemetry?.functionId ?? "embedMany")
+      const model = getEmbeddingModel(options.model)
       const embedManyMetadata = { ...options.telemetry?.metadata, count: options.values.length } as Record<
         string,
         unknown
@@ -1192,7 +951,7 @@ export function createAI(config: AIConfig): AI {
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "embedMany",
-        modelString: effectiveModel,
+        modelString: options.model,
         metadata: embedManyMetadata,
       })
       const startedAt = Date.now()
@@ -1204,15 +963,12 @@ export function createAI(config: AIConfig): AI {
       })
 
       const usage = extractUsageWithCost(response)
-      logger.debug(
-        { usage, requestedModel: options.model, model: effectiveModel, count: options.values.length },
-        "AI embedMany completed with usage"
-      )
+      logger.debug({ usage, model: options.model, count: options.values.length }, "AI embedMany completed with usage")
 
       await maybeRecordUsage({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "embedMany",
-        modelString: effectiveModel,
+        modelString: options.model,
         usage,
         latencyMs: Date.now() - startedAt,
         metadata: embedManyMetadata,

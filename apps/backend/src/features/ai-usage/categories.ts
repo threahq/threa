@@ -1,54 +1,72 @@
 import type { AIUsageByDay, AIUsageCategory } from "@threahq/types"
 import type { DayFunctionBreakdown } from "./usage-repository"
 
-export const FUNCTION_CATEGORY_MAP: Record<string, AIUsageCategory> = {
-  "memorize-conversation": "memory",
-  "revise-memo": "memory",
-  "memo-classify-conversation": "memory",
-  "memo-rerank": "memory",
-  "memo-explorer-query": "memory",
-  "memo-edit-embedding": "memory",
-  "memo-embedding": "memory",
-  "message-embedding": "memory",
+/**
+ * The order AI work stops in as a workspace approaches its limit: agents first,
+ * embeddings last, so search and memory keep working longest.
+ */
+export type AISpendStage = "agents" | "enrichment" | "core" | "embeddings"
 
-  "boundary-extraction": "conversation",
-  "conversation-split": "conversation",
+interface AIFunction {
+  category: AIUsageCategory
+  stage: AISpendStage
+}
 
-  "agent-loop": "agents",
-  "tool-guardian": "agents",
-  "turn-digest": "agents",
-  "agent-rerun-response-validation": "agents",
-  "summary-update": "agents",
-  "agent.episode-summary": "agents",
-  "context-bag.summarize": "agents",
-  "ws-plan": "agents",
-  "ws-eval": "agents",
-  "ws-memo-embed": "agents",
-  "ws-msg-embed": "agents",
-  "general-research-loop": "agents",
-  "enclave-agent-loop": "agents",
-  "langchain-model": "agents",
-  "langchain-model-invoke": "agents",
+/** Every `telemetry.functionId` a production AI call can carry. */
+export const AI_FUNCTIONS: Record<string, AIFunction> = {
+  "agent-loop": { category: "agents", stage: "agents" },
+  "companion-response": { category: "agents", stage: "agents" },
+  "general-research-loop": { category: "agents", stage: "agents" },
+  "enclave-agent-loop": { category: "agents", stage: "agents" },
+  "tool-guardian": { category: "agents", stage: "agents" },
+  "turn-digest": { category: "agents", stage: "agents" },
+  "summary-update": { category: "agents", stage: "agents" },
+  "agent.episode-summary": { category: "agents", stage: "agents" },
+  "agent-rerun-response-validation": { category: "agents", stage: "agents" },
+  "context-bag.summarize": { category: "agents", stage: "agents" },
+  "ws-plan": { category: "agents", stage: "agents" },
+  "ws-eval": { category: "agents", stage: "agents" },
+  "ws-memo-embed": { category: "agents", stage: "agents" },
+  "ws-msg-embed": { category: "agents", stage: "agents" },
 
-  "pdf-summary": "attachments",
-  "pdf-layout-extraction": "attachments",
-  "excel-summary": "attachments",
-  "word-summary": "attachments",
-  "word-image-caption": "attachments",
-  "text-summary": "attachments",
-  "image-caption": "attachments",
-  "attachment-summary-embedding": "attachments",
+  "image-caption": { category: "attachments", stage: "enrichment" },
+  "word-image-caption": { category: "attachments", stage: "enrichment" },
+  "pdf-summary": { category: "attachments", stage: "enrichment" },
+  "pdf-layout-extraction": { category: "attachments", stage: "enrichment" },
+  "word-summary": { category: "attachments", stage: "enrichment" },
+  "excel-summary": { category: "attachments", stage: "enrichment" },
+  "text-summary": { category: "attachments", stage: "enrichment" },
+  "search-expand": { category: "other", stage: "enrichment" },
+  "search-refine": { category: "other", stage: "enrichment" },
+  "search-rerank": { category: "other", stage: "enrichment" },
+  "memo-rerank": { category: "memory", stage: "enrichment" },
+  "dynamic-naming-evaluate": { category: "other", stage: "enrichment" },
+  "stream-naming": { category: "other", stage: "enrichment" },
+  "suggestion-extract": { category: "other", stage: "enrichment" },
 
-  "stream-naming": "other",
-  "search-query": "other",
-  "search-expand": "other",
-  "search-rerank": "other",
-  "voice-transcript-polish": "other",
-  "suggestion-extract": "other",
+  "boundary-extraction": { category: "conversation", stage: "core" },
+  "conversation-split": { category: "conversation", stage: "core" },
+  "memo-classify-conversation": { category: "memory", stage: "core" },
+  "memorize-conversation": { category: "memory", stage: "core" },
+  "revise-memo": { category: "memory", stage: "core" },
+  "voice-transcript-polish": { category: "other", stage: "core" },
+  "voice-transcript-boundary-scope": { category: "other", stage: "core" },
+
+  "message-embedding": { category: "memory", stage: "embeddings" },
+  "message-embedding-backfill": { category: "memory", stage: "embeddings" },
+  "memo-embedding": { category: "memory", stage: "embeddings" },
+  "memo-edit-embedding": { category: "memory", stage: "embeddings" },
+  "conversation-embedding": { category: "conversation", stage: "embeddings" },
+  "conversation-embedding-backfill": { category: "conversation", stage: "embeddings" },
+  "attachment-summary-embedding": { category: "attachments", stage: "embeddings" },
+  "search-query": { category: "other", stage: "embeddings" },
+  "memo-explorer-query": { category: "memory", stage: "embeddings" },
+  "embedding-single": { category: "memory", stage: "embeddings" },
+  "embedding-batch": { category: "memory", stage: "embeddings" },
 }
 
 export function categorizeFunction(functionId: string): AIUsageCategory {
-  return FUNCTION_CATEGORY_MAP[functionId] ?? "other"
+  return AI_FUNCTIONS[functionId]?.category ?? "other"
 }
 
 export function aggregateUsageByDay(rows: DayFunctionBreakdown[]): AIUsageByDay[] {

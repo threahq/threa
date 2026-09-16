@@ -13,6 +13,7 @@ import type {
 } from "../../src/lib/queue"
 import type { Querier } from "../../src/db"
 import { ProcessingStatuses, type ProcessingStatus } from "@threahq/types"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 
 const TEST_QUEUE = "test.dlq-hook" as JobQueueName
 const IMAGE_CAPTION_TEST_QUEUE = "test.image-caption.dlq-hook" as JobQueueName
@@ -382,6 +383,65 @@ describe("QueueManager", () => {
       } finally {
         await manager.stop()
       }
+    })
+  })
+
+  describe("AI spend denial", () => {
+    test("should defer a job denied by a spend limit without spending a retry", async () => {
+      const attempts: number[] = []
+      const deniedHandler: JobHandler<TestJobData> = async (job) => {
+        attempts.push(job.attempt)
+        throw new AISpendDeniedError({ workspaceId: "ws_test_spend", functionId: "image-caption" }, "workspace_limit")
+      }
+
+      const manager = new QueueManager({
+        pool,
+        queueRepository: QueueRepository,
+        tokenPoolRepository: TokenPoolRepository,
+        maxRetries: 1,
+        pollIntervalMs: 50,
+        lockDurationMs: 5000,
+      })
+      manager.registerHandler(TEST_QUEUE, deniedHandler as JobHandler<unknown>)
+
+      const now = new Date()
+      const messageId = `queue_test_spend_${Date.now()}`
+      await QueueRepository.insert(pool, {
+        id: messageId,
+        queueName: TEST_QUEUE,
+        workspaceId: "ws_test_spend",
+        payload: { workspaceId: "ws_test_spend", testValue: "spend" },
+        processAfter: now,
+        insertedAt: now,
+      })
+
+      manager.start()
+      try {
+        await waitForCondition(
+          async () => (await QueueRepository.getById(pool, messageId))?.lastError != null,
+          5000,
+          `Message ${messageId} was not deferred`
+        )
+      } finally {
+        await manager.stop()
+      }
+
+      const message = await QueueRepository.getById(pool, messageId)
+      expect({
+        attempts,
+        failedCount: message!.failedCount,
+        dlqAt: message!.dlqAt,
+        completedAt: message!.completedAt,
+        claimedBy: message!.claimedBy,
+        deferredAtLeast25Minutes: message!.processAfter!.getTime() - now.getTime() > 25 * 60 * 1000,
+      }).toEqual({
+        attempts: [0],
+        failedCount: 0,
+        dlqAt: null,
+        completedAt: null,
+        claimedBy: null,
+        deferredAtLeast25Minutes: true,
+      })
     })
   })
 
