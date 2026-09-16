@@ -502,6 +502,8 @@ export class BotRuntimeTransport {
             stepType: step.stepType,
             content: step.content,
             ...(step.clientStepId ? { clientStepId: step.clientStepId } : {}),
+            ...(step.phase ? { phase: step.phase } : {}),
+            ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
             ...(statusText ? { statusText } : {}),
           }),
         })

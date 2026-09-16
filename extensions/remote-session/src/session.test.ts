@@ -4931,3 +4931,40 @@ describe("RemoteSession.failTurn", () => {
     })
   })
 })
+
+describe("RemoteSession step lifecycle frames", () => {
+  test("forwards started and finishing tool frames with phase and durationMs intact", async () => {
+    const { client } = makeFakeClient()
+    const { transport, steps } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_tool" }))
+    const frames = [
+      { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", phase: "started" as const },
+      { stepType: "tool_call", content: "Read a.ts done", clientStepId: "step_a", durationMs: 1234 },
+    ]
+
+    await session.recordSteps("binv_tool", frames)
+
+    expect(steps).toEqual([{ invocationId: "binv_tool", frames }])
+    await session.shutdown()
+  })
+
+  test("records no forwarded thinking step when the runtime declares no note", async () => {
+    const { client } = makeFakeClient()
+    const { transport, steps } = makeFakeTransport()
+    const { forwardedNote: _forwardedNote, ...runtime } = RUNTIME
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime,
+      transport,
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (session as any).deliverTurn(makeInvocation({ id: "binv_quiet" }), "Do the thing")
+
+    expect(steps).toEqual([])
+    await session.shutdown()
+  })
+})

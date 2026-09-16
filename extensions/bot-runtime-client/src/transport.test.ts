@@ -96,6 +96,35 @@ describe("HTTP fallback (no socket connected)", () => {
     expect(calls[0]!.body!.clientStepId).not.toBe(calls[1]!.body!.clientStepId)
   })
 
+  it("carries phase and durationMs on the HTTP fallback body", async () => {
+    const calls = stubFetch(() => new Response(JSON.stringify({ data: {} }), { status: 200 }))
+    const transport = makeTransport()
+
+    await transport.recordSteps("binv_1", "tok_1", [
+      { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", phase: "started" },
+      { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", durationMs: 1234 },
+    ])
+
+    expect(calls.map((call) => call.body)).toEqual([
+      {
+        instanceId: "inst_42",
+        claimToken: "tok_1",
+        stepType: "tool_call",
+        content: "Read a.ts",
+        clientStepId: "step_a",
+        phase: "started",
+      },
+      {
+        instanceId: "inst_42",
+        claimToken: "tok_1",
+        stepType: "tool_call",
+        content: "Read a.ts",
+        clientStepId: "step_a",
+        durationMs: 1234,
+      },
+    ])
+  })
+
   it("renews over HTTP and reports notFound on a 404", async () => {
     const calls = stubFetch((req) =>
       req.url.includes("/renew") ? new Response(null, { status: 404 }) : new Response("{}", { status: 200 })
@@ -511,5 +540,38 @@ describe("the routed writes never reject (best-effort contract)", () => {
         acceptingInvocations: false,
       })
     ).resolves.toBeUndefined()
+  })
+})
+
+describe("WS steps", () => {
+  it("carries phase and durationMs on the socket payload", async () => {
+    const emitted: Array<{ event: string; payload: unknown }> = []
+    const socket = fakeSocket((event, payload, callback) => {
+      emitted.push({ event, payload })
+      callback(null, { ok: true })
+    })
+    const transport = makeTransport()
+    attachReadySocket(transport, socket)
+
+    await transport.recordSteps("binv_1", "tok_1", [
+      { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", phase: "started" },
+      { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", durationMs: 1234 },
+    ])
+
+    expect(emitted).toEqual([
+      {
+        event: "bot:invocation:steps",
+        payload: {
+          invocationId: "binv_1",
+          instanceId: "inst_42",
+          claimToken: "tok_1",
+          steps: [
+            { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", phase: "started" },
+            { stepType: "tool_call", content: "Read a.ts", clientStepId: "step_a", durationMs: 1234 },
+          ],
+        },
+      },
+    ])
+    transport.disconnect()
   })
 })
