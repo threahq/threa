@@ -72,10 +72,13 @@ turn still carries the pre-clear context; a thread first used after the `/clear`
 
 A mention of the bot outside the scratchpad, in a channel, a DM or one of their threads, is never forked from the
 scratchpad. It runs in a fresh conversation keyed by the stream it arrived on, so nothing from the scratchpad reaches
-that audience.
+that audience through the conversation.
 
-The memory scope (`X-Hermes-Session-Key`) is keyed by the turn's root stream. The scratchpad and its threads share
-long-term memory, and each channel or DM the bot is mentioned in gets its own.
+Conversation history stays per stream, but Hermes's built-in memory does not. Whatever the agent saves with its
+`memory` tool lands in `~/.hermes/memories/MEMORY.md` and `USER.md`, which load into every new session on the profile,
+channel mentions included. `X-Hermes-Session-Key` is keyed by the turn's root stream, and it only separates an
+external memory provider (`memory.provider`, such as Honcho) and the prompt cache. Run a separate Hermes profile if a
+channel audience must never see what the scratchpad saved.
 
 ## Attachments
 

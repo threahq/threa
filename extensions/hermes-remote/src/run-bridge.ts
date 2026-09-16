@@ -59,7 +59,7 @@ const MEDIA_LINE_RE = /^MEDIA:[ \t]*(.+)$/gm
 export interface HermesTurnRunnerOptions {
   client: HermesRunsClient
   session: BridgeSession
-  /** Long-term memory scope for a stream tree, keyed by the turn's root stream. */
+  /** X-Hermes-Session-Key for a stream tree, keyed by the turn's root stream. */
   sessionKeyFor(rootStreamId: string): string
   log?: (message: string) => void
   /** Injectable for tests; paces the status poll that replaces a lost event stream. */
