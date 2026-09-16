@@ -14,12 +14,9 @@ import {
   type DecisionResolvedEventPayload,
 } from "@threahq/types"
 import { BotInvocationRepository, BotRuntimeSessionLinkRepository } from "../bot-runtimes"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { checkStreamAccess, StreamEventRepository, StreamRepository } from "../streams"
-import {
-  DecisionRequestRepository,
-  serializeDecisionRequest,
-  type DecisionRequestRecord,
-} from "./repository"
+import { DecisionRequestRepository, serializeDecisionRequest, type DecisionRequestRecord } from "./repository"
 
 /**
  * The bot-side stream gate, satisfied by `BotChannelService` — injected as a
@@ -96,6 +93,13 @@ export class DecisionService {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
       const rootStreamId = stream.rootStreamId ?? stream.id
+
+      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, rootStreamId)) {
+        throw new HttpError("Decisions on an end-to-end encrypted stream are not supported yet", {
+          status: 400,
+          code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+        })
+      }
 
       const invocation = params.invocationId
         ? await BotInvocationRepository.findLiveClaimedForBot(client, {

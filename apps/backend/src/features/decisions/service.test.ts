@@ -5,6 +5,7 @@ import { DecisionService, type BotStreamAccessChecker } from "./service"
 import { DecisionRequestRepository, type DecisionRequestRecord } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotInvocationRepository, BotRuntimeSessionLinkRepository } from "../bot-runtimes"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import * as streamsModule from "../streams"
 import * as dbModule from "../../db"
@@ -40,6 +41,7 @@ function fakeDecision(overrides: Partial<DecisionRequestRecord> = {}): DecisionR
 
 function stubTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+  spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
 }
 
 function stubEventAppend() {
@@ -107,6 +109,24 @@ describe("DecisionService.request", () => {
       streamId: "stream_1",
       event: { id: "evt_1" },
     })
+  })
+
+  it("refuses a decision on an end-to-end encrypted stream", async () => {
+    stubTransaction()
+    stubRunningSession()
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+    const { insertEvent, insertOutbox } = stubEventAppend()
+
+    await expect(makeService().request(REQUEST_PARAMS)).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+    })
+    expect({
+      inserted: insert.mock.calls.length,
+      events: insertEvent.mock.calls.length,
+      outbox: insertOutbox.mock.calls.length,
+    }).toEqual({ inserted: 0, events: 0, outbox: 0 })
   })
 
   it("refuses a bot with no running session and no in-flight invocation", async () => {
@@ -291,9 +311,7 @@ describe("DecisionService.resolve", () => {
       resolution: { optionId: "no", decidedBy: "usr_2", decidedAt: NOW.toISOString() },
     })
     stubTransaction()
-    spyOn(DecisionRequestRepository, "findById")
-      .mockResolvedValueOnce(fakeDecision())
-      .mockResolvedValueOnce(winner)
+    spyOn(DecisionRequestRepository, "findById").mockResolvedValueOnce(fakeDecision()).mockResolvedValueOnce(winner)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ streamId: "stream_1" } as never)
     spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(null)
     stubEventAppend()
