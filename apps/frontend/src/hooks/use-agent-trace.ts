@@ -120,6 +120,8 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     (payload: StepStartedPayload) => {
       if (payload?.sessionId !== sessionId || !payload.step?.id) return
       setRealtimeSteps((prev) => {
+        // Start and finish can be emitted by different replicas and arrive finish-first.
+        if (prev.get(payload.step.id)?.completedAt) return prev
         const next = new Map(prev)
         next.set(payload.step.id, payload.step)
         return next
