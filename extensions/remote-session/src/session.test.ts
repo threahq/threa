@@ -1436,6 +1436,7 @@ describe("RemoteSession status snapshot", () => {
       socketConnected: false,
       inflightCount: 0,
       activeTurnStreamId: undefined,
+      inflightStreamIds: [],
       pendingDecisionCount: 0,
     })
 
@@ -4966,5 +4967,357 @@ describe("RemoteSession step lifecycle frames", () => {
 
     expect(steps).toEqual([])
     await session.shutdown()
+  })
+})
+
+describe("parallel turns across streams", () => {
+  const drain = (session: RemoteSession) => (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
+  const settle = async (predicate: () => boolean) => {
+    for (let i = 0; i < 50 && !predicate(); i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+
+  const message = (id: string, streamId: string, promptMarkdown = id) =>
+    makeInvocation({ id, responseStreamId: streamId, sourceMessageId: `src_${id}`, promptMarkdown })
+  const command = (id: string, streamId: string, name: string, args = "") =>
+    makeInvocation({
+      id,
+      responseStreamId: streamId,
+      sourceMessageId: `src_${id}`,
+      trigger: "session-control",
+      requiredCapability: "session-control",
+      promptMarkdown: `/${name} ${args}`.trim(),
+      metadata: { command: { executionKind: "bot-runtime", id: `cmd_${id}`, name, args } },
+    })
+
+  function makeParallelSession(
+    queue: ClaimedInvocation[],
+    options: { maxConcurrentTurns?: number; serverIgnoresExclusion?: boolean; steer?: boolean } = {}
+  ) {
+    const delivered: string[] = []
+    const claims: Array<Record<string, unknown>> = []
+    const interrupts: Array<string | undefined> = []
+    const steers: Array<{ text: string; streamId: string | undefined }> = []
+    const { client, calls } = makeFakeClient()
+    Object.assign(client as unknown as Record<string, unknown>, {
+      claim: async (body: Record<string, unknown>) => {
+        claims.push(body)
+        const scope = body.responseStreamId
+        const caps = (body.supportedCapabilities ?? []) as string[]
+        const exclude = options.serverIgnoresExclusion ? [] : ((body.excludeResponseStreamIds ?? []) as string[])
+        const index = queue.findIndex(
+          (item) =>
+            caps.includes(item.requiredCapability) &&
+            (!scope || item.responseStreamId === scope) &&
+            (item.trigger === "session-control" || !exclude.includes(item.responseStreamId))
+        )
+        return index === -1 ? null : queue.splice(index, 1)[0]
+      },
+    })
+    const fake = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: {
+        deliverTurn: async (turn) => {
+          delivered.push(turn.invocationId)
+        },
+        sessionControl: {
+          commands: ["stop", "steer"],
+          interrupt: (streamId) => {
+            interrupts.push(streamId)
+            return true
+          },
+          ...(options.steer
+            ? {
+                steer: (text: string, streamId?: string) => {
+                  steers.push({ text, streamId })
+                  return true
+                },
+              }
+            : {}),
+          runCommand: async () => ({ ok: true, message: "ok" }),
+        },
+      },
+      runtime: { ...RUNTIME, maxConcurrentTurns: options.maxConcurrentTurns ?? 2 },
+      transport: fake.transport,
+    })
+    const drainClaims = () =>
+      claims
+        .filter((body) => body.responseStreamId === undefined)
+        .map((body) => ({ caps: body.supportedCapabilities, exclude: body.excludeResponseStreamIds }))
+    return { session, queue, delivered, claims, drainClaims, interrupts, steers, calls, fake }
+  }
+
+  const FULL_CAPS = claimCapabilitiesFor(false, true)
+
+  test("rejects a maxConcurrentTurns that is not a positive integer", () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const build = (maxConcurrentTurns: number) => () =>
+      new RemoteSession({
+        config: makeConfig(),
+        client,
+        delegate: { deliverTurn: async () => {} },
+        runtime: { ...RUNTIME, maxConcurrentTurns },
+        transport,
+      })
+    expect(build(0)).toThrow("maxConcurrentTurns must be a positive integer")
+    expect(build(1.5)).toThrow("maxConcurrentTurns must be a positive integer")
+  })
+
+  test("the serial capability table is unchanged", () => {
+    expect([
+      claimCapabilitiesFor(false, true),
+      claimCapabilitiesFor(true, true),
+      claimCapabilitiesFor(true, false),
+    ]).toEqual([supportedCapabilitiesFor(true), ["session-control"], []])
+  })
+
+  test("messages in two streams are both claimed and delivered, the second claim excluding the first stream", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+
+    await drain(h.session)
+
+    expect({
+      delivered: h.delivered,
+      drainClaims: h.drainClaims(),
+      streams: h.session.statusSnapshot.inflightStreamIds,
+    }).toEqual({
+      delivered: ["binv_a", "binv_b"],
+      drainClaims: [
+        { caps: FULL_CAPS, exclude: undefined },
+        { caps: FULL_CAPS, exclude: ["stream_a"] },
+        { caps: ["session-control"], exclude: undefined },
+      ],
+      streams: ["stream_a", "stream_b"],
+    })
+  })
+
+  test("a second message in a running stream waits until that stream's turn settles", async () => {
+    const h = makeParallelSession([message("binv_a1", "stream_a")])
+    await drain(h.session)
+    h.queue.push(message("binv_a2", "stream_a"))
+
+    await drain(h.session)
+    const whileRunning = [...h.delivered]
+    await h.session.reply("binv_a1", "done")
+    await settle(() => h.delivered.length === 2)
+
+    expect({ whileRunning, delivered: h.delivered, exclusion: h.drainClaims()[2] }).toEqual({
+      whileRunning: ["binv_a1"],
+      delivered: ["binv_a1", "binv_a2"],
+      exclusion: { caps: FULL_CAPS, exclude: ["stream_a"] },
+    })
+  })
+
+  test("/stop in one stream stops only that stream and the drain continues for other streams", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], {
+      maxConcurrentTurns: 3,
+    })
+    await drain(h.session)
+    h.queue.push(
+      command("binv_stop", "stream_a", "stop"),
+      message("binv_a2", "stream_a"),
+      message("binv_c", "stream_c")
+    )
+
+    await drain(h.session)
+
+    expect({
+      interrupts: h.interrupts,
+      delivered: h.delivered,
+      pending: h.queue.map((item) => item.id),
+      completed: h.calls.complete.map((call) => call.id),
+      inflight: [h.session.isInflight("binv_a"), h.session.isInflight("binv_b")],
+    }).toEqual({
+      interrupts: ["stream_a"],
+      delivered: ["binv_a", "binv_b", "binv_c"],
+      pending: ["binv_a2"],
+      completed: ["binv_a", "binv_stop"],
+      inflight: [false, true],
+    })
+  })
+
+  test("/stop in a stream with no turn acks without interrupting", async () => {
+    const h = makeParallelSession([message("binv_b", "stream_b")])
+    await drain(h.session)
+    h.queue.push(command("binv_stop", "stream_a", "stop"))
+
+    await drain(h.session)
+
+    expect({
+      interrupts: h.interrupts,
+      ack: h.calls.complete.find((call) => call.id === "binv_stop")?.body.summary,
+      b: h.session.isInflight("binv_b"),
+    }).toEqual({
+      interrupts: [],
+      ack: "No turn is running in this stream.",
+      b: true,
+    })
+  })
+
+  test("/steer in one stream steers only that stream and sweeps only its queued messages", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], { steer: true })
+    await drain(h.session)
+    h.queue.push(
+      command("binv_steer", "stream_a", "steer", "go left"),
+      message("binv_b2", "stream_b", "b follow-up"),
+      message("binv_a2", "stream_a", "a follow-up")
+    )
+
+    await drain(h.session)
+
+    expect({
+      steers: h.steers,
+      steppedOn: [...new Set(h.fake.steps.filter((s) => s.frames[0]?.stepType === "steer").map((s) => s.invocationId))],
+      pending: h.queue.map((item) => item.id),
+      interrupts: h.interrupts,
+    }).toEqual({
+      steers: [{ text: buildSteerContent(["a follow-up", "go left"]), streamId: "stream_a" }],
+      steppedOn: ["binv_a"],
+      pending: ["binv_b2"],
+      interrupts: [],
+    })
+  })
+
+  test("at capacity claims only session control and goes busy; one settle restores full caps", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(h.session)
+    const busyPresence = h.fake.presence.at(-1)?.status
+
+    await h.session.reply("binv_a", "done")
+    await settle(() => h.drainClaims().length === 4)
+
+    expect({ busyPresence, afterSettle: h.drainClaims()[3], presence: h.fake.presence.at(-1)?.status }).toEqual({
+      busyPresence: "busy",
+      afterSettle: { caps: FULL_CAPS, exclude: ["stream_b"] },
+      presence: "available",
+    })
+  })
+
+  test("shutdown fails both in-flight turns; a gone host fails neither", async () => {
+    const ordinary = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(ordinary.session)
+    await ordinary.session.shutdown()
+    const gone = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(gone.session)
+    await gone.session.shutdown({ hostGone: true })
+
+    expect({
+      ordinary: ordinary.calls.fail.map((call) => [call.id, call.body.errorMessage]).sort(),
+      gone: gone.calls.fail,
+    }).toEqual({
+      ordinary: [
+        ["binv_a", "Test runtime shut down"],
+        ["binv_b", "Test runtime shut down"],
+      ],
+      gone: [],
+    })
+  })
+
+  test("a lost claim fences only its own stream's turn", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(h.session)
+
+    await h.fake.observations.get("binv_a")!.lose()
+
+    expect({
+      interrupts: h.interrupts,
+      inflight: [h.session.isInflight("binv_a"), h.session.isInflight("binv_b")],
+      renewals: [...h.fake.observations.keys()],
+    }).toEqual({ interrupts: ["stream_a"], inflight: [false, true], renewals: ["binv_a", "binv_b"] })
+  })
+
+  test("a server that ignores the exclusion gets the duplicate failed, never a second turn in the stream", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a")], { serverIgnoresExclusion: true })
+    await drain(h.session)
+    h.queue.push(message("binv_a2", "stream_a"))
+
+    await drain(h.session)
+
+    expect({
+      delivered: h.delivered,
+      failed: h.calls.fail.map((call) => [call.id, call.body.errorMessage]),
+    }).toEqual({
+      delivered: ["binv_a"],
+      failed: [["binv_a2", "Threa server ignored excludeResponseStreamIds; resend the message"]],
+    })
+  })
+
+  test("a pending decision keeps alive only its own stream's turn", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(h.session)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const internals = h.session as any
+    internals.pendingDecisions.set("dreq_b", {
+      decision: { id: "dreq_b", streamId: "stream_b" },
+      resolve: () => {},
+      reject: () => {},
+    })
+    const keepAlive = spyOn(h.session, "keepAlive")
+
+    internals.keepTurnAliveForDecisions()
+
+    expect(keepAlive.mock.calls).toEqual([["stream_b"]])
+    internals.pendingDecisions.clear()
+  })
+
+  test("requestDecision without a stream throws while several streams run", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(h.session)
+
+    await expect(
+      h.session.requestDecision({ title: "Allow?", options: [{ id: "allow", label: "Allow", tone: "primary" }] })
+    ).rejects.toThrow("pass streamId")
+  })
+
+  test("an input update on a running turn steers only that turn's stream", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], { steer: true })
+    await drain(h.session)
+    ;(h.session as unknown as { client: { listStreamMessages: () => Promise<unknown[]> } }).client.listStreamMessages =
+      async () => []
+
+    expect(await h.fake.observations.get("binv_a")!.update(plaintextUpdate({ promptMarkdown: "a edited" }))).toBe(
+      "applied"
+    )
+
+    expect(h.steers).toEqual([{ text: "a edited", streamId: "stream_a" }])
+  })
+
+  test("/steer in an idle stream at capacity acks without starting a turn past the cap", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], { steer: true })
+    await drain(h.session)
+    h.queue.push(command("binv_steer", "stream_c", "steer", "go left"))
+
+    await drain(h.session)
+
+    expect({
+      delivered: h.delivered,
+      interrupts: h.interrupts,
+      ack: h.calls.complete.find((call) => call.id === "binv_steer")?.body.summary,
+    }).toEqual({
+      delivered: ["binv_a", "binv_b"],
+      interrupts: [],
+      ack: "Every turn slot is busy; resend the steer when a turn finishes.",
+    })
+  })
+
+  test("requestDecision without a stream opens in the one running stream", async () => {
+    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    await drain(h.session)
+    await h.session.reply("binv_b", "done")
+    const opened: string[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = (h.session as any).client
+    client.requestDecision = async (streamId: string) => {
+      opened.push(streamId)
+      throw new Error("stop here")
+    }
+
+    await expect(
+      h.session.requestDecision({ title: "Allow?", options: [{ id: "allow", label: "Allow", tone: "primary" }] })
+    ).rejects.toThrow("stop here")
+
+    expect(opened).toEqual(["stream_a"])
   })
 })

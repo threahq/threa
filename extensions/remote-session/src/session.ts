@@ -130,16 +130,23 @@ export interface SessionControlActuator {
   spawnRuntimes?: readonly SpawnRuntimeInfo[]
   /** Which of them a `/spawn` naming no runtime lands on, so the picker offers its models first. */
   spawnDefaultRuntime?: string
-  /** Interrupt the runtime's current turn. False = control lost (e.g. pane gone). */
-  interrupt(): boolean
+  /**
+   * Interrupt the runtime's current turn. False = control lost (e.g. pane gone).
+   * The SDK always passes the stream the turn answers into; a serial runtime may
+   * ignore it, but a runtime declaring `maxConcurrentTurns > 1` must interrupt
+   * only that stream's turn.
+   */
+  interrupt(streamId?: string): boolean
   /**
    * Fold text into the RUNNING turn without interrupting it — the runtime's
    * native mid-turn steering (typing into Claude Code while it works). When
    * present and a turn is in flight, /steer steers in place: the running
    * invocation keeps its trace and its reply. Absent, /steer falls back to
-   * interrupt + redeliver. False = control lost.
+   * interrupt + redeliver. False = control lost. The SDK always passes the
+   * target stream; a serial runtime may ignore it, but a runtime declaring
+   * `maxConcurrentTurns > 1` must steer only that stream's turn.
    */
-  steer?(text: string): Promise<boolean> | boolean
+  steer?(text: string, streamId?: string): Promise<boolean> | boolean
   runCommand(
     name: string,
     args: string,
@@ -229,6 +236,13 @@ export interface RuntimeDescriptor {
   forwardedNote?: string
   /** Error recorded on in-flight turns when the session shuts down. */
   shutdownErrorMessage: string
+  /**
+   * Streams that may run a turn at the same time. Absent = 1 = serial: one turn
+   * at a time across the whole session. Above 1, at most one turn per response
+   * stream runs, and the actuator must honour the `streamId` passed to
+   * `interrupt`/`steer`.
+   */
+  maxConcurrentTurns?: number
 }
 
 export interface SendResult {
@@ -248,6 +262,8 @@ export interface RemoteSessionStatusSnapshot {
   socketConnected: boolean
   inflightCount: number
   activeTurnStreamId?: string
+  /** Distinct response streams with an in-flight turn. */
+  inflightStreamIds: string[]
   /** Decisions opened on the stream and still awaiting an answer. */
   pendingDecisionCount: number
 }
@@ -482,8 +498,14 @@ export class RemoteSession {
   /** Decisions this session opened and is still awaiting an answer for, keyed by decision id. */
   private readonly pendingDecisions = new Map<string, PendingDecision>()
   private decisionPollTimer: ReturnType<typeof setTimeout> | undefined
+  private readonly maxConcurrentTurns: number
 
   constructor(options: RemoteSessionOptions) {
+    const maxConcurrentTurns = options.runtime.maxConcurrentTurns ?? 1
+    if (!Number.isInteger(maxConcurrentTurns) || maxConcurrentTurns < 1) {
+      throw new Error(`maxConcurrentTurns must be a positive integer, got ${maxConcurrentTurns}`)
+    }
+    this.maxConcurrentTurns = maxConcurrentTurns
     this.config = options.config
     this.client = options.client
     this.delegate = options.delegate
@@ -547,10 +569,24 @@ export class RemoteSession {
     return Boolean(this.delegate.sessionControl)
   }
 
+  private get parallel(): boolean {
+    return this.maxConcurrentTurns > 1
+  }
+
+  /** Distinct response streams of the in-flight routes. */
+  private inflightStreams(): Set<string> {
+    return new Set([...this.inflight.values()].map((route) => route.invocation.responseStreamId))
+  }
+
+  /** With the serial default this is exactly `inflight.size > 0`. */
+  private get atCapacity(): boolean {
+    return this.inflightStreams().size >= this.maxConcurrentTurns
+  }
+
   private refreshHelloCapabilities(): void {
     let status: "available" | "busy" | "offline" = "available"
     if (this.stopped || this.archive.detached || !this.link) status = "offline"
-    else if (this.reconnectHandoff || this.inflight.size > 0) status = "busy"
+    else if (this.reconnectHandoff || this.atCapacity) status = "busy"
     Object.assign(this.hello, this.presenceBody(status))
     this.hello.supportedCapabilities = supportedCapabilitiesFor(this.sessionControlEnabled)
   }
@@ -576,6 +612,7 @@ export class RemoteSession {
       socketConnected: this.transport.socketConnected,
       inflightCount: this.inflight.size,
       activeTurnStreamId: this.activeTurnStream,
+      inflightStreamIds: [...this.inflightStreams()],
       pendingDecisionCount: this.pendingDecisions.size,
     }
   }
@@ -855,17 +892,21 @@ export class RemoteSession {
 
   private async runClaimDrain(): Promise<boolean> {
     let claimedAny = false
+    // Parallel mode only: streams a /stop in this drain asked to keep quiet.
+    const stoppedStreams = new Set<string>()
     try {
       for (let i = 0; i < MAX_CLAIMS_PER_DRAIN; i++) {
         // One normal turn at a time: once a turn is in flight we claim with
         // session-control caps ONLY (claimBody(busy)), so /stop and /steer still
         // reach us mid-turn while a normal active-scratchpad follow-up stays
         // queued. Without runtime control there's nothing to claim while busy:
-        // strict one-at-a-time.
+        // strict one-at-a-time. With `maxConcurrentTurns > 1` "busy" means at
+        // capacity; under it we claim everything except streams already running.
         if (this.reconnectHandoff || this.stopped || this.archive.detached) break
-        const busy = this.inflight.size > 0
+        const busy = this.atCapacity
         if (busy && !this.sessionControlEnabled) break
-        const invocation = await this.claimNext(busy)
+        const exclude = busy ? [] : [...new Set([...this.inflightStreams(), ...stoppedStreams])]
+        const invocation = await this.claimNext(busy, undefined, exclude)
         if (!invocation) break
         claimedAny = true
         this.markClaimProcessing(invocation)
@@ -874,11 +915,23 @@ export class RemoteSession {
           const isStop = parseSessionControlCommand(invocation)?.name === "stop"
           await this.handleSessionControl(invocation)
           // After a stop, don't immediately pull the next queued turn — the user
-          // asked for quiet (mirrors Pi's runStopCommand).
+          // asked for quiet (mirrors Pi's runStopCommand). In parallel mode the
+          // quiet is that stream's only; other streams keep draining.
           if (isStop) {
+            if (this.parallel) {
+              stoppedStreams.add(invocation.responseStreamId)
+              continue
+            }
             this.claimDrainRequested = false
             break
           }
+          continue
+        }
+        if (this.routeForStream(invocation.responseStreamId)) {
+          this.log(
+            `claimed ${invocation.id} for busy stream ${invocation.responseStreamId}: server ignored excludeResponseStreamIds`
+          )
+          await this.failInvocation(invocation, "Threa server ignored excludeResponseStreamIds; resend the message")
           continue
         }
         const deferred = await this.startFoldedTurn(invocation)
@@ -888,6 +941,10 @@ export class RemoteSession {
         for (const control of deferred) {
           if (parseSessionControlCommand(control)?.name === "stop") {
             await this.handleSessionControl(control)
+            if (this.parallel) {
+              stoppedStreams.add(control.responseStreamId)
+              continue
+            }
             this.claimDrainRequested = false
             return claimedAny
           }
@@ -915,12 +972,16 @@ export class RemoteSession {
    * loudly (scrubbed reason) and reports "nothing claimed" rather than throwing
    * the drain into a TTL-recycle loop.
    */
-  private async claimAndHydrate(busy: boolean, responseStreamId?: string): Promise<ClaimedInvocation | null> {
+  private async claimAndHydrate(
+    busy: boolean,
+    responseStreamId?: string,
+    excludeResponseStreamIds: string[] = []
+  ): Promise<ClaimedInvocation | null> {
     if (this.claimRetryTimer) return null
     let invocation: ClaimedInvocation | null
     try {
       invocation = await this.client.claim({
-        ...this.claimBody(busy),
+        ...this.claimBody(busy, excludeResponseStreamIds),
         ...(responseStreamId ? { responseStreamId } : {}),
       })
       this.claimFailures = 0
@@ -988,9 +1049,13 @@ export class RemoteSession {
     }, delay)
   }
 
-  private async claimNext(busy: boolean, responseStreamId?: string): Promise<ClaimedInvocation | null> {
+  private async claimNext(
+    busy: boolean,
+    responseStreamId?: string,
+    excludeResponseStreamIds: string[] = []
+  ): Promise<ClaimedInvocation | null> {
     const lifecycle = this.lifecycle
-    const invocation = await this.claimAndHydrate(busy, responseStreamId)
+    const invocation = await this.claimAndHydrate(busy, responseStreamId, excludeResponseStreamIds)
     if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
     const identity = invocation.sealing ? this.bik.current : undefined
     const handle = this.transport.observeClaim({
@@ -1063,7 +1128,7 @@ export class RemoteSession {
     const running = this.inflight.get(context.invocation.id) ?? (ownerId ? this.inflight.get(ownerId) : undefined)
     if (!running) return
     try {
-      this.delegate.sessionControl?.interrupt()
+      this.delegate.sessionControl?.interrupt(running.invocation.responseStreamId)
     } catch {
       // Backend authority still fences output when native control is gone.
     }
@@ -1128,7 +1193,7 @@ export class RemoteSession {
       let steered: boolean
       try {
         if (signal.aborted) throw signal.reason
-        steered = await steer.call(this.delegate.sessionControl, content)
+        steered = await steer.call(this.delegate.sessionControl, content, context.invocation.responseStreamId)
       } finally {
         signal.removeEventListener("abort", interruptOnAbort)
       }
@@ -1376,7 +1441,7 @@ export class RemoteSession {
     if (!this.inflight.has(invocation.id) || this.isClaimCancelled(invocation) || dependencyChanged) {
       if (dependencyChanged) {
         try {
-          this.delegate.sessionControl?.interrupt()
+          this.delegate.sessionControl?.interrupt(invocation.responseStreamId)
         } catch {}
       }
       throw new Error("invocation input changed while the runtime was accepting the turn")
@@ -1548,12 +1613,17 @@ export class RemoteSession {
   private async runStop(invocation: ClaimedInvocation, actuator: SessionControlActuator): Promise<void> {
     // If the interrupt can't be sent (runtime control lost), the runtime is
     // still running — don't close its in-flight turns as if we stopped them.
-    if (!actuator.interrupt()) {
+    const streamId = invocation.responseStreamId
+    if (this.parallel && !this.routeForStream(streamId)) {
+      await this.completeAck(invocation, "No turn is running in this stream.")
+      return
+    }
+    if (!actuator.interrupt(streamId)) {
       await this.completeAck(invocation, "Could not send the interrupt (runtime control unavailable).")
       return
     }
     const hadTurn = this.inflight.size > 0
-    await this.completeInterruptedTurns()
+    await this.completeInterruptedTurns(this.controlStream(streamId))
     await this.completeAck(invocation, hadTurn ? "Stopped the current turn." : "Sent an interrupt to the session.")
     await this.syncPresence()
   }
@@ -1567,8 +1637,16 @@ export class RemoteSession {
    */
   private async runSteer(invocation: ClaimedInvocation, actuator: SessionControlActuator, text: string): Promise<void> {
     const steer = actuator.steer?.bind(actuator)
-    if (this.inflight.size > 0 && steer) {
+    const running = this.parallel
+      ? this.routeForStream(invocation.responseStreamId) !== undefined
+      : this.inflight.size > 0
+    if (running && steer) {
       return await this.steerRunningTurn(invocation, steer, text)
+    }
+    // Redelivering would start a turn past the cap.
+    if (this.parallel && !running && this.atCapacity) {
+      await this.completeAck(invocation, "Every turn slot is busy; resend the steer when a turn finishes.")
+      return
     }
     return await this.steerByInterrupt(invocation, actuator, text)
   }
@@ -1584,10 +1662,11 @@ export class RemoteSession {
    */
   private async steerRunningTurn(
     invocation: ClaimedInvocation,
-    steer: (text: string) => Promise<boolean> | boolean,
+    steer: (text: string, streamId?: string) => Promise<boolean> | boolean,
     text: string
   ): Promise<void> {
-    const { parts, swept, contents } = await this.sweepQueuedForSteer(text)
+    const streamId = invocation.responseStreamId
+    const { parts, swept, contents } = await this.sweepQueuedForSteer(text, streamId)
     if (this.isClaimCancelled(invocation)) return
     if (parts.length === 0) {
       // The sweep can still have claimed foldless invocations (a queued control
@@ -1613,7 +1692,7 @@ export class RemoteSession {
     let combined = buildSteerContent(parts)
     // Step before actuation so it sits ahead of the continuation's frames in
     // the trace; a steer is also a sign of life for the turn it redirects.
-    for (const route of [...this.inflight.values()]) {
+    for (const route of this.controlRoutes(streamId)) {
       await this.recordSteps(route.invocation.id, [{ stepType: "steer", content: combined }])
       route.touchIdleTimeout()
     }
@@ -1630,7 +1709,7 @@ export class RemoteSession {
       (entry) => entry.invocation.responseStreamId === invocation.responseStreamId
     )?.invocation
     if (owner) this.bindRunningOwner(owner.id, [invocation, ...liveSwept])
-    if (!(await steer(combined))) {
+    if (!(await steer(combined, streamId))) {
       // Nothing was injected: the swept messages were claimed but not
       // delivered — fail them loudly so they don't vanish into a silent close.
       if (owner) this.unbindRunningOwner(owner.id, [invocation, ...liveSwept])
@@ -1666,7 +1745,8 @@ export class RemoteSession {
     // If the interrupt can't be sent, bail before any destructive side-effect —
     // don't close the running turn or deliver the steer as a second concurrent
     // turn against a runtime we couldn't actually interrupt.
-    if (!actuator.interrupt()) {
+    const streamId = invocation.responseStreamId
+    if (!actuator.interrupt(streamId)) {
       await this.completeAck(
         invocation,
         "Could not interrupt the session (runtime control unavailable); steer not delivered."
@@ -1675,9 +1755,9 @@ export class RemoteSession {
     }
     await new Promise((resolve) => setTimeout(resolve, STEER_SETTLE_MS))
     if (this.isClaimCancelled(invocation)) return
-    await this.completeInterruptedTurns()
+    await this.completeInterruptedTurns(this.controlStream(streamId))
 
-    const { parts, swept } = await this.sweepQueuedForSteer(text)
+    const { parts, swept } = await this.sweepQueuedForSteer(text, streamId)
     if (this.isClaimCancelled(invocation)) return
 
     if (parts.length === 0) {
@@ -1700,13 +1780,16 @@ export class RemoteSession {
    * Unscoped when nothing is in flight — there is no turn whose stream to
    * inherit, and the steer itself is then the only thing being folded into.
    */
-  private async sweepQueuedForSteer(text: string): Promise<{
+  private async sweepQueuedForSteer(
+    text: string,
+    streamId: string
+  ): Promise<{
     parts: string[]
     swept: ClaimedInvocation[]
     contents: Map<string, string>
   }> {
     const swept: ClaimedInvocation[] = []
-    const running = [...this.inflight.values()][0]?.invocation.responseStreamId
+    const running = this.parallel ? streamId : [...this.inflight.values()][0]?.invocation.responseStreamId
     for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
       const extra = await this.claimNext(false, running).catch(() => null)
       if (!extra) break
@@ -1892,8 +1975,8 @@ export class RemoteSession {
    * idle-hangs for an hour. Nothing is posted: the /stop or /steer that caused
    * the interrupt closes with its own account of it, on its own entry.
    */
-  private async completeInterruptedTurns(): Promise<void> {
-    const routes = [...this.inflight.values()]
+  private async completeInterruptedTurns(streamId?: string): Promise<void> {
+    const routes = this.controlRoutes(streamId)
     const interrupted = new Set(routes.map((route) => route.invocation.id))
     const withdrawals = this.abandonPendingDecisions(
       (decision) => !!decision.requesterInvocationId && interrupted.has(decision.requesterInvocationId)
@@ -2627,6 +2710,20 @@ export class RemoteSession {
     return new Error(`No routable request with invocation_id ${invocationId} exists in this session.`)
   }
 
+  /**
+   * The stream a control command acts on: its own in parallel mode, every stream
+   * (undefined) in serial mode, where one turn runs whichever stream it answers.
+   */
+  private controlStream(streamId: string): string | undefined {
+    return this.parallel ? streamId : undefined
+  }
+
+  private controlRoutes(streamId: string | undefined): TurnRoute[] {
+    const routes = [...this.inflight.values()]
+    const scope = streamId === undefined ? undefined : this.controlStream(streamId)
+    return scope === undefined ? routes : routes.filter((route) => route.invocation.responseStreamId === scope)
+  }
+
   private routeForStream(streamId: string): TurnRoute | undefined {
     let closing: TurnRoute | undefined
     for (const route of this.inflight.values()) {
@@ -2663,7 +2760,11 @@ export class RemoteSession {
    * on the socket backstop cadence as the missed-push insurance.
    */
   async requestDecision(input: DecisionRequestInput, opts: { signal?: AbortSignal } = {}): Promise<DecisionOutcome> {
-    const streamId = input.streamId ?? this.activeTurnStream ?? this.link?.rootStreamId
+    if (!input.streamId && this.parallel && this.inflightStreams().size > 1) {
+      throw new Error("Cannot open a decision: turns are running in several streams; pass streamId.")
+    }
+    const onlyStream = this.parallel ? [...this.inflightStreams()][0] : undefined
+    const streamId = input.streamId ?? onlyStream ?? this.activeTurnStream ?? this.link?.rootStreamId
     if (!streamId) throw new Error("Cannot open a decision: this session has no active turn and no linked scratchpad.")
     const invocationId = input.invocationId ?? this.routeForStream(streamId)?.invocation.id
     const decision = await this.client.requestDecision(streamId, {
@@ -2758,9 +2859,9 @@ export class RemoteSession {
 
   /** A pending decision is a sign of life for the turn that is blocked on it. */
   private keepTurnAliveForDecisions(): void {
-    if (this.pendingDecisions.size === 0) return
-    const streamId = this.activeTurnStream
-    if (streamId) this.keepAlive(streamId)
+    for (const streamId of new Set([...this.pendingDecisions.values()].map((pending) => pending.decision.streamId))) {
+      this.keepAlive(streamId)
+    }
   }
 
   /**
@@ -3006,7 +3107,7 @@ export class RemoteSession {
     const lifecycle = this.lifecycle
     return this.enqueuePresence(async () => {
       if (lifecycle !== this.lifecycle || this.stopped || this.archive.detached) return
-      const busy = this.reconnectHandoff || this.inflight.size > 0
+      const busy = this.reconnectHandoff || this.atCapacity
       await this.transport.updatePresence(
         this.presenceBody(busy ? "busy" : "available", busy ? this.runtime.busyStatusText : undefined)
       )
@@ -3041,13 +3142,14 @@ export class RemoteSession {
     }
   }
 
-  private claimBody(busy: boolean): Record<string, unknown> {
+  private claimBody(busy: boolean, excludeResponseStreamIds: string[] = []): Record<string, unknown> {
     return {
       runtimeKind: this.runtime.kind,
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
       supportedCapabilities: claimCapabilitiesFor(busy, this.sessionControlEnabled),
       claimTtlSeconds: CLAIM_TTL_SECONDS,
+      ...(!busy && excludeResponseStreamIds.length > 0 ? { excludeResponseStreamIds } : {}),
     }
   }
 
