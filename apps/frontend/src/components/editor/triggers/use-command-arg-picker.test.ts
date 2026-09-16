@@ -100,9 +100,6 @@ describe("resolveActiveArg", () => {
   })
 
   it("arms a row as soon as the argument is filtered, and none before", () => {
-    // None of `/spawn`'s option-bearing arguments is required, so without the
-    // query half of the rule the whole command typed unarmed: Enter sent the
-    // half-written line and Tab reached the editor's indent keymap.
     const armed = ["", "p", "pi ", "pi /mod", "pi /model ", "pi /model gpt"].map((text) => {
       const active = resolveActiveArg(SPAWN_ARGS, text)
       return [text, active ? !defersSelection(active) : null]

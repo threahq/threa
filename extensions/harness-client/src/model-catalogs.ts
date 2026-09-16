@@ -18,9 +18,8 @@ export interface ModelSuggestion {
  * so a new release shows up without a code change.
  *
  * The copy names the role, never the version: the alias is stable but the model
- * behind it moves every release, and a hardcoded "Opus 4.8" here outlived the
- * client by two minor versions while claiming to describe it. Version-bearing
- * copy comes only from the client's own cache, which updates with the client.
+ * behind it moves every release. Version-bearing copy comes only from the
+ * client's own cache, which updates with the client.
  */
 const CLAUDE_BASELINE_MODELS: ModelSuggestion[] = [
   {
