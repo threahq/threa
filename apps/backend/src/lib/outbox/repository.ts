@@ -1,6 +1,6 @@
 import { OutboxRepository as BaseOutboxRepository, type Querier } from "@threahq/backend-common"
 import { z } from "zod"
-import { BOT_INVOCATION_CANCELLATION_REASONS } from "@threahq/types"
+import { BOT_INVOCATION_CANCELLATION_REASONS, DECISION_REQUEST_STATUSES } from "@threahq/types"
 import type { Stream } from "../../features/streams"
 import type { StreamEvent } from "../../features/streams"
 import type { User } from "../../features/workspaces"
@@ -98,6 +98,10 @@ export type OutboxEventType =
   | "stream:subagent_status_changed"
   | "stream:bot_access_requested"
   | "stream:bot_access_status_changed"
+  | "stream:decision_requested"
+  | "stream:decision_resolved"
+  | "bot_decision:resolved"
+  | "bot_decision:cancelled"
   | "invitation:sent"
   | "invitation:link-created"
   | "invitation:link-claimed"
@@ -171,6 +175,8 @@ export type StreamScopedEventType =
   | "stream:subagent_status_changed"
   | "stream:bot_access_requested"
   | "stream:bot_access_status_changed"
+  | "stream:decision_requested"
+  | "stream:decision_resolved"
   | "stream:call_started"
   | "stream:call_ended"
   | "call:participants_changed"
@@ -438,6 +444,14 @@ export interface StreamBotAccessRequestedOutboxPayload extends StreamScopedPaylo
 }
 
 export interface StreamBotAccessStatusChangedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamDecisionRequestedOutboxPayload extends StreamScopedPayload {
+  event: StreamEvent
+}
+
+export interface StreamDecisionResolvedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
 }
 
@@ -1163,6 +1177,25 @@ export const botInvocationCancelledPayloadSchema = botInvocationControlPayloadSc
   reason: z.enum(BOT_INVOCATION_CANCELLATION_REASONS),
 })
 
+/**
+ * The decision outcome pushed back to the runtime that asked. Validated on
+ * dispatch like the invocation control events: a malformed row is dropped with
+ * a log rather than emitted into a session room.
+ */
+export const botDecisionPayloadSchema = z.object({
+  workspaceId: z.string().min(1),
+  botId: z.string().min(1),
+  streamId: z.string().min(1),
+  runtimeSessionId: z.string().min(1),
+  decisionId: z.string().min(1),
+  status: z.enum(DECISION_REQUEST_STATUSES),
+  optionId: z.string().nullable(),
+  note: z.string().nullable(),
+  version: z.number().int().min(1),
+})
+
+export type BotDecisionOutboxPayload = z.infer<typeof botDecisionPayloadSchema>
+
 export type BotInvocationControlOutboxPayload = z.infer<typeof botInvocationControlPayloadSchema>
 export type BotInvocationCancelledOutboxPayload = z.infer<typeof botInvocationCancelledPayloadSchema>
 
@@ -1308,6 +1341,10 @@ export interface OutboxEventPayloadMap {
   "stream:subagent_status_changed": StreamSubagentStatusChangedOutboxPayload
   "stream:bot_access_requested": StreamBotAccessRequestedOutboxPayload
   "stream:bot_access_status_changed": StreamBotAccessStatusChangedOutboxPayload
+  "stream:decision_requested": StreamDecisionRequestedOutboxPayload
+  "stream:decision_resolved": StreamDecisionResolvedOutboxPayload
+  "bot_decision:resolved": BotDecisionOutboxPayload
+  "bot_decision:cancelled": BotDecisionOutboxPayload
   "stream:read": StreamReadOutboxPayload
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
@@ -1453,6 +1490,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:subagent_status_changed",
   "stream:bot_access_requested",
   "stream:bot_access_status_changed",
+  "stream:decision_requested",
+  "stream:decision_resolved",
   "call:participants_changed",
   "call:transport_transfer_changed",
   "stream:activity",
@@ -1568,6 +1607,8 @@ export type BotScopedEventType =
   | "bot:resync"
   | "bot:session_archived"
   | "bot:session_restored"
+  | "bot_decision:resolved"
+  | "bot_decision:cancelled"
 
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
@@ -1578,6 +1619,8 @@ const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot:resync",
   "bot:session_archived",
   "bot:session_restored",
+  "bot_decision:resolved",
+  "bot_decision:cancelled",
 ]
 
 /**

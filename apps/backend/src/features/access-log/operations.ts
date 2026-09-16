@@ -221,6 +221,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "subagents.requeue",
   "bot_access_requests.approve",
   "bot_access_requests.deny",
+  "decisions.resolve",
+  "decisions.get",
   // Drafts
   "drafts.list",
   "drafts.upsert",

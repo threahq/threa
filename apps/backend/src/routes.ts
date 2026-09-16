@@ -110,6 +110,8 @@ import { createSubagentHandlers, type SubagentService } from "./features/subagen
 import { createAgentOutcomeHandlers, createAgentOutcomeService } from "./features/agent-outcomes"
 import { createStreamContextHandlers, createStreamContextService } from "./features/stream-context"
 import { BotAccessRequestService, createBotAccessRequestHandlers } from "./features/bot-access-requests"
+import { createDecisionHandlers, type DecisionService } from "./features/decisions"
+import { createDecisionPublicApi } from "./features/public-api/decision-handlers"
 import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import type { PushService } from "./features/push"
@@ -168,6 +170,7 @@ interface Dependencies {
   agentFollowUpService: AgentFollowUpService
   personaConfigService: PersonaConfigService
   delegationService: DelegationService
+  decisionService: DecisionService
   subagentService: SubagentService
   draftsService: DraftsService
   labelService: LabelService
@@ -243,6 +246,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     agentFollowUpService,
     personaConfigService,
     delegationService,
+    decisionService,
     subagentService,
     draftsService,
     labelService,
@@ -391,6 +395,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   })
   const botAccessRequestService = new BotAccessRequestService({ pool, streamService })
   const botAccessRequests = createBotAccessRequestHandlers({ botAccessRequestService, streamService })
+  const decisions = createDecisionHandlers({ decisionService })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
   const giphy = createGiphyHandlers({ giphyService })
@@ -1522,6 +1527,16 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     botAccessRequests.deny
   )
 
+  // Decision requests — a member answers the question a bot runtime could not
+  // answer for itself. Both are stream-access gated inside the service.
+  app.post(
+    "/api/workspaces/:workspaceId/decisions/:id/resolve",
+    ...authed,
+    audit("decisions.resolve", "write"),
+    decisions.resolve
+  )
+  app.get("/api/workspaces/:workspaceId/decisions/:id", ...authed, audit("decisions.get", "read"), decisions.get)
+
   // Drafts — centralized, local-first composer payloads that roam across the
   // author's devices. Private to the author; never timeline-broadcast.
   app.get("/api/workspaces/:workspaceId/drafts", ...authed, audit("drafts.list", "read"), drafts.list)
@@ -1985,6 +2000,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     pool,
     io: deps.io,
   })
+  const decisionPublicApi = createDecisionPublicApi({ decisionService })
   const delegationPublicApi = createDelegationPublicApiHandlers({
     pool,
     delegationService,
@@ -2040,6 +2056,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     completeDelegation: delegationPublicApi.completeDelegation,
     failDelegation: delegationPublicApi.failDelegation,
     requestDelegationAccess: delegationPublicApi.requestDelegationAccess,
+    createDecision: decisionPublicApi.createDecision,
+    cancelDecision: decisionPublicApi.cancelDecision,
+    getDecision: decisionPublicApi.getDecision,
     listStreams: publicApi.listStreams,
     getStream: publicApi.getStream,
     updateStream: publicApi.updateStream,

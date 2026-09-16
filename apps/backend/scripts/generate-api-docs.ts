@@ -96,6 +96,11 @@ const TAG_DEFS: { name: string; description: string }[] = [
     description:
       "Inspect delegated work, claim accepted tasks, report progress or renew the lease, then complete, fail, or release the claim.",
   },
+  {
+    name: "Decisions",
+    description:
+      "Ask the stream for a call the runtime cannot make on its own, withdraw the question, or read the answer a member gave.",
+  },
 ]
 
 function buildTags() {

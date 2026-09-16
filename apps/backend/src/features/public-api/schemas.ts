@@ -6,6 +6,16 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
+import { DECISION_OPTION_TONES, DECISION_REQUEST_KINDS } from "@threahq/types"
+import {
+  DECISION_BODY_MAX_CHARS,
+  DECISION_EXTERNAL_REF_MAX_CHARS,
+  DECISION_MAX_EXPIRES_IN_MS,
+  DECISION_OPTIONS_MAX,
+  DECISION_OPTION_ID_MAX_CHARS,
+  DECISION_OPTION_LABEL_MAX_CHARS,
+  DECISION_TITLE_MAX_CHARS,
+} from "../decisions/config"
 // Deep import: the bot-runtimes barrel imports public-api, so the barrel would form a cycle here.
 import { botRuntimeManifestSchema } from "../bot-runtimes/manifest-schema"
 import {
@@ -560,4 +570,35 @@ export const failDelegationSchema = z.object({
 export const requestDelegationAccessSchema = z.object({
   /** Human-readable identity of the requesting runner, shown on the access-request card (e.g. "Kris's MacBook"). */
   requestedByLabel: z.string().max(200).optional(),
+})
+
+// ── Decisions (Hermes) — a bot runtime putting a call it cannot make to its human.
+
+const decisionOptionSchema = z.object({
+  /** Stable id echoed back by the resolver — what the runtime branches on. */
+  id: z.string().min(1).max(DECISION_OPTION_ID_MAX_CHARS),
+  label: z.string().min(1).max(DECISION_OPTION_LABEL_MAX_CHARS),
+  tone: z.enum(DECISION_OPTION_TONES).default("neutral"),
+})
+
+export const createDecisionSchema = z.object({
+  kind: z.enum(DECISION_REQUEST_KINDS).default("approval"),
+  title: z.string().min(1).max(DECISION_TITLE_MAX_CHARS),
+  bodyMarkdown: z.string().max(DECISION_BODY_MAX_CHARS).optional(),
+  options: z
+    .array(decisionOptionSchema)
+    .min(1)
+    .max(DECISION_OPTIONS_MAX)
+    .refine((options) => new Set(options.map((option) => option.id)).size === options.length, {
+      message: "Option ids must be unique",
+    }),
+  /** Whether the resolver may attach a free-text note to their answer. */
+  allowNote: z.boolean().default(false),
+  /** The runtime's own reference for the call (e.g. a tool-call id). */
+  externalRef: z.string().max(DECISION_EXTERNAL_REF_MAX_CHARS).optional(),
+  /** Deadline, relative to now. The sweep expires the card once it passes. */
+  expiresInMs: z.number().int().min(1000).max(DECISION_MAX_EXPIRES_IN_MS).optional(),
+  /** The asking session / invocation; either proves the bot is running here. */
+  runtimeSessionId: z.string().min(1).optional(),
+  invocationId: z.string().min(1).optional(),
 })

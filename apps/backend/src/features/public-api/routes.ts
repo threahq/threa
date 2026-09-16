@@ -29,6 +29,9 @@ import {
   PROCESSING_STATUSES,
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
+  DECISION_OPTION_TONES,
+  DECISION_REQUEST_KINDS,
+  DECISION_REQUEST_STATUSES,
   DELEGATION_STATUSES,
 } from "@threahq/types"
 import type { WorkspacePermissionSlug } from "@threahq/types"
@@ -74,6 +77,7 @@ import {
   reportDelegationStatusSchema,
   completeDelegationSchema,
   failDelegationSchema,
+  createDecisionSchema,
   requestDelegationAccessSchema,
 } from "./schemas"
 
@@ -656,6 +660,40 @@ const completedDelegationSchema = delegationSchema.extend({
   resultThreadId: z.string().optional(),
 })
 
+const decisionOptionResponseSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  tone: z.enum(DECISION_OPTION_TONES),
+})
+
+const decisionSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  streamId: z.string(),
+  requesterBotId: z.string().optional(),
+  requesterRuntimeSessionId: z.string().optional(),
+  requesterInvocationId: z.string().optional(),
+  kind: z.enum(DECISION_REQUEST_KINDS),
+  title: z.string(),
+  bodyMarkdown: z.string().optional(),
+  options: z.array(decisionOptionResponseSchema),
+  allowNote: z.boolean(),
+  externalRef: z.string().optional(),
+  status: z.enum(DECISION_REQUEST_STATUSES),
+  resolution: z
+    .object({
+      optionId: z.string(),
+      note: z.string().optional(),
+      decidedBy: z.string(),
+      decidedAt: z.string().datetime(),
+    })
+    .optional(),
+  expiresAt: z.string().datetime().optional(),
+  version: z.number().int(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+
 const delegationAccessRequestSchema = z.object({
   /** Absent when the bot already had access (`already_granted`); otherwise the open request's id. */
   requestId: z.string().optional(),
@@ -791,6 +829,14 @@ const callbackTokenHeaderParam = {
   description: "Per-claim callback token from the sealed claim response (binds the caller to the assigned session).",
 }
 
+const decisionIdParam = {
+  name: "id",
+  in: "path" as const,
+  required: true,
+  schema: { type: "string" as const },
+  description: "Decision request ID (prefixed ULID)",
+}
+
 const delegationIdParam = {
   name: "delegationId",
   in: "path" as const,
@@ -843,6 +889,9 @@ export type OperationId =
   | "completeDelegation"
   | "failDelegation"
   | "requestDelegationAccess"
+  | "createDecision"
+  | "cancelDecision"
+  | "getDecision"
   | "listStreams"
   | "getStream"
   | "updateStream"
@@ -1426,6 +1475,47 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: requestDelegationAccessSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(delegationAccessRequestSchema),
+    canReturn404: true,
+  },
+
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/decisions",
+    operationId: "createDecision",
+    summary: "Ask the stream for a decision",
+    description:
+      "Post a decision card into the stream: a question the runtime cannot answer for itself, with the options a member picks from. Only a bot with a running session link or an in-flight invocation on that stream may open one (409 DECISION_REQUESTER_NOT_ACTIVE otherwise). The answer arrives on the bot socket as decision:resolved; an unanswered card past expiresInMs is cancelled and delivered as decision:cancelled with status expired.",
+    tags: ["Decisions"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam, streamIdParam],
+    requestSchema: createDecisionSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(decisionSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/decisions/{id}/cancel",
+    operationId: "cancelDecision",
+    summary: "Cancel a decision request",
+    description:
+      "Withdraw an open decision card — the runtime no longer needs the answer. The card becomes cancelled in the stream. Already-resolved or already-cancelled cards return the current row unchanged.",
+    tags: ["Decisions"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam, decisionIdParam],
+    responseSchema: dataEnvelope(decisionSchema),
+    canReturn404: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/decisions/{id}",
+    operationId: "getDecision",
+    summary: "Get a decision request",
+    description: "Read one decision card, including its resolution once a member has answered.",
+    tags: ["Decisions"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_READ],
+    parameters: [workspaceIdParam, decisionIdParam],
+    responseSchema: dataEnvelope(decisionSchema),
     canReturn404: true,
   },
 
