@@ -52,6 +52,7 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
   it("accepts the session-linking runtime kinds", () => {
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local" }).success).toBe(true)
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "claude-code-channel" }).success).toBe(true)
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "hermes" }).success).toBe(true)
   })
 
   it("rejects link-free kinds that have no business creating a session", () => {

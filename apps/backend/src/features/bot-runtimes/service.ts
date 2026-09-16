@@ -577,7 +577,6 @@ export class BotRuntimeService {
         workspaceId: params.workspaceId,
         botId: params.botId,
         linkId: params.linkId,
-        runtimeKind: "pi-local",
         instanceId: params.instanceId,
         runtimeSessionId: params.runtimeSessionId,
         newInstanceId: params.newInstanceId,
@@ -586,7 +585,7 @@ export class BotRuntimeService {
       await this.upsertPiRemoteSessionPresenceInTransaction(db, {
         workspaceId: params.workspaceId,
         botId: params.botId,
-        runtimeKind: "pi-local",
+        runtimeKind: link.runtimeKind,
         instanceId: params.newInstanceId,
         runtimeSessionId: params.runtimeSessionId,
       })

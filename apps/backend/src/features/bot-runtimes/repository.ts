@@ -977,7 +977,6 @@ export const BotRuntimeSessionLinkRepository = {
       workspaceId: string
       botId: string
       linkId: string
-      runtimeKind: BotRuntimeKind
       instanceId: string
       runtimeSessionId: string
       newInstanceId: string
@@ -988,7 +987,6 @@ export const BotRuntimeSessionLinkRepository = {
       WHERE id = ${params.linkId}
         AND workspace_id = ${params.workspaceId}
         AND bot_id = ${params.botId}
-        AND runtime_kind = ${params.runtimeKind}
         AND instance_id = ${params.instanceId}
         AND runtime_session_id = ${params.runtimeSessionId}
         AND status = 'active'
