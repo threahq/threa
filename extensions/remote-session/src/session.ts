@@ -14,7 +14,9 @@ import {
   scrubSealedError,
   sealReply,
   sealStep,
+  type BotDecisionPayload,
   type BotRuntimeHello,
+  type DecisionRequest,
   type DelegationAvailableNudge,
   type InvocationInputUpdate,
   type ObservedClaimHandle,
@@ -183,16 +185,6 @@ export interface RemoteSessionDelegate {
   /** Push a turn into the runtime. Resolve when handed off (not when answered). */
   deliverTurn(turn: DeliveredTurn): Promise<void>
   /**
-   * Inspect a claimed invocation before it is routed (e.g. a relayed
-   * tool-approval verdict). Runs for EVERY claim — ordinary messages,
-   * session-control commands, and messages swept into a /steer — because a
-   * verdict can arrive as /steer text (the busy-session composer routes replies
-   * through /steer) and treating it as steering would inject it into the
-   * runtime instead of answering the pending prompt. Return true when
-   * consumed; the SDK then closes it silently and moves on.
-   */
-  interceptClaimed?(invocation: ClaimedInvocation): Promise<boolean>
-  /**
    * The scratchpad link was created or resumed (also after an unarchive
    * reattach). Runs before the link is committed locally and before presence
    * is synced, so a connector can record what this process now owns. A throw
@@ -253,6 +245,8 @@ export interface RemoteSessionStatusSnapshot {
   socketConnected: boolean
   inflightCount: number
   activeTurnStreamId?: string
+  /** Decisions opened on the stream and still awaiting an answer. */
+  pendingDecisionCount: number
 }
 
 type SessionControlCommand = { name: string; args: string }
@@ -398,6 +392,45 @@ export interface RemoteSessionOptions {
  * idle timeouts, claim renewal, and attachment plumbing. Connectors implement
  * `RemoteSessionDelegate` and call `sendInterim`/`reply` from their runtime.
  */
+/** What a connector asks its human when it cannot make the call itself. */
+export interface DecisionRequestInput {
+  title: string
+  /** Markdown body shown under the title on the card. */
+  body?: string
+  options: Array<{ id: string; label: string; tone?: "primary" | "neutral" | "destructive" }>
+  allowNote?: boolean
+  externalRef?: string
+  expiresInMs?: number
+  /** Defaults to the active turn's stream, then the root stream. */
+  streamId?: string
+  /** Defaults to the in-flight invocation on that stream when one is running. */
+  invocationId?: string
+}
+
+export type DecisionOutcome =
+  | { status: "resolved"; optionId: string; note: string | null; decision: DecisionRequest }
+  | { status: "cancelled" | "expired"; decision: DecisionRequest }
+
+/** Thrown into every awaiting `requestDecision` when the session tears down. */
+export class DecisionAbandonedError extends Error {
+  constructor(readonly decisionId: string) {
+    super(`Decision ${decisionId} was abandoned: the remote session is shutting down.`)
+    this.name = "DecisionAbandonedError"
+  }
+}
+
+interface PendingDecision {
+  decision: DecisionRequest
+  resolve: (outcome: DecisionOutcome) => void
+  reject: (error: Error) => void
+}
+
+function decisionAbortError(decisionId: string): Error {
+  const error = new Error(`Decision ${decisionId} was aborted by its caller.`)
+  error.name = "AbortError"
+  return error
+}
+
 export class RemoteSession {
   private readonly config: RemoteSessionConfig
   private readonly client: ThreaClient
@@ -443,6 +476,9 @@ export class RemoteSession {
   // follow-up claimed during an open-permission window would otherwise be
   // picked as the (wrong) target.
   private activeTurnStream: string | undefined
+  /** Decisions this session opened and is still awaiting an answer for, keyed by decision id. */
+  private readonly pendingDecisions = new Map<string, PendingDecision>()
+  private decisionPollTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(options: RemoteSessionOptions) {
     this.config = options.config
@@ -492,10 +528,13 @@ export class RemoteSession {
             // re-derive before trusting the link the bootstrap arrived on.
             void this.probeArchiveBackstop()
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
+            if (this.pendingDecisions.size > 0) this.scheduleDecisionPoll(0)
           },
           onDisconnected: () => this.handleTransportDisconnected(),
           onSessionArchived: (payload) => void this.handleSessionArchived(payload),
           onSessionRestored: (payload) => void this.handleSessionRestored(payload),
+          onDecisionResolved: (payload) => this.handleDecisionPush(payload),
+          onDecisionCancelled: (payload) => this.handleDecisionPush(payload),
         },
         log: this.log,
       })
@@ -534,6 +573,7 @@ export class RemoteSession {
       socketConnected: this.transport.socketConnected,
       inflightCount: this.inflight.size,
       activeTurnStreamId: this.activeTurnStream,
+      pendingDecisionCount: this.pendingDecisions.size,
     }
   }
 
@@ -620,6 +660,7 @@ export class RemoteSession {
     if (this.claimRetryTimer) clearTimeout(this.claimRetryTimer)
     this.claimRetryTimer = undefined
     this.archive.stop()
+    this.abandonPendingDecisions()
     this.resetReconnectHandoff()
     await this.reconnectFallbackTask
     // Fast, idempotent teardown first so SIGTERM cleanup isn't held hostage by
@@ -816,21 +857,15 @@ export class RemoteSession {
         // One normal turn at a time: once a turn is in flight we claim with
         // session-control caps ONLY (claimBody(busy)), so /stop and /steer still
         // reach us mid-turn while a normal active-scratchpad follow-up stays
-        // queued. A connector holding an open intercept window (e.g. a pending
-        // tool approval whose verdict arrives as an ordinary message) keeps
-        // draining with full caps via `interceptHoldsClaims`. Without runtime
-        // control there's nothing to claim while busy: strict one-at-a-time.
+        // queued. Without runtime control there's nothing to claim while busy:
+        // strict one-at-a-time.
         if (this.reconnectHandoff || this.stopped || this.archive.detached) break
-        const busy = this.inflight.size > 0 && !this.interceptHoldsClaims
+        const busy = this.inflight.size > 0
         if (busy && !this.sessionControlEnabled) break
         const invocation = await this.claimNext(busy)
         if (!invocation) break
         claimedAny = true
         this.markClaimProcessing(invocation)
-        // Intercept before command routing: a relayed verdict can ride in as
-        // /steer text, and the steer path would inject it into the runtime
-        // instead of answering the prompt it belongs to.
-        if (await this.interceptInvocation(invocation)) continue
         if (this.isClaimCancelled(invocation)) continue
         if (isSessionControlInvocation(invocation)) {
           const isStop = parseSessionControlCommand(invocation)?.name === "stop"
@@ -867,13 +902,6 @@ export class RemoteSession {
   private async waitForClaimDrain(): Promise<void> {
     await this.claimDrainTask
   }
-
-  /**
-   * Connector-controlled override: while true, the drain keeps claiming with
-   * full capabilities even though a turn is in flight (used for tool-approval
-   * verdicts that arrive as ordinary messages and must reach the connector).
-   */
-  interceptHoldsClaims = false
 
   /**
    * Claim one invocation and, when it arrives sealed, hydrate it in place: open
@@ -1184,23 +1212,6 @@ export class RemoteSession {
       .catch((error) => this.log(`invocation fail write failed: ${this.summarize(error)}`))
   }
 
-  /** Consult the connector's intercept. True = the delegate consumed the invocation and it was closed silently. */
-  private async interceptInvocation(invocation: ClaimedInvocation): Promise<boolean> {
-    if (this.isClaimCancelled(invocation)) return true
-    if (!this.delegate.interceptClaimed) return false
-    const intercepted = await this.delegate.interceptClaimed(invocation)
-    // Cancellation while the interceptor awaited consumes the claim regardless
-    // of its verdict; routing it onward could execute a cancelled command/turn.
-    if (this.isClaimCancelled(invocation)) return true
-    if (!intercepted) return false
-    try {
-      await this.completeTurn(invocation, { noResponse: true })
-    } catch (error) {
-      await this.failAfterTerminalWrite(invocation, error, "intercepted-claim acknowledgement")
-    }
-    return true
-  }
-
   /**
    * Start one turn that sees every ordinary message already queued behind this
    * one, and return any session-control commands the sweep pulled up with them.
@@ -1231,7 +1242,6 @@ export class RemoteSession {
         const extra = await this.claimNext(false, invocation.responseStreamId).catch(() => null)
         if (!extra) break
         this.markClaimProcessing(extra)
-        if (await this.interceptInvocation(extra)) continue
         if (this.isClaimCancelled(extra)) continue
         if (isSessionControlInvocation(extra)) {
           control.push(extra)
@@ -1571,7 +1581,7 @@ export class RemoteSession {
     steer: (text: string) => Promise<boolean> | boolean,
     text: string
   ): Promise<void> {
-    const { parts, swept, contents, interceptedCount } = await this.sweepQueuedForSteer(text)
+    const { parts, swept, contents } = await this.sweepQueuedForSteer(text)
     if (this.isClaimCancelled(invocation)) return
     if (parts.length === 0) {
       // The sweep can still have claimed foldless invocations (a queued control
@@ -1579,9 +1589,8 @@ export class RemoteSession {
       await Promise.all(swept.map((item) => this.completeNoResponse(item)))
       if (invocation.metadata?.steeredMessage === true) {
         // An embedded-steer pair carries its text on the normal message. If
-        // that companion is already running (or an interceptor consumed it),
-        // the empty control half is only a barrier — do not post a false
-        // "nothing to steer" acknowledgement.
+        // that companion is already running, the empty control half is only a
+        // barrier — do not post a false "nothing to steer" acknowledgement.
         await this.completeTurn(invocation, {
           noResponse: true,
           metadata: {
@@ -1592,15 +1601,7 @@ export class RemoteSession {
         })
         return
       }
-      // A sweep that only consumed intercepted replies did real work (a verdict
-      // reached its pending prompt) — "nothing to steer with" would misread as
-      // the reply having been lost.
-      await this.completeAck(
-        invocation,
-        interceptedCount > 0
-          ? "Routed your reply to the session's pending request; the turn continues."
-          : "Nothing to steer with (no text, no queued messages); the turn continues."
-      )
+      await this.completeAck(invocation, "Nothing to steer with (no text, no queued messages); the turn continues.")
       return
     }
     let combined = buildSteerContent(parts)
@@ -1670,16 +1671,11 @@ export class RemoteSession {
     if (this.isClaimCancelled(invocation)) return
     await this.completeInterruptedTurns()
 
-    const { parts, swept, interceptedCount } = await this.sweepQueuedForSteer(text)
+    const { parts, swept } = await this.sweepQueuedForSteer(text)
     if (this.isClaimCancelled(invocation)) return
 
     if (parts.length === 0) {
-      await this.completeAck(
-        invocation,
-        interceptedCount > 0
-          ? "Interrupted the session; your reply was routed to its pending request."
-          : "Interrupted the session; nothing pending to steer with."
-      )
+      await this.completeAck(invocation, "Interrupted the session; nothing pending to steer with.")
       await this.syncPresence()
       return
     }
@@ -1702,22 +1698,13 @@ export class RemoteSession {
     parts: string[]
     swept: ClaimedInvocation[]
     contents: Map<string, string>
-    interceptedCount: number
   }> {
     const swept: ClaimedInvocation[] = []
-    let interceptedCount = 0
     const running = [...this.inflight.values()][0]?.invocation.responseStreamId
     for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
       const extra = await this.claimNext(false, running).catch(() => null)
       if (!extra) break
       this.markClaimProcessing(extra)
-      // A swept message the connector intercepts (e.g. a permission verdict) is
-      // consumed and closed here, never folded into the steer text — and never
-      // failed by the caller's could-not-steer path, since it was delivered.
-      if (await this.interceptInvocation(extra)) {
-        interceptedCount++
-        continue
-      }
       if (this.isClaimCancelled(extra)) continue
       // The canonical text is derived after the sweep so a claim cancelled by an
       // update while a later claim awaited is omitted rather than injected stale.
@@ -1729,7 +1716,7 @@ export class RemoteSession {
       contents.set(item.id, await this.foldedSteerContent(item))
     }
     const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    return { parts: this.steerParts(liveSwept, text, contents), swept: liveSwept, contents, interceptedCount }
+    return { parts: this.steerParts(liveSwept, text, contents), swept: liveSwept, contents }
   }
 
   /** Fold the swept messages' prepared content (steer text last); a claim cancelled since its download contributes nothing. */
@@ -2615,6 +2602,170 @@ export class RemoteSession {
     }
   }
 
+  // --- Decisions ------------------------------------------------------------
+
+  /**
+   * Put a call the runtime cannot make to the human on the stream and block on
+   * the answer. The card is opened over HTTP; the answer arrives on the bot
+   * plane (`decision:resolved`/`decision:cancelled`) with a `getDecision` poll
+   * on the socket backstop cadence as the missed-push insurance.
+   */
+  async requestDecision(input: DecisionRequestInput, opts: { signal?: AbortSignal } = {}): Promise<DecisionOutcome> {
+    const streamId = input.streamId ?? this.activeTurnStream ?? this.link?.rootStreamId
+    if (!streamId) throw new Error("Cannot open a decision: this session has no active turn and no linked scratchpad.")
+    const invocationId = input.invocationId ?? this.routeForStream(streamId)?.invocation.id
+    const decision = await this.client.requestDecision(streamId, {
+      title: input.title,
+      ...(input.body ? { bodyMarkdown: input.body } : {}),
+      options: input.options,
+      ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }),
+      ...(input.externalRef ? { externalRef: input.externalRef } : {}),
+      ...(input.expiresInMs === undefined ? {} : { expiresInMs: input.expiresInMs }),
+      runtimeSessionId: this.config.runtimeSessionId,
+      ...(invocationId ? { invocationId } : {}),
+    })
+    // A decision that landed non-open already (an instant resolve, an expiry
+    // race) never gets a push — settle from what the POST returned.
+    if (decision.status !== "open") return this.outcomeFor(decision)
+    // shutdown() during the POST already ran abandonPendingDecisions over an
+    // empty map, so registering now would strand this caller forever.
+    if (this.stopped) {
+      void this.cancelDecision(decision.id).catch(() => {})
+      throw new DecisionAbandonedError(decision.id)
+    }
+    const promise = new Promise<DecisionOutcome>((resolve, reject) => {
+      this.pendingDecisions.set(decision.id, { decision, resolve, reject })
+    })
+    const abort = () => {
+      if (!this.pendingDecisions.has(decision.id)) return
+      this.failDecision(decision.id, decisionAbortError(decision.id))
+      void this.cancelDecision(decision.id).catch((error) =>
+        this.log(`decision ${decision.id} cancel-on-abort failed: ${this.summarize(error)}`)
+      )
+    }
+    if (opts.signal?.aborted) abort()
+    else opts.signal?.addEventListener("abort", abort, { once: true })
+    this.keepTurnAliveForDecisions()
+    this.scheduleDecisionPoll()
+    try {
+      return await promise
+    } finally {
+      opts.signal?.removeEventListener("abort", abort)
+    }
+  }
+
+  /** Withdraw a decision this session opened (also settles a local awaiter through the push/poll). */
+  async cancelDecision(decisionId: string): Promise<void> {
+    await this.client.cancelDecision(decisionId)
+  }
+
+  private outcomeFor(decision: DecisionRequest): DecisionOutcome {
+    if (decision.status === "resolved") {
+      const optionId = decision.resolution?.optionId
+      if (!optionId) throw new Error(`Decision ${decision.id} resolved without an option id.`)
+      return { status: "resolved", optionId, note: decision.resolution?.note ?? null, decision }
+    }
+    return { status: decision.status === "expired" ? "expired" : "cancelled", decision }
+  }
+
+  /** A `decision:resolved`/`decision:cancelled` push for a decision this session is awaiting. */
+  private handleDecisionPush(payload: BotDecisionPayload): void {
+    if (!payload || typeof payload !== "object") return
+    const pending = this.pendingDecisions.get(payload.decisionId)
+    if (!pending) return
+    if (payload.runtimeSessionId !== this.config.runtimeSessionId) return
+    this.settleDecision({
+      ...pending.decision,
+      status: payload.status,
+      version: payload.version,
+      ...(payload.status === "resolved" && payload.optionId
+        ? { resolution: { optionId: payload.optionId, ...(payload.note === null ? {} : { note: payload.note }) } }
+        : {}),
+    })
+  }
+
+  private settleDecision(decision: DecisionRequest): void {
+    const pending = this.pendingDecisions.get(decision.id)
+    if (!pending) return
+    this.pendingDecisions.delete(decision.id)
+    this.stopDecisionPollWhenIdle()
+    try {
+      pending.resolve(this.outcomeFor(decision))
+    } catch (error) {
+      pending.reject(error instanceof Error ? error : new Error(String(error)))
+    }
+  }
+
+  private failDecision(decisionId: string, error: Error): void {
+    const pending = this.pendingDecisions.get(decisionId)
+    if (!pending) return
+    this.pendingDecisions.delete(decisionId)
+    this.stopDecisionPollWhenIdle()
+    pending.reject(error)
+  }
+
+  /** A pending decision is a sign of life for the turn that is blocked on it. */
+  private keepTurnAliveForDecisions(): void {
+    if (this.pendingDecisions.size === 0) return
+    const streamId = this.activeTurnStream
+    if (streamId) this.keepAlive(streamId)
+  }
+
+  /**
+   * (Re)arm the decision backstop, replacing any pending tick. The socket-up
+   * cadence is bounded by half the turn's idle timeout because this poll is
+   * also what keeps a turn blocked on an open card alive.
+   */
+  private scheduleDecisionPoll(delayMs?: number): void {
+    if (this.decisionPollTimer) clearTimeout(this.decisionPollTimer)
+    this.decisionPollTimer = undefined
+    if (this.stopped || this.pendingDecisions.size === 0) return
+    const delay =
+      delayMs ??
+      (this.transport.socketConnected
+        ? Math.min(WS_BACKSTOP_POLL_MS, Math.floor(this.config.idleTimeoutMs / 2))
+        : this.config.pollMs)
+    this.decisionPollTimer = setTimeout(() => {
+      this.decisionPollTimer = undefined
+      void this.pollPendingDecisions()
+    }, delay)
+  }
+
+  private stopDecisionPollWhenIdle(): void {
+    if (this.pendingDecisions.size > 0) return
+    if (this.decisionPollTimer) clearTimeout(this.decisionPollTimer)
+    this.decisionPollTimer = undefined
+  }
+
+  /** Missed-push backstop: read every pending decision and settle the ones that moved. */
+  private async pollPendingDecisions(): Promise<void> {
+    if (this.stopped) return
+    this.keepTurnAliveForDecisions()
+    for (const decisionId of [...this.pendingDecisions.keys()]) {
+      try {
+        const decision = await this.client.getDecision(decisionId)
+        if (decision.status !== "open") this.settleDecision(decision)
+      } catch (error) {
+        // A decision the requester can no longer read is never coming back;
+        // everything else is transient and retried on the next tick.
+        if (error instanceof ThreaApiError && error.status === 404) {
+          this.failDecision(decisionId, error)
+          continue
+        }
+        this.log(`decision ${decisionId} backstop poll failed: ${this.summarize(error)}`)
+      }
+    }
+    this.scheduleDecisionPoll()
+  }
+
+  /** Teardown: nobody is left to answer, so no connector may keep awaiting one. */
+  private abandonPendingDecisions(): void {
+    for (const decisionId of [...this.pendingDecisions.keys()]) {
+      this.failDecision(decisionId, new DecisionAbandonedError(decisionId))
+    }
+    this.stopDecisionPollWhenIdle()
+  }
+
   /** Queue timeout closure behind posts so in-flight output cannot be overtaken. */
   private async onReplyTimeout(route: TurnRoute, generation: number): Promise<void> {
     if (!route.isCurrentDeadline(generation) || route.state !== "open") return
@@ -2705,6 +2856,7 @@ export class RemoteSession {
   private handleTransportDisconnected(): void {
     this.emptyNoSocketPolls = 0
     this.reschedulePoll(this.config.pollMs)
+    if (this.pendingDecisions.size > 0) this.scheduleDecisionPoll(this.config.pollMs)
   }
 
   /** (Re)arm the poll timer. Replaces any pending tick so a state change can pull the next tick closer. */

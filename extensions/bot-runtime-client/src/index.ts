@@ -23,6 +23,11 @@ export type {
   BotRuntimeTransportCallbacks,
   BotRuntimeTransportOptions,
   DelegationAvailableNudge,
+  BotDecisionPayload,
+  DecisionOption,
+  DecisionRequest,
+  DecisionRequestStatus,
+  DecisionResolution,
 } from "./types"
 export {
   BikKeystore,

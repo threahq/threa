@@ -15,6 +15,7 @@ import {
 } from "./invocation-control"
 import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint"
 import type {
+  BotDecisionPayload,
   BotHelloBootstrap,
   BotRuntimeTransportCallbacks,
   DelegationAvailableNudge,
@@ -203,6 +204,12 @@ export class BotRuntimeTransport {
     socket.on("bot:active_actor_changed", (payload: unknown) => this.callbacks.onActiveActorChanged?.(payload))
     socket.on("bot:session_archived", (payload: unknown) => this.callbacks.onSessionArchived?.(payload))
     socket.on("bot:session_restored", (payload: unknown) => this.callbacks.onSessionRestored?.(payload))
+    socket.on("decision:resolved", (payload: unknown) =>
+      this.callbacks.onDecisionResolved?.(payload as BotDecisionPayload)
+    )
+    socket.on("decision:cancelled", (payload: unknown) =>
+      this.callbacks.onDecisionCancelled?.(payload as BotDecisionPayload)
+    )
     socket.on("bot:resync", () => {
       this.callbacks.onResync?.()
       this.teardownSocket()

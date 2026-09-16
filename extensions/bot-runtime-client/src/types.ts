@@ -67,6 +67,56 @@ export interface DelegationAvailableNudge {
   title?: string
 }
 
+/**
+ * The decision outcome pushed to the requesting runtime's session room
+ * (`decision:resolved` / `decision:cancelled`). Mirrors the server's
+ * `botDecisionPayloadSchema`; `extensions/*` do not depend on `@threahq/types`.
+ */
+export interface BotDecisionPayload {
+  workspaceId: string
+  botId: string
+  streamId: string
+  runtimeSessionId: string
+  decisionId: string
+  status: DecisionRequestStatus
+  optionId: string | null
+  note: string | null
+  version: number
+}
+
+export type DecisionRequestStatus = "open" | "resolved" | "cancelled" | "expired"
+
+export interface DecisionOption {
+  id: string
+  label: string
+  tone?: "primary" | "neutral" | "destructive"
+}
+
+export interface DecisionResolution {
+  optionId: string
+  note?: string
+  /** Absent when the resolution was reconstructed from a socket push, which carries only the answer. */
+  decidedBy?: string
+  decidedAt?: string
+}
+
+/** Minimal mirror of the server's `DecisionRequest` wire shape — what the SDK reads. */
+export interface DecisionRequest {
+  id: string
+  workspaceId: string
+  streamId: string
+  requesterBotId?: string
+  runtimeSessionId?: string
+  status: DecisionRequestStatus
+  title: string
+  options: DecisionOption[]
+  allowNote: boolean
+  externalRef?: string
+  resolution?: DecisionResolution
+  expiresAt?: string
+  version: number
+}
+
 export interface BotRuntimeTransportCallbacks {
   /** New work is claimable — the runtime should drain its claim loop. */
   onInvocationAvailable?: () => void
@@ -84,6 +134,10 @@ export interface BotRuntimeTransportCallbacks {
   onSessionRestored?: (payload: unknown) => void
   /** The `bot:hello` ack landed; carries the bootstrap snapshot. */
   onBootstrap?: (bootstrap: BotHelloBootstrap) => void
+  /** A decision this runtime opened was answered; the requester unblocks on it. */
+  onDecisionResolved?: (payload: BotDecisionPayload) => void
+  /** A decision this runtime opened was cancelled (or expired) without an answer. */
+  onDecisionCancelled?: (payload: BotDecisionPayload) => void
   /** A hello-ready socket became unavailable; wake any HTTP delivery backstop parked on the healthy-socket cadence. */
   onDisconnected?: () => void
 }
