@@ -5063,6 +5063,8 @@ describe("parallel turns across streams", () => {
       })
     expect(build(0)).toThrow("maxConcurrentTurns must be a positive integer")
     expect(build(1.5)).toThrow("maxConcurrentTurns must be a positive integer")
+    expect(build(13)).toThrow("maxConcurrentTurns must be at most 12")
+    expect(build(12)).not.toThrow()
   })
 
   test("the serial capability table is unchanged", () => {
@@ -5153,6 +5155,31 @@ describe("parallel turns across streams", () => {
       interrupts: [],
       ack: "No turn is running in this stream.",
       b: true,
+    })
+  })
+
+  test("/stop in the idle scratchpad root stops channel turns and leaves scratchpad threads running", async () => {
+    const h = makeParallelSession(
+      [
+        makeInvocation({ id: "binv_ch", rootStreamId: "stream_channel", responseStreamId: "stream_channel" }),
+        message("binv_thread", "stream_thread"),
+      ],
+      { maxConcurrentTurns: 3 }
+    )
+    ;(h.session as unknown as { link: { rootStreamId: string } }).link = { rootStreamId: "stream_root" }
+    await drain(h.session)
+    h.queue.push(command("binv_stop", "stream_root", "stop"))
+
+    await drain(h.session)
+
+    expect({
+      interrupts: h.interrupts,
+      ack: h.calls.complete.find((call) => call.id === "binv_stop")?.body.summary,
+      inflight: [h.session.isInflight("binv_ch"), h.session.isInflight("binv_thread")],
+    }).toEqual({
+      interrupts: ["stream_channel"],
+      ack: "Stopped the turn running outside this scratchpad.",
+      inflight: [false, true],
     })
   })
 

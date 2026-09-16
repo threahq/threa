@@ -61,6 +61,12 @@ const CLAIM_RETRY_CAP_MS = 2 * 60 * 1000
 // Harness preflight can take 10s and replacement verification up to 15s.
 export const RECONNECT_HANDOFF_FALLBACK_MS = 30_000
 const MAX_CLAIMS_PER_DRAIN = 20
+// Server-side cap on `excludeResponseStreamIds` (`claimInvocationSchema` in
+// apps/backend/src/features/public-api/schemas.ts). A drain excludes every
+// in-flight stream plus each stream it stopped, so the turn cap leaves room
+// for a full drain of stops.
+const MAX_EXCLUDED_RESPONSE_STREAMS = 32
+const MAX_CONCURRENT_TURNS = MAX_EXCLUDED_RESPONSE_STREAMS - MAX_CLAIMS_PER_DRAIN
 // Server-side cap on frames per bot:invocation:steps call (`stepsFrameSchema`
 // in apps/backend/src/features/bot-runtimes/socket-handler.ts).
 const MAX_STEP_FRAMES_PER_CALL = 50
@@ -240,7 +246,7 @@ export interface RuntimeDescriptor {
    * Streams that may run a turn at the same time. Absent = 1 = serial: one turn
    * at a time across the whole session. Above 1, at most one turn per response
    * stream runs, and the actuator must honour the `streamId` passed to
-   * `interrupt`/`steer`.
+   * `interrupt`/`steer`. At most 12.
    */
   maxConcurrentTurns?: number
 }
@@ -504,6 +510,9 @@ export class RemoteSession {
     const maxConcurrentTurns = options.runtime.maxConcurrentTurns ?? 1
     if (!Number.isInteger(maxConcurrentTurns) || maxConcurrentTurns < 1) {
       throw new Error(`maxConcurrentTurns must be a positive integer, got ${maxConcurrentTurns}`)
+    }
+    if (maxConcurrentTurns > MAX_CONCURRENT_TURNS) {
+      throw new Error(`maxConcurrentTurns must be at most ${MAX_CONCURRENT_TURNS}, got ${maxConcurrentTurns}`)
     }
     this.maxConcurrentTurns = maxConcurrentTurns
     this.config = options.config
@@ -1615,6 +1624,7 @@ export class RemoteSession {
     // still running — don't close its in-flight turns as if we stopped them.
     const streamId = invocation.responseStreamId
     if (this.parallel && !this.routeForStream(streamId)) {
+      if (streamId === this.link?.rootStreamId) return await this.stopTurnsOutsideScratchpad(invocation, actuator)
       await this.completeAck(invocation, "No turn is running in this stream.")
       return
     }
@@ -1625,6 +1635,37 @@ export class RemoteSession {
     const hadTurn = this.inflight.size > 0
     await this.completeInterruptedTurns(this.controlStream(streamId))
     await this.completeAck(invocation, hadTurn ? "Stopped the current turn." : "Sent an interrupt to the session.")
+    await this.syncPresence()
+  }
+
+  // Commands can't be typed in a channel or DM, so a turn a mention started
+  // there is stopped from the scratchpad root.
+  private async stopTurnsOutsideScratchpad(
+    invocation: ClaimedInvocation,
+    actuator: SessionControlActuator
+  ): Promise<void> {
+    const root = this.link?.rootStreamId
+    const streams = new Set(
+      [...this.inflight.values()]
+        .filter((route) => route.invocation.rootStreamId !== root)
+        .map((route) => route.invocation.responseStreamId)
+    )
+    if (streams.size === 0) {
+      await this.completeAck(invocation, "No turn is running in this stream.")
+      return
+    }
+    const interrupted = [...streams].filter((streamId) => actuator.interrupt(streamId))
+    for (const streamId of interrupted) await this.completeInterruptedTurns(streamId)
+    if (interrupted.length === 0) {
+      await this.completeAck(invocation, "Could not send the interrupt (runtime control unavailable).")
+      return
+    }
+    await this.completeAck(
+      invocation,
+      interrupted.length === 1
+        ? "Stopped the turn running outside this scratchpad."
+        : `Stopped ${interrupted.length} turns running outside this scratchpad.`
+    )
     await this.syncPresence()
   }
 
