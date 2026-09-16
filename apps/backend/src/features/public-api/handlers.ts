@@ -2597,7 +2597,7 @@ export function createPublicApiHandlers({
     async failBotInvocation(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const data = validateRequest(failInvocationSchema, req.body)
-      const failed = await withTransaction(pool, async (client) => {
+      const { failed, sessionFailed } = await withTransaction(pool, async (client) => {
         const failed = await botRuntimeService.failInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
@@ -2619,11 +2619,17 @@ export function createPublicApiHandlers({
           })
         }
 
-        return failed
+        const session = await AgentSessionRepository.findById(client, failed.id)
+        if (!session || session.status !== AgentSessionStatuses.RUNNING) return { failed, sessionFailed: false }
+        const stream = await StreamRepository.findById(client, session.streamId)
+        const sessionFailed = await failSessionWithLifecycleInTransaction(client, session, stream, data.errorMessage)
+        return { failed, sessionFailed }
       })
-      // The session row stays RUNNING here (the orphan sweeper owns that), but the
-      // parent timeline's indicator is driven by these frames alone — without this
-      // a failed /spawn leaves the anchor spinning until the sweep.
+      if (sessionFailed) {
+        io.to(`ws:${req.workspaceId!}:agent_session:${failed.id}`).emit("agent_session:failed", {
+          sessionId: failed.id,
+        })
+      }
       emitAgentActivityEnded(io, {
         workspaceId: req.workspaceId!,
         streamId: failed.responseStreamId,
