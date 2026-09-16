@@ -10,6 +10,7 @@ const remote: RemoteSessionStatusSnapshot = {
   rootStreamId: "stream_1",
   activeStreamId: "stream_1",
   socketConnected: true,
+  pendingDecisionCount: 0,
   inflightCount: 1,
   activeTurnStreamId: "stream_1",
 }

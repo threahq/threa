@@ -237,7 +237,6 @@ describe("BotRuntimeSessionLinkRepository.rebindInstance", () => {
       workspaceId: "ws_1",
       botId: "bot_alice",
       linkId: "brsl_1",
-      runtimeKind: "pi-local",
       instanceId: "inst_old",
       runtimeSessionId: "sess_1",
       newInstanceId: "inst_new",

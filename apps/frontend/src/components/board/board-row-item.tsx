@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { Bot, Clock, MessageSquareDashed, Sparkles, SquareSlash, TerminalSquare } from "lucide-react"
+import { Bot, CircleHelp, Clock, MessageSquareDashed, Sparkles, SquareSlash, TerminalSquare } from "lucide-react"
 import type { StreamEvent } from "@threahq/types"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { isContinuation } from "@/lib/message-grouping"
@@ -10,6 +10,7 @@ import { MemoPreviewDialog } from "@/components/memo/memo-preview-dialog"
 import { FollowUpScheduledEvent } from "@/components/timeline/follow-up-event"
 import { DelegationEvent } from "@/components/timeline/delegation-event"
 import { SubagentEvent } from "@/components/timeline/subagent-event"
+import { DecisionEvent } from "@/components/timeline/decision-event"
 import { CommandEvent } from "@/components/timeline/command-event"
 import { AsideAnchorEvent } from "@/components/timeline/aside-anchor-event"
 import { useSocket, useTrace } from "@/contexts"
@@ -527,6 +528,15 @@ export function BoardEventRowItem({
           statusPatch={row.statusPatch}
         />
       )
+    case "decision":
+      return (
+        <DecisionEvent
+          event={row.event as StreamEvent}
+          workspaceId={workspaceId}
+          streamId={row.streamId}
+          statusPatch={row.statusPatch}
+        />
+      )
     case "subagent":
       return (
         <SubagentEvent
@@ -548,6 +558,7 @@ const LEDGER_EVENT_ICONS: Record<BoardEventRow["kind"], ReactNode> = {
   memo: <Sparkles className="size-3 text-amber-500" />,
   followUp: <Clock className="size-3" />,
   delegation: <TerminalSquare className="size-3" />,
+  decision: <CircleHelp className="size-3" />,
   subagent: <Bot className="size-3" />,
   aside: <MessageSquareDashed className="size-3 text-primary" />,
 }

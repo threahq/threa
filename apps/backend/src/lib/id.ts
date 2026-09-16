@@ -77,6 +77,7 @@ export {
   subagentRunId,
   subagentKickoffId,
   botAccessRequestId,
+  decisionRequestId,
   agentConfigOverrideId,
   personaConfigDraftId,
   personaConfigRevisionId,

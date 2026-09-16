@@ -18,6 +18,8 @@ import type {
   AgentStepType,
   KnowledgeType,
   DelegationStatus,
+  DecisionOptionTone,
+  DecisionRequestStatus,
   DelegationReopenReason,
   SubagentStatus,
 } from "./constants"
@@ -1471,6 +1473,76 @@ export interface BotAccessStatusChangedEventPayload {
   resolvedBy?: string
   delegationId?: string
   delegationTitle?: string
+}
+
+/** One answer a decision request offers. `id` is what the resolver sends back. */
+export interface DecisionOption {
+  id: string
+  label: string
+  tone: DecisionOptionTone
+}
+
+/** What a resolved decision was decided to be, and by whom. */
+export interface DecisionResolution {
+  optionId: string
+  note?: string
+  /** The resolving user (UserId), or the system for an expiry sweep. */
+  decidedBy: string
+  decidedAt: string
+}
+
+/**
+ * A call a bot runtime cannot make for itself, put to its human on the stream
+ * timeline (Hermes). Wire shape: dates are ISO strings. `version` is the CAS
+ * token every write carries (INV-66) — the resolver echoes the version it saw,
+ * so a second click on a card that already moved loses the race instead of
+ * overwriting the first answer.
+ */
+export interface DecisionRequest {
+  id: string
+  workspaceId: string
+  streamId: string
+  requesterBotId?: string
+  requesterRuntimeSessionId?: string
+  requesterInvocationId?: string
+  title: string
+  bodyMarkdown?: string
+  options: DecisionOption[]
+  allowNote: boolean
+  externalRef?: string
+  status: DecisionRequestStatus
+  resolution?: DecisionResolution
+  expiresAt?: string
+  version: number
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Payload for `decision:requested` timeline events: appended in the same
+ * transaction as the `decision_requests` row (INV-4/7). The card renders
+ * entirely from this payload — no fetch — so it carries the whole request.
+ * `triggerMessageId` is what the board projection keys the card on
+ * (`conversationRef: "trigger-message"`), taken from the requesting
+ * invocation's source message when the requester names one.
+ */
+export interface DecisionRequestedEventPayload {
+  decisionId: string
+  decision: DecisionRequest
+  triggerMessageId?: string
+}
+
+/**
+ * Payload for `decision:resolved` events: a patch onto the matching
+ * `decision:requested` card, appended in the same transaction as the CAS that
+ * moved the row. Carries the post-write `version` so a client that already
+ * applied a later patch can drop an out-of-order one.
+ */
+export interface DecisionResolvedEventPayload {
+  decisionId: string
+  status: DecisionRequestStatus
+  resolution?: DecisionResolution
+  version: number
 }
 
 /**

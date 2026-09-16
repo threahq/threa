@@ -2051,6 +2051,8 @@ function bindStreamSocketHandlers(
   // is all that's needed.
   socket.on("stream:bot_access_requested", handleAppendEvent)
   socket.on("stream:bot_access_status_changed", handleAppendEvent)
+  socket.on("stream:decision_requested", handleAppendEvent)
+  socket.on("stream:decision_resolved", handleAppendEvent)
   socket.on("stream:brief_updated", handleAppendEvent)
   socket.on("stream:call_started", handleAppendEvent)
   socket.on("stream:call_ended", handleAppendEvent)
@@ -2094,6 +2096,8 @@ function bindStreamSocketHandlers(
     socket.off("stream:subagent_status_changed", handleSubagentEvent)
     socket.off("stream:bot_access_requested", handleAppendEvent)
     socket.off("stream:bot_access_status_changed", handleAppendEvent)
+    socket.off("stream:decision_requested", handleAppendEvent)
+    socket.off("stream:decision_resolved", handleAppendEvent)
     socket.off("stream:brief_updated", handleAppendEvent)
     socket.off("stream:call_started", handleAppendEvent)
     socket.off("stream:call_ended", handleAppendEvent)

@@ -6,6 +6,7 @@ import {
   type OutboxEvent,
   botInvocationControlPayloadSchema,
   botInvocationCancelledPayloadSchema,
+  botDecisionPayloadSchema,
   type BotInvocationAvailableOutboxPayload,
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
@@ -343,6 +344,23 @@ export class BroadcastHandler implements OutboxHandler {
       if (payload.targetRuntimeSessionId)
         room = `bot:${workspaceId}:bot:${payload.botId}:session:${payload.targetRuntimeSessionId}`
       botNs.to(room).emit(event.eventType, payload)
+      return
+    }
+
+    if (isOutboxEventType(event, "bot_decision:resolved") || isOutboxEventType(event, "bot_decision:cancelled")) {
+      const parsed = botDecisionPayloadSchema.safeParse(event.payload)
+      if (!parsed.success) {
+        logger.error(
+          { eventId: event.id, eventType: event.eventType, issues: parsed.error.issues },
+          "dispatchBotEvent: dropping malformed decision event"
+        )
+        return
+      }
+      const payload = parsed.data
+      const socketEvent = event.eventType === "bot_decision:resolved" ? "decision:resolved" : "decision:cancelled"
+      botNs
+        .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
+        .emit(socketEvent, payload)
       return
     }
 

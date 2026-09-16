@@ -709,6 +709,7 @@ describe("delegated-model badge in a subagent thread", () => {
       subagentStatusPatches: new Map(),
       subagentThreadRun,
       botAccessStatusPatches: new Map(),
+      decisionStatusPatches: new Map(),
       callEndedPatches: new Map(),
     }
     return render(<TimelineItemContent item={{ type: "event", event }} ctx={ctx} deferSecondaryHydration={false} />, {
@@ -784,6 +785,7 @@ describe("row-tree read fan-out", () => {
       delegationStatusPatches: new Map(),
       subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
+      decisionStatusPatches: new Map(),
       callEndedPatches: new Map(),
     }
   }

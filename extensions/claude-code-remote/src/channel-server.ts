@@ -25,13 +25,12 @@ import {
   writeSpawnBrief,
 } from "@threahq/harness-client"
 import {
+  DecisionAbandonedError,
   DelegationClient,
   DelegationRunner,
   RemoteSession,
   ThreaClient,
-  parseSessionControlCommand,
   type ClaimedDelegation,
-  type ClaimedInvocation,
   type DelegationExecutorContext,
   type DeliveredTurn,
   type HandedOffCommandClaim,
@@ -96,14 +95,13 @@ const defaultSpawnRuntimes = spawnRuntimesResolver((error) =>
   console.error(`harnessd runtimes: ${error}; /spawn disabled`)
 )
 
-/** "y abcde" / "yes abcde" / "n abcde" / "no abcde". The id alphabet skips 'l' (Claude Code's convention). */
-export const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
-const EMBEDDED_STEER_RE = /(^|[^\p{L}\p{N}_/])\/steer(?=$|[^\p{L}\p{N}_/-])/giu
-
 // Delegation-queue backstop poll. The /bot socket pushes delegation:available,
 // so like WS_BACKSTOP_POLL_MS in the SDK this is only insurance against a
 // dropped push — every tick is a billed edge request.
 const DELEGATION_BACKSTOP_POLL_MS = 15 * 60 * 1000
+
+/** The backend's ceiling on a decision's lifetime; a longer idle timeout clamps to it. */
+const DECISION_MAX_EXPIRES_MS = 24 * 60 * 60 * 1000
 
 /**
  * The delegation brief as delivered into the Claude session. The event carries
@@ -162,6 +160,33 @@ export const CHANNEL_TOOLS = [
   },
 ] as const
 
+const PERMISSION_PREVIEW_MAX_CHARS = 1500
+
+/**
+ * Claude Code sends the tool input as one line of JSON. A shell command reads
+ * best as the command itself; anything else is shown as formatted JSON, and a
+ * preview that is not JSON at all goes into a plain fenced block.
+ */
+export function permissionPreviewBlock(inputPreview: string): string {
+  let lang = ""
+  let text = inputPreview
+  try {
+    const parsed: unknown = JSON.parse(inputPreview)
+    if (parsed && typeof parsed === "object" && typeof (parsed as { command?: unknown }).command === "string") {
+      lang = "sh"
+      text = (parsed as { command: string }).command
+    } else {
+      lang = "json"
+      text = JSON.stringify(parsed, null, 2)
+    }
+  } catch {
+    // not JSON: shown verbatim
+  }
+  if (text.length > PERMISSION_PREVIEW_MAX_CHARS) text = `${text.slice(0, PERMISSION_PREVIEW_MAX_CHARS)}…`
+  const fence = text.includes("```") ? "````" : "```"
+  return `${fence}${lang}\n${text}\n${fence}`
+}
+
 const PermissionRequestSchema = z.object({
   method: z.literal("notifications/claude/channel/permission_request"),
   params: z.object({
@@ -171,40 +196,6 @@ const PermissionRequestSchema = z.object({
     input_preview: z.string(),
   }),
 })
-
-export interface PermissionVerdict {
-  behavior: "allow" | "deny"
-  requestId: string
-}
-
-export function parsePermissionVerdict(text: string): PermissionVerdict | null {
-  const match = PERMISSION_REPLY_RE.exec(text)
-  if (!match) return null
-  return {
-    behavior: match[1]!.toLowerCase().startsWith("y") ? "allow" : "deny",
-    requestId: match[2]!.toLowerCase(),
-  }
-}
-
-/**
- * The text of a claimed invocation that could carry a permission verdict: an
- * ordinary message's prompt, or a /steer's folded text — the busy-session
- * composer routes replies through /steer, so "yes abcde" often arrives as
- * steer args. Other session-control commands never carry a verdict.
- */
-export function verdictCandidateText(invocation: ClaimedInvocation): string | null {
-  const command = parseSessionControlCommand(invocation)
-  if (command) return command.name === "steer" ? command.args : null
-
-  // Embedded steer is now persisted as an ordinary source message plus an
-  // empty structured steer invocation. When that source message is swept while
-  // busy, retain the old permission-reply behavior by testing its text without
-  // the embedded directive, regardless of where the user placed it.
-  return invocation.promptMarkdown
-    .replace(EMBEDDED_STEER_RE, "$1")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim()
-}
 
 export function buildInstructions(permissionRelay: boolean, channelActive = true): string {
   if (!channelActive) {
@@ -229,7 +220,7 @@ export function buildInstructions(permissionRelay: boolean, channelActive = true
   if (permissionRelay) {
     lines.push(
       "",
-      "When you use a tool that needs approval, Claude Code forwards the prompt to the Threa scratchpad for the user to approve there. Proceed normally; you don't need to do anything special."
+      "When you use a tool that needs approval, Claude Code posts it to the Threa scratchpad as a decision card the user answers there. Proceed normally; you don't need to do anything special."
     )
   }
   return lines.join("\n")
@@ -629,7 +620,6 @@ export class ChannelServer {
   readonly session: RemoteSession
   private readonly tracer: TranscriptTracer
   private readonly carryOn: CarryOnController | undefined
-  private readonly openPermissions = new Map<string, { cleanup: ReturnType<typeof setTimeout> }>()
   private readonly delegations: DelegationRunner | undefined
   /** Delegation turns awaiting Claude's reply, keyed by delegation id (the tool-call invocation_id). */
   private readonly openDelegations = new Map<
@@ -645,6 +635,8 @@ export class ChannelServer {
   private started = false
   private shuttingDown = false
   private currentRuntimeInvocationId: string | undefined
+  /** Whether the turn the runtime is executing arrived sealed — a sealed stream has no decision card yet. */
+  private currentTurnSealed = false
   /** Set only when harnessd revived this session; spent on the first turn delivered. */
   private wakeBrief: WakeBrief | undefined
 
@@ -702,7 +694,7 @@ export class ChannelServer {
               runtimeSessionId: config.runtimeSessionId,
               remote: this.session.statusSnapshot,
               quotaHolding: this.carryOn?.holding ?? false,
-              pendingPermissionCount: this.openPermissions.size,
+              pendingPermissionCount: this.session.statusSnapshot.pendingDecisionCount,
               activeDelegationCount: this.openDelegations.size,
             }),
           () => this.session?.rootStreamId,
@@ -727,9 +719,6 @@ export class ChannelServer {
             worktree: process.cwd(),
           }),
         onArchived: () => this.windDownForArchive(),
-        ...(config.permissionRelay
-          ? { interceptClaimed: (invocation: ClaimedInvocation) => this.interceptVerdict(invocation) }
-          : {}),
       },
     })
     // Quota carry-on needs the tmux pane to type the resume into — without it
@@ -816,8 +805,6 @@ export class ChannelServer {
     this.tracer.stop()
     this.carryOn?.stop()
     await this.delegations?.stop()
-    for (const [, open] of this.openPermissions) clearTimeout(open.cleanup)
-    this.openPermissions.clear()
     // A never-started session has nothing linked — skipping its shutdown keeps
     // plain-MCP teardown from writing an offline-presence row for an instance
     // that never existed on the Threa side.
@@ -903,6 +890,7 @@ export class ChannelServer {
 
   private async deliverToClaude(turn: DeliveredTurn): Promise<void> {
     this.currentRuntimeInvocationId = turn.invocationId
+    this.currentTurnSealed = turn.sealed
     // Window the transcript tail BEFORE the content is pushed, so the tracer's
     // start offset precedes the prompt echo it binds on.
     // A sealed turn's steps are ciphertext to the server, so the tracer may
@@ -980,53 +968,74 @@ export class ChannelServer {
   // --- Permission relay -----------------------------------------------------
 
   /**
-   * A relayed permission verdict ("yes abcde") arrives as a claimed invocation
-   * — an ordinary message, or /steer args when the session was busy. Recognize
-   * it and route it to Claude Code as a verdict instead of pushing it into the
-   * session as a fresh prompt or steering text.
+   * A Claude Code tool approval, put to the user as a decision card on the
+   * scratchpad. The turn stays alive while the card is open (the SDK keeps it
+   * alive), and the answer comes back as the verdict Claude Code is waiting
+   * for. A sealed stream has no card yet, and a card that cannot be opened
+   * leaves the approval in the terminal — both say so on the stream (INV-11).
    */
-  private async interceptVerdict(invocation: ClaimedInvocation): Promise<boolean> {
-    const text = verdictCandidateText(invocation)
-    if (text === null) return false
-    const verdict = parsePermissionVerdict(text)
-    if (!verdict) return false
-    const open = this.openPermissions.get(verdict.requestId)
-    if (!open) return false
-    clearTimeout(open.cleanup)
-    this.openPermissions.delete(verdict.requestId)
-    this.syncInterceptHold()
-    await this.notify("notifications/claude/channel/permission", {
-      request_id: verdict.requestId,
-      behavior: verdict.behavior,
-    })
-    return true
-  }
-
   private async handlePermissionRequest(params: z.infer<typeof PermissionRequestSchema>["params"]): Promise<void> {
-    const invocationId = this.currentRuntimeInvocationId
+    // Only name the turn while it is still in flight: a completed invocation is
+    // refused as the requester and the card would never open.
+    const invocationId = this.inflightRuntimeInvocationId()
     const rootStreamId = this.session.rootStreamId
     if (!invocationId && !rootStreamId) return
-    const activeStreamId = this.session.activeTurnStreamId
-    if (activeStreamId) this.session.keepAlive(activeStreamId)
-    const existing = this.openPermissions.get(params.request_id)
-    if (existing) clearTimeout(existing.cleanup)
-    const cleanup = setTimeout(() => {
-      this.openPermissions.delete(params.request_id)
-      this.syncInterceptHold()
-    }, this.config.idleTimeoutMs)
-    this.openPermissions.set(params.request_id, { cleanup })
-    this.syncInterceptHold()
-    const preview = params.input_preview ? `\n\n\`${params.input_preview.slice(0, 200)}\`` : ""
+    if (this.currentTurnSealed) {
+      log(`permission ${params.request_id}: sealed turn — approval stays in the terminal`)
+      await this.postTerminalApprovalNotice(params, "Approvals on a sealed stream cannot be shown as a card yet.")
+      return
+    }
+    const preview = params.input_preview ? `\n\n${permissionPreviewBlock(params.input_preview)}` : ""
+    let outcome
+    try {
+      outcome = await this.session.requestDecision({
+        title: `Run \`${params.tool_name}\`?`,
+        body: `${params.description}${preview}`,
+        options: [
+          { id: "allow", label: "Allow", tone: "primary" },
+          { id: "deny", label: "Deny", tone: "destructive" },
+        ],
+        allowNote: true,
+        externalRef: params.request_id,
+        // The card expires when the relay's own per-request cleanup would have.
+        expiresInMs: Math.min(this.config.idleTimeoutMs, DECISION_MAX_EXPIRES_MS),
+        ...(invocationId ? { invocationId } : {}),
+      })
+    } catch (error) {
+      // Teardown: Claude Code is going away with us, so there is nobody to
+      // answer and nothing to post.
+      if (error instanceof DecisionAbandonedError) return
+      log(`permission ${params.request_id} card failed: ${error instanceof Error ? error.message : String(error)}`)
+      await this.postTerminalApprovalNotice(params, "The decision card could not be opened.")
+      return
+    }
+    await this.notify("notifications/claude/channel/permission", {
+      request_id: params.request_id,
+      behavior: outcome.status === "resolved" && outcome.optionId === "allow" ? "allow" : "deny",
+    })
+  }
+
+  /** The turn this session is executing right now, or undefined once it has been replied to. */
+  private inflightRuntimeInvocationId(): string | undefined {
+    const invocationId = this.currentRuntimeInvocationId
+    return invocationId && this.session.isInflight(invocationId) ? invocationId : undefined
+  }
+
+  /**
+   * The approval cannot become a card: tell the stream where it is instead of
+   * leaving the user waiting. A sealed turn keeps posting through its
+   * invocation even after `reply` closed it (the closed route still seals as a
+   * follow-up); a plaintext stream post would be refused on an E2EE stream.
+   */
+  private async postTerminalApprovalNotice(
+    params: z.infer<typeof PermissionRequestSchema>["params"],
+    reason: string
+  ): Promise<void> {
+    const invocationId =
+      this.inflightRuntimeInvocationId() ?? (this.currentTurnSealed ? this.currentRuntimeInvocationId : undefined)
+    const rootStreamId = this.session.rootStreamId
     const body = {
-      content: [
-        `**Claude Code wants to run \`${params.tool_name}\`**`,
-        params.description,
-        preview,
-        "",
-        `Reply \`yes ${params.request_id}\` to allow or \`no ${params.request_id}\` to deny.`,
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      content: `Claude Code is waiting for approval to run \`${params.tool_name}\`. Answer it in the terminal. ${reason}`,
       clientMessageId: `ccperm-${params.request_id}`,
       metadata: { "cc.channel.permissionRequest": params.request_id },
     }
@@ -1034,17 +1043,8 @@ export class ChannelServer {
       ? this.session.postToInvocation(invocationId, body)
       : this.session.postToStream(rootStreamId!, body)
     await posting.catch((error) =>
-      log(`permission relay send failed: ${error instanceof Error ? error.message : String(error)}`)
+      log(`permission notice send failed: ${error instanceof Error ? error.message : String(error)}`)
     )
-  }
-
-  /**
-   * While a permission prompt is open, its verdict arrives as an ordinary
-   * message and the in-flight turn is blocked until we route it — so the SDK
-   * must keep claiming with full capabilities instead of session-control only.
-   */
-  private syncInterceptHold(): void {
-    this.session.interceptHoldsClaims = this.openPermissions.size > 0
   }
 
   private async notify(method: string, params: Record<string, unknown>): Promise<void> {

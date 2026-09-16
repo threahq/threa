@@ -577,7 +577,6 @@ export class BotRuntimeService {
         workspaceId: params.workspaceId,
         botId: params.botId,
         linkId: params.linkId,
-        runtimeKind: "pi-local",
         instanceId: params.instanceId,
         runtimeSessionId: params.runtimeSessionId,
         newInstanceId: params.newInstanceId,
@@ -586,9 +585,12 @@ export class BotRuntimeService {
       await this.upsertPiRemoteSessionPresenceInTransaction(db, {
         workspaceId: params.workspaceId,
         botId: params.botId,
-        runtimeKind: "pi-local",
+        runtimeKind: link.runtimeKind,
         instanceId: params.newInstanceId,
         runtimeSessionId: params.runtimeSessionId,
+        // The new instance usually said hello (with its own capabilities)
+        // before rebinding; merge the bootstrap set instead of replacing it.
+        mergeCapabilities: true,
       })
       return link
     })
@@ -602,9 +604,11 @@ export class BotRuntimeService {
       runtimeKind: BotRuntimeKind
       instanceId: string
       runtimeSessionId: string
+      mergeCapabilities?: boolean
     }
   ): Promise<void> {
     await BotRuntimeInstanceRepository.upsertPresence(db, {
+      mergeCapabilities: params.mergeCapabilities,
       id: botRuntimeInstanceId(),
       workspaceId: params.workspaceId,
       botId: params.botId,

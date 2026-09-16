@@ -45,6 +45,7 @@ const ctx: TimelineItemRenderContext = {
   delegationStatusPatches: new Map(),
   subagentStatusPatches: new Map(),
   botAccessStatusPatches: new Map(),
+  decisionStatusPatches: new Map(),
   callEndedPatches: new Map(),
 }
 

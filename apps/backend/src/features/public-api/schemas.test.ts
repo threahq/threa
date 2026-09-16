@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test"
-import { createRuntimeSessionSchema, searchAttachmentsSchema, upsertPresenceSchema } from "./schemas"
+import {
+  createDecisionSchema,
+  createRuntimeSessionSchema,
+  searchAttachmentsSchema,
+  upsertPresenceSchema,
+} from "./schemas"
 
 const BASE = {
   runtimeKind: "pi-local" as const,
@@ -52,6 +57,7 @@ describe("createRuntimeSessionSchema runtimeKind", () => {
   it("accepts the session-linking runtime kinds", () => {
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "pi-local" }).success).toBe(true)
     expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "claude-code-channel" }).success).toBe(true)
+    expect(createRuntimeSessionSchema.safeParse({ ...base, runtimeKind: "hermes" }).success).toBe(true)
   })
 
   it("rejects link-free kinds that have no business creating a session", () => {
@@ -132,5 +138,35 @@ describe("searchAttachmentsSchema query", () => {
 
   it("rejects an empty-string query", () => {
     expect(searchAttachmentsSchema.safeParse({ query: "" }).success).toBe(false)
+  })
+})
+
+describe("createDecisionSchema", () => {
+  const base = { title: "Deploy the migration?", options: [{ id: "yes", label: "Deploy" }] }
+
+  it("defaults tone and allowNote", () => {
+    const parsed = createDecisionSchema.parse(base)
+    expect(parsed).toMatchObject({
+      allowNote: false,
+      options: [{ id: "yes", label: "Deploy", tone: "neutral" }],
+    })
+  })
+
+  it("rejects more than eight options", () => {
+    const options = Array.from({ length: 9 }, (_, index) => ({ id: `o${index}`, label: `Option ${index}` }))
+    expect(createDecisionSchema.safeParse({ ...base, options }).success).toBe(false)
+  })
+
+  it("rejects duplicate option ids", () => {
+    const options = [
+      { id: "ok", label: "Ship" },
+      { id: "ok", label: "Hold" },
+    ]
+    expect(createDecisionSchema.safeParse({ ...base, options }).success).toBe(false)
+  })
+
+  it("rejects an unknown tone", () => {
+    const options = [{ id: "yes", label: "Deploy", tone: "danger" }]
+    expect(createDecisionSchema.safeParse({ ...base, options }).success).toBe(false)
   })
 })

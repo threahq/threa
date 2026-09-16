@@ -1,5 +1,6 @@
 export {
   RemoteSession,
+  DecisionAbandonedError,
   parseSessionControlCommand,
   isSessionControlInvocation,
   formatInvocationContent,
@@ -11,6 +12,8 @@ export {
   SESSION_CONTROL_CAPABILITY,
   STEER_SETTLE_MS,
   COMPLETED_TURN_MEMORY,
+  type DecisionOutcome,
+  type DecisionRequestInput,
   type DeliveredTurn,
   type HandedOffCommandClaim,
   type ModelSuggestionInfo,
@@ -48,6 +51,7 @@ export {
   type RemoteSessionConfig,
   type TraceMode,
 } from "./identity"
+export { readConfigFile, writeFileAtomic } from "./config-file"
 export {
   downloadInboundAttachments,
   formatInboundAttachmentManifest,
@@ -73,4 +77,4 @@ export {
   type DelegationExecutor,
   type DelegationExecutorContext,
 } from "./delegation-runner"
-export type { StepFrame } from "@threahq/bot-runtime-client"
+export type { DecisionRequest, StepFrame } from "@threahq/bot-runtime-client"

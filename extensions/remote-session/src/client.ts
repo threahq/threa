@@ -1,5 +1,7 @@
 import {
   THREA_CALLBACK_TOKEN_HEADER,
+  type CreateDecisionRequestBody,
+  type DecisionRequest,
   type AttachmentRef,
   type ProvisionedWrap,
   type SealedReplyBody,
@@ -282,6 +284,30 @@ export class ThreaClient {
       body: JSON.stringify(body),
       signal,
     })
+  }
+
+  /** Open a decision card on a stream and return the created request. Bot key only. */
+  async requestDecision(streamId: string, body: CreateDecisionRequestBody): Promise<DecisionRequest> {
+    const result = await this.request<{ data: DecisionRequest }>(this.workspacePath(`/streams/${streamId}/decisions`), {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+    return result.data
+  }
+
+  /** Read one decision this bot opened. 404 once it is out of the caller's scope. */
+  async getDecision(decisionId: string): Promise<DecisionRequest> {
+    const result = await this.request<{ data: DecisionRequest }>(this.workspacePath(`/decisions/${decisionId}`))
+    return result.data
+  }
+
+  /** Withdraw a decision this bot opened. */
+  async cancelDecision(decisionId: string): Promise<DecisionRequest> {
+    const result = await this.request<{ data: DecisionRequest }>(
+      this.workspacePath(`/decisions/${decisionId}/cancel`),
+      { method: "POST" }
+    )
+    return result.data
   }
 
   /** Recent messages for a stream, newest-window first. Used to discover inbound attachments (the claim context omits them). Requires `messages:read` + `streams:read`. */

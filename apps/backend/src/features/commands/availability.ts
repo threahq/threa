@@ -233,8 +233,8 @@ async function resolveRuntimeCommandTarget(
   })
   if (!presence) return null
   // Session-control is for runtimes that drive a long-lived linked session
-  // (Pi natively, the Claude Code channel via tmux, an SDK-built custom
-  // runtime through its actuator). Each gates the surfaced command set on what
+  // (Pi natively, the Claude Code channel via tmux, the Hermes connector via
+  // its Runs API, an SDK-built custom runtime through its actuator). Each gates the surfaced command set on what
   // it advertises in `sessionControlCommands`.
   if (resolveRuntimeKindConfig(presence.runtimeKind).sessionLinking === "none") return null
   if (presence.status !== BotRuntimeStatuses.AVAILABLE && presence.status !== BotRuntimeStatuses.BUSY) return null
