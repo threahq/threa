@@ -2,7 +2,9 @@ import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
 import { argNames } from "@/lib/markdown/command-list-context"
-import { chipBase, commandFlagChipStyle, commandValueStyle } from "@/lib/markdown/chip-styles"
+import { commandFlagChipStyle, commandValueStyle } from "@/lib/markdown/chip-styles"
+import { commandNodeTextSize } from "./command-extension"
+import { pillBaseClassName } from "./create-trigger-extension"
 import type { CommandArgumentInfo } from "@threahq/types"
 
 const CLAUDE_MODELS = [{ value: "opus", label: "Opus" }]
@@ -60,13 +62,14 @@ function openWith(command: string, text: string, pickable = true) {
   return editor
 }
 
-const valueChipClass = `${chipBase} bg-muted font-mono ${commandValueStyle} pl-0 rounded-l-none`
+const box = `${pillBaseClassName} ${commandNodeTextSize}`
+const valueChipClass = `${box} bg-muted font-mono ${commandValueStyle} pl-0 rounded-l-none`
 
 // Exact class match, so the `/command` node's own chip — same gold styling —
 // is not counted as a decoration.
 function flagChips(editor: Editor): { flag: string; value: string }[] {
   return [...editor.view.dom.querySelectorAll("span")]
-    .filter((el) => el.className === `${chipBase} ${commandFlagChipStyle} pr-0 rounded-r-none`)
+    .filter((el) => el.className === `${box} ${commandFlagChipStyle} pr-0 rounded-r-none`)
     .map((el) => {
       const next = el.nextElementSibling
       return { flag: el.textContent?.trim() ?? "", value: next?.className === valueChipClass ? (next.textContent ?? "") : "" }

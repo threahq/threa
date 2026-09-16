@@ -5,6 +5,9 @@ import type { CommandItem } from "./types"
 
 export const CommandPluginKey = new PluginKey("slashCommand")
 
+/** The command node's own type size; the argument decorations share it so their boxes line up with the node's. */
+export const commandNodeTextSize = "text-sm"
+
 /**
  * Client-action id for the synthetic "memo" slash entry. Selecting it doesn't
  * insert a command chip — it types `/memo ` so the separate memo-search trigger
@@ -73,7 +76,7 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
     name: { dataAttr: "data-name" },
     clientActionId: { dataAttr: "data-client-action-id", default: null },
   },
-  getClassName: () => `${commandChipStyle} text-sm`,
+  getClassName: () => `${commandChipStyle} ${commandNodeTextSize}`,
   getText: (attrs) => `/${attrs.name}`,
   mapPropsToAttrs: (c) => ({
     name: c.name,
