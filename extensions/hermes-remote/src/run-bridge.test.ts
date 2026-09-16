@@ -697,6 +697,65 @@ describe("HermesTurnRunner control", () => {
     runner.shutdown()
   })
 
+  test("a steer that lands while an approval is parked is sent once the approval is answered", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome(resolvedWith("once"))
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.failNextSteer(steerRejected())
+    expect(await runner.steer("go left")).toBe(true)
+
+    gate.push(APPROVAL_EVENT)
+    await settle()
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
+    gate.close()
+
+    expect({ steers: gate.steers, nextInput: gate.created[1]?.input }).toEqual({
+      steers: [{ runId: "run_1", input: "go left" }],
+      nextInput: "Next",
+    })
+    runner.shutdown()
+  })
+
+  test("steer text a completed run never consumed is folded into the next turn", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok", pending_steer: "tighten the ending" })
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
+    gate.close()
+
+    expect(gate.created[1]?.input).toBe("Next\n\n[Steer that arrived between turns]\ntighten the ending")
+    runner.shutdown()
+  })
+
+  test("an approval seen only through the status poll gets one card and is answered", async () => {
+    const { session, calls, setOutcome } = makeSession()
+    setOutcome(resolvedWith("once"))
+    const parked: RunStatus = { runId: "run_1", status: "waiting_for_approval", approval: APPROVAL_EVENT }
+    const { client, approvals } = makeClient(
+      [[]],
+      [parked, parked, { runId: "run_1", status: "completed", output: "removed" }]
+    )
+    await makeRunner(client, session).deliverTurn(TURN)
+    await settle()
+
+    expect({
+      cards: calls.decisions.map((decision) => decision.externalRef),
+      approvals,
+      replies: calls.replies,
+    }).toEqual({
+      cards: ["req_1"],
+      approvals: [{ runId: "run_1", choice: "once", requestId: "req_1" }],
+      replies: [{ invocationId: "binv_1", text: "removed" }],
+    })
+  })
+
   test("an expired decision denies the approval", async () => {
     const { session, setOutcome } = makeSession()
     setOutcome({ status: "expired", decision: { id: "dec_1" } as DecisionOutcome["decision"] })

@@ -207,6 +207,30 @@ describe("HermesRunsClient.getRun", () => {
   })
 })
 
+describe("HermesRunsClient.getRun fields", () => {
+  test("reads a parked approval and a completed run's unconsumed steer", async () => {
+    const { client } = clientWith((url) =>
+      Response.json(
+        url.endsWith("run_parked")
+          ? {
+              run_id: "run_parked",
+              status: "waiting_for_approval",
+              approval: { event: "approval.request", run_id: "run_parked", request_id: "req_1" },
+            }
+          : { run_id: "run_done", status: "completed", output: "ok", pending_steer: "tighten the ending" }
+      )
+    )
+    expect({ parked: await client.getRun("run_parked"), done: await client.getRun("run_done") }).toEqual({
+      parked: {
+        runId: "run_parked",
+        status: "waiting_for_approval",
+        approval: { event: "approval.request", run_id: "run_parked", request_id: "req_1" },
+      },
+      done: { runId: "run_done", status: "completed", output: "ok", pendingSteer: "tighten the ending" },
+    })
+  })
+})
+
 function clientWith(handler: (url: string, init?: RequestInit) => Response): {
   client: HermesRunsClient
   seen: () => { url: string; body: unknown } | undefined

@@ -61,6 +61,15 @@ export interface HermesTurnRunnerOptions {
   conversationStore?: ConversationStore
 }
 
+/** A run being consumed: what the event stream and the status poll both act on. */
+interface ConsumedRun {
+  runId: string
+  streamId: string
+  batcher: StepBatcher
+  signal: AbortSignal
+  answered: Set<string>
+}
+
 interface OpenRun {
   runId: string
   streamId: string
@@ -183,6 +192,9 @@ export class HermesTurnRunner {
   private readonly conversationStore: ConversationStore | undefined
   private generations: Record<string, number>
   private readonly pendingSteers = new Map<string, string[]>()
+  // Steer text for an open run that was not `running` when it arrived (queued,
+  // parked on an approval): sent once the run resumes, else carried to the next turn.
+  private readonly runSteers = new Map<string, string[]>()
   // Turns inside createRun: an interrupt or shutdown that lands during admission
   // marks them here, and the run is stopped the moment Hermes returns its id.
   private readonly admitting = new Map<string, AbortController>()
@@ -227,25 +239,59 @@ export class HermesTurnRunner {
 
   /**
    * Fold text into every open run. A run Hermes will not steer right now
-   * (queued, or already finishing) is not a failure: the text is held and
-   * prepended to the next turn on that stream instead of being lost.
+   * (queued, or parked on an approval) is not a failure: the text waits for the
+   * run to resume, and if it settles first it is prepended to the next turn.
    */
   async steer(text: string): Promise<boolean> {
     const open = this.openRuns()
     if (open.length === 0) return false
     for (const run of open) {
       try {
-        await this.client.steerRun(run.runId, text)
+        await this.steerOrHold(run.runId, text)
       } catch (error) {
-        if (error instanceof HermesApiError && error.code === STEER_REJECTED_CODE) {
-          this.holdSteer(run.streamId, text)
-          continue
-        }
         this.log(`run ${run.runId} steer failed: ${this.summarize(error)}`)
         return false
       }
     }
     return true
+  }
+
+  /** Throws only for a failure other than the run not accepting steer yet. */
+  private async steerOrHold(runId: string, text: string): Promise<void> {
+    const held = this.runSteers.get(runId)
+    if (held) {
+      held.push(text)
+      return
+    }
+    try {
+      await this.client.steerRun(runId, text)
+    } catch (error) {
+      if (!(error instanceof HermesApiError && error.code === STEER_REJECTED_CODE)) throw error
+      const waiting = this.runSteers.get(runId)
+      if (waiting) waiting.push(text)
+      else this.runSteers.set(runId, [text])
+    }
+  }
+
+  /** Send the steer text a run held while it was not `running`, in arrival order. */
+  private async flushRunSteers(runId: string): Promise<void> {
+    const held = this.runSteers.get(runId)
+    if (!held) return
+    this.runSteers.delete(runId)
+    for (const [index, text] of held.entries()) {
+      try {
+        await this.client.steerRun(runId, text)
+      } catch (error) {
+        if (!(error instanceof HermesApiError && error.code === STEER_REJECTED_CODE)) {
+          this.log(`run ${runId} held steer failed: ${this.summarize(error)}`)
+          continue
+        }
+        // Still not running: put the rest back ahead of anything that arrived meanwhile.
+        const rest = held.slice(index)
+        this.runSteers.set(runId, [...rest, ...(this.runSteers.get(runId) ?? [])])
+        return
+      }
+    }
   }
 
   /**
@@ -334,9 +380,11 @@ export class HermesTurnRunner {
     replayed: boolean
   ): Promise<void> {
     const batcher = new StepBatcher(invocationId, this.session)
+    const run: ConsumedRun = { runId, streamId, batcher, signal: abort.signal, answered: new Set() }
+    let terminal: HermesRunEvent | undefined
     try {
-      let terminal = replayed ? undefined : await this.drain(runId, streamId, abort, batcher)
-      terminal ??= await this.awaitStatus(runId, abort)
+      terminal = replayed ? undefined : await this.drain(run)
+      terminal ??= await this.awaitStatus(run)
       await batcher.flush()
       if (terminal && !abort.signal.aborted) await this.settle(invocationId, terminal)
     } catch (error) {
@@ -347,6 +395,10 @@ export class HermesTurnRunner {
       await batcher.flush()
       // A settled run can still hold an unanswered approval card; aborting withdraws it.
       abort.abort()
+      const pendingSteer = text(terminal?.pending_steer)
+      const unsent = [...(this.runSteers.get(runId) ?? []), ...(pendingSteer === undefined ? [] : [pendingSteer])]
+      this.runSteers.delete(runId)
+      for (const steer of unsent) this.holdSteer(streamId, steer)
       const open = this.runs.get(invocationId)
       if (open?.runId === runId) this.runs.delete(invocationId)
     }
@@ -358,16 +410,19 @@ export class HermesTurnRunner {
    * The run itself carries on, and its status record survives, so poll that
    * until it settles. Returns undefined only when the subscription was aborted.
    */
-  private async awaitStatus(runId: string, abort: AbortController): Promise<HermesRunEvent | undefined> {
+  private async awaitStatus(run: ConsumedRun): Promise<HermesRunEvent | undefined> {
+    const { runId, signal } = run
     let failures = 0
     for (;;) {
-      if (abort.signal.aborted) return undefined
+      if (signal.aborted) return undefined
       try {
-        const status = await this.client.getRun(runId, abort.signal)
+        const status = await this.client.getRun(runId, signal)
         if (TERMINAL_STATUSES.has(status.status)) return terminalFromStatus(status)
+        if (status.approval) this.answerApproval(run, status.approval)
+        if (status.status === "running") await this.flushRunSteers(runId)
         failures = 0
       } catch (error) {
-        if (abort.signal.aborted) return undefined
+        if (signal.aborted) return undefined
         failures += 1
         if (failures >= MAX_CONSECUTIVE_POLL_FAILURES) throw error
         this.log(`run ${runId} status poll failed (${failures}): ${this.summarize(error)}`)
@@ -377,33 +432,26 @@ export class HermesTurnRunner {
   }
 
   /** Consume one subscription; returns the terminal event if the stream carried one. */
-  private async drain(
-    runId: string,
-    streamId: string,
-    abort: AbortController,
-    batcher: StepBatcher
-  ): Promise<HermesRunEvent | undefined> {
+  private async drain(run: ConsumedRun): Promise<HermesRunEvent | undefined> {
+    const { runId, batcher, signal } = run
     let terminal: HermesRunEvent | undefined
     try {
-      for await (const event of this.client.streamEvents(runId, abort.signal)) {
-        if (abort.signal.aborted) return undefined
+      for await (const event of this.client.streamEvents(runId, signal)) {
+        if (signal.aborted) return undefined
         if (event.event === "approval.request") {
-          batcher.add({ stepType: "tool_call", content: `Waiting for approval: ${text(event.command) ?? "a command"}` })
-          // The run is parked until it is answered, so the card is resolved
-          // off the drain loop; blocking here would stall nothing but would
-          // also never see the resume events.
-          void this.resolveApproval(runId, streamId, event, abort.signal)
+          this.answerApproval(run, event)
           continue
         }
         if (TERMINAL_EVENTS.has(event.event)) {
           terminal = event
           break
         }
+        void this.flushRunSteers(runId)
         const frame = frameForEvent(event)
         if (frame && frame.content.length > 0) batcher.add(frame)
       }
     } catch (error) {
-      if (abort.signal.aborted) return undefined
+      if (signal.aborted) return undefined
       this.log(`run ${runId} event stream lost, falling back to its status: ${this.summarize(error)}`)
     }
     return terminal
@@ -424,6 +472,21 @@ export class HermesTurnRunner {
     // (idle timeout, superseded) would otherwise vanish without a trace.
     if (!result.ok)
       this.log(`run ${terminal.run_id} reply ${result.retryable ? "deferred" : "refused"}: ${result.message}`)
+  }
+
+  /**
+   * The same approval reaches us from the event stream and, after a fallback,
+   * from the status record; it is carded once per request id. The run is parked
+   * until it is answered, so the card resolves off the caller's loop.
+   */
+  private answerApproval(run: ConsumedRun, event: HermesRunEvent): void {
+    const requestId = text(event.request_id)
+    if (requestId) {
+      if (run.answered.has(requestId)) return
+      run.answered.add(requestId)
+    }
+    run.batcher.add({ stepType: "tool_call", content: `Waiting for approval: ${text(event.command) ?? "a command"}` })
+    void this.resolveApproval(run.runId, run.streamId, event, run.signal)
   }
 
   /**
@@ -472,15 +535,11 @@ export class HermesTurnRunner {
       this.log(`run ${runId} approval response failed: ${this.summarize(error)}`)
       return
     }
+    await this.flushRunSteers(runId)
     if (choice !== "deny" || !note) return
-    const denial = `The user denied this and said: ${note}`
     try {
-      await this.client.steerRun(runId, denial)
+      await this.steerOrHold(runId, `The user denied this and said: ${note}`)
     } catch (error) {
-      if (error instanceof HermesApiError && error.code === STEER_REJECTED_CODE) {
-        this.holdSteer(streamId, denial)
-        return
-      }
       this.log(`run ${runId} denial note could not be steered in: ${this.summarize(error)}`)
     }
   }
@@ -496,6 +555,7 @@ function terminalFromStatus(status: RunStatus): HermesRunEvent {
     run_id: status.runId,
     ...(status.output === undefined ? {} : { output: status.output }),
     ...(status.error === undefined ? {} : { error: status.error }),
+    ...(status.pendingSteer === undefined ? {} : { pending_steer: status.pendingSteer }),
     ...(status.status === "interrupted" && status.error === undefined
       ? { error: "The Hermes gateway restarted before this run settled." }
       : {}),

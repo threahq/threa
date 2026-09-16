@@ -22,6 +22,10 @@ export interface RunStatus {
   status: string
   output?: string
   error?: string
+  /** Steer text Hermes accepted but the run finished before consuming. */
+  pendingSteer?: string
+  /** The parked `approval.request` event, present only while `waiting_for_approval`. */
+  approval?: HermesRunEvent
 }
 
 export interface SteerAccepted {
@@ -86,6 +90,10 @@ export interface HermesRunsClientOptions {
 const SUBSCRIBE_ATTEMPTS = 3
 const SUBSCRIBE_BACKOFF_MS = 250
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined
 }
@@ -133,6 +141,8 @@ export class HermesRunsClient {
       status: str(payload.status) ?? "unknown",
       ...(str(payload.output) === undefined ? {} : { output: payload.output as string }),
       ...(str(payload.error) === undefined ? {} : { error: payload.error as string }),
+      ...(str(payload.pending_steer) === undefined ? {} : { pendingSteer: payload.pending_steer as string }),
+      ...(isRecord(payload.approval) ? { approval: payload.approval as HermesRunEvent } : {}),
     }
   }
 
