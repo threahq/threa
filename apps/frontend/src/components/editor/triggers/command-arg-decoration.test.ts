@@ -60,16 +60,10 @@ function openWith(command: string, text: string, pickable = true) {
   return editor
 }
 
-// Exact class match, so the `/command` node's own chip — same gold styling —
-// is not counted as a decoration.
-function spansWithClass(editor: Editor, className: string): string[] {
-  return [...editor.view.dom.querySelectorAll("span")]
-    .filter((el) => el.className === className)
-    .map((el) => el.textContent ?? "")
-}
-
 const valueChipClass = `${chipBase} bg-muted font-mono ${commandValueStyle} pl-0 rounded-l-none`
 
+// Exact class match, so the `/command` node's own chip — same gold styling —
+// is not counted as a decoration.
 function flagChips(editor: Editor): { flag: string; value: string }[] {
   return [...editor.view.dom.querySelectorAll("span")]
     .filter((el) => el.className === `${chipBase} ${commandFlagChipStyle} pr-0 rounded-r-none`)
