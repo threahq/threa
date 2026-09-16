@@ -43,6 +43,8 @@ export const HERMES_RUNTIME: RuntimeDescriptor = {
   manifest: { output: { reply: true, trace: true, sources: false } },
   busyStatusText: "Working in Hermes…",
   shutdownErrorMessage: "Hermes connector shut down",
+  // The Hermes gateway caps concurrent runs at 10 and answers 429 above it.
+  maxConcurrentTurns: 4,
 }
 
 const FLUSH_DELAY_MS = 500
@@ -242,7 +244,7 @@ export class HermesTurnRunner {
   private readonly steerFlushes = new Map<string, Promise<void>>()
   // Turns inside createRun: an interrupt or shutdown that lands during admission
   // marks them here, and the run is stopped the moment Hermes returns its id.
-  private readonly admitting = new Map<string, AbortController>()
+  private readonly admitting = new Map<string, { abort: AbortController; streamId: string }>()
   readonly runs = new Map<string, OpenRun>()
 
   constructor(options: HermesTurnRunnerOptions) {
@@ -290,8 +292,12 @@ export class HermesTurnRunner {
   }
 
   /** Runs still inside admission count too: they have no run id yet but will. */
-  hasOpenTurns(): boolean {
-    return this.runs.size > 0 || this.admitting.size > 0
+  hasOpenTurns(streamId?: string): boolean {
+    if (streamId === undefined) return this.runs.size > 0 || this.admitting.size > 0
+    return (
+      [...this.runs.values()].some((run) => run.streamId === streamId) ||
+      [...this.admitting.values()].some((pending) => pending.streamId === streamId)
+    )
   }
 
   openRuns(): Array<{ invocationId: string; runId: string; streamId: string }> {
@@ -303,12 +309,12 @@ export class HermesTurnRunner {
   }
 
   /**
-   * Fold text into every open run. A run Hermes will not steer right now
+   * Fold text into every open run, or only the given stream's. A run Hermes will not steer right now
    * (queued, or parked on an approval) is not a failure: the text waits for the
    * run to resume, and if it settles first it is prepended to the next turn.
    */
-  async steer(text: string): Promise<boolean> {
-    const open = this.openRuns()
+  async steer(text: string, streamId?: string): Promise<boolean> {
+    const open = this.openRuns().filter((run) => streamId === undefined || run.streamId === streamId)
     if (open.length === 0) return false
     for (const run of open) {
       try {
@@ -367,13 +373,15 @@ export class HermesTurnRunner {
   }
 
   /**
-   * Stop every open run and drop it here first: the SDK closes the turn as
+   * Stop every open run (or only the given stream's) and drop it here first: the SDK closes the turn as
    * interrupted, so the consumer must never come back and reply to it.
    */
-  interrupt(): boolean {
+  interrupt(streamId?: string): boolean {
+    const inScope = (candidate: string) => streamId === undefined || candidate === streamId
     try {
-      for (const pending of this.admitting.values()) pending.abort()
+      for (const pending of this.admitting.values()) if (inScope(pending.streamId)) pending.abort.abort()
       for (const [invocationId, run] of [...this.runs.entries()]) {
+        if (!inScope(run.streamId)) continue
         void this.client.stopRun(run.runId).catch((error) => {
           this.log(`run ${run.runId} stop failed: ${this.summarize(error)}`)
         })
@@ -446,7 +454,7 @@ export class HermesTurnRunner {
     const abort = new AbortController()
     const input = this.inputFor(turn)
     const admission = new AbortController()
-    this.admitting.set(turn.invocationId, admission)
+    this.admitting.set(turn.invocationId, { abort: admission, streamId: turn.streamId })
     let created: Awaited<ReturnType<HermesRunsClient["createRun"]>>
     try {
       created = await this.client.createRun(
@@ -489,7 +497,7 @@ export class HermesTurnRunner {
 
   /** Abort every open subscription; the SDK's own shutdown fails the turns. */
   shutdown(): void {
-    for (const pending of this.admitting.values()) pending.abort()
+    for (const pending of this.admitting.values()) pending.abort.abort()
     for (const run of this.runs.values()) run.abort.abort()
     this.runs.clear()
   }
