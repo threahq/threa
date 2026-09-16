@@ -220,6 +220,15 @@ export class HermesRunsClient {
     )
   }
 
+  /** Copy a conversation's history into a new one; 404 when the source has never run, 409 `session_exists` when the fork id is taken. */
+  async forkSession(sourceId: string, forkId: string, signal?: AbortSignal): Promise<void> {
+    await this.request(
+      `/api/sessions/${encodeURIComponent(sourceId)}/fork`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: forkId }) },
+      signal
+    )
+  }
+
   async lockSessionModel(
     id: string,
     runtime: { provider: string; model: string },

@@ -6,24 +6,31 @@ import { HermesRunsClient, type FetchLike } from "./hermes-client"
 import { HERMES_RUNTIME, HermesTurnRunner, type ConversationStore } from "./run-bridge"
 import { createHermesSessionControl } from "./session-control"
 
-/** `/clear` generations per stream, written through a temp file so a crash cannot truncate it. */
+/** `/clear` generations and thread forks, written through a temp file so a crash cannot truncate it. */
 export function createFileConversationStore(path: string): ConversationStore {
   return {
     load: () => {
       try {
         const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-        return Object.fromEntries(
-          Object.entries(parsed).flatMap(([key, value]) =>
+        // The chunk 7 file was the bare generation map; a file with neither key is one of those.
+        const legacy = !("generations" in parsed) && !("forked" in parsed)
+        const raw = (legacy ? parsed : (parsed.generations ?? {})) as Record<string, unknown>
+        const generations = Object.fromEntries(
+          Object.entries(raw).flatMap(([key, value]) =>
             typeof value === "number" && Number.isFinite(value) ? [[key, value] as const] : []
           )
         )
+        const forked = Array.isArray(parsed.forked)
+          ? parsed.forked.flatMap((entry) => (typeof entry === "string" && entry.length > 0 ? [entry] : []))
+          : []
+        return { generations, forked }
       } catch {
-        return {}
+        return { generations: {}, forked: [] }
       }
     },
-    save: (generations) => {
+    save: (state) => {
       const tmp = `${path}.tmp`
-      writeFileSync(tmp, `${JSON.stringify(generations, null, 2)}\n`, { mode: 0o600 })
+      writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 })
       renameSync(tmp, path)
     },
   }

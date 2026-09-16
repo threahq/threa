@@ -19,10 +19,15 @@ export interface BridgeSession {
   requestDecision(input: DecisionRequestInput, opts?: { signal?: AbortSignal }): Promise<DecisionOutcome>
 }
 
-/** Where the per-stream conversation generation (`/clear` count) survives a restart. */
+/** What survives a restart: the per-stream `/clear` count, and which conversations were forked from the root. */
+export interface ConversationState {
+  generations: Record<string, number>
+  forked: string[]
+}
+
 export interface ConversationStore {
-  load(): Record<string, number>
-  save(generations: Record<string, number>): void
+  load(): ConversationState
+  save(state: ConversationState): void
 }
 
 export const HERMES_RUNTIME: RuntimeDescriptor = {
@@ -65,6 +70,7 @@ export interface HermesTurnRunnerOptions {
 interface ConsumedRun {
   runId: string
   streamId: string
+  sealed: boolean
   batcher: StepBatcher
   signal: AbortSignal
   answered: Set<string>
@@ -191,6 +197,7 @@ export class HermesTurnRunner {
   private readonly sleep: (ms: number) => Promise<void>
   private readonly conversationStore: ConversationStore | undefined
   private generations: Record<string, number>
+  private readonly forked: Set<string>
   private readonly pendingSteers = new Map<string, string[]>()
   // Steer text for an open run that was not `running` when it arrived (queued,
   // parked on an approval): sent once the run resumes, else carried to the next turn.
@@ -208,7 +215,9 @@ export class HermesTurnRunner {
     this.log = options.log ?? (() => {})
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.conversationStore = options.conversationStore
-    this.generations = options.conversationStore?.load() ?? {}
+    const state = options.conversationStore?.load()
+    this.generations = state?.generations ?? {}
+    this.forked = new Set(state?.forked ?? [])
   }
 
   /** The Hermes conversation for a stream: the stream id, suffixed once per `/clear`. */
@@ -220,7 +229,7 @@ export class HermesTurnRunner {
   /** Start a fresh conversation on a stream; returns the new conversation id. */
   bumpConversation(streamId: string): string {
     const next = { ...this.generations, [streamId]: (this.generations[streamId] ?? 0) + 1 }
-    this.conversationStore?.save(next)
+    this.conversationStore?.save({ generations: next, forked: [...this.forked] })
     this.generations = next
     return this.conversationFor(streamId)
   }
@@ -335,7 +344,36 @@ export class HermesTurnRunner {
     return `${turn.content}\n\n[Steer that arrived between turns]\n${held.join("\n")}`
   }
 
+  /**
+   * A stream that is not the scratchpad root runs in its own Hermes conversation,
+   * forked once from the root's so a thread starts with the scratchpad's context.
+   * A later `/clear` on the root bumps the root only; an existing fork stays.
+   * Throws on any fork failure other than a missing source, and the SDK's
+   * delivery catch fails the turn once with that message.
+   */
+  private async ensureConversation(turn: DeliveredTurn): Promise<void> {
+    const root = this.session.rootStreamId
+    if (!root || turn.streamId === root) return
+    const forkId = this.conversationFor(turn.streamId)
+    if (this.forked.has(forkId)) return
+    const sourceId = this.conversationFor(root)
+    try {
+      await this.client.forkSession(sourceId, forkId)
+    } catch (error) {
+      if (error instanceof HermesApiError && error.status === 404) {
+        this.log(`conversation ${sourceId} does not exist yet; ${forkId} starts fresh instead of forking`)
+      } else if (error instanceof HermesApiError && error.code === "session_exists") {
+        this.log(`conversation ${forkId} was already forked`)
+      } else {
+        throw new Error(`Hermes could not fork ${sourceId}: ${this.summarize(error)}`)
+      }
+    }
+    this.conversationStore?.save({ generations: { ...this.generations }, forked: [...this.forked, forkId] })
+    this.forked.add(forkId)
+  }
+
   async deliverTurn(turn: DeliveredTurn): Promise<void> {
+    await this.ensureConversation(turn)
     const abort = new AbortController()
     const input = this.inputFor(turn)
     const admission = new AbortController()
@@ -367,7 +405,14 @@ export class HermesTurnRunner {
     // A replayed admission points at a run whose event transport may be gone
     // already (Hermes drops it when the first subscriber leaves), so its status
     // is the source of truth from the start.
-    void this.consume(turn.invocationId, created.runId, turn.streamId, abort, created.replayed).catch((error) => {
+    void this.consume(
+      turn.invocationId,
+      created.runId,
+      turn.streamId,
+      turn.sealed === true,
+      abort,
+      created.replayed
+    ).catch((error) => {
       this.log(`run ${created.runId} bridge failed: ${this.summarize(error)}`)
       void this.session.failTurn(turn.invocationId, this.summarize(error)).catch(() => undefined)
     })
@@ -384,11 +429,12 @@ export class HermesTurnRunner {
     invocationId: string,
     runId: string,
     streamId: string,
+    sealed: boolean,
     abort: AbortController,
     replayed: boolean
   ): Promise<void> {
     const batcher = new StepBatcher(invocationId, this.session)
-    const run: ConsumedRun = { runId, streamId, batcher, signal: abort.signal, answered: new Set() }
+    const run: ConsumedRun = { runId, streamId, sealed, batcher, signal: abort.signal, answered: new Set() }
     let terminal: HermesRunEvent | undefined
     try {
       terminal = replayed ? undefined : await this.drain(run)
@@ -495,7 +541,7 @@ export class HermesTurnRunner {
       run.answered.add(requestId)
     }
     run.batcher.add({ stepType: "tool_call", content: `Waiting for approval: ${text(event.command) ?? "a command"}` })
-    void this.resolveApproval(run.runId, run.streamId, event, run.signal)
+    void this.resolveApproval(run, event)
   }
 
   /**
@@ -503,12 +549,8 @@ export class HermesTurnRunner {
    * except a successful answer leaves the gateway's own approval timeout to
    * deny the command, so a lost card never parks the run forever.
    */
-  private async resolveApproval(
-    runId: string,
-    streamId: string,
-    event: HermesRunEvent,
-    signal: AbortSignal
-  ): Promise<void> {
+  private async resolveApproval(run: ConsumedRun, event: HermesRunEvent): Promise<void> {
+    const { runId, streamId, batcher, signal } = run
     const choices = Array.isArray(event.choices) ? event.choices.flatMap((c) => text(c) ?? []) : []
     const options = approvalOptions(choices)
     if (options.length === 0) {
@@ -517,6 +559,20 @@ export class HermesTurnRunner {
     }
     const requestId = text(event.request_id)
     const command = text(event.command) ?? "(command withheld)"
+    if (run.sealed) {
+      batcher.add({
+        stepType: "status",
+        content: `Approval denied: this scratchpad is encrypted and decision cards cannot be shown there yet (${command})`,
+      })
+      try {
+        await this.client.respondApproval(runId, { choice: "deny", ...(requestId ? { requestId } : {}) })
+      } catch (error) {
+        this.log(`run ${runId} sealed approval denial failed: ${this.summarize(error)}`)
+        return
+      }
+      await this.flushRunSteers(runId)
+      return
+    }
     let outcome: DecisionOutcome
     try {
       outcome = await this.session.requestDecision(
