@@ -374,6 +374,7 @@ function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error 
     await internals.deliverToClaude({
       invocationId,
       streamId: "stream_turn",
+      rootStreamId: "stream_root",
       sourceMessageId: `msg_${invocationId}`,
       content: "Do the thing",
       sealed,

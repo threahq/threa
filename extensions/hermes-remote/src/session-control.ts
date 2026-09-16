@@ -1,5 +1,5 @@
 import type { ModelSuggestionInfo, SessionControlActuator } from "@threahq/remote-session"
-import { HermesApiError, type HermesRunsClient, type ModelOptions } from "./hermes-client"
+import { HermesApiError, type HermesRunsClient, type ModelChoice, type ModelOptions } from "./hermes-client"
 import type { HermesTurnRunner } from "./run-bridge"
 
 /** Threa catalog names only; the plan's "new conversation" is the catalog's `clear`. */
@@ -10,11 +10,8 @@ const MAX_AMBIGUOUS_CANDIDATES = 8
 export interface HermesSessionControl extends SessionControlActuator {
   /** Load the model picker's options; awaited once before the session starts. */
   refresh(): Promise<void>
-}
-
-export interface ModelChoice {
-  provider: string
-  model: string
+  /** Give a freshly forked thread conversation the model its source was locked to. */
+  inheritModel(sourceId: string, forkId: string): Promise<void>
 }
 
 function choicesOf(options: ModelOptions): ModelChoice[] {
@@ -52,9 +49,6 @@ export function createHermesSessionControl(
   log: (message: string) => void = () => {}
 ): HermesSessionControl {
   let suggestions: ModelSuggestionInfo[] = []
-  // Per conversation: /clear starts a conversation Hermes has no lock for,
-  // so the lock is re-applied to the new one.
-  const lockedModels = new Map<string, ModelChoice>()
 
   async function status(rootStreamId: string): Promise<string> {
     const conversationId = runner.conversationFor(rootStreamId)
@@ -70,7 +64,7 @@ export function createHermesSessionControl(
         lines.push(`Run \`${run.runId}\` (${state})`)
       }
     }
-    const lockedModel = lockedModels.get(conversationId)
+    const lockedModel = runner.lockedModel(conversationId)
     if (lockedModel) lines.push(`Model: \`${label(lockedModel)}\``)
     lines.push(`Gateway: ${client.baseUrl}`)
     return lines.join("\n")
@@ -96,6 +90,18 @@ export function createHermesSessionControl(
     const choice = matches[0]!
     const failure = await lockModel(runner.conversationFor(rootStreamId), choice)
     if (failure) return { ok: false, message: failure }
+    // Threads run in forks of the scratchpad conversation, each with its own lock.
+    const unlocked: string[] = []
+    for (const forkId of runner.forkedConversations()) {
+      const forkFailure = await lockModel(forkId, choice)
+      if (forkFailure) unlocked.push(`\`${forkId}\`: ${forkFailure}`)
+    }
+    if (unlocked.length > 0) {
+      return {
+        ok: true,
+        message: `Set the model to ${label(choice)}, but these threads keep their model. ${unlocked.join("; ")}`,
+      }
+    }
     return { ok: true, summary: `Set the model to ${label(choice)}` }
   }
 
@@ -116,7 +122,7 @@ export function createHermesSessionControl(
     } catch (error) {
       return `Could not set the model: ${errorText(error)}`
     }
-    lockedModels.set(conversationId, locked)
+    runner.recordModel(conversationId, locked)
     return undefined
   }
 
@@ -126,7 +132,7 @@ export function createHermesSessionControl(
     if (runner.hasOpenTurns()) {
       return { ok: false, message: "Stop the running turn first (/stop)." }
     }
-    const previous = lockedModels.get(runner.conversationFor(rootStreamId))
+    const previous = runner.lockedModel(runner.conversationFor(rootStreamId))
     const conversationId = runner.bumpConversation(rootStreamId)
     if (!previous) return { ok: true, summary: "Started a new conversation" }
     const failure = await lockModel(conversationId, previous)
@@ -146,6 +152,12 @@ export function createHermesSessionControl(
     },
     interrupt: () => runner.interrupt(),
     steer: (text) => runner.steer(text),
+    inheritModel: async (sourceId, forkId) => {
+      const lockedModel = runner.lockedModel(sourceId)
+      if (!lockedModel) return
+      const failure = await lockModel(forkId, lockedModel)
+      if (failure) log(`thread conversation ${forkId} runs on the gateway default model: ${failure}`)
+    },
     refresh: async () => {
       try {
         suggestions = suggestionsFrom(await client.listModelOptions())

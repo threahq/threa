@@ -15,7 +15,12 @@ const OPTIONS: ModelOptions = {
   ],
 }
 
-function makeRunner(open: Array<{ runId: string; streamId: string }> = [], admitting = 0) {
+function makeRunner(
+  open: Array<{ runId: string; streamId: string }> = [],
+  admitting = 0,
+  forked: string[] = [],
+  models: Record<string, { provider: string; model: string }> = {}
+) {
   const bumps: string[] = []
   let generation = 0
   const runner = {
@@ -27,6 +32,11 @@ function makeRunner(open: Array<{ runId: string; streamId: string }> = [], admit
     },
     openRuns: () => open.map((run, index) => ({ invocationId: `binv_${index}`, ...run })),
     hasOpenTurns: () => open.length > 0 || admitting > 0,
+    forkedConversations: () => forked,
+    lockedModel: (conversationId: string) => models[conversationId],
+    recordModel: (conversationId: string, choice: { provider: string; model: string }) => {
+      models[conversationId] = choice
+    },
     steer: async () => true,
     interrupt: () => true,
   }
@@ -143,6 +153,41 @@ describe("createHermesSessionControl", () => {
       created: ["stream_root"],
       locks: [{ id: "stream_root", provider: "local", model: "hermes-4" }],
       model: true,
+    })
+  })
+
+  test("model locks every thread forked from the scratchpad, and a later fork inherits the lock", async () => {
+    const { runner } = makeRunner([], 0, ["stream_thread"])
+    const { client, locks } = makeClient()
+    const control = createHermesSessionControl(runner, client)
+
+    const result = await control.runCommand("model", "local::hermes-4", CONTEXT)
+    await control.inheritModel("stream_root", "stream_later")
+
+    expect({ result, locks }).toEqual({
+      result: { ok: true, summary: "Set the model to local::hermes-4" },
+      locks: [
+        { id: "stream_root", provider: "local", model: "hermes-4" },
+        { id: "stream_thread", provider: "local", model: "hermes-4" },
+        { id: "stream_later", provider: "local", model: "hermes-4" },
+      ],
+    })
+  })
+
+  test("a thread whose lock fails is named instead of silently keeping its old model", async () => {
+    const { runner } = makeRunner([], 0, ["stream_thread"])
+    const { client } = makeClient({
+      lockSessionModel: async (id: string, runtime: { provider: string; model: string }) => {
+        if (id === "stream_thread") throw new Error("gateway busy")
+        return { sessionId: id, ...runtime }
+      },
+    })
+    const control = createHermesSessionControl(runner, client)
+
+    expect(await control.runCommand("model", "local::hermes-4", CONTEXT)).toEqual({
+      ok: true,
+      message:
+        "Set the model to local::hermes-4, but these threads keep their model. `stream_thread`: Could not set the model: gateway busy",
     })
   })
 

@@ -1,31 +1,39 @@
-import { readFileSync, renameSync, writeFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { RemoteSession, ThreaClient, type ShutdownOptions } from "@threahq/remote-session"
+import { RemoteSession, ThreaClient, writeFileAtomic, type ShutdownOptions } from "@threahq/remote-session"
 import { WORK_DIR, type HermesRemoteConfig } from "./config"
 import { HermesRunsClient, type FetchLike } from "./hermes-client"
 import { HERMES_RUNTIME, HermesTurnRunner, type ConversationStore } from "./run-bridge"
 import { createHermesSessionControl } from "./session-control"
 
-/** `/clear` generations per stream, written through a temp file so a crash cannot truncate it. */
+/** `/clear` generations, thread forks and `/model` locks, swapped in whole so a crash cannot truncate it. */
 export function createFileConversationStore(path: string): ConversationStore {
   return {
     load: () => {
       try {
         const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-        return Object.fromEntries(
-          Object.entries(parsed).flatMap(([key, value]) =>
+        const generations = Object.fromEntries(
+          Object.entries((parsed.generations ?? {}) as Record<string, unknown>).flatMap(([key, value]) =>
             typeof value === "number" && Number.isFinite(value) ? [[key, value] as const] : []
           )
         )
+        const forked = Array.isArray(parsed.forked)
+          ? parsed.forked.flatMap((entry) => (typeof entry === "string" && entry.length > 0 ? [entry] : []))
+          : []
+        const models = Object.fromEntries(
+          Object.entries((parsed.models ?? {}) as Record<string, unknown>).flatMap(([key, value]) => {
+            const { provider, model } = (value ?? {}) as { provider?: unknown; model?: unknown }
+            return typeof provider === "string" && typeof model === "string"
+              ? [[key, { provider, model }] as const]
+              : []
+          })
+        )
+        return { generations, forked, models }
       } catch {
-        return {}
+        return { generations: {}, forked: [], models: {} }
       }
     },
-    save: (generations) => {
-      const tmp = `${path}.tmp`
-      writeFileSync(tmp, `${JSON.stringify(generations, null, 2)}\n`, { mode: 0o600 })
-      renameSync(tmp, path)
-    },
+    save: (state) => writeFileAtomic(path, `${JSON.stringify(state, null, 2)}\n`),
   }
 }
 
@@ -65,10 +73,13 @@ export function createHermesConnector(
       failTurn: (id, message) => session.failTurn(id, message),
       requestDecision: (input, opts) => session.requestDecision(input, opts),
     },
-    // Long-term memory scope (X-Hermes-Session-Key): one per Threa scratchpad. The
-    // conversation itself is selected by session_id, the stream the turn arrived on.
-    sessionKeyFor: (streamId) => `threa:${config.workspaceId}:${session.rootStreamId ?? streamId}`,
+    // X-Hermes-Session-Key scopes an external memory provider and the prompt cache
+    // per stream tree. Built-in memory (MEMORY.md, USER.md) is profile-wide and
+    // ignores it. The conversation itself is selected by session_id.
+    sessionKeyFor: (rootStreamId) => `threa:${config.workspaceId}:${rootStreamId}`,
     conversationStore: createFileConversationStore(join(WORK_DIR, "conversations.json")),
+    // The session control is constructed below; a fork only happens once a turn runs.
+    onForked: (sourceId, forkId) => sessionControl.inheritModel(sourceId, forkId),
     log,
   })
 

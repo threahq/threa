@@ -402,3 +402,23 @@ describe("HermesRunsClient control endpoints", () => {
     expect({ status: error.status, code: error.code }).toEqual({ status: 404, code: "session_not_found" })
   })
 })
+
+describe("HermesRunsClient.forkSession", () => {
+  test("posts the fork id to the source session", async () => {
+    const { client, seen } = clientWith(
+      () =>
+        new Response(JSON.stringify({ object: "hermes.session", session: { id: "stream_thread" } }), { status: 201 })
+    )
+    await client.forkSession("stream_root", "stream_thread")
+    expect(seen()).toEqual({
+      url: "http://127.0.0.1:8642/api/sessions/stream_root/fork",
+      body: { id: "stream_thread" },
+    })
+  })
+
+  test("surfaces a fork id that is already taken", async () => {
+    const { client } = clientWith(() => errorResponse(409, "session_exists", "Session already exists"))
+    const error = await caught(client.forkSession("stream_root", "stream_thread"))
+    expect({ status: error.status, code: error.code }).toEqual({ status: 409, code: "session_exists" })
+  })
+})

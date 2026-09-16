@@ -19,6 +19,7 @@ import {
   parseSessionControlCommand,
   runtimeCapabilitiesFor,
   supportedCapabilitiesFor,
+  type DeliveredTurn,
   type RemoteSessionDelegate,
   type RuntimeDescriptor,
   type SessionControlActuator,
@@ -1240,6 +1241,31 @@ describe("RemoteSession terminal route writes", () => {
     expect(internals.activeTurnStream).toBeUndefined()
     expect(timerFired).toBe(false)
     expect(presence.at(-1)?.status).toBe("available")
+  })
+
+  test("hands the runtime a mention turn with the stream tree it arrived in", async () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const turns: DeliveredTurn[] = []
+    const session = makeSession(client, transport, { deliverTurn: async (turn) => void turns.push(turn) })
+    await (
+      session as unknown as { deliverTurn: (invocation: ClaimedInvocation, content: string) => Promise<void> }
+    ).deliverTurn(
+      makeInvocation({ id: "binv_mention", rootStreamId: "stream_channel", responseStreamId: "stream_channel_thread" }),
+      "Hello"
+    )
+
+    expect(turns).toEqual([
+      {
+        invocationId: "binv_mention",
+        streamId: "stream_channel_thread",
+        rootStreamId: "stream_channel",
+        sourceMessageId: expect.any(String),
+        content: "Hello",
+        sealed: false,
+      },
+    ])
+    await session.shutdown()
   })
 
   test("should leave a newer turn owning the same stream when an older route is terminally evicted", async () => {

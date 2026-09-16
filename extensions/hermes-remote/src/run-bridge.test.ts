@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import type { DecisionOutcome, DecisionRequestInput, DeliveredTurn, StepFrame } from "@threahq/remote-session"
 import { HermesApiError, type HermesRunEvent, type HermesRunsClient, type RunStatus } from "./hermes-client"
-import { HermesTurnRunner, idempotencyKeyFor, type BridgeSession, type ConversationStore } from "./run-bridge"
+import {
+  HermesTurnRunner,
+  idempotencyKeyFor,
+  type BridgeSession,
+  type ConversationState,
+  type ConversationStore,
+} from "./run-bridge"
+import { createHermesSessionControl } from "./session-control"
 
 function makeSession() {
   const calls = {
@@ -58,9 +65,16 @@ function makeClient(
   const stops: string[] = []
   const approvals: Array<{ runId: string; choice: string; requestId?: string }> = []
   const steerErrors: Error[] = []
+  const forks: Array<{ sourceId: string; forkId: string }> = []
+  const forkErrors: Error[] = []
   let getRunCalls = 0
   let subscribe = 0
   const client = {
+    forkSession: async (sourceId: string, forkId: string) => {
+      const failure = forkErrors.shift()
+      if (failure) throw failure
+      forks.push({ sourceId, forkId })
+    },
     steerRun: async (runId: string, input: string) => {
       const failure = steerErrors.shift()
       if (failure) throw failure
@@ -96,6 +110,8 @@ function makeClient(
     steers,
     stops,
     approvals,
+    forks,
+    failNextFork: (error: Error) => forkErrors.push(error),
     failNextSteer: (error: Error) => steerErrors.push(error),
     counts: () => ({ getRunCalls, subscribe }),
   }
@@ -104,6 +120,7 @@ function makeClient(
 const TURN: DeliveredTurn = {
   invocationId: "binv_1",
   streamId: "stream_thread",
+  rootStreamId: "stream_root",
   sourceMessageId: "msg_1",
   content: "Do the thing",
   sealed: false,
@@ -113,7 +130,7 @@ function makeRunner(client: HermesRunsClient, session: BridgeSession): HermesTur
   return new HermesTurnRunner({
     client,
     session,
-    sessionKeyFor: (streamId) => `threa:ws_1:${session.rootStreamId ?? streamId}`,
+    sessionKeyFor: (rootStreamId) => `threa:ws_1:${rootStreamId}`,
     sleep: async () => {},
   })
 }
@@ -381,10 +398,14 @@ function makeGatedClient() {
   const approvals: Array<{ runId: string; choice: string; requestId?: string }> = []
   const steerErrors: Error[] = []
   const queue: HermesRunEvent[] = []
+  const forks: Array<{ sourceId: string; forkId: string }> = []
   const admissionErrors: Error[] = []
   let closed = false
   let releaseAdmission: (() => void) | undefined
   const client = {
+    forkSession: async (sourceId: string, forkId: string) => {
+      forks.push({ sourceId, forkId })
+    },
     createRun: async (input: Record<string, unknown>) => {
       created.push(input)
       if (releaseAdmission) await new Promise<void>((resolve) => (releaseAdmission = resolve))
@@ -426,6 +447,7 @@ function makeGatedClient() {
     steers,
     stops,
     approvals,
+    forks,
     push: (event: HermesRunEvent) => queue.push(event),
     close: () => {
       closed = true
@@ -806,11 +828,11 @@ describe("HermesTurnRunner control", () => {
 
   test("a bumped conversation generation is persisted and used as the next run's session id", async () => {
     const { session } = makeSession()
-    const saved: Array<Record<string, number>> = []
+    const saved: ConversationState[] = []
     const store: ConversationStore = {
-      load: () => ({}),
-      save: (generations) => {
-        saved.push(generations)
+      load: () => ({ generations: {}, forked: ["stream_thread.1"], models: {} }),
+      save: (state) => {
+        saved.push(state)
       },
     }
     const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
@@ -828,7 +850,7 @@ describe("HermesTurnRunner control", () => {
     await settle()
 
     expect({ saved, sessionId: created[0]?.sessionId }).toEqual({
-      saved: [{ stream_thread: 1 }],
+      saved: [{ generations: { stream_thread: 1 }, forked: ["stream_thread.1"], models: {} }],
       sessionId: "stream_thread.1",
     })
   })
@@ -836,7 +858,7 @@ describe("HermesTurnRunner control", () => {
   test("a generation that fails to persist is not used", () => {
     const { session } = makeSession()
     const store: ConversationStore = {
-      load: () => ({}),
+      load: () => ({ generations: {}, forked: [], models: {} }),
       save: () => {
         throw new Error("disk full")
       },
@@ -852,5 +874,276 @@ describe("HermesTurnRunner control", () => {
 
     expect(() => runner.bumpConversation("stream_root")).toThrow("disk full")
     expect(runner.conversationFor("stream_root")).toBe("stream_root")
+  })
+})
+
+describe("HermesTurnRunner threads", () => {
+  function storeOf(state: ConversationState): { store: ConversationStore; saved: ConversationState[] } {
+    const saved: ConversationState[] = []
+    return {
+      saved,
+      store: {
+        load: () => state,
+        save: (next) => {
+          saved.push(next)
+        },
+      },
+    }
+  }
+
+  function threadRunner(
+    client: HermesRunsClient,
+    session: BridgeSession,
+    store?: ConversationStore,
+    onForked?: (sourceId: string, forkId: string) => Promise<void>
+  ): HermesTurnRunner {
+    return new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: () => "threa:ws_1:stream_root",
+      sleep: async () => {},
+      ...(store ? { conversationStore: store } : {}),
+      ...(onForked ? { onForked } : {}),
+    })
+  }
+
+  test("the first turn on a thread forks the root conversation, and the run uses the fork", async () => {
+    const { session } = makeSession()
+    const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const { store, saved } = storeOf({ generations: {}, forked: [], models: {} })
+    await threadRunner(client, session, store).deliverTurn(TURN)
+    await settle()
+
+    expect({ forks, sessionId: created[0]?.sessionId, saved }).toEqual({
+      forks: [{ sourceId: "stream_root", forkId: "stream_thread" }],
+      sessionId: "stream_thread",
+      saved: [{ generations: {}, forked: ["stream_thread"], models: {} }],
+    })
+  })
+
+  test("the fork is handed on before its first run, so a model lock lands first", async () => {
+    const { session } = makeSession()
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const handed: Array<{ sourceId: string; forkId: string; runsBefore: number }> = []
+    await threadRunner(client, session, undefined, async (sourceId, forkId) => {
+      handed.push({ sourceId, forkId, runsBefore: created.length })
+    }).deliverTurn(TURN)
+    await settle()
+
+    expect(handed).toEqual([{ sourceId: "stream_root", forkId: "stream_thread", runsBefore: 0 }])
+  })
+
+  test("a mention in a channel runs its own unforked conversation under the channel's memory scope", async () => {
+    const { session } = makeSession()
+    const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const runner = new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: (rootStreamId) => `threa:ws_1:${rootStreamId}`,
+      sleep: async () => {},
+    })
+    await runner.deliverTurn({ ...TURN, streamId: "stream_channel_thread", rootStreamId: "stream_channel" })
+    await settle()
+
+    expect({ forks, sessionId: created[0]?.sessionId, sessionKey: created[0]?.sessionKey }).toEqual({
+      forks: [],
+      sessionId: "stream_channel_thread",
+      sessionKey: "threa:ws_1:stream_channel",
+    })
+  })
+
+  test("a turn on the root itself is never forked", async () => {
+    const { session } = makeSession()
+    const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    await threadRunner(client, session).deliverTurn({ ...TURN, streamId: "stream_root" })
+    await settle()
+
+    expect({ forks, sessionId: created[0]?.sessionId }).toEqual({ forks: [], sessionId: "stream_root" })
+  })
+
+  test("the second turn on the same thread reuses the fork", async () => {
+    const { session } = makeSession()
+    const { client, forks } = makeClient([
+      [{ event: "run.completed", run_id: "run_1", output: "ok" }],
+      [{ event: "run.completed", run_id: "run_1", output: "ok" }],
+    ])
+    const runner = threadRunner(client, session)
+    await runner.deliverTurn(TURN)
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2" })
+    await settle()
+
+    expect(forks).toEqual([{ sourceId: "stream_root", forkId: "stream_thread" }])
+  })
+
+  test("a restart with the fork in the store does not fork again", async () => {
+    const { session } = makeSession()
+    const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const { store, saved } = storeOf({ generations: {}, forked: ["stream_thread"], models: {} })
+    await threadRunner(client, session, store).deliverTurn(TURN)
+    await settle()
+
+    expect({ forks, saved, sessionId: created[0]?.sessionId }).toEqual({
+      forks: [],
+      saved: [],
+      sessionId: "stream_thread",
+    })
+  })
+
+  test("a /model lock survives a restart, so a thread forked afterwards still inherits it", async () => {
+    let state: ConversationState = { generations: {}, forked: [], models: {} }
+    const store: ConversationStore = {
+      load: () => state,
+      save: (next) => {
+        state = next
+      },
+    }
+    const locks: Array<{ id: string; provider: string; model: string }> = []
+    const connect = () => {
+      const { session } = makeSession()
+      const { client } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+      client.createSession = async () => {}
+      client.listModelOptions = async () => ({ providers: [{ slug: "opencode-go", models: ["muse-spark"] }] })
+      client.lockSessionModel = async (id, runtime) => {
+        locks.push({ id, ...runtime })
+        return { sessionId: id, ...runtime }
+      }
+      let control: ReturnType<typeof createHermesSessionControl> | undefined
+      const runner = threadRunner(client, session, store, (sourceId, forkId) => control!.inheritModel(sourceId, forkId))
+      control = createHermesSessionControl(runner, client)
+      return { runner, control }
+    }
+
+    const before = connect()
+    await before.control.runCommand("model", "muse-spark", { rootStreamId: "stream_root", sourceMessageId: "msg_1" })
+    const after = connect()
+    await after.runner.deliverTurn(TURN)
+    await settle()
+
+    expect(locks).toEqual([
+      { id: "stream_root", provider: "opencode-go", model: "muse-spark" },
+      { id: "stream_thread", provider: "opencode-go", model: "muse-spark" },
+    ])
+  })
+
+  test("a root conversation that does not exist yet leaves the thread with a fresh conversation", async () => {
+    const { session, calls } = makeSession()
+    const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    client.forkSession = async () => {
+      throw new HermesApiError("Session not found", { status: 404, code: "session_not_found" })
+    }
+    const logs: string[] = []
+    const runner = new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: () => "threa:ws_1:stream_root",
+      sleep: async () => {},
+      log: (message) => logs.push(message),
+    })
+    await runner.deliverTurn(TURN)
+    await settle()
+
+    expect({
+      forks,
+      sessionId: created[0]?.sessionId,
+      fails: calls.fails,
+      replies: calls.replies,
+      logged: logs.some((line) => line.includes("does not exist yet")),
+    }).toEqual({
+      forks: [],
+      sessionId: "stream_thread",
+      fails: [],
+      replies: [{ invocationId: "binv_1", text: "ok" }],
+      logged: true,
+    })
+  })
+
+  test("a fork id Hermes already has is treated as forked", async () => {
+    const { session, calls } = makeSession()
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    client.forkSession = async () => {
+      throw new HermesApiError("Session already exists", { status: 409, code: "session_exists" })
+    }
+    await threadRunner(client, session).deliverTurn(TURN)
+    await settle()
+
+    expect({ sessionId: created[0]?.sessionId, fails: calls.fails, replies: calls.replies }).toEqual({
+      sessionId: "stream_thread",
+      fails: [],
+      replies: [{ invocationId: "binv_1", text: "ok" }],
+    })
+  })
+
+  test("any other fork failure rejects the delivery with the fork error and never starts a run", async () => {
+    const { session, calls } = makeSession()
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    client.forkSession = async () => {
+      throw new HermesApiError("Fork failed", { status: 500, code: "session_fork_failed" })
+    }
+    const delivery = threadRunner(client, session).deliverTurn(TURN)
+
+    await expect(delivery).rejects.toThrow("Hermes could not fork stream_root: Fork failed")
+    expect({ created, fails: calls.fails }).toEqual({ created: [], fails: [] })
+  })
+
+  test("a routing 404 is a gateway without the fork endpoint, not a missing source", async () => {
+    const { session } = makeSession()
+    const { client, created } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    client.forkSession = async () => {
+      throw new HermesApiError("Not Found", { status: 404, code: "not_found" })
+    }
+    const { store, saved } = storeOf({ generations: {}, forked: [], models: {} })
+    const delivery = threadRunner(client, session, store).deliverTurn(TURN)
+
+    await expect(delivery).rejects.toThrow("Hermes could not fork stream_root: Not Found")
+    expect({ created, saved }).toEqual({ created: [], saved: [] })
+  })
+})
+
+describe("HermesTurnRunner sealed turns", () => {
+  test("an approval on a sealed turn is denied with a status frame instead of a card", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn({ ...TURN, sealed: true })
+    gate.push(APPROVAL_EVENT)
+    await settle()
+    gate.push({ event: "run.completed", run_id: "run_1", output: "done" })
+    gate.close()
+    await settle()
+
+    expect({
+      approvals: gate.approvals,
+      decisions: calls.decisions,
+      frames: calls.steps.flatMap((call) => call.frames),
+    }).toEqual({
+      approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
+      decisions: [],
+      frames: [
+        { stepType: "tool_call", content: "Waiting for approval: rm -rf build" },
+        {
+          stepType: "tool_error",
+          content:
+            "Approval denied: this scratchpad is encrypted and decision cards cannot be shown there yet (rm -rf build)",
+        },
+      ],
+    })
+  })
+
+  test("a sealed approval with no usable choices is still denied", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn({ ...TURN, sealed: true })
+    gate.push({ ...APPROVAL_EVENT, choices: [] })
+    await settle()
+    gate.push({ event: "run.completed", run_id: "run_1", output: "done" })
+    gate.close()
+    await settle()
+
+    expect({ approvals: gate.approvals, decisions: calls.decisions }).toEqual({
+      approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
+      decisions: [],
+    })
   })
 })

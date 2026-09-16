@@ -95,6 +95,8 @@ export interface SpawnRuntimeInfo {
 export interface DeliveredTurn {
   invocationId: string
   streamId: string
+  /** The stream tree the turn belongs to: the session's scratchpad, or a channel or DM root when the bot was mentioned there. */
+  rootStreamId: string
   sourceMessageId: string
   content: string
   /**
@@ -1365,6 +1367,7 @@ export class RemoteSession {
     await this.delegate.deliverTurn({
       invocationId: invocation.id,
       streamId: invocation.responseStreamId,
+      rootStreamId: invocation.rootStreamId,
       sourceMessageId: invocation.sourceMessageId,
       content,
       sealed: invocation.sealing !== undefined,
