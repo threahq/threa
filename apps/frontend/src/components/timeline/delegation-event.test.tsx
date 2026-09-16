@@ -379,6 +379,7 @@ describe("DelegationEvent", () => {
       delegationStatusPatches: collectDelegationStatusPatches(patches),
       subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
+      decisionStatusPatches: new Map(),
       callEndedPatches: new Map(),
     })
     const queryClient = new QueryClient()

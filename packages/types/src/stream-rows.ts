@@ -305,15 +305,17 @@ export const STREAM_ROW_SPEC: Record<EventType, StreamRowSpec> = {
 
   // A bot asked its human to decide (Hermes). Its own broadcast row — the
   // decision card. Threadable so the back and forth about the call hangs off
-  // the card itself. `none` until the board can draw it: the board projection
-  // and its guard fixtures switch this to `trigger-message` together.
+  // the card itself. `trigger-message`: the card draws on the board conversation
+  // whose member messages include the requesting invocation's source message; a
+  // request with no trigger (a session-linked runtime asking unprompted) draws
+  // nowhere on the board and lives only on the stream timeline.
   "decision:requested": {
     rendersAsOwnRow: true,
     grouping: null,
     authorGroupable: false,
     patchesRow: false,
     broadcastSlot: true,
-    conversationRef: "none",
+    conversationRef: "trigger-message",
     bumps: false,
     threadable: true,
     readBlocking: false,

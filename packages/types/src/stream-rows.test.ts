@@ -111,6 +111,7 @@ describe("STREAM_ROW_SPEC", () => {
         "command_failed",
         "command_progress",
         "aside:anchored",
+        "decision:requested",
       ])
     )
     // None of them are message bodies (those are `self-message`, handled directly).

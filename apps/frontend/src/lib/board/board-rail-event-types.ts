@@ -6,5 +6,6 @@ export const BOARD_RAIL_EVENT_TYPES: EventType[] = [
   "agent:follow_up_cancelled",
   "delegation:status_changed",
   "subagent:status_changed",
+  "decision:resolved",
   "message_created",
 ]

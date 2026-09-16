@@ -1,6 +1,8 @@
 import {
   STREAM_ROW_SPEC,
   type AsideAnchoredEventPayload,
+  type DecisionRequestedEventPayload,
+  type DecisionResolvedEventPayload,
   type DelegationStatusChangedEventPayload,
   type MemosCapturedEventPayload,
   type SubagentStatusChangedEventPayload,
@@ -30,6 +32,14 @@ export type BoardEventRow =
       streamId: string
       event: CachedEvent
       statusPatch?: DelegationStatusChangedEventPayload
+    }
+  | {
+      kind: "decision"
+      key: string
+      sortMs: number
+      streamId: string
+      event: CachedEvent
+      statusPatch?: DecisionResolvedEventPayload
     }
   | {
       kind: "subagent"
@@ -86,11 +96,17 @@ function timeMs(event: CachedEvent): number {
  *   scheduled card's `cancelled` flag (mirrors the timeline's cancel handling).
  * - `delegation:status_changed` is likewise a patch: the latest one per
  *   delegation rides on the delegation row as `statusPatch`.
+ * - `decision:requested` is `trigger-message` but names its trigger directly
+ *   (it is no agent session): the card draws it iff `payload.triggerMessageId`
+ *   is a member message. A request with no trigger draws nowhere on the board —
+ *   it still renders on the stream timeline. `decision:resolved` is its patch,
+ *   highest `version` winning.
  */
 export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEventRowsCtx): BoardEventRow[] {
   const cancelledFollowUpIds = new Set<string>()
   const delegationStatusPatches = new Map<string, { payload: DelegationStatusChangedEventPayload; atMs: number }>()
   const subagentStatusPatches = new Map<string, { event: CachedEvent; atMs: number }>()
+  const decisionStatusPatches = new Map<string, DecisionResolvedEventPayload>()
   for (const event of events) {
     if (event.eventType === "agent:follow_up_cancelled") {
       const followUpId = (event.payload as { followUpId?: string })?.followUpId
@@ -103,6 +119,13 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
       const atMs = timeMs(event)
       const existing = delegationStatusPatches.get(payload.delegationId)
       if (!existing || atMs >= existing.atMs) delegationStatusPatches.set(payload.delegationId, { payload, atMs })
+      continue
+    }
+    if (event.eventType === "decision:resolved") {
+      const payload = event.payload as DecisionResolvedEventPayload | undefined
+      if (!payload?.decisionId) continue
+      const existing = decisionStatusPatches.get(payload.decisionId)
+      if (!existing || payload.version >= existing.version) decisionStatusPatches.set(payload.decisionId, payload)
       continue
     }
     if (event.eventType === "subagent:status_changed") {
@@ -146,6 +169,19 @@ export function resolveBoardEventRows(events: CachedEvent[], ctx: ResolveBoardEv
       if (!isOwnCommandEvent(event, ctx.currentUserId)) continue
       if (payload?.asideId && ctx.archivedAsideIds?.has(payload.asideId)) continue
       rows.push({ kind: "aside", key: event.id, sortMs: timeMs(event), streamId: event.streamId, event })
+      continue
+    }
+    if (event.eventType === "decision:requested") {
+      const payload = event.payload as DecisionRequestedEventPayload | undefined
+      if (!payload?.triggerMessageId || !ctx.memberMessageIds.has(payload.triggerMessageId)) continue
+      rows.push({
+        kind: "decision",
+        key: event.id,
+        sortMs: timeMs(event),
+        streamId: event.streamId,
+        event,
+        statusPatch: decisionStatusPatches.get(payload.decisionId),
+      })
       continue
     }
     const ref = STREAM_ROW_SPEC[event.eventType].conversationRef

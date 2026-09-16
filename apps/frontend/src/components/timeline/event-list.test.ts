@@ -6,6 +6,7 @@ import {
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
   collectBotAccessStatusPatches,
+  collectDecisionStatusPatches,
   collectCallEndedPatches,
   collectDividerAnchorIds,
   collectSubagentStatusPatches,
@@ -975,6 +976,47 @@ describe("collectBotAccessStatusPatches", () => {
   })
 })
 
+describe("collectDecisionStatusPatches", () => {
+  const patchItem = (
+    id: string,
+    decisionId: string,
+    version: number,
+    status: "resolved" | "cancelled"
+  ): TimelineItem => ({
+    type: "event",
+    event: createEvent({
+      id,
+      sequence: "5",
+      eventType: "decision:resolved",
+      payload: { decisionId, status, version },
+    }),
+  })
+
+  it("keeps the last patch per decision", () => {
+    const patches = collectDecisionStatusPatches([
+      patchItem("evt_1", "dec_1", 4, "cancelled"),
+      patchItem("evt_2", "dec_1", 5, "resolved"),
+      patchItem("evt_3", "dec_2", 2, "cancelled"),
+    ])
+    expect(patches.get("dec_1")).toMatchObject({ status: "resolved", version: 5 })
+    expect(patches.get("dec_2")).toMatchObject({ status: "cancelled", version: 2 })
+  })
+
+  it("never lets a lower version overwrite a higher one — an out-of-order patch is stale", () => {
+    const patches = collectDecisionStatusPatches([
+      patchItem("evt_1", "dec_1", 7, "resolved"),
+      patchItem("evt_2", "dec_1", 6, "cancelled"),
+    ])
+    expect(patches.get("dec_1")).toMatchObject({ status: "resolved", version: 7 })
+  })
+
+  it("must run on pre-filter items — filterVisibleItems strips the zero-height resolution patch", () => {
+    const items = [patchItem("evt_1", "dec_1", 4, "resolved")]
+    expect(collectDecisionStatusPatches(items).has("dec_1")).toBe(true)
+    expect(collectDecisionStatusPatches(filterVisibleItems(items)).has("dec_1")).toBe(false)
+  })
+})
+
 describe("collectCallEndedPatches", () => {
   const endedItem = (id: string, callId: string, durationMs: number): TimelineItem => ({
     type: "event",
@@ -1031,6 +1073,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       delegationStatusPatches: new Map(),
       subagentStatusPatches: new Map(),
       botAccessStatusPatches: new Map(),
+      decisionStatusPatches: new Map(),
       callEndedPatches: new Map(),
       ...overrides,
     }

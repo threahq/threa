@@ -104,6 +104,29 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
       sourceConversationId: CONV,
     }),
   ],
+  "decision:requested": [
+    cachedEvent("decision:requested", {
+      decisionId: "dec_1",
+      triggerMessageId: MEMBER_MESSAGE,
+      decision: {
+        id: "dec_1",
+        workspaceId: WS,
+        streamId: STREAM,
+        requesterBotId: "bot_1",
+        kind: "approval",
+        title: "Force-push the rebased branch?",
+        options: [
+          { id: "opt_yes", label: "Force-push", tone: "primary" },
+          { id: "opt_no", label: "Wait for me", tone: "neutral" },
+        ],
+        allowNote: false,
+        status: "open",
+        version: 1,
+        createdAt: "2026-07-04T10:00:00.000Z",
+        updatedAt: "2026-07-04T10:00:00.000Z",
+      },
+    }),
+  ],
   "aside:anchored": [
     cachedEvent("aside:anchored", { asideId: "stream_aside_1", anchorId: MEMBER_MESSAGE, conversationId: CONV }),
   ],
@@ -138,6 +161,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: () => "Ariadne",
+    getBot: () => ({ id: "bot_1", name: "Kris's Runner" }),
   } as unknown as ReturnType<typeof hooksModule.useActors>)
   vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
   vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")
@@ -173,6 +197,7 @@ describe("BoardEventRowItem renders every spec-declared board row", () => {
       "delegation:created": ["delegation"],
       "subagent:created": ["subagent"],
       "aside:anchored": ["aside"],
+      "decision:requested": ["decision"],
       command_dispatched: ["command"],
       command_progress: ["command"],
       command_completed: ["command"],
@@ -182,6 +207,13 @@ describe("BoardEventRowItem renders every spec-declared board row", () => {
     // expectation above to make it green. This half names the offending type and
     // cannot be satisfied by editing an expectation.
     expect(Object.entries(rendered).filter(([, kinds]) => kinds.length === 0)).toEqual([])
+  })
+
+  it("renders the decision card with its title and option labels", () => {
+    const row = rowsFor(ROW_FIXTURES["decision:requested"]!)[0]!
+    const { container } = renderRow(row)
+    expect(container.textContent).toContain("Force-push the rebased branch?")
+    expect(container.textContent).toContain("Wait for me")
   })
 
   it("renders the delegation card with its title and latest status", () => {
