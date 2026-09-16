@@ -565,7 +565,7 @@ export class HermesTurnRunner {
     const command = text(event.command) ?? "(command withheld)"
     if (run.sealed) {
       batcher.add({
-        stepType: "status",
+        stepType: "tool_error",
         content: `Approval denied: this scratchpad is encrypted and decision cards cannot be shown there yet (${command})`,
       })
       try {

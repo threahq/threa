@@ -1065,9 +1065,9 @@ describe("HermesTurnRunner sealed turns", () => {
       approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
       decisions: [],
       frames: [
-        { stepType: "status", content: "Waiting for approval: rm -rf build" },
+        { stepType: "tool_call", content: "Waiting for approval: rm -rf build" },
         {
-          stepType: "status",
+          stepType: "tool_error",
           content:
             "Approval denied: this scratchpad is encrypted and decision cards cannot be shown there yet (rm -rf build)",
         },

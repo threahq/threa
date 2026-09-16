@@ -105,8 +105,10 @@ cards are THR-121.
    hermes gateway install
    ```
 
-   Set `unattended_mode: approve` in the Hermes config so tool approvals are asked for rather than auto-answered; the
-   connector turns each request into a Threa decision card. Register the `threa` MCP server in `~/.hermes/config.yaml`
+   Set `approvals.mode: manual` in the Hermes config so every flagged command is asked for rather than answered by
+   Hermes's auxiliary model; the connector turns each request into a Threa decision card. Also set
+   `approvals.unattended_mode: approve`: it covers the gates the API server cannot forward, such as plugin tool rules,
+   and approves them. Register the `threa` MCP server in `~/.hermes/config.yaml`
    so Hermes can read and post in the workspace as the bot (the connector writes the config file it points at):
 
    ```yaml
