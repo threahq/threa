@@ -1538,6 +1538,7 @@ export function createPublicApiHandlers({
         supportedCapabilities: data.supportedCapabilities,
         claimTtlSeconds: data.claimTtlSeconds,
         responseStreamId: data.responseStreamId,
+        excludeResponseStreamIds: data.excludeResponseStreamIds,
         claimToken: randomUUID(),
       })
       // An empty claim poll read nothing — runtimes poll every few seconds

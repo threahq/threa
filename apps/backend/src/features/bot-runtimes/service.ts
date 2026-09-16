@@ -1350,6 +1350,8 @@ export class BotRuntimeService {
     claimTtlSeconds: number
     /** Only claim invocations answering into this stream (see `claimOne`). */
     responseStreamId?: string
+    /** Skip invocations answering into these streams (see `claimOne`). */
+    excludeResponseStreamIds?: string[]
   }): Promise<BotInvocation | null> {
     // Parking is independent lifecycle cleanup. Commit it before taking any
     // stream authority locks so exhausted-row cleanup can never invert the

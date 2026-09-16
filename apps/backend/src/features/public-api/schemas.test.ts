@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import {
+  claimInvocationSchema,
   createDecisionSchema,
   createRuntimeSessionSchema,
   searchAttachmentsSchema,
@@ -168,5 +169,21 @@ describe("createDecisionSchema", () => {
   it("rejects an unknown tone", () => {
     const options = [{ id: "yes", label: "Deploy", tone: "danger" }]
     expect(createDecisionSchema.safeParse({ ...base, options }).success).toBe(false)
+  })
+})
+
+describe("claimInvocationSchema excludeResponseStreamIds", () => {
+  const claim = {
+    runtimeKind: "pi-local" as const,
+    instanceId: "inst_42",
+    supportedCapabilities: ["mentionable" as const],
+  }
+
+  it("accepts 32 excluded streams and rejects 33", () => {
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `stream_${i}`)
+    expect({
+      max: claimInvocationSchema.safeParse({ ...claim, excludeResponseStreamIds: ids(32) }).success,
+      over: claimInvocationSchema.safeParse({ ...claim, excludeResponseStreamIds: ids(33) }).success,
+    }).toEqual({ max: true, over: false })
   })
 })

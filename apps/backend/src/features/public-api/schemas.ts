@@ -276,6 +276,9 @@ export const claimInvocationSchema = z.object({
   // share a response stream; without the filter it would have to claim first
   // and inspect after, and a claim it should not have taken cannot be released.
   responseStreamId: z.string().min(1).max(64).optional(),
+  // Skip invocations answering into these streams, so a runtime busy in some
+  // streams can still pick up work elsewhere. Session control is never skipped.
+  excludeResponseStreamIds: z.array(z.string().min(1).max(64)).max(32).optional(),
 })
 
 export const renewInvocationClaimSchema = z.object({
