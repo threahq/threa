@@ -113,7 +113,6 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
         workspaceId: WS,
         streamId: STREAM,
         requesterBotId: "bot_1",
-        kind: "approval",
         title: "Force-push the rebased branch?",
         options: [
           { id: "opt_yes", label: "Force-push", tone: "primary" },

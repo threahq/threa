@@ -28,7 +28,6 @@ function decision(overrides: Partial<DecisionRequest> = {}): DecisionRequest {
     workspaceId: "ws_1",
     streamId: "stream_1",
     requesterBotId: BOT.id,
-    kind: "approval",
     title: "Force-push the rebased branch?",
     bodyMarkdown: "The rebase dropped **two** commits.",
     options: [
