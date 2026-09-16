@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
+import { writeFileAtomic } from "@threahq/remote-session"
 import { homedir, hostname } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -28,14 +29,7 @@ export function readStoredConfig(path: string): StoredBotConfig | undefined {
 }
 
 function writeStoredConfig(path: string, config: StoredBotConfig): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  // Owner-only from the first byte, then swapped in whole: an existing file's
-  // looser mode never applies to the new key, and a crash mid-write cannot
-  // leave a truncated config behind.
-  const temp = `${path}.${process.pid}.tmp`
-  writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600, flag: "wx" })
-  chmodSync(temp, 0o600)
-  renameSync(temp, path)
+  writeFileAtomic(path, `${JSON.stringify(config, null, 2)}\n`)
 }
 
 /**

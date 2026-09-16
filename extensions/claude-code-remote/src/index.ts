@@ -1,29 +1,16 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "node:fs"
 import { hostname } from "node:os"
-import { ThreaClient, parseConfigFile, wireLifecycle, type RawConfig } from "@threahq/remote-session"
+import { ThreaClient, readConfigFile, wireLifecycle } from "@threahq/remote-session"
 import { channelActivation, readParentCommand } from "./channel-detect"
 import { ChannelServer } from "./channel-server"
 import { CONFIG_PATH, loadChannelConfig } from "./config"
-
-function readFileConfig(): RawConfig | undefined {
-  if (!existsSync(CONFIG_PATH)) return undefined
-  try {
-    return parseConfigFile(readFileSync(CONFIG_PATH, "utf8"))
-  } catch (error) {
-    process.stderr.write(
-      `[threa-channel] ignoring ${CONFIG_PATH}: ${error instanceof Error ? error.message : String(error)}\n`
-    )
-    return undefined
-  }
-}
 
 async function main(): Promise<void> {
   const result = loadChannelConfig({
     env: process.env,
     cwd: process.cwd(),
     hostname: hostname(),
-    file: readFileConfig(),
+    file: readConfigFile(CONFIG_PATH, (message) => process.stderr.write(`[threa-channel] ${message}\n`)),
   })
   if ("error" in result) {
     process.stderr.write(`[threa-channel] ${result.error}\n`)
