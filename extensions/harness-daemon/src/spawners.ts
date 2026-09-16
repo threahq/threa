@@ -39,6 +39,65 @@ export function mcpConfigPath(runtimeSessionId: string): string {
   return join(mcpConfigDir(), `${runtimeSessionId}.json`)
 }
 
+export function cliConfigPath(runtimeSessionId: string): string {
+  return join(mcpConfigDir(), "..", "cli", `${runtimeSessionId}.json`)
+}
+
+export interface SessionThreaCredentials {
+  apiKey: string
+  workspaceId: string
+  baseUrl: string
+}
+
+/**
+ * The runtime's own bot key, never a human's: env override first, then the channel config.
+ * An attached child skips the env key, which is the parent bot's inherited one.
+ */
+export function sessionThreaCredentials(
+  config: ThreaChannelConfig,
+  attachedThread = false
+): SessionThreaCredentials | undefined {
+  const apiKey = (attachedThread ? undefined : process.env.THREA_API_KEY) || config.apiKey
+  const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
+  if (!apiKey || !workspaceId) return undefined
+  return { apiKey, workspaceId, baseUrl: configuredThreaBaseUrl(config) }
+}
+
+/**
+ * The session's own `threa` CLI config: its bot key, and `principal: "bot"` so the
+ * CLI refuses to run if that key ever turns out to belong to a human.
+ */
+export function writeSessionCliConfig(runtimeSessionId: string, credentials: SessionThreaCredentials): string {
+  const path = cliConfigPath(runtimeSessionId)
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  writeFileSync(path, `${JSON.stringify({ ...credentials, principal: "bot" }, null, 2)}\n`, { mode: 0o600 })
+  return path
+}
+
+export function prepareThreaCli(): string {
+  const cliEntry = join(import.meta.dir, "..", "..", "..", "packages", "cli", "src", "cli.ts")
+  if (!existsSync(cliEntry)) die(`Threa CLI entry not found: ${cliEntry}`)
+  return cliEntry
+}
+
+/**
+ * The session's workspace tools, served by the CLI as the session's own bot.
+ * Missing credentials register nothing and say so (INV-11) — a `threa` server
+ * pointed at a config file that was never written would fail per tool call.
+ */
+export function sessionThreaMcpServer(
+  runtimeSessionId: string,
+  config: ThreaChannelConfig,
+  attachedThread = false
+): { cliEntry: string; configPath: string } | undefined {
+  const credentials = sessionThreaCredentials(config, attachedThread)
+  if (!credentials) {
+    console.warn("harnessd: no Threa bot credentials; the threa MCP server is not registered for this session")
+    return undefined
+  }
+  return { cliEntry: prepareThreaCli(), configPath: writeSessionCliConfig(runtimeSessionId, credentials) }
+}
+
 export function configuredThreaBaseUrl(config: ThreaChannelConfig): string {
   return (process.env.THREA_BASE_URL || config.baseUrl || "https://app.threa.io").replace(/\/$/, "")
 }
@@ -194,7 +253,13 @@ export function claudeLaunchArgs(params: {
  * channel implementation and leaves global config untouched. This also keeps
  * revived feature branches from loading an obsolete connector.
  */
-export function writeChannelMcpConfig(runtimeSessionId: string, channel: string, channelEntry: string): string {
+export function writeChannelMcpConfig(
+  runtimeSessionId: string,
+  channel: string,
+  channelEntry: string,
+  threa?: ThreaCliMcpServer
+): string {
+  if (threa) assertChannelKeyFree(channel)
   const path = mcpConfigPath(runtimeSessionId)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(
@@ -208,6 +273,7 @@ export function writeChannelMcpConfig(runtimeSessionId: string, channel: string,
             args: [channelEntry],
             env: { THREA_CHANNEL_SERVER_KEY: channel },
           },
+          ...(threa ? { [THREA_CLI_SERVER_KEY]: threaCliServerEntry(threa) } : {}),
         },
       },
       null,
@@ -217,12 +283,23 @@ export function writeChannelMcpConfig(runtimeSessionId: string, channel: string,
   return path
 }
 
-export function normalizeChannelMcpConfig(path: string, channel: string, channelEntry: string): void {
+export function normalizeChannelMcpConfig(
+  path: string,
+  channel: string,
+  channelEntry: string,
+  threa?: ThreaCliMcpServer
+): void {
+  if (threa) assertChannelKeyFree(channel)
   const parsed = JSON.parse(readFileSync(path, "utf8"))
   const servers = parsed.mcpServers
   const entries = servers && typeof servers === "object" ? Object.entries(servers) : []
-  if (entries.length !== 1 || !entries[0]) die(`MCP config must contain exactly one channel server: ${path}`)
-  const [, server] = entries[0] as [string, Record<string, unknown>]
+  // A legacy channel registration is itself named `threa`, so the CLI server is
+  // recognized by the config file it is pointed at, not by its key.
+  const channelEntries = entries.filter(([name, server]) => !isThreaCliServer(name, server))
+  if (channelEntries.length !== 1 || !channelEntries[0]) {
+    die(`MCP config must contain exactly one channel server: ${path}`)
+  }
+  const [, server] = channelEntries[0] as [string, Record<string, unknown>]
   parsed.mcpServers = {
     [channel]: {
       ...server,
@@ -231,8 +308,41 @@ export function normalizeChannelMcpConfig(path: string, channel: string, channel
       args: [channelEntry],
       env: { ...((server.env as Record<string, unknown> | undefined) ?? {}), THREA_CHANNEL_SERVER_KEY: channel },
     },
+    ...(threa ? { [THREA_CLI_SERVER_KEY]: threaCliServerEntry(threa) } : {}),
   }
   writeFileSync(path, JSON.stringify(parsed, null, 2))
+}
+
+const THREA_CLI_SERVER_KEY = "threa"
+
+// A legacy THREA_HARNESSD_CLAUDE_CHANNEL=threa would collapse both servers onto
+// one key and the CLI entry would silently replace the channel.
+function assertChannelKeyFree(channel: string): void {
+  if (channel === THREA_CLI_SERVER_KEY) {
+    die(
+      `channel server name "${channel}" collides with the threa CLI server; set THREA_HARNESSD_CLAUDE_CHANNEL=threa-channel`
+    )
+  }
+}
+
+export interface ThreaCliMcpServer {
+  cliEntry: string
+  configPath: string
+}
+
+function threaCliServerEntry(threa: ThreaCliMcpServer): Record<string, unknown> {
+  return {
+    type: "stdio",
+    command: "bun",
+    args: [threa.cliEntry, "mcp", "serve"],
+    env: { THREA_CONFIG: threa.configPath },
+  }
+}
+
+function isThreaCliServer(name: string, server: unknown): boolean {
+  if (name !== THREA_CLI_SERVER_KEY) return false
+  const env = (server as { env?: Record<string, unknown> } | null)?.env
+  return typeof env?.THREA_CONFIG === "string"
 }
 
 function firstScratchpadUrl(text: string): string | undefined {
@@ -637,21 +747,37 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         }
       }
 
+      const threaCli = options.noRegister
+        ? undefined
+        : sessionThreaMcpServer(
+            identity.runtimeSessionId,
+            config,
+            isAttachedThread(options.attach?.rootStreamId, activeStreamId)
+          )
       const args = claudeLaunchArgs({
         claudeBin,
         name: options.name,
         channel,
         mcpConfig: options.noRegister
           ? undefined
-          : this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry),
+          : this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry, threaCli),
         noYolo: options.noYolo,
         choice: { model: options.model, thinking: options.thinking },
       })
 
       const window = pickTmuxWindow(session, options.name)
       const launchCommand = options.attach
-        ? claudeLaunchCommand(args, identity, config, "wait", "error", options.attach.rootStreamId, activeStreamId)
-        : claudeLaunchCommand(args, identity, config)
+        ? claudeLaunchCommand(
+            args,
+            identity,
+            config,
+            "wait",
+            "error",
+            options.attach.rootStreamId,
+            activeStreamId,
+            threaCli?.configPath
+          )
+        : claudeLaunchCommand(args, identity, config, "replace", "create", undefined, undefined, threaCli?.configPath)
       const { windowId, paneId } = createWindow(session, window, worktree, launchCommand)
       Object.assign(partial, { tmuxWindow: window, tmuxWindowId: windowId, tmuxPaneId: paneId })
       console.log(`harnessd: launched Claude Code in tmux ${session}:${window} (${windowId})`)
@@ -687,8 +813,15 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const config = readThreaChannelConfig()
     const identity = claudeAgentIdentity(agent, config)
     const mcpConfig = mcpConfigPath(identity.runtimeSessionId)
-    if (!existsSync(mcpConfig)) this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry)
-    normalizeChannelMcpConfig(mcpConfig, channel, channelEntry)
+    const rootStreamId =
+      scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`)
+    const threaCli = sessionThreaMcpServer(
+      identity.runtimeSessionId,
+      config,
+      isAttachedThread(rootStreamId, agent.activeStreamId)
+    )
+    if (!existsSync(mcpConfig)) this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry, threaCli)
+    normalizeChannelMcpConfig(mcpConfig, channel, channelEntry, threaCli)
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
     ensureTmuxSession(session, true)
     const noYolo = recordedNoYolo(agent)
@@ -725,8 +858,9 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         config,
         "wait",
         "error",
-        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`),
-        agent.activeStreamId
+        rootStreamId,
+        agent.activeStreamId,
+        threaCli?.configPath
       )
     )
     console.log(`harnessd: resumed Claude Code in tmux ${session}:${window} (${windowId})`)
@@ -761,8 +895,13 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     }
   }
 
-  private writeMcpConfig(runtimeSessionId: string, channel: string, channelEntry: string): string {
-    return writeChannelMcpConfig(runtimeSessionId, channel, channelEntry)
+  private writeMcpConfig(
+    runtimeSessionId: string,
+    channel: string,
+    channelEntry: string,
+    threa?: ThreaCliMcpServer
+  ): string {
+    return writeChannelMcpConfig(runtimeSessionId, channel, channelEntry, threa)
   }
 
   private async prelinkScratchpad(
@@ -871,6 +1010,10 @@ export function claudeAgentIdentity(
   })
 }
 
+export function isAttachedThread(expectedRootStreamId?: string, activeStreamId?: string): boolean {
+  return Boolean(activeStreamId && expectedRootStreamId && activeStreamId !== expectedRootStreamId)
+}
+
 export function claudeLaunchCommand(
   args: string[],
   identity: { instanceId: string; runtimeSessionId: string },
@@ -878,12 +1021,12 @@ export function claudeLaunchCommand(
   coldStartIfArchived: "wait" | "replace" = "replace",
   coldStartIfMissing: "create" | "error" = "create",
   expectedRootStreamId?: string,
-  activeStreamId?: string
+  activeStreamId?: string,
+  threaConfigPath?: string
 ): string {
-  const isAttachedThread = activeStreamId && expectedRootStreamId && activeStreamId !== expectedRootStreamId
   const environment = {
     // The detached harness inherits the parent bot's key. An attached child must let its own config file win.
-    ...(isAttachedThread ? { THREA_API_KEY: "" } : {}),
+    ...(isAttachedThread(expectedRootStreamId, activeStreamId) ? { THREA_API_KEY: "" } : {}),
     THREA_INSTANCE_ID: identity.instanceId,
     THREA_RUNTIME_SESSION_ID: identity.runtimeSessionId,
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",
@@ -893,6 +1036,7 @@ export function claudeLaunchCommand(
     THREA_COLD_START_IF_ARCHIVED: coldStartIfArchived,
     THREA_COLD_START_IF_MISSING: coldStartIfMissing,
     ...(expectedRootStreamId ? { THREA_EXPECTED_ROOT_STREAM_ID: expectedRootStreamId } : {}),
+    ...(threaConfigPath ? { THREA_CONFIG: threaConfigPath } : {}),
   }
   return ["env", ...Object.entries(environment).map(([key, value]) => `${key}=${value}`), ...args]
     .map(shellQuote)

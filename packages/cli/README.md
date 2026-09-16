@@ -25,13 +25,14 @@ If you keep the CLI on PATH for a Claude Code session, add the bin directory to 
 
 ## Configuration
 
-Config resolves from environment variables first, then from an optional JSON file. Environment variables win over the file.
+Config resolves from environment variables and an optional JSON file. Environment variables win over `~/.threa/config.json`. A file named by `THREA_CONFIG` wins over the environment instead, so a runtime that points the CLI at its bot's config cannot be overridden by a `THREA_API_KEY` inherited from a shell; the environment only fills keys that file leaves out.
 
 | Setting      | Env var              | File key      | Required | Default                |
 | ------------ | -------------------- | ------------- | -------- | ---------------------- |
 | API key      | `THREA_API_KEY`      | `apiKey`      | yes      | none                   |
 | Workspace id | `THREA_WORKSPACE_ID` | `workspaceId` | yes      | none                   |
 | Base URL     | `THREA_BASE_URL`     | `baseUrl`     | no       | `https://app.threa.io` |
+| Principal    | `THREA_PRINCIPAL`    | `principal`   | no       | none (no assertion)    |
 
 The JSON file is read from `THREA_CONFIG` if set, otherwise from `~/.threa/config.json` if it exists (a legacy `~/.threa/mcp.json` is still read, with a hint to rename it). Shape:
 
@@ -39,9 +40,12 @@ The JSON file is read from `THREA_CONFIG` if set, otherwise from `~/.threa/confi
 {
   "apiKey": "threa_uk_…",
   "workspaceId": "ws_…",
-  "baseUrl": "https://app.threa.io"
+  "baseUrl": "https://app.threa.io",
+  "principal": "bot"
 }
 ```
+
+`principal` is `"bot"` or `"user"`. When it is set, the CLI calls `/me` at startup (both the command head and `mcp serve`) and refuses to run when the key's kind differs from the declaration, so a runtime configured to act as its bot can never fall back to a human's key. Without it nothing is asserted.
 
 If `THREA_API_KEY` or `THREA_WORKSPACE_ID` cannot be resolved from either source, the CLI exits with an actionable error naming the missing variable. The API key is never logged.
 

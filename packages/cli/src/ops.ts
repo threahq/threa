@@ -20,7 +20,12 @@ interface Principal {
 
 export async function whoami(client: ThreaApiClient, config: ThreaConfig): Promise<unknown> {
   const { data } = await client.get<{ data: Principal }>("/me")
-  return { principal: data, baseUrl: config.baseUrl, workspaceId: config.workspaceId }
+  return {
+    principal: data,
+    declaredPrincipal: config.principal ?? null,
+    baseUrl: config.baseUrl,
+    workspaceId: config.workspaceId,
+  }
 }
 
 export interface ListStreamsParams {

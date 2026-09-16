@@ -392,7 +392,7 @@ describe("public API bot send trace stamping", () => {
       workspaceId: "ws_1",
       params: { streamId: "stream_1" },
       body: { content: "hello" },
-      botApiKey: { botId: "bot_1" },
+      botApiKey: { id: "bkey_1", botId: "bot_1" },
       ...extra,
     } as unknown as Request
   }
@@ -442,7 +442,7 @@ describe("public API bot send trace stamping", () => {
 
     expect(createMessageForPrincipalReturningConversation).toHaveBeenCalledWith(
       { kind: "bot", botId: "bot_1" },
-      expect.objectContaining({ sessionId: "session_1", authorId: "bot_1" })
+      expect.objectContaining({ sessionId: "session_1", authorId: "bot_1", sentVia: "api_key:bkey_1" })
     )
   })
 

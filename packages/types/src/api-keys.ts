@@ -48,10 +48,10 @@ export const API_KEY_ELIGIBLE_PICKER_SCOPES: readonly WorkspacePermission[] = WO
   ELIGIBLE_SCOPE_SET.has(p.slug)
 )
 
-/** Prefix for sentVia field on messages created through user-scoped API keys */
+/** Prefix for sentVia field on messages created through user- or bot-scoped API keys */
 export const SENT_VIA_API_PREFIX = "api_key:" as const
 
-/** Build the sentVia value for a user-scoped API key */
+/** Build the sentVia value for a user- or bot-scoped API key */
 export function sentViaApiKey(keyId: string): string {
   return `${SENT_VIA_API_PREFIX}${keyId}`
 }

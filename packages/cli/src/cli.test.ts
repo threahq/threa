@@ -283,3 +283,26 @@ test("mcp serve signals serve mode without touching HTTP; a bad subcommand is ex
   expect(bad.exitCode).toBe(2)
   expect((JSON.parse(bad.stderr) as { code: string }).code).toBe("USAGE")
 })
+
+test("a declared principal that does not match the key exits 1 before the command runs", async () => {
+  fetchSpy.mockImplementation(fetchByPath(() => jsonResponse(200, { data: { kind: "user", userId: "usr_1" } })))
+
+  const result = await run(["whoami"], { config: { ...TEST_CONFIG, principal: "bot" } })
+
+  expect(result.exitCode).toBe(1)
+  expect(result.stdout).toBe("")
+  expect(JSON.parse(result.stderr)).toEqual({
+    code: "ERROR",
+    message: 'threa: config declares principal "bot" but the key belongs to user usr_1 (INV-11)',
+  })
+})
+
+test("whoami prints the declared principal alongside the resolved one", async () => {
+  fetchSpy.mockImplementation(fetchByPath(() => jsonResponse(200, { data: { kind: "bot", botId: "bot_1" } })))
+
+  const result = await run(["whoami"], { config: { ...TEST_CONFIG, principal: "bot" } })
+
+  expect(result.exitCode).toBe(0)
+  expect(result.stdout).toContain("principal: bot bot_1")
+  expect(result.stdout).toContain("declared:  bot")
+})

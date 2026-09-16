@@ -686,7 +686,7 @@ function MessageLayout({
       )}
       {theme.badge}
       {modelBadgeId && <ModelBadge modelId={modelBadgeId} />}
-      {payload.sentVia && isSentViaApi(payload.sentVia) && (
+      {event.actorType !== "bot" && payload.sentVia && isSentViaApi(payload.sentVia) && (
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="text-[10px] text-muted-foreground/70 font-medium cursor-default">via API</span>
