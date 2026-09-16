@@ -608,6 +608,8 @@ describe("HermesTurnRunner control", () => {
         ],
         allowNote: true,
         streamId: "stream_thread",
+        expiresInMs: 300_000,
+        externalRef: "req_1",
       },
     ])
     expect(gate.approvals).toEqual([{ runId: "run_1", choice: "once", requestId: "req_1" }])
@@ -638,6 +640,26 @@ describe("HermesTurnRunner control", () => {
       before: [false],
       after: [true],
     })
+  })
+
+  test("a run that settles withdraws its unanswered approval card", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.push(APPROVAL_EVENT)
+    await settle()
+
+    const before = calls.decisionSignals.map((signal) => signal?.aborted)
+    gate.push({ event: "run.completed", run_id: "run_1", output: "done" })
+    gate.close()
+    await settle()
+
+    expect({
+      before,
+      after: calls.decisionSignals.map((signal) => signal?.aborted),
+      replies: calls.replies,
+    }).toEqual({ before: [false], after: [true], replies: [{ invocationId: "binv_1", text: "done" }] })
   })
 
   test("a denial with a note is posted as a deny and steered in as the reason", async () => {

@@ -41,6 +41,8 @@ const STATUS_POLL_MS = 2000
 const MAX_CONSECUTIVE_POLL_FAILURES = 5
 const NO_RESPONSE_SENTINEL = "THREA_NO_RESPONSE"
 const STEER_REJECTED_CODE = "run_not_accepting_steer"
+// Hermes's default `approvals.timeout`: past it the gateway denies the command itself, so the card must not outlive it.
+const APPROVAL_CARD_EXPIRES_MS = 300_000
 const APPROVAL_OPTION_LABELS: Record<string, { label: string; tone?: "primary" | "destructive" }> = {
   once: { label: "Allow once", tone: "primary" },
   session: { label: "Allow this session" },
@@ -342,6 +344,8 @@ export class HermesTurnRunner {
       throw error
     } finally {
       await batcher.flush()
+      // A settled run can still hold an unanswered approval card; aborting withdraws it.
+      abort.abort()
       const open = this.runs.get(invocationId)
       if (open?.runId === runId) this.runs.delete(invocationId)
     }
@@ -449,6 +453,8 @@ export class HermesTurnRunner {
           options,
           allowNote: true,
           streamId,
+          expiresInMs: APPROVAL_CARD_EXPIRES_MS,
+          ...(requestId ? { externalRef: requestId } : {}),
         },
         { signal }
       )

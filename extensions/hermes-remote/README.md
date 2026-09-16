@@ -51,6 +51,7 @@ generation counter lives in `~/.threa/hermes-remote/work/conversations.json`, so
 When Hermes asks to run a command, the request arrives in the scratchpad as a decision card with the command, its
 description and the choices Hermes offered (allow once, allow this session, always allow, deny). Answering resolves the
 run. A denial with a note sends the note back to the run as a steer. Nothing is auto-approved: an unanswered card runs
-into the gateway's own approval timeout, which denies it.
+into the gateway's own approval timeout, which denies it. The card expires at 5 minutes to match Hermes's default
+`approvals.timeout`, and a run that ends withdraws any card still open.
 
 Threads, Hermes-side config, E2EE specifics and the installer land in later chunks.
