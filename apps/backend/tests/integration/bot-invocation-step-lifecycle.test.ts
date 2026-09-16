@@ -224,6 +224,40 @@ describe("recordSteps plaintext tool step lifecycle", () => {
     })
   })
 
+  test("should finalize a start that is still committing when the finish arrives", async () => {
+    const holder = await pool.connect()
+    try {
+      await holder.query("BEGIN")
+      const open = await AgentSessionRepository.appendStep(holder, {
+        id: `step_racing_${ws.slice(-8)}`,
+        sessionId: invocationId,
+        stepType: "tool_call",
+        content: "fast",
+        startedAt: new Date(),
+        clientStepId: "call-racing",
+      })
+      const finishing = send({
+        stepType: "tool_call",
+        content: "fast: done",
+        clientStepId: "call-racing",
+        durationMs: 7,
+      })
+      // Let the finish miss the uncommitted row and block on the insert before the start commits.
+      await Bun.sleep(300)
+      await holder.query("COMMIT")
+      const finish = await finishing
+      expect({
+        rows: await rows("call-racing"),
+        emitted: finish.emitted.map((e) => [e.event, e.payload.step?.id]),
+      }).toEqual({
+        rows: [{ id: open.id, step_type: "tool_call", content: "fast: done", duration_ms: 7 }],
+        emitted: [["agent_session:step:completed", open.id]],
+      })
+    } finally {
+      holder.release()
+    }
+  })
+
   test("should reject an append whose caller-supplied step id already exists instead of retrying forever", async () => {
     const existing = await send({ stepType: "tool_call", content: "dup", clientStepId: "call-dup" })
     await expect(

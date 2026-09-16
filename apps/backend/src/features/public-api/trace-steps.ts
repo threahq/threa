@@ -171,15 +171,17 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
     // append distinct rows instead of clobbering each other.
     const outcome = await withTransaction(pool, async (client) => {
-      if (clientStepId && !started) {
-        const finalized = await AgentSessionRepository.finalizeStepByClientStepId(client, {
+      const finalize = (key: string) =>
+        AgentSessionRepository.finalizeStepByClientStepId(client, {
           sessionId,
-          clientStepId,
+          clientStepId: key,
           stepType: step.stepType,
           content: step.content,
           completedAt,
           durationMs: frameDurationMs,
         })
+      if (clientStepId && !started) {
+        const finalized = await finalize(clientStepId)
         if (finalized) return { step: finalized, event: "finalized" as const }
       }
       const inserted = await AgentSessionRepository.appendStep(client, {
@@ -197,7 +199,15 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
       // appendStep returns the pre-existing row (a different id than the one we
       // generated); its type was set when it first landed, and re-setting it from
       // this replay would write the replay's type and regress to an older step.
-      if (inserted.id !== stepId) return { step: inserted, event: null }
+      if (inserted.id !== stepId) {
+        // The finalize above cannot see a start still committing in another transaction;
+        // the insert waited on it, so the open row is visible now and this finish owns it.
+        if (clientStepId && !started && !inserted.completedAt) {
+          const finalized = await finalize(clientStepId)
+          if (finalized) return { step: finalized, event: "finalized" as const }
+        }
+        return { step: inserted, event: null }
+      }
       await AgentSessionRepository.updateCurrentStepType(client, sessionId, inserted.stepType)
       return { step: inserted, event: started ? ("started" as const) : ("inserted" as const) }
     })
