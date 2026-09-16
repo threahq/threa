@@ -122,7 +122,6 @@ export {
   type AI,
   type AIConfig,
   type AIOrigin,
-  type AISpendDenialReason,
   type CostContext,
   type CostRecorder,
   type SpendAdmissionRequest,

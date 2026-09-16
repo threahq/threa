@@ -11,6 +11,7 @@ import type {
   AgentSessionFailedPayload,
   AgentSessionInterruptedPayload,
   AgentSessionDeletedPayload,
+  AISpendDenialReason,
 } from "@threahq/types"
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
@@ -21,6 +22,15 @@ import { SessionEffectGrid } from "./session-effect-grid"
 import { LiveSessionEffectGrid } from "./live-session-effect-grid"
 import { isDescribedEffect, unionSessionEffects } from "@/lib/effect-links"
 import { useAgentSessionActivity } from "@/stores/agent-activity-store"
+
+const SPEND_DENIAL_COPY: Record<AISpendDenialReason, string> = {
+  workspace_limit: "Workspace AI limit reached",
+  user_limit: "Personal AI limit reached",
+  user_agent_allowance: "Agent allowance used up",
+  workspace_disabled: "AI turned off by an admin",
+  user_disabled: "AI turned off for this person",
+  operator_disabled: "AI turned off by Threa",
+}
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000
@@ -213,13 +223,14 @@ function buildStatusConfig(
       if (failedPayload) {
         parts.push(`${failedPayload.stepCount} ${failedPayload.stepCount === 1 ? "step" : "steps"}`)
       }
-      parts.push("Error during execution")
+      const spendDenial = failedPayload?.spendDenial
+      parts.push(spendDenial ? SPEND_DENIAL_COPY[spendDenial] : "Error during execution")
       const failedChanges = formatMarkerEffectCount(markerEffectCount)
       if (failedChanges) {
         parts.push(failedChanges)
       }
       return {
-        title: "Session failed",
+        title: spendDenial ? "Session stopped" : "Session failed",
         subtitle: parts.join(" • "),
         icon: (
           <div className="w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(0_84%_60%/0.15)]">
@@ -521,7 +532,9 @@ export function AgentSessionEvent({
             </div>
           )}
           {!showRedirectHint && !showLiveSubstep && (
-            <div className="text-[11px] text-muted-foreground mt-0.5">{config.subtitle || "\u00a0"}</div>
+            <div className="mt-0.5 min-w-0 truncate text-[11px] text-muted-foreground">
+              {config.subtitle || "\u00a0"}
+            </div>
           )}
         </div>
         {/*

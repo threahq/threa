@@ -3,19 +3,36 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { withClient, type Querier } from "../../db"
 import { AIUsageRepository } from "./usage-repository"
-import { AIBudgetRepository } from "./budget-repository"
+import type { AIBudgetConfig, AIUserLimits } from "@threahq/types"
+import { AIBudgetRepository, DEFAULT_AI_BUDGET_CONFIG, type AIBudget, type AIUserQuota } from "./budget-repository"
 import { categorizeFunction, aggregateUsageByDay } from "./categories"
 import { resolveBudgetMonthRange } from "./billing-window"
-import { aiBudgetId } from "../../lib/id"
+import { aiBudgetId, aiQuotaId } from "../../lib/id"
+import { HttpError } from "../../lib/errors"
+import { UserRepository } from "../workspaces"
 import { validateRequest } from "../../lib/validation"
 import { isValidIanaTimezone, monthRangeInTimezone } from "../../lib/temporal"
 
-const updateBudgetSchema = z.object({
-  monthlyBudgetUsd: z.number().min(0).optional(),
-  alertThreshold50: z.boolean().optional(),
-  alertThreshold80: z.boolean().optional(),
-  alertThreshold100: z.boolean().optional(),
-})
+const updateBudgetSchema = z
+  .object({
+    monthlyBudgetUsd: z.number().min(0).optional(),
+    alertThreshold50: z.boolean().optional(),
+    alertThreshold80: z.boolean().optional(),
+    alertThreshold100: z.boolean().optional(),
+    aiDisabled: z.boolean().optional(),
+    defaultUserAgentAllowanceUsd: z.number().min(0).nullable().optional(),
+  })
+  .strict()
+
+const userLimitsParamsSchema = z.object({ userId: z.string().min(1) })
+
+const setUserLimitsSchema = z
+  .object({
+    monthlyQuotaUsd: z.number().min(0).nullable(),
+    agentAllowanceUsd: z.number().min(0).nullable(),
+    aiDisabled: z.boolean(),
+  })
+  .strict()
 
 interface Dependencies {
   pool: Pool
@@ -110,26 +127,10 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         ])
       )
 
-      if (!budget) {
-        return res.json({
-          budget: null,
-          currentUsage: usage,
-          percentUsed: 0,
-          nextReset,
-        })
-      }
-
-      const percentUsed = budget.monthlyBudgetUsd > 0 ? (usage.totalCostUsd / budget.monthlyBudgetUsd) * 100 : 0
-
       res.json({
-        budget: {
-          monthlyBudgetUsd: budget.monthlyBudgetUsd,
-          alertThreshold50: budget.alertThreshold50,
-          alertThreshold80: budget.alertThreshold80,
-          alertThreshold100: budget.alertThreshold100,
-        },
+        budget: toBudgetConfig(budget),
         currentUsage: usage,
-        percentUsed: Math.round(percentUsed * 100) / 100,
+        percentUsed: percentUsed(usage.totalCostUsd, budget),
         nextReset,
       })
     },
@@ -153,24 +154,67 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         return [updatedBudget, currentUsage, await resolveNextReset(client, workspaceId)] as const
       })
 
-      if (!budget) {
-        return res.status(500).json({ error: "Failed to update budget" })
-      }
-
-      const percentUsed = budget.monthlyBudgetUsd > 0 ? (usage.totalCostUsd / budget.monthlyBudgetUsd) * 100 : 0
-
       res.json({
-        budget: {
-          monthlyBudgetUsd: budget.monthlyBudgetUsd,
-          alertThreshold50: budget.alertThreshold50,
-          alertThreshold80: budget.alertThreshold80,
-          alertThreshold100: budget.alertThreshold100,
-        },
+        budget: toBudgetConfig(budget),
         currentUsage: usage,
-        percentUsed: Math.round(percentUsed * 100) / 100,
+        percentUsed: percentUsed(usage.totalCostUsd, budget),
         nextReset,
       })
     },
+
+    async listUserLimits(req: Request, res: Response) {
+      const quotas = await AIBudgetRepository.listUserQuotas(pool, req.workspaceId!)
+      res.json({ limits: quotas.map(toUserLimits) })
+    },
+
+    async setUserLimits(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const { userId } = validateRequest(userLimitsParamsSchema, req.params)
+      const limits = validateRequest(setUserLimitsSchema, req.body)
+
+      const quota = await withClient(pool, async (client) => {
+        const user = await UserRepository.findById(client, workspaceId, userId)
+        if (!user) throw new HttpError("User not found", { status: 404, code: "USER_NOT_FOUND" })
+        return AIBudgetRepository.upsertUserQuota(client, { id: aiQuotaId(), workspaceId, userId, ...limits })
+      })
+
+      res.json({ limits: toUserLimits(quota) })
+    },
+
+    async deleteUserLimits(req: Request, res: Response) {
+      const { userId } = validateRequest(userLimitsParamsSchema, req.params)
+      await AIBudgetRepository.deleteUserQuota(pool, req.workspaceId!, userId)
+      res.status(204).send()
+    },
+  }
+}
+
+/** A workspace with no budget row is enforced against the defaults, so it reports them. */
+function toBudgetConfig(budget: AIBudget | null): AIBudgetConfig {
+  if (!budget) return DEFAULT_AI_BUDGET_CONFIG
+  return {
+    monthlyBudgetUsd: budget.monthlyBudgetUsd,
+    alertThreshold50: budget.alertThreshold50,
+    alertThreshold80: budget.alertThreshold80,
+    alertThreshold100: budget.alertThreshold100,
+    aiDisabled: budget.aiDisabled,
+    defaultUserAgentAllowanceUsd: budget.defaultUserAgentAllowanceUsd,
+    operatorCeilingUsd: budget.operatorCeilingUsd,
+    operatorAiDisabled: budget.operatorAiDisabled,
+  }
+}
+
+function percentUsed(totalCostUsd: number, budget: AIBudget | null): number {
+  const { monthlyBudgetUsd } = toBudgetConfig(budget)
+  return monthlyBudgetUsd > 0 ? Math.round((totalCostUsd / monthlyBudgetUsd) * 10000) / 100 : 0
+}
+
+function toUserLimits(quota: AIUserQuota): AIUserLimits {
+  return {
+    userId: quota.userId,
+    monthlyQuotaUsd: quota.monthlyQuotaUsd,
+    agentAllowanceUsd: quota.agentAllowanceUsd,
+    aiDisabled: quota.aiDisabled,
   }
 }
 

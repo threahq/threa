@@ -179,6 +179,9 @@ export const ACCESS_LOG_OPERATIONS = [
   "ai_usage.get_recent",
   "ai_usage.get_budget",
   "ai_usage.update_budget",
+  "ai_usage.list_user_limits",
+  "ai_usage.set_user_limits",
+  "ai_usage.delete_user_limits",
   // Activity
   "activity.list",
   "activity.mark_all_read",

@@ -2379,15 +2379,32 @@ export const AI_SPEND_STAGE_CUTOFFS: Record<AISpendStage, number> = {
   embeddings: 1,
 }
 
+export const AI_SPEND_DENIAL_REASONS = [
+  "operator_disabled",
+  "workspace_disabled",
+  "workspace_limit",
+  "user_disabled",
+  "user_agent_allowance",
+  "user_limit",
+] as const
+export type AISpendDenialReason = (typeof AI_SPEND_DENIAL_REASONS)[number]
+
 export interface AIBudgetConfig {
   monthlyBudgetUsd: number
   alertThreshold50: boolean
   alertThreshold80: boolean
   alertThreshold100: boolean
+  /** Admin off switch: every AI call in the workspace is denied. */
+  aiDisabled: boolean
+  /** Agent spend allowed per user per month when the user has no allowance of their own. Null means no default. */
+  defaultUserAgentAllowanceUsd: number | null
+  /** Set by Threa, not editable by workspace admins. The enforced limit is min(monthlyBudgetUsd, operatorCeilingUsd). */
+  operatorCeilingUsd: number
+  operatorAiDisabled: boolean
 }
 
 export interface AIBudgetResponse {
-  budget: AIBudgetConfig | null
+  budget: AIBudgetConfig
   currentUsage: AIUsageSummary
   percentUsed: number
   nextReset: string
@@ -2398,6 +2415,28 @@ export interface UpdateAIBudgetInput {
   alertThreshold50?: boolean
   alertThreshold80?: boolean
   alertThreshold100?: boolean
+  aiDisabled?: boolean
+  defaultUserAgentAllowanceUsd?: number | null
+}
+
+/** Per-user limits. A user with no row has no personal limits beyond the workspace default agent allowance. */
+export interface AIUserLimits {
+  userId: string
+  /** Total AI spend per month attributed to this user. Null means no personal cap. */
+  monthlyQuotaUsd: number | null
+  /** Agent spend per month. Null falls back to the workspace default allowance. */
+  agentAllowanceUsd: number | null
+  aiDisabled: boolean
+}
+
+export interface AIUserLimitsListResponse {
+  limits: AIUserLimits[]
+}
+
+export type SetAIUserLimitsInput = Omit<AIUserLimits, "userId">
+
+export interface AIUserLimitsResponse {
+  limits: AIUserLimits
 }
 
 /**

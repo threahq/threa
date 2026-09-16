@@ -784,7 +784,12 @@ export type {
   AIUsageResponse,
   AIRecentUsageResponse,
   AIBudgetConfig,
+  AISpendDenialReason,
   AISpendStage,
+  AIUserLimits,
+  AIUserLimitsListResponse,
+  AIUserLimitsResponse,
+  SetAIUserLimitsInput,
   AIBudgetResponse,
   UpdateAIBudgetInput,
 } from "./api"
@@ -805,7 +810,7 @@ export { sharedMessageSlotKey, parseSharedMessageSlotKey } from "./slots"
 export { DEVICE_KEY_LENGTH } from "./api"
 
 // AI usage category constants
-export { AI_SPEND_STAGE_CUTOFFS, AI_USAGE_CATEGORIES } from "./api"
+export { AI_SPEND_DENIAL_REASONS, AI_SPEND_STAGE_CUTOFFS, AI_USAGE_CATEGORIES } from "./api"
 
 // Command kind constants
 export { CommandKinds, CommandScopes } from "./api"

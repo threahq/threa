@@ -24,6 +24,8 @@ export interface BudgetMetrics {
   statusCopy: string
   totalCost: number
   budgetAmount: number
+  /** The limit the stop points are drawn from: the budget, or Threa's ceiling when that is lower. */
+  enforcedLimit: number
   percentUsed: number
   projectedTotal: number
   projectedOverage: number
@@ -39,6 +41,8 @@ export interface BudgetMetrics {
 export function computeMetrics(opts: {
   totalCost: number
   budgetAmount: number
+  /** Undefined only while the budget is still loading. */
+  operatorCeilingUsd: number | undefined
   percentUsed: number
   periodStart: string
   periodEnd: string
@@ -88,6 +92,7 @@ export function computeMetrics(opts: {
     statusCopy,
     totalCost: opts.totalCost,
     budgetAmount: opts.budgetAmount,
+    enforcedLimit: Math.min(opts.budgetAmount, opts.operatorCeilingUsd ?? opts.budgetAmount),
     percentUsed: opts.percentUsed,
     projectedTotal,
     projectedOverage,

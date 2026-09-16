@@ -1,5 +1,13 @@
 import { api } from "./client"
-import type { AIUsageResponse, AIRecentUsageResponse, AIBudgetResponse, UpdateAIBudgetInput } from "@threahq/types"
+import type {
+  AIUsageResponse,
+  AIRecentUsageResponse,
+  AIBudgetResponse,
+  UpdateAIBudgetInput,
+  AIUserLimitsListResponse,
+  AIUserLimitsResponse,
+  SetAIUserLimitsInput,
+} from "@threahq/types"
 
 // The dashboard's day buckets and month window are drawn server-side in the
 // timezone the caller names — the viewer's device zone or the workspace's
@@ -25,5 +33,17 @@ export const aiUsageApi = {
 
   async updateBudget(workspaceId: string, timezone: string, input: UpdateAIBudgetInput): Promise<AIBudgetResponse> {
     return api.put<AIBudgetResponse>(`/api/workspaces/${workspaceId}/ai-budget${tzQuery(timezone)}`, input)
+  },
+
+  async listUserLimits(workspaceId: string): Promise<AIUserLimitsListResponse> {
+    return api.get<AIUserLimitsListResponse>(`/api/workspaces/${workspaceId}/ai-budget/users`)
+  },
+
+  async setUserLimits(workspaceId: string, userId: string, input: SetAIUserLimitsInput): Promise<AIUserLimitsResponse> {
+    return api.put<AIUserLimitsResponse>(`/api/workspaces/${workspaceId}/ai-budget/users/${userId}`, input)
+  },
+
+  async resetUserLimits(workspaceId: string, userId: string): Promise<void> {
+    await api.delete<void>(`/api/workspaces/${workspaceId}/ai-budget/users/${userId}`)
   },
 }

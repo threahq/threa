@@ -192,12 +192,18 @@ export function TrajectoryChart({ metrics, timezone }: { metrics: BudgetMetrics;
           />
 
           <ReferenceLine
-            y={metrics.budgetAmount * AI_SPEND_STAGE_CUTOFFS.agents}
+            y={metrics.enforcedLimit * AI_SPEND_STAGE_CUTOFFS.agents}
             stroke="currentColor"
             strokeOpacity={0.35 * dim("budget")}
             strokeWidth={1}
             strokeDasharray="4 3"
-            label={{ value: "Agents stop", position: "insideTopLeft", fontSize: 10, fill: "currentColor", opacity: 0.6 }}
+            label={{
+              value: "Agents stop",
+              position: "insideTopLeft",
+              fontSize: 10,
+              fill: "currentColor",
+              opacity: 0.6,
+            }}
           />
 
           {/* Today vertical marker */}
