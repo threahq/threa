@@ -16,6 +16,13 @@ export interface SystemdUnitInput {
 
 /** The unit text, modelled on the harnessd user unit: absolute paths, restart always, appended logs. */
 export function renderSystemdUnit(input: SystemdUnitInput): string {
+  for (const path of [input.bunPath, input.entryPath, input.homeDir, input.envFile]) {
+    if (/[\s\\\0]/.test(path)) {
+      throw new Error(
+        `Cannot write a systemd unit for ${JSON.stringify(path)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
+      )
+    }
+  }
   const workingDir = dirname(dirname(input.entryPath))
   const logDir = join(input.homeDir, ".threa", "hermes-remote", "log")
   return [
@@ -110,6 +117,7 @@ export function planInstall(options: InstallOptions): InstallPlan {
 export function runInstall(options: InstallOptions): InstallPlan {
   const log = options.log ?? (() => {})
   const plan = planInstall(options)
+  const soulPath = join(options.homeDir, ".hermes", "SOUL.md")
   const unitWrite = plan.writes.find((write) => write.path === plan.unitPath)
   if (unitWrite?.skipped && !options.dryRun) {
     throw new Error(`${plan.unitPath} already exists. Pass --force to overwrite it.`)
@@ -120,7 +128,7 @@ export function runInstall(options: InstallOptions): InstallPlan {
       join(options.homeDir, ".hermes", "skills", "threa", "SKILL.md"),
       readPackageFile(options.packageDir, "hermes", "skills", "threa", "SKILL.md"),
     ],
-    [join(options.homeDir, ".hermes", "SOUL.md"), readPackageFile(options.packageDir, "hermes", "SOUL.md")],
+    [soulPath, readPackageFile(options.packageDir, "hermes", "SOUL.md")],
   ])
 
   for (const dir of plan.directories) {
@@ -133,7 +141,16 @@ export function runInstall(options: InstallOptions): InstallPlan {
       continue
     }
     log(`${options.dryRun ? "would write" : "writing"} ${write.path}`)
-    if (!options.dryRun) writeFileSync(write.path, contents.get(write.path) ?? "", { mode: 0o600 })
+    if (options.dryRun) continue
+    const exclusive = write.path === soulPath || (write.path === plan.unitPath && !options.force)
+    try {
+      writeFileSync(write.path, contents.get(write.path) ?? "", { mode: 0o600, flag: exclusive ? "wx" : "w" })
+    } catch (error) {
+      const exists = (error as NodeJS.ErrnoException).code === "EEXIST"
+      if (!exists) throw error
+      if (write.path !== soulPath) throw new Error(`${write.path} already exists. Pass --force to overwrite it.`)
+      log(`keeping ${write.path}: a persona already exists there and is never overwritten`)
+    }
   }
   const run = options.run ?? ((command, args) => spawnSync(command, args, { stdio: "inherit" }))
   for (const [command, ...args] of plan.commands) {

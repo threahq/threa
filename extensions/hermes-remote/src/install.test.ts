@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { renderSystemdUnit, runInstall, SERVICE_NAME } from "./install"
@@ -46,6 +46,47 @@ describe("renderSystemdUnit", () => {
         "",
       ].join("\n")
     )
+  })
+})
+
+describe("renderSystemdUnit paths", () => {
+  test("a path systemd would split or unescape is refused", () => {
+    expect(() =>
+      renderSystemdUnit({
+        bunPath: "/home/u/.bun/bin/bun",
+        entryPath: "/home/my user/threa/extensions/hermes-remote/src/index.ts",
+        homeDir: "/home/my user",
+        envFile: "/home/my user/.config/threa/hermes-remote.env",
+      })
+    ).toThrow("whitespace and backslashes")
+  })
+})
+
+describe("runInstall", () => {
+  function racingInstall(home: string, appears: string, content: string) {
+    const log = (message: string) => {
+      if (message === `writing ${join(home, ".config", "systemd", "user", SERVICE_NAME)}`)
+        writeFileSync(appears, content)
+    }
+    return () => runInstall({ ...installOptions(home), dryRun: false, run: () => ({ status: 0 }), log })
+  }
+
+  test("a unit that appears after planning is not overwritten", () => {
+    const home = tempHome()
+    const unitPath = join(home, ".config", "systemd", "user", SERVICE_NAME)
+
+    expect(racingInstall(home, unitPath, "theirs\n")).toThrow(
+      `${unitPath} already exists. Pass --force to overwrite it.`
+    )
+    expect(readFileSync(unitPath, "utf8")).toBe("theirs\n")
+  })
+
+  test("a SOUL.md that appears after planning is kept", () => {
+    const home = tempHome()
+    const soulPath = join(home, ".hermes", "SOUL.md")
+
+    racingInstall(home, soulPath, "mine\n")()
+    expect(readFileSync(soulPath, "utf8")).toBe("mine\n")
   })
 })
 

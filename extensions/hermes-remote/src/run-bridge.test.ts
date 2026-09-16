@@ -1074,4 +1074,21 @@ describe("HermesTurnRunner sealed turns", () => {
       ],
     })
   })
+
+  test("a sealed approval with no usable choices is still denied", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn({ ...TURN, sealed: true })
+    gate.push({ ...APPROVAL_EVENT, choices: [] })
+    await settle()
+    gate.push({ event: "run.completed", run_id: "run_1", output: "done" })
+    gate.close()
+    await settle()
+
+    expect({ approvals: gate.approvals, decisions: calls.decisions }).toEqual({
+      approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
+      decisions: [],
+    })
+  })
 })

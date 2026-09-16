@@ -12,7 +12,7 @@ export function createFileConversationStore(path: string): ConversationStore {
     load: () => {
       try {
         const parsed = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
-        // The chunk 7 file was the bare generation map; a file with neither key is one of those.
+        // A file without `generations` or `forked` is a legacy bare generation map.
         const legacy = !("generations" in parsed) && !("forked" in parsed)
         const raw = (legacy ? parsed : (parsed.generations ?? {})) as Record<string, unknown>
         const generations = Object.fromEntries(

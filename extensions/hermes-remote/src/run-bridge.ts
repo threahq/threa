@@ -556,11 +556,6 @@ export class HermesTurnRunner {
   private async resolveApproval(run: ConsumedRun, event: HermesRunEvent): Promise<void> {
     const { runId, streamId, batcher, signal } = run
     const choices = Array.isArray(event.choices) ? event.choices.flatMap((c) => text(c) ?? []) : []
-    const options = approvalOptions(choices)
-    if (options.length === 0) {
-      this.log(`run ${runId} approval request carried no usable choices`)
-      return
-    }
     const requestId = text(event.request_id)
     const command = text(event.command) ?? "(command withheld)"
     if (run.sealed) {
@@ -575,6 +570,11 @@ export class HermesTurnRunner {
         return
       }
       await this.flushRunSteers(runId)
+      return
+    }
+    const options = approvalOptions(choices)
+    if (options.length === 0) {
+      this.log(`run ${runId} approval request carried no usable choices`)
       return
     }
     let outcome: DecisionOutcome
