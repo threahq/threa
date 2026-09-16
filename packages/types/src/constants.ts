@@ -939,6 +939,8 @@ export const DecisionRequestStatuses = {
 export const DECISION_OPTION_TONES = ["primary", "neutral", "destructive"] as const
 export type DecisionOptionTone = (typeof DECISION_OPTION_TONES)[number]
 
+export const DECISION_NOTE_MAX_CHARS = 2000
+
 // Agent session event types (stream events for session lifecycle)
 export const AGENT_SESSION_EVENT_TYPES = [
   "agent_session:started",

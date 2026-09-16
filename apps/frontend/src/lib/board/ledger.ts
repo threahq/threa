@@ -9,6 +9,7 @@ import {
   type AsideAnchoredEventPayload,
   type AttachmentSummary,
   type CommandDispatchedPayload,
+  type DecisionRequestedEventPayload,
   type DelegationCreatedEventPayload,
   type LinkPreviewContentType,
   type LinkPreviewSummary,
@@ -275,6 +276,20 @@ export function ledgerEventContent(row: BoardEventRow, ctx: LedgerEventContentCt
         kind: "delegation",
         label: payload?.title ? `Delegation: ${payload.title}` : "Delegation",
         meta: delegationAvailabilityLabel(row.statusPatch?.status ?? DelegationStatuses.OPEN, row.statusPatch?.reason),
+      }
+    }
+    case "decision": {
+      const payload = row.event.payload as DecisionRequestedEventPayload | undefined
+      const status = row.statusPatch?.status ?? payload?.decision.status ?? "open"
+      const chosen = row.statusPatch?.resolution ?? payload?.decision.resolution
+      const chosenLabel = chosen
+        ? (payload?.decision.options.find((option) => option.id === chosen.optionId)?.label ?? chosen.optionId)
+        : null
+      return {
+        key: row.key,
+        kind: "decision",
+        label: payload?.decision.title ? `Decision: ${payload.decision.title}` : "Decision",
+        meta: status === "open" ? "waiting" : (chosenLabel ?? status),
       }
     }
     case "subagent": {

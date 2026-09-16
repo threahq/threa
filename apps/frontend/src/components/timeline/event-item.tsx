@@ -1,6 +1,7 @@
 import type {
   BotAccessStatusChangedEventPayload,
   CallEndedEventPayload,
+  DecisionResolvedEventPayload,
   DelegationStatusChangedEventPayload,
   StreamEvent,
   SubagentSummary,
@@ -16,6 +17,7 @@ import { FollowUpScheduledEvent } from "./follow-up-event"
 import { DelegationEvent } from "./delegation-event"
 import { SubagentEvent } from "./subagent-event"
 import { BotAccessEvent } from "./bot-access-event"
+import { DecisionEvent } from "./decision-event"
 import { BriefUpdatedEvent } from "./brief-updated-event"
 import { DescriptionSetEvent } from "./description-set-event"
 import { CallCard } from "./call-card"
@@ -58,6 +60,8 @@ interface EventItemProps {
   subagentThreadRun?: SubagentThreadRun | null
   /** Latest status patch per bot-access requestId within the loaded window — drives the request card's state. */
   botAccessStatusPatches?: Map<string, BotAccessStatusChangedEventPayload>
+  /** Latest `decision:resolved` payload per decisionId within the loaded window — drives the decision card's state. */
+  decisionStatusPatches?: Map<string, DecisionResolvedEventPayload>
   /** Latest `call_ended` payload per callId within the loaded window — drives the call card's ended state. */
   callEndedPatches?: Map<string, CallEndedEventPayload>
   /** True when the viewer is a stream member — gates the request card's Approve/Deny buttons. */
@@ -99,6 +103,7 @@ export function EventItem({
   subagentRunFallback,
   subagentThreadRun,
   botAccessStatusPatches,
+  decisionStatusPatches,
   callEndedPatches,
   viewerIsMember,
   deferSecondaryHydration = false,
@@ -278,6 +283,27 @@ export function EventItem({
         </div>
       )
     }
+
+    case "decision:requested": {
+      const decisionId = (event.payload as { decisionId?: string })?.decisionId
+      const statusPatch = decisionId ? decisionStatusPatches?.get(decisionId) : undefined
+      return (
+        <div data-event-id={event.id}>
+          <DecisionEvent
+            event={event}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            statusPatch={statusPatch}
+            isThreadParent={isThreadParent}
+          />
+        </div>
+      )
+    }
+
+    case "decision:resolved":
+      // Patch, not a row: it resolves the matching decision card via
+      // decisionStatusPatches (collected in event-list) — renders nothing.
+      return null
 
     case "bot_access:status_changed":
       // Patch, not a row: it resolves the matching request card via

@@ -73,6 +73,7 @@ import {
   type SubagentCreatedEventPayload,
   type SubagentStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
+  type DecisionResolvedEventPayload,
   type CallEndedEventPayload,
   type UnreadOpenPosition,
 } from "@threahq/types"
@@ -91,6 +92,7 @@ import {
   collectDelegationStatusPatches,
   collectSubagentStatusPatches,
   collectBotAccessStatusPatches,
+  collectDecisionStatusPatches,
   collectCallEndedPatches,
   findMessageItemIndex,
   findEventItemIndex,
@@ -1490,6 +1492,13 @@ export function StreamContent({
   // resolution to render the authoritative terminal state on the virtualized path.
   const botAccessStatusPatches = useMemo(
     () => timeDerive(() => collectBotAccessStatusPatches(timelineItems)),
+    [timelineItems]
+  )
+  // Same full-window read for decision resolution patches (zero-height, filtered
+  // out of `visibleItems`): the decision card must see the resolution to render
+  // the authoritative terminal state on the virtualized path.
+  const decisionStatusPatches = useMemo(
+    () => timeDerive(() => collectDecisionStatusPatches(timelineItems)),
     [timelineItems]
   )
   // Same full-window read for `call_ended` patches (zero-height, filtered out of
@@ -2986,6 +2995,7 @@ export function StreamContent({
                           subagentStatusPatches={subagentStatusPatches}
                           subagentThreadRun={subagentThreadRun}
                           botAccessStatusPatches={botAccessStatusPatches}
+                          decisionStatusPatches={decisionStatusPatches}
                           callEndedPatches={callEndedPatches}
                           viewerIsMember={isMember}
                           isLoading={isLoading}
@@ -3266,6 +3276,7 @@ function TimelineMessageList({
   subagentStatusPatches,
   subagentThreadRun,
   botAccessStatusPatches,
+  decisionStatusPatches,
   callEndedPatches,
   viewerIsMember,
   isLoading,
@@ -3308,6 +3319,7 @@ function TimelineMessageList({
   subagentStatusPatches: Map<string, StreamEvent>
   subagentThreadRun: SubagentThreadRun | null
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
+  decisionStatusPatches: Map<string, DecisionResolvedEventPayload>
   callEndedPatches: Map<string, CallEndedEventPayload>
   /** True when the viewer is a member — gates the bot-access card's Approve/Deny. */
   viewerIsMember?: boolean
@@ -3428,6 +3440,7 @@ function TimelineMessageList({
       subagentStatusPatches,
       subagentThreadRun,
       botAccessStatusPatches,
+      decisionStatusPatches,
       callEndedPatches,
       viewerIsMember,
       batch,
@@ -3449,6 +3462,7 @@ function TimelineMessageList({
       subagentStatusPatches,
       subagentThreadRun,
       botAccessStatusPatches,
+      decisionStatusPatches,
       callEndedPatches,
       viewerIsMember,
       batch,

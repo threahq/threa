@@ -461,6 +461,28 @@ const ROW_FIXTURES: Partial<Record<EventType, CachedEvent[]>> = {
       },
     }),
   ],
+  "decision:requested": [
+    cachedEvent({
+      eventType: "decision:requested",
+      createdAt: "2026-07-04T10:00:00Z",
+      payload: {
+        decisionId: "dec_fixture",
+        triggerMessageId: MEMBER_MESSAGE,
+        decision: {
+          id: "dec_fixture",
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          title: "Fixture",
+          options: [{ id: "opt_yes", label: "Yes", tone: "primary" }],
+          allowNote: false,
+          status: "open",
+          version: 1,
+          createdAt: "2026-07-04T10:00:00Z",
+          updatedAt: "2026-07-04T10:00:00Z",
+        },
+      },
+    }),
+  ],
   "aside:anchored": [
     cachedEvent({
       eventType: "aside:anchored",
@@ -496,6 +518,7 @@ describe("resolveBoardEventRows covers every spec-declared board row type", () =
       "delegation:created": ["delegation"],
       "subagent:created": ["subagent"],
       "aside:anchored": ["aside"],
+      "decision:requested": ["decision"],
       command_dispatched: ["command"],
       command_progress: ["command"],
       command_completed: ["command"],
@@ -523,6 +546,69 @@ describe("resolveBoardEventRows covers every spec-declared board row type", () =
  * relation the spec exposes today — `patchesRow` is a bare boolean with no
  * pointer at the row it patches — and it reproduces today's hand-list exactly.
  */
+describe("resolveBoardEventRows — decision request rows", () => {
+  const decisionEvent = (id: string, triggerMessageId?: string) =>
+    cachedEvent({
+      id,
+      eventType: "decision:requested",
+      createdAt: "2026-09-16T09:00:00Z",
+      payload: {
+        decisionId: `dec_${id}`,
+        triggerMessageId,
+        decision: {
+          id: `dec_${id}`,
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          title: "Force-push?",
+          options: [{ id: "opt_yes", label: "Yes", tone: "primary" }],
+          allowNote: false,
+          status: "open",
+          version: 1,
+          createdAt: "2026-09-16T09:00:00Z",
+          updatedAt: "2026-09-16T09:00:00Z",
+        },
+      },
+    })
+
+  it("draws on the card whose member messages include the trigger", () => {
+    const rows = resolveBoardEventRows([decisionEvent("d_member", MEMBER_MESSAGE), decisionEvent("d_other", "msg_x")], {
+      conversationId: CONV,
+      memberMessageIds: new Set([MEMBER_MESSAGE]),
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: "decision", key: "d_member" })
+  })
+
+  it("draws nowhere when the request names no trigger message", () => {
+    const rows = resolveBoardEventRows([decisionEvent("d_untriggered")], {
+      conversationId: CONV,
+      memberMessageIds: new Set([MEMBER_MESSAGE]),
+    })
+    expect(rows).toEqual([])
+  })
+
+  it("rides the highest-version resolution patch on the row", () => {
+    const rows = resolveBoardEventRows(
+      [
+        decisionEvent("d_member", MEMBER_MESSAGE),
+        cachedEvent({
+          eventType: "decision:resolved",
+          createdAt: "2026-09-16T09:05:00Z",
+          payload: { decisionId: "dec_d_member", status: "resolved", version: 3 },
+        }),
+        cachedEvent({
+          eventType: "decision:resolved",
+          createdAt: "2026-09-16T09:06:00Z",
+          payload: { decisionId: "dec_d_member", status: "cancelled", version: 2 },
+        }),
+      ],
+      { conversationId: CONV, memberMessageIds: new Set([MEMBER_MESSAGE]) }
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: "decision", statusPatch: { status: "resolved", version: 3 } })
+  })
+})
+
 describe("BOARD_RAIL_EVENT_TYPES covers every patch belonging to a board row type", () => {
   it("subscribes to the patch types in each board row type's namespace", () => {
     const rowNamespaces = new Set(

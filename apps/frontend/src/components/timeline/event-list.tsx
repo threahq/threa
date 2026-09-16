@@ -6,6 +6,7 @@ import {
   type DelegationStatusChangedEventPayload,
   type SubagentStatusChangedEventPayload,
   type BotAccessStatusChangedEventPayload,
+  type DecisionResolvedEventPayload,
   type CallEndedEventPayload,
 } from "@threahq/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
@@ -358,6 +359,8 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
   "subagent:status_changed",
   // Status changes patch the bot-access request card (collectBotAccessStatusPatches).
   "bot_access:status_changed",
+  // Resolution patches the decision card (collectDecisionStatusPatches).
+  "decision:resolved",
   // The end summary patches the call card (collectCallEndedPatches).
   "call_ended",
 ])
@@ -484,6 +487,25 @@ export function collectBotAccessStatusPatches(items: TimelineItem[]): Map<string
     if (item.type !== "event" || item.event.eventType !== "bot_access:status_changed") continue
     const payload = item.event.payload as BotAccessStatusChangedEventPayload | undefined
     if (payload?.requestId) patches.set(payload.requestId, payload)
+  }
+  return patches
+}
+
+/**
+ * Collect the authoritative `decision:resolved` patch per decisionId in the
+ * loaded window. Last patch wins, except that a LOWER `version` never overwrites
+ * a higher one: the resolve CAS stamps the version, so an out-of-order patch is
+ * stale by definition and would walk the card back to an earlier state.
+ */
+export function collectDecisionStatusPatches(items: TimelineItem[]): Map<string, DecisionResolvedEventPayload> {
+  const patches = new Map<string, DecisionResolvedEventPayload>()
+  for (const item of items) {
+    if (item.type !== "event" || item.event.eventType !== "decision:resolved") continue
+    const payload = item.event.payload as DecisionResolvedEventPayload | undefined
+    if (!payload?.decisionId) continue
+    const existing = patches.get(payload.decisionId)
+    if (existing && existing.version > payload.version) continue
+    patches.set(payload.decisionId, payload)
   }
   return patches
 }
@@ -872,6 +894,8 @@ export interface TimelineItemRenderContext {
   subagentThreadRun?: SubagentThreadRun | null
   /** Latest `bot_access:status_changed` payload per requestId in the loaded window. */
   botAccessStatusPatches: Map<string, BotAccessStatusChangedEventPayload>
+  /** Latest `decision:resolved` payload per decisionId in the loaded window. */
+  decisionStatusPatches: Map<string, DecisionResolvedEventPayload>
   /** Latest `call_ended` payload per callId in the loaded window — drives the call card's ended state. */
   callEndedPatches: Map<string, CallEndedEventPayload>
   /**
@@ -921,6 +945,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         subagentStatusPatches={ctx.subagentStatusPatches}
         subagentThreadRun={ctx.subagentThreadRun}
         botAccessStatusPatches={ctx.botAccessStatusPatches}
+        decisionStatusPatches={ctx.decisionStatusPatches}
         callEndedPatches={ctx.callEndedPatches}
         viewerIsMember={ctx.viewerIsMember}
         batch={ctx.batch}
@@ -1172,6 +1197,13 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
       return false
   }
 
+  // A decision card repaints when its own resolution patch changes.
+  if (item.event.eventType === "decision:requested") {
+    const did = (item.event.payload as { decisionId?: string })?.decisionId
+    if (did !== undefined && !decisionPatchEqual(p.decisionStatusPatches.get(did), n.decisionStatusPatches.get(did)))
+      return false
+  }
+
   // A call card repaints when its own `call_ended` patch changes (the call ended
   // within the window). Liveness itself is read from the active-calls store
   // inside the card via useSyncExternalStore, so that flip repaints without a
@@ -1218,6 +1250,15 @@ function delegationPatchEqual(
     a.statusNote === b.statusNote &&
     a.reason === b.reason
   )
+}
+
+function decisionPatchEqual(
+  a: DecisionResolvedEventPayload | undefined,
+  b: DecisionResolvedEventPayload | undefined
+): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.status === b.status && a.version === b.version && a.resolution?.optionId === b.resolution?.optionId
 }
 
 function botAccessPatchEqual(
@@ -1311,6 +1352,7 @@ export function EventList({
   const delegationStatusPatches = collectDelegationStatusPatches(timelineItems)
   const subagentStatusPatches = collectSubagentStatusPatches(timelineItems)
   const botAccessStatusPatches = collectBotAccessStatusPatches(timelineItems)
+  const decisionStatusPatches = collectDecisionStatusPatches(timelineItems)
   const callEndedPatches = collectCallEndedPatches(timelineItems)
 
   if (timelineItems.length === 0) {
@@ -1340,6 +1382,7 @@ export function EventList({
     subagentStatusPatches,
     subagentThreadRun,
     botAccessStatusPatches,
+    decisionStatusPatches,
     callEndedPatches,
     viewerIsMember,
     batch,
