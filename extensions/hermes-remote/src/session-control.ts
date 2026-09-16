@@ -61,7 +61,7 @@ export function createHermesSessionControl(
           .getRun(run.runId)
           .then((result) => result.status)
           .catch((error) => `status unavailable: ${error instanceof Error ? error.message : String(error)}`)
-        lines.push(`Run \`${run.runId}\` (${state})`)
+        lines.push(`Run \`${run.runId}\` (${state}) in \`${run.streamId}\``)
       }
     }
     const lockedModel = runner.lockedModel(conversationId)
@@ -129,7 +129,7 @@ export function createHermesSessionControl(
   // Commands act on the root conversation: the SDK hands a command only its root
   // stream, so a /clear typed in a thread clears the scratchpad's conversation.
   async function clear(rootStreamId: string): Promise<{ ok: boolean; summary?: string; message?: string }> {
-    if (runner.hasOpenTurns()) {
+    if (runner.hasOpenTurns(rootStreamId)) {
       return { ok: false, message: "Stop the running turn first (/stop)." }
     }
     const previous = runner.lockedModel(runner.conversationFor(rootStreamId))
@@ -150,8 +150,8 @@ export function createHermesSessionControl(
     get modelSuggestions() {
       return suggestions
     },
-    interrupt: () => runner.interrupt(),
-    steer: (text) => runner.steer(text),
+    interrupt: (streamId) => runner.interrupt(streamId),
+    steer: (text, streamId) => runner.steer(text, streamId),
     inheritModel: async (sourceId, forkId) => {
       const lockedModel = runner.lockedModel(sourceId)
       if (!lockedModel) return

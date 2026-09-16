@@ -17,7 +17,7 @@ const OPTIONS: ModelOptions = {
 
 function makeRunner(
   open: Array<{ runId: string; streamId: string }> = [],
-  admitting = 0,
+  admitting: string[] = [],
   forked: string[] = [],
   models: Record<string, { provider: string; model: string }> = {}
 ) {
@@ -31,7 +31,8 @@ function makeRunner(
       return `${streamId}.${generation}`
     },
     openRuns: () => open.map((run, index) => ({ invocationId: `binv_${index}`, ...run })),
-    hasOpenTurns: () => open.length > 0 || admitting > 0,
+    hasOpenTurns: (streamId?: string) =>
+      [...open.map((run) => run.streamId), ...admitting].some((id) => streamId === undefined || id === streamId),
     forkedConversations: () => forked,
     lockedModel: (conversationId: string) => models[conversationId],
     recordModel: (conversationId: string, choice: { provider: string; model: string }) => {
@@ -129,7 +130,20 @@ describe("createHermesSessionControl", () => {
     const control = createHermesSessionControl(runner, makeClient().client)
     expect(await control.runCommand("status", "", CONTEXT)).toEqual({
       ok: true,
-      message: "Conversation: `stream_root`\nRun `run_1` (running)\nGateway: http://127.0.0.1:8642",
+      message: "Conversation: `stream_root`\nRun `run_1` (running) in `stream_root`\nGateway: http://127.0.0.1:8642",
+    })
+  })
+
+  test("status lists every open run with its stream", async () => {
+    const { runner } = makeRunner([
+      { runId: "run_1", streamId: "stream_root" },
+      { runId: "run_2", streamId: "stream_thread" },
+    ])
+    const control = createHermesSessionControl(runner, makeClient().client)
+    expect(await control.runCommand("status", "", CONTEXT)).toEqual({
+      ok: true,
+      message:
+        "Conversation: `stream_root`\nRun `run_1` (running) in `stream_root`\nRun `run_2` (running) in `stream_thread`\nGateway: http://127.0.0.1:8642",
     })
   })
 
@@ -157,7 +171,7 @@ describe("createHermesSessionControl", () => {
   })
 
   test("model locks every thread forked from the scratchpad, and a later fork inherits the lock", async () => {
-    const { runner } = makeRunner([], 0, ["stream_thread"])
+    const { runner } = makeRunner([], [], ["stream_thread"])
     const { client, locks } = makeClient()
     const control = createHermesSessionControl(runner, client)
 
@@ -175,7 +189,7 @@ describe("createHermesSessionControl", () => {
   })
 
   test("a thread whose lock fails is named instead of silently keeping its old model", async () => {
-    const { runner } = makeRunner([], 0, ["stream_thread"])
+    const { runner } = makeRunner([], [], ["stream_thread"])
     const { client } = makeClient({
       lockSessionModel: async (id: string, runtime: { provider: string; model: string }) => {
         if (id === "stream_thread") throw new Error("gateway busy")
@@ -242,8 +256,17 @@ describe("createHermesSessionControl", () => {
     })
   })
 
-  test("clear is refused while a run is open anywhere in the session, a thread included", async () => {
+  test("clear goes ahead while only a thread run is open", async () => {
     const { runner, bumps } = makeRunner([{ runId: "run_1", streamId: "stream_thread" }])
+    const control = createHermesSessionControl(runner, makeClient().client)
+    expect({ result: await control.runCommand("clear", "", CONTEXT), bumps }).toEqual({
+      result: { ok: true, summary: "Started a new conversation" },
+      bumps: ["stream_root"],
+    })
+  })
+
+  test("clear is refused while a root run is open", async () => {
+    const { runner, bumps } = makeRunner([{ runId: "run_1", streamId: "stream_root" }])
     const control = createHermesSessionControl(runner, makeClient().client)
     expect({ result: await control.runCommand("clear", "", CONTEXT), bumps }).toEqual({
       result: { ok: false, message: "Stop the running turn first (/stop)." },
@@ -252,7 +275,7 @@ describe("createHermesSessionControl", () => {
   })
 
   test("clear is refused while a turn is still being admitted", async () => {
-    const { runner, bumps } = makeRunner([], 1)
+    const { runner, bumps } = makeRunner([], ["stream_root"])
     const control = createHermesSessionControl(runner, makeClient().client)
     expect({ result: await control.runCommand("clear", "", CONTEXT), bumps }).toEqual({
       result: { ok: false, message: "Stop the running turn first (/stop)." },

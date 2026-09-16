@@ -491,12 +491,13 @@ function makeGatedClient() {
     },
     createRun: async (input: Record<string, unknown>) => {
       created.push(input)
+      const runId = `run_${created.length}`
       if (releaseAdmission) await new Promise<void>((resolve) => (releaseAdmission = resolve))
       const failure = admissionErrors.shift()
       if (failure) throw failure
-      return { runId: "run_1", status: "running", replayed: false }
+      return { runId, status: "running", replayed: false }
     },
-    getRun: async (): Promise<RunStatus> => ({ runId: "run_1", status: "running" }),
+    getRun: async (runId: string): Promise<RunStatus> => ({ runId, status: "running" }),
     steerRun: async (runId: string, input: string) => {
       const failure = steerErrors.shift()
       if (failure) throw failure
@@ -511,10 +512,11 @@ function makeGatedClient() {
       approvals.push({ runId, ...answer })
       return { runId, choice: answer.choice, resolved: true }
     },
-    streamEvents: async function* (_runId: string, signal?: AbortSignal): AsyncIterable<HermesRunEvent> {
+    streamEvents: async function* (runId: string, signal?: AbortSignal): AsyncIterable<HermesRunEvent> {
       for (;;) {
         if (signal?.aborted) return
-        const next = queue.shift()
+        const index = queue.findIndex((event) => event.run_id === runId)
+        const next = index === -1 ? undefined : queue.splice(index, 1)[0]
         if (next) {
           yield next
           continue
@@ -559,6 +561,106 @@ const APPROVAL_EVENT: HermesRunEvent = {
 }
 
 describe("HermesTurnRunner control", () => {
+  const CHANNEL_TURN: DeliveredTurn = {
+    ...TURN,
+    invocationId: "binv_2",
+    streamId: "stream_channel",
+    rootStreamId: "stream_channel",
+    content: "Other thing",
+  }
+
+  test("the runtime admits up to four turns at once", () => {
+    expect(HERMES_RUNTIME.maxConcurrentTurns).toBe(4)
+  })
+
+  test("interrupt with a stream stops only that stream's run, and the other still replies", async () => {
+    const { session, calls } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    await runner.deliverTurn(CHANNEL_TURN)
+
+    expect(runner.interrupt("stream_thread")).toBe(true)
+    gate.push({ event: "run.completed", run_id: "run_2", output: "channel done" })
+    await settle()
+    gate.close()
+    runner.shutdown()
+
+    expect({ stops: gate.stops, replies: calls.replies, fails: calls.fails }).toEqual({
+      stops: ["run_1"],
+      replies: [{ invocationId: "binv_2", text: "channel done" }],
+      fails: [],
+    })
+  })
+
+  test("steer with a stream reaches only that stream's run", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    await runner.deliverTurn(CHANNEL_TURN)
+
+    const results = {
+      thread: await runner.steer("go left", "stream_thread"),
+      elsewhere: await runner.steer("go right", "stream_other"),
+    }
+    gate.close()
+    runner.shutdown()
+
+    expect({ results, steers: gate.steers }).toEqual({
+      results: { thread: true, elsewhere: false },
+      steers: [{ runId: "run_1", input: "go left" }],
+    })
+  })
+
+  test("an interrupt on another stream leaves a turn in admission admitted", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    const release = gate.holdAdmission()
+    const delivered = runner.deliverTurn(CHANNEL_TURN)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+
+    expect(runner.interrupt("stream_thread")).toBe(true)
+    release()
+    await delivered
+    const open = runner.openRuns()
+    gate.close()
+    runner.shutdown()
+
+    expect({ stops: gate.stops, open }).toEqual({
+      stops: ["run_1"],
+      open: [{ invocationId: "binv_2", runId: "run_2", streamId: "stream_channel" }],
+    })
+  })
+
+  test("concurrent turns in a thread and a channel each create a run on their own conversation", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await Promise.all([runner.deliverTurn(TURN), runner.deliverTurn(CHANNEL_TURN)])
+    const open = runner.openRuns()
+    gate.close()
+    runner.shutdown()
+
+    expect({ sessionIds: gate.created.map((input) => input.sessionId).sort(), runs: open.length }).toEqual({
+      sessionIds: ["stream_channel", "stream_thread"],
+      runs: 2,
+    })
+  })
+
+  test("a 429 from the gateway rejects the turn with its message", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    gate.failNextAdmission(new HermesApiError("Too many concurrent runs", { status: 429 }))
+
+    await expect(runner.deliverTurn(TURN)).rejects.toThrow("Too many concurrent runs")
+    await settle()
+    expect(runner.hasOpenTurns()).toBe(false)
+  })
+
   test("steer folds the text into the running run", async () => {
     const { session } = makeSession()
     const gate = makeGatedClient()
