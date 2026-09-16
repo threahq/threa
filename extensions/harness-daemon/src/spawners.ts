@@ -49,9 +49,15 @@ export interface SessionThreaCredentials {
   baseUrl: string
 }
 
-/** The runtime's own bot key, never a human's: env override first, then the channel config. */
-export function sessionThreaCredentials(config: ThreaChannelConfig): SessionThreaCredentials | undefined {
-  const apiKey = process.env.THREA_API_KEY || config.apiKey
+/**
+ * The runtime's own bot key, never a human's: env override first, then the channel config.
+ * An attached child skips the env key, which is the parent bot's inherited one.
+ */
+export function sessionThreaCredentials(
+  config: ThreaChannelConfig,
+  attachedThread = false
+): SessionThreaCredentials | undefined {
+  const apiKey = (attachedThread ? undefined : process.env.THREA_API_KEY) || config.apiKey
   const workspaceId = process.env.THREA_WORKSPACE_ID || config.workspaceId
   if (!apiKey || !workspaceId) return undefined
   return { apiKey, workspaceId, baseUrl: configuredThreaBaseUrl(config) }
@@ -81,9 +87,10 @@ export function prepareThreaCli(): string {
  */
 export function sessionThreaMcpServer(
   runtimeSessionId: string,
-  config: ThreaChannelConfig
+  config: ThreaChannelConfig,
+  attachedThread = false
 ): { cliEntry: string; configPath: string } | undefined {
-  const credentials = sessionThreaCredentials(config)
+  const credentials = sessionThreaCredentials(config, attachedThread)
   if (!credentials) {
     console.warn("harnessd: no Threa bot credentials; the threa MCP server is not registered for this session")
     return undefined
@@ -740,7 +747,13 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         }
       }
 
-      const threaCli = options.noRegister ? undefined : sessionThreaMcpServer(identity.runtimeSessionId, config)
+      const threaCli = options.noRegister
+        ? undefined
+        : sessionThreaMcpServer(
+            identity.runtimeSessionId,
+            config,
+            isAttachedThread(options.attach?.rootStreamId, activeStreamId)
+          )
       const args = claudeLaunchArgs({
         claudeBin,
         name: options.name,
@@ -800,7 +813,13 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
     const config = readThreaChannelConfig()
     const identity = claudeAgentIdentity(agent, config)
     const mcpConfig = mcpConfigPath(identity.runtimeSessionId)
-    const threaCli = sessionThreaMcpServer(identity.runtimeSessionId, config)
+    const rootStreamId =
+      scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`)
+    const threaCli = sessionThreaMcpServer(
+      identity.runtimeSessionId,
+      config,
+      isAttachedThread(rootStreamId, agent.activeStreamId)
+    )
     if (!existsSync(mcpConfig)) this.writeMcpConfig(identity.runtimeSessionId, channel, channelEntry, threaCli)
     normalizeChannelMcpConfig(mcpConfig, channel, channelEntry, threaCli)
     const session = options.tmux ?? agent.tmuxSession ?? tmuxSession({ runtime: "claude", name: agent.name })
@@ -839,7 +858,7 @@ export class ClaudeRuntimeSpawner extends RuntimeSpawner {
         config,
         "wait",
         "error",
-        scratchpadStreamId(agent.scratchpadUrl) ?? die(`invalid scratchpad URL: ${agent.scratchpadUrl ?? "<none>"}`),
+        rootStreamId,
         agent.activeStreamId,
         threaCli?.configPath
       )
@@ -991,6 +1010,10 @@ export function claudeAgentIdentity(
   })
 }
 
+export function isAttachedThread(expectedRootStreamId?: string, activeStreamId?: string): boolean {
+  return Boolean(activeStreamId && expectedRootStreamId && activeStreamId !== expectedRootStreamId)
+}
+
 export function claudeLaunchCommand(
   args: string[],
   identity: { instanceId: string; runtimeSessionId: string },
@@ -1001,10 +1024,9 @@ export function claudeLaunchCommand(
   activeStreamId?: string,
   threaConfigPath?: string
 ): string {
-  const isAttachedThread = activeStreamId && expectedRootStreamId && activeStreamId !== expectedRootStreamId
   const environment = {
     // The detached harness inherits the parent bot's key. An attached child must let its own config file win.
-    ...(isAttachedThread ? { THREA_API_KEY: "" } : {}),
+    ...(isAttachedThread(expectedRootStreamId, activeStreamId) ? { THREA_API_KEY: "" } : {}),
     THREA_INSTANCE_ID: identity.instanceId,
     THREA_RUNTIME_SESSION_ID: identity.runtimeSessionId,
     THREA_DISPLAY_NAME: process.env.THREA_DISPLAY_NAME || config.displayName || "Claude Code",

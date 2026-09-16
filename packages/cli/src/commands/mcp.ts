@@ -8,7 +8,9 @@ import { createThreaMcpServer } from "../server"
 export async function serveMcp(config: ThreaConfig): Promise<void> {
   await assertPrincipal(
     new ThreaApiClient({ baseUrl: config.baseUrl, workspaceId: config.workspaceId, apiKey: config.apiKey }),
-    config
+    config,
+    // An MCP client starts this once and does not restart it, so a blip at boot must not end the session.
+    { retryDelaysMs: [1_000, 2_000, 4_000, 8_000] }
   )
   const server = createThreaMcpServer(config)
   const transport = new StdioServerTransport()

@@ -14,6 +14,7 @@ import {
   piLaunchCommand,
   prelinkThreadSession,
   requireThreadSessionTarget,
+  sessionThreaCredentials,
   cliConfigPath,
   normalizeChannelMcpConfig,
   writeChannelMcpConfig,
@@ -429,6 +430,26 @@ test("requireThreadSessionTarget rejects an ambient key when the runtime has no 
   } finally {
     if (savedWorkspace === undefined) delete process.env.THREA_WORKSPACE_ID
     else process.env.THREA_WORKSPACE_ID = savedWorkspace
+    if (savedApiKey === undefined) delete process.env.THREA_API_KEY
+    else process.env.THREA_API_KEY = savedApiKey
+  }
+})
+
+test("an attached thread's CLI config takes the runtime key, never the parent's inherited one", () => {
+  const savedApiKey = process.env.THREA_API_KEY
+  process.env.THREA_API_KEY = "parent-key"
+  const config = { baseUrl: "https://threa.example", workspaceId: "workspace", apiKey: "runtime-key" }
+  try {
+    expect({
+      attached: sessionThreaCredentials(config, true),
+      standalone: sessionThreaCredentials(config),
+      attachedWithoutRuntimeKey: sessionThreaCredentials({ workspaceId: "workspace" }, true),
+    }).toEqual({
+      attached: { baseUrl: "https://threa.example", workspaceId: "workspace", apiKey: "runtime-key" },
+      standalone: { baseUrl: "https://threa.example", workspaceId: "workspace", apiKey: "parent-key" },
+      attachedWithoutRuntimeKey: undefined,
+    })
+  } finally {
     if (savedApiKey === undefined) delete process.env.THREA_API_KEY
     else process.env.THREA_API_KEY = savedApiKey
   }
