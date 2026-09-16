@@ -120,6 +120,8 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     (payload: StepStartedPayload) => {
       if (payload?.sessionId !== sessionId || !payload.step?.id) return
       setRealtimeSteps((prev) => {
+        // Start and finish can be emitted by different replicas and arrive finish-first.
+        if (prev.get(payload.step.id)?.completedAt) return prev
         const next = new Map(prev)
         next.set(payload.step.id, payload.step)
         return next
@@ -375,8 +377,10 @@ function mergeSteps(apiSteps: AgentSessionStep[], realtimeSteps: Map<string, Age
     merged.set(step.id, step)
   }
 
-  // Realtime steps override API steps on id collision (more recent data).
+  // Realtime steps override API steps on id collision (more recent data), except a
+  // late start never reopens a step the bootstrap already has completed.
   for (const [id, step] of realtimeSteps) {
+    if (!step.completedAt && merged.get(id)?.completedAt) continue
     merged.set(id, step)
   }
 

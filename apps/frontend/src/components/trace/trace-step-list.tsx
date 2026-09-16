@@ -1,9 +1,15 @@
 import { useRef, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react"
-import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels, type AgentSessionStep, type AgentStepType } from "@threahq/types"
+import {
+  PI_TOOL_TRACE_FORMAT,
+  PiToolTraceSectionLabels,
+  type AgentSessionStep,
+  type AgentStepType,
+} from "@threahq/types"
 import type { StreamingSubstep } from "@/hooks/use-agent-trace"
 import { getCachedDecryption, getDecryptCacheVersion, subscribeDecryptCacheVersion } from "@/lib/crypto/decrypt-cache"
 import { TraceStep } from "./trace-step"
 import { cn } from "@/lib/utils"
+import { formatDuration } from "@/lib/dates"
 import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -116,6 +122,7 @@ export function TraceStepList({
             key={item.id}
             tools={item.tools}
             active={item.id === activePhaseId}
+            sessionRunning={isSessionRunning}
             highlightedMessageId={highlightMessageId}
             renderStep={renderStep}
           />
@@ -128,11 +135,14 @@ export function TraceStepList({
 function BotWorkingSection({
   tools,
   active,
+  sessionRunning,
   highlightedMessageId,
   renderStep,
 }: {
   tools: AgentSessionStep[]
   active: boolean
+  /** A row the session ended with is closed only in the database, so an open row counts only while the session runs. */
+  sessionRunning: boolean
   highlightedMessageId: string | null
   renderStep: (step: AgentSessionStep) => ReactNode
 }) {
@@ -142,7 +152,8 @@ function BotWorkingSection({
   const [detailsOpen, setDetailsOpen] = useState(errorCount > 0)
   const open = containsHighlight || detailsOpen
   const lastTool = tools.at(-1)!
-  const preview = active ? toolPreview(resolveStepContent(lastTool)) : null
+  const running = active || (sessionRunning && tools.some((step) => !step.completedAt))
+  const preview = running ? toolPreview(resolveStepContent(lastTool)) : null
 
   useEffect(() => {
     if (errorCount > 0) setDetailsOpen(true)
@@ -152,6 +163,7 @@ function BotWorkingSection({
   const calls = useMemo(() => deriveToolCalls(tools), [tools])
   const callCount = calls.length
   const toolLabel = `${callCount} tool ${callCount === 1 ? "call" : "calls"}`
+  const totalDurationMs = calls.reduce((sum, call) => sum + (call.durationMs ?? 0), 0)
   const allChips = dedupeChips(calls)
   const chips = allChips.slice(0, isMobile ? MAX_TOOL_CHIPS_MOBILE : MAX_TOOL_CHIPS)
   const hiddenChipCount = allChips.length - chips.length
@@ -172,13 +184,18 @@ function BotWorkingSection({
             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
             style={{ background: workHue(0.12), color: workHue(), boxShadow: `inset 0 0 0 1px ${workHue(0.22)}` }}
           >
-            {active ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="h-3.5 w-3.5" />}
+            {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <TerminalSquare className="h-3.5 w-3.5" />}
           </span>
           <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: workHue() }}>
             Working
           </span>
-          <span className="sr-only">{active ? "Working in progress" : "Working complete"}</span>
+          <span className="sr-only">{running ? "Working in progress" : "Working complete"}</span>
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{toolLabel}</span>
+          {totalDurationMs > 0 && (
+            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+              {formatDuration(totalDurationMs)}
+            </span>
+          )}
           {errorCount > 0 && (
             <span className="shrink-0 text-[11px] font-medium text-destructive">
               {errorCount} {errorCount === 1 ? "error" : "errors"}
@@ -246,6 +263,7 @@ interface ToolCall {
   key: string
   headline: string
   isError: boolean
+  durationMs?: number
 }
 
 type ToolChipItem = ToolCall & { count: number }
@@ -258,8 +276,9 @@ type ToolChipItem = ToolCall & { count: number }
  * agent would recognise. The payload carries no tool id (the redactor strips
  * arguments, not just values), so the pairing identity is the section label:
  * Arguments/Details opens a call, Output/Error output closes the open one with
- * the same headline. Steps carrying neither label (truncated or undecryptable
- * traces) fall back to collapsing a consecutive same-headline run into one call.
+ * the same headline. A step carrying both labels, or a parsed trace with no
+ * labelled sections (lifecycle rows), is a whole call on its own. Truncated or
+ * undecryptable traces fall back to collapsing a consecutive same-headline run.
  */
 function deriveToolCalls(tools: AgentSessionStep[]): ToolCall[] {
   const calls: ToolCall[] = []
@@ -272,6 +291,12 @@ function deriveToolCalls(tools: AgentSessionStep[]): ToolCall[] {
     const headline = toolPreview(content)?.headline ?? "Tool call"
     const role = toolStepRole(content)
     const isError = step.stepType === "tool_error"
+
+    // Legacy use rows are always stored completed, so an open one is a lifecycle row awaiting its finish.
+    if (role === "single" || (role === "use" && !step.completedAt)) {
+      calls.push({ key: step.id, headline, isError, durationMs: step.duration })
+      continue
+    }
 
     if (role === "result" && openIndices.length > 0) {
       const matchAt = openIndices.findIndex((index) => calls[index].headline === headline)
@@ -307,16 +332,21 @@ function dedupeChips(calls: ToolCall[]): ToolChipItem[] {
   return chips
 }
 
-function toolStepRole(content: unknown): "use" | "result" | "unknown" {
+function toolStepRole(content: unknown): "use" | "result" | "single" | "unknown" {
   const parsed = parseToolTrace(content)
-  const sections: unknown[] = Array.isArray(parsed?.sections) ? parsed.sections : []
-  for (const section of sections) {
+  if (!parsed || !Array.isArray(parsed.sections)) return "unknown"
+  let hasUse = false
+  let hasResult = false
+  for (const section of parsed.sections as unknown[]) {
     if (!section || typeof section !== "object" || !("label" in section)) continue
     const label = section.label
-    if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) return "result"
-    if (label === PiToolTraceSectionLabels.ARGUMENTS || label === PiToolTraceSectionLabels.DETAILS) return "use"
+    if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) hasResult = true
+    if (label === PiToolTraceSectionLabels.ARGUMENTS || label === PiToolTraceSectionLabels.DETAILS) hasUse = true
   }
-  return "unknown"
+  if (hasUse && hasResult) return "single"
+  if (hasResult) return "result"
+  if (hasUse) return "use"
+  return "single"
 }
 
 /**
@@ -357,7 +387,6 @@ function groupBotWorkByThinking(steps: AgentSessionStep[]): TraceStepDisplayItem
 
 function isLowLevelBotToolStep(step: AgentSessionStep): boolean {
   if (step.stepType !== "tool_call" && step.stepType !== "tool_error") return false
-  if (!step.completedAt) return false
   const content = resolveStepContent(step)
   return parseToolTrace(content)?.format === PI_TOOL_TRACE_FORMAT || looksLikeTruncatedToolTrace(content)
 }

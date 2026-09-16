@@ -31,6 +31,15 @@ function toolResult(id: string, stepNumber: number, headline: string): AgentSess
   })
 }
 
+function lifecycleStep(id: string, stepNumber: number, headline: string, overrides: Partial<AgentSessionStep> = {}) {
+  return createStep({
+    id,
+    stepNumber,
+    content: JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections: [] }),
+    ...overrides,
+  })
+}
+
 function createStep(overrides: Partial<AgentSessionStep> = {}): AgentSessionStep {
   return {
     id: "step_1",
@@ -381,5 +390,88 @@ describe("TraceStepList", () => {
 
     expect(screen.queryByText("Full tool details")).not.toBeInTheDocument()
     expect(screen.getByText("workspace_search")).toBeInTheDocument()
+  })
+  it("spins the Working header while a lifecycle row is still running, then shows the summed duration", () => {
+    const done = [
+      lifecycleStep("tool_1", 1, "read_file: a.ts", { duration: 500 }),
+      lifecycleStep("tool_2", 2, "read_file: b.ts", { duration: 1000 }),
+    ]
+    // The trailing thinking step makes the group inactive, so only the open row can drive the spinner.
+    const after = thinking("think_4", 4, "Reading the output")
+    const view = renderList(
+      [...done, lifecycleStep("tool_3", 3, "terminal: ls", { completedAt: undefined }), after],
+      true
+    )
+
+    expect(screen.getByText("3 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("Working in progress")).toBeInTheDocument()
+
+    view.rerender(listElement([...done, lifecycleStep("tool_3", 3, "terminal: ls", { duration: 1500 }), after], true))
+
+    expect(screen.getByText("Working complete")).toBeInTheDocument()
+    expect(screen.getByText("3.0s")).toBeInTheDocument()
+  })
+
+  it("stops spinning for a row left open when the session ended", () => {
+    renderList([lifecycleStep("tool_1", 1, "terminal: ls", { completedAt: undefined })], false)
+
+    expect(screen.getByText("Working complete")).toBeInTheDocument()
+  })
+
+  it("does not bind a later result to an in-flight arguments-only row", () => {
+    renderList([
+      createStep({
+        id: "tool_1",
+        stepNumber: 1,
+        completedAt: undefined,
+        content: JSON.stringify({
+          format: PI_TOOL_TRACE_FORMAT,
+          headline: "Read: a.ts",
+          sections: [{ label: PiToolTraceSectionLabels.ARGUMENTS, body: "a.ts", lang: null }],
+        }),
+      }),
+      toolResult("tool_2", 2, "Used tool"),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
+  })
+
+  it("shows a tool_error lifecycle row and opens its group", () => {
+    renderList([
+      lifecycleStep("tool_1", 1, "read_file: a.ts"),
+      lifecycleStep("tool_2", 2, "terminal: false", { stepType: "tool_error" }),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("1 error")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /working/i })).toHaveAttribute("aria-expanded", "true")
+  })
+
+  it("counts each lifecycle row as its own call and dedupes repeats into one chip", () => {
+    renderList([1, 2, 3, 4, 5].map((n) => lifecycleStep(`tool_${n}`, n, "read_file: a.ts")))
+
+    expect(screen.getByText("5 tool calls")).toBeInTheDocument()
+    expect(screen.getByText("read_file: a.ts ×5")).toBeInTheDocument()
+  })
+
+  it("counts a single-row call with arguments and output next to a legacy pair", () => {
+    renderList([
+      createStep({
+        id: "tool_1",
+        stepNumber: 1,
+        content: JSON.stringify({
+          format: PI_TOOL_TRACE_FORMAT,
+          headline: "Bash",
+          sections: [
+            { label: PiToolTraceSectionLabels.ARGUMENTS, body: "ls", lang: null },
+            { label: PiToolTraceSectionLabels.OUTPUT, body: "a.ts", lang: null },
+          ],
+        }),
+      }),
+      toolUse("tool_2", 2, "Grep"),
+      toolResult("tool_3", 3, "Grep"),
+    ])
+
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument()
   })
 })
