@@ -30,7 +30,6 @@ import {
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
   DECISION_OPTION_TONES,
-  DECISION_REQUEST_KINDS,
   DECISION_REQUEST_STATUSES,
   DELEGATION_STATUSES,
 } from "@threahq/types"
@@ -673,7 +672,6 @@ const decisionSchema = z.object({
   requesterBotId: z.string().optional(),
   requesterRuntimeSessionId: z.string().optional(),
   requesterInvocationId: z.string().optional(),
-  kind: z.enum(DECISION_REQUEST_KINDS),
   title: z.string(),
   bodyMarkdown: z.string().optional(),
   options: z.array(decisionOptionResponseSchema),

@@ -205,8 +205,6 @@ export {
   BOT_ACCESS_REQUEST_STATUSES,
   type BotAccessRequestStatus,
   BotAccessRequestStatuses,
-  DECISION_REQUEST_KINDS,
-  type DecisionRequestKind,
   DECISION_REQUEST_STATUSES,
   type DecisionRequestStatus,
   DecisionRequestStatuses,

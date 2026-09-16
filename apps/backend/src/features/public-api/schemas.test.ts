@@ -144,10 +144,9 @@ describe("searchAttachmentsSchema query", () => {
 describe("createDecisionSchema", () => {
   const base = { title: "Deploy the migration?", options: [{ id: "yes", label: "Deploy" }] }
 
-  it("defaults kind, tone and allowNote", () => {
+  it("defaults tone and allowNote", () => {
     const parsed = createDecisionSchema.parse(base)
     expect(parsed).toMatchObject({
-      kind: "approval",
       allowNote: false,
       options: [{ id: "yes", label: "Deploy", tone: "neutral" }],
     })

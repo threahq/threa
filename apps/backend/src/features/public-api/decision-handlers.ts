@@ -45,7 +45,6 @@ export function createDecisionPublicApi({ decisionService }: DecisionPublicApiDe
         botId,
         runtimeSessionId: body.runtimeSessionId,
         invocationId: body.invocationId,
-        kind: body.kind,
         title: body.title,
         bodyMarkdown: body.bodyMarkdown,
         options: body.options,

@@ -6,7 +6,7 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
-import { DECISION_OPTION_TONES, DECISION_REQUEST_KINDS } from "@threahq/types"
+import { DECISION_OPTION_TONES } from "@threahq/types"
 import {
   DECISION_BODY_MAX_CHARS,
   DECISION_EXTERNAL_REF_MAX_CHARS,
@@ -584,7 +584,6 @@ const decisionOptionSchema = z.object({
 })
 
 export const createDecisionSchema = z.object({
-  kind: z.enum(DECISION_REQUEST_KINDS).default("approval"),
   title: z.string().min(1).max(DECISION_TITLE_MAX_CHARS),
   bodyMarkdown: z.string().max(DECISION_BODY_MAX_CHARS).optional(),
   options: z

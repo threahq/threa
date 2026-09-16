@@ -4,7 +4,6 @@ import {
   DecisionRequestStatuses,
   type DecisionOption,
   type DecisionRequest,
-  type DecisionRequestKind,
   type DecisionRequestStatus,
   type DecisionResolution,
 } from "@threahq/types"
@@ -16,7 +15,6 @@ interface DecisionRequestRow {
   requester_bot_id: string | null
   requester_runtime_session_id: string | null
   requester_invocation_id: string | null
-  kind: string
   title: string
   body_markdown: string | null
   options: DecisionOption[]
@@ -38,7 +36,6 @@ export interface DecisionRequestRecord {
   requesterBotId: string | null
   requesterRuntimeSessionId: string | null
   requesterInvocationId: string | null
-  kind: DecisionRequestKind
   title: string
   bodyMarkdown: string | null
   options: DecisionOption[]
@@ -59,7 +56,6 @@ export interface InsertDecisionRequestParams {
   requesterBotId: string | null
   requesterRuntimeSessionId: string | null
   requesterInvocationId: string | null
-  kind: DecisionRequestKind
   title: string
   bodyMarkdown: string | null
   options: DecisionOption[]
@@ -70,7 +66,7 @@ export interface InsertDecisionRequestParams {
 
 const COLUMNS = `
   id, workspace_id, stream_id, requester_bot_id, requester_runtime_session_id, requester_invocation_id,
-  kind, title, body_markdown, options, allow_note, external_ref, status, resolution,
+  title, body_markdown, options, allow_note, external_ref, status, resolution,
   expires_at, version, created_at, updated_at
 `
 
@@ -82,7 +78,6 @@ function mapRow(row: DecisionRequestRow): DecisionRequestRecord {
     requesterBotId: row.requester_bot_id,
     requesterRuntimeSessionId: row.requester_runtime_session_id,
     requesterInvocationId: row.requester_invocation_id,
-    kind: row.kind as DecisionRequestKind,
     title: row.title,
     bodyMarkdown: row.body_markdown,
     options: row.options,
@@ -106,7 +101,6 @@ export function serializeDecisionRequest(record: DecisionRequestRecord): Decisio
     requesterBotId: record.requesterBotId ?? undefined,
     requesterRuntimeSessionId: record.requesterRuntimeSessionId ?? undefined,
     requesterInvocationId: record.requesterInvocationId ?? undefined,
-    kind: record.kind,
     title: record.title,
     bodyMarkdown: record.bodyMarkdown ?? undefined,
     options: record.options,
@@ -126,11 +120,11 @@ export const DecisionRequestRepository = {
     const result = await db.query<DecisionRequestRow>(sql`
       INSERT INTO decision_requests (
         id, workspace_id, stream_id, requester_bot_id, requester_runtime_session_id, requester_invocation_id,
-        kind, title, body_markdown, options, allow_note, external_ref, status, expires_at
+        title, body_markdown, options, allow_note, external_ref, status, expires_at
       ) VALUES (
         ${params.id}, ${params.workspaceId}, ${params.streamId}, ${params.requesterBotId},
         ${params.requesterRuntimeSessionId}, ${params.requesterInvocationId},
-        ${params.kind}, ${params.title}, ${params.bodyMarkdown}, ${JSON.stringify(params.options)},
+        ${params.title}, ${params.bodyMarkdown}, ${JSON.stringify(params.options)},
         ${params.allowNote}, ${params.externalRef}, ${DecisionRequestStatuses.OPEN}, ${params.expiresAt}
       )
       RETURNING ${sql.raw(COLUMNS)}

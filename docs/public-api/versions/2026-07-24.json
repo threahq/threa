@@ -4968,7 +4968,6 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
-                  "kind": { "default": "approval", "type": "string", "enum": ["approval"] },
                   "title": { "type": "string", "minLength": 1, "maxLength": 200 },
                   "bodyMarkdown": { "type": "string", "maxLength": 8000 },
                   "options": {
@@ -4996,7 +4995,7 @@
                   "runtimeSessionId": { "type": "string", "minLength": 1 },
                   "invocationId": { "type": "string", "minLength": 1 }
                 },
-                "required": ["kind", "title", "options", "allowNote"],
+                "required": ["title", "options", "allowNote"],
                 "additionalProperties": false
               }
             }
@@ -5020,7 +5019,6 @@
                         "requesterBotId": { "type": "string" },
                         "requesterRuntimeSessionId": { "type": "string" },
                         "requesterInvocationId": { "type": "string" },
-                        "kind": { "type": "string", "enum": ["approval"] },
                         "title": { "type": "string" },
                         "bodyMarkdown": { "type": "string" },
                         "options": {
@@ -5059,7 +5057,6 @@
                         "id",
                         "workspaceId",
                         "streamId",
-                        "kind",
                         "title",
                         "options",
                         "allowNote",
@@ -5150,7 +5147,6 @@
                         "requesterBotId": { "type": "string" },
                         "requesterRuntimeSessionId": { "type": "string" },
                         "requesterInvocationId": { "type": "string" },
-                        "kind": { "type": "string", "enum": ["approval"] },
                         "title": { "type": "string" },
                         "bodyMarkdown": { "type": "string" },
                         "options": {
@@ -5189,7 +5185,6 @@
                         "id",
                         "workspaceId",
                         "streamId",
-                        "kind",
                         "title",
                         "options",
                         "allowNote",
@@ -5280,7 +5275,6 @@
                         "requesterBotId": { "type": "string" },
                         "requesterRuntimeSessionId": { "type": "string" },
                         "requesterInvocationId": { "type": "string" },
-                        "kind": { "type": "string", "enum": ["approval"] },
                         "title": { "type": "string" },
                         "bodyMarkdown": { "type": "string" },
                         "options": {
@@ -5319,7 +5313,6 @@
                         "id",
                         "workspaceId",
                         "streamId",
-                        "kind",
                         "title",
                         "options",
                         "allowNote",

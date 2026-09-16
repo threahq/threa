@@ -19,7 +19,6 @@ import type {
   KnowledgeType,
   DelegationStatus,
   DecisionOptionTone,
-  DecisionRequestKind,
   DecisionRequestStatus,
   DelegationReopenReason,
   SubagentStatus,
@@ -1506,7 +1505,6 @@ export interface DecisionRequest {
   requesterBotId?: string
   requesterRuntimeSessionId?: string
   requesterInvocationId?: string
-  kind: DecisionRequestKind
   title: string
   bodyMarkdown?: string
   options: DecisionOption[]

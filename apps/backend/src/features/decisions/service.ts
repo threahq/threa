@@ -6,15 +6,16 @@ import { decisionRequestId, eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
 import {
   AuthorTypes,
+  BotTypes,
   DecisionRequestStatuses,
   type DecisionOption,
-  type DecisionRequestKind,
   type DecisionRequestedEventPayload,
   type DecisionResolution,
   type DecisionResolvedEventPayload,
 } from "@threahq/types"
 import { BotInvocationRepository, BotRuntimeSessionLinkRepository } from "../bot-runtimes"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { BotRepository } from "../public-api"
 import { checkStreamAccess, StreamEventRepository, StreamRepository } from "../streams"
 import { DecisionRequestRepository, serializeDecisionRequest, type DecisionRequestRecord } from "./repository"
 
@@ -37,7 +38,6 @@ export interface RequestDecisionParams {
   botId: string
   runtimeSessionId?: string
   invocationId?: string
-  kind: DecisionRequestKind
   title: string
   bodyMarkdown?: string
   options: DecisionOption[]
@@ -164,7 +164,6 @@ export class DecisionService {
         requesterBotId: params.botId,
         requesterRuntimeSessionId: runtimeSessionId,
         requesterInvocationId: invocation?.id ?? null,
-        kind: params.kind,
         title: params.title,
         bodyMarkdown: params.bodyMarkdown ?? null,
         options: params.options,
@@ -202,7 +201,9 @@ export class DecisionService {
 
   /**
    * Answer a decision as a stream member. 404 hides a decision the user cannot
-   * reach (INV-62); a lost CAS is a 409 carrying the row that won, so the caller
+   * reach (INV-62). A personal bot's card answers only to its owner, the one
+   * user who may invoke it (`BotRepository.findInvocableByIds`); anyone else who
+   * can read the stream gets the same 404. A lost CAS is a 409 carrying the row that won, so the caller
    * can show the answer instead of a failure.
    */
   async resolve(params: ResolveDecisionParams): Promise<DecisionRequestRecord> {
@@ -212,7 +213,10 @@ export class DecisionService {
         throw new HttpError("Decision not found", { status: 404, code: "DECISION_NOT_FOUND" })
       }
       const access = await checkStreamAccess(client, decision.streamId, params.workspaceId, params.userId)
-      if (!access) {
+      const requester = decision.requesterBotId
+        ? await BotRepository.findById(client, params.workspaceId, decision.requesterBotId)
+        : null
+      if (!access || (requester?.type === BotTypes.PERSONAL && requester.ownerUserId !== params.userId)) {
         throw new HttpError("Decision not found", { status: 404, code: "DECISION_NOT_FOUND" })
       }
       if (!decision.options.some((option) => option.id === params.optionId)) {

@@ -1,5 +1,5 @@
 -- Decision requests: a bot runtime puts a call it cannot make to its human as
--- a timeline card. Tracking table (INV-57); kind/status are TEXT validated in
+-- a timeline card. Tracking table (INV-57); status is TEXT validated in
 -- code (INV-3); every write CASes on `version` (INV-66). Requester columns are
 -- nullable because a human may open one; a bot pins the session/invocation so
 -- the answer is pushed back to that session's socket room.
@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS decision_requests (
   requester_bot_id TEXT,
   requester_runtime_session_id TEXT,
   requester_invocation_id TEXT,
-  kind TEXT NOT NULL,
   title TEXT NOT NULL,
   body_markdown TEXT,
   options JSONB NOT NULL,

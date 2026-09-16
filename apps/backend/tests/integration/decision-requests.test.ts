@@ -56,7 +56,6 @@ describe("decision requests", () => {
       workspaceId: workspace,
       streamId: stream,
       botId: bot,
-      kind: "approval",
       title: "Deploy the migration?",
       options: OPTIONS,
       allowNote: true,
@@ -73,7 +72,6 @@ describe("decision requests", () => {
       streamId: stream,
       requesterBotId: bot,
       requesterRuntimeSessionId: "hermes-session",
-      kind: "approval",
       status: "open",
       allowNote: true,
       externalRef: "tool_call_7",
@@ -176,6 +174,43 @@ describe("decision requests", () => {
     })
   })
 
+  test("a personal bot's card in a public channel answers only to the bot's owner", async () => {
+    const channel = streamId()
+    const reader = userId()
+    await pool.query(
+      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'public', $3)",
+      [channel, workspace, author]
+    )
+    const decision = await DecisionRequestRepository.insert(pool, {
+      id: `dreq_${crypto.randomUUID().replaceAll("-", "").slice(0, 26)}`,
+      workspaceId: workspace,
+      streamId: channel,
+      requesterBotId: bot,
+      requesterRuntimeSessionId: "hermes-session",
+      requesterInvocationId: null,
+      title: "Run rm -rf build?",
+      bodyMarkdown: null,
+      options: OPTIONS,
+      allowNote: false,
+      externalRef: null,
+      expiresAt: null,
+    })
+    const answer = (user: string) =>
+      service.resolve({
+        workspaceId: workspace,
+        id: decision.id,
+        userId: user,
+        optionId: "yes",
+        version: decision.version,
+      })
+
+    await expect(answer(reader)).rejects.toMatchObject({ status: 404, code: "DECISION_NOT_FOUND" })
+    expect(await answer(author)).toMatchObject({
+      status: "resolved",
+      resolution: { optionId: "yes", decidedBy: author },
+    })
+  })
+
   test("a decision on a thread inside a channel is invisible to a non-member of the channel (INV-62)", async () => {
     const channel = streamId()
     const thread = streamId()
@@ -198,7 +233,6 @@ describe("decision requests", () => {
       requesterBotId: bot,
       requesterRuntimeSessionId: "hermes-session",
       requesterInvocationId: null,
-      kind: "approval",
       title: "Merge?",
       bodyMarkdown: null,
       options: OPTIONS,

@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { AuthorTypes, DecisionRequestStatuses } from "@threahq/types"
+import { AuthorTypes, BotTypes, DecisionRequestStatuses } from "@threahq/types"
 import { DecisionService, type BotStreamAccessChecker } from "./service"
 import { DecisionRequestRepository, type DecisionRequestRecord } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotInvocationRepository, BotRuntimeSessionLinkRepository } from "../bot-runtimes"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import * as streamsModule from "../streams"
 import * as dbModule from "../../db"
@@ -20,7 +21,6 @@ function fakeDecision(overrides: Partial<DecisionRequestRecord> = {}): DecisionR
     requesterBotId: "bot_1",
     requesterRuntimeSessionId: "sess_1",
     requesterInvocationId: null,
-    kind: "approval",
     title: "Deploy the migration?",
     bodyMarkdown: null,
     options: [
@@ -59,7 +59,6 @@ const REQUEST_PARAMS = {
   workspaceId: "ws_1",
   streamId: "stream_1",
   botId: "bot_1",
-  kind: "approval" as const,
   title: "Deploy the migration?",
   options: [
     { id: "yes", label: "Deploy", tone: "primary" as const },
@@ -240,6 +239,7 @@ describe("DecisionService.resolve", () => {
     stubTransaction()
     spyOn(DecisionRequestRepository, "findById").mockResolvedValue(decision)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ streamId: "stream_1" } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", type: BotTypes.SHARED } as never)
     return decision
   }
 
@@ -313,6 +313,7 @@ describe("DecisionService.resolve", () => {
     stubTransaction()
     spyOn(DecisionRequestRepository, "findById").mockResolvedValueOnce(fakeDecision()).mockResolvedValueOnce(winner)
     spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({ streamId: "stream_1" } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", type: BotTypes.SHARED } as never)
     spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(null)
     stubEventAppend()
 

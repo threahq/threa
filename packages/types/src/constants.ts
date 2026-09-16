@@ -923,12 +923,8 @@ export const BotAccessRequestStatuses = {
 } as const satisfies Record<string, BotAccessRequestStatus>
 
 // Decision requests (Hermes): a bot runtime asks its human for a call it cannot
-// make itself. `approval` is the only kind today — a titled question with a
-// fixed option set. Statuses are TEXT validated in code (INV-3); `open` is the
+// make itself, as a titled question with a fixed option set. Statuses are TEXT validated in code (INV-3); `open` is the
 // only non-terminal one, and every write CASes on the row's `version` (INV-66).
-export const DECISION_REQUEST_KINDS = ["approval"] as const
-export type DecisionRequestKind = (typeof DECISION_REQUEST_KINDS)[number]
-
 export const DECISION_REQUEST_STATUSES = ["open", "resolved", "cancelled", "expired"] as const
 export type DecisionRequestStatus = (typeof DECISION_REQUEST_STATUSES)[number]
 
