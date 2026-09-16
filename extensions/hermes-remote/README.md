@@ -58,8 +58,8 @@ manual` for a card on every flagged command. The card expires at 5 minutes to ma
 
 ## Threads
 
-The scratchpad is one Hermes conversation, keyed by the stream id. A turn on any other stream (a thread under the
-scratchpad, an aside) runs in its own conversation, forked once from the scratchpad's current conversation
+The scratchpad is one Hermes conversation, keyed by the stream id. A turn on a thread under the scratchpad or an aside
+runs in its own conversation, forked once from the scratchpad's current conversation
 (`POST /api/sessions/{root}/fork`), so a thread opens with the scratchpad's context and then diverges: nothing said in
 a thread comes back to the scratchpad.
 
@@ -70,8 +70,12 @@ connector logs it. Any other fork error fails the turn with the error Hermes ret
 `/clear` bumps the scratchpad's generation only. Threads forked before it keep their own conversation, so their next
 turn still carries the pre-clear context; a thread first used after the `/clear` forks from the new conversation.
 
-The memory scope (`X-Hermes-Session-Key`) is the scratchpad's for every stream, so long-term memory is shared across
-the scratchpad and its threads.
+A mention of the bot outside the scratchpad, in a channel, a DM or one of their threads, is never forked from the
+scratchpad. It runs in a fresh conversation keyed by the stream it arrived on, so nothing from the scratchpad reaches
+that audience.
+
+The memory scope (`X-Hermes-Session-Key`) is keyed by the turn's root stream. The scratchpad and its threads share
+long-term memory, and each channel or DM the bot is mentioned in gets its own.
 
 ## Attachments
 

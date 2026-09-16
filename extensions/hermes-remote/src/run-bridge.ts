@@ -59,7 +59,8 @@ const MEDIA_LINE_RE = /^MEDIA:[ \t]*(.+)$/gm
 export interface HermesTurnRunnerOptions {
   client: HermesRunsClient
   session: BridgeSession
-  sessionKeyFor(streamId: string): string
+  /** Long-term memory scope for a stream tree, keyed by the turn's root stream. */
+  sessionKeyFor(rootStreamId: string): string
   log?: (message: string) => void
   /** Injectable for tests; paces the status poll that replaces a lost event stream. */
   sleep?: (ms: number) => Promise<void>
@@ -192,7 +193,7 @@ export function frameForEvent(event: HermesRunEvent): StepFrame | undefined {
 export class HermesTurnRunner {
   private readonly client: HermesRunsClient
   private readonly session: BridgeSession
-  private readonly sessionKeyFor: (streamId: string) => string
+  private readonly sessionKeyFor: (rootStreamId: string) => string
   private readonly log: (message: string) => void
   private readonly sleep: (ms: number) => Promise<void>
   private readonly conversationStore: ConversationStore | undefined
@@ -354,7 +355,9 @@ export class HermesTurnRunner {
    */
   private async ensureConversation(turn: DeliveredTurn): Promise<void> {
     const root = this.session.rootStreamId
-    if (!root || turn.streamId === root) return
+    // Only a thread under the scratchpad inherits its conversation; a mention
+    // elsewhere starts its own, so scratchpad context never leaks into a channel.
+    if (!root || turn.streamId === root || turn.rootStreamId !== root) return
     const forkId = this.conversationFor(turn.streamId)
     if (this.forked.has(forkId)) return
     const sourceId = this.conversationFor(root)
@@ -386,7 +389,7 @@ export class HermesTurnRunner {
           input,
           sessionId: this.conversationFor(turn.streamId),
           idempotencyKey: idempotencyKeyFor(turn.invocationId, input),
-          sessionKey: this.sessionKeyFor(turn.streamId),
+          sessionKey: this.sessionKeyFor(turn.rootStreamId),
         },
         abort.signal
       )

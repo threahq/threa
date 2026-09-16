@@ -119,6 +119,7 @@ function makeClient(
 const TURN: DeliveredTurn = {
   invocationId: "binv_1",
   streamId: "stream_thread",
+  rootStreamId: "stream_root",
   sourceMessageId: "msg_1",
   content: "Do the thing",
   sealed: false,
@@ -128,7 +129,7 @@ function makeRunner(client: HermesRunsClient, session: BridgeSession): HermesTur
   return new HermesTurnRunner({
     client,
     session,
-    sessionKeyFor: (streamId) => `threa:ws_1:${session.rootStreamId ?? streamId}`,
+    sessionKeyFor: (rootStreamId) => `threa:ws_1:${rootStreamId}`,
     sleep: async () => {},
   })
 }
@@ -910,6 +911,25 @@ describe("HermesTurnRunner threads", () => {
       forks: [{ sourceId: "stream_root", forkId: "stream_thread" }],
       sessionId: "stream_thread",
       saved: [{ generations: {}, forked: ["stream_thread"] }],
+    })
+  })
+
+  test("a mention in a channel runs its own unforked conversation under the channel's memory scope", async () => {
+    const { session } = makeSession()
+    const { client, created, forks } = makeClient([[{ event: "run.completed", run_id: "run_1", output: "ok" }]])
+    const runner = new HermesTurnRunner({
+      client,
+      session,
+      sessionKeyFor: (rootStreamId) => `threa:ws_1:${rootStreamId}`,
+      sleep: async () => {},
+    })
+    await runner.deliverTurn({ ...TURN, streamId: "stream_channel_thread", rootStreamId: "stream_channel" })
+    await settle()
+
+    expect({ forks, sessionId: created[0]?.sessionId, sessionKey: created[0]?.sessionKey }).toEqual({
+      forks: [],
+      sessionId: "stream_channel_thread",
+      sessionKey: "threa:ws_1:stream_channel",
     })
   })
 

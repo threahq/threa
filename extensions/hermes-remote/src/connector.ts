@@ -72,9 +72,10 @@ export function createHermesConnector(
       failTurn: (id, message) => session.failTurn(id, message),
       requestDecision: (input, opts) => session.requestDecision(input, opts),
     },
-    // Long-term memory scope (X-Hermes-Session-Key): one per Threa scratchpad. The
-    // conversation itself is selected by session_id, the stream the turn arrived on.
-    sessionKeyFor: (streamId) => `threa:${config.workspaceId}:${session.rootStreamId ?? streamId}`,
+    // Long-term memory scope (X-Hermes-Session-Key): one per stream tree, so a
+    // channel mention never reads the scratchpad's memory. The conversation itself
+    // is selected by session_id, the stream the turn arrived on.
+    sessionKeyFor: (rootStreamId) => `threa:${config.workspaceId}:${rootStreamId}`,
     conversationStore: createFileConversationStore(join(WORK_DIR, "conversations.json")),
     log,
   })
