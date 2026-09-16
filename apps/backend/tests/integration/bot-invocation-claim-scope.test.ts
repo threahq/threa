@@ -43,7 +43,12 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
     )
   })
 
-  async function seed(id: string, responseStreamId: string, sourceMessageId: string): Promise<void> {
+  async function seed(
+    id: string,
+    responseStreamId: string,
+    sourceMessageId: string,
+    trigger: "active-scratchpad" | "session-control" = "active-scratchpad"
+  ): Promise<void> {
     await BotInvocationRepository.insertIdempotent(pool, {
       id,
       workspaceId: ws,
@@ -53,8 +58,8 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
       responseStreamId,
       actorType: "bot",
       actorId: botId,
-      trigger: "active-scratchpad",
-      requiredCapability: "active-scratchpad",
+      trigger,
+      requiredCapability: trigger,
       promptMarkdown: `prompt for ${responseStreamId}`,
       sourceMessageRevision: 0,
       authorUserId: author,
@@ -65,17 +70,29 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
     })
   }
 
-  const claim = (responseStreamId?: string) =>
+  const claim = (responseStreamId?: string, excludeResponseStreamIds?: string[]) =>
     BotInvocationRepository.claimOne(pool, {
       workspaceId: ws,
       botId,
       instanceId,
       runtimeKind: "claude-code-channel",
       claimToken: `tok_${Math.random().toString(36).slice(2)}`,
-      supportedCapabilities: ["active-scratchpad"],
+      supportedCapabilities: ["active-scratchpad", "session-control"],
       claimTtlSeconds: 60,
       maxAttempts: 5,
       ...(responseStreamId ? { responseStreamId } : {}),
+      ...(excludeResponseStreamIds ? { excludeResponseStreamIds } : {}),
+    })
+
+  const findNext = (excludeResponseStreamIds?: string[]) =>
+    BotInvocationRepository.findNextClaimable(pool, {
+      workspaceId: ws,
+      botId,
+      instanceId,
+      runtimeKind: "claude-code-channel",
+      supportedCapabilities: ["active-scratchpad", "session-control"],
+      maxAttempts: 5,
+      ...(excludeResponseStreamIds ? { excludeResponseStreamIds } : {}),
     })
 
   test("should persist the actual runtime session on every successful claim", async () => {
@@ -196,5 +213,52 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
 
     expect(await claim(rootStream)).toBeNull()
     expect((await claim(threadStream))?.id).toBe("binv_thread_only")
+  })
+
+  describe("excludeResponseStreamIds", () => {
+    test("should skip an excluded stream and claim the next stream's invocation", async () => {
+      await seed("binv_excluded_first", threadStream, "msg_excluded")
+      await seed("binv_other_second", rootStream, "msg_other")
+
+      expect({
+        found: (await findNext([threadStream]))?.id,
+        claimed: (await claim(undefined, [threadStream]))?.id,
+      }).toEqual({ found: "binv_other_second", claimed: "binv_other_second" })
+    })
+
+    test("should claim nothing when only excluded streams have work", async () => {
+      await seed("binv_only_excluded", threadStream, "msg_only")
+
+      expect({
+        found: await findNext([threadStream]),
+        claimed: await claim(undefined, [threadStream]),
+      }).toEqual({ found: null, claimed: null })
+    })
+
+    test("should never exclude session control", async () => {
+      await seed("binv_session_control", threadStream, "msg_sc", "session-control")
+
+      expect({
+        found: (await findNext([threadStream]))?.id,
+        claimed: (await claim(undefined, [threadStream]))?.id,
+      }).toEqual({ found: "binv_session_control", claimed: "binv_session_control" })
+    })
+
+    test("should combine with a responseStreamId scope", async () => {
+      await seed("binv_scope_excluded", threadStream, "msg_scope_excluded")
+      await seed("binv_scope_target", rootStream, "msg_scope_target")
+
+      expect((await claim(rootStream, [threadStream]))?.id).toBe("binv_scope_target")
+    })
+
+    test("should treat an empty list like no exclusion", async () => {
+      await seed("binv_empty_first", threadStream, "msg_empty_first")
+      await seed("binv_empty_second", rootStream, "msg_empty_second")
+
+      expect({
+        found: (await findNext([]))?.id,
+        claimed: (await claim(undefined, []))?.id,
+      }).toEqual({ found: "binv_empty_first", claimed: "binv_empty_first" })
+    })
   })
 })

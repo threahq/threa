@@ -1465,6 +1465,7 @@ export const BotInvocationRepository = {
       supportedCapabilities: BotInvocationCapability[]
       maxAttempts: number
       responseStreamId?: string
+      excludeResponseStreamIds?: string[]
     }
   ): Promise<BotInvocation | null> {
     const result = await db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
@@ -1483,6 +1484,7 @@ export const BotInvocationRepository = {
         AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
         AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
         AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
+        AND (i.trigger = 'session-control' OR NOT (i.response_stream_id = ANY(${params.excludeResponseStreamIds ?? []}::text[])))
         AND i.attempts < ${params.maxAttempts}
         AND ${sealedStreamClaimGateSql(params.instanceId)}
       ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC
@@ -1516,6 +1518,12 @@ export const BotInvocationRepository = {
        * after, and there is no way to release a claim it should not have taken.
        */
       responseStreamId?: string
+      /**
+       * Skip invocations answering into these streams (streams the runtime is
+       * already busy in). Session control is never skipped: it changes the
+       * runtime session itself and must not wait behind a busy stream.
+       */
+      excludeResponseStreamIds?: string[]
     }
   ): Promise<BotInvocation | null> {
     // A composite message + steer shares one transaction timestamp; put the
@@ -1537,6 +1545,7 @@ export const BotInvocationRepository = {
           AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
           AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
+          AND (i.trigger = 'session-control' OR NOT (i.response_stream_id = ANY(${params.excludeResponseStreamIds ?? []}::text[])))
           AND i.attempts < ${params.maxAttempts}
           AND ${sealedStreamClaimGateSql(params.instanceId)}
         ORDER BY i.created_at ASC, CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC, i.id ASC
