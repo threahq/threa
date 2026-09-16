@@ -51,6 +51,7 @@ export {
   type RemoteSessionConfig,
   type TraceMode,
 } from "./identity"
+export { readConfigFile, writeFileAtomic } from "./config-file"
 export {
   downloadInboundAttachments,
   formatInboundAttachmentManifest,

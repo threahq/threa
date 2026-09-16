@@ -41,7 +41,7 @@ describe("HermesRunsClient.createRun", () => {
       sessionKey: "threa:ws_1:stream_root",
     })
 
-    expect(created).toEqual({ runId: "run_abc", status: "started", replayed: false })
+    expect(created).toEqual({ runId: "run_abc", replayed: false })
     expect({
       url: seen?.url,
       auth: seen?.headers.authorization,
@@ -180,7 +180,7 @@ describe("HermesRunsClient.streamEvents", () => {
 })
 
 describe("HermesRunsClient.getRun", () => {
-  test("reads status, output and last_event from a live Hermes-shaped listener", async () => {
+  test("reads status and output from a live Hermes-shaped listener", async () => {
     const server = Bun.serve({
       port: 0,
       fetch: (request) => {
@@ -200,7 +200,6 @@ describe("HermesRunsClient.getRun", () => {
         runId: "run_1",
         status: "completed",
         output: "all done",
-        lastEvent: "run.completed",
       })
     } finally {
       await server.stop(true)

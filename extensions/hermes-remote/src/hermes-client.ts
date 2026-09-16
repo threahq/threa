@@ -1,7 +1,6 @@
 export interface HermesRunEvent {
   event: string
   run_id: string
-  timestamp?: number
   [key: string]: unknown
 }
 
@@ -11,12 +10,10 @@ export interface CreateRunInput {
   /** Hermes requires 1-255 visible ASCII; a Threa invocation id qualifies. */
   idempotencyKey: string
   sessionKey: string
-  instructions?: string
 }
 
 export interface CreatedRun {
   runId: string
-  status: string
   replayed: boolean
 }
 
@@ -25,7 +22,6 @@ export interface RunStatus {
   status: string
   output?: string
   error?: string
-  lastEvent?: string
 }
 
 export class HermesApiError extends Error {
@@ -83,20 +79,16 @@ export class HermesRunsClient {
           "Idempotency-Key": input.idempotencyKey,
           "X-Hermes-Session-Key": input.sessionKey,
         },
-        body: JSON.stringify({
-          input: input.input,
-          session_id: input.sessionId,
-          ...(input.instructions ? { instructions: input.instructions } : {}),
-        }),
+        body: JSON.stringify({ input: input.input, session_id: input.sessionId }),
       },
       signal
     )
-    const payload = (await this.readJson(response)) as { run_id?: unknown; status?: unknown; replayed?: unknown }
+    const payload = (await this.readJson(response)) as { run_id?: unknown; replayed?: unknown }
     const runId = str(payload.run_id)
     if (!runId) {
       throw new HermesApiError("Hermes accepted the run without a run_id", { status: response.status })
     }
-    return { runId, status: str(payload.status) ?? "queued", replayed: payload.replayed === true }
+    return { runId, replayed: payload.replayed === true }
   }
 
   async getRun(runId: string, signal?: AbortSignal): Promise<RunStatus> {
@@ -107,7 +99,6 @@ export class HermesRunsClient {
       status: str(payload.status) ?? "unknown",
       ...(str(payload.output) === undefined ? {} : { output: payload.output as string }),
       ...(str(payload.error) === undefined ? {} : { error: payload.error as string }),
-      ...(str(payload.last_event) === undefined ? {} : { lastEvent: payload.last_event as string }),
     }
   }
 

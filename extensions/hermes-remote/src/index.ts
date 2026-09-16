@@ -1,31 +1,18 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { mkdirSync } from "node:fs"
 import { hostname } from "node:os"
-import { wireLifecycle } from "@threahq/remote-session"
+import { readConfigFile, wireLifecycle } from "@threahq/remote-session"
 import { createHermesConnector } from "./connector"
-import { CLI_CONFIG_PATH, CONFIG_PATH, WORK_DIR, loadHermesConfig, parseConfigFile, writeCliConfig } from "./config"
-import type { HermesRawConfig } from "./config"
+import { CLI_CONFIG_PATH, CONFIG_PATH, WORK_DIR, loadHermesConfig, writeCliConfig } from "./config"
 
 const LOG_PREFIX = "[threa-hermes]"
-
-function readFileConfig(): HermesRawConfig | undefined {
-  if (!existsSync(CONFIG_PATH)) return undefined
-  try {
-    return parseConfigFile(readFileSync(CONFIG_PATH, "utf8")) as HermesRawConfig
-  } catch (error) {
-    process.stderr.write(
-      `${LOG_PREFIX} ignoring ${CONFIG_PATH}: ${error instanceof Error ? error.message : String(error)}\n`
-    )
-    return undefined
-  }
-}
 
 async function main(): Promise<void> {
   const result = loadHermesConfig({
     env: process.env,
     cwd: process.cwd(),
     hostname: hostname(),
-    file: readFileConfig(),
+    file: readConfigFile(CONFIG_PATH, (message) => process.stderr.write(`${LOG_PREFIX} ${message}\n`)),
   })
   if ("error" in result) {
     process.stderr.write(`${LOG_PREFIX} ${result.error}\n`)

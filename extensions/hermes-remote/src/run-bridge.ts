@@ -18,8 +18,6 @@ export const HERMES_RUNTIME: RuntimeDescriptor = {
   shutdownErrorMessage: "Hermes connector shut down",
 }
 
-// The steps wire rejects more than 50 frames per call.
-const MAX_FRAMES_PER_FLUSH = 50
 const FLUSH_DELAY_MS = 500
 const TERMINAL_EVENTS = new Set(["run.completed", "run.failed", "run.cancelled"])
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"])
@@ -33,7 +31,6 @@ export interface HermesTurnRunnerOptions {
   client: HermesRunsClient
   session: BridgeSession
   sessionKeyFor(streamId: string): string
-  instructions?: string
   log?: (message: string) => void
   /** Injectable for tests; paces the status poll that replaces a lost event stream. */
   sleep?: (ms: number) => Promise<void>
@@ -52,16 +49,11 @@ class StepBatcher {
 
   constructor(
     private readonly invocationId: string,
-    private readonly session: BridgeSession,
-    private readonly log: (message: string) => void
+    private readonly session: BridgeSession
   ) {}
 
   add(frame: StepFrame): void {
     this.frames.push(frame)
-    if (this.frames.length >= MAX_FRAMES_PER_FLUSH) {
-      void this.flush()
-      return
-    }
     this.timer ??= setTimeout(() => void this.flush(), FLUSH_DELAY_MS)
   }
 
@@ -73,12 +65,9 @@ class StepBatcher {
     if (this.frames.length === 0) return this.tail
     const batch = this.frames
     this.frames = []
+    // recordSteps chunks to the wire limit and logs its own failures.
     this.tail = this.tail.then(async () => {
-      try {
-        await this.session.recordSteps(this.invocationId, batch)
-      } catch (error) {
-        this.log(`recordSteps failed: ${error instanceof Error ? error.message : String(error)}`)
-      }
+      await this.session.recordSteps(this.invocationId, batch)
     })
     return this.tail
   }
@@ -150,7 +139,6 @@ export class HermesTurnRunner {
   private readonly client: HermesRunsClient
   private readonly session: BridgeSession
   private readonly sessionKeyFor: (streamId: string) => string
-  private readonly instructions?: string
   private readonly log: (message: string) => void
   private readonly sleep: (ms: number) => Promise<void>
   readonly runs = new Map<string, OpenRun>()
@@ -159,7 +147,6 @@ export class HermesTurnRunner {
     this.client = options.client
     this.session = options.session
     this.sessionKeyFor = options.sessionKeyFor
-    if (options.instructions !== undefined) this.instructions = options.instructions
     this.log = options.log ?? (() => {})
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   }
@@ -172,7 +159,6 @@ export class HermesTurnRunner {
         sessionId: turn.streamId,
         idempotencyKey: idempotencyKeyFor(turn),
         sessionKey: this.sessionKeyFor(turn.streamId),
-        ...(this.instructions ? { instructions: this.instructions } : {}),
       },
       abort.signal
     )
@@ -193,7 +179,7 @@ export class HermesTurnRunner {
   }
 
   private async consume(invocationId: string, runId: string, abort: AbortController, replayed: boolean): Promise<void> {
-    const batcher = new StepBatcher(invocationId, this.session, this.log)
+    const batcher = new StepBatcher(invocationId, this.session)
     try {
       let terminal = replayed ? undefined : await this.drain(runId, abort, batcher)
       terminal ??= await this.awaitStatus(runId, abort)

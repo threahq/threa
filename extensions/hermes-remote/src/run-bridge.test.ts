@@ -122,7 +122,7 @@ describe("HermesTurnRunner", () => {
     expect(calls.replies).toEqual([{ invocationId: "binv_1", text: "All done." }])
   })
 
-  test("flushes 120 tool events in batches of at most 50, in order, before the reply", async () => {
+  test("flushes 120 tool events in order before the reply", async () => {
     const { session, calls } = makeSession()
     const events: HermesRunEvent[] = Array.from({ length: 120 }, (_, index) => ({
       event: "tool.started",
@@ -134,8 +134,6 @@ describe("HermesTurnRunner", () => {
     await makeRunner(client, session).deliverTurn(TURN)
     await settle()
 
-    const sizes = calls.steps.map((call) => call.frames.length)
-    expect(Math.max(...sizes)).toBeLessThanOrEqual(50)
     expect(calls.steps.flatMap((call) => call.frames.map((frame) => frame.content))).toEqual(
       events.slice(0, 120).map((_, index) => `Tool${index}`)
     )

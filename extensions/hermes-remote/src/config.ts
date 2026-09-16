@@ -1,11 +1,12 @@
-import { mkdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import {
   loadConfig,
   type ConnectorIdentity,
   type LoadConfigInput,
+  type RawConfig,
   type RemoteSessionConfig,
+  writeFileAtomic,
 } from "@threahq/remote-session"
 
 export const CONFIG_DIR = join(homedir(), ".threa", "hermes-remote")
@@ -38,10 +39,9 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 }
 
-export interface HermesRawConfig {
+export interface HermesRawConfig extends RawConfig {
   hermesApiUrl?: unknown
   hermesApiKey?: unknown
-  [key: string]: unknown
 }
 
 export function loadHermesConfig(input: LoadConfigInput & { file?: HermesRawConfig }): LoadHermesConfigResult {
@@ -70,24 +70,7 @@ export interface CliConfigInput {
   baseUrl: string
 }
 
-/**
- * The `THREA_CONFIG` file the Hermes-side `threa` MCP server reads. Written
- * through a temp file so a Hermes process reading it never sees a half-written
- * document, and 0600 because it carries the bot key.
- */
+/** The `THREA_CONFIG` file the Hermes-side `threa` MCP server reads; 0600 because it carries the bot key. */
 export function writeCliConfig(path: string, input: CliConfigInput): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
-  const tmp = `${path}.tmp`
-  writeFileSync(
-    tmp,
-    `${JSON.stringify(
-      { apiKey: input.apiKey, workspaceId: input.workspaceId, baseUrl: input.baseUrl, principal: "bot" },
-      null,
-      2
-    )}\n`,
-    { mode: 0o600 }
-  )
-  renameSync(tmp, path)
+  writeFileAtomic(path, `${JSON.stringify({ ...input, principal: "bot" }, null, 2)}\n`)
 }
-
-export { parseConfigFile, type RawConfig, type RemoteSessionConfig } from "@threahq/remote-session"
