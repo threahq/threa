@@ -323,4 +323,47 @@ test.describe("Command argument option picker", () => {
       await ctx.context.close()
     }
   })
+  test("draws the picked flag and its value as chips in the composer", async ({ browser }) => {
+    test.setTimeout(60000)
+    const ctx = await loginInNewContext(browser, `argpicker-chips-${Date.now()}@example.com`, "ArgPickerChips")
+
+    try {
+      const testId = generateTestId()
+      const wsRes = await ctx.page.request.post("/api/workspaces", { data: { name: `ArgPicker WS ${testId}` } })
+      await expectApiOk(wsRes, "Workspace creation")
+      const { workspace } = (await wsRes.json()) as { workspace: { id: string } }
+      const workspaceId = workspace.id
+      await waitForWorkspaceProvisioned(ctx.page, workspaceId)
+
+      const channelSlug = `argpick-chips-${testId}`
+      const streamRes = await ctx.page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+        data: { type: "channel", slug: channelSlug, visibility: "public" },
+      })
+      await expectApiOk(streamRes, "Create public channel")
+      const { stream } = (await streamRes.json()) as { stream: { id: string } }
+
+      await ctx.page.route("**/bootstrap*", injectCommands(SPAWN_COMMAND))
+
+      await ctx.page.goto(`/w/${workspaceId}/s/${stream.id}`)
+      await expect(ctx.page.getByRole("heading", { name: `#${channelSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+
+      const editor = ctx.page.locator("[contenteditable='true']")
+      await editor.click()
+      await ctx.page.keyboard.type("/spawn")
+      const commandPopup = ctx.page.locator("[aria-label='Slash command suggestions']")
+      await expect(commandPopup).toBeVisible({ timeout: 5000 })
+      await commandPopup.getByRole("option", { name: /spawn/ }).first().click()
+
+      const argPopup = ctx.page.locator("[aria-label='Command option suggestions']")
+      await expect(argPopup).toBeVisible({ timeout: 5000 })
+      await argPopup.getByRole("option", { name: /^Pi/ }).click()
+      await argPopup.getByRole("option", { name: "/model" }).click()
+      await argPopup.getByRole("option", { name: /GPT-5.6 Luna/ }).click()
+
+      await expect(editor.locator("span.text-primary.font-mono", { hasText: "/model" })).toBeVisible()
+      await expect(editor.locator("span.font-normal", { hasText: "openai-codex/gpt-5.6-luna" })).toBeVisible()
+    } finally {
+      await ctx.context.close()
+    }
+  })
 })
