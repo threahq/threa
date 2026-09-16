@@ -49,6 +49,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "memorize-conversation": { category: "memory", stage: "core" },
   "revise-memo": { category: "memory", stage: "core" },
   "voice-transcript-polish": { category: "other", stage: "core" },
+  "voice-transcription-realtime": { category: "other", stage: "core" },
   "voice-transcript-boundary-scope": { category: "other", stage: "core" },
 
   "message-embedding": { category: "memory", stage: "embeddings" },

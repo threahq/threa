@@ -128,6 +128,21 @@ function hookHarness(acks: VoiceStartAck[], callbacks: Partial<Parameters<typeof
 }
 
 describe("useVoiceDictation lifecycle", () => {
+  it("should show which AI limit stopped dictation when the start ack carries a spend denial", async () => {
+    const harness = hookHarness([
+      {
+        ok: false,
+        error: "AI spend limit reached",
+        code: "AI_SPEND_DENIED",
+        spendDenial: "operator_disabled",
+        protocolVersion: 4,
+      },
+    ])
+    act(() => harness.result.current.start())
+    await waitFor(() => expect(harness.result.current.state).toBe("error"))
+    expect(harness.result.current.error).toBe("AI turned off by Threa")
+  })
+
   it("accepts a lower revision in a second real hook session", async () => {
     const harness = hookHarness([
       { ok: true, protocolVersion: 2 },

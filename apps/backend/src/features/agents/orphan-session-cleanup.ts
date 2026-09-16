@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import type { AISpendDenialReason } from "@threahq/types"
 import type { Server } from "socket.io"
 import type { Querier } from "../../db"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
@@ -34,7 +35,8 @@ export async function failSessionWithLifecycleInTransaction(
   session: { id: string; streamId: string; personaId: string },
   stream: Awaited<ReturnType<typeof StreamRepository.findById>>,
   error: string,
-  onFailed?: (tx: Querier) => Promise<void>
+  onFailed?: (tx: Querier) => Promise<void>,
+  options: { spendDenial?: AISpendDenialReason } = {}
 ): Promise<boolean> {
   const { id: sessionId, streamId, personaId } = session
   const failed = await AgentSessionRepository.updateStatus(tx, sessionId, SessionStatuses.FAILED, {
@@ -56,6 +58,7 @@ export async function failSessionWithLifecycleInTransaction(
         error,
         traceId: sessionId,
         failedAt: new Date().toISOString(),
+        ...(options.spendDenial && { spendDenial: options.spendDenial }),
       },
       actorId: personaId,
       actorType: "persona",

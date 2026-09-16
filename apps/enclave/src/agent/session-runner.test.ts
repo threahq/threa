@@ -103,13 +103,13 @@ describe("runEnclaveSession", () => {
       throw new Error("model exploded")
     }
     let completed = false
-    const failed: { sessionId: string; errorName: string }[] = []
+    const failed: unknown[] = []
     const callbacks = noopCallbacks({
       complete: async () => {
         completed = true
       },
       fail: async (sessionId, failure) => {
-        failed.push({ sessionId, errorName: failure.errorName })
+        failed.push({ sessionId, ...failure })
       },
     })
 
@@ -118,6 +118,14 @@ describe("runEnclaveSession", () => {
     expect(completed).toBe(false) // the failed turn never acked completion
     // It acked the failure instead, with scrubbed metadata only (the error's class
     // name, never the thrown message — which could carry decrypted payload bytes).
-    expect(failed).toEqual([{ sessionId: "session_test", errorName: "Error" }])
+    // Model + summed usage ride along so spend incurred before the throw is still recorded.
+    expect(failed).toEqual([
+      {
+        sessionId: "session_test",
+        errorName: "Error",
+        model: assignment.model,
+        usage: { promptTokens: 0, completionTokens: 0, cost: 0 },
+      },
+    ])
   })
 })

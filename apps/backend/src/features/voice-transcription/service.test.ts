@@ -1,14 +1,18 @@
-import { describe, expect, test, spyOn, afterEach } from "bun:test"
+import { describe, expect, test, spyOn, afterEach, mock } from "bun:test"
 import type { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
 import { UserRepository } from "../workspaces"
 import { UserPreferencesService } from "../user-preferences"
-import { VoiceTranscriptionService } from "./service"
+import { AISpendDeniedError, type SpendGate } from "@threahq/agent-runtime"
+import { logger } from "../../lib/logger"
+import { VoiceTranscriptionService, type VoiceTranscriptionServiceDeps } from "./service"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
 import { voiceConfig } from "./config"
 import { DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threahq/types"
 
-const pool = {} as Pool
+const pool = {
+  connect: async () => ({ query: async () => ({ rows: [], rowCount: 0 }), release: () => {} }),
+} as unknown as Pool
 
 const userPreferencesService = new UserPreferencesService(pool)
 
@@ -41,6 +45,19 @@ function makeRow(overrides: Partial<VoiceSessionRow> = {}): VoiceSessionRow {
   }
 }
 
+const allowAll: SpendGate = { admit: async () => ({ allowed: true }) }
+
+function makeService(overrides: Partial<VoiceTranscriptionServiceDeps> = {}) {
+  return new VoiceTranscriptionService({
+    pool,
+    userPreferencesService,
+    spendGate: allowAll,
+    costService: { recordUsageInTransaction: async () => {} },
+    modelRegistry: { getAudioPricePerHour: () => 0.39 },
+    ...overrides,
+  })
+}
+
 afterEach(() => {
   // Bun restores spies created with spyOn at the end of each test file scope,
   // but restore explicitly so cross-test leakage can't happen.
@@ -56,7 +73,7 @@ describe("VoiceTranscriptionService.createSession", () => {
   test("falls back to the configured default when neither the caller nor the user pref names a model", async () => {
     const insert = spyOn(VoiceSessionRepository, "insert").mockResolvedValue(makeRow())
     spyOn(userPreferencesService, "getPreferences").mockResolvedValue(makePrefs())
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
 
     const before = Date.now()
     await service.createSession({ workspaceId: "ws_1", userId: "user_1" })
@@ -75,7 +92,7 @@ describe("VoiceTranscriptionService.createSession", () => {
     spyOn(userPreferencesService, "getPreferences").mockResolvedValue(
       makePrefs({ voiceTranscriptionModel: "deepgram:nova-3" })
     )
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
 
     await service.createSession({ workspaceId: "ws_1", userId: "user_1" })
 
@@ -87,7 +104,7 @@ describe("VoiceTranscriptionService.createSession", () => {
   test("an explicit model wins over the user preference and skips the prefs lookup", async () => {
     const insert = spyOn(VoiceSessionRepository, "insert").mockResolvedValue(makeRow())
     const getPrefs = spyOn(userPreferencesService, "getPreferences")
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
 
     await service.createSession({ workspaceId: "ws_1", userId: "user_1", model: "deepgram:nova-3", language: "en" })
 
@@ -100,7 +117,7 @@ describe("VoiceTranscriptionService.createSession", () => {
 
   test("rejects a model without a provider prefix", async () => {
     spyOn(VoiceSessionRepository, "insert").mockResolvedValue(makeRow())
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
 
     const promise = service.createSession({ workspaceId: "ws_1", userId: "user_1", model: "no-colon" })
     await expect(promise).rejects.toMatchObject({ status: 400, code: "INVALID_VOICE_MODEL" })
@@ -119,7 +136,7 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
     mockUser()
     const row = makeRow()
     const findOwned = spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(row)
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     expect(await service.getRelaySession(params)).toBe(row)
     // The session lookup is scoped to the resolved workspace user id, not the
     // raw WorkOS id from the socket.
@@ -129,7 +146,7 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
   test("throws 403 when the WorkOS user is not a member of the workspace", async () => {
     spyOn(UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue(null)
     const findOwned = spyOn(VoiceSessionRepository, "findOwned")
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await expect(service.getRelaySession(params)).rejects.toMatchObject({
       status: 403,
       code: "VOICE_NOT_AUTHORIZED",
@@ -140,7 +157,7 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
   test("throws 404 when not found", async () => {
     mockUser()
     spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(null)
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await expect(service.getRelaySession(params)).rejects.toMatchObject({
       status: 404,
       code: "VOICE_SESSION_NOT_FOUND",
@@ -150,7 +167,7 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
   test("throws 409 when not active", async () => {
     mockUser()
     spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow({ status: "finished" }))
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await expect(service.getRelaySession(params)).rejects.toMatchObject({
       status: 409,
       code: "VOICE_SESSION_NOT_ACTIVE",
@@ -160,10 +177,25 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
   test("throws 409 when expired", async () => {
     mockUser()
     spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow({ expiresAt: new Date(Date.now() - 1) }))
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await expect(service.getRelaySession(params)).rejects.toMatchObject({
       status: 409,
       code: "VOICE_SESSION_EXPIRED",
+    })
+  })
+
+  test("should throw AISpendDeniedError when the spend gate denies the transcription", async () => {
+    mockUser()
+    spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow())
+    const admit = mock(async () => ({ allowed: false as const, reason: "operator_disabled" as const }))
+    const service = makeService({ spendGate: { admit } })
+    const error = await service.getRelaySession(params).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(AISpendDeniedError)
+    expect(error).toMatchObject({
+      workspaceId: "ws_1",
+      userId: "user_1",
+      functionId: "voice-transcription-realtime",
+      reason: "operator_disabled",
     })
   })
 })
@@ -173,21 +205,37 @@ describe("VoiceTranscriptionService finalize paths", () => {
 
   test("finishSession transitions with status finished", async () => {
     const finalize = spyOn(VoiceSessionRepository, "finalizeOwned").mockResolvedValue("ok")
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow())
+    const service = makeService()
     await service.finishSession(params)
     expect(finalize.mock.calls[0][1]).toMatchObject({ status: "finished", totalAudioMs: 1234, id: "voicesess_1" })
   })
 
+  test("should log and skip cost recording when the model has no audio price", async () => {
+    spyOn(VoiceSessionRepository, "finalizeOwned").mockResolvedValue("ok")
+    spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow())
+    const loggerError = spyOn(logger, "error").mockImplementation(() => {})
+    const recordUsageInTransaction = mock(async () => {})
+    const service = makeService({
+      costService: { recordUsageInTransaction },
+      modelRegistry: { getAudioPricePerHour: () => undefined },
+    })
+    await service.finishSession(params)
+    expect(recordUsageInTransaction).not.toHaveBeenCalled()
+    expect(loggerError).toHaveBeenCalledTimes(1)
+    loggerError.mockRestore()
+  })
+
   test("abortSession defaults totalAudioMs to 0 and uses status aborted", async () => {
     const finalize = spyOn(VoiceSessionRepository, "finalizeOwned").mockResolvedValue("ok")
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await service.abortSession({ workspaceId: "ws_1", userId: "user_1", sessionId: "voicesess_1" })
     expect(finalize.mock.calls[0][1]).toMatchObject({ status: "aborted", totalAudioMs: 0 })
   })
 
   test("throws 404 when the session does not exist", async () => {
     spyOn(VoiceSessionRepository, "finalizeOwned").mockResolvedValue("not_found")
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await expect(service.finishSession(params)).rejects.toMatchObject({
       status: 404,
       code: "VOICE_SESSION_NOT_FOUND",
@@ -196,7 +244,7 @@ describe("VoiceTranscriptionService finalize paths", () => {
 
   test("treats already_final as an idempotent no-op", async () => {
     spyOn(VoiceSessionRepository, "finalizeOwned").mockResolvedValue("already_final")
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
     await expect(service.finishSession(params)).resolves.toBeUndefined()
   })
 })
@@ -204,7 +252,7 @@ describe("VoiceTranscriptionService finalize paths", () => {
 describe("VoiceTranscriptionService.expireStaleSessions", () => {
   test("sweeps with the current time and returns the swept count", async () => {
     const expireStale = spyOn(VoiceSessionRepository, "expireStale").mockResolvedValue(3)
-    const service = new VoiceTranscriptionService(pool, userPreferencesService)
+    const service = makeService()
 
     const before = Date.now()
     expect(await service.expireStaleSessions()).toBe(3)

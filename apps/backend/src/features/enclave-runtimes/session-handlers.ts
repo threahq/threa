@@ -44,7 +44,7 @@ import {
   getNamingEligibility,
 } from "../dynamic-naming"
 import type { AICostServiceLike } from "../ai-usage"
-import { enqueueEnclaveInvocation } from "./claim-service"
+import { ENCLAVE_AGENT_FUNCTION_ID, enqueueEnclaveInvocation } from "./claim-service"
 import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
 import { parseModelId } from "@threahq/agent-runtime"
 
@@ -106,18 +106,18 @@ const sealedSummarySchema = z.object({
   lastSummarizedSequence: z.string().regex(/^\d+$/),
 })
 
+const turnUsageSchema = z.object({
+  promptTokens: z.number().optional(),
+  completionTokens: z.number().optional(),
+  // OpenRouter's billed cost (USD) for the turn — aggregate accounting, not
+  // content. Recorded against the workspace/user like a companion turn (#9).
+  cost: z.number().optional(),
+})
+
 const completeSchema = z.object({
   messageIds: z.array(z.string().min(1)).max(64),
   model: z.string().min(1),
-  usage: z
-    .object({
-      promptTokens: z.number().optional(),
-      completionTokens: z.number().optional(),
-      // OpenRouter's billed cost (USD) for the turn — aggregate accounting, not
-      // content. Recorded against the workspace/user like a companion turn (#9).
-      cost: z.number().optional(),
-    })
-    .optional(),
+  usage: turnUsageSchema.optional(),
   // The highest stream sequence the turn incorporated via the interjection pull
   // (UX-12), base-10. Advances the catch-up boundary so a mid-turn message the
   // reply already addressed isn't re-triggered. Absent → trigger boundary.
@@ -130,6 +130,9 @@ const completeSchema = z.object({
 // Bounded so a misbehaving caller can't persist an unbounded string on the row.
 const failSchema = z.object({
   errorName: z.string().min(1).max(200),
+  // A turn that dies after model calls already spent money still owes them.
+  model: z.string().min(1).optional(),
+  usage: turnUsageSchema.optional(),
 })
 
 // One sealed trace step. `stepType` + `messageId` + timing are clear; the step's
@@ -922,42 +925,13 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:completed", { sessionId: id })
       }
 
-      // Record the turn's usage against the workspace + invoking user, the same
-      // recording path a companion turn uses (#9). Under egress discipline the
-      // enclave reports summed token counts + OpenRouter's billed cost and we
-      // record them here — aggregate accounting, never content
-      // (INV-E7). Only after we actually won the RUNNING→COMPLETED transition, so
-      // a redelivery (handled by the already-completed no-op above) can't
-      // double-charge. Best-effort: a recording failure must not fail the ack.
       if (committed && stream && parsed.data.usage) {
-        const usage = parsed.data.usage
-        try {
-          // The invoking user is the trigger message's author (the session row
-          // stores only the trigger message id). Origin is always "user": the
-          // enclave runs solely for user-sent E2E scratchpad messages.
-          const triggerMessage = await MessageRepository.findById(pool, session.triggerMessageId)
-          // The enclave routes exclusively through OpenRouter and reports the bare
-          // model id (the `openrouter:` prefix is stripped at dispatch), so re-derive
-          // the provider with the same parser the companion records through.
-          const parsedModel = parseModelId(`openrouter:${parsed.data.model}`)
-          await costService.recordUsage({
-            workspaceId: stream.workspaceId,
-            userId: triggerMessage?.authorId,
-            sessionId: id,
-            functionId: "enclave-agent-loop",
-            model: parsedModel.modelId,
-            provider: parsedModel.provider,
-            origin: "user",
-            usage: {
-              promptTokens: usage.promptTokens,
-              completionTokens: usage.completionTokens,
-              totalTokens: (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0),
-              cost: usage.cost,
-            },
-          })
-        } catch (err) {
-          logger.error({ err, sessionId: id, streamId: session.streamId }, "Enclave usage recording failed")
-        }
+        await recordEnclaveUsage(pool, costService, {
+          session,
+          workspaceId: stream.workspaceId,
+          model: parsed.data.model,
+          usage: parsed.data.usage,
+        })
       }
 
       // Interjection catch-up (parity with the main app's `checkForUnseenMessages`,
@@ -1044,12 +1018,67 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       // the RUNNING→FAILED transition is won, so a raced completion keeps its
       // own claim flip.
       const error = `Enclave session failed: ${parsed.data.errorName}`
-      await failSessionWithLifecycle(pool, io, session, error, async (tx) => {
+      const won = await failSessionWithLifecycle(pool, io, session, error, async (tx) => {
         await EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
         await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
       })
 
+      const { model, usage } = parsed.data
+      if (won && model && usage) {
+        const stream = await StreamRepository.findById(pool, session.streamId)
+        if (stream)
+          await recordEnclaveUsage(pool, costService, { session, workspaceId: stream.workspaceId, model, usage })
+      }
+
       res.status(204).end()
     },
+  }
+}
+
+/**
+ * Record a turn's usage against the workspace + invoking user, the same
+ * recording path a companion turn uses (#9). Under egress discipline the
+ * enclave reports summed token counts + OpenRouter's billed cost — aggregate
+ * accounting, never content (INV-E7). Callers invoke it only after winning the
+ * session's terminal transition, so a redelivery can't double-charge.
+ * Best-effort: a recording failure must not fail the ack.
+ */
+async function recordEnclaveUsage(
+  pool: Pool,
+  costService: AICostServiceLike,
+  params: {
+    session: { id: string; streamId: string; triggerMessageId: string }
+    workspaceId: string
+    model: string
+    usage: z.infer<typeof turnUsageSchema>
+  }
+): Promise<void> {
+  const { session, usage } = params
+  try {
+    // The invoking user is the trigger message's author (the session row
+    // stores only the trigger message id). Origin is always "user": the
+    // enclave runs solely for user-sent E2E scratchpad messages.
+    const triggerMessage = await MessageRepository.findById(pool, session.triggerMessageId)
+    // The enclave routes exclusively through OpenRouter and reports the bare
+    // model id (the `openrouter:` prefix is stripped at dispatch), so re-derive
+    // the provider with the same parser the companion records through.
+    const parsedModel = parseModelId(`openrouter:${params.model}`)
+    await costService.recordUsage({
+      workspaceId: params.workspaceId,
+      userId: triggerMessage?.authorId,
+      sessionId: session.id,
+      functionId: ENCLAVE_AGENT_FUNCTION_ID,
+      model: parsedModel.modelId,
+      provider: parsedModel.provider,
+      origin: "user",
+      usage: {
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        totalTokens: (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0),
+        cost: usage.cost,
+      },
+    })
+  } catch (err) {
+    logger.error({ err, sessionId: session.id, streamId: session.streamId }, "Enclave usage recording failed")
   }
 }

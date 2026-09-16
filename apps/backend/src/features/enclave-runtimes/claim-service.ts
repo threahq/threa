@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { randomUUID } from "node:crypto"
 import {
   AuthorTypes,
@@ -7,7 +7,7 @@ import {
   type EnclaveSessionAssignment,
   type EnclaveStreamEnvelope,
 } from "@threahq/types"
-import { TURN_DIGEST_INJECT_COUNT } from "@threahq/agent-runtime"
+import { AISpendDeniedError, TURN_DIGEST_INJECT_COUNT, type SpendGate } from "@threahq/agent-runtime"
 import { sessionId as newSessionId, eventId, enclaveInvocationId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { withTransaction, type Querier } from "../../db"
@@ -34,6 +34,7 @@ import {
   ARIADNE_AGENT_ID,
   buildEnclaveSystemPrompt,
   getBuiltInAgentConfig,
+  failSessionWithLifecycleInTransaction,
   hashCallbackToken,
   isE2eCapablePersona,
 } from "../agents"
@@ -125,7 +126,11 @@ export interface EnclaveClaimServiceDeps {
   storage: StorageProvider
   /** Trigger author's preferences feed the shared system-prompt builder (temporal grounding). */
   userPreferencesService: UserPreferencesService
+  /** Admits each turn against the workspace and trigger author's AI spend limits before any work is built. */
+  spendGate: SpendGate
 }
+
+export const ENCLAVE_AGENT_FUNCTION_ID = "enclave-agent-loop"
 
 /**
  * Serves `POST /internal/enclave-runtimes/claims` (§2.7 pull transport): an
@@ -142,11 +147,13 @@ export class EnclaveClaimService {
   private readonly pool: Pool
   private readonly storage: StorageProvider
   private readonly userPreferencesService: UserPreferencesService
+  private readonly spendGate: SpendGate
 
   constructor(deps: EnclaveClaimServiceDeps) {
     this.pool = deps.pool
     this.storage = deps.storage
     this.userPreferencesService = deps.userPreferencesService
+    this.spendGate = deps.spendGate
   }
 
   /**
@@ -389,6 +396,101 @@ export class EnclaveClaimService {
     const trigger = await MessageRepository.findById(pool, triggerId)
     if (!trigger || !trigger.ciphertext) return completeAsNoOp("trigger message gone or not E2E")
 
+    // The session row carries the trigger's author, so the claim-time guard
+    // re-reads it under the transaction rather than trusting this snapshot.
+    const refuseUnwritableTrigger = async (tx: PoolClient): Promise<{ authorId: string } | null> => {
+      const currentTrigger = await MessageRepository.findById(tx, triggerId)
+      if (!currentTrigger || currentTrigger.authorType !== "user") {
+        await EnclaveInvocationsRepository.failClaimed(tx, {
+          id: invocation.id,
+          keyId,
+          claimToken,
+          errorMessage: "STREAM_READ_ONLY:missing_initiating_user",
+        })
+        return null
+      }
+      try {
+        await assertStreamWritable(tx, {
+          workspaceId,
+          streamId,
+          principal: { kind: "user", userId: currentTrigger.authorId },
+        })
+      } catch (error) {
+        const denial = error as { code?: string; details?: { reason?: string } }
+        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
+        await EnclaveInvocationsRepository.failClaimed(tx, {
+          id: invocation.id,
+          keyId,
+          claimToken,
+          errorMessage: `STREAM_READ_ONLY:${
+            denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
+          }`,
+        })
+        return null
+      }
+      return { authorId: currentTrigger.authorId }
+    }
+
+    // Admitted before the assignment is built so a denied turn never loads
+    // history or attachment ciphertext it cannot use.
+    const admission = { workspaceId, userId: trigger.authorId, functionId: ENCLAVE_AGENT_FUNCTION_ID }
+    const decision = await this.spendGate.admit(admission)
+    if (!decision.allowed) {
+      const denial = new AISpendDeniedError(admission, decision.reason)
+      const outcome = await withTransaction(pool, async (tx) => {
+        if (!(await refuseUnwritableTrigger(tx))) return "refused" as const
+        const deniedSessionId = newSessionId()
+        const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
+          id: deniedSessionId,
+          streamId,
+          personaId: ARIADNE_AGENT_ID,
+          triggerMessageId: triggerId,
+          serverId: keyId,
+          initialSequence: 0n,
+        })
+        if (!created) return "busy" as const
+        await EnclaveInvocationsRepository.attachSession(tx, { id: invocation.id, sessionId: deniedSessionId })
+        await this.insertStartedEvent(tx, {
+          workspaceId,
+          stream: triggerStream,
+          sessionId: deniedSessionId,
+          personaName: persona.name,
+          triggerMessageId: triggerId,
+          startedAt: created.createdAt,
+        })
+        await failSessionWithLifecycleInTransaction(
+          tx,
+          { id: deniedSessionId, streamId, personaId: ARIADNE_AGENT_ID },
+          triggerStream,
+          denial.message,
+          (failTx) =>
+            EnclaveInvocationsRepository.failClaimed(failTx, {
+              id: invocation.id,
+              keyId,
+              claimToken,
+              errorMessage: `AI_SPEND_DENIED:${decision.reason}`,
+            }),
+          { spendDenial: decision.reason }
+        )
+        return "failed" as const
+      })
+      if (outcome === "busy") return completeAsNoOp("another session is running for this stream")
+      if (outcome === "failed") {
+        logger.warn(
+          {
+            invocationId: invocation.id,
+            workspaceId,
+            streamId,
+            userId: trigger.authorId,
+            functionId: ENCLAVE_AGENT_FUNCTION_ID,
+            reason: decision.reason,
+          },
+          "Enclave turn denied by AI spend limit"
+        )
+      }
+      return { kind: "no_op" }
+    }
+
     const [wraps, surrounding, rootStream, preferences, authors, allowedToolCategories] = await Promise.all([
       // Root's wraps — the thread shares the root's SSK and has no wraps of its own.
       StreamE2eKeyWrapsRepository.listForStream(pool, workspaceId, e2eStreamId),
@@ -532,35 +634,7 @@ export class EnclaveClaimService {
     // the payload carries only ids + the persona name. last_seen_sequence is
     // an inert placeholder here; mid-turn reconsideration is a later slice.
     const session = await withTransaction(pool, async (tx) => {
-      const currentTrigger = await MessageRepository.findById(tx, triggerId)
-      if (!currentTrigger || currentTrigger.authorType !== "user") {
-        await EnclaveInvocationsRepository.failClaimed(tx, {
-          id: invocation.id,
-          keyId,
-          claimToken,
-          errorMessage: "STREAM_READ_ONLY:missing_initiating_user",
-        })
-        return null
-      }
-      try {
-        await assertStreamWritable(tx, {
-          workspaceId,
-          streamId,
-          principal: { kind: "user", userId: currentTrigger.authorId },
-        })
-      } catch (error) {
-        const denial = error as { code?: string; details?: { reason?: string } }
-        if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
-        await EnclaveInvocationsRepository.failClaimed(tx, {
-          id: invocation.id,
-          keyId,
-          claimToken,
-          errorMessage: `STREAM_READ_ONLY:${
-            denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
-          }`,
-        })
-        return null
-      }
+      if (!(await refuseUnwritableTrigger(tx))) return null
       const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
         id: sid,
         streamId,
@@ -642,26 +716,13 @@ export class EnclaveClaimService {
       }
 
       await EnclaveInvocationsRepository.attachSession(tx, { id: invocation.id, sessionId: sid })
-      const startedEvent = await StreamEventRepository.insert(tx, {
-        id: eventId(),
-        streamId,
-        eventType: "agent_session:started",
-        payload: {
-          sessionId: sid,
-          personaId: ARIADNE_AGENT_ID,
-          personaName: persona.name,
-          triggerMessageId: triggerId,
-          rerunContext: null,
-          startedAt: created.createdAt.toISOString(),
-        },
-        actorId: ARIADNE_AGENT_ID,
-        actorType: "persona",
-      })
-      await OutboxRepository.insert(tx, "agent_session:started", {
+      await this.insertStartedEvent(tx, {
         workspaceId,
-        streamId,
-        rootStreamId: triggerStream.rootStreamId ?? triggerStream.id,
-        event: startedEvent,
+        stream: triggerStream,
+        sessionId: sid,
+        personaName: persona.name,
+        triggerMessageId: triggerId,
+        startedAt: created.createdAt,
       })
       return created
     })
@@ -669,6 +730,40 @@ export class EnclaveClaimService {
 
     logger.info({ workspaceId, streamId, sessionId: sid, keyId }, "Enclave turn claimed")
     return { kind: "assignment", assignment }
+  }
+
+  private async insertStartedEvent(
+    tx: Querier,
+    params: {
+      workspaceId: string
+      stream: { id: string; rootStreamId: string | null }
+      sessionId: string
+      personaName: string
+      triggerMessageId: string
+      startedAt: Date
+    }
+  ): Promise<void> {
+    const startedEvent = await StreamEventRepository.insert(tx, {
+      id: eventId(),
+      streamId: params.stream.id,
+      eventType: "agent_session:started",
+      payload: {
+        sessionId: params.sessionId,
+        personaId: ARIADNE_AGENT_ID,
+        personaName: params.personaName,
+        triggerMessageId: params.triggerMessageId,
+        rerunContext: null,
+        startedAt: params.startedAt.toISOString(),
+      },
+      actorId: ARIADNE_AGENT_ID,
+      actorType: "persona",
+    })
+    await OutboxRepository.insert(tx, "agent_session:started", {
+      workspaceId: params.workspaceId,
+      streamId: params.stream.id,
+      rootStreamId: params.stream.rootStreamId ?? params.stream.id,
+      event: startedEvent,
+    })
   }
 
   /**

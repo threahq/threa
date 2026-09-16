@@ -1,4 +1,6 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
+import { logger } from "../../lib/logger"
 import { Reranker, sanitizeOrder } from "./reranker"
 import { StubReranker } from "./reranker.stub"
 
@@ -76,5 +78,33 @@ describe("Reranker", () => {
       workspaceId: "ws_1",
     })
     expect(order).toEqual([1, 0])
+  })
+
+  it("should keep the pre-rerank order and log the spend denial when the spend gate refuses the call", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
+    try {
+      const reranker = new Reranker({
+        ai: {
+          generateObject: async () => {
+            throw new AISpendDeniedError(
+              { workspaceId: "ws_1", userId: "user_1", functionId: "search-rerank" },
+              "operator_disabled"
+            )
+          },
+        } as never,
+        subject: "chat messages",
+        functionId: "search-rerank",
+      })
+
+      const order = await reranker.rerank("q", [{ abstract: "a" }, { abstract: "b" }], { workspaceId: "ws_1" })
+
+      expect(order).toEqual([0, 1])
+      expect(warn).toHaveBeenCalledWith(
+        { workspaceId: "ws_1", userId: "user_1", functionId: "search-rerank", reason: "operator_disabled" },
+        "Rerank denied by AI spend limit; using pre-rerank order"
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

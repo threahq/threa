@@ -1722,6 +1722,7 @@ describe("deferred generated output authority", () => {
       pool,
       storage: { getObject: async () => Buffer.alloc(0) } as never,
       userPreferencesService: { getPreferences: async () => ({}) } as never,
+      spendGate: { admit: async () => ({ allowed: true }) },
     })
     expect(await service.claimTurn(keyId)).toBeNull()
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, mock, spyOn } from "bun:test"
 import { buildPolishUserMessage, createPolishTranscript, scrubDashes } from "./polish"
 import { voicePolishConfig } from "./config"
-import type { AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, type AI } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 
 type GenerateTextArgs = Parameters<AI["generateText"]>[0]
@@ -150,6 +150,42 @@ describe("createPolishTranscript", () => {
       expect(logs[0]?.[0]).toMatchObject({ outcome: "timeout", deadline: "live", deadlineMs: 1 })
       expect(JSON.stringify(logs)).not.toContain("SENTINEL")
     } finally {
+      info.mockRestore()
+    }
+  })
+
+  it("should return provider_error and log the spend denial when the spend gate refuses the call", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
+    const info = spyOn(logger, "info").mockImplementation(() => logger)
+    try {
+      const generateText = mock(async () => {
+        throw new AISpendDeniedError(
+          { workspaceId: "ws_1", userId: "user_1", functionId: "voice-transcript-polish" },
+          "operator_disabled"
+        )
+      })
+      const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+      const outcome = await polish({
+        rawTranscript: "hello",
+        level: "minor",
+        workspaceId: "ws_1",
+        userId: "user_1",
+        sessionId: "voicesess_1",
+      })
+
+      expect(outcome).toEqual({ status: "provider_error" })
+      expect(warn).toHaveBeenCalledWith(
+        {
+          sessionId: "voicesess_1",
+          workspaceId: "ws_1",
+          userId: "user_1",
+          functionId: "voice-transcript-polish",
+          reason: "operator_disabled",
+        },
+        "Voice polish denied by AI spend limit; keeping raw transcript"
+      )
+    } finally {
+      warn.mockRestore()
       info.mockRestore()
     }
   })

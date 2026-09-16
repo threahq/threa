@@ -1,5 +1,5 @@
 import type { AI, CostContext } from "@threahq/agent-runtime"
-import { isAbortError } from "@threahq/agent-runtime"
+import { AISpendDeniedError, isAbortError } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import { MEMO_RERANKER_MODEL_ID, MEMO_RERANKER_TEMPERATURE, MEMO_RERANKER_TIMEOUT_MS, memoRerankSchema } from "./config"
 
@@ -126,6 +126,11 @@ export class Reranker implements RerankerLike {
     } catch (error) {
       if (isAbortError(error)) {
         logger.debug({ workspaceId: context.workspaceId }, "Rerank timed out; using pre-rerank order")
+      } else if (error instanceof AISpendDeniedError) {
+        logger.warn(
+          { workspaceId: error.workspaceId, userId: error.userId, functionId: error.functionId, reason: error.reason },
+          "Rerank denied by AI spend limit; using pre-rerank order"
+        )
       } else {
         logger.warn({ error, workspaceId: context.workspaceId }, "Rerank failed; using pre-rerank order")
       }

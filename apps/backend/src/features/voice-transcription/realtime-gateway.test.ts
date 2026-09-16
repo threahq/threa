@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threahq/types"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import { registerVoiceGateway } from "./realtime-gateway"
 import type { TranscriptionSession } from "./transcription/strategy"
@@ -348,6 +349,38 @@ describe("registerVoiceGateway voice:start", () => {
 
     expect(cb).toHaveBeenCalledWith({ ok: false, error: "workspaceId and voiceSessionId required", protocolVersion: 3 })
     expect(transcription.open).not.toHaveBeenCalled()
+  })
+
+  it("should ack a structured spend denial and abort the session when the spend gate refuses the start", async () => {
+    const denial = new AISpendDeniedError(
+      { workspaceId: START_PAYLOAD.workspaceId, userId: "user_1", functionId: "voice-transcription-realtime" },
+      "workspace_limit"
+    )
+    const { socket, transcription, voiceTranscriptionService } = setup({
+      getRelaySession: async () => {
+        throw denial
+      },
+    })
+    const warn = spyOn(logger, "warn").mockImplementation(() => {})
+    const cb = mock(() => {})
+
+    await socket.trigger("voice:start", START_PAYLOAD, cb)
+    warn.mockRestore()
+
+    expect(cb).toHaveBeenCalledWith({
+      ok: false,
+      error: "AI spend limit reached",
+      code: "AI_SPEND_DENIED",
+      spendDenial: "workspace_limit",
+      protocolVersion: 3,
+    })
+    expect(transcription.open).not.toHaveBeenCalled()
+    expect(voiceTranscriptionService.abortSession).toHaveBeenCalledWith({
+      workspaceId: START_PAYLOAD.workspaceId,
+      userId: "user_1",
+      sessionId: START_PAYLOAD.voiceSessionId,
+      totalAudioMs: 0,
+    })
   })
 
   it("refuses a second start while a session is already active", async () => {
