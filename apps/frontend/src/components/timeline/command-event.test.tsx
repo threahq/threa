@@ -158,6 +158,17 @@ describe("CommandEvent", () => {
     expect(screen.getByText("Completed: replies go in a thread on each message")).toBeInTheDocument()
   })
 
+  it("should say the reply goes in a thread when /thread completes", async () => {
+    renderChip([
+      event("1", "command_dispatched", { commandId: "cmd_1", name: "thread", args: "why?" }),
+      event("2", "command_completed", { commandId: "cmd_1", result: { replyInThread: true } }),
+    ])
+
+    await userEvent.click(screen.getByRole("button", { name: /thread/ }))
+
+    expect(screen.getByText("Completed: the reply goes in a thread on your message")).toBeInTheDocument()
+  })
+
   it('falls back to "completed" when the command sent no summary', () => {
     render(
       <MemoryRouter>

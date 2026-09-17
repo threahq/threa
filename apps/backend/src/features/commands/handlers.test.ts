@@ -326,6 +326,58 @@ describe("runtime command dispatch source", () => {
     })
   })
 
+  async function dispatchServerCommand(command: string) {
+    const createMessage = mock(async (_client: unknown, _params: unknown) => ({
+      message: { id: "msg_thread" },
+      created: true,
+    }))
+    const resolved = { executionKind: CommandKinds.SERVER, info: {} }
+    const handlers = createCommandHandlers({
+      pool: makePool(),
+      commandAvailabilityService: {
+        resolveCommandForDispatch: mock(async () => resolved),
+        resolveCommandInTransaction: mock(async () => resolved),
+        listStreamCommands: mock(async () => []),
+        listWorkspaceCommands: mock(() => []),
+      } as never,
+      botRuntimeService: {} as never,
+      eventService: { createMessageInTransaction: createMessage } as never,
+    })
+    const res = makeResponse()
+    await handlers.dispatch(
+      { user: { id: "usr_1" }, workspaceId: "ws_1", body: { streamId: "stream_root", command } } as Request,
+      res
+    )
+    return { createMessage, res }
+  }
+
+  it("should persist the text after /thread as a message marked to reply in a thread", async () => {
+    const { createMessage, res } = await dispatchServerCommand("/thread why did it fail?\nsee the log")
+
+    expect({ status: res.statusCode, message: createMessage.mock.calls[0][1] }).toEqual({
+      status: 202,
+      message: {
+        workspaceId: "ws_1",
+        streamId: "stream_root",
+        authorId: "usr_1",
+        authorType: "user",
+        contentJson: parseMarkdown("why did it fail?\nsee the log"),
+        contentMarkdown: "why did it fail?\nsee the log",
+        metadata: { "threa.reply_in_thread": "true" },
+      },
+    })
+  })
+
+  it("should reject /thread with no message", async () => {
+    const { createMessage, res } = await dispatchServerCommand("/thread   ")
+
+    expect({ status: res.statusCode, body: res.body, messages: createMessage.mock.calls.length }).toEqual({
+      status: 400,
+      body: { success: false, error: "Usage: /thread <message>" },
+      messages: 0,
+    })
+  })
+
   it("leaves every other runtime command a command-sourced invocation with no message", async () => {
     const { createMessage, createInvocation } = await dispatchRuntimeCommand("/steer continue")
 

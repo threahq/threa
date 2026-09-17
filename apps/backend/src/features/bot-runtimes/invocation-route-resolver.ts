@@ -11,7 +11,12 @@ import {
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { resolveSealingContext } from "../e2e-streams"
-import { MESSAGE_METADATA_COMMAND_KEY, MessageVersionRepository, type InvocationSourceState } from "../messaging"
+import {
+  MESSAGE_METADATA_COMMAND_KEY,
+  MESSAGE_METADATA_REPLY_IN_THREAD_KEY,
+  MessageVersionRepository,
+  type InvocationSourceState,
+} from "../messaging"
 import { BotRepository } from "../public-api"
 import { projectStreamForBot, StreamRepository, type Stream } from "../streams"
 import { BotInvocationRepository, BotRuntimeInstanceRepository, type BotRuntimeSessionLink } from "./repository"
@@ -258,8 +263,9 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
 }
 
 /**
- * A session in thread reply mode answers a message posted at its scratchpad
- * root in the thread anchored on that message. Claim re-resolves routes and
+ * A session in thread reply mode, or any message typed through `/thread`, gets
+ * its answer to a message posted at the scratchpad root in the thread anchored
+ * on that message. Claim re-resolves routes and
  * compares `responseStreamId`, so once reconcile has created the thread this
  * must find it and return its id.
  */
@@ -270,7 +276,9 @@ async function resolveReplyStream(
   link: BotRuntimeSessionLink | null
 ): Promise<Pick<CanonicalInvocationRoute, "responseStreamId" | "replyThreadAnchorId">> {
   const flat = { responseStreamId: stream.id, replyThreadAnchorId: null }
-  if (link?.replyMode !== RuntimeReplyModes.THREAD || link.activeStreamId !== stream.id) return flat
+  const threaded =
+    link?.replyMode === RuntimeReplyModes.THREAD || source.metadata[MESSAGE_METADATA_REPLY_IN_THREAD_KEY] === "true"
+  if (!threaded || link?.activeStreamId !== stream.id) return flat
   if (stream.rootStreamId && stream.rootStreamId !== stream.id) return flat
   const thread = await StreamRepository.findByAnchor(db, stream.id, source.messageId)
   if (thread) return { responseStreamId: thread.id, replyThreadAnchorId: null }

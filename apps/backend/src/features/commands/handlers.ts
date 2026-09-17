@@ -25,7 +25,8 @@ import {
   StreamEventRepository,
   type StreamEvent,
 } from "../streams"
-import { MESSAGE_METADATA_COMMAND_KEY, type EventService } from "../messaging"
+import { MESSAGE_METADATA_COMMAND_KEY, MESSAGE_METADATA_REPLY_IN_THREAD_KEY, type EventService } from "../messaging"
+import { THREAD_COMMAND } from "./thread-command"
 
 const dispatchCommandSchema = z.object({
   command: z.string().min(1, "command is required"),
@@ -201,6 +202,10 @@ export function createCommandHandlers({
         })
       }
 
+      if (parsed.name === THREAD_COMMAND && !parsed.args.trim()) {
+        return res.status(400).json({ success: false, error: "Usage: /thread <message>" })
+      }
+
       if (resolved.executionKind === CommandKinds.CLIENT_ACTION) {
         return res.status(400).json({
           success: false,
@@ -246,6 +251,23 @@ export function createCommandHandlers({
           )
           if (!current || current.executionKind !== CommandKinds.SERVER) {
             throw new HttpError("Command is no longer available", { status: 404, code: "COMMAND_NOT_AVAILABLE" })
+          }
+
+          // `/thread`'s text is the user's message; the marker routes its answer into a thread on it.
+          if (parsed.name === THREAD_COMMAND) {
+            await eventService.createMessageInTransaction(
+              client,
+              {
+                workspaceId,
+                streamId,
+                authorId: userId,
+                authorType: AuthorTypes.USER,
+                contentJson: parseMarkdown(parsed.args),
+                contentMarkdown: parsed.args,
+                metadata: { [MESSAGE_METADATA_REPLY_IN_THREAD_KEY]: "true" },
+              },
+              userId
+            )
           }
 
           const event = await insertCommandDispatchedEvent(client, {

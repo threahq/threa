@@ -26,6 +26,7 @@ import {
 } from "../bot-runtimes"
 import type { CommandRegistry } from "./registry"
 import { isRepliesAvailableInStream, REPLIES_COMMAND } from "./replies-command"
+import { THREAD_COMMAND } from "./thread-command"
 import {
   listClientActionCommandInfos,
   listSessionControlCommandInfos,
@@ -180,6 +181,8 @@ export class CommandAvailabilityService {
 
 async function isServerCommandAvailableInStream(name: string, stream: Stream, db: Querier): Promise<boolean> {
   if (name === REPLIES_COMMAND) return isRepliesAvailableInStream(db, stream)
+  // Its message is written as plaintext, so a sealed stream never offers it.
+  if (name === THREAD_COMMAND) return stream.e2eEnabled !== true && isRepliesAvailableInStream(db, stream)
   if (name !== "invite") return true
   if (stream.type === StreamTypes.CHANNEL) return true
   if (stream.type !== StreamTypes.THREAD || !stream.rootStreamId) return false

@@ -23,3 +23,4 @@ export type { CommandWorkerDeps, CommandCompletedPayload, CommandFailedPayload }
 
 export { InviteCommand } from "./invite-command"
 export { RepliesCommand } from "./replies-command"
+export { ThreadCommand } from "./thread-command"
