@@ -205,7 +205,14 @@ import { LabelService, LabelAssignmentService, LabelMessageService } from "./fea
 import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AIBudgetService } from "./features/ai-usage"
-import { CommandRegistry, InviteCommand, RepliesCommand, createCommandWorker, CommandHandler } from "./features/commands"
+import {
+  CommandRegistry,
+  InviteCommand,
+  RepliesCommand,
+  ThreadCommand,
+  createCommandWorker,
+  CommandHandler,
+} from "./features/commands"
 import {
   createImageCaptionWorker,
   createImageThumbnailWorker,
@@ -765,6 +772,7 @@ export async function startServer(): Promise<ServerInstance> {
   const commandRegistry = new CommandRegistry()
   commandRegistry.register(new InviteCommand({ pool, streamService }))
   commandRegistry.register(new RepliesCommand({ pool }))
+  commandRegistry.register(new ThreadCommand())
 
   // WorkOS validates API keys in production, stub in dev.
   const apiKeyService = config.useStubAuth ? new StubApiKeyService() : new WorkosApiKeyService(config.workos)

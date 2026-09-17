@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { BotChannelAccessRepository } from "../../src/features/api-keys"
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
-import { CommandAvailabilityService, CommandRegistry, RepliesCommand } from "../../src/features/commands"
+import { CommandAvailabilityService, CommandRegistry, RepliesCommand, ThreadCommand } from "../../src/features/commands"
+import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { BotRepository } from "../../src/features/public-api"
-import { MessageRepository } from "../../src/features/messaging"
+import { MESSAGE_METADATA_REPLY_IN_THREAD_KEY, MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { botChannelAccessId, commandId, messageId, streamId, workspaceId } from "../../src/lib/id"
 import { addTestMember, botRuntimeServiceFor, setupIsolatedTestDatabase, testContentJson } from "./setup"
@@ -65,7 +66,7 @@ describe("linked session reply mode", () => {
     return { workspace, root, owner, bot, instance, session, link }
   }
 
-  async function post(stream: string, author: string, markdown: string) {
+  async function post(stream: string, author: string, markdown: string, metadata?: Record<string, string>) {
     sequence += 1n
     return MessageRepository.insert(pool, {
       id: messageId(),
@@ -75,6 +76,7 @@ describe("linked session reply mode", () => {
       authorType: "user",
       contentJson: testContentJson(markdown),
       contentMarkdown: markdown,
+      metadata,
     })
   }
 
@@ -173,6 +175,55 @@ describe("linked session reply mode", () => {
     const inThread = await post(thread!.id, scenario.owner, "follow-up")
     await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: inThread.id })
     expect(await invocationsFor(inThread.id)).toEqual([{ response_stream_id: thread!.id, status: "pending" }])
+  })
+
+  test("should offer /thread only in an unsealed scratchpad with a linked session", async () => {
+    const scenario = await seed()
+    const registry = new CommandRegistry()
+    registry.register(new ThreadCommand())
+    const availability = new CommandAvailabilityService({ pool, commandRegistry: registry })
+    const resolve = () =>
+      availability.resolveCommand({
+        workspaceId: scenario.workspace,
+        userId: scenario.owner,
+        streamId: scenario.root,
+        name: "thread",
+      })
+
+    expect((await resolve())?.info).toMatchObject({ name: "thread", args: [{ name: "message", required: true }] })
+
+    await E2eStreamsRepository.markStreamE2e(pool, {
+      streamId: scenario.root,
+      workspaceId: scenario.workspace,
+      ownerUserId: scenario.owner,
+      ownerUserKeyId: "e2ek_owner",
+    })
+    expect(await resolve()).toBeNull()
+  })
+
+  test("should answer a /thread message in a thread on it when the session replies flat", async () => {
+    const scenario = await seed()
+    const service = botRuntimeServiceFor(pool)
+    const message = await post(scenario.root, scenario.owner, "just this once", {
+      [MESSAGE_METADATA_REPLY_IN_THREAD_KEY]: "true",
+    })
+    await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: message.id })
+
+    const thread = await StreamRepository.findByAnchor(pool, scenario.root, message.id)
+    expect(thread).toMatchObject({ type: "thread", rootStreamId: scenario.root, createdBy: scenario.bot })
+    expect(await invocationsFor(message.id)).toEqual([{ response_stream_id: thread!.id, status: "pending" }])
+
+    const claimed = await service.claimNextInvocation({
+      workspaceId: scenario.workspace,
+      botId: scenario.bot,
+      instanceId: scenario.instance,
+      runtimeSessionId: scenario.session,
+      runtimeKind: "hermes",
+      claimToken: "thread-once",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+    })
+    expect(claimed).toMatchObject({ sourceMessageId: message.id, responseStreamId: thread!.id, status: "claimed" })
   })
 
   test("should answer a root message in the scratchpad in flat mode", async () => {

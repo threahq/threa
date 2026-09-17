@@ -240,6 +240,7 @@ function formatResult(result: unknown): string {
     const r = result as Record<string, unknown>
     if (r.replyMode === "thread") return "replies go in a thread on each message"
     if (r.replyMode === "flat") return "replies go in the scratchpad"
+    if (r.replyInThread === true) return "the reply goes in a thread on your message"
     if ("personas" in r && "topic" in r) {
       const personas = r.personas as string[]
       return `${personas.join(", ")} discussing "${r.topic}"`

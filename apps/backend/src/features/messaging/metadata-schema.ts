@@ -107,3 +107,9 @@ export function withDerivedMessageMetadata(
  * the command dispatcher, read by route resolution to leave the message alone.
  */
 export const MESSAGE_METADATA_COMMAND_KEY = "threa.command"
+
+/**
+ * Server-derived key marking a message typed through `/thread`: the linked
+ * session answers it in a thread on the message whatever its reply mode.
+ */
+export const MESSAGE_METADATA_REPLY_IN_THREAD_KEY = "threa.reply_in_thread"
