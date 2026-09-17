@@ -40,10 +40,6 @@ const RUNTIME_STATUS: Record<BotRuntimeStatus, { label: string; dotClassName: st
   error: { label: "Error", dotClassName: "bg-destructive" },
 }
 
-export function botProfileQueryKey(workspaceId: string, botId: string) {
-  return ["bots", workspaceId, botId, "profile"] as const
-}
-
 interface BotProfileModalProps {
   botId: string
   open: boolean
@@ -54,7 +50,7 @@ interface BotProfileModalProps {
 export function BotProfileModal({ botId, open, onOpenChange, onOpenUserProfile }: BotProfileModalProps) {
   const { workspaceId = "" } = useParams<{ workspaceId: string }>()
   const { data, error, isLoading } = useQuery({
-    queryKey: botProfileQueryKey(workspaceId, botId),
+    queryKey: ["bots", workspaceId, botId, "profile"],
     queryFn: () => botsApi.getProfile(workspaceId, botId),
     enabled: Boolean(workspaceId),
   })

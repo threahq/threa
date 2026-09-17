@@ -8,7 +8,7 @@ interface UserProfileContextValue {
   openBotProfile: (botId: string) => void
 }
 
-type ProfileTarget = { kind: "user"; id: string } | { kind: "bot"; id: string }
+type ProfileTarget = { kind: "user" | "bot"; id: string }
 
 const UserProfileContext = createContext<UserProfileContextValue | null>(null)
 
