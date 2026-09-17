@@ -371,11 +371,11 @@ describe("runtime command dispatch source", () => {
   it("should reject /thread with no message", async () => {
     const { createMessage, res } = await dispatchServerCommand("/thread   ")
 
-    expect({ status: res.statusCode, body: res.body, messages: createMessage.mock.calls.length }).toEqual({
+    expect({ status: res.statusCode, body: res.body }).toEqual({
       status: 400,
       body: { success: false, error: "Usage: /thread <message>" },
-      messages: 0,
     })
+    expect(createMessage).not.toHaveBeenCalled()
   })
 
   it("leaves every other runtime command a command-sourced invocation with no message", async () => {
