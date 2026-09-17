@@ -39,6 +39,14 @@ interface Dependencies {
   pool: Pool
 }
 
+const syncOperatorControlsSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    operatorCeilingUsd: z.number().min(0),
+    operatorAiDisabled: z.boolean(),
+  })
+  .strict()
+
 // The dashboard's day buckets and month window follow whatever zone the caller
 // names — the viewer's device zone or the workspace's own (Stripe's model: money
 // is stored as timestamps, day/month lines are drawn at presentation).
@@ -161,6 +169,13 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
         percentUsed: percentUsed(usage.totalCostUsd, budget),
         nextReset,
       })
+    },
+
+    /** Control-plane fan-out: full snapshot of the operator controls, so replays are idempotent. */
+    async syncOperatorControls(req: Request, res: Response) {
+      const controls = validateRequest(syncOperatorControlsSchema, req.body)
+      await AIBudgetRepository.upsertOperatorControls(pool, { id: aiBudgetId(), ...controls })
+      res.status(204).send()
     },
 
     async listUserLimits(req: Request, res: Response) {

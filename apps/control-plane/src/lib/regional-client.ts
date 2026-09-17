@@ -187,6 +187,14 @@ export class RegionalClient {
     await this.postInternal(region, "/internal/feature-flags", data, "Regional feature flag sync")
   }
 
+  /** Push the operator's AI spend controls for one workspace. Full snapshot, so replays are idempotent. */
+  async syncAISpendControls(
+    region: string,
+    data: { workspaceId: string; operatorCeilingUsd: number; operatorAiDisabled: boolean }
+  ): Promise<void> {
+    await this.postInternal(region, "/internal/ai-spend-controls", data, "Regional AI spend controls sync")
+  }
+
   /**
    * Push one workspace user's platform-admin grant to the regional
    * `platform_admin_access` mirror. Snapshot semantics keep the call

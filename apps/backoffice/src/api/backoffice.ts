@@ -143,12 +143,19 @@ export interface WorkspaceFeatureFlags {
   overrides: WorkspaceFeatureFlagOverride[]
 }
 
+/** Operator-only AI limits; workspace admins cannot change these. */
+export interface WorkspaceAISpendControls {
+  operatorCeilingUsd: number
+  operatorAiDisabled: boolean
+}
+
 export const backofficeKeys = {
   workspaces: ["backoffice", "workspaces"] as const,
   workspace: (id: string) => ["backoffice", "workspaces", id] as const,
   workspaceMembers: (id: string) => ["backoffice", "workspaces", id, "members"] as const,
   workspaceInvitations: (id: string) => ["backoffice", "workspaces", id, "invitations"] as const,
   workspaceFeatureFlags: (id: string) => ["backoffice", "workspaces", id, "feature-flags"] as const,
+  workspaceAISpendControls: (id: string) => ["backoffice", "workspaces", id, "ai-spend-controls"] as const,
   invitations: ["backoffice", "invitations"] as const,
   waitlist: ["backoffice", "waitlist"] as const,
   config: ["backoffice", "config"] as const,
@@ -245,6 +252,25 @@ export function setWorkspaceFeatureFlag(
   params: { subjectType: FeatureFlagScope; subjectId: string; flagKey: string; value: string }
 ): Promise<void> {
   return api.put<void>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`, params)
+}
+
+export function getWorkspaceAISpendControls(workspaceId: string): Promise<WorkspaceAISpendControls> {
+  return api
+    .get<{
+      controls: WorkspaceAISpendControls
+    }>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/ai-spend-controls`)
+    .then((r) => r.controls)
+}
+
+export function setWorkspaceAISpendControls(
+  workspaceId: string,
+  controls: WorkspaceAISpendControls
+): Promise<WorkspaceAISpendControls> {
+  return api
+    .put<{
+      controls: WorkspaceAISpendControls
+    }>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/ai-spend-controls`, controls)
+    .then((r) => r.controls)
 }
 
 export function assignWorkspaceMember(
