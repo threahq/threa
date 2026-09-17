@@ -15,6 +15,7 @@ import {
   embed as aiEmbed,
   embedMany as aiEmbedMany,
 } from "ai"
+import type { AISpendDenialReason } from "@threahq/types"
 import type { Embedding, LanguageModel, EmbeddingModel, ModelMessage, Tool } from "ai"
 import type { z } from "zod"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
@@ -102,14 +103,6 @@ export interface CostContext {
   /** Origin of the AI call - defaults to 'system' if not specified */
   origin?: AIOrigin
 }
-
-export type AISpendDenialReason =
-  | "operator_disabled"
-  | "workspace_disabled"
-  | "workspace_limit"
-  | "user_disabled"
-  | "user_agent_allowance"
-  | "user_limit"
 
 export type SpendDecision = { allowed: true } | { allowed: false; reason: AISpendDenialReason }
 

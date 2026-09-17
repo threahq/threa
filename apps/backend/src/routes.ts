@@ -1325,6 +1325,27 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
     aiUsage.updateBudget
   )
+  app.get(
+    "/api/workspaces/:workspaceId/ai-budget/users",
+    ...authed,
+    audit("ai_usage.list_user_limits", "read"),
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    aiUsage.listUserLimits
+  )
+  app.put(
+    "/api/workspaces/:workspaceId/ai-budget/users/:userId",
+    ...authed,
+    audit("ai_usage.set_user_limits", "write"),
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    aiUsage.setUserLimits
+  )
+  app.delete(
+    "/api/workspaces/:workspaceId/ai-budget/users/:userId",
+    ...authed,
+    audit("ai_usage.delete_user_limits", "write"),
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    aiUsage.deleteUserLimits
+  )
 
   // Sync-log catch-up (sync engine v2 step 1): ordered entries after a cursor,
   // ACL-filtered to the requester's delivery groups.

@@ -328,6 +328,7 @@ export async function withCompanionSession(
               traceId: session.id,
               effects: collectSessionEffects(steps),
               failedAt: new Date().toISOString(),
+              ...(err instanceof AISpendDeniedError && { spendDenial: err.reason }),
             },
             actorId: personaId,
             actorType: "persona",

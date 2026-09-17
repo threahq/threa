@@ -1,15 +1,17 @@
+import type { AIBudgetConfig } from "@threahq/types"
 import { sql, type Querier } from "../../db"
 
 /** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
-const DEFAULT_MONTHLY_BUDGET_USD = 50
-const DEFAULT_OPERATOR_CEILING_USD = 100
-
-/** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
-export const DEFAULT_AI_ALERT_THRESHOLDS = {
+export const DEFAULT_AI_BUDGET_CONFIG: AIBudgetConfig = {
+  monthlyBudgetUsd: 50,
   alertThreshold50: true,
   alertThreshold80: true,
   alertThreshold100: true,
-} as const satisfies Pick<AIBudget, "alertThreshold50" | "alertThreshold80" | "alertThreshold100">
+  aiDisabled: false,
+  defaultUserAgentAllowanceUsd: null,
+  operatorCeilingUsd: 100,
+  operatorAiDisabled: false,
+}
 
 interface AIBudgetRow {
   id: string
@@ -18,6 +20,10 @@ interface AIBudgetRow {
   alert_threshold_50: boolean
   alert_threshold_80: boolean
   alert_threshold_100: boolean
+  ai_disabled: boolean
+  default_user_agent_allowance_usd: string | null
+  operator_ceiling_usd: string
+  operator_ai_disabled: boolean
   created_at: Date
   updated_at: Date
 }
@@ -27,6 +33,8 @@ interface AIUserQuotaRow {
   workspace_id: string
   user_id: string
   monthly_quota_usd: string | null
+  agent_allowance_usd: string | null
+  ai_disabled: boolean
   created_at: Date
   updated_at: Date
 }
@@ -48,6 +56,10 @@ export interface AIBudget {
   alertThreshold50: boolean
   alertThreshold80: boolean
   alertThreshold100: boolean
+  aiDisabled: boolean
+  defaultUserAgentAllowanceUsd: number | null
+  operatorCeilingUsd: number
+  operatorAiDisabled: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -57,6 +69,8 @@ export interface AIUserQuota {
   workspaceId: string
   userId: string
   monthlyQuotaUsd: number | null
+  agentAllowanceUsd: number | null
+  aiDisabled: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -78,6 +92,9 @@ export interface UpsertAIBudgetParams {
   alertThreshold50?: boolean
   alertThreshold80?: boolean
   alertThreshold100?: boolean
+  aiDisabled?: boolean
+  /** Undefined keeps the stored value; null clears it. */
+  defaultUserAgentAllowanceUsd?: number | null
 }
 
 export interface SpendPosition {
@@ -109,6 +126,8 @@ export interface UpsertAIUserQuotaParams {
   workspaceId: string
   userId: string
   monthlyQuotaUsd: number | null
+  agentAllowanceUsd: number | null
+  aiDisabled: boolean
 }
 
 export interface InsertAIAlertParams {
@@ -132,6 +151,10 @@ function mapRowToBudget(row: AIBudgetRow): AIBudget {
     alertThreshold50: row.alert_threshold_50,
     alertThreshold80: row.alert_threshold_80,
     alertThreshold100: row.alert_threshold_100,
+    aiDisabled: row.ai_disabled,
+    defaultUserAgentAllowanceUsd: parseNullableUsd(row.default_user_agent_allowance_usd),
+    operatorCeilingUsd: parseFloat(row.operator_ceiling_usd),
+    operatorAiDisabled: row.operator_ai_disabled,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -143,6 +166,8 @@ function mapRowToQuota(row: AIUserQuotaRow): AIUserQuota {
     workspaceId: row.workspace_id,
     userId: row.user_id,
     monthlyQuotaUsd: parseNullableUsd(row.monthly_quota_usd),
+    agentAllowanceUsd: parseNullableUsd(row.agent_allowance_usd),
+    aiDisabled: row.ai_disabled,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -163,10 +188,11 @@ function mapRowToAlert(row: AIAlertRow): AIAlert {
 const BUDGET_FIELDS = `
   id, workspace_id, monthly_budget_usd,
   alert_threshold_50, alert_threshold_80, alert_threshold_100,
+  ai_disabled, default_user_agent_allowance_usd, operator_ceiling_usd, operator_ai_disabled,
   created_at, updated_at
 `
 
-const QUOTA_FIELDS = `id, workspace_id, user_id, monthly_quota_usd, created_at, updated_at`
+const QUOTA_FIELDS = `id, workspace_id, user_id, monthly_quota_usd, agent_allowance_usd, ai_disabled, created_at, updated_at`
 const ALERT_FIELDS = `id, workspace_id, user_id, alert_type, threshold_percent, period_start, created_at`
 
 export const AIBudgetRepository = {
@@ -182,32 +208,44 @@ export const AIBudgetRepository = {
   /**
    * Atomic upsert with partial update semantics: INSERT applies defaults for
    * unprovided fields, UPDATE preserves existing values for them. Avoids
-   * find-then-update races (INV-20).
+   * find-then-update races (INV-20). Operator columns are never written here.
    */
   async upsertPartial(db: Querier, params: UpsertAIBudgetParams): Promise<AIBudget> {
     const monthlyBudgetUsd = params.monthlyBudgetUsd ?? null
     const alertThreshold50 = params.alertThreshold50 ?? null
     const alertThreshold80 = params.alertThreshold80 ?? null
     const alertThreshold100 = params.alertThreshold100 ?? null
+    const aiDisabled = params.aiDisabled ?? null
+    const allowanceProvided = params.defaultUserAgentAllowanceUsd !== undefined
+    const defaultUserAgentAllowanceUsd = params.defaultUserAgentAllowanceUsd ?? null
+    const defaults = DEFAULT_AI_BUDGET_CONFIG
 
     const result = await db.query<AIBudgetRow>(sql`
       INSERT INTO ai_budgets (
         id, workspace_id, monthly_budget_usd,
-        alert_threshold_50, alert_threshold_80, alert_threshold_100
+        alert_threshold_50, alert_threshold_80, alert_threshold_100,
+        ai_disabled, default_user_agent_allowance_usd
       )
       VALUES (
         ${params.id},
         ${params.workspaceId},
-        COALESCE(${monthlyBudgetUsd}::numeric, ${DEFAULT_MONTHLY_BUDGET_USD}),
-        COALESCE(${alertThreshold50}, true),
-        COALESCE(${alertThreshold80}, true),
-        COALESCE(${alertThreshold100}, true)
+        COALESCE(${monthlyBudgetUsd}::numeric, ${defaults.monthlyBudgetUsd}),
+        COALESCE(${alertThreshold50}::boolean, ${defaults.alertThreshold50}),
+        COALESCE(${alertThreshold80}::boolean, ${defaults.alertThreshold80}),
+        COALESCE(${alertThreshold100}::boolean, ${defaults.alertThreshold100}),
+        COALESCE(${aiDisabled}::boolean, ${defaults.aiDisabled}),
+        ${defaultUserAgentAllowanceUsd}::numeric
       )
       ON CONFLICT (workspace_id) DO UPDATE SET
         monthly_budget_usd = COALESCE(${monthlyBudgetUsd}, ai_budgets.monthly_budget_usd),
         alert_threshold_50 = COALESCE(${alertThreshold50}, ai_budgets.alert_threshold_50),
         alert_threshold_80 = COALESCE(${alertThreshold80}, ai_budgets.alert_threshold_80),
         alert_threshold_100 = COALESCE(${alertThreshold100}, ai_budgets.alert_threshold_100),
+        ai_disabled = COALESCE(${aiDisabled}::boolean, ai_budgets.ai_disabled),
+        default_user_agent_allowance_usd = CASE
+          WHEN ${allowanceProvided}::boolean THEN ${defaultUserAgentAllowanceUsd}::numeric
+          ELSE ai_budgets.default_user_agent_allowance_usd
+        END,
         updated_at = NOW()
       RETURNING ${sql.raw(BUDGET_FIELDS)}
     `)
@@ -231,8 +269,8 @@ export const AIBudgetRepository = {
       user_agent_spend_usd: string
     }>(sql`
       SELECT
-        COALESCE(b.monthly_budget_usd, ${DEFAULT_MONTHLY_BUDGET_USD}) AS monthly_budget_usd,
-        COALESCE(b.operator_ceiling_usd, ${DEFAULT_OPERATOR_CEILING_USD}) AS operator_ceiling_usd,
+        COALESCE(b.monthly_budget_usd, ${DEFAULT_AI_BUDGET_CONFIG.monthlyBudgetUsd}) AS monthly_budget_usd,
+        COALESCE(b.operator_ceiling_usd, ${DEFAULT_AI_BUDGET_CONFIG.operatorCeilingUsd}) AS operator_ceiling_usd,
         COALESCE(b.ai_disabled, false) AS workspace_ai_disabled,
         COALESCE(b.operator_ai_disabled, false) AS operator_ai_disabled,
         b.default_user_agent_allowance_usd,
@@ -278,15 +316,6 @@ export const AIBudgetRepository = {
     }
   },
 
-  async findUserQuota(db: Querier, workspaceId: string, userId: string): Promise<AIUserQuota | null> {
-    const result = await db.query<AIUserQuotaRow>(sql`
-      SELECT ${sql.raw(QUOTA_FIELDS)} FROM ai_user_quotas
-      WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
-    `)
-    if (!result.rows[0]) return null
-    return mapRowToQuota(result.rows[0])
-  },
-
   async listUserQuotas(db: Querier, workspaceId: string): Promise<AIUserQuota[]> {
     const result = await db.query<AIUserQuotaRow>(sql`
       SELECT ${sql.raw(QUOTA_FIELDS)} FROM ai_user_quotas
@@ -298,22 +327,30 @@ export const AIBudgetRepository = {
 
   async upsertUserQuota(db: Querier, params: UpsertAIUserQuotaParams): Promise<AIUserQuota> {
     const result = await db.query<AIUserQuotaRow>(sql`
-      INSERT INTO ai_user_quotas (id, workspace_id, user_id, monthly_quota_usd)
-      VALUES (${params.id}, ${params.workspaceId}, ${params.userId}, ${params.monthlyQuotaUsd})
+      INSERT INTO ai_user_quotas (id, workspace_id, user_id, monthly_quota_usd, agent_allowance_usd, ai_disabled)
+      VALUES (
+        ${params.id},
+        ${params.workspaceId},
+        ${params.userId},
+        ${params.monthlyQuotaUsd},
+        ${params.agentAllowanceUsd},
+        ${params.aiDisabled}
+      )
       ON CONFLICT (workspace_id, user_id) DO UPDATE SET
         monthly_quota_usd = EXCLUDED.monthly_quota_usd,
+        agent_allowance_usd = EXCLUDED.agent_allowance_usd,
+        ai_disabled = EXCLUDED.ai_disabled,
         updated_at = NOW()
       RETURNING ${sql.raw(QUOTA_FIELDS)}
     `)
     return mapRowToQuota(result.rows[0])
   },
 
-  async deleteUserQuota(db: Querier, workspaceId: string, userId: string): Promise<boolean> {
-    const result = await db.query(sql`
+  async deleteUserQuota(db: Querier, workspaceId: string, userId: string): Promise<void> {
+    await db.query(sql`
       DELETE FROM ai_user_quotas
       WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
     `)
-    return result.rowCount !== null && result.rowCount > 0
   },
 
   async findAlert(
@@ -348,31 +385,5 @@ export const AIBudgetRepository = {
       RETURNING ${sql.raw(ALERT_FIELDS)}
     `)
     return mapRowToAlert(result.rows[0])
-  },
-
-  async listAlerts(
-    db: Querier,
-    workspaceId: string,
-    periodStart: Date,
-    options?: { userId?: string }
-  ): Promise<AIAlert[]> {
-    if (options?.userId) {
-      const result = await db.query<AIAlertRow>(sql`
-        SELECT ${sql.raw(ALERT_FIELDS)} FROM ai_alerts
-        WHERE workspace_id = ${workspaceId}
-          AND period_start = ${periodStart}
-          AND user_id = ${options.userId}
-        ORDER BY created_at DESC
-      `)
-      return result.rows.map(mapRowToAlert)
-    }
-
-    const result = await db.query<AIAlertRow>(sql`
-      SELECT ${sql.raw(ALERT_FIELDS)} FROM ai_alerts
-      WHERE workspace_id = ${workspaceId}
-        AND period_start = ${periodStart}
-      ORDER BY created_at DESC
-    `)
-    return result.rows.map(mapRowToAlert)
   },
 }

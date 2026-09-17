@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom"
 import { ArrowLeft, DollarSign } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { useAIBudget, useAIUsage, useUpdateAIBudget } from "@/hooks"
+import { useAIBudget, useAIUsage, useAIUserLimits, useUpdateAIBudget } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { UsageTimezoneSelector } from "@/components/ai-usage/timezone-selector"
@@ -47,32 +47,35 @@ export function AIUsageAdminPage() {
 
   const { data: usage, isLoading: usageLoading } = useAIUsage(workspaceId ?? "", timezone)
   const { data: budget, isLoading: budgetLoading } = useAIBudget(workspaceId ?? "", timezone)
+  const { data: userLimits } = useAIUserLimits(workspaceId ?? "")
 
   // Local state for the inline-editable budget. Synced from server, committed
   // on blur.
-  const initialBudget = budget?.budget?.monthlyBudgetUsd ?? 50
-  const [localBudget, setLocalBudget] = useState<string>(String(initialBudget))
+  const [localBudget, setLocalBudget] = useState<string>(budget?.budget.monthlyBudgetUsd.toString() ?? "")
 
   const updateBudget = useUpdateAIBudget(workspaceId ?? "", timezone)
 
   useEffect(() => {
-    if (budget?.budget?.monthlyBudgetUsd !== undefined) {
+    if (budget?.budget.monthlyBudgetUsd !== undefined) {
       setLocalBudget(budget.budget.monthlyBudgetUsd.toString())
     }
-  }, [budget?.budget?.monthlyBudgetUsd])
+  }, [budget?.budget.monthlyBudgetUsd])
 
   const handleBudgetCommit = useCallback(() => {
     const value = parseFloat(localBudget)
-    const serverValue = budget?.budget?.monthlyBudgetUsd
+    const serverValue = budget?.budget.monthlyBudgetUsd
     if (!isNaN(value) && value >= 0) {
       if (value !== serverValue) {
-        updateBudget.mutate({ monthlyBudgetUsd: value })
+        updateBudget.mutate(
+          { monthlyBudgetUsd: value },
+          { onError: () => serverValue !== undefined && setLocalBudget(serverValue.toString()) }
+        )
       }
     } else if (serverValue !== undefined) {
       // Invalid entry — revert the input so the display matches the server.
       setLocalBudget(serverValue.toString())
     }
-  }, [localBudget, budget?.budget?.monthlyBudgetUsd, updateBudget])
+  }, [localBudget, budget?.budget.monthlyBudgetUsd, updateBudget])
 
   const userNames = useMemo(() => {
     const map = new Map<string, string>()
@@ -98,19 +101,29 @@ export function AIUsageAdminPage() {
   const optimisticBudget = useMemo(() => {
     const parsed = parseFloat(localBudget)
     if (!isNaN(parsed) && parsed >= 0) return parsed
-    return budget?.budget?.monthlyBudgetUsd ?? 50
-  }, [localBudget, budget?.budget?.monthlyBudgetUsd])
+    return budget?.budget.monthlyBudgetUsd ?? 0
+  }, [localBudget, budget?.budget.monthlyBudgetUsd])
 
   const metrics = useMemo<BudgetMetrics>(
     () =>
       computeMetrics({
         totalCost: usage?.total.totalCostUsd ?? 0,
         budgetAmount: optimisticBudget,
-        percentUsed: optimisticBudget > 0 ? ((usage?.total.totalCostUsd ?? 0) / optimisticBudget) * 100 : 0,
+        operatorCeilingUsd: budget?.budget.operatorCeilingUsd,
+        aiDisabled: budget?.budget.aiDisabled ?? false,
+        operatorAiDisabled: budget?.budget.operatorAiDisabled ?? false,
         periodStart: usage?.period.start ?? new Date().toISOString(),
         periodEnd: usage?.period.end ?? new Date().toISOString(),
       }),
-    [usage?.total.totalCostUsd, usage?.period.start, usage?.period.end, optimisticBudget]
+    [
+      usage?.total.totalCostUsd,
+      usage?.period.start,
+      usage?.period.end,
+      optimisticBudget,
+      budget?.budget.operatorCeilingUsd,
+      budget?.budget.aiDisabled,
+      budget?.budget.operatorAiDisabled,
+    ]
   )
 
   if (!workspaceId) {
@@ -175,8 +188,10 @@ export function AIUsageAdminPage() {
                 isLoading={usageLoading}
               />
               <TopSpendersCard
+                workspaceId={workspaceId}
                 byUser={usage?.byUser ?? []}
                 userNames={userNames}
+                userLimits={userLimits?.limits ?? []}
                 assistantTotal={assistantCost}
                 isLoading={usageLoading}
               />

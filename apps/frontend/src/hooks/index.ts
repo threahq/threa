@@ -184,7 +184,16 @@ export { useCoordinatedStreamQueries } from "./use-coordinated-stream-queries"
 
 export { useStreamError, type StreamErrorType, type StreamError } from "./use-stream-error"
 
-export { useAIUsage, useAIRecentUsage, useAIBudget, useUpdateAIBudget, aiUsageKeys } from "./use-ai-usage"
+export {
+  useAIUsage,
+  useAIRecentUsage,
+  useAIBudget,
+  useUpdateAIBudget,
+  useAIUserLimits,
+  useSetAIUserLimits,
+  useResetAIUserLimits,
+  aiUsageKeys,
+} from "./use-ai-usage"
 
 export { useThreadAncestors } from "./use-thread-ancestors"
 

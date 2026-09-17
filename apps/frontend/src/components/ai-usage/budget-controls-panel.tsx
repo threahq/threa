@@ -1,12 +1,12 @@
-import { useCallback } from "react"
-import { Bell } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Bell, Power } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useUpdateAIBudget } from "@/hooks"
-import { AI_SPEND_STAGE_CUTOFFS, type UpdateAIBudgetInput } from "@threahq/types"
+import { AI_SPEND_STAGE_CUTOFFS, type AIBudgetConfig } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { formatCurrency, type BudgetMetrics } from "./metrics"
 import { SectionLabel } from "./primitives"
@@ -23,12 +23,7 @@ export function BudgetControlsPanel({
   isLoading,
 }: {
   workspaceId: string
-  budget: {
-    monthlyBudgetUsd: number
-    alertThreshold50: boolean
-    alertThreshold80: boolean
-    alertThreshold100: boolean
-  } | null
+  budget: AIBudgetConfig | null
   nextReset: string
   /**
    * The zone the dashboard's month window is drawn in. Keys the budget mutation
@@ -42,13 +37,32 @@ export function BudgetControlsPanel({
   isLoading: boolean
 }) {
   const updateBudget = useUpdateAIBudget(workspaceId, reportingTimezone)
+  const serverAllowance = budget?.defaultUserAgentAllowanceUsd ?? null
+  const [allowanceDraft, setAllowanceDraft] = useState(serverAllowance === null ? "" : String(serverAllowance))
 
-  const handleUpdate = useCallback(
-    (updates: UpdateAIBudgetInput) => {
-      updateBudget.mutate(updates)
-    },
-    [updateBudget]
-  )
+  useEffect(() => {
+    setAllowanceDraft(serverAllowance === null ? "" : String(serverAllowance))
+  }, [serverAllowance])
+
+  const saveAllowance = (value: number | null) =>
+    updateBudget.mutate(
+      { defaultUserAgentAllowanceUsd: value },
+      { onError: () => setAllowanceDraft(serverAllowance === null ? "" : String(serverAllowance)) }
+    )
+
+  const commitAllowance = () => {
+    const trimmed = allowanceDraft.trim()
+    if (trimmed === "") {
+      if (serverAllowance !== null) saveAllowance(null)
+      return
+    }
+    const value = parseFloat(trimmed)
+    if (isNaN(value) || value < 0) {
+      setAllowanceDraft(serverAllowance === null ? "" : String(serverAllowance))
+      return
+    }
+    if (value !== serverAllowance) saveAllowance(value)
+  }
 
   if (isLoading) {
     return (
@@ -106,11 +120,76 @@ export function BudgetControlsPanel({
           </div>
           <p className="text-xs text-muted-foreground">
             Hard monthly limit · resets {resetDateStr} · currently {formatCurrency(metrics.totalCost)} of{" "}
-            {formatCurrency(metrics.budgetAmount, 0)} used
+            {formatCurrency(metrics.enforcedLimit, 0)} used
           </p>
+          {budget && budget.operatorCeilingUsd < metrics.budgetAmount && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Threa caps this workspace at {formatCurrency(budget.operatorCeilingUsd, 0)}, so the stop points use that
+              amount.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
-            Agents stop at {formatCurrency(metrics.budgetAmount * AI_SPEND_STAGE_CUTOFFS.agents, 0)}, background AI
-            winds down after that, and everything stops at {formatCurrency(metrics.budgetAmount, 0)}.
+            Agents stop at {formatCurrency(metrics.enforcedLimit * AI_SPEND_STAGE_CUTOFFS.agents, 0)}, background AI
+            winds down after that, and everything stops at {formatCurrency(metrics.enforcedLimit, 0)}.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          {budget?.operatorAiDisabled && (
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+              Threa has turned AI off for this workspace.
+            </p>
+          )}
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-md border border-border/60 p-3 transition-colors",
+              budget?.aiDisabled && "border-destructive/40 bg-destructive/5"
+            )}
+          >
+            <Label htmlFor="ai-disabled" className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="flex items-center gap-2 text-sm font-medium">
+                <Power className="h-3.5 w-3.5 text-muted-foreground" />
+                Turn off AI
+              </span>
+              <span className="text-xs font-normal text-muted-foreground">
+                {budget?.aiDisabled
+                  ? "All AI in this workspace is stopped."
+                  : "Stops every AI feature for everyone in the workspace."}
+              </span>
+            </Label>
+            <Switch
+              id="ai-disabled"
+              checked={budget?.aiDisabled ?? false}
+              disabled={updateBudget.isPending}
+              onCheckedChange={(checked) => updateBudget.mutate({ aiDisabled: checked })}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <Label
+            htmlFor="default-agent-allowance"
+            className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+          >
+            Default agent allowance per person
+          </Label>
+          <div className="flex items-baseline gap-1 border-b border-border pb-1 focus-within:border-primary">
+            <span className="text-sm font-semibold tabular-nums text-muted-foreground">$</span>
+            <Input
+              id="default-agent-allowance"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="decimal"
+              placeholder="No default"
+              value={allowanceDraft}
+              onChange={(e) => setAllowanceDraft(e.target.value)}
+              onBlur={commitAllowance}
+              className="h-auto w-full rounded-none border-0 bg-transparent px-0 text-base font-semibold tabular-nums shadow-none focus-visible:ring-0"
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Monthly agent spend for anyone without their own allowance. Leave empty for no default.
           </p>
         </div>
 
@@ -144,7 +223,7 @@ export function BudgetControlsPanel({
               },
             ].map((t) => {
               const hit = thresholdHit(t.pct)
-              const thresholdAmount = metrics.budgetAmount * (t.pct / 100)
+              const thresholdAmount = metrics.enforcedLimit * (t.pct / 100)
               return (
                 <div
                   key={t.id}
@@ -173,7 +252,8 @@ export function BudgetControlsPanel({
                   <Switch
                     id={t.id}
                     checked={t.checked}
-                    onCheckedChange={(checked) => handleUpdate({ [t.key]: checked })}
+                    disabled={updateBudget.isPending}
+                    onCheckedChange={(checked) => updateBudget.mutate({ [t.key]: checked })}
                   />
                 </div>
               )

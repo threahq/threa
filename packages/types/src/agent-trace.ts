@@ -1,5 +1,6 @@
 import type { AgentSessionStatus, AgentStepType, AuthoredByKind, ToolVerificationStatus } from "./constants"
 import type { AgentToolEffect } from "./tool-effects"
+import type { AISpendDenialReason } from "./api"
 
 export const TRACE_SOURCE_TYPES = ["web", "workspace", "workspace_message", "workspace_memo", "github"] as const
 export type TraceSourceType = (typeof TRACE_SOURCE_TYPES)[number]
@@ -184,6 +185,8 @@ export interface AgentSessionFailedPayload {
   sessionId: string
   stepCount: number
   error: string
+  /** Set when a spend limit stopped the session, so the card can say which one. */
+  spendDenial?: AISpendDenialReason
   traceId: string
   effects?: AgentToolEffect[]
   failedAt: string

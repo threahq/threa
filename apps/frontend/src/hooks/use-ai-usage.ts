@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { aiUsageApi } from "@/api"
-import type { UpdateAIBudgetInput, AIBudgetResponse } from "@threahq/types"
+import type { UpdateAIBudgetInput, AIBudgetResponse, SetAIUserLimitsInput } from "@threahq/types"
 
 // Usage and budget responses are bucketed into days and a month window by the
 // timezone the caller asks for, so the zone is part of the identity of the
@@ -10,6 +11,7 @@ export const aiUsageKeys = {
   usage: (workspaceId: string, timezone: string) => [...aiUsageKeys.all, "usage", workspaceId, timezone] as const,
   recentUsage: (workspaceId: string) => [...aiUsageKeys.all, "recent", workspaceId] as const,
   budget: (workspaceId: string, timezone: string) => [...aiUsageKeys.all, "budget", workspaceId, timezone] as const,
+  userLimits: (workspaceId: string) => [...aiUsageKeys.all, "user-limits", workspaceId] as const,
 }
 
 /**
@@ -61,5 +63,33 @@ export function useUpdateAIBudget(workspaceId: string, timezone: string | null) 
         predicate: (query) => query.queryKey[query.queryKey.length - 1] !== timezone,
       })
     },
+    onError: () => toast.error("Could not save AI budget"),
+  })
+}
+
+export function useAIUserLimits(workspaceId: string) {
+  return useQuery({
+    queryKey: aiUsageKeys.userLimits(workspaceId),
+    queryFn: () => aiUsageApi.listUserLimits(workspaceId),
+    enabled: !!workspaceId,
+  })
+}
+
+export function useSetAIUserLimits(workspaceId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ userId, input }: { userId: string; input: SetAIUserLimitsInput }) =>
+      aiUsageApi.setUserLimits(workspaceId, userId, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiUsageKeys.userLimits(workspaceId) }),
+  })
+}
+
+export function useResetAIUserLimits(workspaceId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (userId: string) => aiUsageApi.resetUserLimits(workspaceId, userId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: aiUsageKeys.userLimits(workspaceId) }),
   })
 }

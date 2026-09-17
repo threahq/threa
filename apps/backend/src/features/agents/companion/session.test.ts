@@ -293,10 +293,17 @@ describe("withCompanionSession", () => {
 
     expect({
       result,
-      eventTypes: insertEventSpy.mock.calls.map(([, event]) => event.eventType),
+      events: insertEventSpy.mock.calls.map(([, event]) => ({
+        eventType: event.eventType,
+        hasSpendDenial: "spendDenial" in (event.payload as object),
+        spendDenial: (event.payload as { spendDenial?: string }).spendDenial,
+      })),
     }).toEqual({
       result: { status: "failed", sessionId: "session_1", willRetry: false, retryable: false },
-      eventTypes: ["agent_session:started", "agent_session:failed"],
+      events: [
+        { eventType: "agent_session:started", hasSpendDenial: false, spendDenial: undefined },
+        { eventType: "agent_session:failed", hasSpendDenial: true, spendDenial: "workspace_limit" },
+      ],
     })
   })
 
@@ -304,10 +311,8 @@ describe("withCompanionSession", () => {
     const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 4, maxAttempts: 5 })
 
     expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: false, retryable: true })
-    expect(insertEventSpy).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ eventType: "agent_session:failed" })
-    )
+    const failed = insertEventSpy.mock.calls.find(([, event]) => event.eventType === "agent_session:failed")
+    expect(failed && "spendDenial" in (failed[1].payload as object)).toBe(false)
     expect(insertOutboxSpy).toHaveBeenCalledWith(expect.anything(), "agent_session:failed", expect.anything())
   })
 

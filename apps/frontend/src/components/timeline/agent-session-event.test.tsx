@@ -229,6 +229,33 @@ describe("AgentSessionEvent", () => {
     })
   })
 
+  describe("Spend-denied failure", () => {
+    it("says which limit stopped the session instead of a bare failure", () => {
+      const startedEvent = createSessionEvent("agent_session:started", {
+        sessionId: "session_spend",
+        personaId: "persona_1",
+        personaName: "Ariadne",
+        triggerMessageId: "msg_1",
+        startedAt: "2026-02-19T18:00:00.000Z",
+      })
+      const failedEvent = createSessionEvent("agent_session:failed", {
+        sessionId: "session_spend",
+        stepCount: 1,
+        error: "AI spend limit reached",
+        spendDenial: "user_agent_allowance",
+        traceId: "session_spend",
+        failedAt: "2026-02-19T18:00:02.000Z",
+      })
+
+      renderEvent(<AgentSessionEvent workspaceId={WS} events={[startedEvent, failedEvent]} />)
+
+      expect(screen.getByText("Session stopped")).toBeInTheDocument()
+      expect(screen.getByText("1 step • Agent allowance used up")).toBeInTheDocument()
+      expect(screen.queryByText("Session failed")).not.toBeInTheDocument()
+      expect(screen.queryByText(/Error during execution/)).not.toBeInTheDocument()
+    })
+  })
+
   describe("Stop / Redirect actions", () => {
     const runningEvents: StreamEvent[] = [
       createSessionEvent("agent_session:started", {

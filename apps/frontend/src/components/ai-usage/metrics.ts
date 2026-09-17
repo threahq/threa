@@ -24,6 +24,8 @@ export interface BudgetMetrics {
   statusCopy: string
   totalCost: number
   budgetAmount: number
+  /** The limit spend is enforced against: the budget, or Threa's ceiling when that is lower. */
+  enforcedLimit: number
   percentUsed: number
   projectedTotal: number
   projectedOverage: number
@@ -39,7 +41,10 @@ export interface BudgetMetrics {
 export function computeMetrics(opts: {
   totalCost: number
   budgetAmount: number
-  percentUsed: number
+  /** Undefined only while the budget is still loading. */
+  operatorCeilingUsd: number | undefined
+  aiDisabled: boolean
+  operatorAiDisabled: boolean
   periodStart: string
   periodEnd: string
 }): BudgetMetrics {
@@ -52,35 +57,45 @@ export function computeMetrics(opts: {
   const daysElapsed = Math.max(0.5, Math.min(daysTotal, daysElapsedRaw))
   const daysRemaining = Math.max(0, daysTotal - Math.floor(daysElapsed))
 
+  const enforcedLimit = Math.min(opts.budgetAmount, opts.operatorCeilingUsd ?? opts.budgetAmount)
+  // The gate denies everything at a $0 limit, so it reads as fully used.
+  const percentUsed = enforcedLimit > 0 ? (opts.totalCost / enforcedLimit) * 100 : 100
   const dailyAvg = opts.totalCost / daysElapsed
   const projectedTotal = dailyAvg * daysTotal
-  const projectedOverage = Math.max(0, projectedTotal - opts.budgetAmount)
-  const projectedPercent = opts.budgetAmount > 0 ? (projectedTotal / opts.budgetAmount) * 100 : 0
+  const projectedOverage = Math.max(0, projectedTotal - enforcedLimit)
+  const projectedPercent = enforcedLimit > 0 ? (projectedTotal / enforcedLimit) * 100 : 0
 
+  const aiOff = opts.aiDisabled || opts.operatorAiDisabled
   let status: Status = "on_track"
-  if (opts.percentUsed >= 100 || projectedPercent > 110) status = "over"
+  if (aiOff || percentUsed >= 100 || projectedPercent > 110) status = "over"
   else if (projectedPercent > 100) status = "at_risk"
 
   let budgetBustDate: Date | null = null
-  if (dailyAvg > 0 && projectedTotal > opts.budgetAmount && opts.totalCost < opts.budgetAmount) {
-    const daysUntilBust = opts.budgetAmount / dailyAvg
+  if (dailyAvg > 0 && projectedTotal > enforcedLimit && opts.totalCost < enforcedLimit) {
+    const daysUntilBust = enforcedLimit / dailyAvg
     if (daysUntilBust > daysElapsed && daysUntilBust <= daysTotal) {
       budgetBustDate = new Date(periodStart.getTime() + daysUntilBust * MS_PER_DAY)
     }
   }
 
   let statusCopy: string
-  if (status === "on_track") {
+  if (opts.operatorAiDisabled) {
+    statusCopy = "Threa has turned AI off for this workspace."
+  } else if (opts.aiDisabled) {
+    statusCopy = "AI is turned off for this workspace."
+  } else if (enforcedLimit <= 0) {
+    statusCopy = "The limit is $0, so AI is off."
+  } else if (status === "on_track") {
     statusCopy =
       projectedTotal > 0
-        ? `Expected to finish within budget at ${formatCurrency(projectedTotal)}.`
+        ? `Expected to finish within the limit at ${formatCurrency(projectedTotal)}.`
         : "No AI spend recorded yet this cycle."
   } else if (status === "at_risk") {
-    statusCopy = `Expected to finish ${formatCurrency(projectedOverage)} over budget.`
-  } else if (opts.percentUsed >= 100) {
-    statusCopy = `Currently ${formatCurrency(opts.totalCost - opts.budgetAmount)} over budget.`
+    statusCopy = `Expected to reach the limit before the cycle ends.`
+  } else if (percentUsed >= 100) {
+    statusCopy = `Limit reached. AI is off until the cycle resets.`
   } else {
-    statusCopy = `Expected to finish ${formatCurrency(projectedOverage)} over budget.`
+    statusCopy = `Expected to reach the limit before the cycle ends.`
   }
 
   return {
@@ -88,7 +103,8 @@ export function computeMetrics(opts: {
     statusCopy,
     totalCost: opts.totalCost,
     budgetAmount: opts.budgetAmount,
-    percentUsed: opts.percentUsed,
+    enforcedLimit,
+    percentUsed,
     projectedTotal,
     projectedOverage,
     dailyAvg,
