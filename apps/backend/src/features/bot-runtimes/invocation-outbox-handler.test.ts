@@ -371,7 +371,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
 
   it("passes only source identity so an old payload cannot stamp stale content", async () => {
     const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
-    const handler = new BotInvocationOutboxHandler(pool)
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
 
     await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
       createdPayload
@@ -385,7 +385,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
       { botId: "bot_1", streamId: "stream_1", rootStreamId: "stream_root", contentMarkdown: "Link Scout" },
     ])
     const createMessage = spyOn(EventService.prototype, "createGeneratedMessage").mockResolvedValue(undefined as never)
-    const handler = new BotInvocationOutboxHandler(pool)
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
 
     await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
       createdPayload
@@ -405,7 +405,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
       { botId: "bot_1", streamId: "stream_1", rootStreamId: "stream_root", contentMarkdown: "Link Scout" },
     ])
     spyOn(EventService.prototype, "createGeneratedMessage").mockRejectedValue(createStreamReadOnlyError("not_a_member"))
-    const handler = new BotInvocationOutboxHandler(pool)
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
 
     await expect(
       (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
@@ -416,7 +416,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
 
   it("routes deletion through the same canonical reconciliation service", async () => {
     const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
-    const handler = new BotInvocationOutboxHandler(pool)
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
 
     await (handler as unknown as { processMessageDeleted(payload: unknown): Promise<void> }).processMessageDeleted({
       workspaceId: "ws_1",
@@ -428,7 +428,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
 
   it("repairs a migration-cancelled session if an old replica starts it after startup", async () => {
     const repair = spyOn(BotRuntimeService.prototype, "repairDeletedSourceSession").mockResolvedValue(true)
-    const handler = new BotInvocationOutboxHandler(pool)
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
 
     await (
       handler as unknown as { processAgentSessionStarted(payload: unknown): Promise<void> }
@@ -445,7 +445,7 @@ describe("BotInvocationOutboxHandler stream lifecycle", () => {
   it("ends and restores runtime session links", async () => {
     const end = spyOn(BotRuntimeService.prototype, "endSessionsForArchivedStream").mockResolvedValue(1)
     const restore = spyOn(BotRuntimeService.prototype, "restoreSessionsForUnarchivedStream").mockResolvedValue(1)
-    const handler = new BotInvocationOutboxHandler(pool)
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
     const privateHandler = handler as unknown as {
       processStreamArchived(payload: unknown): Promise<void>
       processStreamUnarchived(payload: unknown): Promise<void>

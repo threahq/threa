@@ -10,7 +10,7 @@ import {
   type StreamUnarchivedOutboxPayload,
 } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { BotRuntimeService } from "./service"
+import type { BotRuntimeService } from "./service"
 import { EventService } from "../messaging"
 
 const DEFAULT_CONFIG = {
@@ -32,9 +32,9 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private readonly service: BotRuntimeService
   private readonly eventService: EventService
 
-  constructor(pool: Pool, eventService = new EventService(pool)) {
+  constructor(pool: Pool, service: BotRuntimeService, eventService = new EventService(pool)) {
     this.pool = pool
-    this.service = new BotRuntimeService({ pool })
+    this.service = service
     this.eventService = eventService
     this.cursorLock = new CursorLock({
       pool,

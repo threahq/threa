@@ -41,6 +41,7 @@ export function listServerCommandInfos(commandRegistry: CommandRegistry): Comman
       description: cmd.description,
       kind: CommandKinds.SERVER,
       scope: CommandScopes.WORKSPACE,
+      ...(cmd.args ? { args: cmd.args } : {}),
     }
   })
 }

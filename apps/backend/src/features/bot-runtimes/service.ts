@@ -1109,6 +1109,34 @@ export class BotRuntimeService {
     })
   }
 
+  private async createReplyThreads(
+    db: Querier,
+    workspaceId: string,
+    routes: CanonicalInvocationRoute[]
+  ): Promise<CanonicalInvocationRoute[]> {
+    const results: CanonicalInvocationRoute[] = []
+    for (const route of routes) {
+      if (!route.replyThreadAnchorId) {
+        results.push(route)
+        continue
+      }
+      if (!this.streamService) throw new Error("BotRuntimeService missing thread reply dependencies")
+      const thread = await this.streamService.createThreadForPrincipalOn(
+        db,
+        { kind: "bot", botId: route.actorId },
+        {
+          workspaceId,
+          parentStreamId: route.activeStreamId,
+          parentAnchorId: route.replyThreadAnchorId,
+          createdBy: route.actorId,
+          createdByType: "bot",
+        }
+      )
+      results.push({ ...route, responseStreamId: thread.id, replyThreadAnchorId: null })
+    }
+    return results
+  }
+
   private async reconcileInvocationSourceInTransaction(
     db: Querier,
     params: { workspaceId: string; sourceMessageId: string },
@@ -1127,7 +1155,11 @@ export class BotRuntimeService {
       return []
     }
 
-    const routes = await resolveCanonicalInvocationRoutes(db, source)
+    const routes = await this.createReplyThreads(
+      db,
+      params.workspaceId,
+      await resolveCanonicalInvocationRoutes(db, source)
+    )
     const dispatchable = routes.filter((route) => !route.missingLinkNotice)
     const cancelled = await BotInvocationRepository.cancelActiveRoutesNotDesired(
       db,

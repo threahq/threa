@@ -22,3 +22,4 @@ export { createCommandWorker } from "./worker"
 export type { CommandWorkerDeps, CommandCompletedPayload, CommandFailedPayload } from "./worker"
 
 export { InviteCommand } from "./invite-command"
+export { RepliesCommand } from "./replies-command"
