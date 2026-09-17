@@ -4,6 +4,8 @@ import {
   BOT_INVOCATION_TRIGGERS,
   BOT_RUNTIME_KINDS,
   BOT_RUNTIME_SESSION_LINK_STATUSES,
+  RUNTIME_REPLY_MODES,
+  type RuntimeReplyMode,
   BOT_RUNTIME_STATUSES,
   UNROUTED_BOT_INVOCATION_TRIGGERS,
   type BotInvocationCapability,
@@ -84,6 +86,7 @@ export interface BotRuntimeSessionLink {
   rootStreamId: string
   activeStreamId: string
   status: RuntimeSessionLinkStatus
+  replyMode: RuntimeReplyMode
   linkedBy: string
   metadata: Record<string, unknown>
   lastSeenAt: Date | null
@@ -187,6 +190,7 @@ interface BotRuntimeSessionLinkRow {
   root_stream_id: string
   active_stream_id: string
   status: string
+  reply_mode: string
   linked_by: string
   metadata: Record<string, unknown>
   last_seen_at: Date | null
@@ -370,6 +374,7 @@ const knownInvocationStatuses = new Set<string>(BOT_INVOCATION_STATUSES)
 const knownInvocationTriggers = new Set<string>(BOT_INVOCATION_TRIGGERS)
 const knownInvocationCapabilities = new Set<string>(BOT_INVOCATION_CAPABILITIES)
 const knownLinkStatuses = new Set<string>(BOT_RUNTIME_SESSION_LINK_STATUSES)
+const knownReplyModes = new Set<string>(RUNTIME_REPLY_MODES)
 
 function assertKnown(value: string, known: Set<string>, label: string): void {
   if (!known.has(value)) throw new Error(`Unknown ${label}: ${value}`)
@@ -416,6 +421,7 @@ function mapRuntimeInstance(row: BotRuntimeInstanceRow): BotRuntimeInstance {
 function mapSessionLink(row: BotRuntimeSessionLinkRow): BotRuntimeSessionLink {
   assertKnown(row.runtime_kind, knownRuntimeKinds, "runtime kind")
   assertKnown(row.status, knownLinkStatuses, "runtime session link status")
+  assertKnown(row.reply_mode, knownReplyModes, "runtime reply mode")
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -426,6 +432,7 @@ function mapSessionLink(row: BotRuntimeSessionLinkRow): BotRuntimeSessionLink {
     rootStreamId: row.root_stream_id,
     activeStreamId: row.active_stream_id,
     status: row.status as RuntimeSessionLinkStatus,
+    replyMode: row.reply_mode as RuntimeReplyMode,
     linkedBy: row.linked_by,
     metadata: row.metadata,
     lastSeenAt: row.last_seen_at,
@@ -991,6 +998,16 @@ export const BotRuntimeSessionLinkRepository = {
         AND runtime_session_id = ${params.runtimeSessionId}
         AND status = 'active'
       RETURNING *`)
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
+
+  async setReplyMode(
+    db: Querier,
+    params: { workspaceId: string; linkId: string; replyMode: RuntimeReplyMode }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`UPDATE bot_runtime_session_links SET reply_mode = ${params.replyMode}, updated_at = NOW() WHERE workspace_id = ${params.workspaceId} AND id = ${params.linkId} AND status = 'active' RETURNING *`
+    )
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
 

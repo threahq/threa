@@ -205,7 +205,7 @@ import { LabelService, LabelAssignmentService, LabelMessageService } from "./fea
 import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AIBudgetService } from "./features/ai-usage"
-import { CommandRegistry, InviteCommand, createCommandWorker, CommandHandler } from "./features/commands"
+import { CommandRegistry, InviteCommand, RepliesCommand, createCommandWorker, CommandHandler } from "./features/commands"
 import {
   createImageCaptionWorker,
   createImageThumbnailWorker,
@@ -764,6 +764,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   const commandRegistry = new CommandRegistry()
   commandRegistry.register(new InviteCommand({ pool, streamService }))
+  commandRegistry.register(new RepliesCommand({ pool }))
 
   // WorkOS validates API keys in production, stub in dev.
   const apiKeyService = config.useStubAuth ? new StubApiKeyService() : new WorkosApiKeyService(config.workos)
@@ -1717,7 +1718,7 @@ export async function startServer(): Promise<ServerInstance> {
   const conversationEmbeddingHandler = new ConversationEmbeddingHandler(pool, jobQueue)
   const systemMessageOutboxHandler = new SystemMessageOutboxHandler(pool, systemMessageService)
   const activityFeedHandler = new ActivityFeedHandler(pool, activityService)
-  const botInvocationOutboxHandler = new BotInvocationOutboxHandler(pool, eventService)
+  const botInvocationOutboxHandler = new BotInvocationOutboxHandler(pool, botRuntimeService, eventService)
   const pushNotificationHandler = pushService.isEnabled()
     ? new PushNotificationHandler({ pool: pools.realtime, pushService })
     : null

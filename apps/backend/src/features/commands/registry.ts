@@ -5,6 +5,7 @@
  * the job queue when dispatched from the command endpoint.
  */
 
+import type { CommandArgumentInfo } from "@threahq/types"
 import { logger } from "../../lib/logger"
 
 export interface CommandContext {
@@ -27,6 +28,7 @@ export interface Command {
   /** Command name without leading slash (e.g., "invite") */
   name: string
   description: string
+  args?: CommandArgumentInfo[]
   execute(ctx: CommandContext): Promise<CommandResult>
 }
 

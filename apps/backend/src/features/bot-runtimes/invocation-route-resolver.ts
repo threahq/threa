@@ -2,6 +2,7 @@ import { resolveDeliveryVerdict, TrustTiers } from "@threahq/agent-runtime"
 import { collectMentionActorRefs, collectMentionSlugs } from "@threahq/prosemirror"
 import {
   AuthorTypes,
+  RuntimeReplyModes,
   StreamTypes,
   botHasCapability,
   type BotInvocationCapability,
@@ -13,7 +14,7 @@ import { resolveSealingContext } from "../e2e-streams"
 import { MESSAGE_METADATA_COMMAND_KEY, MessageVersionRepository, type InvocationSourceState } from "../messaging"
 import { BotRepository } from "../public-api"
 import { projectStreamForBot, StreamRepository, type Stream } from "../streams"
-import { BotInvocationRepository, BotRuntimeInstanceRepository } from "./repository"
+import { BotInvocationRepository, BotRuntimeInstanceRepository, type BotRuntimeSessionLink } from "./repository"
 import { resolveLinkedRuntimeRouteTarget } from "./runtime-route-selection"
 import { resolveRuntimeKindConfig } from "./runtime-kind-config"
 
@@ -24,6 +25,8 @@ export interface CanonicalInvocationRoute {
   rootStreamId: string
   activeStreamId: string
   responseStreamId: string
+  /** Set when the reply belongs in a thread on this message that does not exist yet; reconcile creates it. */
+  replyThreadAnchorId: string | null
   authorUserId: string
   mentionedActorSlugs: string[]
   targetInstanceId: string | null
@@ -189,6 +192,7 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
       rootStreamId: root?.id ?? stream.id,
       activeStreamId: stream.id,
       responseStreamId: stream.id,
+      replyThreadAnchorId: null,
       authorUserId: source.authorId,
       mentionedActorSlugs: slugs,
       targetInstanceId: null,
@@ -207,7 +211,10 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
   const bot = await BotRepository.findById(db, source.workspaceId, runtimeTarget.botId)
   if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return routes
   if (source.authorType === AuthorTypes.BOT && source.authorId === bot.id) return routes
-  if (mentionable.some((candidate) => candidate.id === bot.id)) return routes
+  if (mentionable.some((candidate) => candidate.id === bot.id)) {
+    const reply = await resolveReplyStream(db, source, stream, runtimeTarget.link)
+    return routes.map((route) => (route.actorId === bot.id ? { ...route, ...reply } : route))
+  }
   if ((mentionable.length > 0 || hasPersona) && !mentionedBotIds.includes(bot.id)) return routes
   if (!(await allows(db, source, stream, bot.id))) return routes
   const link = runtimeTarget.link
@@ -224,6 +231,7 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
     rootStreamId: root.id,
     activeStreamId: stream.id,
     responseStreamId: stream.id,
+    replyThreadAnchorId: null,
     authorUserId: source.authorId,
     mentionedActorSlugs: slugs,
     promptMarkdown: buildCanonicalInvocationPrompt(source),
@@ -241,9 +249,30 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
   }
   routes.push({
     ...activeScratchpadRoute,
+    ...(await resolveReplyStream(db, source, stream, link)),
     targetInstanceId: link?.instanceId ?? null,
     targetRuntimeSessionId: link?.runtimeSessionId ?? null,
     missingLinkNotice: null,
   })
   return routes
+}
+
+/**
+ * A session in thread reply mode answers a message posted at its scratchpad
+ * root in the thread anchored on that message. Claim re-resolves routes and
+ * compares `responseStreamId`, so once reconcile has created the thread this
+ * must find it and return its id.
+ */
+async function resolveReplyStream(
+  db: Querier,
+  source: InvocationSourceState,
+  stream: Stream,
+  link: BotRuntimeSessionLink | null
+): Promise<Pick<CanonicalInvocationRoute, "responseStreamId" | "replyThreadAnchorId">> {
+  const flat = { responseStreamId: stream.id, replyThreadAnchorId: null }
+  if (link?.replyMode !== RuntimeReplyModes.THREAD || link.activeStreamId !== stream.id) return flat
+  if (stream.rootStreamId && stream.rootStreamId !== stream.id) return flat
+  const thread = await StreamRepository.findByAnchor(db, stream.id, source.messageId)
+  if (thread) return { responseStreamId: thread.id, replyThreadAnchorId: null }
+  return { responseStreamId: stream.id, replyThreadAnchorId: source.messageId }
 }

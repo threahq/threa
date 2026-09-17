@@ -1509,6 +1509,16 @@ export const BotRuntimeSessionLinkStatuses = {
   ARCHIVED: "archived",
 } as const satisfies Record<string, BotRuntimeSessionLinkStatus>
 
+// Where a linked session answers a message posted at its scratchpad root:
+// 'flat' in the scratchpad itself, 'thread' in a thread anchored on the message.
+export const RUNTIME_REPLY_MODES = ["flat", "thread"] as const
+export type RuntimeReplyMode = (typeof RUNTIME_REPLY_MODES)[number]
+
+export const RuntimeReplyModes = {
+  FLAT: "flat",
+  THREAD: "thread",
+} as const satisfies Record<string, RuntimeReplyMode>
+
 export const BOT_RUNTIME_STATUSES = ["available", "busy", "offline", "error"] as const
 export type BotRuntimeStatus = (typeof BOT_RUNTIME_STATUSES)[number]
 

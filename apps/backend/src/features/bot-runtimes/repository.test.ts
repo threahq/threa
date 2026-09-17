@@ -48,6 +48,7 @@ function makeSessionLinkRow(overrides: Record<string, unknown> = {}) {
     root_stream_id: "stream_root",
     active_stream_id: "stream_active",
     status: "active",
+    reply_mode: "flat",
     linked_by: "usr_owner",
     metadata: {},
     last_seen_at: new Date(),

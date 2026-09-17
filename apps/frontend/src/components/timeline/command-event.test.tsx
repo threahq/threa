@@ -147,6 +147,17 @@ describe("CommandEvent", () => {
     expect(screen.getByText("Completed: Interrupted the running turn")).toBeInTheDocument()
   })
 
+  it("should name the reply mode when /replies completes", async () => {
+    renderChip([
+      event("1", "command_dispatched", { commandId: "cmd_1", name: "replies", args: "thread" }),
+      event("2", "command_completed", { commandId: "cmd_1", result: { replyMode: "thread" } }),
+    ])
+
+    await userEvent.click(screen.getByRole("button", { name: /replies/ }))
+
+    expect(screen.getByText("Completed: replies go in a thread on each message")).toBeInTheDocument()
+  })
+
   it('falls back to "completed" when the command sent no summary', () => {
     render(
       <MemoryRouter>

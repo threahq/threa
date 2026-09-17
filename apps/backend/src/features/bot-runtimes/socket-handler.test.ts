@@ -490,6 +490,7 @@ describe("attachBotNamespace bot:hello", () => {
       rootStreamId: "stream_root",
       activeStreamId: "stream_active",
       status: "active",
+      replyMode: "flat",
       linkedBy: "usr_owner",
       metadata: {},
       lastSeenAt: new Date("2026-05-26T11:45:00Z"),
