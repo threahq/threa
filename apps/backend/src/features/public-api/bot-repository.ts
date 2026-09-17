@@ -207,6 +207,17 @@ export const BotRepository = {
     return result.rows.map(mapRowToBot)
   },
 
+  async findVisibleTo(db: Querier, workspaceId: string, userId: string, id: string): Promise<Bot | null> {
+    const result = await db.query<BotRow>(composeSql`
+      ${sql`SELECT ${sql.raw(BOT_COLUMNS)} FROM bots`}
+      WHERE workspace_id = ${workspaceId}
+        AND id = ${id}
+        AND archived_at IS NULL
+        AND ${visibleBotPredicateSql(workspaceId, userId)}
+    `)
+    return result.rows[0] ? mapRowToBot(result.rows[0]) : null
+  },
+
   async findBySlugs(db: Querier, workspaceId: string, slugs: string[]): Promise<Bot[]> {
     if (slugs.length === 0) return []
 

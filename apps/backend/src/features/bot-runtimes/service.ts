@@ -16,6 +16,7 @@ import type {
   BotInvocationTrigger,
   BotRuntimeKind,
   BotRuntimeManifest,
+  BotRuntimePresenceSummary,
   BotRuntimeStatus,
   BotTrait,
 } from "@threahq/types"
@@ -1838,4 +1839,19 @@ export class BotRuntimeService {
       reason: params.reason,
     })
   }
+}
+
+export function serializeBotRuntimePresence(presence: BotRuntimeInstance | null): BotRuntimePresenceSummary | null {
+  return presence
+    ? {
+        botId: presence.botId,
+        runtimeKind: presence.runtimeKind,
+        instanceId: presence.instanceId,
+        displayName: presence.displayName,
+        status: presence.status,
+        acceptingInvocations: presence.acceptingInvocations,
+        statusText: presence.statusText,
+        lastSeenAt: presence.lastSeenAt.toISOString(),
+      }
+    : null
 }

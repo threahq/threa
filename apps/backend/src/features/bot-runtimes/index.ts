@@ -1,4 +1,4 @@
-export { BotRuntimeService } from "./service"
+export { BotRuntimeService, serializeBotRuntimePresence } from "./service"
 export {
   BotInvocationRepository,
   BotRuntimeInstanceRepository,

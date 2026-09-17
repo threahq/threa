@@ -1,6 +1,8 @@
+import type { BotProfileStream, StreamType } from "@threahq/types"
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { sql, composeSql } from "../../db"
 import { effectivelyArchivedSql } from "../../lib/sql-filters"
+import { streamAccessPredicateSql } from "../streams"
 
 export const BotChannelAccessRepository = {
   async filterGrantedStreamIds(
@@ -154,5 +156,36 @@ export const BotChannelAccessRepository = {
       ORDER BY a.granted_at DESC
     `)
     return result.rows.map((r) => ({ streamId: r.stream_id, grantedBy: r.granted_by, grantedAt: r.granted_at }))
+  },
+
+  async listGrantedStreamsVisibleTo(
+    db: Querier,
+    workspaceId: string,
+    botId: string,
+    userId: string
+  ): Promise<BotProfileStream[]> {
+    const result = await db.query<{
+      id: string
+      type: StreamType
+      slug: string | null
+      display_name: string | null
+      parent_stream_id: string | null
+    }>(composeSql`
+      SELECT s.id, s.type, s.slug, s.display_name, s.parent_stream_id
+      FROM bot_channel_access a
+      JOIN streams s ON s.id = a.stream_id AND s.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${workspaceId}
+        AND a.bot_id = ${botId}
+        AND ${sql`NOT ${sql.raw(effectivelyArchivedSql("s"))}`}
+        AND ${streamAccessPredicateSql(workspaceId, userId, "a.stream_id")}
+      ORDER BY a.granted_at DESC
+    `)
+    return result.rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      slug: r.slug,
+      displayName: r.display_name,
+      parentStreamId: r.parent_stream_id,
+    }))
   },
 }

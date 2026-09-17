@@ -6,6 +6,8 @@ import { BotApiKeyRepository, type BotApiKeyRow } from "./bot-api-key-repository
 import { BotChannelAccessRepository } from "../api-keys"
 import { StreamRepository } from "../streams"
 import type { StreamService } from "../streams"
+import { serializeBotRuntimePresence, type BotRuntimeService } from "../bot-runtimes"
+import { canManageBot } from "../../middleware/bot-management"
 import type { AvatarService } from "../workspaces"
 import type { BotApiKeyService } from "./bot-api-key-service"
 import { serializeBot } from "./handlers"
@@ -25,6 +27,7 @@ import {
   permissionsForRole,
   WORKSPACE_PERMISSION_SCOPES,
   type BotApiKey,
+  type BotProfile,
   type BotTrait,
   type WorkspacePermissionSlug,
 } from "@threahq/types"
@@ -97,6 +100,7 @@ interface BotHandlerDeps {
   botApiKeyService: BotApiKeyService
   avatarService: AvatarService
   streamService: StreamService
+  botRuntimeService: BotRuntimeService
   pool: Pool
 }
 
@@ -110,7 +114,13 @@ function resolveGrantActorId(req: Request): string | null {
   return resolveWorkspaceUserActorId(req) ?? req.botApiKey?.botId ?? null
 }
 
-export function createBotHandlers({ botApiKeyService, avatarService, streamService, pool }: BotHandlerDeps) {
+export function createBotHandlers({
+  botApiKeyService,
+  avatarService,
+  streamService,
+  botRuntimeService,
+  pool,
+}: BotHandlerDeps) {
   return {
     /** POST /api/workspaces/:workspaceId/bots */
     async create(req: Request, res: Response) {
@@ -278,6 +288,36 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
         throw new HttpError("Bot not found", { status: 404, code: "NOT_FOUND" })
       }
       res.json({ data: serializeBot(bot) })
+    },
+
+    /**
+     * GET /api/workspaces/:workspaceId/bots/:botId/profile
+     *
+     * Streams are the bot's grants filtered to those the viewer can read, so
+     * the card never reveals a private stream's existence.
+     */
+    async profile(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const { botId: id } = req.params
+      const viewerId = resolveWorkspaceUserActorId(req)
+      if (!viewerId) {
+        throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHORIZED" })
+      }
+      const bot = await BotRepository.findVisibleTo(pool, workspaceId, viewerId, id)
+      if (!bot) {
+        throw new HttpError("Bot not found", { status: 404, code: "NOT_FOUND" })
+      }
+      const [streams, runtime] = await Promise.all([
+        BotChannelAccessRepository.listGrantedStreamsVisibleTo(pool, workspaceId, id, viewerId),
+        botRuntimeService.findLatestPresence({ workspaceId, botId: id }),
+      ])
+      const profile: BotProfile = {
+        bot: serializeBot(bot),
+        streams,
+        runtime: serializeBotRuntimePresence(runtime),
+        canManage: canManageBot(req, bot),
+      }
+      res.json({ data: profile })
     },
 
     /** POST /api/workspaces/:workspaceId/bots/:botId/archive */
