@@ -3,8 +3,7 @@ export { createAIUsageHandlers } from "./handlers"
 export { AICostService, createNoOpCostService } from "./cost-service"
 export type { RecordUsageParams, AICostServiceConfig, AICostServiceLike } from "./cost-service"
 
-export { AIBudgetService } from "./budget-service"
-export type { BudgetStatus, AIBudgetServiceConfig, AIBudgetServiceLike } from "./budget-service"
+export { AISpendGate } from "./spend-gate"
 
 export { AIUsageRepository } from "./usage-repository"
 export type {
@@ -19,7 +18,7 @@ export type {
   OriginBreakdown,
 } from "./usage-repository"
 
-export { FUNCTION_CATEGORY_MAP, categorizeFunction, aggregateUsageByDay } from "./categories"
+export { AI_FUNCTIONS, categorizeFunction, aggregateUsageByDay } from "./categories"
 
 export { AIBudgetRepository } from "./budget-repository"
 export type {
@@ -27,7 +26,6 @@ export type {
   AIUserQuota,
   AIAlert,
   UpsertAIBudgetParams,
-  UpdateAIBudgetParams,
   UpsertAIUserQuotaParams,
   InsertAIAlertParams,
 } from "./budget-repository"

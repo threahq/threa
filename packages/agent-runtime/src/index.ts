@@ -117,15 +117,17 @@ export {
   providerRequiresCacheBreakpoints,
   applyCacheBreakpoints,
   isAbortError,
-  AIBudgetExceededError,
+  AISpendDeniedError,
   type AccessLogSink,
   type AI,
   type AIConfig,
   type AIOrigin,
-  type BudgetEnforcer,
-  type BudgetStatus,
+  type AISpendDenialReason,
   type CostContext,
   type CostRecorder,
+  type SpendAdmissionRequest,
+  type SpendDecision,
+  type SpendGate,
   type EmbedManyOptions,
   type EmbedOptions,
   type GenerateObjectOptions,
@@ -133,7 +135,6 @@ export {
   type GenerateTextWithToolsOptions,
   type GenerateTextWithToolsResult,
   type ImageContentPart,
-  type LangChainModelResult,
   type ManyEmbedResult,
   type Message,
   type MessageContent,
@@ -149,8 +150,6 @@ export {
   type TextResult,
   type UsageWithCost,
 } from "./ai/ai"
-export { CostTracker, type CapturedUsage } from "./ai/openrouter-cost-interceptor"
-export { getCostTrackingCallbacks, CostTrackingCallback } from "./ai/cost-tracking-callback"
 export { DebugCallback, getDebugCallbacks, isDebugEnabled } from "./ai/debug-callback"
 
 export { stripMarkdownFences, createJsonRepair, type SemanticFieldMapping } from "./ai/text-utils"

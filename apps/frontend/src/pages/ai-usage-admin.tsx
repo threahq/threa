@@ -48,12 +48,10 @@ export function AIUsageAdminPage() {
   const { data: usage, isLoading: usageLoading } = useAIUsage(workspaceId ?? "", timezone)
   const { data: budget, isLoading: budgetLoading } = useAIBudget(workspaceId ?? "", timezone)
 
-  // Local state for inline-editable budget + hard limit. Synced from server,
-  // committed on blur.
+  // Local state for the inline-editable budget. Synced from server, committed
+  // on blur.
   const initialBudget = budget?.budget?.monthlyBudgetUsd ?? 50
-  const initialHardLimit = budget?.budget?.hardLimitPercent ?? 100
   const [localBudget, setLocalBudget] = useState<string>(String(initialBudget))
-  const [localHardLimit, setLocalHardLimit] = useState<string>(String(initialHardLimit))
 
   const updateBudget = useUpdateAIBudget(workspaceId ?? "", timezone)
 
@@ -62,12 +60,6 @@ export function AIUsageAdminPage() {
       setLocalBudget(budget.budget.monthlyBudgetUsd.toString())
     }
   }, [budget?.budget?.monthlyBudgetUsd])
-
-  useEffect(() => {
-    if (budget?.budget?.hardLimitPercent !== undefined) {
-      setLocalHardLimit(budget.budget.hardLimitPercent.toString())
-    }
-  }, [budget?.budget?.hardLimitPercent])
 
   const handleBudgetCommit = useCallback(() => {
     const value = parseFloat(localBudget)
@@ -81,19 +73,6 @@ export function AIUsageAdminPage() {
       setLocalBudget(serverValue.toString())
     }
   }, [localBudget, budget?.budget?.monthlyBudgetUsd, updateBudget])
-
-  const handleHardLimitCommit = useCallback(() => {
-    const value = parseInt(localHardLimit, 10)
-    const serverValue = budget?.budget?.hardLimitPercent
-    if (!isNaN(value) && value >= 100 && value <= 500) {
-      if (value !== serverValue) {
-        updateBudget.mutate({ hardLimitPercent: value })
-      }
-    } else if (serverValue !== undefined) {
-      // Invalid entry — revert the input so the display matches the server.
-      setLocalHardLimit(serverValue.toString())
-    }
-  }, [localHardLimit, budget?.budget?.hardLimitPercent, updateBudget])
 
   const userNames = useMemo(() => {
     const map = new Map<string, string>()
@@ -114,19 +93,13 @@ export function AIUsageAdminPage() {
     return usage.byUser.filter((u) => u.userId !== null).reduce((sum, u) => sum + u.totalCostUsd, 0)
   }, [usage?.byUser])
 
-  // Reflect in-flight input values in metrics so the chart (budget line,
-  // hard-limit line, zone tints) responds immediately as the user edits.
+  // Reflect the in-flight input value in metrics so the chart's budget line
+  // and zone tints respond immediately as the user edits.
   const optimisticBudget = useMemo(() => {
     const parsed = parseFloat(localBudget)
     if (!isNaN(parsed) && parsed >= 0) return parsed
     return budget?.budget?.monthlyBudgetUsd ?? 50
   }, [localBudget, budget?.budget?.monthlyBudgetUsd])
-
-  const optimisticHardLimitPercent = useMemo(() => {
-    const parsed = parseInt(localHardLimit, 10)
-    if (!isNaN(parsed) && parsed >= 100 && parsed <= 500) return parsed
-    return budget?.budget?.hardLimitPercent ?? 100
-  }, [localHardLimit, budget?.budget?.hardLimitPercent])
 
   const metrics = useMemo<BudgetMetrics>(
     () =>
@@ -136,17 +109,8 @@ export function AIUsageAdminPage() {
         percentUsed: optimisticBudget > 0 ? ((usage?.total.totalCostUsd ?? 0) / optimisticBudget) * 100 : 0,
         periodStart: usage?.period.start ?? new Date().toISOString(),
         periodEnd: usage?.period.end ?? new Date().toISOString(),
-        hardLimitEnabled: budget?.budget?.hardLimitEnabled ?? false,
-        hardLimitPercent: optimisticHardLimitPercent,
       }),
-    [
-      usage?.total.totalCostUsd,
-      usage?.period.start,
-      usage?.period.end,
-      optimisticBudget,
-      budget?.budget?.hardLimitEnabled,
-      optimisticHardLimitPercent,
-    ]
+    [usage?.total.totalCostUsd, usage?.period.start, usage?.period.end, optimisticBudget]
   )
 
   if (!workspaceId) {
@@ -228,9 +192,6 @@ export function AIUsageAdminPage() {
                 localBudget={localBudget}
                 onBudgetChange={setLocalBudget}
                 onBudgetCommit={handleBudgetCommit}
-                localHardLimit={localHardLimit}
-                onHardLimitChange={setLocalHardLimit}
-                onHardLimitCommit={handleHardLimitCommit}
                 isLoading={budgetLoading}
               />
             </div>

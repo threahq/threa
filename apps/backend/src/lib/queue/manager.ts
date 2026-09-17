@@ -25,6 +25,10 @@ import {
   queueTokensStuck,
 } from "../observability"
 import { isUniqueViolation } from "../errors"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
+
+/** How long a job blocked by an AI spend limit waits before it asks again. */
+const SPEND_DENIAL_DEFER_MS = 30 * 60 * 1000
 
 /**
  * Per-tier configuration. Each tier has its own concurrency budget so that
@@ -746,6 +750,17 @@ export class QueueManager {
       const durationSeconds = Number(process.hrtime.bigint() - startTime) / 1e9
       queueMessagesInFlight.dec({ queue: message.queueName })
       queueMessageDuration.observe({ queue: message.queueName, workspace_id: workspaceId }, durationSeconds)
+
+      if (error instanceof AISpendDeniedError) {
+        await this.queueRepo.defer(this.pool, {
+          messageId: message.id,
+          claimedBy: workerId,
+          reason: error.message,
+          processAfter: new Date(Date.now() + SPEND_DENIAL_DEFER_MS),
+        })
+        queueMessagesProcessed.inc({ queue: message.queueName, status: "deferred", workspace_id: workspaceId })
+        return
+      }
 
       logger.warn({ messageId: message.id, queueName: message.queueName, err: error }, "Message processing failed")
 

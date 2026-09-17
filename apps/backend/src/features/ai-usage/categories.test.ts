@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test"
+import { Glob } from "bun"
+import { join } from "node:path"
 import { AI_USAGE_CATEGORIES } from "@threahq/types"
-import { FUNCTION_CATEGORY_MAP, categorizeFunction, aggregateUsageByDay } from "./categories"
+import { AI_FUNCTIONS, categorizeFunction, aggregateUsageByDay } from "./categories"
 
 describe("categorizeFunction", () => {
   it("maps a representative id from each category", () => {
@@ -16,9 +18,29 @@ describe("categorizeFunction", () => {
   })
 
   it("only maps to declared categories", () => {
-    for (const category of Object.values(FUNCTION_CATEGORY_MAP)) {
+    for (const { category } of Object.values(AI_FUNCTIONS)) {
       expect(AI_USAGE_CATEGORIES).toContain(category)
     }
+  })
+})
+
+describe("AI_FUNCTIONS", () => {
+  // An id missing here is gated as an agent call, so background work would stop
+  // at the agents cutoff instead of its own.
+  it("should list every functionId literal in production source", async () => {
+    const repoRoot = join(import.meta.dir, "../../../../..")
+    const found = new Set<string>()
+    for (const pattern of ["apps/backend/src/**/*.ts", "packages/agent-runtime/src/**/*.ts"]) {
+      for await (const file of new Glob(pattern).scan(repoRoot)) {
+        if (file.endsWith(".test.ts")) continue
+        const text = await Bun.file(join(repoRoot, file)).text()
+        for (const match of text.matchAll(/functionId:\s*"([^"]+)"/g)) found.add(match[1])
+      }
+    }
+    // Callers that omit an id fall back to these.
+    found.add("embedding-single").add("embedding-batch")
+
+    expect([...found].filter((id) => !(id in AI_FUNCTIONS))).toEqual([])
   })
 })
 

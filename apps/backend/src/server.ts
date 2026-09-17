@@ -204,7 +204,7 @@ import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
-import { AICostService, AIBudgetService } from "./features/ai-usage"
+import { AICostService, AISpendGate } from "./features/ai-usage"
 import {
   CommandRegistry,
   InviteCommand,
@@ -366,7 +366,6 @@ export async function startServer(): Promise<ServerInstance> {
   await attachmentService.recoverStalePendingScans()
 
   const costService = new AICostService({ pool })
-  const budgetService = new AIBudgetService({ pool })
   const accessLogService = new AccessLogService({ pool })
   const modelRegistry = createModelRegistry()
   const analyticsReporter: AnalyticsReporter = config.posthog
@@ -378,7 +377,7 @@ export async function startServer(): Promise<ServerInstance> {
     // The enclave reports its own usage straight to `costService`, so wrapping
     // here is what keeps enclave AI calls out of PostHog.
     costRecorder: new AnalyticsCostRecorder(costService, analyticsReporter, modelRegistry),
-    budgetEnforcer: budgetService,
+    spendGate: new AISpendGate({ pool }),
     accessLogSink: createAiAccessLogSink(accessLogService),
   })
   const configResolver = createStaticConfigResolver()

@@ -165,9 +165,9 @@ export interface WorkspaceSettings {
   defaultCompanionPersonaId: string | null
   /**
    * The workspace's own IANA timezone: the boundary its AI spend month is cut
-   * on. Anchors both halves of the budget — `budget-service.checkBudget` resolves
-   * the enforcement window against it (so degradation and the hard limit reset on
-   * the workspace's midnight, not the server's), and the AI usage dashboard
+   * on. Anchors both halves of the budget — `AISpendGate` resolves the enforcement
+   * window against it (so spend limits reset on the workspace's midnight, not the
+   * server's), and the AI usage dashboard
    * offers it as a reporting zone alongside the viewer's device zone.
    *
    * Storage stays UTC timestamps (`ai_usage_records.created_at`); this only moves

@@ -5,6 +5,7 @@
  */
 
 import type { Pool } from "pg"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { getDocumentProxy } from "unpdf"
 import { createWorker, type Worker as TesseractWorker } from "tesseract.js"
 import { withClient, withTransaction } from "../../../db"
@@ -290,6 +291,9 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
           break
       }
     } catch (error) {
+      // The page stays PROCESSING, which the claim re-enters, so the queue's
+      // deferred retry picks it up once spend allows.
+      if (error instanceof AISpendDeniedError) throw error
       log.error({ error }, "Page processing failed")
 
       await withTransaction(this.pool, async (client) => {
@@ -534,6 +538,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
       log.info({ markdownLength: value.markdown.length }, "Layout extraction complete")
       return { markdownContent: value.markdown }
     } catch (error) {
+      if (error instanceof AISpendDeniedError) throw error
       log.error({ error }, "Layout extraction failed")
       return { markdownContent: null }
     }

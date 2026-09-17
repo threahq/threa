@@ -131,7 +131,7 @@ Research cost now follows the turn: a persona pinned to Opus 5 researches at Opu
 
 **When to use:** nothing. No production component selects it.
 
-This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell) and the over-budget degradation map degraded Sonnet _to_ it, buying 2× where `gpt-5.4-mini` buys 2.7× and `gpt-5.4-nano` buys 10×. All six now target Luna. Left in the registry so a persona deliberately pinned to it keeps resolving.
+This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell). All five now use Luna. Left in the registry so a persona deliberately pinned to it keeps resolving.
 
 **Use instead:** `gpt-5.6-luna`.
 
@@ -179,8 +179,7 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 - Image captioning and OCR (`image-caption`), and PDF layout extraction (`pdf`), since 2026-09-07
 - Attachment summarization (`pdf`, `word`, `excel`, `text`), since 2026-09-07
 - Memo memorization and tool-call guarding
-- Over-budget model degradation
-- Fallback model for the general researcher (since 2026-08-31; was pinned `claude-sonnet-4.6`). Callers with a turn of their own pass their own model instead, so this fires only where no calling turn exists — chosen as the cheapest current-generation model that still holds up on agentic tool use, on the same reasoning as the degradation map below, not on a research-specific eval.
+- Fallback model for the general researcher (since 2026-08-31; was pinned `claude-sonnet-4.6`). Callers with a turn of their own pass their own model instead, so this fires only where no calling turn exists — chosen as the cheapest current-generation model that still holds up on agentic tool use, not on a research-specific eval.
 
 **On the Ariadne default — read this before citing it as an eval win.** It is
 Kristoffer's product call, taken on Luna's cost and his own use of it, and the
@@ -199,12 +198,6 @@ What that attempt produced:
 
 So the honest status is _unmeasured_, not _equal_. `evals/companion-model-comparison.yaml`
 runs the comparison; finish it before this entry claims anything about quality.
-
-**Consequence of the switch:** over-budget degradation is now a no-op for the
-default persona. Every `MODEL_DEGRADATION_MAP` target is Luna because it is the
-cheapest current-generation model that still holds up on agentic tool use, so a
-workspace whose default persona is already Luna has no cheaper tier to fall back
-to at the soft limit.
 
 **Eval history (July 2026, 6-run tallies vs `gpt-5.4-mini`):** memorizer 10/10 cases perfect against mini's 8/10 — Luna never leaked the anti-gossip residuals and never inverted a decision direction; boundary-extraction effectively tied (0.996 vs 0.992); memo-classifier tied (11/11 both). Luna was ~40% slower per call, but the price cut makes it cheaper than both 5.4 tiers, so every production task previously on a GPT-5.4 tier now uses Luna.
 

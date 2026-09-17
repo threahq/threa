@@ -2369,14 +2369,21 @@ export interface AIRecentUsageResponse {
   records: AIUsageRecord[]
 }
 
+export type AISpendStage = "agents" | "enrichment" | "core" | "embeddings"
+
+/** Fraction of a workspace's spend limit at which each stage of AI stops. */
+export const AI_SPEND_STAGE_CUTOFFS: Record<AISpendStage, number> = {
+  agents: 0.7,
+  enrichment: 0.85,
+  core: 0.95,
+  embeddings: 1,
+}
+
 export interface AIBudgetConfig {
   monthlyBudgetUsd: number
   alertThreshold50: boolean
   alertThreshold80: boolean
   alertThreshold100: boolean
-  degradationEnabled: boolean
-  hardLimitEnabled: boolean
-  hardLimitPercent: number
 }
 
 export interface AIBudgetResponse {
@@ -2391,9 +2398,6 @@ export interface UpdateAIBudgetInput {
   alertThreshold50?: boolean
   alertThreshold80?: boolean
   alertThreshold100?: boolean
-  degradationEnabled?: boolean
-  hardLimitEnabled?: boolean
-  hardLimitPercent?: number
 }
 
 /**

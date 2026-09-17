@@ -34,7 +34,6 @@ export interface BudgetMetrics {
   periodStart: Date
   periodEnd: Date
   budgetBustDate: Date | null
-  hardLimitAmount: number | null
 }
 
 export function computeMetrics(opts: {
@@ -43,8 +42,6 @@ export function computeMetrics(opts: {
   percentUsed: number
   periodStart: string
   periodEnd: string
-  hardLimitEnabled: boolean
-  hardLimitPercent: number
 }): BudgetMetrics {
   const periodStart = new Date(opts.periodStart)
   const periodEnd = new Date(opts.periodEnd)
@@ -71,8 +68,6 @@ export function computeMetrics(opts: {
       budgetBustDate = new Date(periodStart.getTime() + daysUntilBust * MS_PER_DAY)
     }
   }
-
-  const hardLimitAmount = opts.hardLimitEnabled ? opts.budgetAmount * (opts.hardLimitPercent / 100) : null
 
   let statusCopy: string
   if (status === "on_track") {
@@ -103,7 +98,6 @@ export function computeMetrics(opts: {
     periodStart,
     periodEnd,
     budgetBustDate,
-    hardLimitAmount,
   }
 }
 

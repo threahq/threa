@@ -1,6 +1,13 @@
 import { describe, it, expect, mock, spyOn } from "bun:test"
 import { z } from "zod"
-import { parseModelId, createAI, AIBudgetExceededError, applyCacheBreakpoints, extractUsageWithCost } from "./ai"
+import {
+  parseModelId,
+  createAI,
+  AISpendDeniedError,
+  applyCacheBreakpoints,
+  extractUsageWithCost,
+  type SpendAdmissionRequest,
+} from "./ai"
 
 // Import fixture data captured from real OpenRouter API calls (2026-01-06)
 import fixtures from "./fixtures/openrouter-responses.json"
@@ -118,12 +125,6 @@ describe("API behavior", () => {
     expect(() => ai.getEmbeddingModel("openrouter:test")).toThrow(/OPENROUTER_API_KEY.*openrouter\.apiKey/)
   })
 
-  it("should have consistent error messages mentioning env var and config for LangChain models", async () => {
-    const ai = createAI({})
-
-    await expect(ai.getLangChainModel("openrouter:test")).rejects.toThrow(/OPENROUTER_API_KEY.*openrouter\.apiKey/)
-  })
-
   it("should list supported providers in error for unsupported provider", () => {
     const ai = createAI({ openrouter: { apiKey: "test-key" } })
 
@@ -131,87 +132,92 @@ describe("API behavior", () => {
   })
 })
 
-describe("budget enforcement", () => {
-  it("should block generateText when hard limit is reached", async () => {
-    const checkBudget = mock(async () => ({
-      allowed: false as const,
-      reason: "hard_limit" as const,
-      currentUsageUsd: 160,
-      budgetUsd: 100,
-      percentUsed: 1.6,
-    }))
+describe("spend admission", () => {
+  function spyOnProvider() {
+    return spyOn(globalThis, "fetch").mockImplementation(
+      (async () =>
+        new Response(
+          JSON.stringify({
+            id: "gen_test",
+            model: "openai/gpt-5.6-luna",
+            choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )) as unknown as typeof globalThis.fetch
+    )
+  }
 
-    const ai = createAI({
-      budgetEnforcer: {
-        checkBudget,
-      },
-    })
+  it("should deny every method before the provider is called when the gate denies", async () => {
+    const fetchSpy = spyOnProvider()
+    try {
+      const admit = mock(async (_request: SpendAdmissionRequest) => ({
+        allowed: false as const,
+        reason: "workspace_limit" as const,
+      }))
+      const ai = createAI({ openrouter: { apiKey: "test-key" }, spendGate: { admit } })
+      const context = { workspaceId: "ws_123", userId: "usr_1" }
+      const messages = [{ role: "user" as const, content: "test" }]
 
-    await expect(
-      ai.generateText({
-        model: "openrouter:openai/gpt-5",
+      const calls = [
+        ai.generateText({ model: "openrouter:openai/gpt-5.6-luna", messages, context, telemetry: { functionId: "a" } }),
+        ai.generateObject({
+          model: "openrouter:openai/gpt-5.6-luna",
+          schema: z.object({ answer: z.string() }),
+          messages,
+          context,
+          telemetry: { functionId: "b" },
+        }),
+        ai.generateTextWithTools({
+          model: ai.getLanguageModel("openrouter:openai/gpt-5.6-luna"),
+          messages,
+          tools: {},
+          context,
+          telemetry: { functionId: "c" },
+        }),
+        ai.embed({
+          model: "openrouter:openai/text-embedding-3-small",
+          value: "x",
+          context,
+          telemetry: { functionId: "d" },
+        }),
+        ai.embedMany({
+          model: "openrouter:openai/text-embedding-3-small",
+          values: ["x"],
+          context,
+          telemetry: { functionId: "e" },
+        }),
+      ]
+      const results = await Promise.allSettled(calls)
+
+      expect(results.map((r) => (r.status === "rejected" ? r.reason : r))).toEqual(
+        ["a", "b", "c", "d", "e"].map(() => expect.any(AISpendDeniedError))
+      )
+      expect(admit.mock.calls.map(([request]) => request)).toEqual(
+        ["a", "b", "c", "d", "e"].map((functionId) => ({ workspaceId: "ws_123", userId: "usr_1", functionId }))
+      )
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("should call the provider when the gate admits", async () => {
+    const fetchSpy = spyOnProvider()
+    try {
+      const ai = createAI({
+        openrouter: { apiKey: "test-key" },
+        spendGate: { admit: async () => ({ allowed: true }) },
+      })
+      const result = await ai.generateText({
+        model: "openrouter:openai/gpt-5.6-luna",
         messages: [{ role: "user", content: "test" }],
         context: { workspaceId: "ws_123" },
       })
-    ).rejects.toBeInstanceOf(AIBudgetExceededError)
-
-    expect(checkBudget).toHaveBeenCalledWith("ws_123", "openrouter:openai/gpt-5")
-  })
-
-  it("should apply soft-limit recommended model for LangChain calls", async () => {
-    const checkBudget = mock(async () => ({
-      allowed: true as const,
-      reason: "soft_limit" as const,
-      currentUsageUsd: 80,
-      budgetUsd: 100,
-      percentUsed: 0.8,
-      recommendedModel: "unsupported:model",
-    }))
-
-    const ai = createAI({
-      openrouter: { apiKey: "test-key" },
-      budgetEnforcer: {
-        checkBudget,
-      },
-    })
-
-    await expect(ai.getLangChainModel("openrouter:openai/gpt-5-mini", { workspaceId: "ws_123" })).rejects.toThrow(
-      'Unsupported LangChain provider: "unsupported"'
-    )
-    expect(checkBudget).toHaveBeenCalledWith("ws_123", "openrouter:openai/gpt-5-mini")
-  })
-
-  it("should expose the effective model chosen for LangChain calls", async () => {
-    const checkBudget = mock(async () => ({
-      allowed: true as const,
-      reason: "soft_limit" as const,
-      currentUsageUsd: 85,
-      budgetUsd: 100,
-      percentUsed: 0.85,
-      recommendedModel: "openrouter:openai/gpt-5-mini",
-    }))
-
-    const ai = createAI({
-      openrouter: { apiKey: "test-key" },
-      budgetEnforcer: {
-        checkBudget,
-      },
-    })
-
-    const { effectiveModel, budgetMetadata } = await ai.getLangChainModel("openrouter:openai/gpt-5", {
-      workspaceId: "ws_999",
-    })
-    expect(effectiveModel).toBe("openrouter:openai/gpt-5-mini")
-    expect(budgetMetadata).toMatchObject({
-      budget_policy_checked: true,
-      budget_policy_reason: "soft_limit",
-      budget_model_requested: "openrouter:openai/gpt-5",
-      budget_model_effective: "openrouter:openai/gpt-5-mini",
-      budget_model_degraded: true,
-      budget_percent_used: 0.85,
-      budget_current_usage_usd: 85,
-      budget_limit_usd: 100,
-    })
+      expect(result.value).toBe("ok")
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 })
 
