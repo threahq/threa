@@ -19,6 +19,12 @@ export interface UsageAccumulator {
   cost: number
 }
 
+export function addUsage(usage: UsageAccumulator, result: Awaited<ReturnType<RawChatFn>>): void {
+  usage.promptTokens += result.usage?.prompt_tokens ?? 0
+  usage.completionTokens += result.usage?.completion_tokens ?? 0
+  usage.cost += result.usage?.cost ?? 0
+}
+
 function parseArguments(raw: string): unknown {
   try {
     return JSON.parse(raw)
@@ -53,9 +59,7 @@ export function createEnclaveAI(rawChat: RawChatFn, usage: UsageAccumulator): Ag
         signal: options.abortSignal,
       })
 
-      usage.promptTokens += result.usage?.prompt_tokens ?? 0
-      usage.completionTokens += result.usage?.completion_tokens ?? 0
-      usage.cost += result.usage?.cost ?? 0
+      addUsage(usage, result)
 
       const toolCalls = (result.message.tool_calls ?? []).map((tc) => ({
         toolCallId: tc.id,

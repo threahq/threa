@@ -5,6 +5,6 @@ export const SPEND_DENIAL_COPY: Record<AISpendDenialReason, string> = {
   user_limit: "Personal AI limit reached",
   user_agent_allowance: "Agent allowance used up",
   workspace_disabled: "AI turned off by an admin",
-  user_disabled: "AI turned off for this person",
+  user_disabled: "Your AI access is turned off",
   operator_disabled: "AI turned off by Threa",
 }

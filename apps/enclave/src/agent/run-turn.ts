@@ -545,6 +545,7 @@ export async function runEnclaveTurn(
       const effectiveInstruction = advanceNamingInstruction(request.naming, observedMessageCount)
       const evaluated = await evaluateNaming({
         rawChat,
+        usage,
         model: request.model,
         instruction: effectiveInstruction,
         currentTitle,
