@@ -1,5 +1,12 @@
 import { api, postAvatarUpload } from "./client"
-import type { Bot, BotApiKey, BotTrait, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threahq/types"
+import type {
+  Bot,
+  BotApiKey,
+  BotProfile,
+  BotTrait,
+  CreateBotApiKeyResponse,
+  WorkspacePermissionSlug,
+} from "@threahq/types"
 
 export interface CreateBotInput {
   type?: "shared" | "personal"
@@ -34,6 +41,11 @@ export const botsApi = {
 
   async get(workspaceId: string, botId: string): Promise<Bot> {
     const res = await api.get<{ data: Bot }>(`/api/workspaces/${workspaceId}/bots/${botId}`)
+    return res.data
+  },
+
+  async getProfile(workspaceId: string, botId: string): Promise<BotProfile> {
+    const res = await api.get<{ data: BotProfile }>(`/api/workspaces/${workspaceId}/bots/${botId}/profile`)
     return res.data
   },
 

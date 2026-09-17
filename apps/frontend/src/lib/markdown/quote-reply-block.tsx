@@ -174,7 +174,7 @@ function QuoteAuthor({
   actorType: AuthorType
 }) {
   const { getActorAvatar } = useActors(workspaceId)
-  const { openUserProfile } = useUserProfile()
+  const { openUserProfile, openBotProfile } = useUserProfile()
   const { fallback, slug, avatarUrl } = getActorAvatar(authorId || null, actorType)
   const isPersona = actorType === "persona"
   const isBot = actorType === "bot"
@@ -182,9 +182,8 @@ function QuoteAuthor({
   const isUser = actorType === "user"
 
   const handleAuthorClick = () => {
-    if (isUser && authorId) {
-      openUserProfile(authorId)
-    }
+    if (isUser && authorId) openUserProfile(authorId)
+    else if (isBot && authorId) openBotProfile(authorId)
   }
 
   let avatar = null
@@ -216,7 +215,9 @@ function QuoteAuthor({
         onClick={handleAuthorClick}
         className={cn(
           "text-xs font-medium",
-          isUser && authorId ? "text-muted-foreground hover:underline" : "text-muted-foreground cursor-default",
+          (isUser || isBot) && authorId
+            ? "text-muted-foreground hover:underline"
+            : "text-muted-foreground cursor-default",
           isPersona && "text-primary",
           isBot && "text-emerald-600",
           isSystem && "text-blue-500"

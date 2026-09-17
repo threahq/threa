@@ -13,6 +13,7 @@ import { Tabs, TabsContent } from "@/components/ui/tabs"
 import {
   WORKSPACE_SETTINGS_TABS,
   WORKSPACE_SETTINGS_TAB_CONFIG,
+  WS_SETTINGS_BOT_PARAM,
   WS_SETTINGS_PARAM,
   type WorkspaceSettingsTab,
 } from "./tab-config"
@@ -31,7 +32,7 @@ import { ScheduleTab } from "./schedule-tab"
 import { StatusesTab } from "./statuses-tab"
 import { DictationTab } from "./dictation-tab"
 
-const WS_SETTINGS_COVER = [WS_SETTINGS_PARAM] as const
+const WS_SETTINGS_COVER = [WS_SETTINGS_PARAM, WS_SETTINGS_BOT_PARAM] as const
 
 interface WorkspaceSettingsDialogProps {
   workspaceId: string
@@ -74,6 +75,7 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
   const setTab = (tab: string) => {
     const newParams = new URLSearchParams(searchParams)
     newParams.set(WS_SETTINGS_PARAM, tab)
+    newParams.delete(WS_SETTINGS_BOT_PARAM)
     setSearchParams(newParams, { replace: true })
   }
 

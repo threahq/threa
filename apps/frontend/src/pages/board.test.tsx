@@ -234,7 +234,7 @@ beforeEach(async () => {
     setPanelStreamIds: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   // Author names open the profile via UserProfileProvider, not mounted here.
-  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
+  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn(), openBotProfile: vi.fn() })
   // RelativeTime reads timezone/locale from the preferences context.
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },

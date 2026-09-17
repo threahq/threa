@@ -86,7 +86,7 @@ beforeEach(() => {
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([] as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockReturnValue(undefined as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
-  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
+  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn(), openBotProfile: vi.fn() })
   vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
     setBoardStreamIds: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)

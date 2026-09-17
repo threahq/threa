@@ -1,6 +1,9 @@
 /** URL query param that drives the workspace settings dialog. */
 export const WS_SETTINGS_PARAM = "ws-settings"
 
+/** Selects a bot in the bots tab, so a link can open its detail. */
+export const WS_SETTINGS_BOT_PARAM = "bot"
+
 export const WORKSPACE_SETTINGS_TABS = [
   "general",
   "schedule",

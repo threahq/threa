@@ -42,14 +42,14 @@ function DescriptionActor({
   actorId: string | null
   actorType: AuthorType | null
 }) {
-  const { openUserProfile } = useUserProfile()
+  const { openUserProfile, openBotProfile } = useUserProfile()
   const style = CHIP_STYLE_BY_ACTOR[actorType ?? "user"] ?? triggerStyles.user
 
-  if (actorType === "user" && actorId) {
+  if ((actorType === "user" || actorType === "bot") && actorId) {
     return (
       <button
         type="button"
-        onClick={() => openUserProfile(actorId)}
+        onClick={() => (actorType === "bot" ? openBotProfile(actorId) : openUserProfile(actorId))}
         className={cn(chipBase, "cursor-pointer hover:underline", style)}
       >
         {actorName}
