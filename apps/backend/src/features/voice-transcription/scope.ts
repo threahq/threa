@@ -1,7 +1,7 @@
 import { z } from "zod"
-import type { AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, type AI } from "@threahq/agent-runtime"
 import { VOICE_POLISH_WIDEN_MAX_WINDOWS, voicePolishConfig, type VoicePolishConfig } from "./config"
-import type { VoicePolishAttemptObserver } from "./polish"
+import { logSpendDenial, type VoicePolishAttemptObserver } from "./polish"
 import { logger } from "../../lib/logger"
 import { safeProviderError } from "./safe-error"
 
@@ -126,6 +126,7 @@ export function createDecideVoiceBoundaryScope(deps: {
       else {
         outcome = "provider_error"
         providerError = safeProviderError(error)
+        if (error instanceof AISpendDeniedError) logSpendDenial(error, input.sessionId)
       }
       return { status: outcome }
     } finally {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
+import type { SpendGate } from "@threahq/agent-runtime"
 import { StreamTypes } from "@threahq/types"
 import * as db from "../../db"
 import * as agents from "../agents"
@@ -104,8 +105,15 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
   return { tx, findNextClaimable, claimNext, completeClaimed, attachSession }
 }
 
+const ALLOW_ALL: SpendGate = { admit: async () => ({ allowed: true }) }
+
 function service() {
-  return new EnclaveClaimService({ pool, storage: FAKE_STORAGE, userPreferencesService: FAKE_PREFERENCES })
+  return new EnclaveClaimService({
+    pool,
+    storage: FAKE_STORAGE,
+    userPreferencesService: FAKE_PREFERENCES,
+    spendGate: ALLOW_ALL,
+  })
 }
 
 describe("EnclaveClaimService.claimTurn", () => {
@@ -298,6 +306,7 @@ describe("EnclaveClaimService.claimTurn", () => {
       pool,
       storage: { getObject } as unknown as StorageProvider,
       userPreferencesService: FAKE_PREFERENCES,
+      spendGate: ALLOW_ALL,
     })
     const assignment = await svc.claimTurn("eik_live")
 

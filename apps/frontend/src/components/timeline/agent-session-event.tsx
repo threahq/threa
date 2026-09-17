@@ -11,7 +11,6 @@ import type {
   AgentSessionFailedPayload,
   AgentSessionInterruptedPayload,
   AgentSessionDeletedPayload,
-  AISpendDenialReason,
 } from "@threahq/types"
 import { useTrace } from "@/contexts"
 import { RelativeTime } from "@/components/relative-time"
@@ -22,15 +21,7 @@ import { SessionEffectGrid } from "./session-effect-grid"
 import { LiveSessionEffectGrid } from "./live-session-effect-grid"
 import { isDescribedEffect, unionSessionEffects } from "@/lib/effect-links"
 import { useAgentSessionActivity } from "@/stores/agent-activity-store"
-
-const SPEND_DENIAL_COPY: Record<AISpendDenialReason, string> = {
-  workspace_limit: "Workspace AI limit reached",
-  user_limit: "Personal AI limit reached",
-  user_agent_allowance: "Agent allowance used up",
-  workspace_disabled: "AI turned off by an admin",
-  user_disabled: "AI turned off for this person",
-  operator_disabled: "AI turned off by Threa",
-}
+import { SPEND_DENIAL_COPY } from "@/lib/ai-spend-denial"
 
 /** How long the Redirect hint replaces the subtitle line after a click. */
 const REDIRECT_HINT_MS = 5000

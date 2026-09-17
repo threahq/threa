@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest, mock, spyOn } from "bun:test"
 import type { Server } from "socket.io"
 import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threahq/types"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import { registerVoiceGateway } from "./realtime-gateway"
 import type { TranscriptionSession } from "./transcription/strategy"
@@ -82,7 +83,12 @@ function setup(overrides?: {
   const voiceTranscriptionService = {
     getRelaySession: mock(
       overrides?.getRelaySession ??
-        (async () => ({ userId: "user_1", model: "elevenlabs:scribe-v2-realtime", language: null }))
+        (async () => ({
+          userId: "user_1",
+          model: "elevenlabs:scribe-v2-realtime",
+          language: null,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1_000),
+        }))
     ),
     finishSession: mock(async () => {}),
     abortSession: mock(async () => {}),
@@ -350,6 +356,38 @@ describe("registerVoiceGateway voice:start", () => {
     expect(transcription.open).not.toHaveBeenCalled()
   })
 
+  it("should ack a structured spend denial and abort the session when the spend gate refuses the start", async () => {
+    const denial = new AISpendDeniedError(
+      { workspaceId: START_PAYLOAD.workspaceId, userId: "user_1", functionId: "voice-transcription-realtime" },
+      "workspace_limit"
+    )
+    const { socket, transcription, voiceTranscriptionService } = setup({
+      getRelaySession: async () => {
+        throw denial
+      },
+    })
+    const warn = spyOn(logger, "warn").mockImplementation(() => {})
+    const cb = mock(() => {})
+
+    await socket.trigger("voice:start", START_PAYLOAD, cb)
+    warn.mockRestore()
+
+    expect(cb).toHaveBeenCalledWith({
+      ok: false,
+      error: "AI spend limit reached",
+      code: "AI_SPEND_DENIED",
+      spendDenial: "workspace_limit",
+      protocolVersion: 3,
+    })
+    expect(transcription.open).not.toHaveBeenCalled()
+    expect(voiceTranscriptionService.abortSession).toHaveBeenCalledWith({
+      workspaceId: START_PAYLOAD.workspaceId,
+      userId: "user_1",
+      sessionId: START_PAYLOAD.voiceSessionId,
+      totalAudioMs: 0,
+    })
+  })
+
   it("refuses a second start while a session is already active", async () => {
     const { socket } = setup()
     await socket.trigger(
@@ -554,9 +592,17 @@ describe("registerVoiceGateway lifecycle", () => {
     })
   })
 
-  it("max duration follows the authoritative format path before disconnecting", async () => {
+  it("should stop at the session's expires_at through the authoritative format path before disconnecting", async () => {
     jest.useFakeTimers()
-    const { socket, upstream, voiceTranscriptionService } = setup({ voicePolishLevel: "opinionated" })
+    const { socket, upstream, voiceTranscriptionService } = setup({
+      voicePolishLevel: "opinionated",
+      getRelaySession: async () => ({
+        userId: "user_1",
+        model: "elevenlabs:scribe-v2-realtime",
+        language: null,
+        expiresAt: new Date(Date.now() + 30_000),
+      }),
+    })
     await socket.trigger(
       "voice:start",
       START_PAYLOAD,
@@ -564,7 +610,9 @@ describe("registerVoiceGateway lifecycle", () => {
     )
     upstream.fireDelta({ text: "final words", isFinal: false })
 
-    jest.advanceTimersByTime(10 * 60 * 1_000)
+    jest.advanceTimersByTime(29_000)
+    expect(voiceTranscriptionService.finishSession).not.toHaveBeenCalled()
+    jest.advanceTimersByTime(1_000)
     jest.useRealTimers()
     await new Promise((resolve) => setTimeout(resolve, 0))
 

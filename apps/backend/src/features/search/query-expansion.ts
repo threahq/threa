@@ -1,5 +1,5 @@
 import type { AI, CostContext } from "@threahq/agent-runtime"
-import { isAbortError } from "@threahq/agent-runtime"
+import { AISpendDeniedError, isAbortError } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import {
   SEARCH_EXPANSION_MODEL_ID,
@@ -80,6 +80,11 @@ export class SearchQueryExpander implements QueryExpanderLike {
         logger.debug(
           { workspaceId: context.workspaceId },
           "Search query expansion timed out; using original query only"
+        )
+      } else if (error instanceof AISpendDeniedError) {
+        logger.warn(
+          { workspaceId: error.workspaceId, userId: error.userId, functionId: error.functionId, reason: error.reason },
+          "Search query expansion denied by AI spend limit; using original query only"
         )
       } else {
         logger.warn(

@@ -368,6 +368,7 @@ export async function startServer(): Promise<ServerInstance> {
   const costService = new AICostService({ pool })
   const accessLogService = new AccessLogService({ pool })
   const modelRegistry = createModelRegistry()
+  const spendGate = new AISpendGate({ pool })
   const analyticsReporter: AnalyticsReporter = config.posthog
     ? new PostHogAnalyticsReporter({ config: config.posthog, service: "backend", region: config.region })
     : new DisabledAnalyticsReporter()
@@ -377,7 +378,7 @@ export async function startServer(): Promise<ServerInstance> {
     // The enclave reports its own usage straight to `costService`, so wrapping
     // here is what keeps enclave AI calls out of PostHog.
     costRecorder: new AnalyticsCostRecorder(costService, analyticsReporter, modelRegistry),
-    spendGate: new AISpendGate({ pool }),
+    spendGate,
     accessLogSink: createAiAccessLogSink(accessLogService),
   })
   const configResolver = createStaticConfigResolver()
@@ -790,7 +791,13 @@ export async function startServer(): Promise<ServerInstance> {
   // The factory only registers a provider strategy when its key is present
   // (empty string disables that provider); fail loudly later if a session is
   // opened with a model whose provider isn't configured (INV-11).
-  const voiceTranscriptionService = new VoiceTranscriptionService(pool, userPreferencesService)
+  const voiceTranscriptionService = new VoiceTranscriptionService({
+    pool,
+    userPreferencesService,
+    spendGate,
+    costService,
+    modelRegistry,
+  })
   const transcription = createTranscription({
     elevenlabs: config.ai.elevenLabsApiKey ? { apiKey: config.ai.elevenLabsApiKey } : undefined,
     deepgram: config.ai.deepgramApiKey ? { apiKey: config.ai.deepgramApiKey } : undefined,
@@ -828,7 +835,7 @@ export async function startServer(): Promise<ServerInstance> {
   // the oldest claimable E2E turn it can decrypt, building the sealed
   // assignment at claim time. Routes mount only when the enclave credential
   // is configured.
-  const enclaveClaimService = new EnclaveClaimService({ pool, storage, userPreferencesService })
+  const enclaveClaimService = new EnclaveClaimService({ pool, storage, userPreferencesService, spendGate })
 
   // Wake-up nudge for the claim long-poll (§2.7): holds one LISTEN connection
   // on `pools.listen` and fans each "invocation available" NOTIFY out to the

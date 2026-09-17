@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { ENCLAVE_NAMING_CHECKPOINTS, type EnclaveNamingInstruction } from "@threahq/types"
 import type { RawChatFn } from "../llm"
+import { addUsage, type UsageAccumulator } from "./enclave-ai"
 
 const MAX_TITLE_CHARS = 60
 
@@ -56,6 +57,7 @@ Preserve a good title rather than rewriting for style. Use the participants' dom
 
 export async function evaluateNaming(params: {
   rawChat: RawChatFn
+  usage: UsageAccumulator
   model: string
   instruction: EnclaveNamingInstruction
   currentTitle: string | null
@@ -98,6 +100,7 @@ export async function evaluateNaming(params: {
         },
       ],
     })
+    addUsage(params.usage, result)
     if (!result.message.content) return null
     const parsed = responseSchema.parse(JSON.parse(result.message.content))
     if (params.instruction.forced && parsed.action === "defer") return null

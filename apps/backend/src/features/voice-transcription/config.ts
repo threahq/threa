@@ -63,6 +63,11 @@ export const voiceConfig = {
   frameMs: 100,
   /** Hard max session duration — a runaway-cost guard; the gateway force-stops a session that exceeds it. */
   maxSessionMs: 10 * 60 * 1_000,
+  /**
+   * The sweeper only expires sessions this long past `expires_at`, so a gateway
+   * finishing at the deadline wins the finalize and records the audio cost.
+   */
+  expirySweepGraceMs: 2 * 60 * 1_000,
 } as const
 
 // Voice-transcript polish config (INV-44: colocated with the feature, shared

@@ -1098,6 +1098,9 @@ export interface EnclaveSessionResult {
  */
 export interface EnclaveSessionFailure {
   errorName: string
+  /** Set with `usage` when the loop spent on model calls before it threw, so that spend is still recorded. */
+  model?: string
+  usage?: EnclaveSessionResult["usage"]
 }
 
 /**

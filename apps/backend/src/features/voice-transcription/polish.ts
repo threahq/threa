@@ -1,5 +1,5 @@
 import type { VoicePolishLevel } from "@threahq/types"
-import type { AI, UsageWithCost } from "@threahq/agent-runtime"
+import { AISpendDeniedError, type AI, type UsageWithCost } from "@threahq/agent-runtime"
 import { parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import { logger } from "../../lib/logger"
@@ -210,6 +210,7 @@ export function createPolishTranscript(deps: {
     } catch (err) {
       if (signal?.aborted) return complete({ status: "canceled" })
       if (timedOut) return complete({ status: "timeout" })
+      if (err instanceof AISpendDeniedError) logSpendDenial(err, sessionId)
       return complete({ status: "provider_error" }, err)
     } finally {
       clearTimeout(timer)
@@ -266,4 +267,17 @@ export function buildPolishUserMessage(args: {
 
 export function scrubDashes(text: string): string {
   return text.replace(/\s+[—–]\s+/g, ": ").replace(/[—–]/g, ", ")
+}
+
+export function logSpendDenial(error: AISpendDeniedError, sessionId?: string): void {
+  logger.warn(
+    {
+      sessionId,
+      workspaceId: error.workspaceId,
+      userId: error.userId,
+      functionId: error.functionId,
+      reason: error.reason,
+    },
+    "Voice polish denied by AI spend limit; keeping raw transcript"
+  )
 }

@@ -132,6 +132,12 @@ export interface EnclaveTurnDeps {
    */
   abortSignal?: AbortSignal
   /**
+   * Accumulates the turn's model spend. Owned by the caller so spend already
+   * incurred survives a thrown turn and can be reported on the fail ack.
+   * Omitted → a turn-local accumulator.
+   */
+  usage?: UsageAccumulator
+  /**
    * Mid-turn interjection pull (UX-12): fetch the sealed messages that landed
    * since `afterSequence` so the loop can reconsider a draft when new context
    * arrives mid-turn, instead of only catching up after completion. When wired,
@@ -290,7 +296,7 @@ export async function runEnclaveTurn(
   }
   const memoryBlock = formatConversationMemoryForPrompt(priorSummaryText)
 
-  const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
+  const usage: UsageAccumulator = deps.usage ?? { promptTokens: 0, completionTokens: 0, cost: 0 }
   const messageIds: string[] = []
   // First reply plaintext seeds dynamic naming below; it is never logged or persisted.
   let firstReplyText: string | null = null
@@ -539,6 +545,7 @@ export async function runEnclaveTurn(
       const effectiveInstruction = advanceNamingInstruction(request.naming, observedMessageCount)
       const evaluated = await evaluateNaming({
         rawChat,
+        usage,
         model: request.model,
         instruction: effectiveInstruction,
         currentTitle,

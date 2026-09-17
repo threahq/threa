@@ -13,6 +13,7 @@ import { voiceApi } from "@/api/voice"
 import { parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
+import { SPEND_DENIAL_COPY } from "@/lib/ai-spend-denial"
 import { useDictationCoordinator, isDictationExternalHeld } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
@@ -1024,7 +1025,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             }
             protocolVersionRef.current = result.protocolVersion ?? 1
             if (!result?.ok) {
-              fail(result?.error || "Couldn't start dictation")
+              fail(
+                result?.spendDenial
+                  ? SPEND_DENIAL_COPY[result.spendDenial]
+                  : result?.error || "Couldn't start dictation"
+              )
               return
             }
             worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {

@@ -43,37 +43,34 @@ export class AICostService implements AICostServiceLike {
   }
 
   async recordUsage(params: RecordUsageParams): Promise<void> {
+    if (isEmptyUsage(params)) return
+    await withTransaction(this.pool, (client) => this.recordUsageInTransaction(client, params))
+  }
+
+  /** For callers whose usage must commit atomically with their own domain write. */
+  async recordUsageInTransaction(client: PoolClient, params: RecordUsageParams): Promise<void> {
+    if (isEmptyUsage(params)) return
     const cost = params.usage.cost ?? 0
 
-    if (cost === 0 && params.usage.totalTokens === 0) {
-      logger.debug(
-        { functionId: params.functionId, model: params.model },
-        "Skipping usage record with no cost or tokens"
-      )
-      return
-    }
-
-    await withTransaction(this.pool, async (client) => {
-      await AIUsageRepository.insert(client, {
-        id: aiUsageId(),
-        workspaceId: params.workspaceId,
-        userId: params.userId,
-        sessionId: params.sessionId,
-        functionId: params.functionId,
-        model: params.model,
-        provider: params.provider,
-        promptTokens: params.usage.promptTokens ?? 0,
-        cachedPromptTokens: params.usage.cachedPromptTokens ?? 0,
-        completionTokens: params.usage.completionTokens ?? 0,
-        totalTokens: params.usage.totalTokens ?? 0,
-        costUsd: cost,
-        origin: params.origin,
-        metadata: params.metadata,
-      })
-
-      // Same transaction as the usage insert so the alert event commits atomically with it.
-      await this.checkAndFireAlerts(client, params.workspaceId)
+    await AIUsageRepository.insert(client, {
+      id: aiUsageId(),
+      workspaceId: params.workspaceId,
+      userId: params.userId,
+      sessionId: params.sessionId,
+      functionId: params.functionId,
+      model: params.model,
+      provider: params.provider,
+      promptTokens: params.usage.promptTokens ?? 0,
+      cachedPromptTokens: params.usage.cachedPromptTokens ?? 0,
+      completionTokens: params.usage.completionTokens ?? 0,
+      totalTokens: params.usage.totalTokens ?? 0,
+      costUsd: cost,
+      origin: params.origin,
+      metadata: params.metadata,
     })
+
+    // Same transaction as the usage insert so the alert event commits atomically with it.
+    await this.checkAndFireAlerts(client, params.workspaceId)
 
     logger.debug(
       {
@@ -154,6 +151,12 @@ export class AICostService implements AICostServiceLike {
       provider: params.parsedModel.provider,
     })
   }
+}
+
+function isEmptyUsage(params: RecordUsageParams): boolean {
+  if ((params.usage.cost ?? 0) !== 0 || params.usage.totalTokens !== 0) return false
+  logger.debug({ functionId: params.functionId, model: params.model }, "Skipping usage record with no cost or tokens")
+  return true
 }
 
 export function createNoOpCostService(): AICostServiceLike {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { EnclaveNamingInstruction } from "@threahq/types"
+import type { UsageAccumulator } from "./enclave-ai"
 import { advanceNamingInstruction, evaluateNaming, sanitizeTitle } from "./naming-evaluator"
 
 const instruction: EnclaveNamingInstruction = {
@@ -10,6 +11,8 @@ const instruction: EnclaveNamingInstruction = {
   forced: true,
   reason: "ordinary",
 }
+
+const emptyUsage = (): UsageAccumulator => ({ promptTokens: 0, completionTokens: 0, cost: 0 })
 
 describe("sanitizeTitle", () => {
   it("normalizes model output and caps long titles", () => {
@@ -38,7 +41,14 @@ describe("evaluateNaming", () => {
       }
     })
     await expect(
-      evaluateNaming({ rawChat, model: "stub", instruction, currentTitle: null, context: "User: rollback failed" })
+      evaluateNaming({
+        rawChat,
+        usage: emptyUsage(),
+        model: "stub",
+        instruction,
+        currentTitle: null,
+        context: "User: rollback failed",
+      })
     ).resolves.toEqual({ action: "rename", title: "Migration rollback records", confidence: 0.9 })
     expect(request?.responseFormat?.type).toBe("json_schema")
   })
@@ -49,10 +59,37 @@ describe("evaluateNaming", () => {
       message: { content: JSON.stringify({ action, title: "", confidence: 0.5 }) },
     })
     await expect(
-      evaluateNaming({ rawChat: response("defer"), model: "stub", instruction, currentTitle: null, context: "x" })
+      evaluateNaming({
+        rawChat: response("defer"),
+        usage: emptyUsage(),
+        model: "stub",
+        instruction,
+        currentTitle: null,
+        context: "x",
+      })
     ).resolves.toBeNull()
     await expect(
-      evaluateNaming({ rawChat: response("keep"), model: "stub", instruction, currentTitle: null, context: "x" })
+      evaluateNaming({
+        rawChat: response("keep"),
+        usage: emptyUsage(),
+        model: "stub",
+        instruction,
+        currentTitle: null,
+        context: "x",
+      })
     ).resolves.toBeNull()
+  })
+
+  it("should add the naming call's spend to the turn usage when the model answers", async () => {
+    const usage: UsageAccumulator = { promptTokens: 100, completionTokens: 20, cost: 0.01 }
+    const rawChat: import("../llm").RawChatFn = async () => ({
+      model: "stub",
+      message: { content: JSON.stringify({ action: "keep", title: "", confidence: 0.8 }) },
+      usage: { prompt_tokens: 40, completion_tokens: 10, cost: 0.002 },
+    })
+
+    await evaluateNaming({ rawChat, usage, model: "stub", instruction, currentTitle: "Rollback", context: "x" })
+
+    expect(usage).toEqual({ promptTokens: 140, completionTokens: 30, cost: 0.012 })
   })
 })

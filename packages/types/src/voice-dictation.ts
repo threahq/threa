@@ -1,4 +1,5 @@
 import type { JSONContent } from "./prosemirror"
+import type { AISpendDenialReason } from "./api"
 
 export const VOICE_PROTOCOL_VERSION = 4 as const
 export const VOICE_LEGACY_PROTOCOL_VERSION = 3 as const
@@ -9,6 +10,10 @@ export type VoiceRelayPhase = "live" | "formatting" | "closing" | "closed"
 export interface VoiceStartAck {
   ok: boolean
   error?: string
+  /** Stable machine code for a refused start, e.g. `AI_SPEND_DENIED`. */
+  code?: string
+  /** Set with `code: "AI_SPEND_DENIED"` so the client can say which limit stopped it. */
+  spendDenial?: AISpendDenialReason
   protocolVersion: number
 }
 

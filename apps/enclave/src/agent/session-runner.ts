@@ -4,6 +4,7 @@ import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import type { BackendCallbacks } from "./backend-callbacks"
 import { runEnclaveTurn } from "./run-turn"
+import type { UsageAccumulator } from "./enclave-ai"
 
 const logger = baseLogger.child({ name: "enclave-session" })
 
@@ -56,6 +57,8 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
       })
   }, HEARTBEAT_INTERVAL_MS)
 
+  const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
+
   try {
     const result = await runEnclaveTurn(
       {
@@ -77,6 +80,7 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         pollNewMessages: (afterSequence) => deps.callbacks.pollMessages(sessionId, afterSequence),
         tools: deps.toolConfig ? { tavilyApiKey: deps.toolConfig.tavilyApiKey } : undefined,
         abortSignal: abortController.signal,
+        usage,
       },
       assignment
     )
@@ -96,10 +100,12 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     // inline indicator + open trace dialog) instead of waiting for orphan-cleanup.
     // Best-effort + scrubbed metadata only: if this can't land, heartbeats have
     // already stopped, so orphan-cleanup still reclaims the session as a backstop.
-    await deps.callbacks.fail(sessionId, { errorName }).catch((failErr) => {
-      const failErrorName = failErr instanceof Error ? failErr.name : typeof failErr
-      logger.warn({ errorName: failErrorName, sessionId }, "Enclave session fail callback failed")
-    })
+    await deps.callbacks
+      .fail(sessionId, { errorName, model: assignment.model, usage: { ...usage } })
+      .catch((failErr) => {
+        const failErrorName = failErr instanceof Error ? failErr.name : typeof failErr
+        logger.warn({ errorName: failErrorName, sessionId }, "Enclave session fail callback failed")
+      })
   } finally {
     clearInterval(heartbeat)
   }

@@ -2,6 +2,7 @@ import { describe, expect, it, mock, spyOn } from "bun:test"
 import { SearchQueryExpander } from "./query-expansion"
 import { StubQueryExpander } from "./query-expansion.stub"
 import { logger } from "../../lib/logger"
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 
 describe("SearchQueryExpander", () => {
   it("returns cleaned variants: trimmed, deduped, original query dropped", async () => {
@@ -40,6 +41,32 @@ describe("SearchQueryExpander", () => {
       expect(warn).toHaveBeenCalledWith(
         { error: expect.any(Error), workspaceId: "ws_1" },
         "Search query expansion failed; using original query only"
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it("should return [] and log the spend denial when the spend gate refuses the call", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
+    try {
+      const expander = new SearchQueryExpander({
+        ai: {
+          generateObject: async () => {
+            throw new AISpendDeniedError(
+              { workspaceId: "ws_1", userId: "user_1", functionId: "search-expand" },
+              "operator_disabled"
+            )
+          },
+        } as never,
+      })
+
+      const variants = await expander.expand("some query", { workspaceId: "ws_1" })
+
+      expect(variants).toEqual([])
+      expect(warn).toHaveBeenCalledWith(
+        { workspaceId: "ws_1", userId: "user_1", functionId: "search-expand", reason: "operator_disabled" },
+        "Search query expansion denied by AI spend limit; using original query only"
       )
     } finally {
       warn.mockRestore()
