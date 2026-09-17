@@ -1875,11 +1875,17 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // are gated by `requireBotManagement()` middleware that resolves the bot,
   // authorizes the actor (ownership for personal bots, BOTS_MANAGE for shared),
   // and attaches the bot to req.bot so handlers don't re-fetch it.
-  const botHandlers = createBotHandlers({ botApiKeyService, avatarService, streamService, pool })
+  const botHandlers = createBotHandlers({ botApiKeyService, avatarService, streamService, botRuntimeService, pool })
   const requireBotManagement = createRequireBotManagement(pool)
   app.get("/api/workspaces/:workspaceId/bots", ...authed, audit("bots.list", "read"), botHandlers.list)
   app.post("/api/workspaces/:workspaceId/bots", ...authed, audit("bots.create", "write"), botHandlers.create)
   app.get("/api/workspaces/:workspaceId/bots/:botId", ...authed, audit("bots.get", "read"), botHandlers.get)
+  app.get(
+    "/api/workspaces/:workspaceId/bots/:botId/profile",
+    ...authed,
+    audit("bots.profile", "read"),
+    botHandlers.profile
+  )
   app.patch(
     "/api/workspaces/:workspaceId/bots/:botId",
     ...authed,

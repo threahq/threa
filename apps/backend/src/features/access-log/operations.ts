@@ -286,6 +286,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "bots.list",
   "bots.create",
   "bots.get",
+  "bots.profile",
   "bots.update",
   "bots.archive",
   "bots.restore",

@@ -219,6 +219,21 @@ export interface BotRuntimePresenceSummary {
   lastSeenAt: string
 }
 
+export interface BotProfileStream {
+  id: string
+  type: StreamType
+  slug: string | null
+  displayName: string | null
+  parentStreamId: string | null
+}
+
+export interface BotProfile {
+  bot: Bot
+  streams: BotProfileStream[]
+  runtime: BotRuntimePresenceSummary | null
+  canManage: boolean
+}
+
 export interface StreamBootstrap {
   stream: Stream
   events: StreamEvent[]

@@ -23,6 +23,27 @@ function resolveActorId(req: Request): string | null {
   return req.user?.id ?? req.authUser?.id ?? req.userApiKey?.userId ?? null
 }
 
+/**
+ * Personal bots: ownership only — the owner can always manage their bot
+ * regardless of workspace permission configuration. Shared bots: bots:manage,
+ * resolved in requireWorkspacePermission's order — session JWT, role fallback,
+ * API key.
+ */
+export function canManageBot(req: Request, bot: Bot): boolean {
+  if (bot.type === BotTypes.PERSONAL) {
+    const actorId = resolveActorId(req) ?? req.botApiKey?.botId ?? null
+    return actorId === bot.ownerUserId
+  }
+  return (
+    req.authUser?.permissions?.includes(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
+    (req.user != null &&
+      (permissionsForRole(req.user.role) as readonly string[]).includes(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE)) ??
+    req.userApiKey?.scopes.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
+    req.botApiKey?.scopes.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
+    false
+  )
+}
+
 export function createRequireBotManagement(pool: Pool) {
   return function requireBotManagement(): RequestHandler {
     return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
@@ -40,30 +61,13 @@ export function createRequireBotManagement(pool: Pool) {
           return
         }
 
-        if (bot.type === BotTypes.PERSONAL) {
-          // Personal bots: ownership-based access. The owner can always manage
-          // their bot regardless of workspace permission configuration.
-          const actorId = resolveActorId(req) ?? req.botApiKey?.botId ?? null
-          if (actorId !== bot.ownerUserId) {
-            next(new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" }))
-            return
-          }
-        } else {
-          // Shared bots: require bots:manage. Use the same resolution order as
-          // requireWorkspacePermission — session JWT, role fallback, API key.
-          const hasManage =
-            req.authUser?.permissions?.includes(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
-            (req.user != null &&
-              (permissionsForRole(req.user.role) as readonly string[]).includes(
-                WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE
-              )) ??
-            req.userApiKey?.scopes.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
-            req.botApiKey?.scopes.has(WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE) ??
-            false
-          if (!hasManage) {
-            next(insufficient())
-            return
-          }
+        if (!canManageBot(req, bot)) {
+          next(
+            bot.type === BotTypes.PERSONAL
+              ? new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
+              : insufficient()
+          )
+          return
         }
 
         req.bot = bot

@@ -6,7 +6,7 @@ import type { EventService } from "../messaging"
 import { collectSharedMessageRefs, hydrateSharedMessageRefs, toDualSlotMaps, type DualSlotMaps } from "../messaging"
 import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
-import type { BotRuntimeService } from "../bot-runtimes"
+import { serializeBotRuntimePresence, type BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { setAuditSubjects, type AuditSubjectRef } from "../access-log"
@@ -576,21 +576,6 @@ async function enrichEventsWithLinkPreviews(
   ])
 
   return applyLinkPreviewStateToEvents(events, previewMap, dismissals)
-}
-
-function serializeBotRuntimePresence(presence: Awaited<ReturnType<BotRuntimeService["findLatestPresence"]>>) {
-  return presence
-    ? {
-        botId: presence.botId,
-        runtimeKind: presence.runtimeKind,
-        instanceId: presence.instanceId,
-        displayName: presence.displayName,
-        status: presence.status,
-        acceptingInvocations: presence.acceptingInvocations,
-        statusText: presence.statusText,
-        lastSeenAt: presence.lastSeenAt.toISOString(),
-      }
-    : null
 }
 
 function presenceMatchesRuntimeSessionLink(
