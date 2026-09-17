@@ -2,6 +2,11 @@ import { BOT_TRAITS, type BotTrait } from "@threahq/types"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 
+export const BOT_TRAIT_LABELS: Record<BotTrait, string> = {
+  mentionable: "Mentionable",
+  "active-scratchpad": "Active scratchpad",
+}
+
 interface BotTraitsPickerProps {
   traits: ReadonlySet<BotTrait>
   onToggle: (trait: BotTrait) => void
@@ -21,9 +26,7 @@ export function BotTraitsPicker({ traits, onToggle }: BotTraitsPickerProps) {
           <label key={trait} className="flex items-start gap-2 rounded-md border px-2.5 py-2 text-sm">
             <Checkbox checked={traits.has(trait)} onCheckedChange={() => onToggle(trait)} />
             <span>
-              <span className="block font-medium">
-                {trait === "active-scratchpad" ? "Active scratchpad" : "Mentionable"}
-              </span>
+              <span className="block font-medium">{BOT_TRAIT_LABELS[trait]}</span>
               <span className="block text-xs text-muted-foreground">
                 {trait === "active-scratchpad"
                   ? "Receives messages from scratchpads where this bot is the active actor."

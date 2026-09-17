@@ -1,10 +1,14 @@
 import React, { createContext, useCallback, useContext, useState, type ReactNode } from "react"
 
+import { BotProfileModal } from "@/components/bot-profile/bot-profile-modal"
 import { UserProfileModal } from "./user-profile-modal"
 
 interface UserProfileContextValue {
   openUserProfile: (userId: string) => void
+  openBotProfile: (botId: string) => void
 }
+
+type ProfileTarget = { kind: "user" | "bot"; id: string }
 
 const UserProfileContext = createContext<UserProfileContextValue | null>(null)
 
@@ -13,23 +17,35 @@ interface UserProfileProviderProps {
 }
 
 export function UserProfileProvider({ children }: UserProfileProviderProps) {
-  const [targetUserId, setTargetUserId] = useState<string | null>(null)
+  const [target, setTarget] = useState<ProfileTarget | null>(null)
 
   const openUserProfile = useCallback((userId: string) => {
-    setTargetUserId(userId)
+    setTarget({ kind: "user", id: userId })
+  }, [])
+
+  const openBotProfile = useCallback((botId: string) => {
+    setTarget({ kind: "bot", id: botId })
   }, [])
 
   const close = useCallback(() => {
-    setTargetUserId(null)
+    setTarget(null)
   }, [])
 
   return (
-    <UserProfileContext.Provider value={{ openUserProfile }}>
+    <UserProfileContext.Provider value={{ openUserProfile, openBotProfile }}>
       {children}
-      {targetUserId && (
+      {target?.kind === "user" && (
         <React.Suspense fallback={null}>
-          <UserProfileModal userId={targetUserId} open onOpenChange={(open) => !open && close()} />
+          <UserProfileModal userId={target.id} open onOpenChange={(open) => !open && close()} />
         </React.Suspense>
+      )}
+      {target?.kind === "bot" && (
+        <BotProfileModal
+          botId={target.id}
+          open
+          onOpenChange={(open) => !open && close()}
+          onOpenUserProfile={openUserProfile}
+        />
       )}
     </UserProfileContext.Provider>
   )

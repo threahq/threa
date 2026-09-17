@@ -15,7 +15,7 @@ beforeEach(() => {
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: () => "Kristoffer Remback",
   } as unknown as ReturnType<typeof hooksModule.useActors>)
-  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile })
+  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile, openBotProfile: vi.fn() })
 })
 
 function createEvent(payload: DescriptionSetEventPayload, overrides: Partial<StreamEvent> = {}): StreamEvent {

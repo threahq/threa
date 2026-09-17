@@ -566,12 +566,8 @@ function MessageLayout({
   batch,
 }: MessageLayoutProps) {
   const theme = actorRowTheme(event.actorType)
-  // Users with a resolved actorId get a clickable name that opens their
-  // profile; everything else (personas, bots, system, unknown) renders a
-  // non-interactive span with the theme's color. This is the only remaining
-  // behavioral branch — all of the styling branches live in the theme map.
-  const hasInteractiveName = event.actorType === "user" && event.actorId != null
-  const { openUserProfile } = useUserProfile()
+  const hasInteractiveName = (event.actorType === "user" || event.actorType === "bot") && event.actorId != null
+  const { openUserProfile, openBotProfile } = useUserProfile()
   const { formatTime, formatFull } = useFormattedDate()
 
   // Edit mode needs the full content column (author row + status indicator) so the
@@ -676,8 +672,8 @@ function MessageLayout({
       {hasInteractiveName ? (
         <button
           type="button"
-          onClick={() => openUserProfile(event.actorId!)}
-          className="font-semibold text-sm hover:underline text-left"
+          onClick={() => (event.actorType === "bot" ? openBotProfile(event.actorId!) : openUserProfile(event.actorId!))}
+          className={cn("font-semibold text-sm hover:underline text-left", theme.nameClassName)}
         >
           {actorName}
         </button>

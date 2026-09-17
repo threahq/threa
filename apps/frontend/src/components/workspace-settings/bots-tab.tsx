@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { WORKSPACE_PERMISSION_SCOPES, type BotTrait } from "@threahq/types"
 import { botsApi, type CreateBotInput } from "@/api/bots"
@@ -13,6 +14,7 @@ import { Plus, BotIcon, ChevronRight, Globe, User } from "lucide-react"
 import { BotAvatar } from "./bot-avatar"
 import { BotDetail } from "./bot-detail"
 import { BotTraitsPicker } from "./bot-traits-picker"
+import { WS_SETTINGS_BOT_PARAM } from "./tab-config"
 import { useCachedWorkspaceBootstrap, workspaceKeys } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { useWorkspaceBots } from "@/stores/workspace-store"
@@ -22,7 +24,20 @@ interface BotsTabProps {
 }
 
 export function BotsTab({ workspaceId }: BotsTabProps) {
-  const [selectedBotId, setSelectedBotId] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedBotId = searchParams.get(WS_SETTINGS_BOT_PARAM)
+
+  const setSelectedBotId = (botId: string | null) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (botId) next.set(WS_SETTINGS_BOT_PARAM, botId)
+        else next.delete(WS_SETTINGS_BOT_PARAM)
+        return next
+      },
+      { replace: true }
+    )
+  }
 
   if (selectedBotId) {
     return <BotDetail workspaceId={workspaceId} botId={selectedBotId} onBack={() => setSelectedBotId(null)} />

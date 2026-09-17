@@ -203,7 +203,7 @@ export function MessageItem({
 }: MessageItemProps) {
   const { formatTime, formatFull } = useFormattedDate()
   const messageCollapse = useMessageCollapseSettings()
-  const { openUserProfile } = useUserProfile()
+  const { openUserProfile, openBotProfile } = useUserProfile()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false)
@@ -225,9 +225,7 @@ export function MessageItem({
     deferToNativeLinks: true,
   })
   const hasReactions = Object.keys(message.reactions).length > 0
-  // Users open their profile on click (same as the timeline); other actor types
-  // (persona/bot/system) are non-interactive.
-  const interactiveName = message.authorType === "user" && Boolean(message.authorId)
+  const interactiveName = (message.authorType === "user" || message.authorType === "bot") && Boolean(message.authorId)
   // Per-actor colorization, shared with the timeline: the author-name color + inline
   // badge, plus the full-bleed `rowAccent` (tint + inset left stripe) on the row.
   // `rowInsetClassName` breaks the row out to the surface edges so the accent fills
@@ -918,7 +916,9 @@ export function MessageItem({
             {interactiveName ? (
               <button
                 type="button"
-                onClick={() => openUserProfile(message.authorId)}
+                onClick={() =>
+                  message.authorType === "bot" ? openBotProfile(message.authorId) : openUserProfile(message.authorId)
+                }
                 className={cn("min-w-0 truncate text-left text-sm font-semibold hover:underline", theme.nameClassName)}
               >
                 {authorName}

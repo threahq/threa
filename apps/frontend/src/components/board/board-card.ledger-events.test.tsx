@@ -205,7 +205,7 @@ beforeEach(async () => {
     toggleReaction: vi.fn(),
     toggleByEmoji: vi.fn(),
   } as unknown as ReturnType<typeof messageReactionsModule.useMessageReactions>)
-  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
+  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn(), openBotProfile: vi.fn() })
   vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
     setBoardStreamIds: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)

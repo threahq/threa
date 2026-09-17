@@ -311,7 +311,7 @@ beforeEach(async () => {
     setBoardStreamIds: vi.fn(),
     setPanelStreamIds: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
-  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn() })
+  vi.spyOn(userProfileModule, "useUserProfile").mockReturnValue({ openUserProfile: vi.fn(), openBotProfile: vi.fn() })
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: { timezone: "UTC", locale: "en-US" },
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
