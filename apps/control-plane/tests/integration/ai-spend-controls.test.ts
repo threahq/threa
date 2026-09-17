@@ -67,7 +67,7 @@ describe("AISpendControlsService", () => {
     await service.syncToRegion({ workspaceId })
 
     expect({ before, returned, events: await syncEvents(workspaceId), calls }).toEqual({
-      before: { operatorCeilingUsd: 50, operatorAiDisabled: false },
+      before: { operatorCeilingUsd: 100, operatorAiDisabled: false },
       returned: { operatorCeilingUsd: 250.5, operatorAiDisabled: true },
       events: [{ workspaceId }, { workspaceId }],
       calls: [["eu", { workspaceId, operatorCeilingUsd: 250.5, operatorAiDisabled: true }]],
@@ -82,7 +82,7 @@ describe("AISpendControlsService", () => {
     await expect(service.set(workspaceId, { operatorCeilingUsd: 5, operatorAiDisabled: true })).rejects.toThrow(
       "outbox down"
     )
-    expect(await service.get(workspaceId)).toEqual({ operatorCeilingUsd: 50, operatorAiDisabled: false })
+    expect(await service.get(workspaceId)).toEqual({ operatorCeilingUsd: 100, operatorAiDisabled: false })
   })
 
   test("404s for a workspace outside the registry and skips syncing one that is gone", async () => {

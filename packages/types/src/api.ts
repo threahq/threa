@@ -2372,7 +2372,7 @@ export interface AIRecentUsageResponse {
 export type AISpendStage = "agents" | "enrichment" | "core" | "embeddings"
 
 /** The operator ceiling a workspace has until the operator sets one. Far above normal use; it guards against runaway spend. */
-export const AI_OPERATOR_CEILING_DEFAULT_USD = 50
+export const AI_OPERATOR_CEILING_DEFAULT_USD = 100
 
 /** Fraction of a workspace's spend limit at which each stage of AI stops. */
 export const AI_SPEND_STAGE_CUTOFFS: Record<AISpendStage, number> = {
