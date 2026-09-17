@@ -10,7 +10,7 @@
 
 ALTER TABLE ai_budgets
   ADD COLUMN ai_disabled BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN operator_ceiling_usd NUMERIC(10, 2) NOT NULL DEFAULT 50.00,
+  ADD COLUMN operator_ceiling_usd NUMERIC(10, 2) NOT NULL DEFAULT 100.00,
   ADD COLUMN operator_ai_disabled BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN default_user_agent_allowance_usd NUMERIC(10, 2);
 

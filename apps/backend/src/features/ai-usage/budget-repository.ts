@@ -2,7 +2,7 @@ import { sql, type Querier } from "../../db"
 
 /** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
 const DEFAULT_MONTHLY_BUDGET_USD = 50
-const DEFAULT_OPERATOR_CEILING_USD = 50
+const DEFAULT_OPERATOR_CEILING_USD = 100
 
 /** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
 export const DEFAULT_AI_ALERT_THRESHOLDS = {
