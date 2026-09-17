@@ -73,7 +73,7 @@ describe("AI spend limit endpoints", () => {
       alertThreshold100: true,
       aiDisabled: false,
       defaultUserAgentAllowanceUsd: null,
-      operatorCeilingUsd: 50,
+      operatorCeilingUsd: 100,
       operatorAiDisabled: false,
     })
   })
@@ -92,7 +92,7 @@ describe("AI spend limit endpoints", () => {
       alertThreshold50: true,
       alertThreshold80: true,
       alertThreshold100: true,
-      operatorCeilingUsd: 50,
+      operatorCeilingUsd: 100,
       operatorAiDisabled: false,
     }
     expect({ created, omitted, cleared, read }).toEqual({
@@ -110,7 +110,7 @@ describe("AI spend limit endpoints", () => {
       call(handlers.updateBudget, mockReq(ws, { body: { operatorCeilingUsd: 1000, operatorAiDisabled: true } }))
     ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
     await expect(call(handlers.getBudget, mockReq(ws))).resolves.toMatchObject({
-      body: { budget: { operatorCeilingUsd: 50, operatorAiDisabled: false } },
+      body: { budget: { operatorCeilingUsd: 100, operatorAiDisabled: false } },
     })
   })
 
