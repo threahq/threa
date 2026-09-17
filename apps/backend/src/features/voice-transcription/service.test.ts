@@ -250,15 +250,13 @@ describe("VoiceTranscriptionService finalize paths", () => {
 })
 
 describe("VoiceTranscriptionService.expireStaleSessions", () => {
-  test("sweeps with the current time and returns the swept count", async () => {
+  test("should sweep only sessions past the grace window so a finishing gateway records its cost", async () => {
     const expireStale = spyOn(VoiceSessionRepository, "expireStale").mockResolvedValue(3)
     const service = makeService()
+    const now = new Date("2026-09-17T12:00:00.000Z")
 
-    const before = Date.now()
-    expect(await service.expireStaleSessions()).toBe(3)
+    expect(await service.expireStaleSessions(now)).toBe(3)
 
-    expect(expireStale.mock.calls[0][0]).toBe(pool)
-    const now = expireStale.mock.calls[0][1] as Date
-    expect(now.getTime()).toBeGreaterThanOrEqual(before)
+    expect(expireStale.mock.calls[0]).toEqual([pool, new Date(now.getTime() - voiceConfig.expirySweepGraceMs)])
   })
 })

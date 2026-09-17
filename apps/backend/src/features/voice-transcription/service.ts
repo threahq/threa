@@ -144,7 +144,7 @@ export class VoiceTranscriptionService {
    * transitions stay behind the service (INV-34). Returns how many were swept.
    */
   async expireStaleSessions(now: Date = new Date()): Promise<number> {
-    return VoiceSessionRepository.expireStale(this.pool, now)
+    return VoiceSessionRepository.expireStale(this.pool, new Date(now.getTime() - voiceConfig.expirySweepGraceMs))
   }
 
   private async finalize(params: {

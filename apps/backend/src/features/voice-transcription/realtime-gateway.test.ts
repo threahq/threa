@@ -83,7 +83,12 @@ function setup(overrides?: {
   const voiceTranscriptionService = {
     getRelaySession: mock(
       overrides?.getRelaySession ??
-        (async () => ({ userId: "user_1", model: "elevenlabs:scribe-v2-realtime", language: null }))
+        (async () => ({
+          userId: "user_1",
+          model: "elevenlabs:scribe-v2-realtime",
+          language: null,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1_000),
+        }))
     ),
     finishSession: mock(async () => {}),
     abortSession: mock(async () => {}),
@@ -587,9 +592,17 @@ describe("registerVoiceGateway lifecycle", () => {
     })
   })
 
-  it("max duration follows the authoritative format path before disconnecting", async () => {
+  it("should stop at the session's expires_at through the authoritative format path before disconnecting", async () => {
     jest.useFakeTimers()
-    const { socket, upstream, voiceTranscriptionService } = setup({ voicePolishLevel: "opinionated" })
+    const { socket, upstream, voiceTranscriptionService } = setup({
+      voicePolishLevel: "opinionated",
+      getRelaySession: async () => ({
+        userId: "user_1",
+        model: "elevenlabs:scribe-v2-realtime",
+        language: null,
+        expiresAt: new Date(Date.now() + 30_000),
+      }),
+    })
     await socket.trigger(
       "voice:start",
       START_PAYLOAD,
@@ -597,7 +610,9 @@ describe("registerVoiceGateway lifecycle", () => {
     )
     upstream.fireDelta({ text: "final words", isFinal: false })
 
-    jest.advanceTimersByTime(10 * 60 * 1_000)
+    jest.advanceTimersByTime(29_000)
+    expect(voiceTranscriptionService.finishSession).not.toHaveBeenCalled()
+    jest.advanceTimersByTime(1_000)
     jest.useRealTimers()
     await new Promise((resolve) => setTimeout(resolve, 0))
 

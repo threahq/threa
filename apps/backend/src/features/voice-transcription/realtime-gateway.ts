@@ -505,7 +505,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           finalReused: false,
           maxDurationTimer: setTimeout(
             () => void terminate("format", "max_duration").finally(() => socket.disconnect(true)),
-            voiceConfig.maxSessionMs
+            Math.max(0, row.expiresAt.getTime() - Date.now())
           ),
         } satisfies Partial<RelayState>)
         if (current.incrementalEngine) {
