@@ -1,7 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
 import { AIUsageRepository, type AIUsageOrigin } from "./usage-repository"
-import { AIBudgetRepository, DEFAULT_AI_ALERT_THRESHOLDS } from "./budget-repository"
+import { AIBudgetRepository, DEFAULT_AI_BUDGET_CONFIG } from "./budget-repository"
 import { resolveBudgetMonthRange } from "./billing-window"
 import { workspaceSpendLimitUsd } from "./spend-gate"
 import { OutboxRepository } from "../../lib/outbox"
@@ -95,7 +95,7 @@ export class AICostService implements AICostServiceLike {
       periodEnd,
       agentFunctionIds: [],
     })
-    const alertSettings = (await AIBudgetRepository.findByWorkspace(client, workspaceId)) ?? DEFAULT_AI_ALERT_THRESHOLDS
+    const alertSettings = (await AIBudgetRepository.findByWorkspace(client, workspaceId)) ?? DEFAULT_AI_BUDGET_CONFIG
 
     const currentUsageUsd = position.workspaceSpendUsd
     const budgetUsd = workspaceSpendLimitUsd(position)

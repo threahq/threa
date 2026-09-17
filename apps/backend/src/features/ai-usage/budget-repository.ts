@@ -13,13 +13,6 @@ export const DEFAULT_AI_BUDGET_CONFIG: AIBudgetConfig = {
   operatorAiDisabled: false,
 }
 
-/** Applies to a workspace with no ai_budgets row. Matches the column defaults. */
-export const DEFAULT_AI_ALERT_THRESHOLDS = {
-  alertThreshold50: true,
-  alertThreshold80: true,
-  alertThreshold100: true,
-} as const satisfies Pick<AIBudget, "alertThreshold50" | "alertThreshold80" | "alertThreshold100">
-
 interface AIBudgetRow {
   id: string
   workspace_id: string
