@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { aiUsageApi } from "@/api"
 import type { UpdateAIBudgetInput, AIBudgetResponse, SetAIUserLimitsInput } from "@threahq/types"
 
@@ -62,6 +63,7 @@ export function useUpdateAIBudget(workspaceId: string, timezone: string | null) 
         predicate: (query) => query.queryKey[query.queryKey.length - 1] !== timezone,
       })
     },
+    onError: () => toast.error("Could not save AI budget"),
   })
 }
 

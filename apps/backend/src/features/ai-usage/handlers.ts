@@ -7,6 +7,7 @@ import type { AIBudgetConfig, AIUserLimits } from "@threahq/types"
 import { AIBudgetRepository, DEFAULT_AI_BUDGET_CONFIG, type AIBudget, type AIUserQuota } from "./budget-repository"
 import { categorizeFunction, aggregateUsageByDay } from "./categories"
 import { resolveBudgetMonthRange } from "./billing-window"
+import { workspaceSpendLimitUsd } from "./spend-gate"
 import { aiBudgetId, aiQuotaId } from "../../lib/id"
 import { HttpError } from "../../lib/errors"
 import { UserRepository } from "../workspaces"
@@ -205,8 +206,8 @@ function toBudgetConfig(budget: AIBudget | null): AIBudgetConfig {
 }
 
 function percentUsed(totalCostUsd: number, budget: AIBudget | null): number {
-  const { monthlyBudgetUsd } = toBudgetConfig(budget)
-  return monthlyBudgetUsd > 0 ? Math.round((totalCostUsd / monthlyBudgetUsd) * 10000) / 100 : 0
+  const limitUsd = workspaceSpendLimitUsd(toBudgetConfig(budget))
+  return limitUsd > 0 ? Math.round((totalCostUsd / limitUsd) * 10000) / 100 : 100
 }
 
 function toUserLimits(quota: AIUserQuota): AIUserLimits {

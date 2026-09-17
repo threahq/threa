@@ -66,7 +66,10 @@ export function AIUsageAdminPage() {
     const serverValue = budget?.budget.monthlyBudgetUsd
     if (!isNaN(value) && value >= 0) {
       if (value !== serverValue) {
-        updateBudget.mutate({ monthlyBudgetUsd: value })
+        updateBudget.mutate(
+          { monthlyBudgetUsd: value },
+          { onError: () => serverValue !== undefined && setLocalBudget(serverValue.toString()) }
+        )
       }
     } else if (serverValue !== undefined) {
       // Invalid entry — revert the input so the display matches the server.
@@ -107,6 +110,8 @@ export function AIUsageAdminPage() {
         totalCost: usage?.total.totalCostUsd ?? 0,
         budgetAmount: optimisticBudget,
         operatorCeilingUsd: budget?.budget.operatorCeilingUsd,
+        aiDisabled: budget?.budget.aiDisabled ?? false,
+        operatorAiDisabled: budget?.budget.operatorAiDisabled ?? false,
         periodStart: usage?.period.start ?? new Date().toISOString(),
         periodEnd: usage?.period.end ?? new Date().toISOString(),
       }),
@@ -116,6 +121,8 @@ export function AIUsageAdminPage() {
       usage?.period.end,
       optimisticBudget,
       budget?.budget.operatorCeilingUsd,
+      budget?.budget.aiDisabled,
+      budget?.budget.operatorAiDisabled,
     ]
   )
 

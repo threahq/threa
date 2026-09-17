@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
 import { Bell, Power } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { useUpdateAIBudget } from "@/hooks"
-import { AI_SPEND_STAGE_CUTOFFS, type AIBudgetConfig, type UpdateAIBudgetInput } from "@threahq/types"
+import { AI_SPEND_STAGE_CUTOFFS, type AIBudgetConfig } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { formatCurrency, type BudgetMetrics } from "./metrics"
 import { SectionLabel } from "./primitives"
@@ -44,17 +44,16 @@ export function BudgetControlsPanel({
     setAllowanceDraft(serverAllowance === null ? "" : String(serverAllowance))
   }, [serverAllowance])
 
-  const handleUpdate = useCallback(
-    (updates: UpdateAIBudgetInput) => {
-      updateBudget.mutate(updates)
-    },
-    [updateBudget]
-  )
+  const saveAllowance = (value: number | null) =>
+    updateBudget.mutate(
+      { defaultUserAgentAllowanceUsd: value },
+      { onError: () => setAllowanceDraft(serverAllowance === null ? "" : String(serverAllowance)) }
+    )
 
   const commitAllowance = () => {
     const trimmed = allowanceDraft.trim()
     if (trimmed === "") {
-      if (serverAllowance !== null) handleUpdate({ defaultUserAgentAllowanceUsd: null })
+      if (serverAllowance !== null) saveAllowance(null)
       return
     }
     const value = parseFloat(trimmed)
@@ -62,7 +61,7 @@ export function BudgetControlsPanel({
       setAllowanceDraft(serverAllowance === null ? "" : String(serverAllowance))
       return
     }
-    if (value !== serverAllowance) handleUpdate({ defaultUserAgentAllowanceUsd: value })
+    if (value !== serverAllowance) saveAllowance(value)
   }
 
   if (isLoading) {
@@ -161,7 +160,8 @@ export function BudgetControlsPanel({
             <Switch
               id="ai-disabled"
               checked={budget?.aiDisabled ?? false}
-              onCheckedChange={(checked) => handleUpdate({ aiDisabled: checked })}
+              disabled={updateBudget.isPending}
+              onCheckedChange={(checked) => updateBudget.mutate({ aiDisabled: checked })}
             />
           </div>
         </div>
@@ -252,7 +252,8 @@ export function BudgetControlsPanel({
                   <Switch
                     id={t.id}
                     checked={t.checked}
-                    onCheckedChange={(checked) => handleUpdate({ [t.key]: checked })}
+                    disabled={updateBudget.isPending}
+                    onCheckedChange={(checked) => updateBudget.mutate({ [t.key]: checked })}
                   />
                 </div>
               )
