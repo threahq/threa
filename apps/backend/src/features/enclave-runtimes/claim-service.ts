@@ -398,7 +398,7 @@ export class EnclaveClaimService {
 
     // The session row carries the trigger's author, so the claim-time guard
     // re-reads it under the transaction rather than trusting this snapshot.
-    const refuseUnwritableTrigger = async (tx: PoolClient): Promise<{ authorId: string } | null> => {
+    const ensureTriggerWritable = async (tx: PoolClient): Promise<boolean> => {
       const currentTrigger = await MessageRepository.findById(tx, triggerId)
       if (!currentTrigger || currentTrigger.authorType !== "user") {
         await EnclaveInvocationsRepository.failClaimed(tx, {
@@ -407,7 +407,7 @@ export class EnclaveClaimService {
           claimToken,
           errorMessage: "STREAM_READ_ONLY:missing_initiating_user",
         })
-        return null
+        return false
       }
       try {
         await assertStreamWritable(tx, {
@@ -426,9 +426,9 @@ export class EnclaveClaimService {
             denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
           }`,
         })
-        return null
+        return false
       }
-      return { authorId: currentTrigger.authorId }
+      return true
     }
 
     // Admitted before the assignment is built so a denied turn never loads
@@ -438,7 +438,7 @@ export class EnclaveClaimService {
     if (!decision.allowed) {
       const denial = new AISpendDeniedError(admission, decision.reason)
       const outcome = await withTransaction(pool, async (tx) => {
-        if (!(await refuseUnwritableTrigger(tx))) return "refused" as const
+        if (!(await ensureTriggerWritable(tx))) return "refused" as const
         const deniedSessionId = newSessionId()
         const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
           id: deniedSessionId,
@@ -634,7 +634,7 @@ export class EnclaveClaimService {
     // the payload carries only ids + the persona name. last_seen_sequence is
     // an inert placeholder here; mid-turn reconsideration is a later slice.
     const session = await withTransaction(pool, async (tx) => {
-      if (!(await refuseUnwritableTrigger(tx))) return null
+      if (!(await ensureTriggerWritable(tx))) return null
       const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
         id: sid,
         streamId,
