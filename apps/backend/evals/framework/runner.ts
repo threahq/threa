@@ -24,6 +24,7 @@ import { setupEvalDatabase, setupEvalTemplate, type EvalDatabaseResult, type Eva
 import {
   createAI,
   type AI,
+  type GenerateDecisionsOptions,
   type GenerateObjectOptions,
   type GenerateTextOptions,
   type GenerateTextWithToolsOptions,
@@ -156,6 +157,12 @@ export function createUsageTrackingAI(ai: AI, accumulator: UsageAccumulator, cre
     async generateObject<T extends import("zod").ZodType>(options: GenerateObjectOptions<T>) {
       accumulator.recordModel(options.model)
       const result = await watch(() => ai.generateObject(options))
+      accumulator.recordUsage(result.usage)
+      return result
+    },
+    async generateDecisions(options: GenerateDecisionsOptions) {
+      accumulator.recordModel(options.model)
+      const result = await watch(() => ai.generateDecisions(options))
       accumulator.recordUsage(result.usage)
       return result
     },
