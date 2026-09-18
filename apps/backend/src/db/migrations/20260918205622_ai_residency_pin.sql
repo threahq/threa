@@ -4,9 +4,8 @@
 -- latency. Default false: nobody is pinned today, and pinning is the opt-in.
 --
 -- It sits on ai_budgets because that row is already the workspace's AI policy
--- (ai_disabled, the operator controls), read once per AI call. Unlike the
--- operator columns it is workspace-admin-owned, so it has no control-plane
--- mirror.
+-- (ai_disabled, the operator controls). Unlike the operator columns it is
+-- workspace-admin-owned, so it has no control-plane mirror.
 
 ALTER TABLE ai_budgets
   ADD COLUMN ai_residency_pinned BOOLEAN NOT NULL DEFAULT false;
