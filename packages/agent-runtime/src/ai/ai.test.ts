@@ -187,14 +187,21 @@ describe("spend admission", () => {
           context,
           telemetry: { functionId: "e" },
         }),
+        ai.generateDecisions({
+          model: "openrouter:typesafe/jev-1.13",
+          state: {},
+          questions: { q: { type: "noul", instructions: "?" } },
+          context,
+          telemetry: { functionId: "f" },
+        }),
       ]
       const results = await Promise.allSettled(calls)
 
       expect(results.map((r) => (r.status === "rejected" ? r.reason : r))).toEqual(
-        ["a", "b", "c", "d", "e"].map(() => expect.any(AISpendDeniedError))
+        ["a", "b", "c", "d", "e", "f"].map(() => expect.any(AISpendDeniedError))
       )
       expect(admit.mock.calls.map(([request]) => request)).toEqual(
-        ["a", "b", "c", "d", "e"].map((functionId) => ({ workspaceId: "ws_123", userId: "usr_1", functionId }))
+        ["a", "b", "c", "d", "e", "f"].map((functionId) => ({ workspaceId: "ws_123", userId: "usr_1", functionId }))
       )
       expect(fetchSpy).not.toHaveBeenCalled()
     } finally {

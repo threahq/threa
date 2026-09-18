@@ -31,7 +31,7 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
 | `google/gemini-3.6-flash`       | $1.50 | $7.50  | $0.15      | $0.083      | 1M      |
 | `openai/text-embedding-3-small` | $0.02 | —      | —          | —           | —       |
 
-Anthropic, Google and OpenAI only. That is a deliberate constraint, not an accident of history: those three can be run regionally, through OpenRouter or direct with the provider, and that has repeatedly mattered more than a cheaper per-token rate elsewhere.
+Anthropic, Google and OpenAI only. That is a deliberate constraint on the inference registry, not an accident of history: those three can be run regionally, through OpenRouter or direct with the provider, and that option has repeatedly mattered more than a cheaper per-token rate elsewhere. [Decision Models](#decision-models) sit outside it and give the option up in exchange for price and latency.
 
 **Cache columns are not a footnote — they change which model is cheapest.**
 
@@ -289,6 +289,39 @@ runs the comparison; finish it before this entry claims anything about quality.
 **Typical cost:** ~$1.50 / ~$7.50 per 1M (cache read $0.15, cache write $0.083)
 
 **When to use:** not evaluated here yet. Note the cache-write rate is far below the read-heavy Anthropic/OpenAI premium tiers, so a stable prefix pays back quickly here.
+
+---
+
+## Decision Models
+
+A decision model answers a fixed set of typed questions about one `state` object and cannot emit prose. It speaks a different protocol from chat completions (`POST /api/alpha/decisions`; `/api/v1/chat/completions` rejects these models with a 400), so it does not go through the AI SDK provider. `ai.generateDecisions()` (`packages/agent-runtime/src/ai/decisions.ts`) is the only way to reach one, and it carries the same spend gate, access-log disclose row and usage recording as every other AI call.
+
+Three question types: **choice** (pick one of a named set, returns the pick plus the distribution behind it), **score** (where on an ordered ladder, and it lands between rungs when belief splits), **noul** (yes/no, returned as the belief itself in [0, 1] with no separate confidence number). Questions are answered in parallel and in isolation against the shared `state`, so a second and third question cost little beyond the input they already share.
+
+These models are deliberately absent from `models.yaml`. That registry is what the persona picker offers, and a model that cannot hold a conversation has nothing to offer a persona.
+
+### openrouter:typesafe/jev-1.13
+
+**Name:** Jev 1.13
+
+**Description:** TypeSafe's "System One" classifier, trained with RLCD rather than as a language model. It classifies, scores and judges; it cannot write a sentence, so any surface that also needs a topic or a summary needs a second call to an inference model.
+
+**Typical cost:** $0.04 per 1M input. Output tokens bill at $0.00.
+
+**Residency:** US only. It cannot be run regionally at all, which is the one thing every model in the inference registry above can do.
+
+**Confidence is calibrated, and that is the point.** The number tracks whether the answer is right instead of reporting how sure the model sounds. On the boundary run below, mean confidence was 0.87 and the one wrong decision scored 0.06; `gpt-5.6-luna` self-reports 0.97 on the same suite whether it is right or wrong. A low score reliably meant the question was badly worded, which is how two bugs in our own criteria strings were found.
+
+**Measured against `gpt-5.6-luna` through the production extractors (`bun run eval boundary-extraction`, `bun run eval memo-classifier`), 18 Sep 2026:**
+
+|                    | boundary Jev | boundary luna | memo Jev  | memo luna |
+| ------------------ | ------------ | ------------- | --------- | --------- |
+| cases passed       | 37/41        | 41/41         | 11/11     | 11/11     |
+| decisions correct  | 40/41        | 41/41         | 11/11     | 11/11     |
+| wall clock         | 45.2s        | 1.8m          | 5.0s      | 30.3s     |
+| suite cost         | $0.0080      | $0.012        | $0.00073  | $0.0052   |
+
+The boundary figure for Jev includes 19 `gpt-5.6-luna` calls to name new conversations, which is why its cost lead there is 1.5x rather than the memo suite's 7x. Of its four failing cases, three decide correctly and miss a `minConfidence` floor authored against luna's flat self-report; one is a real miss. Read the rest as parity, not a quality win: both suites were tuned against luna, so they are saturated and can only show Jev not-worse. All six Swedish boundary cases and the whole memo suite pass, so it is not English-only.
 
 ---
 

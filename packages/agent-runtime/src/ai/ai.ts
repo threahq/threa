@@ -20,6 +20,7 @@ import type { Embedding, LanguageModel, EmbeddingModel, ModelMessage, Tool } fro
 import type { z } from "zod"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
 import { stripMarkdownFences } from "./text-utils"
+import { requestDecisions, type DecisionQuestion, type DecisionsResult } from "./decisions"
 import { logger } from "../logger"
 
 export interface ParsedModel {
@@ -264,6 +265,22 @@ export interface GenerateObjectOptions<T extends z.ZodType> {
   abortSignal?: AbortSignal
 }
 
+export interface GenerateDecisionsOptions {
+  model: string
+  /**
+   * The facts the questions are asked about, serialized as JSON. Question
+   * instructions address it by path (`conversation.messages[].text`), so its
+   * key names are part of the prompt.
+   */
+  state: unknown
+  questions: Record<string, DecisionQuestion>
+  telemetry?: TelemetryConfig
+  /** When provided, usage will be recorded to the database */
+  context?: CostContext
+  /** Abort signal for graceful cancellation / per-call timeouts */
+  abortSignal?: AbortSignal
+}
+
 export interface EmbedOptions {
   model: string
   value: string
@@ -348,6 +365,7 @@ export interface AI {
   generateText(options: GenerateTextOptions): Promise<TextResult>
   generateTextWithTools(options: GenerateTextWithToolsOptions): Promise<GenerateTextWithToolsResult>
   generateObject<T extends z.ZodType>(options: GenerateObjectOptions<T>): Promise<ObjectResult<z.infer<T>>>
+  generateDecisions(options: GenerateDecisionsOptions): Promise<DecisionsResult>
 
   // Embeddings
   embed(options: EmbedOptions): Promise<SingleEmbedResult>
@@ -896,6 +914,47 @@ export function createAI(config: AIConfig): AI {
         },
         usage,
       }
+    },
+
+    async generateDecisions(options: GenerateDecisionsOptions): Promise<DecisionsResult> {
+      const functionId = options.telemetry?.functionId ?? "generateDecisions"
+      await admit(options.context, functionId)
+
+      const { provider, modelId } = parseModelId(options.model)
+      if (provider !== "openrouter") {
+        throw new Error(`Unsupported decisions provider: "${provider}". Currently supported: openrouter`)
+      }
+      if (!config.openrouter) {
+        throw new Error("OpenRouter not configured. Set OPENROUTER_API_KEY or provide openrouter.apiKey in config.")
+      }
+
+      maybeDisclose({
+        context: options.context,
+        functionId,
+        modelString: options.model,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
+      const startedAt = Date.now()
+      const result = await requestDecisions({
+        apiKey: config.openrouter.apiKey,
+        modelId,
+        state: options.state,
+        questions: options.questions,
+        abortSignal: options.abortSignal,
+      })
+
+      logger.debug({ usage: result.usage, model: options.model }, "AI generateDecisions completed with usage")
+
+      await maybeRecordUsage({
+        context: options.context,
+        functionId,
+        modelString: options.model,
+        usage: result.usage,
+        latencyMs: Date.now() - startedAt,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
+
+      return result
     },
 
     async embed(options) {

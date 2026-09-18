@@ -129,6 +129,7 @@ export {
   type SpendGate,
   type EmbedManyOptions,
   type EmbedOptions,
+  type GenerateDecisionsOptions,
   type GenerateObjectOptions,
   type GenerateTextOptions,
   type GenerateTextWithToolsOptions,
@@ -149,6 +150,24 @@ export {
   type TextResult,
   type UsageWithCost,
 } from "./ai/ai"
+export { DecisionsAvailability } from "./ai/decisions-availability"
+export {
+  choiceAnswer,
+  noulAnswer,
+  rescaleScore,
+  isDecisionsModel,
+  scoreAnswer,
+  type ChoiceAnswer,
+  type ChoiceQuestion,
+  type DecisionAnswer,
+  type DecisionQuestion,
+  type DecisionsResult,
+  type NoulAnswer,
+  type NoulQuestion,
+  type ScoreAnswer,
+  type ScoreQuestion,
+} from "./ai/decisions"
+
 export { DebugCallback, getDebugCallbacks, isDebugEnabled } from "./ai/debug-callback"
 
 export { stripMarkdownFences, createJsonRepair, type SemanticFieldMapping } from "./ai/text-utils"
