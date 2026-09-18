@@ -9,6 +9,7 @@
  *
  *   bun run eval -- -s memo-classifier
  *   bun run eval -- -s memo-classifier -c news-hot-takes-001
+ *   bun run eval -- -s memo-classifier -m openrouter:typesafe/jev-1.13,openrouter:openai/gpt-5.6-luna
  *
  * ## Key Evaluators
  *
@@ -17,16 +18,25 @@
  * - garbage-leak-rate (run-level): share of chatter classified as knowledge
  */
 
+import { isDecisionsModel } from "@threahq/agent-runtime"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { memoClassifierCases } from "./cases"
 import type { MemoClassifierInput, MemoClassifierOutput, MemoClassifierExpected } from "./types"
 import { worthinessEvaluator, revisionEvaluator, accuracyEvaluator, garbageLeakRateEvaluator } from "./evaluators"
-import { MemoClassifier, MEMO_CLASSIFIER_MODEL_ID, MEMO_TEMPERATURES } from "../../../src/features/memos"
+import {
+  DecisionsMemoClassifier,
+  MemoClassifier,
+  MEMO_CLASSIFIER_MODEL_ID,
+  MEMO_DECISIONS_MODEL_ID,
+  MEMO_TEMPERATURES,
+} from "../../../src/features/memos"
 import { MessageFormatter } from "../../../src/lib/ai/message-formatter"
 import { formatEvalMessages, toConversation, toMemo } from "../../fixtures/memo"
 
 async function runClassifierTask(input: MemoClassifierInput, ctx: EvalContext): Promise<MemoClassifierOutput> {
-  const classifier = new MemoClassifier(ctx.ai, ctx.configResolver, new MessageFormatter())
+  const classifier = isDecisionsModel(ctx.permutation.model)
+    ? new DecisionsMemoClassifier(ctx.ai, ctx.permutation.model)
+    : new MemoClassifier(ctx.ai, ctx.configResolver, new MessageFormatter())
   const conversation = toConversation({
     topicSummary: input.topicSummary,
     participantIds: [...new Set(input.messages.map((m) => m.authorId))],
@@ -69,11 +79,11 @@ export const memoClassifierSuite: EvalSuite<MemoClassifierInput, MemoClassifierO
 
   runEvaluators: [accuracyEvaluator, garbageLeakRateEvaluator],
 
+  // The decision model first: it is what every unpinned workspace runs, which
+  // is every workspace today. The inference model is the residency-pinned path.
   defaultPermutations: [
-    {
-      model: MEMO_CLASSIFIER_MODEL_ID,
-      temperature: MEMO_TEMPERATURES.classification,
-    },
+    { model: MEMO_DECISIONS_MODEL_ID },
+    { model: MEMO_CLASSIFIER_MODEL_ID, temperature: MEMO_TEMPERATURES.classification },
   ],
 }
 

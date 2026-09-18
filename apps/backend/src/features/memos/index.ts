@@ -23,13 +23,22 @@ export { PendingItemRepository } from "./pending-item-repository"
 export type { PendingMemoItem, QueuePendingItemParams } from "./pending-item-repository"
 
 export { MemoClassifier } from "./classifier"
-export type { ConversationClassification, ClassifierContext } from "./classifier"
+export type {
+  ClassifiableConversation,
+  ClassifierContext,
+  ConversationClassification,
+  ConversationClassifier,
+} from "./classifier"
+
+export { DecisionsMemoClassifier } from "./decisions-classifier"
+export { ResidencyRoutedMemoClassifier } from "./residency-routed-classifier"
 
 export { Memorizer } from "./memorizer"
 export type { MemoContent, MemorizerContext } from "./memorizer"
 
 export {
   MEMO_CLASSIFIER_MODEL_ID,
+  MEMO_DECISIONS_MODEL_ID,
   MEMO_MEMORIZER_MODEL_ID,
   MEMO_TEMPERATURES,
   MEMO_GEM_CONFIDENCE_FLOOR,

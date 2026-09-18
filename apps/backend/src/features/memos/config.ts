@@ -319,6 +319,75 @@ export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memos for this con
 
 Set shouldReviseExisting true ONLY if the conversation now contains substantive knowledge these memos do not capture — a changed conclusion, or a distinctly new topic worth its own memo. Continued chat about what the memos already say, rewordings, and reactions are NOT grounds for revision.`
 
+// --- Decision-model path (unpinned workspaces) ---
+
+export const MEMO_DECISIONS_MODEL_ID = "openrouter:typesafe/jev-1.13"
+
+/**
+ * A to-do belief at or above this admits the conversation to the suggestion
+ * collector, which runs its own AI call and extracts nothing when there is
+ * nothing to extract — so a near-miss costs one cheap call, and the floor sits
+ * below the revision floor on purpose.
+ */
+export const MEMO_DECISION_ACTION_ITEMS_FLOOR = 0.6
+
+/** "When in doubt, do not revise" as a number. */
+export const MEMO_DECISION_REVISE_FLOOR = 0.7
+
+/**
+ * The worthiness question is one pick-one over what the participants PRODUCED,
+ * never over the subject. The worthy options ARE the knowledge types a memo can
+ * carry, so a worthy answer already names the artifact; the four unworthy ones
+ * are the ways a conversation can look substantial and leave nothing behind.
+ * Splitting the negative side into named failures — rather than one "not worth
+ * it" — is what keeps the two gates (durability, agency) separable: a hot take
+ * and a passing status both fail, for different reasons, and the model has to
+ * pick which.
+ */
+const WORTHY_CRITERIA: Record<KnowledgeType, string> = {
+  decision:
+    "The participants made a choice and the messages carry its rationale — whether they just committed to it or are reporting one they already acted on. Still true and useful in six months.",
+  procedure:
+    "The participants worked out a sequence that reliably achieves something — a setup, a fix, a process — and it is recoverable from these messages.",
+  learning:
+    "The participants discovered or validated something themselves, through debugging, an incident, an experiment, or watching a tool they build with behave a certain way.",
+  reference:
+    "A stable look-it-up fact the participants established or pinned down: an id, a value, a name, a location, a durable constraint.",
+  context:
+    "Durable background on WHY something is the way it is, or where it now lives — the state of their own setup and what moved it there. Reach for this LAST, after the four above: a passing status or a reaction that fits none of them is not context, it is not worth capturing.",
+}
+
+const UNWORTHY_CRITERIA = {
+  transient_status:
+    "A passing state — it is broken, it works, it is slow right now — with no cause, fix, decision, or lasting change attached. True for an hour, worthless after. The FIX for that same problem would be a procedure or a learning; this is the bare state.",
+  reaction_or_relay:
+    "The participants passed along or reacted to something outside their own control: news, a release, an announcement, a rumor, a third-party event. The underlying fact may be perfectly durable and it still belongs here, because they did not produce it. Recasting the reaction as a fact about them does not move it.",
+  social: "Banter, small talk, travel plans, whereabouts, moods, logistics. Nothing was produced and nothing lasts.",
+  unresolved:
+    "A discussion that trails off without landing, or whose substance lives only behind an external link. Something was being worked on; nothing was reached.",
+}
+
+export const WORTHINESS_CRITERIA: Record<string, string> = { ...WORTHY_CRITERIA, ...UNWORTHY_CRITERIA }
+
+/** The options of WORTHINESS_CRITERIA that mean "capture this" — one per knowledge type. */
+export const WORTHY_CHOICES: readonly string[] = KNOWLEDGE_TYPES
+
+export const WORTHINESS_INSTRUCTIONS = `What durable knowledge did the participants PRODUCE in this conversation? Judge the product, never the subject — any topic can land in any option here.
+
+Two tests decide it, and an option on the worthy side has to pass BOTH:
+- DURABILITY: would the core still be true and useful in six months?
+- AGENCY: did the participants decide it, work it out, or validate it themselves, rather than voice a reaction to something outside their control?
+
+A conversation is not worth capturing just because it is long or technical. If the durable core is "they chatted about X", pick the option on the unworthy side that names why. Message tags carry a relative \`age\` — a passing state described days ago has gone stale, while a decision or a validated learning stays durable regardless of age.`
+
+export const ACTION_ITEMS_INSTRUCTIONS = `Did someone commit to doing something, or get directly asked to? A task, a to-do, a follow-up with an owner.
+
+This is independent of whether the conversation is worth remembering: "send me the deck by Friday" is a to-do with no durable knowledge, and a recorded decision can carry no open task at all.`
+
+export const REVISE_INSTRUCTIONS = `The memos listed in the state already cover this conversation. Do these messages now contain substantive durable knowledge those memos do not capture — a conclusion that changed, a decision reversed, a setup replaced, a fact corrected, or a genuinely new topic that deserves its own memo?
+
+More chat around a topic a memo already states is NOT a revision: restatements, agreement, rewordings, and elaboration that leaves the captured conclusion intact are all covered already. When in doubt, it is not a revision.`
+
 const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team chat application. From a conversation, you pull out only the things genuinely worth remembering later and write each as its own short, self-contained memo.
 
 Before writing anything, gate every candidate through two topic-neutral tests — a candidate that fails EITHER is not a memo. Apply them to what was actually produced, never blanket-ban the subject. A whole conversation can pass zero candidates; returning no memos is correct and common when nothing here lasts or nothing here was produced by the participants:

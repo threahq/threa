@@ -114,6 +114,8 @@ import {
   StubReranker,
   StubMemoService,
   MemoClassifier,
+  DecisionsMemoClassifier,
+  ResidencyRoutedMemoClassifier,
   Memorizer,
   EmbeddingService,
   StubEmbeddingService,
@@ -1062,7 +1064,12 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubMemoService()
     : new MemoService({
         pool,
-        classifier: new MemoClassifier(ai, configResolver, messageFormatter),
+        classifier: new ResidencyRoutedMemoClassifier({
+          residency: aiResidency,
+          decisions: new DecisionsMemoClassifier(ai),
+          inference: new MemoClassifier(ai, configResolver, messageFormatter),
+          availability: decisionsAvailability,
+        }),
         memorizer: new Memorizer(ai, configResolver, messageFormatter),
         embeddingService,
         messageFormatter,
