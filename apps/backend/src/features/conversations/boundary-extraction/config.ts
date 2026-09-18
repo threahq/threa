@@ -1,6 +1,7 @@
 // Co-located config (INV-43): production code and evals import from here.
 
 import { z } from "zod"
+import type { ConversationStatus } from "@threahq/types"
 import { CONVERSATION_STATUSES } from "@threahq/types"
 
 export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
@@ -309,7 +310,7 @@ export const COMPLETENESS_INSTRUCTIONS = `How settled is this conversation, coun
 
 export const STATUS_INSTRUCTIONS = `What state is this conversation in, counting \`newMessage\` as its newest turn if it belongs here?`
 
-export const STATUS_CRITERIA: Record<string, string> = {
+export const STATUS_CRITERIA: Record<ConversationStatus, string> = {
   active: "Being talked about right now, or last touched within this session with something still open.",
   stalled: "Left hanging — nobody has come back to it, and its open question was never answered or withdrawn.",
   resolved:

@@ -26,6 +26,7 @@
  * - completeness-update: Correct resolution detection?
  */
 
+import { isDecisionsModel } from "@threahq/agent-runtime"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { boundaryExtractionCases } from "./cases"
 import type {
@@ -158,10 +159,9 @@ async function runBoundaryExtractionTask(
   input: BoundaryExtractionInput,
   ctx: EvalContext
 ): Promise<BoundaryExtractionOutput> {
-  const extractor =
-    ctx.permutation.model === BOUNDARY_DECISIONS_MODEL_ID
-      ? new DecisionsBoundaryExtractor(ctx.ai, NAMING_CONFIG_RESOLVER)
-      : new LLMBoundaryExtractor(ctx.ai, ctx.configResolver)
+  const extractor = isDecisionsModel(ctx.permutation.model)
+    ? new DecisionsBoundaryExtractor(ctx.ai, NAMING_CONFIG_RESOLVER, ctx.permutation.model)
+    : new LLMBoundaryExtractor(ctx.ai, ctx.configResolver)
   const extractionContext = buildExtractionContext(input, ctx.workspaceId)
 
   try {
@@ -222,11 +222,11 @@ export const boundaryExtractionSuite: EvalSuite<
 
   runEvaluators: [accuracyEvaluator, decisionAccuracyEvaluator, averageConfidenceEvaluator],
 
+  // The decision model first: it is what every unpinned workspace runs, which
+  // is every workspace today. The inference model is the residency-pinned path.
   defaultPermutations: [
-    {
-      model: BOUNDARY_EXTRACTION_MODEL_ID,
-      temperature: BOUNDARY_EXTRACTION_TEMPERATURE,
-    },
+    { model: BOUNDARY_DECISIONS_MODEL_ID },
+    { model: BOUNDARY_EXTRACTION_MODEL_ID, temperature: BOUNDARY_EXTRACTION_TEMPERATURE },
   ],
 }
 

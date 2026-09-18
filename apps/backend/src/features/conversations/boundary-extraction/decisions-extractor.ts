@@ -70,7 +70,8 @@ const COMPLETENESS_MAX = 7
 export class DecisionsBoundaryExtractor {
   constructor(
     private ai: AI,
-    private configResolver: ConfigResolver
+    private configResolver: ConfigResolver,
+    private modelId: string = BOUNDARY_DECISIONS_MODEL_ID
   ) {}
 
   async extract(context: ExtractionContext): Promise<ExtractionResult> {
@@ -85,7 +86,7 @@ export class DecisionsBoundaryExtractor {
     }
 
     const result = await this.ai.generateDecisions({
-      model: BOUNDARY_DECISIONS_MODEL_ID,
+      model: this.modelId,
       state: this.buildState(context, candidates),
       questions: this.buildQuestions(context, candidates),
       telemetry: {
@@ -101,17 +102,22 @@ export class DecisionsBoundaryExtractor {
 
     const placement = choiceAnswer(result, KEY.placement)
     const known = new Set(candidates.map((c) => c.id))
-    if (!known.has(placement.choice) && placement.choice !== NEW_CONVERSATION_CHOICE) {
+    const unoffered = !known.has(placement.choice) && placement.choice !== NEW_CONVERSATION_CHOICE
+    if (unoffered) {
       logger.warn(
         { choice: placement.choice, workspaceId: context.workspaceId, streamType: context.streamType },
         "Decision model returned an unoffered placement choice; opening a new conversation"
       )
     }
     const primaryId = known.has(placement.choice) ? placement.choice : null
-    const reassignments = this.readReassignments(result, context, candidates, primaryId)
+    // An unoffered choice is an answer we cannot read. Opening a conversation
+    // for the new message is recoverable; dragging older messages into it on
+    // the same unreadable answer is not.
+    const reassignments = unoffered ? [] : this.readReassignments(result, context, candidates, primaryId)
+    const completeness = this.readCompleteness(result, candidates, primaryId)
 
     if (primaryId === null) {
-      return this.openNewConversation(context, reassignments, placement.confidence)
+      return this.openNewConversation(context, reassignments, placement.confidence, completeness)
     }
 
     const assignments: MessageAssignment[] = [{ conversationId: primaryId, isPrimary: true }]
@@ -132,7 +138,7 @@ export class DecisionsBoundaryExtractor {
     return {
       assignments,
       reassignments: reassignments.length > 0 ? reassignments : undefined,
-      completenessUpdates: [this.readCompleteness(result, primaryId, summary)],
+      completenessUpdates: completeness.map((u) => (u.conversationId === primaryId ? { ...u, summary } : u)),
       confidence: placement.confidence,
     }
   }
@@ -145,7 +151,8 @@ export class DecisionsBoundaryExtractor {
   private async openNewConversation(
     context: ExtractionContext,
     reassignments: Reassignment[],
-    confidence: number
+    confidence: number,
+    completenessUpdates: CompletenessUpdate[] = []
   ): Promise<ExtractionResult> {
     const moving = new Set(reassignments.filter((r) => r.toConversationId === null).map((r) => r.messageId))
     const messages = [...context.recentMessages.filter((m) => moving.has(m.id)), context.newMessage]
@@ -156,22 +163,31 @@ export class DecisionsBoundaryExtractor {
       newConversationTopic: prose.title ?? truncateAsTopic(context.newMessage),
       newConversationSummary: prose.summary ?? undefined,
       reassignments: reassignments.length > 0 ? reassignments : undefined,
+      completenessUpdates: completenessUpdates.length > 0 ? completenessUpdates : undefined,
       confidence,
     }
   }
 
-  private readCompleteness(result: DecisionsResult, conversationId: string, summary?: string): CompletenessUpdate {
-    const ladder = scoreAnswer(result, KEY.completeness(conversationId))
-    const score =
-      COMPLETENESS_MIN + rescaleScore(ladder, COMPLETENESS_LADDER.length, COMPLETENESS_MAX - COMPLETENESS_MIN)
-    const status = choiceAnswer(result, KEY.status(conversationId)).choice
-
-    return {
-      conversationId,
-      score: Math.round(score),
-      status: (CONVERSATION_STATUSES as readonly string[]).includes(status) ? (status as ConversationStatus) : "active",
-      summary,
+  private readCompleteness(
+    result: DecisionsResult,
+    candidates: ConversationSummary[],
+    primaryId: string | null
+  ): CompletenessUpdate[] {
+    const updates: CompletenessUpdate[] = []
+    for (const c of candidates) {
+      const status = choiceAnswer(result, KEY.status(c.id)).choice
+      if (!(CONVERSATION_STATUSES as readonly string[]).includes(status)) {
+        logger.warn({ status, conversationId: c.id, primaryId }, "Decision model returned an unoffered status; skipping")
+        continue
+      }
+      const ladder = scoreAnswer(result, KEY.completeness(c.id))
+      updates.push({
+        conversationId: c.id,
+        score: Math.round(COMPLETENESS_MIN + rescaleScore(ladder, COMPLETENESS_MAX - COMPLETENESS_MIN)),
+        status: status as ConversationStatus,
+      })
     }
+    return updates
   }
 
   /**
@@ -263,7 +279,16 @@ export class DecisionsBoundaryExtractor {
   private renderMessages(context: ExtractionContext, messages: Message[]): string {
     const now = context.newMessage.createdAt
     return messages
-      .map((m) => `(${formatRelativeAge(m.createdAt, now)}) ${this.author(m)}: ${m.contentMarkdown.slice(0, 300)}`)
+      .map((m) => {
+        const extras = [
+          ...(this.attachments(context, m.id, RECENT_ATTACHMENT_CHARS) ?? []).map(
+            (a) => `  [attachment ${a.filename} (${a.kind})]: ${a.text}`
+          ),
+          this.links(context, m.id),
+        ].filter((line): line is string => Boolean(line))
+        const head = `(${formatRelativeAge(m.createdAt, now)}) ${this.author(m)}: ${m.contentMarkdown.slice(0, 300)}`
+        return extras.length > 0 ? `${head}\n${extras.join("\n")}` : head
+      })
       .join("\n")
   }
 

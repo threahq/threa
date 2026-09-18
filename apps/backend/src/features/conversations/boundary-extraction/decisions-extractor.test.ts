@@ -31,7 +31,13 @@ function createAI(answers: Answers, prose: { title: string | null; summary: stri
       }
       return [
         key,
-        { type: "score", score: typeof value === "number" ? value : 0, legend: {}, probabilities: {}, confidence: 0.9 },
+        {
+          type: "score",
+          score: typeof value === "number" ? value : 0,
+          legend: Object.fromEntries(question.criteria.map((c, i) => [String(i), c])),
+          probabilities: {},
+          confidence: 0.9,
+        },
       ] as const
     })
     return { answers: Object.fromEntries(entries), usage: {} }
@@ -179,6 +185,50 @@ describe("DecisionsBoundaryExtractor", () => {
     ])
   })
 
+  test("reports completeness for every candidate, not just the one the message joined", async () => {
+    const ctx = context({ activeConversations: [conversation(), conversation({ id: "conv_b" })] })
+    const { ai } = createAI(
+      {
+        placement: "conv_a",
+        "completeness::conv_a": 3,
+        "status::conv_a": "active",
+        "completeness::conv_b": 3,
+        "status::conv_b": "stalled",
+      },
+      NO_PROSE
+    )
+
+    const result = await new DecisionsBoundaryExtractor(ai, configResolver).extract(ctx)
+
+    expect(result.completenessUpdates).toEqual([
+      { conversationId: "conv_a", score: 7, status: "active", summary: undefined },
+      { conversationId: "conv_b", score: 7, status: "stalled" },
+    ])
+  })
+
+  test("drops a status the model was never offered rather than overwriting the stored one", async () => {
+    const { ai } = createAI({ placement: "conv_a", "status::conv_a": "abandoned" }, NO_PROSE)
+
+    const result = await new DecisionsBoundaryExtractor(ai, configResolver).extract(context())
+
+    expect(result.completenessUpdates).toEqual([])
+  })
+
+  test("does not move earlier messages on a placement choice it cannot read", async () => {
+    const ctx = context({
+      recentMessages: [message({ id: "msg_stray", contentMarkdown: "Stray opener" })],
+      activeConversations: [conversation({ contextMessageIds: ["msg_stray"] })],
+    })
+    const { ai } = createAI({ placement: "conv_nonexistent", "move::msg_stray": 0.99 }, NO_PROSE)
+
+    const result = await new DecisionsBoundaryExtractor(ai, configResolver).extract(ctx)
+
+    expect({ assignments: result.assignments, reassignments: result.reassignments }).toEqual({
+      assignments: [{ conversationId: null, isPrimary: true }],
+      reassignments: undefined,
+    })
+  })
+
   test("refreshes the summary only when the stored one is called stale", async () => {
     const stale = createAI(
       { placement: "conv_a", "summary_stale::conv_a": 0.9 },
@@ -276,7 +326,7 @@ describe("DecisionsBoundaryExtractor", () => {
         newConversationTopic: "Rollback-plan",
         newConversationSummary: "Om rollbacken.",
         moves: [{ messageId: "msg_stray", to: null }],
-        completenessUpdates: undefined,
+        completenessUpdates: [{ conversationId: "conv_a", score: 1, status: "active" }],
       },
       proseCalls: 1,
     })
