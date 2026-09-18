@@ -1,5 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test"
-import { LLMBoundaryExtractor, formatRelativeAge } from "./llm-extractor"
+import { LLMBoundaryExtractor } from "./llm-extractor"
+import { formatRelativeAge } from "./shared"
 import type { ExtractionContext, ConversationSummary } from "./types"
 import type { Message } from "../../messaging"
 import type { AI } from "@threahq/agent-runtime"

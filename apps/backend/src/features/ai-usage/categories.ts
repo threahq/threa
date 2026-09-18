@@ -44,6 +44,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "suggestion-extract": { category: "other", stage: "enrichment" },
 
   "boundary-extraction": { category: "conversation", stage: "core" },
+  "boundary-naming": { category: "conversation", stage: "core" },
   "conversation-split": { category: "conversation", stage: "core" },
   "memo-classify-conversation": { category: "memory", stage: "core" },
   "memorize-conversation": { category: "memory", stage: "core" },

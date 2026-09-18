@@ -132,7 +132,9 @@ import {
   BoundaryExtractionHandler,
   createBoundaryExtractionWorker,
   createStalenessSweepWorker,
+  DecisionsBoundaryExtractor,
   LLMBoundaryExtractor,
+  ResidencyRoutedBoundaryExtractor,
   StubBoundaryExtractor,
   ConversationEmbeddingHandler,
   createConversationEmbeddingWorker,
@@ -204,7 +206,7 @@ import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
-import { AICostService, AISpendGate } from "./features/ai-usage"
+import { AICostService, AISpendGate, WorkspaceAIResidencyPolicy } from "./features/ai-usage"
 import {
   CommandRegistry,
   InviteCommand,
@@ -897,9 +899,14 @@ export async function startServer(): Promise<ServerInstance> {
   // Constructed here (not at the worker registration below) so the HTTP routes can
   // reach it for the on-demand conversation-split endpoints; the boundary-extract
   // worker reuses the same instance (INV-13).
+  const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
   const boundaryExtractor = config.useStubBoundaryExtraction
     ? new StubBoundaryExtractor()
-    : new LLMBoundaryExtractor(ai, configResolver)
+    : new ResidencyRoutedBoundaryExtractor({
+        residency: aiResidency,
+        decisions: new DecisionsBoundaryExtractor(ai, configResolver),
+        inference: new LLMBoundaryExtractor(ai, configResolver),
+      })
   const boundaryExtractionService = new BoundaryExtractionService(pool, boundaryExtractor)
 
   registerRoutes(app, {

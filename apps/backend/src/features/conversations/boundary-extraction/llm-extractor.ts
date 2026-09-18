@@ -13,10 +13,9 @@ import type {
   SplitProposal,
   SplitGroup,
 } from "./types"
-import type { Message } from "../../messaging"
 import { renderLinkPreviewContext } from "../../link-previews"
+import { coldStartThreadResult, formatRelativeAge, isColdStartThread, truncateAsTopic } from "./shared"
 import { logger } from "../../../lib/logger"
-import { StreamTypes } from "@threahq/types"
 import {
   extractionResponseSchema,
   BOUNDARY_EXTRACTION_SYSTEM_PROMPT,
@@ -51,25 +50,6 @@ function indent(text: string, prefix: string): string {
     .join("\n")
 }
 
-/**
- * Age of `date` relative to `reference` (the new message), rendered for the
- * prompt: "just now", "5m ago", "3h ago", "2d ago". Ages at or after the
- * reference clamp to "just now" — `recentMessages` includes a couple of
- * messages sent AFTER the new message (MESSAGES_AFTER), and their sub-minute
- * skew carries no boundary signal.
- */
-export function formatRelativeAge(date: Date, reference: Date): string {
-  const minutes = Math.floor((reference.getTime() - date.getTime()) / 60_000)
-  if (minutes < 1) return "just now"
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.round(minutes / 60)
-  // Hours up to two days: "26h ago" carries the overnight-vs-full-day nuance
-  // that "1d ago" would flatten, and that nuance is exactly what the model
-  // weighs at session boundaries.
-  if (hours < 48) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
-
 export class LLMBoundaryExtractor implements BoundaryExtractor {
   constructor(
     private ai: AI,
@@ -77,20 +57,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   ) {}
 
   async extract(context: ExtractionContext): Promise<ExtractionResult> {
-    // Cold-start: a thread with no active conversation and no parent message
-    // conversation. There's nothing for the LLM to consider, so just create a
-    // new conversation deterministically.
-    if (
-      context.streamType === StreamTypes.THREAD &&
-      context.activeConversations.length === 0 &&
-      (!context.parentMessageConversations || context.parentMessageConversations.length === 0)
-    ) {
-      return {
-        assignments: [{ conversationId: null, isPrimary: true }],
-        newConversationTopic: this.truncateAsTopic(context.newMessage),
-        confidence: 1.0,
-      }
-    }
+    if (isColdStartThread(context)) return coldStartThreadResult(context)
 
     const config = await this.configResolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
     const prompt = this.buildPrompt(context)
@@ -127,7 +94,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
         )
         return {
           assignments: [{ conversationId: null, isPrimary: true }],
-          newConversationTopic: this.truncateAsTopic(context.newMessage),
+          newConversationTopic: truncateAsTopic(context.newMessage),
           confidence: 0.5,
         }
       }
@@ -205,7 +172,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   private splitFallbackTitle(context: SplitContext): string {
     if (context.topicSummary) return context.topicSummary
     const first = context.messages[0]
-    return first ? this.truncateAsTopic(first) : "Conversation"
+    return first ? truncateAsTopic(first) : "Conversation"
   }
 
   private buildSplitPrompt(context: SplitContext): string {
@@ -366,7 +333,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       )
       return {
         assignments: [{ conversationId: null, isPrimary: true }],
-        newConversationTopic: parsed.newConversationTopic ?? this.truncateAsTopic(context.newMessage),
+        newConversationTopic: parsed.newConversationTopic ?? truncateAsTopic(context.newMessage),
         newConversationSummary: parsed.newConversationSummary ?? undefined,
         reassignments: undefined,
         completenessUpdates: this.normalizeCompletenessUpdates(parsed),
@@ -433,7 +400,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
     const hasNullAssignment = validAssignments.some((a) => a.conversationId === null)
     const newConversationTopic = hasNullAssignment
-      ? (parsed.newConversationTopic ?? this.truncateAsTopic(context.newMessage))
+      ? (parsed.newConversationTopic ?? truncateAsTopic(context.newMessage))
       : undefined
 
     return {
@@ -455,22 +422,5 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       status: u.status,
       summary: u.summary ?? undefined,
     }))
-  }
-
-  private truncateAsTopic(message: Message): string {
-    const firstSentence = message.contentMarkdown.split(/[.!?\n]/)[0]?.trim()
-    const text = firstSentence && firstSentence.length > 0 ? firstSentence : message.contentMarkdown.trim()
-
-    if (text.length <= 100) {
-      return text
-    }
-
-    // Find last space before the limit to avoid cutting mid-word.
-    const lastSpace = text.lastIndexOf(" ", 99)
-    if (lastSpace > 20) {
-      return text.slice(0, lastSpace) + "…"
-    }
-
-    return text.slice(0, 99) + "…"
   }
 }
