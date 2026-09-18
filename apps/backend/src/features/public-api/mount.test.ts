@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { API_KEY_ELIGIBLE_SCOPES } from "@threahq/types"
 import { assertHandlerParity, toExpressPath } from "./mount"
 import { PUBLIC_API_ROUTES } from "./routes"
 
@@ -32,5 +33,15 @@ describe("assertHandlerParity", () => {
     expect(() => assertHandlerParity([...registryIds, "ghostOperation"])).toThrow(
       /without a registry route: ghostOperation/
     )
+  })
+})
+
+describe("route scopes", () => {
+  it("only requires scopes an API key can actually be granted", () => {
+    const grantable = new Set<string>(API_KEY_ELIGIBLE_SCOPES)
+    const ungrantable = PUBLIC_API_ROUTES.flatMap((route) =>
+      (route.scopes ?? []).filter((scope) => !grantable.has(scope)).map((scope) => `${route.operationId}:${scope}`)
+    )
+    expect(ungrantable).toEqual([])
   })
 })
