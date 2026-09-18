@@ -1,4 +1,5 @@
 import { describe, test, expect, mock } from "bun:test"
+import { DecisionsAvailability } from "@threahq/agent-runtime"
 import { ResidencyRoutedBoundaryExtractor } from "./residency-routed-extractor"
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult, SplitContext, SplitProposal } from "./types"
 
@@ -14,7 +15,11 @@ const SPLIT_PROPOSAL: SplitProposal = { groups: [], confidence: 0.7, reasoning: 
 
 const context = { workspaceId: "wsp_test", streamType: "scratchpad" } as ExtractionContext
 
-function createExtractor(options: { pinned: boolean; decisionsThrows?: boolean }) {
+function createExtractor(options: {
+  pinned: boolean
+  decisionsThrows?: boolean
+  availability?: DecisionsAvailability
+}) {
   const decisionsExtract = mock(async () => {
     if (options.decisionsThrows) throw new Error("decisions endpoint is unreachable")
     return DECISIONS_RESULT
@@ -27,6 +32,7 @@ function createExtractor(options: { pinned: boolean; decisionsThrows?: boolean }
     residency: { isPinned },
     decisions: { extract: decisionsExtract },
     inference: { extract: inferenceExtract, splitConversation } as unknown as BoundaryExtractor,
+    availability: options.availability ?? new DecisionsAvailability(),
   })
 
   return { extractor, decisionsExtract, inferenceExtract, splitConversation, isPinned }
@@ -73,6 +79,20 @@ describe("ResidencyRoutedBoundaryExtractor", () => {
     expect({ result, inferenceCalls: inferenceExtract.mock.calls.length }).toEqual({
       result: INFERENCE_RESULT,
       inferenceCalls: 1,
+    })
+  })
+
+  test("a failed decision call holds the next extraction on inference for the cooldown", async () => {
+    const availability = new DecisionsAvailability()
+    const failing = createExtractor({ pinned: false, decisionsThrows: true, availability })
+    const healthy = createExtractor({ pinned: false, availability })
+
+    await failing.extractor.extract(context)
+    const result = await healthy.extractor.extract(context)
+
+    expect({ result, decisionCalls: healthy.decisionsExtract.mock.calls.length }).toEqual({
+      result: INFERENCE_RESULT,
+      decisionCalls: 0,
     })
   })
 

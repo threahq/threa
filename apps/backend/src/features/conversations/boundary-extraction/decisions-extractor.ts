@@ -177,7 +177,10 @@ export class DecisionsBoundaryExtractor {
     for (const c of candidates) {
       const status = choiceAnswer(result, KEY.status(c.id)).choice
       if (!(CONVERSATION_STATUSES as readonly string[]).includes(status)) {
-        logger.warn({ status, conversationId: c.id, primaryId }, "Decision model returned an unoffered status; skipping")
+        logger.warn(
+          { status, conversationId: c.id, primaryId },
+          "Decision model returned an unoffered status; skipping"
+        )
         continue
       }
       const ladder = scoreAnswer(result, KEY.completeness(c.id))
