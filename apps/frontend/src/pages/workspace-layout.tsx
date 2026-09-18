@@ -579,11 +579,11 @@ export function WorkspaceLayout() {
             <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
               <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
                 <CallLaunchProvider>
-                  <UserProfileProvider>
-                    <MentionableWrapper mentionables={mentionables}>
-                      <WorkspaceCommandListProvider workspaceId={workspaceId}>
-                        <WorkspaceEmojiProvider workspaceId={workspaceId}>
-                          <PreferencesProvider workspaceId={workspaceId}>
+                  <PreferencesProvider workspaceId={workspaceId}>
+                    <UserProfileProvider>
+                      <MentionableWrapper mentionables={mentionables}>
+                        <WorkspaceCommandListProvider workspaceId={workspaceId}>
+                          <WorkspaceEmojiProvider workspaceId={workspaceId}>
                             <SettingsProvider>
                               <WorkspaceKeyboardHandler
                                 onOpenSwitcher={openSwitcher}
@@ -640,11 +640,11 @@ export function WorkspaceLayout() {
                                 </E2eUnlockProvider>
                               </WorkspaceKeyboardHandler>
                             </SettingsProvider>
-                          </PreferencesProvider>
-                        </WorkspaceEmojiProvider>
-                      </WorkspaceCommandListProvider>
-                    </MentionableWrapper>
-                  </UserProfileProvider>
+                          </WorkspaceEmojiProvider>
+                        </WorkspaceCommandListProvider>
+                      </MentionableWrapper>
+                    </UserProfileProvider>
+                  </PreferencesProvider>
                   <CallDock />
                   <IncomingCallOverlay workspaceId={workspaceId} />
                 </CallLaunchProvider>

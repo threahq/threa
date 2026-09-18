@@ -18,7 +18,7 @@ test.describe("Bot profile card", () => {
     const botId = ((await createBotRes.json()) as { data: { id: string } }).data.id
 
     const keyRes = await page.request.post(`/api/workspaces/${workspaceId}/bots/${botId}/keys`, {
-      data: { name: `card-key-${testId}`, scopes: ["messages:write", "streams:read"] },
+      data: { name: `card-key-${testId}`, scopes: ["messages:write", "streams:read", "bot-runtime:write"] },
     })
     expect(keyRes.ok()).toBe(true)
     const keyValue = ((await keyRes.json()) as { value: string }).value
@@ -32,6 +32,19 @@ test.describe("Bot profile card", () => {
 
     expect(
       (await page.request.post(`/api/workspaces/${workspaceId}/bots/${botId}/streams/${streamId}/grant`)).ok()
+    ).toBe(true)
+    expect(
+      (
+        await page.request.post(`/api/v1/workspaces/${workspaceId}/bot-runtime/presence`, {
+          headers: { Authorization: `Bearer ${keyValue}` },
+          data: {
+            runtimeKind: "hermes",
+            instanceId: `card-runtime-${testId}`,
+            status: "available",
+            acceptingInvocations: true,
+          },
+        })
+      ).ok()
     ).toBe(true)
     const messageContent = `Hello from the card bot ${testId}`
     expect(
@@ -53,6 +66,7 @@ test.describe("Bot profile card", () => {
     await expect(card.getByText("Shared", { exact: true })).toBeVisible()
     await expect(card.getByText("Answers deploy questions")).toBeVisible()
     await expect(card.getByText("Reads only the streams it's added to")).toBeVisible()
+    await expect(card.getByText(/Available · Hermes · seen/)).toBeVisible()
     await expect(card.getByRole("list", { name: "Streams" }).getByRole("link")).toHaveText([`#${channelName}`])
 
     await card.getByRole("link", { name: "Manage" }).click()
