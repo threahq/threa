@@ -798,11 +798,11 @@ export async function unlockWithWebAuthn(workspaceId: string, userId: string, pr
 
 /**
  * Rotate the passphrase: unwrap with the old one, re-wrap the *same* UIK
- * under a freshly-derived KEK, and replace the server bundle. The server
- * mints a fresh `keyId` for the new row, but the underlying X25519 key
- * material is identical — so envelopes addressed by the old `keyId` won't
- * match the new view's `recipientKeyId`, even though the private key still
- * decrypts them. Re-keying past envelopes is a separate (later) migration.
+ * under a freshly-derived KEK, and replace the server bundle. The key material
+ * is unchanged, so the server keeps the same `keyId` and every existing
+ * `stream_e2e_key_wraps` row (plus each wrap AAD binding that id) keeps
+ * addressing this key. Nothing about device trust changes either: a persisted
+ * device key holds the private key itself, not the passphrase.
  */
 export async function rotatePassphrase(
   workspaceId: string,
@@ -814,7 +814,6 @@ export async function rotatePassphrase(
   const scope = getOrCreateScope(workspaceId, userId)
   const cached = scope.cachedKey
   if (!cached) throw new Error("No wrapped key available to rotate")
-  const wasTrusted = scope.state.deviceTrusted
   const generation = ++scope.loadGeneration
 
   const oldKek = await deriveKEK(oldPassphrase, cached.kdfSalt, cached.kdfParams)
@@ -842,30 +841,13 @@ export async function rotatePassphrase(
   await writeCacheRow(workspaceId, userId, view, serverKey.createdAt)
   if (scope.loadGeneration !== generation) return
 
-  // Rotation mints a fresh keyId. If this device was trusted, re-persist the
-  // device key under the new keyId so the next reload still resumes instead of
-  // being treated as a stale rotation. But a PIN/biometric-gated device must not
-  // be silently re-persisted as a plain auto-resume key — that would DOWNGRADE
-  // security by dropping the gate. For those, clear the device key so the user
-  // re-establishes their PIN/biometric under the new passphrase; only plain
-  // trusted devices re-persist automatically. Best-effort either way.
-  let trustPersisted = false
-  if (wasTrusted) {
-    const existing = await readDeviceKey(workspaceId, userId)
-    if (existing?.pinWrappedPrivate || existing?.webauthnWrappedPrivate) {
-      await deleteDeviceKey(workspaceId, userId).catch(() => {})
-    } else {
-      trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, privateKey)
-    }
-    if (scope.loadGeneration !== generation) return
-  }
   scope.cachedKey = view
   setState(workspaceId, userId, {
     status: "unlocked",
     keyId: view.keyId,
     publicKey: view.publicKey,
     privateKey,
-    deviceTrusted: trustPersisted,
+    deviceTrusted: scope.state.deviceTrusted,
     ...NO_UNLOCK_PROMPT,
     error: null,
   })
