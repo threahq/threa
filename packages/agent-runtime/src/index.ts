@@ -150,6 +150,7 @@ export {
   type TextResult,
   type UsageWithCost,
 } from "./ai/ai"
+export { DecisionsAvailability } from "./ai/decisions-availability"
 export {
   choiceAnswer,
   noulAnswer,
