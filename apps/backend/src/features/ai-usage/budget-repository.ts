@@ -9,6 +9,7 @@ export const DEFAULT_AI_BUDGET_CONFIG: AIBudgetConfig = {
   alertThreshold100: true,
   aiDisabled: false,
   defaultUserAgentAllowanceUsd: null,
+  aiResidencyPinned: false,
   operatorCeilingUsd: AI_OPERATOR_CEILING_DEFAULT_USD,
   operatorAiDisabled: false,
 }
@@ -22,6 +23,7 @@ interface AIBudgetRow {
   alert_threshold_100: boolean
   ai_disabled: boolean
   default_user_agent_allowance_usd: string | null
+  ai_residency_pinned: boolean
   operator_ceiling_usd: string
   operator_ai_disabled: boolean
   created_at: Date
@@ -58,6 +60,7 @@ export interface AIBudget {
   alertThreshold100: boolean
   aiDisabled: boolean
   defaultUserAgentAllowanceUsd: number | null
+  aiResidencyPinned: boolean
   operatorCeilingUsd: number
   operatorAiDisabled: boolean
   createdAt: Date
@@ -93,6 +96,7 @@ export interface UpsertAIBudgetParams {
   alertThreshold80?: boolean
   alertThreshold100?: boolean
   aiDisabled?: boolean
+  aiResidencyPinned?: boolean
   /** Undefined keeps the stored value; null clears it. */
   defaultUserAgentAllowanceUsd?: number | null
 }
@@ -153,6 +157,7 @@ function mapRowToBudget(row: AIBudgetRow): AIBudget {
     alertThreshold100: row.alert_threshold_100,
     aiDisabled: row.ai_disabled,
     defaultUserAgentAllowanceUsd: parseNullableUsd(row.default_user_agent_allowance_usd),
+    aiResidencyPinned: row.ai_residency_pinned,
     operatorCeilingUsd: parseFloat(row.operator_ceiling_usd),
     operatorAiDisabled: row.operator_ai_disabled,
     createdAt: row.created_at,
@@ -188,7 +193,8 @@ function mapRowToAlert(row: AIAlertRow): AIAlert {
 const BUDGET_FIELDS = `
   id, workspace_id, monthly_budget_usd,
   alert_threshold_50, alert_threshold_80, alert_threshold_100,
-  ai_disabled, default_user_agent_allowance_usd, operator_ceiling_usd, operator_ai_disabled,
+  ai_disabled, default_user_agent_allowance_usd, ai_residency_pinned,
+  operator_ceiling_usd, operator_ai_disabled,
   created_at, updated_at
 `
 
@@ -216,6 +222,7 @@ export const AIBudgetRepository = {
     const alertThreshold80 = params.alertThreshold80 ?? null
     const alertThreshold100 = params.alertThreshold100 ?? null
     const aiDisabled = params.aiDisabled ?? null
+    const aiResidencyPinned = params.aiResidencyPinned ?? null
     const allowanceProvided = params.defaultUserAgentAllowanceUsd !== undefined
     const defaultUserAgentAllowanceUsd = params.defaultUserAgentAllowanceUsd ?? null
     const defaults = DEFAULT_AI_BUDGET_CONFIG
@@ -224,7 +231,7 @@ export const AIBudgetRepository = {
       INSERT INTO ai_budgets (
         id, workspace_id, monthly_budget_usd,
         alert_threshold_50, alert_threshold_80, alert_threshold_100,
-        ai_disabled, default_user_agent_allowance_usd
+        ai_disabled, default_user_agent_allowance_usd, ai_residency_pinned
       )
       VALUES (
         ${params.id},
@@ -234,7 +241,8 @@ export const AIBudgetRepository = {
         COALESCE(${alertThreshold80}::boolean, ${defaults.alertThreshold80}),
         COALESCE(${alertThreshold100}::boolean, ${defaults.alertThreshold100}),
         COALESCE(${aiDisabled}::boolean, ${defaults.aiDisabled}),
-        ${defaultUserAgentAllowanceUsd}::numeric
+        ${defaultUserAgentAllowanceUsd}::numeric,
+        COALESCE(${aiResidencyPinned}::boolean, ${defaults.aiResidencyPinned})
       )
       ON CONFLICT (workspace_id) DO UPDATE SET
         monthly_budget_usd = COALESCE(${monthlyBudgetUsd}, ai_budgets.monthly_budget_usd),
@@ -246,6 +254,7 @@ export const AIBudgetRepository = {
           WHEN ${allowanceProvided}::boolean THEN ${defaultUserAgentAllowanceUsd}::numeric
           ELSE ai_budgets.default_user_agent_allowance_usd
         END,
+        ai_residency_pinned = COALESCE(${aiResidencyPinned}::boolean, ai_budgets.ai_residency_pinned),
         updated_at = NOW()
       RETURNING ${sql.raw(BUDGET_FIELDS)}
     `)
