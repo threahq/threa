@@ -55,7 +55,13 @@ import {
   type StreamService,
 } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
-import { E2E_GRANT_BOOTSTRAP_LIMIT, E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
+import {
+  E2E_GRANT_BOOTSTRAP_LIMIT,
+  E2eStreamActorsRepository,
+  E2eStreamsRepository,
+  StreamE2eKeyWrapsRepository,
+  emitRewrapSocketNudge,
+} from "../e2e-streams"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
 import {
   buildCanonicalInvocationPrompt,
@@ -199,15 +205,44 @@ export class BotRuntimeService {
         retainManifest: params.retainManifest,
       })
       if (keys) {
-        await RuntimeE2eKeysRepository.replaceInstanceKeys(client, {
+        const newlyHeld = await RuntimeE2eKeysRepository.replaceInstanceKeys(client, {
           workspaceId: params.workspaceId,
           botId: params.botId,
           instanceId: params.instanceId,
           keys,
         })
+        await this.nudgeOwnerForUnwrappedKeys(client, {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          keyIds: newlyHeld,
+        })
       }
       return presence
     })
+  }
+
+  /**
+   * Ask the owner to wrap the stream key to a key this instance has just begun
+   * holding. A bot cannot seal the SSK to itself (INV-E7), so a sealed
+   * scratchpad the bot was granted while holding no wrap — a stream-scoped
+   * runtime's first key for it, or any install that comes back with a fresh
+   * one — leaves every turn there unclaimable until the owner's unlocked tab
+   * heals it. `newlyHeld` is empty on a steady heartbeat, so this costs one
+   * query per genuinely new key, not one per presence write.
+   *
+   * Runs in the presence transaction so the dedup clock and the event commit
+   * together (INV-7); the nudge is deduped per root stream, so several new keys
+   * on one scratchpad ask once.
+   */
+  private async nudgeOwnerForUnwrappedKeys(
+    db: Querier,
+    params: { workspaceId: string; botId: string; keyIds: string[] }
+  ): Promise<void> {
+    if (params.keyIds.length === 0) return
+    const streams = await StreamE2eKeyWrapsRepository.listRootsMissingBotWrap(db, params)
+    for (const { rootStreamId, ownerUserId } of streams) {
+      await emitRewrapSocketNudge(db, { workspaceId: params.workspaceId, rootStreamId, ownerUserId })
+    }
   }
 
   async setActiveActor(params: {

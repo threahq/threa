@@ -161,8 +161,8 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
 
   // Push-only: the web-push re-wrap nudge is consumed by the push handler, not
   // the socket broadcast. Returning null keeps it off the wire and the sync log
-  // (its socket sibling `enclave:rewrap_needed` carries the live-tab signal).
-  if (isOutboxEventType(event, "enclave:rewrap_nudge")) {
+  // (its socket sibling `e2e:rewrap_needed` carries the live-tab signal).
+  if (isOutboxEventType(event, "e2e:rewrap_nudge")) {
     return null
   }
 

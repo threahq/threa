@@ -1,7 +1,7 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { streamE2eKeyWrapId } from "../../lib/id"
-import type { E2eKeyWrapRecipientKind } from "@threahq/types"
+import { E2eKeyWrapRecipientKinds, StreamTypes, type E2eKeyWrapRecipientKind } from "@threahq/types"
 
 interface StreamE2eKeyWrapRow {
   key_generation: number
@@ -121,5 +121,47 @@ export const StreamE2eKeyWrapsRepository = {
       ORDER BY key_generation
     `)
     return result.rows.map((r) => r.key_generation)
+  },
+
+  /**
+   * The sealed scratchpads a bot is an actor on that one of `keyIds` could
+   * serve but no wrap addresses at the current generation — the owner has to
+   * re-wrap before any turn there is claimable. Asked when a runtime registers
+   * a key it has never held, so a fresh key (an install restart, or the first
+   * key minted for a stream-scoped runtime) nudges the owner instead of
+   * silently parking every turn.
+   *
+   * Roots only, and unarchived, matching `listSealedRootsForBot`: a thread
+   * copies its root's actor rows but carries no wraps of its own, so a nudge
+   * naming one would address nothing. One row per stream — the owner's heal is
+   * per stream, not per key, and re-wraps every missing recipient it finds.
+   */
+  async listRootsMissingBotWrap(
+    db: Querier,
+    params: { workspaceId: string; botId: string; keyIds: string[] }
+  ): Promise<{ rootStreamId: string; ownerUserId: string }[]> {
+    const result = await db.query<{ stream_id: string; owner_user_id: string }>(sql`
+      SELECT DISTINCT e.stream_id, e.owner_user_id
+      FROM e2e_stream_actors a
+      JOIN e2e_streams e ON e.workspace_id = a.workspace_id AND e.stream_id = a.stream_id
+      JOIN streams s ON s.id = a.stream_id AND s.workspace_id = a.workspace_id
+      JOIN runtime_e2e_keys k ON k.workspace_id = a.workspace_id AND k.key_id = ANY(${params.keyIds}::text[])
+      WHERE a.workspace_id = ${params.workspaceId}
+        AND a.kind = 'bot'
+        AND a.actor_id = ${params.botId}
+        AND s.type = ${StreamTypes.SCRATCHPAD}
+        AND s.archived_at IS NULL
+        AND (k.stream_id IS NULL OR k.stream_id = a.stream_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM stream_e2e_key_wraps w
+          WHERE w.workspace_id = a.workspace_id
+            AND w.stream_id = a.stream_id
+            AND w.recipient_kind = ${E2eKeyWrapRecipientKinds.BOT}
+            AND w.recipient_key_id = k.key_id
+            AND w.key_generation = e.current_key_generation
+        )
+      ORDER BY e.stream_id
+    `)
+    return result.rows.map((row) => ({ rootStreamId: row.stream_id, ownerUserId: row.owner_user_id }))
   },
 }

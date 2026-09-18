@@ -4,5 +4,7 @@ export { E2E_GRANT_BOOTSTRAP_LIMIT, E2eStreamActorsRepository } from "./actor-re
 export type { E2eStreamActor } from "./actor-repository"
 export { StreamE2eKeyWrapsRepository } from "./key-wrap-repository"
 export type { StreamE2eKeyWrap, InsertKeyWrapParams } from "./key-wrap-repository"
+export { RewrapNotificationsRepository } from "./rewrap-notifications-repository"
+export { REWRAP_SOCKET_REEMIT_MS, emitRewrapSocketNudge } from "./rewrap-nudge"
 export { resolveSealingContext } from "./sealing-context"
 export type { SealingActorRef } from "./sealing-context"

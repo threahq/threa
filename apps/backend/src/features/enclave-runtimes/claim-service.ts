@@ -40,7 +40,7 @@ import {
 } from "../agents"
 import { buildEnclaveSessionAssignment } from "./dispatch/request-builder"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "./service"
-import { EnclaveRewrapNotificationsRepository } from "./rewrap-notifications-repository"
+import { RewrapNotificationsRepository, emitRewrapSocketNudge } from "../e2e-streams"
 import {
   EnclaveInvocationsRepository,
   ENCLAVE_CLAIM_TTL_SECONDS,
@@ -83,19 +83,17 @@ const MAX_NO_OP_CLAIMS_PER_POLL = 20
 const STALE_RUNNING_HEARTBEAT_MS = 60_000
 
 /**
- * Re-emit windows for the proactive owner re-wrap nudge. The socket signal
- * heals an online unlocked owner in place, so it re-arms briskly (a newly
- * online owner gets pinged within the window). The web-push nudge re-arms
- * slower — it pulls an offline owner back to the app, and waking a device is
- * costly to repeat — but must stay **under** `ENCLAVE_PENDING_PARK_AFTER_MS`
- * (15 min): the ledger isn't reset when a stream heals, so a heal-then-restick
- * within the window is deduped against the prior episode's stamp. If web-push
+ * Re-emit window for the web-push re-wrap nudge (the socket signal's window
+ * lives with the shared emitter). It re-arms slower than the socket signal —
+ * it pulls an offline owner back to the app, and waking a device is costly to
+ * repeat — but must stay **under** `ENCLAVE_PENDING_PARK_AFTER_MS` (15 min):
+ * the ledger isn't reset when a stream heals, so a heal-then-restick within
+ * the window is deduped against the prior episode's stamp. If web-push
  * re-armed slower than a turn can park, an offline owner whose scratchpad
  * re-sticks (fresh EIK on the next enclave start) could have the new turn park
  * before a fresh nudge is allowed. Re-arming inside the park window guarantees
  * the re-stuck turn gets its own web-push before it dead-letters.
  */
-const REWRAP_SOCKET_REEMIT_MS = 5 * 60 * 1000
 const REWRAP_WEBPUSH_REEMIT_MS = 10 * 60 * 1000
 
 /**
@@ -300,32 +298,20 @@ export class EnclaveClaimService {
     const { workspaceId, rootStreamId, ownerUserId } = row
 
     // Socket tier: heal an online unlocked owner in place, immediately.
-    await withTransaction(this.pool, async (tx) => {
-      const claimed = await EnclaveRewrapNotificationsRepository.claimSocketNudge(tx, {
-        workspaceId,
-        rootStreamId,
-        reemitMs: REWRAP_SOCKET_REEMIT_MS,
-      })
-      if (!claimed) return
-      await OutboxRepository.insert(tx, "enclave:rewrap_needed", {
-        workspaceId,
-        targetUserId: ownerUserId,
-        rootStreamId,
-      })
-    })
+    await withTransaction(this.pool, (tx) => emitRewrapSocketNudge(tx, { workspaceId, rootStreamId, ownerUserId }))
 
     // Web-push tier: pull an offline owner back, but only once the stuck state
     // has outlived the grace window (an online owner's socket heal, or a
     // capable instance reappearing, resolves it first without waking a device).
     if (now - row.createdAt.getTime() < REWRAP_WEBPUSH_GRACE_MS) return
     await withTransaction(this.pool, async (tx) => {
-      const claimed = await EnclaveRewrapNotificationsRepository.claimWebpushNudge(tx, {
+      const claimed = await RewrapNotificationsRepository.claimWebpushNudge(tx, {
         workspaceId,
         rootStreamId,
         reemitMs: REWRAP_WEBPUSH_REEMIT_MS,
       })
       if (!claimed) return
-      await OutboxRepository.insert(tx, "enclave:rewrap_nudge", {
+      await OutboxRepository.insert(tx, "e2e:rewrap_nudge", {
         workspaceId,
         targetUserId: ownerUserId,
         rootStreamId,

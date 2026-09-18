@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
-import { EnclaveRewrapNotificationsRepository } from "./rewrap-notifications-repository"
+import { RewrapNotificationsRepository } from "./rewrap-notifications-repository"
 
 interface Captured {
   text: string | null
@@ -19,10 +19,10 @@ function createQuerier(captured: Captured, rowCount: number): Querier {
   }
 }
 
-describe("EnclaveRewrapNotificationsRepository.claimSocketNudge", () => {
+describe("RewrapNotificationsRepository.claimSocketNudge", () => {
   it("upserts the socket clock under a window guard and reports whether it won the emit (INV-20)", async () => {
     const captured: Captured = { text: null, values: null }
-    const claimed = await EnclaveRewrapNotificationsRepository.claimSocketNudge(createQuerier(captured, 1), {
+    const claimed = await RewrapNotificationsRepository.claimSocketNudge(createQuerier(captured, 1), {
       workspaceId: "ws_1",
       rootStreamId: "stream_1",
       reemitMs: 300_000,
@@ -39,7 +39,7 @@ describe("EnclaveRewrapNotificationsRepository.claimSocketNudge", () => {
   })
 
   it("reports false when another poller emitted inside the window (no row updated)", async () => {
-    const claimed = await EnclaveRewrapNotificationsRepository.claimSocketNudge(
+    const claimed = await RewrapNotificationsRepository.claimSocketNudge(
       createQuerier({ text: null, values: null }, 0),
       { workspaceId: "ws_1", rootStreamId: "stream_1", reemitMs: 300_000 }
     )
@@ -47,10 +47,10 @@ describe("EnclaveRewrapNotificationsRepository.claimSocketNudge", () => {
   })
 })
 
-describe("EnclaveRewrapNotificationsRepository.claimWebpushNudge", () => {
+describe("RewrapNotificationsRepository.claimWebpushNudge", () => {
   it("guards an independent web-push clock so it can claim even after the socket slot created the row", async () => {
     const captured: Captured = { text: null, values: null }
-    const claimed = await EnclaveRewrapNotificationsRepository.claimWebpushNudge(createQuerier(captured, 1), {
+    const claimed = await RewrapNotificationsRepository.claimWebpushNudge(createQuerier(captured, 1), {
       workspaceId: "ws_1",
       rootStreamId: "stream_1",
       reemitMs: 1_800_000,

@@ -3,7 +3,7 @@ import {
   type ActivityCreatedOutboxPayload,
   type OutboxEvent,
   type SavedReminderFiredOutboxPayload,
-  type EnclaveRewrapNudgeOutboxPayload,
+  type E2eRewrapNudgeOutboxPayload,
 } from "../../lib/outbox"
 import type { PushService } from "./service"
 import { logger } from "../../lib/logger"
@@ -22,7 +22,7 @@ interface PushNotificationHandlerDeps {
 
 /**
  * Listens for outbox events and delegates push delivery to PushService.
- * Handles activity:created, saved_reminder:fired, and enclave:rewrap_nudge —
+ * Handles activity:created, saved_reminder:fired, and e2e:rewrap_nudge —
  * every event here results in a VISIBLE notification. stream:read events are
  * deliberately not consumed: pushing a notification-less "clear" burns the
  * browser's silent-push quota and gets the subscription revoked (see
@@ -72,10 +72,10 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
       return
     }
 
-    if (event.eventType === "enclave:rewrap_nudge") {
-      const payload = event.payload as EnclaveRewrapNudgeOutboxPayload
+    if (event.eventType === "e2e:rewrap_nudge") {
+      const payload = event.payload as E2eRewrapNudgeOutboxPayload
       if (!payload?.workspaceId || !payload?.targetUserId || !payload?.rootStreamId) {
-        logger.warn({ eventId: event.id }, "Skipping malformed enclave:rewrap_nudge payload")
+        logger.warn({ eventId: event.id }, "Skipping malformed e2e:rewrap_nudge payload")
         return
       }
       await this.pushService.deliverRewrapNudge(payload)
