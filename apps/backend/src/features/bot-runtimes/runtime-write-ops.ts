@@ -7,6 +7,7 @@ import type {
   StepFramePhase,
 } from "@threahq/types"
 import type { BotRuntimeInstance } from "./repository"
+import type { RuntimeE2eKeyRegistration } from "./runtime-e2e-keys"
 
 /**
  * Transport-agnostic bot-runtime background writes — the persistence core of
@@ -61,6 +62,7 @@ export interface ApplyPresenceParams {
   statusText?: string | null
   publicKey?: string | null
   publicKeyId?: string | null
+  e2eKeys?: RuntimeE2eKeyRegistration[]
 }
 
 export interface TouchPresenceParams {

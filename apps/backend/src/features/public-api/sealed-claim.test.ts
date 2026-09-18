@@ -4,7 +4,7 @@ import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { BotRepository } from "./bot-repository"
 import { BotChannelAccessRepository } from "../api-keys"
 import { MessageRepository, type EventService, type Message } from "../messaging"
-import { BotRuntimeInstanceRepository } from "../bot-runtimes"
+import { RuntimeE2eKeysRepository } from "../bot-runtimes"
 import {
   E2eStreamsRepository,
   StreamE2eKeyWrapsRepository,
@@ -84,7 +84,7 @@ function botWrap(overrides: Partial<StreamE2eKeyWrap>): StreamE2eKeyWrap {
 }
 
 function arrangeSealedClaim(params: {
-  publicKeyId?: string | null
+  keyIds?: string[]
   wraps?: StreamE2eKeyWrap[]
   surrounding?: Message[]
   trigger?: Message
@@ -138,11 +138,7 @@ function arrangeSealedClaim(params: {
     actorHasGrant: true,
     externalSealedDelivery: true,
   })
-  spyOn(BotRuntimeInstanceRepository, "findByInstance").mockResolvedValue(
-    params.publicKeyId === undefined
-      ? ({ publicKeyId: "bik_1" } as never)
-      : ({ publicKeyId: params.publicKeyId } as never)
-  )
+  spyOn(RuntimeE2eKeysRepository, "listEligibleKeyIdsForInstance").mockResolvedValue(params.keyIds ?? ["bik_1"])
   spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue(e2eStream)
   spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue(params.wraps ?? [botWrap({})])
   spyOn(MessageRepository, "findById").mockResolvedValue(
@@ -286,7 +282,7 @@ describe("claimBotInvocation sealed delivery", () => {
   })
 
   it("fails the claim loudly when the claiming instance has no registered identity key (INV-11)", async () => {
-    const { handlers, req } = arrangeSealedClaim({ publicKeyId: null })
+    const { handlers, req } = arrangeSealedClaim({ keyIds: [] })
     const { res } = createResponse()
 
     await expect(handlers.claimBotInvocation(req, res)).rejects.toMatchObject({
@@ -344,7 +340,7 @@ describe("claimBotInvocation session-control sealed ack", () => {
   })
 
   it("claims WITHOUT a sealedAck (not a 409) when the instance has no registered identity key", async () => {
-    const { handlers, req } = arrangeSealedClaim({ sessionControl: true, publicKeyId: null })
+    const { handlers, req } = arrangeSealedClaim({ sessionControl: true, keyIds: [] })
     const { res, payloads } = createResponse()
 
     await handlers.claimBotInvocation(req, res)

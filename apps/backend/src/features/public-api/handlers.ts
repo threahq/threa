@@ -73,6 +73,7 @@ import {
 import {
   BotRuntimeService,
   BotRuntimeInstanceRepository,
+  RuntimeE2eKeysRepository,
   assertManifestAllows,
   type BotInvocation,
   type BotRuntimeSessionLink,
@@ -109,7 +110,7 @@ import {
   type AgentSessionStep,
   type ParentActivityTarget,
 } from "../agents"
-import { buildSealedTurnContext } from "./sealed-turn-context"
+import { buildSealedTurnContext, selectCoveringKeyId } from "./sealed-turn-context"
 import { authorizeSealedCallback, emitBotSealedProgress } from "./sealed-callbacks"
 import { resolvePublicMessageSlots } from "./message-slots"
 import { encodeCursor, decodeCursor } from "./cursor"
@@ -602,12 +603,13 @@ async function buildSealedClaimContext(
   invocation: BotInvocation,
   instanceId: string
 ): Promise<SealedTurnContext> {
-  const instance = await BotRuntimeInstanceRepository.findByInstance(pool, {
+  const bikKeyIds = await RuntimeE2eKeysRepository.listEligibleKeyIdsForInstance(pool, {
     workspaceId: invocation.workspaceId,
     botId: invocation.actorId,
     instanceId,
+    streamId: invocation.rootStreamId,
   })
-  if (!instance?.publicKeyId) {
+  if (bikKeyIds.length === 0) {
     throw new HttpError("Claiming bot instance has no registered identity key", {
       status: 409,
       code: "BOT_IDENTITY_KEY_REQUIRED",
@@ -640,7 +642,7 @@ async function buildSealedClaimContext(
   )
   const context = buildSealedTurnContext({
     e2e,
-    bikKeyId: instance.publicKeyId,
+    bikKeyIds,
     wraps,
     trigger,
     triggerAuthorName,
@@ -678,22 +680,21 @@ async function buildSessionControlSealedAck(
     }
   | undefined
 > {
-  const instance = await BotRuntimeInstanceRepository.findByInstance(pool, {
+  const bikKeyIds = await RuntimeE2eKeysRepository.listEligibleKeyIdsForInstance(pool, {
     workspaceId: invocation.workspaceId,
     botId: invocation.actorId,
     instanceId,
+    streamId: invocation.rootStreamId,
   })
-  if (!instance?.publicKeyId) return undefined
+  if (bikKeyIds.length === 0) return undefined
   const e2e = await E2eStreamsRepository.getByStreamId(pool, invocation.workspaceId, invocation.rootStreamId)
   if (!e2e) return undefined
   const wraps = await StreamE2eKeyWrapsRepository.listForStream(pool, invocation.workspaceId, invocation.rootStreamId)
+  const bikKeyId = selectCoveringKeyId(bikKeyIds, wraps, new Set([e2e.currentKeyGeneration]))
+  if (!bikKeyId) return undefined
   const botWraps = wraps.filter(
-    (w) =>
-      w.recipientKind === "bot" &&
-      w.recipientKeyId === instance.publicKeyId &&
-      w.keyGeneration === e2e.currentKeyGeneration
+    (w) => w.recipientKind === "bot" && w.recipientKeyId === bikKeyId && w.keyGeneration === e2e.currentKeyGeneration
   )
-  if (botWraps.length === 0) return undefined
   return {
     wraps: botWraps.map((w) => ({ keyGeneration: w.keyGeneration, wrapEnc: w.wrapEnc, wrapCt: w.wrapCt })),
     reply: { keyGeneration: e2e.currentKeyGeneration, senderId: invocation.actorId },
@@ -1163,6 +1164,7 @@ export function createPublicApiHandlers({
         statusText: data.statusText,
         publicKey: data.publicKey,
         publicKeyId: data.publicKeyId,
+        e2eKeys: data.e2eKeys,
       })
       res.json({
         data: {

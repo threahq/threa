@@ -38,7 +38,7 @@ import {
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threahq/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
-import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
+import { botE2eKeyringFields, botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 
 const PUBLIC_SEARCH_MAX_LIMIT = 50
 const PUBLIC_ATTACHMENT_SEARCH_MAX_LIMIT = 50
@@ -152,6 +152,7 @@ export const upsertPresenceSchema = z
     manifest: botRuntimeManifestSchema.nullable().optional(),
     statusText: z.string().max(200).optional(),
     ...botIdentityKeyFields,
+    ...botE2eKeyringFields,
   })
   .refine(bothOrNeitherBotIdentityKey, {
     message: "publicKey and publicKeyId must be provided together",

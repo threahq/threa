@@ -26,7 +26,7 @@ import {
 import { authorizeSealedCallback, finalizeSealedStep } from "./sealed-callbacks"
 import { E2eStreamsRepository, StreamE2eKeyWrapsRepository, resolveSealingContext } from "../e2e-streams"
 import { MessageRepository } from "../messaging"
-import { BotRuntimeInstanceRepository } from "../bot-runtimes"
+import { RuntimeE2eKeysRepository } from "../bot-runtimes"
 import { buildSealedInputUpdate } from "./sealed-turn-context"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import {
@@ -148,6 +148,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
       statusText: sanitizeStatusText(params.statusText),
       publicKey: params.publicKey,
       publicKeyId: params.publicKeyId,
+      e2eKeys: params.e2eKeys,
     })
     await broadcastBotPresence(params.workspaceId, params.botId, presence)
     return presence
@@ -216,10 +217,11 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
             mentionedActorSlugs: renewed.mentionedActorSlugs,
           }
         } else if (needsUpdate) {
-          const instance = await BotRuntimeInstanceRepository.findByInstance(db, {
+          const bikKeyIds = await RuntimeE2eKeysRepository.listEligibleKeyIdsForInstance(db, {
             workspaceId: renewed.workspaceId,
             botId: renewed.actorId,
             instanceId: params.instanceId,
+            streamId: renewed.rootStreamId,
           })
           const e2e = await E2eStreamsRepository.getByStreamId(db, renewed.workspaceId, renewed.rootStreamId)
           const wraps = await StreamE2eKeyWrapsRepository.listForStream(db, renewed.workspaceId, renewed.rootStreamId)
@@ -239,10 +241,10 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
             })
           }
           const sealedUpdate =
-            instance?.publicKeyId && e2e
+            bikKeyIds.length > 0 && e2e
               ? (buildSealedInputUpdate({
                   e2e,
-                  bikKeyId: instance.publicKeyId,
+                  bikKeyIds,
                   wraps,
                   trigger,
                   replySenderId: renewed.actorId,
