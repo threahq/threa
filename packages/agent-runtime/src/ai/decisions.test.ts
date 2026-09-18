@@ -166,10 +166,12 @@ describe("generateDecisions", () => {
   })
 
   it("gives up on a provider that stops answering", async () => {
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_url: string, init: RequestInit) =>
-      await new Promise<Response>((_resolve, reject) => {
-        init.signal?.addEventListener("abort", () => reject(init.signal?.reason))
-      })) as unknown as typeof globalThis.fetch)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async (_url: string, init: RequestInit) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason))
+        })) as unknown as typeof globalThis.fetch
+    )
     try {
       const call = requestDecisions({
         apiKey: "test-key",
@@ -198,6 +200,72 @@ describe("generateDecisions", () => {
       fetchSpy.mockRestore()
     }
   })
+  it("records an access-log disclose row for the egress", async () => {
+    const fetchSpy = stubDecisions()
+    const recorded: unknown[] = []
+    try {
+      const ai = createAI({
+        openrouter: { apiKey: "test-key" },
+        accessLogSink: { record: (event) => void recorded.push(event) },
+      })
+      await ai.generateDecisions({
+        model: "openrouter:typesafe/jev-1.13",
+        state: STATE,
+        questions: QUESTIONS,
+        context: { workspaceId: "ws_1" },
+        telemetry: { functionId: "test-decision" },
+      })
+
+      expect(recorded).toEqual([
+        {
+          functionId: "test-decision",
+          provider: "openrouter",
+          modelId: "typesafe/jev-1.13",
+          context: { workspaceId: "ws_1" },
+          metadata: undefined,
+        },
+      ])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("keeps the answers when the endpoint omits usage", async () => {
+    const { usage: _usage, ...withoutUsage } = RESPONSE_BODY
+    const fetchSpy = stubDecisions(withoutUsage)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" } })
+      const result = await ai.generateDecisions({
+        model: "openrouter:typesafe/jev-1.13",
+        state: STATE,
+        questions: QUESTIONS,
+      })
+
+      expect(result).toEqual({
+        answers: RESPONSE_BODY.answers as DecisionsResult["answers"],
+        usage: { promptTokens: undefined, completionTokens: undefined, totalTokens: undefined, cost: undefined },
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("reports the status when the error body is not JSON", async () => {
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response("<html>502 Bad Gateway</html>", { status: 502 })) as unknown as typeof globalThis.fetch
+    )
+    try {
+      const call = requestDecisions({
+        apiKey: "test-key",
+        modelId: "typesafe/jev-1.13",
+        state: STATE,
+        questions: QUESTIONS,
+      })
+      await expect(call).rejects.toThrow(/failed \(502\): <html>502 Bad Gateway<\/html>/)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 })
 
 describe("decision answer accessors", () => {
@@ -209,9 +277,9 @@ describe("decision answer accessors", () => {
   it("reads each answer type", () => {
     expect({
       choice: choiceAnswer(result, "kind").choice,
-      score: rescaleScore(scoreAnswer(result, "depth"), 4, 7),
+      score: rescaleScore(scoreAnswer(result, "depth"), 7),
       noul: noulAnswer(result, "actionable"),
-    }).toEqual({ choice: "decision", score: (1.83 / 3) * 7, noul: 0.19 })
+    }).toEqual({ choice: "decision", score: 4.27, noul: 0.19 })
   })
 
   it("throws when a question went unanswered", () => {

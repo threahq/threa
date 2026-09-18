@@ -16,6 +16,16 @@ import type { UsageWithCost } from "./ai"
 
 export const DECISIONS_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 
+/**
+ * Whether a model string speaks this protocol rather than chat completions.
+ * Sending one down `/api/v1/chat/completions` fails with a 400, so anything
+ * that picks a path by model id — the eval runner's `-m`, most of all — has to
+ * ask this rather than compare against one pinned id.
+ */
+export function isDecisionsModel(model: string): boolean {
+  return model.includes("typesafe/")
+}
+
 /** A yes/no question. */
 export interface NoulQuestion {
   type: "noul"
@@ -75,11 +85,13 @@ export type DecisionAnswer = z.infer<typeof answerSchema>
 
 const decisionsResponseSchema = z.object({
   answers: z.record(z.string(), answerSchema),
-  usage: z.object({
-    input_tokens: z.number().optional(),
-    output_tokens: z.number().optional(),
-    cost: z.number().optional(),
-  }),
+  usage: z
+    .object({
+      input_tokens: z.number().optional(),
+      output_tokens: z.number().optional(),
+      cost: z.number().optional(),
+    })
+    .default({}),
 })
 
 export interface DecisionsResult {
@@ -121,8 +133,18 @@ function requireAnswer(result: DecisionsResult, key: string, type: DecisionAnswe
  * Rescales a score onto another range. The ladder's own scale is its index
  * range, so a four-level ladder answers in 0..3 whatever the domain's scale is.
  */
-export function rescaleScore(answer: ScoreAnswer, levels: number, max: number): number {
+export function rescaleScore(answer: ScoreAnswer, max: number): number {
+  const levels = Object.keys(answer.legend).length
+  if (levels < 2) return 0
   return (answer.score / (levels - 1)) * max
+}
+
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -149,12 +171,12 @@ export async function requestDecisions(params: {
     signal: params.abortSignal ? AbortSignal.any([params.abortSignal, timeout]) : timeout,
   })
 
-  const body: unknown = await response.json().catch(() => undefined)
+  const raw = await response.text()
   if (!response.ok) {
-    throw new Error(`Decisions request failed (${response.status}): ${JSON.stringify(body).slice(0, 500)}`)
+    throw new Error(`Decisions request failed (${response.status}): ${raw.slice(0, 500)}`)
   }
 
-  const parsed = decisionsResponseSchema.safeParse(body)
+  const parsed = decisionsResponseSchema.safeParse(parseJson(raw))
   if (!parsed.success) {
     throw new Error(`Decisions response did not match the expected shape: ${parsed.error.message}`)
   }
