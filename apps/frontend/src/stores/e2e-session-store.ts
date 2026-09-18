@@ -801,8 +801,8 @@ export async function unlockWithWebAuthn(workspaceId: string, userId: string, pr
  * under a freshly-derived KEK, and replace the server bundle. The key material
  * is unchanged, so the server keeps the same `keyId` and every existing
  * `stream_e2e_key_wraps` row (plus each wrap AAD binding that id) keeps
- * addressing this key. Nothing about device trust changes either: a persisted
- * device key holds the private key itself, not the passphrase.
+ * addressing this key. Device trust survives too: a persisted device key holds
+ * the private key itself, not the passphrase.
  */
 export async function rotatePassphrase(
   workspaceId: string,
@@ -841,13 +841,24 @@ export async function rotatePassphrase(
   await writeCacheRow(workspaceId, userId, view, serverKey.createdAt)
   if (scope.loadGeneration !== generation) return
 
+  // A new keyId means another device rotated the key underneath this one, so
+  // the server minted a fresh id for our public key instead of re-wrapping in
+  // place. The persisted device key still addresses the dead id, so drop it
+  // rather than keep a trust claim the next load would silently revoke —
+  // re-persisting a PIN/biometric row as a plain one would drop its gate.
+  const keyIdChanged = view.keyId !== cached.keyId
+  if (keyIdChanged) {
+    await deleteDeviceKey(workspaceId, userId).catch(() => {})
+    if (scope.loadGeneration !== generation) return
+  }
+
   scope.cachedKey = view
   setState(workspaceId, userId, {
     status: "unlocked",
     keyId: view.keyId,
     publicKey: view.publicKey,
     privateKey,
-    deviceTrusted: scope.state.deviceTrusted,
+    deviceTrusted: keyIdChanged ? false : scope.state.deviceTrusted,
     ...NO_UNLOCK_PROMPT,
     error: null,
   })

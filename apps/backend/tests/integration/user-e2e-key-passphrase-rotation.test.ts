@@ -94,11 +94,15 @@ describe("UserE2eKeysService.setUserKey key identity", () => {
       kdfParams: { ...KDF_PARAMS, t: 4 },
     })
 
-    expect(rotated.rotated).toBe(true)
-    expect(rotated.key.keyId).toBe(keyId)
-    expect(rotated.key.encryptedPrivateBundle.toString()).toBe("bundle-under-new-passphrase")
-    expect(rotated.key.kdfSalt).toEqual(Buffer.alloc(16, 2))
-    expect(rotated.key.kdfParams).toEqual({ ...KDF_PARAMS, t: 4 })
+    expect(rotated).toMatchObject({
+      rotated: true,
+      key: {
+        keyId,
+        encryptedPrivateBundle: Buffer.from("bundle-under-new-passphrase"),
+        kdfSalt: Buffer.alloc(16, 2),
+        kdfParams: { ...KDF_PARAMS, t: 4 },
+      },
+    })
 
     const active = await service.getActive(wsId, ownerId)
     expect(active).toMatchObject({ keyId, revokedAt: null })
@@ -107,8 +111,8 @@ describe("UserE2eKeysService.setUserKey key identity", () => {
       E2eStreamsRepository.getByStreamId(pool, wsId, sealedId),
       StreamE2eKeyWrapsRepository.listForStream(pool, wsId, sealedId),
     ])
-    expect(e2eStream?.ownerUserKeyId).toBe(active!.keyId)
-    expect(wraps.map((w) => w.recipientKeyId)).toEqual([active!.keyId])
+    expect(e2eStream?.ownerUserKeyId).toBe(keyId)
+    expect(wraps.map((wrap) => wrap.recipientKeyId)).toEqual([keyId])
   })
 
   test("a new public key is a real rotation: fresh keyId, old row revoked", async () => {

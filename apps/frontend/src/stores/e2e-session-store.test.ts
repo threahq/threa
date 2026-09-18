@@ -499,4 +499,20 @@ describe("e2e session store — keep me unlocked on this device", () => {
     await reload()
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
   })
+
+  it("rotatePassphrase drops device trust when the server mints a new keyId", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", { params: FAST_PARAMS, trustDevice: true })
+    const initialKeyId = serverKey!.keyId
+    // Another device rotated to a different key. This client still carries the
+    // old public key, so the server mints a fresh id instead of re-wrapping in
+    // place, and the persisted device key now addresses a dead one.
+    serverKey = { ...serverKey!, publicKey: btoa("a-different-public-key----------!") }
+
+    await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-pp", "new-pp", FAST_PARAMS)
+
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state).toMatchObject({ status: "unlocked", deviceTrusted: false })
+    expect(state.keyId).not.toBe(initialKeyId)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+  })
 })
