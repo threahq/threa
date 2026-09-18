@@ -19,7 +19,7 @@ import { StreamContextRepository, contextSnippet, type NewStreamContextItem } fr
 import { MemoRepository, type Memo } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { classificationFingerprint } from "./classification-fingerprint"
-import { MemoClassifier } from "./classifier"
+import type { ConversationClassifier } from "./classifier"
 import { Memorizer } from "./memorizer"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import type { EmbeddingServiceLike } from "./embedding-service"
@@ -266,7 +266,7 @@ export interface SuggestionCollectorLike {
 
 export interface MemoServiceConfig {
   pool: Pool
-  classifier: MemoClassifier
+  classifier: ConversationClassifier
   memorizer: Memorizer
   embeddingService: EmbeddingServiceLike
   messageFormatter: MessageFormatter
@@ -276,7 +276,7 @@ export interface MemoServiceConfig {
 
 export class MemoService implements MemoServiceLike {
   private pool: Pool
-  private classifier: MemoClassifier
+  private classifier: ConversationClassifier
   private memorizer: Memorizer
   private embeddingService: EmbeddingServiceLike
   private messageFormatter: MessageFormatter

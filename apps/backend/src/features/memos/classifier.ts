@@ -36,6 +36,16 @@ export interface ConversationClassification {
   containsActionItems: boolean
 }
 
+/** What the memo service depends on, so the path can be chosen per workspace. */
+export interface ConversationClassifier {
+  classifyConversation(
+    conversation: ClassifiableConversation,
+    formattedMessages: string,
+    existingMemos: Memo[],
+    context: ClassifierContext
+  ): Promise<ConversationClassification>
+}
+
 export class MemoClassifier {
   constructor(
     private ai: AI,

@@ -9,6 +9,7 @@
  *
  *   bun run eval -- -s memo-classifier
  *   bun run eval -- -s memo-classifier -c news-hot-takes-001
+ *   bun run eval -- -s memo-classifier -m openrouter:typesafe/jev-1.13,openrouter:openai/gpt-5.6-luna
  *
  * ## Key Evaluators
  *
@@ -21,12 +22,21 @@ import type { EvalSuite, EvalContext } from "../../framework/types"
 import { memoClassifierCases } from "./cases"
 import type { MemoClassifierInput, MemoClassifierOutput, MemoClassifierExpected } from "./types"
 import { worthinessEvaluator, revisionEvaluator, accuracyEvaluator, garbageLeakRateEvaluator } from "./evaluators"
-import { MemoClassifier, MEMO_CLASSIFIER_MODEL_ID, MEMO_TEMPERATURES } from "../../../src/features/memos"
+import {
+  DecisionsMemoClassifier,
+  MemoClassifier,
+  MEMO_CLASSIFIER_MODEL_ID,
+  MEMO_DECISIONS_MODEL_ID,
+  MEMO_TEMPERATURES,
+} from "../../../src/features/memos"
 import { MessageFormatter } from "../../../src/lib/ai/message-formatter"
 import { formatEvalMessages, toConversation, toMemo } from "../../fixtures/memo"
 
 async function runClassifierTask(input: MemoClassifierInput, ctx: EvalContext): Promise<MemoClassifierOutput> {
-  const classifier = new MemoClassifier(ctx.ai, ctx.configResolver, new MessageFormatter())
+  const classifier =
+    ctx.permutation.model === MEMO_DECISIONS_MODEL_ID
+      ? new DecisionsMemoClassifier(ctx.ai)
+      : new MemoClassifier(ctx.ai, ctx.configResolver, new MessageFormatter())
   const conversation = toConversation({
     topicSummary: input.topicSummary,
     participantIds: [...new Set(input.messages.map((m) => m.authorId))],
