@@ -16,6 +16,7 @@ export {
   type EmojiLookup,
   type ParseMarkdownOptions,
 } from "./markdown"
+export { extractMath, splitMathTokens, type MathPart } from "./math"
 export {
   escapeMarkdownLinkText,
   unescapeMarkdownLinkText,

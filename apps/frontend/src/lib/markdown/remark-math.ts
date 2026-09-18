@@ -1,0 +1,63 @@
+import { splitMathTokens } from "@threahq/prosemirror"
+
+/**
+ * Turn the math tokens `extractMath` left in the source into the
+ * `math-inline` / `math-display` elements `rehype-katex` renders.
+ *
+ * The tokens were substituted before parsing, so each one is a single
+ * uninterruptible text run here and the TeX inside it never met CommonMark's
+ * escaping or emphasis rules.
+ */
+interface MdastNode {
+  type: string
+  value?: string
+  children?: MdastNode[]
+  data?: Record<string, unknown>
+}
+
+export function remarkThreaMath() {
+  return (tree: MdastNode) => {
+    splitMathInChildren(tree)
+  }
+}
+
+function splitMathInChildren(node: MdastNode): void {
+  if (!node.children) return
+  const next: MdastNode[] = []
+  let replaced = false
+  for (const child of node.children) {
+    if (child.type === "text" && typeof child.value === "string") {
+      const parts = splitMathTokens(child.value)
+      if (parts) {
+        next.push(...parts.map((part) => ("tex" in part ? mathNode(part.tex, part.display) : textNode(part.text))))
+        replaced = true
+        continue
+      }
+    }
+    splitMathInChildren(child)
+    next.push(child)
+  }
+  if (replaced) node.children = next
+}
+
+function textNode(value: string): MdastNode {
+  return { type: "text", value }
+}
+
+/**
+ * Display math renders as a `span` (KaTeX's own output is all spans) so it stays
+ * valid inside the `<p>` the surrounding paragraph already opened.
+ */
+function mathNode(tex: string, display: boolean): MdastNode {
+  return {
+    // rehype-katex keys on the className alone; the mdast type only has to be
+    // one remark-rehype does not recognize, so it takes the hName path.
+    type: "math",
+    value: tex,
+    data: {
+      hName: "span",
+      hProperties: { className: display ? ["math", "math-display"] : ["math", "math-inline"] },
+      hChildren: [{ type: "text", value: tex }],
+    },
+  }
+}

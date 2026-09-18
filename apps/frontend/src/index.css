@@ -1102,6 +1102,33 @@ html[data-input="mouse"]
 }
 
 /*
+ * KaTeX math (rehype-katex output inside .markdown-content)
+ */
+
+/* KaTeX sizes math at 1.21em, which reads as a heading next to chat text. */
+.markdown-content .katex {
+  font-size: 1.05em;
+}
+
+/* A long equation scrolls inside its own box instead of widening the message
+   column — the same containment code blocks get. */
+.markdown-content .katex-display {
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* rehype-katex writes the error color as an inline style, so beating it needs
+   !important. Unparseable TeX stays visible and hoverable (the title carries
+   KaTeX's message) rather than silently rendering as prose. */
+.markdown-content .katex-error {
+  color: hsl(var(--destructive)) !important;
+  font-family: "Commit Mono", monospace;
+  font-size: 0.9em;
+}
+
+/*
  * Accessibility - User Preference Styles
  */
 
