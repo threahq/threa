@@ -51,7 +51,7 @@ export interface ObserveClaimParams {
   instanceId?: string
   callbacks: InvocationControlCallbacks
   sealed?: {
-    identity: BotIdentityKey
+    identities: BotIdentityKey[]
     streamId: string
     callbackToken: string
   }
@@ -92,7 +92,7 @@ export interface InvocationControlSyncRequest {
 }
 
 interface SealedBinding {
-  identity: BotIdentityKey
+  identities: BotIdentityKey[]
   streamId: string
   callbackToken: string
 }
@@ -171,7 +171,7 @@ export class InvocationControlManager {
       callbacks: params.callbacks,
       sealedBinding: params.sealed
         ? {
-            identity: params.sealed.identity,
+            identities: params.sealed.identities,
             streamId: params.sealed.streamId,
             callbackToken: params.sealed.callbackToken,
           }
@@ -538,7 +538,7 @@ async function openUpdate(observation: Observation, raw: unknown): Promise<Invoc
   if (!sealed) throw new Error("Invalid sealed update")
   const opened = await openSealedTurnContext({
     sealed,
-    identity: observation.sealedBinding.identity,
+    identities: observation.sealedBinding.identities,
     streamId: observation.sealedBinding.streamId,
   })
   return {

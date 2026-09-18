@@ -31,7 +31,8 @@ export type {
   DecisionResolution,
 } from "./types"
 export {
-  BikKeystore,
+  BotKeyring,
+  mintE2eKeyRecord,
   THREA_CALLBACK_TOKEN_HEADER,
   mintStreamKeyWraps,
   openSealedAck,
@@ -73,3 +74,21 @@ export {
   type SealedSourceItem,
   type StreamEnvelope,
 } from "./crypto"
+export {
+  E2E_KEY_SCOPES,
+  E2E_KEY_STORE_KINDS,
+  E2eKeyring,
+  FileKeyStore,
+  MacKeychainStore,
+  SecretServiceStore,
+  e2eKeyAccount,
+  readLegacyBikFile,
+  resolveKeyStore,
+  type CommandRunner,
+  type E2eKeyRecord,
+  type E2eKeyScope,
+  type E2eKeyStore,
+  type E2eKeyStoreKind,
+  type E2eKeyringOptions,
+  type ResolveKeyStoreInput,
+} from "./keyring"

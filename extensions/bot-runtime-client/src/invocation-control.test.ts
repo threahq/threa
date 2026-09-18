@@ -278,7 +278,7 @@ describe("InvocationControlManager", () => {
     const handle = manager.observe({
       ...params(callback),
       sealed: {
-        identity: { publicKeyId: "bik_1", publicKeyBase64: "x", privateKey: {} as CryptoKey },
+        identities: [{ publicKeyId: "bik_1", publicKeyBase64: "x", privateKey: {} as CryptoKey }],
         streamId: "stream_1",
         callbackToken: "callback_secret",
       },
@@ -386,7 +386,7 @@ describe("InvocationControlManager", () => {
     manager.observe({
       ...params(() => "applied", cancelled),
       sealed: {
-        identity: { publicKeyId: "bik_1", publicKeyBase64: "x", privateKey: {} as CryptoKey },
+        identities: [{ publicKeyId: "bik_1", publicKeyBase64: "x", privateKey: {} as CryptoKey }],
         streamId: "stream_1",
         callbackToken: "callback_secret",
       },

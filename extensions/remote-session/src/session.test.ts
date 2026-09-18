@@ -43,6 +43,7 @@ function makeConfig(overrides?: Partial<RemoteSessionConfig>): RemoteSessionConf
     pollMs: 3000,
     idleTimeoutMs: 3_600_000,
     sealedFullTrace: true,
+    keyScope: "host",
     traceMode: "headline",
     ...overrides,
   }

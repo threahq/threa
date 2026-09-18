@@ -1,11 +1,13 @@
 /**
  * Sealed (E2EE) turn support for bot-runtime harnesses.
  *
- * A harness that serves an end-to-end-encrypted scratchpad holds a BIK (Bot
- * Identity Key): a per-install X25519 keypair the owner wraps the stream's
- * symmetric key (SSK) to. On a winning claim the backend hands the harness a
- * `sealedContext` — SSK wraps addressed to its BIK plus the sealed trigger and
- * history ciphertext — and the harness seals every reply and trace step back
+ * A harness that serves an end-to-end-encrypted scratchpad holds a keyring of
+ * BIKs (Bot Identity Keys): X25519 keypairs the owner wraps the stream's
+ * symmetric key (SSK) to. One key per host is the default, so every runtime on
+ * a box shares it; a key can also be pinned to a single stream. On a winning
+ * claim the backend hands the harness a
+ * `sealedContext` — SSK wraps addressed to one of its keys plus the sealed
+ * trigger and history ciphertext — and the harness seals every reply and trace step back
  * under the same SSK. The server never sees plaintext (INV-E7); the owner's
  * client opens the harness's output exactly as it opens the enclave's.
  *
@@ -14,9 +16,8 @@
  * HTTP client (sealed complete / interim messages, low-frequency writes).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname } from "node:path"
 import { ulid } from "ulid"
+import type { E2eKeyRecord, E2eKeyring } from "./keyring"
 import {
   base64ToBytes,
   buildMessageAad,
@@ -51,12 +52,6 @@ export interface BotIdentityKey {
   publicKeyId: string
   publicKeyBase64: string
   privateKey: WebCryptoKey
-}
-
-interface PersistedBik {
-  publicKeyId: string
-  publicKey: string
-  privateKey: string
 }
 
 /** One SSK wrap addressed to this bot's BIK (wire shape from the claim's `sealedContext`). */
@@ -134,145 +129,87 @@ export interface SealedStepFrame {
   durationMs?: number
 }
 
-// ── BIK keystore ──────────────────────────────────────────────────────────────
+// ── keyring ───────────────────────────────────────────────────────────────────
+
+/** Mint a fresh identity key record: a `bik_…` id and an X25519 keypair, base64. */
+export async function mintE2eKeyRecord(): Promise<E2eKeyRecord> {
+  const keyPair = await generateKeyPair()
+  return {
+    keyId: `bik_${ulid()}`,
+    publicKey: bytesToBase64(await exportPublicKey(keyPair.publicKey)),
+    privateKey: bytesToBase64(await exportPrivateKey(keyPair.privateKey)),
+  }
+}
 
 /**
- * Loads (or generates + persists) a harness install's BIK. The keypair is
- * persisted separately from the config (private key material, mode `0600`) and
- * stable across restarts — the owner's wraps target its `publicKeyId`, so
- * rotating it would orphan every wrap. Generate lazily before the first
- * presence write; the public half must ride EVERY `bot:hello` and presence
- * update (the backend's `bot_runtime_instances` upsert overwrites the stored
- * key by default, so a heartbeat that omits it clears the registration and
- * breaks sealed-claim wrap coverage).
+ * This install's identity keys, ready to open sealed turns. The records live in
+ * an {@link E2eKeyring} (keychain or file); this adds the WebCrypto import and
+ * caches the result for the process.
+ *
+ * The public halves must ride EVERY `bot:hello` and presence update: the
+ * server reads an advertised keyring as the instance's complete set, so a
+ * heartbeat that omits it unregisters every key and breaks sealed-claim wrap
+ * coverage.
  */
-export class BikKeystore {
-  private readonly path: string
+export class BotKeyring {
+  private readonly buildRecords: () => E2eKeyring
   private readonly log: (message: string) => void
-  private cached: BotIdentityKey | undefined
-  private inFlight: Promise<BotIdentityKey | undefined> | undefined
+  private records: E2eKeyring | undefined
+  private cached: BotIdentityKey[] = []
+  private inFlight: Promise<BotIdentityKey[]> | undefined
+  private loaded = false
 
-  constructor(opts: { path: string; log?: (message: string) => void }) {
-    this.path = opts.path
+  constructor(opts: { keyring: () => E2eKeyring; log?: (message: string) => void }) {
+    this.buildRecords = opts.keyring
     this.log = opts.log ?? ((message) => console.error(message))
   }
 
-  /** The loaded BIK, if `ensure()` has resolved. */
-  get current(): BotIdentityKey | undefined {
+  /** The loaded keys, if `ensure()` has resolved. */
+  get identities(): BotIdentityKey[] {
     return this.cached
   }
 
   /**
-   * Load or create this install's BIK, caching it for the process. Returns
-   * `undefined` on a catastrophic failure (WebCrypto without X25519, say) — the
-   * harness then runs plaintext-only, with the failure logged loudly rather
-   * than sealed turns becoming mysteriously unservable with no clue why.
+   * Load or create this install's keys, caching them for the process. Returns
+   * an empty keyring when the store or WebCrypto fails, logged loudly: the
+   * harness then serves plaintext streams only, rather than sealed turns
+   * becoming unservable with no clue why. Nothing is downgraded by that — a
+   * runtime with no registered key cannot claim a sealed stream at all.
    */
-  async ensure(): Promise<BotIdentityKey | undefined> {
-    if (this.cached) return this.cached
-    // Concurrent callers (boot presence + bot:hello, say) would otherwise each
-    // mint a keypair past the cache check and race the persist.
+  async ensure(): Promise<BotIdentityKey[]> {
+    if (this.loaded) return this.cached
+    // Boot presence and `bot:hello` both ensure; without this they would each
+    // mint past the cache check and race the store.
     this.inFlight ??= this.load()
       .catch((error) => {
-        this.log(`Threa sealed: BIK load/create threw: ${String(error)}`)
-        return undefined
+        this.log(`Threa sealed: key load/create failed; sealed scratchpads are unavailable: ${String(error)}`)
+        return [] as BotIdentityKey[]
       })
       .finally(() => {
         this.inFlight = undefined
       })
     this.cached = await this.inFlight
+    this.loaded = this.cached.length > 0
     return this.cached
   }
 
-  /**
-   * The `publicKey`/`publicKeyId` fields to spread into every `bot:hello` and
-   * presence body. Empty until `ensure()` resolves — callers ensure at boot.
-   */
-  presenceFields(): { publicKey: string; publicKeyId: string } | Record<string, never> {
-    return this.cached ? { publicKey: this.cached.publicKeyBase64, publicKeyId: this.cached.publicKeyId } : {}
+  /** The fields to spread into every `bot:hello` and presence body. Empty until `ensure()` resolves. */
+  presenceFields(): ReturnType<E2eKeyring["presenceFields"]> {
+    return this.records?.presenceFields() ?? {}
   }
 
-  private async load(): Promise<BotIdentityKey | undefined> {
-    return (await this.importPersisted()) ?? this.create()
-  }
-
-  private async importPersisted(): Promise<BotIdentityKey | undefined> {
-    const persisted = this.readPersisted()
-    if (!persisted) return undefined
-    try {
-      return {
-        publicKeyId: persisted.publicKeyId,
-        publicKeyBase64: persisted.publicKey,
-        privateKey: await importRecipientPrivateKey(base64ToBytes(persisted.privateKey)),
-      }
-    } catch (error) {
-      this.log(`Threa sealed: failed to import BIK from ${this.path}; generating a fresh one: ${String(error)}`)
-      return undefined
+  private async load(): Promise<BotIdentityKey[]> {
+    this.records ??= this.buildRecords()
+    const records = await this.records.ensure()
+    const identities: BotIdentityKey[] = []
+    for (const record of records) {
+      identities.push({
+        publicKeyId: record.keyId,
+        publicKeyBase64: record.publicKey,
+        privateKey: await importRecipientPrivateKey(base64ToBytes(record.privateKey)),
+      })
     }
-  }
-
-  private readPersisted(): PersistedBik | undefined {
-    if (!existsSync(this.path)) return undefined
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<PersistedBik>
-      if (
-        typeof parsed.publicKeyId === "string" &&
-        typeof parsed.publicKey === "string" &&
-        typeof parsed.privateKey === "string"
-      ) {
-        return parsed as PersistedBik
-      }
-      this.log(`Threa sealed: ${this.path} is malformed; generating a fresh BIK`)
-      return undefined
-    } catch (error) {
-      this.log(`Threa sealed: failed to parse ${this.path}: ${String(error)}`)
-      return undefined
-    }
-  }
-
-  private async create(): Promise<BotIdentityKey | undefined> {
-    let keyPair: { publicKey: WebCryptoKey; privateKey: WebCryptoKey }
-    let publicKeyBase64: string
-    let privateKeyBase64: string
-    try {
-      keyPair = await generateKeyPair()
-      publicKeyBase64 = bytesToBase64(await exportPublicKey(keyPair.publicKey))
-      privateKeyBase64 = bytesToBase64(await exportPrivateKey(keyPair.privateKey))
-    } catch (error) {
-      this.log(`Threa sealed: failed to generate a BIK; sealed scratchpads are unavailable: ${String(error)}`)
-      return undefined
-    }
-    const record: PersistedBik = {
-      publicKeyId: `bik_${ulid()}`,
-      publicKey: publicKeyBase64,
-      privateKey: privateKeyBase64,
-    }
-    // Exclusive create: two connectors sharing the path (two `threa-bot run`s
-    // on one machine) can both find no file at first start. Only one key may
-    // survive on disk, and the other process must adopt it — a key that lives
-    // only in memory strands every scratchpad wrapped to it after a restart.
-    // Any other persist failure is survivable (the in-memory key serves sealed
-    // turns this session); only restart-stability suffers, so log rather than fail.
-    try {
-      mkdirSync(dirname(this.path), { recursive: true })
-      writeFileSync(this.path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600, flag: "wx" })
-    } catch (error) {
-      if ((error as { code?: string }).code === "EEXIST") {
-        const winner = await this.importPersisted()
-        if (winner) {
-          this.log(`Threa sealed: another process created ${this.path} first; using its key`)
-          return winner
-        }
-      }
-      this.log(
-        `Threa sealed: failed to persist BIK to ${this.path}; using an in-memory key this session: ${String(error)}`
-      )
-    }
-    return {
-      publicKeyId: record.publicKeyId,
-      publicKeyBase64,
-      privateKey: keyPair.privateKey,
-    }
+    return identities
   }
 }
 
@@ -359,7 +296,35 @@ export function parseSealedTurnContext(raw: unknown): SealedTurnContext | undefi
 // ── sealed turn crypto (pure; no module state or I/O) ─────────────────────────
 
 /**
- * Open a sealed claim with this bot's BIK: recover the SSK for every generation
+ * Recover one wrap's stream key with whichever of this runtime's keys it was
+ * addressed to. The wire wraps carry no recipient id, so the holder of a
+ * keyring has to try: the wrap AAD binds the key id, so every key but the right
+ * one fails to authenticate. A wrap nothing opens is a generation this runtime
+ * was not invited to, which is why the miss is `undefined` and not a throw.
+ */
+async function unwrapWithAny(params: {
+  wrap: SealedSskWrap
+  identities: BotIdentityKey[]
+  streamId: string
+}): Promise<Uint8Array | undefined> {
+  const { wrap, identities, streamId } = params
+  for (const identity of identities) {
+    try {
+      return await unwrapStreamKey({
+        enc: base64ToBytes(wrap.wrapEnc),
+        ct: base64ToBytes(wrap.wrapCt),
+        recipientPrivateKey: identity.privateKey,
+        aad: buildWrapAad({ streamId, keyGeneration: wrap.keyGeneration, recipientKeyId: identity.publicKeyId }),
+      })
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
+/**
+ * Open a sealed claim with this bot's keyring: recover the SSK for every generation
  * the backend wrapped to us (AAD-bound to our key id), open the trigger + prior
  * history, and return the decrypted prompt plus the {@link SealingState} the turn
  * seals replies/steps with. `streamId` is the E2E root stream — wraps and the
@@ -369,25 +334,14 @@ export function parseSealedTurnContext(raw: unknown): SealedTurnContext | undefi
  */
 export async function openSealedTurnContext(params: {
   sealed: SealedTurnContext
-  identity: BotIdentityKey
+  identities: BotIdentityKey[]
   streamId: string
 }): Promise<OpenedSealedTurn> {
-  const { sealed, identity, streamId } = params
+  const { sealed, identities, streamId } = params
   const sskByGeneration = new Map<number, Uint8Array>()
   for (const wrap of sealed.wraps) {
-    try {
-      sskByGeneration.set(
-        wrap.keyGeneration,
-        await unwrapStreamKey({
-          enc: base64ToBytes(wrap.wrapEnc),
-          ct: base64ToBytes(wrap.wrapCt),
-          recipientPrivateKey: identity.privateKey,
-          aad: buildWrapAad({ streamId, keyGeneration: wrap.keyGeneration, recipientKeyId: identity.publicKeyId }),
-        })
-      )
-    } catch {
-      // A wrap for a generation we weren't invited to — skip it, open what we can.
-    }
+    const ssk = await unwrapWithAny({ wrap, identities, streamId })
+    if (ssk) sskByGeneration.set(wrap.keyGeneration, ssk)
   }
 
   const promptSsk = sskByGeneration.get(sealed.prompt.envelope.keyGeneration)
@@ -499,7 +453,7 @@ export function scrubSealedError(error: unknown): string {
  * (e.g. `/model`) on an E2E scratchpad: the current-generation SSK wraps
  * addressed to this bot's BIK plus the reply binding. No trigger/history — the
  * command name is cleartext dispatch metadata, so only the ack needs sealing.
- * Absent when the bot can't seal (no BIK / wrap race); the harness then closes
+ * Absent when the bot can't seal (no key / wrap race); the harness then closes
  * the command silently.
  */
 export interface SealedAckContext {
@@ -535,20 +489,15 @@ export function parseSealedAckContext(raw: unknown): SealedAckContext | undefine
  */
 export async function openSealedAck(params: {
   ack: SealedAckContext
-  identity: BotIdentityKey
+  identities: BotIdentityKey[]
   streamId: string
 }): Promise<SealingState> {
-  const { ack, identity, streamId } = params
+  const { ack, identities, streamId } = params
   let replySsk: Uint8Array | undefined
   for (const wrap of ack.wraps) {
     if (wrap.keyGeneration !== ack.reply.keyGeneration) continue
-    replySsk = await unwrapStreamKey({
-      enc: base64ToBytes(wrap.wrapEnc),
-      ct: base64ToBytes(wrap.wrapCt),
-      recipientPrivateKey: identity.privateKey,
-      aad: buildWrapAad({ streamId, keyGeneration: wrap.keyGeneration, recipientKeyId: identity.publicKeyId }),
-    })
-    break
+    replySsk = await unwrapWithAny({ wrap, identities, streamId })
+    if (replySsk) break
   }
   if (!replySsk) throw new Error("Sealed ack: no SSK wrap for the reply's key generation")
   return {

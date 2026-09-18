@@ -1,9 +1,15 @@
 import { createHash } from "node:crypto"
-import { homedir } from "node:os"
+import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 import {
   ArchiveGraceController,
-  BikKeystore,
+  BotKeyring,
+  E2eKeyring,
+  e2eKeyAccount,
+  mintE2eKeyRecord,
+  readLegacyBikFile,
+  resolveKeyStore,
+  FileKeyStore,
   WS_BACKSTOP_POLL_MS,
   BotRuntimeTransport,
   mintStreamKeyWraps,
@@ -463,7 +469,7 @@ export class RemoteSession {
   private readonly runtime: RuntimeDescriptor
   private readonly transport: BotRuntimeTransport
   private readonly log: (message: string) => void
-  private readonly bik: BikKeystore
+  private readonly bik: BotKeyring
   private readonly hello: BotRuntimeHello
   private link: RuntimeSessionLink | undefined
   private linkGeneration = 0
@@ -534,12 +540,9 @@ export class RemoteSession {
       },
       options.archiveGraceMs === undefined ? {} : { graceMs: options.archiveGraceMs }
     )
-    this.bik = new BikKeystore({
-      path: this.config.bikPath ?? join(homedir(), ".threa", `bik-${sanitizeId(this.runtime.kind)}.json`),
-      log: this.log,
-    })
+    this.bik = new BotKeyring({ keyring: () => this.buildKeyring(), log: this.log })
     // The transport re-sends this exact object on every reconnect hello, so the
-    // BIK fields assigned into it at start() (after ensure()) ride every one.
+    // key fields assigned into it at start() (after ensure()) ride every one.
     this.hello = {
       ...this.presenceBody("available"),
       supportedCapabilities: supportedCapabilitiesFor(this.sessionControlEnabled),
@@ -626,12 +629,39 @@ export class RemoteSession {
     }
   }
 
+  /**
+   * Where this install's E2E keys live and which one it holds. Built lazily so
+   * an operator who never enables encryption is not asked to pick a key store.
+   */
+  private buildKeyring(): E2eKeyring {
+    const dir = this.config.keyDir ?? join(homedir(), ".threa", "e2e-keys")
+    const account = e2eKeyAccount({
+      scope: this.config.keyScope,
+      hostname: hostname(),
+      instanceId: this.config.instanceId,
+      identitySeed: this.config.apiKey,
+    })
+    const legacyPath = this.config.bikPath ?? join(homedir(), ".threa", `bik-${sanitizeId(this.runtime.kind)}.json`)
+    return new E2eKeyring({
+      store: resolveKeyStore({
+        requested: this.config.keyStore,
+        platform: process.platform,
+        dir,
+        hasExistingFileKey: new FileKeyStore({ dir }).read(account) !== undefined,
+      }),
+      account,
+      mint: mintE2eKeyRecord,
+      legacy: () => readLegacyBikFile(legacyPath),
+      log: this.log,
+    })
+  }
+
   // --- Lifecycle ------------------------------------------------------------
 
   async start(): Promise<void> {
-    // BIK before the first hello/presence write: the server's instance upsert
-    // overwrites the stored key by default, so a write without these fields
-    // clears the registration and breaks sealed-claim wrap coverage.
+    // Keys before the first hello/presence write: the server reads an
+    // advertised keyring as the instance's complete set, so a write without
+    // these fields unregisters every key and breaks sealed-claim wrap coverage.
     await this.bik.ensure()
     Object.assign(this.hello, this.bik.presenceFields())
     await this.verifyPrincipal()
@@ -823,8 +853,10 @@ export class RemoteSession {
    * the moment the owner sets up encryption.
    */
   private async resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
-    const bik = await this.bik.ensure()
-    if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see earlier log)")
+    const identities = await this.bik.ensure()
+    if (identities.length === 0) {
+      throw new Error("e2e is enabled but this install could not create a bot identity key (see earlier log)")
+    }
     let ownerKey: { keyId: string; publicKey: string }
     try {
       ownerKey = await this.client.getOwnerE2eKey()
@@ -850,7 +882,7 @@ export class RemoteSession {
     link: RuntimeSessionLink,
     e2e: { ownerKeyId: string; ownerPublicKey: string }
   ): Promise<void> {
-    const bik = this.bik.current
+    const [bik] = this.bik.identities
     if (!bik) throw new Error("BIK disappeared mid-provisioning")
     const { wraps } = await mintStreamKeyWraps({
       streamId: link.rootStreamId,
@@ -1012,11 +1044,11 @@ export class RemoteSession {
     }
     const sealed = parseSealedTurnContext(invocation.sealedContext)
     if (!sealed) return fail("malformed sealedContext")
-    const identity = await this.bik.ensure()
-    if (!identity) return fail("no bot identity key")
+    const identities = await this.bik.ensure()
+    if (identities.length === 0) return fail("no bot identity key")
     try {
       // Wraps and the message AAD bind to the ROOT stream that owns the E2E key.
-      const opened = await openSealedTurnContext({ sealed, identity, streamId: invocation.rootStreamId })
+      const opened = await openSealedTurnContext({ sealed, identities, streamId: invocation.rootStreamId })
       const messages: ExternalHistoryMessage[] = opened.history.map((item) => ({
         messageId: `sealed-${item.sequence}`,
         role: item.role,
@@ -1066,7 +1098,7 @@ export class RemoteSession {
     const lifecycle = this.lifecycle
     const invocation = await this.claimAndHydrate(busy, responseStreamId, excludeResponseStreamIds)
     if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
-    const identity = invocation.sealing ? this.bik.current : undefined
+    const identities = invocation.sealing ? this.bik.identities : []
     const handle = this.transport.observeClaim({
       invocationId: invocation.id,
       claimToken: invocation.claimToken,
@@ -1080,10 +1112,10 @@ export class RemoteSession {
         onClaimLost: () =>
           this.terminalizeObservedClaim(invocation.id, "Folded claim ownership was lost while the turn was running."),
       },
-      ...(invocation.sealing && identity
+      ...(invocation.sealing && identities.length > 0
         ? {
             sealed: {
-              identity,
+              identities,
               streamId: invocation.rootStreamId,
               callbackToken: invocation.sealing.callbackToken,
             },
@@ -1868,10 +1900,10 @@ export class RemoteSession {
   ): Promise<SealedReplyBody | undefined> {
     const ack = parseSealedAckContext(invocation.sealedAck)
     if (!ack) return undefined
-    const identity = await this.bik.ensure()
-    if (!identity) return undefined
+    const identities = await this.bik.ensure()
+    if (identities.length === 0) return undefined
     try {
-      const sealing = await openSealedAck({ ack, identity, streamId: invocation.rootStreamId })
+      const sealing = await openSealedAck({ ack, identities, streamId: invocation.rootStreamId })
       return await sealReply(sealing, markdown)
     } catch {
       return undefined
@@ -3177,8 +3209,8 @@ export class RemoteSession {
       capabilities: runtimeCapabilitiesFor(this.config.runtimeSessionId, this.delegate.sessionControl),
       manifest: effectiveRuntimeManifest(this.runtime.manifest, this.delegate.sessionControl),
       ...(statusText ? { statusText } : {}),
-      // The BIK must ride every presence write too — the upsert overwrites the
-      // stored key, so omitting it here would clear what hello registered.
+      // The keyring must ride every presence write too — an advertised set
+      // replaces the stored one, so omitting it here clears what hello registered.
       ...this.bik.presenceFields(),
     }
   }

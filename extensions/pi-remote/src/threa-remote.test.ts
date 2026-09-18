@@ -2855,7 +2855,7 @@ describe("session-scoped lifecycle isolation", () => {
       const paths = __testing.storagePaths()
       const persisted = JSON.parse(readFileSync(paths.configPath, "utf8")) as Record<string, unknown>
       expect(persisted).toMatchObject({ workspaceId: "ws_123", apiKey: "threa_bk_test" })
-      expect(readdirSync(persistenceDirectory).sort()).toEqual(["threa-remote-bik.json", "threa-remote.json"])
+      expect(readdirSync(persistenceDirectory).sort()).toEqual(["e2e-keys", "threa-remote.json"])
     } finally {
       fetchSpy.mockRestore()
       rmSync(persistenceDirectory, { recursive: true, force: true })

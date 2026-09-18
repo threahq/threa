@@ -1,4 +1,10 @@
 import { createHash } from "node:crypto"
+import {
+  E2E_KEY_SCOPES,
+  E2E_KEY_STORE_KINDS,
+  type E2eKeyScope,
+  type E2eKeyStoreKind,
+} from "@threahq/bot-runtime-client"
 
 export const TRACE_MODES = ["headline", "commands"] as const
 const TRACE_MODE_SET: ReadonlySet<string> = new Set(TRACE_MODES)
@@ -40,12 +46,30 @@ export interface RemoteSessionConfig {
    */
   idleTimeoutMs: number
   /**
-   * Where this install's BIK (Bot Identity Key, for sealed/E2EE scratchpads)
-   * is persisted. Unset = a per-runtime-kind default under `~/.threa/`.
-   * Deleting the file orphans the owner's key wraps — the owner must re-invite
-   * the bot after it registers a fresh key.
+   * The single-key BIK file this install used before keyrings. Still read: when
+   * the configured key scope holds nothing yet, the old key is adopted under it
+   * so the owner's existing wraps keep addressing a key this runtime holds.
+   * Unset = a per-runtime-kind default under `~/.threa/`.
    */
   bikPath?: string
+  /**
+   * How widely this install's E2E identity key is shared. `host` (default) is
+   * one key for every runtime on this machine, so a person running several
+   * agents invites one recipient rather than one per agent. `identity` is one
+   * key per bot (per API key) across machines, `instance` one per install.
+   * Changing it points the runtime at a different key, so the owner must
+   * re-invite it to streams wrapped under the old one.
+   */
+  keyScope: E2eKeyScope
+  /**
+   * Where E2E keys are kept. Unset lets a working OS keychain win and otherwise
+   * asks rather than choosing disk on the operator's behalf; `file` keeps them
+   * at mode 0600 under `keyDir`; `keychain` requires one and fails loudly
+   * without it.
+   */
+  keyStore?: E2eKeyStoreKind
+  /** Directory for the file key store. Default `~/.threa/e2e-keys`. */
+  keyDir?: string
   /**
    * Emit FULL trace detail (real commands, file contents, outputs) on sealed
    * (E2EE) turns — safe because sealed step content is ciphertext the server
@@ -133,6 +157,9 @@ export interface RawConfig {
   instanceId?: unknown
   runtimeSessionId?: unknown
   bikPath?: unknown
+  keyScope?: unknown
+  keyStore?: unknown
+  keyDir?: unknown
   e2e?: unknown
   sealedFullTrace?: unknown
   traceMode?: unknown
@@ -177,6 +204,9 @@ function parseTraceMode(value: unknown): TraceMode | undefined {
   const mode = str(value)?.toLowerCase()
   return mode && TRACE_MODE_SET.has(mode) ? (mode as TraceMode) : undefined
 }
+
+const KEY_SCOPE_SET: ReadonlySet<string> = new Set(E2E_KEY_SCOPES)
+const KEY_STORE_SET: ReadonlySet<string> = new Set(E2E_KEY_STORE_KINDS)
 
 export interface LoadConfigInput {
   env: Record<string, string | undefined>
@@ -227,6 +257,18 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
     return { error: "Could not derive a valid instanceId/runtimeSessionId (empty after sanitization)." }
   }
 
+  const configuredKeyScope = str(env.THREA_E2E_KEY_SCOPE) ?? str(file.keyScope)
+  if (configuredKeyScope !== undefined && !KEY_SCOPE_SET.has(configuredKeyScope.toLowerCase())) {
+    return { error: `Invalid keyScope: expected one of ${E2E_KEY_SCOPES.join(", ")}.` }
+  }
+  const keyScope = (configuredKeyScope?.toLowerCase() as E2eKeyScope | undefined) ?? "host"
+
+  const configuredKeyStore = str(env.THREA_E2E_KEY_STORE) ?? str(file.keyStore)
+  if (configuredKeyStore !== undefined && !KEY_STORE_SET.has(configuredKeyStore.toLowerCase())) {
+    return { error: `Invalid keyStore: expected one of ${E2E_KEY_STORE_KINDS.join(", ")}.` }
+  }
+  const keyStore = configuredKeyStore?.toLowerCase() as E2eKeyStoreKind | undefined
+
   return {
     config: {
       baseUrl: baseUrl.replace(/\/$/, ""),
@@ -243,6 +285,9 @@ export function loadConfig(input: LoadConfigInput, identity: ConnectorIdentity):
       pollMs: parseNum(env.THREA_POLL_MS ?? file.pollMs, 3000, 1000),
       idleTimeoutMs: parseNum(env.THREA_IDLE_TIMEOUT_MS ?? file.idleTimeoutMs, 3_600_000, 60_000),
       bikPath: str(env.THREA_BIK_PATH) ?? str(file.bikPath),
+      keyScope,
+      keyStore,
+      keyDir: str(env.THREA_E2E_KEY_DIR) ?? str(file.keyDir),
       e2e: parseBool(env.THREA_E2E ?? file.e2e, false),
       sealedFullTrace: parseBool(env.THREA_SEALED_FULL_TRACE ?? file.sealedFullTrace, true),
       traceMode,

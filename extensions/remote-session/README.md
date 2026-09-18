@@ -186,10 +186,21 @@ pass and falls back to HTTP.
 
 Set `e2e: true` in the config (or `THREA_E2E=1`) to create the linked
 scratchpad encrypted. The SDK mints the stream key, wraps it to the bot
-owner's key and its own identity key (persisted at `bikPath`, default
-`~/.threa/bik-<kind>.json`), and from then on decrypts claims and seals
-replies and trace steps locally. The owner must have set up encryption in
-Threa first; until then `start()` logs the reason and retries on each poll.
+owner's key and its own identity key, and from then on decrypts claims and
+seals replies and trace steps locally. The owner must have set up encryption
+in Threa first; until then `start()` logs the reason and retries on each poll.
+
+`keyScope` (`THREA_E2E_KEY_SCOPE`) decides which installs share that identity
+key: `host` (the default: every Threa runtime on this machine), `identity`
+(this bot, wherever it runs), or `instance` (this install alone). `keyStore`
+(`THREA_E2E_KEY_STORE`) picks where it is kept — `keychain` drives the OS
+keychain through its command-line tool, which survives the runtime being
+rebuilt, and `file` writes `0600` files under `keyDir`
+(`THREA_E2E_KEY_DIR`, default `~/.threa/e2e-keys`). Leaving `keyStore` unset
+takes the keychain when one works and asks you to choose when none does;
+there is no silent downgrade to disk. A single-key file from before the
+keyring (`bikPath`) is adopted under the configured scope, so scratchpads
+already sealed to it keep opening.
 
 ## Inside the Threa repo
 
