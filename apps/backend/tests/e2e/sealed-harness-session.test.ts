@@ -273,7 +273,7 @@ describe("sealed harness session (full E2EE round trip)", () => {
     // The harness opens the claim with its BIK — exactly what the SDK does.
     const sealed = parseSealedTurnContext(claimed!.sealedContext)
     expect(sealed).toBeDefined()
-    const opened = await openSealedTurnContext({ sealed: sealed!, identity: bik, streamId: rootStreamId })
+    const opened = await openSealedTurnContext({ sealed: sealed!, identities: [bik], streamId: rootStreamId })
     expect(opened.promptMarkdown).toBe(triggerText)
 
     // The trigger's ref surfaced from the sealed payload; the harness pulls the
