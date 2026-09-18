@@ -511,6 +511,26 @@ Some **bold** and *italic* text with \`code\`.
       const { container } = render(<MarkdownContent content={"Euler: $e^{i\\pi} + 1 = 0$ nice"} />)
       expect(renderedTex(container)).toEqual(["e^{i\\pi} + 1 = 0"])
       expect(container.querySelector(".katex-display")).toBeNull()
+      // The sentence around the equation has to survive the text-node splice.
+      expect(container.textContent).toContain("Euler:")
+      expect(container.textContent).toContain("nice")
+    })
+
+    it("should keep the TeX escapes CommonMark would eat", () => {
+      const { container } = render(<MarkdownContent content={"\\[ \\{x\\} \\\\ 50\\% \\]"} />)
+      expect(renderedTex(container)).toEqual(["\\{x\\} \\\\ 50\\%"])
+    })
+
+    it("should keep a body CommonMark emphasis would split", () => {
+      const { container } = render(<MarkdownContent content={"$x^*$ and $y^*$"} />)
+      expect(renderedTex(container)).toEqual(["x^*", "y^*"])
+      expect(container.querySelector("em")).toBeNull()
+    })
+
+    it("should bound the size of user-specified lengths", () => {
+      const { container } = render(<MarkdownContent content={"$\\rule{1em}{200em}$"} />)
+      const rule = container.querySelector<HTMLElement>(".mord.rule")
+      expect(rule?.style.borderTopWidth).toBe("10em")
     })
 
     it("should render display math between double dollars", () => {

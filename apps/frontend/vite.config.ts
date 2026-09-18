@@ -37,6 +37,24 @@ const buildId = `${buildVersion}@${buildTimestamp}`
 
 let buildOutputDir: string
 
+/**
+ * KaTeX ships each of its 20 faces as ttf, woff and woff2, so a build emits 60
+ * font files for the 20 woff2 any browser that can run this app actually
+ * fetches. Cloudflare Pages counts files per deploy (#2182), and the service
+ * worker would precache the 303 kB of woff twins alongside them.
+ */
+function katexWoff2OnlyPlugin(): Plugin {
+  return {
+    name: "katex-woff2-only",
+    enforce: "pre",
+    transform(code, id) {
+      if (!id.includes("/katex/") || !id.includes(".css")) return null
+      const trimmed = code.replace(/(src:url\([^)]+\.woff2\) format\("woff2"\))[^}]*/g, "$1")
+      return trimmed === code ? null : { code: trimmed, map: null }
+    },
+  }
+}
+
 function versionJsonPlugin(): Plugin {
   return {
     name: "version-json",
@@ -118,6 +136,7 @@ export default defineConfig({
   plugins: [
     react(),
     versionJsonPlugin(),
+    katexWoff2OnlyPlugin(),
     ...postHogSourceMapPlugins(),
     VitePWA({
       strategies: "injectManifest",
@@ -173,7 +192,7 @@ export default defineConfig({
     __E2E_BUILD__: JSON.stringify(isE2ETest),
   },
   resolve: {
-    dedupe: ["react", "react-dom"],
+    dedupe: ["react", "react-dom", "katex"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
@@ -183,10 +202,10 @@ export default defineConfig({
     sourcemap: "hidden",
     rollupOptions: {
       output: {
-        // KaTeX is 270 kB and the entry chunk sits ~35 kB under the service
-        // worker's 2 MiB precache ceiling; inside it, nothing precaches at all.
-        // Its own chunk is still a static import of the entry, so it loads
-        // before first paint and math never renders twice.
+        // KaTeX's 261 kB of JS gets its own chunk: inside the entry chunk, that
+        // chunk crosses workbox's 2 MiB per-file precache limit and the build
+        // fails outright. The chunk is still a static import of the entry, so it
+        // loads before first paint and math never renders twice.
         manualChunks: (id: string) => (id.includes("/node_modules/katex/") ? "katex" : undefined),
       },
     },

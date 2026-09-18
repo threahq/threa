@@ -1,84 +1,116 @@
 import { describe, expect, it } from "bun:test"
-import { findMathSpans, normalizeMathDelimiters } from "./math"
+import { extractMath, splitMathTokens, type MathPart } from "./math"
 
-const texOf = (text: string) => findMathSpans(text).map((span) => ({ tex: span.tex, display: span.display }))
+/** What the renderer sees: literal text runs and the math lifted out of them. */
+function parts(markdown: string): MathPart[] {
+  const extracted = extractMath(markdown)
+  return splitMathTokens(extracted) ?? [{ text: extracted }]
+}
 
-describe("findMathSpans", () => {
-  it("finds inline math", () => {
-    expect(texOf("Euler: $e^{i\\pi} + 1 = 0$ nice")).toEqual([{ tex: "e^{i\\pi} + 1 = 0", display: false }])
-  })
-
-  it("finds display math and trims it", () => {
-    expect(texOf("$$\n\\frac{9}{31}\n$$")).toEqual([{ tex: "\\frac{9}{31}", display: true }])
-  })
-
-  it("finds several spans in one run", () => {
-    expect(texOf("$a$ then $b$")).toEqual([
-      { tex: "a", display: false },
-      { tex: "b", display: false },
+describe("extractMath", () => {
+  it("lifts display math out of backslash delimiters", () => {
+    expect(parts("Solve \\[ x^2 + 1 = 0 \\] now")).toEqual([
+      { text: "Solve " },
+      { tex: "x^2 + 1 = 0", display: true },
+      { text: " now" },
     ])
   })
 
-  it("reports the slice each span covers", () => {
-    expect(findMathSpans("x $a$ y")).toEqual([{ start: 2, end: 5, tex: "a", display: false }])
+  it("lifts inline math out of backslash delimiters", () => {
+    expect(parts("Let \\( p = 0.31 \\) hold")).toEqual([
+      { text: "Let " },
+      { tex: "p = 0.31", display: false },
+      { text: " hold" },
+    ])
+  })
+
+  it("lifts dollar math", () => {
+    expect(parts("Euler: $e^{i\\pi} + 1 = 0$ and $$\\frac{a}{b}$$")).toEqual([
+      { text: "Euler: " },
+      { tex: "e^{i\\pi} + 1 = 0", display: false },
+      { text: " and " },
+      { tex: "\\frac{a}{b}", display: true },
+    ])
+  })
+
+  it("keeps TeX escapes CommonMark would eat", () => {
+    expect(parts("\\[ \\{x\\} \\\\ 50\\% \\_i \\]")).toEqual([{ tex: "\\{x\\} \\\\ 50\\% \\_i", display: true }])
+  })
+
+  it("keeps a body CommonMark emphasis would split", () => {
+    expect(parts("$x^*$ and $y^*$")).toEqual([
+      { tex: "x^*", display: false },
+      { text: " and " },
+      { tex: "y^*", display: false },
+    ])
+  })
+
+  it("collapses the blank lines LLMs put inside display math", () => {
+    expect(parts("\\[\n\n0.31 + 0.31w > 0.40\n\n\\]")).toEqual([{ tex: "0.31 + 0.31w > 0.40", display: true }])
+  })
+
+  it("takes the whole block when a nested inline delimiter sits inside it", () => {
+    expect(parts("a \\[ x \\(y\\) \\] b")).toEqual([
+      { text: "a " },
+      { tex: "x \\(y\\)", display: true },
+      { text: " b" },
+    ])
+  })
+
+  it("leaves markdown without math untouched", () => {
+    const markdown = "# Heading\n\nA [link](https://example.com) and **bold**.\n"
+    expect(extractMath(markdown)).toBe(markdown)
   })
 
   describe("leaves prose alone", () => {
     it.each([
-      ["two prices", "costs $5 and $10 total"],
-      ["thousands separators", "USD $1,000 vs EUR $2,000 difference"],
-      ["a range", "$50-$60 range"],
-      ["one price", "price is $5"],
-      ["a lone shell variable", "and $PATH here"],
-      ["spaced dollars", "a $ b $ c"],
-      ["a numeric span", "I paid $5$."],
-      ["an unclosed delimiter", "broken $x + 1 here"],
-      ["a dollar glued to a word", "USD100$x$"],
-      ["a blank line inside the span", "$a\n\nb$"],
-    ])("%s", (_case, text) => {
-      expect(texOf(text)).toEqual([])
+      ["two prices", "It costs $5 and $10 total"],
+      ["thousands separators", "Revenue went from $1,000 to $2,000"],
+      ["a range", "Somewhere between $50-$60 each"],
+      ["one price", "That will be $42"],
+      ["an env var", "Set $PATH before running"],
+      ["spaced dollars", "The $ sign and another $ sign"],
+      ["an escaped bracket", "See \\[1\\] for details"],
+      ["an unclosed delimiter", "Half an equation $x + 1"],
+      ["a glued opener", "cost$5 and x$y$"],
+      ["a paragraph break", "$a\n\nb$"],
+    ])("%s", (_name, markdown) => {
+      expect(extractMath(markdown)).toBe(markdown)
     })
+  })
+
+  describe("leaves protected regions alone", () => {
+    it.each([
+      ["a fenced block", "```\n\\[ x \\]\n$y$\n```\n"],
+      ["a tilde fence", "~~~\n\\( x \\)\n~~~\n"],
+      ["a code span", "Type `\\[ x \\]` to start"],
+      ["an unterminated fence", "```\n\\[ x \\]\n"],
+      ["a link destination", "See [docs](https://x.test/a$b) and [more](https://y.test/c$d)"],
+      ["bare autolinked URLs", "https://x.test/a$b then https://y.test/c$d"],
+    ])("%s", (_name, markdown) => {
+      expect(extractMath(markdown)).toBe(markdown)
+    })
+
+    it("does not let a stray backtick swallow the paragraphs after it", () => {
+      expect(parts("use the ` char\n\nnow \\[x + 1\\] here\n\nand ` again")).toEqual([
+        { text: "use the ` char\n\nnow " },
+        { tex: "x + 1", display: true },
+        { text: " here\n\nand ` again" },
+      ])
+    })
+  })
+
+  it("separates a price from real math in the same sentence", () => {
+    expect(parts("The price is $5, so $p = 5$.")).toEqual([
+      { text: "The price is $5, so " },
+      { tex: "p = 5", display: false },
+      { text: "." },
+    ])
   })
 })
 
-describe("normalizeMathDelimiters", () => {
-  it("rewrites display delimiters, collapsing the blank lines LLMs put inside", () => {
-    expect(normalizeMathDelimiters("\\[\n\n0.31 + 0.31w > 0.40\n\n\\]")).toBe("$$0.31 + 0.31w > 0.40$$")
-  })
-
-  it("rewrites inline delimiters and trims so the strict scanner accepts them", () => {
-    expect(normalizeMathDelimiters("inline \\( x^2 \\) here")).toBe("inline $x^2$ here")
-  })
-
-  it("leaves markdown without backslash delimiters untouched", () => {
-    const markdown = "a $x$ and a \\$5 price"
-    expect(normalizeMathDelimiters(markdown)).toBe(markdown)
-  })
-
-  it("leaves an escaped backslash alone", () => {
-    expect(normalizeMathDelimiters("a \\\\[not math\\\\]")).toBe("a \\\\[not math\\\\]")
-  })
-
-  it("leaves an unclosed delimiter alone", () => {
-    expect(normalizeMathDelimiters("open \\[ and nothing else")).toBe("open \\[ and nothing else")
-  })
-
-  it("skips fenced code", () => {
-    const markdown = "```\nprice \\[x\\]\n```\nthen \\[y\\]"
-    expect(normalizeMathDelimiters(markdown)).toBe("```\nprice \\[x\\]\n```\nthen $$y$$")
-  })
-
-  it("skips tilde fences", () => {
-    const markdown = "~~~\n\\[x\\]\n~~~"
-    expect(normalizeMathDelimiters(markdown)).toBe(markdown)
-  })
-
-  it("skips code spans", () => {
-    expect(normalizeMathDelimiters("run `\\[x\\]` then \\[y\\]")).toBe("run `\\[x\\]` then $$y$$")
-  })
-
-  it("skips an unterminated fence to the end of the document", () => {
-    const markdown = "```\n\\[x\\]\nstill code \\[y\\]"
-    expect(normalizeMathDelimiters(markdown)).toBe(markdown)
+describe("splitMathTokens", () => {
+  it("returns null for text the extractor never touched", () => {
+    expect(splitMathTokens("plain text with $5 in it")).toBeNull()
   })
 })

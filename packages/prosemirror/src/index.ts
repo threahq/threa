@@ -16,7 +16,7 @@ export {
   type EmojiLookup,
   type ParseMarkdownOptions,
 } from "./markdown"
-export { findMathSpans, normalizeMathDelimiters } from "./math"
+export { extractMath, splitMathTokens, type MathPart } from "./math"
 export {
   escapeMarkdownLinkText,
   unescapeMarkdownLinkText,

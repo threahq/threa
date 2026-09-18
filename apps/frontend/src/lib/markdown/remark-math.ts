@@ -1,13 +1,12 @@
-import { findMathSpans } from "@threahq/prosemirror"
+import { splitMathTokens } from "@threahq/prosemirror"
 
 /**
- * Turn `$…$` / `$$…$$` runs inside text into the `math-inline` / `math-display`
- * elements `rehype-katex` renders.
+ * Turn the math tokens `extractMath` left in the source into the
+ * `math-inline` / `math-display` elements `rehype-katex` renders.
  *
- * This runs over the parsed tree rather than the source, so code spans, fenced
- * code, and link destinations are already their own node types and a `$` inside
- * them is never mistaken for a delimiter. `findMathSpans` owns which runs count
- * as math — see `@threahq/prosemirror` for why `$5 and $10` does not.
+ * The tokens were substituted before parsing, so each one is a single
+ * uninterruptible text run here and the TeX inside it never met CommonMark's
+ * escaping or emphasis rules.
  */
 interface MdastNode {
   type: string
@@ -28,9 +27,9 @@ function splitMathInChildren(node: MdastNode): void {
   let replaced = false
   for (const child of node.children) {
     if (child.type === "text" && typeof child.value === "string") {
-      const parts = splitMath(child.value)
+      const parts = splitMathTokens(child.value)
       if (parts) {
-        next.push(...parts)
+        next.push(...parts.map((part) => ("tex" in part ? mathNode(part.tex, part.display) : textNode(part.text))))
         replaced = true
         continue
       }
@@ -41,18 +40,8 @@ function splitMathInChildren(node: MdastNode): void {
   if (replaced) node.children = next
 }
 
-function splitMath(value: string): MdastNode[] | null {
-  const spans = findMathSpans(value)
-  if (spans.length === 0) return null
-  const parts: MdastNode[] = []
-  let cursor = 0
-  for (const span of spans) {
-    if (span.start > cursor) parts.push({ type: "text", value: value.slice(cursor, span.start) })
-    parts.push(mathNode(span.tex, span.display))
-    cursor = span.end
-  }
-  if (cursor < value.length) parts.push({ type: "text", value: value.slice(cursor) })
-  return parts
+function textNode(value: string): MdastNode {
+  return { type: "text", value }
 }
 
 /**
