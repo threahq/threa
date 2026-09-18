@@ -1,4 +1,4 @@
-import { listStreams, readStream } from "../ops"
+import { listStreams, readStream, setStreamArchived } from "../ops"
 import {
   boolFlag,
   cursorFooter,
@@ -121,8 +121,40 @@ const readVerb: VerbSpec = {
   },
 }
 
+function archiveVerb(archived: boolean): VerbSpec {
+  const name = archived ? "archive" : "unarchive"
+  const effect = archived
+    ? "Archive a stream: it goes read-only and every thread beneath it is sealed with it."
+    : "Reopen an archived stream. An archived ancestor keeps the subtree sealed until it is reopened too."
+  return {
+    name,
+    summary: `${archived ? "Archive" : "Unarchive"} a stream (accepts a stream_ id or #slug)`,
+    usage: `threa streams ${name} <ref>`,
+    help:
+      `threa streams ${name} <ref>\n\n` +
+      `${effect}\n` +
+      "<ref> is a stream_ id or a #channel-slug. Open to the stream's creator and, for a user key, the creator " +
+      "of its root; a workspace key acts for its bot and reaches only the streams that bot opened. Repeating " +
+      `the call is a no-op. An archived channel is not resolvable by #slug — pass its stream_ id.\n\n` +
+      "Flags:\n" +
+      "  --json       force JSON output\n" +
+      "  --help       show this help",
+    options: {},
+    run: (ctx, positionals) => {
+      const ref = positionals[0]
+      if (!ref) throw new UsageError(`streams ${name} requires a <ref> (a stream_ id or #channel-slug)`)
+      return setStreamArchived(ctx.client, ctx.resolver, { streamRef: ref, archived })
+    },
+    render: (payload) => {
+      const stream = (payload as { data?: StreamRow & { archivedAt?: string | null } }).data
+      if (!stream) return `${name}d`
+      return `${stream.id ?? "?"}  ${streamLabel(stream)}  ${stream.archivedAt ? `archived ${stream.archivedAt}` : "active"}`
+    },
+  }
+}
+
 export const streamsNoun: NounSpec = {
   name: "streams",
-  summary: "List streams and read a stream with its messages",
-  verbs: [listVerb, readVerb],
+  summary: "List streams, read one with its messages, archive and unarchive",
+  verbs: [listVerb, readVerb, archiveVerb(true), archiveVerb(false)],
 }

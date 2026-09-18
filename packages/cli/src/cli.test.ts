@@ -306,3 +306,49 @@ test("whoami prints the declared principal alongside the resolved one", async ()
   expect(result.stdout).toContain("principal: bot bot_1")
   expect(result.stdout).toContain("declared:  bot")
 })
+
+test("streams archive posts to the stream's archive route and renders its new state", async () => {
+  fetchSpy.mockResolvedValue(
+    jsonResponse(200, { data: { id: "stream_1", displayName: "Notes", archivedAt: "2026-09-18T10:00:00.000Z" } })
+  )
+
+  const result = await run(["streams", "archive", "stream_1"], { config: TEST_CONFIG })
+
+  expect({
+    exitCode: result.exitCode,
+    stdout: result.stdout.trim(),
+    method: fetchSpy.mock.calls[0]?.[1]?.method,
+    paths: calledPaths(),
+  }).toEqual({
+    exitCode: 0,
+    stdout: "stream_1  Notes  archived 2026-09-18T10:00:00.000Z",
+    method: "POST",
+    paths: ["/api/v1/workspaces/ws_1/streams/stream_1/archive"],
+  })
+})
+
+test("streams unarchive resolves a #slug then posts to the unarchive route", async () => {
+  fetchSpy.mockImplementation(
+    fetchByPath((path) => {
+      if (path.endsWith("/unarchive"))
+        return jsonResponse(200, { data: { id: "stream_1", slug: "eng", archivedAt: null } })
+      return jsonResponse(200, { data: [{ id: "stream_1", slug: "eng" }] })
+    })
+  )
+
+  const result = await run(["streams", "unarchive", "#eng"], { config: TEST_CONFIG })
+
+  expect({
+    exitCode: result.exitCode,
+    stdout: result.stdout.trim(),
+    posted: calledPaths().includes("/api/v1/workspaces/ws_1/streams/stream_1/unarchive"),
+  }).toEqual({ exitCode: 0, stdout: "stream_1  #eng  active", posted: true })
+})
+
+test("streams archive without a ref is a usage error (exit 2) and makes no request", async () => {
+  const result = await run(["streams", "archive"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(2)
+  expect((JSON.parse(result.stderr) as { code: string }).code).toBe("USAGE")
+  expect(fetchSpy).not.toHaveBeenCalled()
+})

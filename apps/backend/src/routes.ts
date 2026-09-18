@@ -2089,6 +2089,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     listStreams: publicApi.listStreams,
     getStream: publicApi.getStream,
     updateStream: publicApi.updateStream,
+    archiveStream: publicApi.archiveStream,
+    unarchiveStream: publicApi.unarchiveStream,
     listMembers: publicApi.listMembers,
     listMessages: publicApi.listMessages,
     sendMessage: publicApi.sendMessage,

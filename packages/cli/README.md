@@ -69,6 +69,7 @@ Commands are grouped by noun, with a verb subcommand under each noun (the `gh`/`
 threa whoami                                        # authenticated principal, api version, binding
 threa streams list --type channel --query eng       # list accessible streams (page with --after)
 threa streams read #eng --members --limit 20        # a stream plus a page of its messages
+threa streams archive stream_abc                     # archive a stream; unarchive reopens it
 threa users list --query alice                      # workspace users
 threa search "deploy plan" --what messages          # search messages (--semantic, --exact, --type)
 threa search "" --what memos --knowledge-type decision   # browse workspace memory (empty query allowed)
@@ -172,6 +173,7 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 | ------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | (none)              | `whoami`                                                                                                             |
 | `streams:read`      | `streams list`, `streams read` (stream and member legs)                                                              |
+| `streams:write`     | `streams archive`, `streams unarchive`                                                                               |
 | `users:read`        | `users list`                                                                                                         |
 | `messages:read`     | `streams read` (messages leg), `conversations read`, `conversations list`, `messages find-by-metadata`               |
 | `messages:search`   | `search --what messages`                                                                                             |

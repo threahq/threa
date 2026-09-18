@@ -84,6 +84,16 @@ export async function readStream(client: ThreaApiClient, resolver: RefResolver, 
   return result
 }
 
+/** Flip a stream's archived state. Both directions return the stream row as it now stands. */
+export async function setStreamArchived(
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  p: { streamRef: string; archived: boolean }
+): Promise<unknown> {
+  const id = encodeURIComponent(await resolver.resolveStream(p.streamRef))
+  return client.post(`/streams/${id}/${p.archived ? "archive" : "unarchive"}`)
+}
+
 export interface ListUsersParams {
   query?: string
   after?: string

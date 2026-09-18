@@ -896,6 +896,8 @@ export type OperationId =
   | "listStreams"
   | "getStream"
   | "updateStream"
+  | "archiveStream"
+  | "unarchiveStream"
   | "listMembers"
   | "listMessages"
   | "sendMessage"
@@ -1556,6 +1558,32 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     parameters: [workspaceIdParam, streamIdParam],
     requestSchema: updateStreamSchema,
     requestIn: "body",
+    responseSchema: dataEnvelope(streamSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/archive",
+    operationId: "archiveStream",
+    summary: "Archive a stream",
+    description:
+      "Archive a stream — its scratchpads, channels and threads go read-only, and every thread beneath it is sealed with it. Open to the stream's creator and, for user-scoped keys, the creator of its access root; a workspace-scoped key archives only streams its own bot opened. Archiving an already-archived stream returns it unchanged.",
+    tags: ["Streams"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE],
+    parameters: [workspaceIdParam, streamIdParam],
+    responseSchema: dataEnvelope(streamSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/unarchive",
+    operationId: "unarchiveStream",
+    summary: "Unarchive a stream",
+    description:
+      "Reopen an archived stream. Same authority as archive. Clearing a stream's own flag does not lift an archived ancestor — the subtree stays sealed until that ancestor is reopened too. Unarchiving a live stream returns it unchanged.",
+    tags: ["Streams"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE],
+    parameters: [workspaceIdParam, streamIdParam],
     responseSchema: dataEnvelope(streamSchema),
     canReturn404: true,
   },
