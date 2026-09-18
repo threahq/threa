@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Bell, Power } from "lucide-react"
+import { Bell, Globe, Power } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -164,6 +164,31 @@ export function BudgetControlsPanel({
               onCheckedChange={(checked) => updateBudget.mutate({ aiDisabled: checked })}
             />
           </div>
+        </div>
+
+        <div
+          className={cn(
+            "flex items-center justify-between gap-3 rounded-md border border-border/60 p-3 transition-colors",
+            budget?.aiResidencyPinned && "border-primary/40 bg-primary/5"
+          )}
+        >
+          <Label htmlFor="ai-residency-pinned" className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+              Pin AI to this region
+            </span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {budget?.aiResidencyPinned
+                ? "AI only uses models Threa can run in this workspace's region."
+                : "AI uses the best model for each job, including ones that run outside this workspace's region."}
+            </span>
+          </Label>
+          <Switch
+            id="ai-residency-pinned"
+            checked={budget?.aiResidencyPinned ?? false}
+            disabled={updateBudget.isPending}
+            onCheckedChange={(checked) => updateBudget.mutate({ aiResidencyPinned: checked })}
+          />
         </div>
 
         <div className="space-y-2">

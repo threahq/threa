@@ -1,7 +1,8 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { addTestMember, setupTestDatabase } from "./setup"
-import { AISpendGate, createAIUsageHandlers } from "../../src/features/ai-usage"
+import { AISpendGate, WorkspaceAIResidencyPolicy, createAIUsageHandlers } from "../../src/features/ai-usage"
+import type { AIBudgetConfig } from "@threahq/types"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { userId, workspaceId } from "../../src/lib/id"
 
@@ -73,6 +74,7 @@ describe("AI spend limit endpoints", () => {
       alertThreshold100: true,
       aiDisabled: false,
       defaultUserAgentAllowanceUsd: null,
+      aiResidencyPinned: false,
       operatorCeilingUsd: 100,
       operatorAiDisabled: false,
     })
@@ -92,6 +94,7 @@ describe("AI spend limit endpoints", () => {
       alertThreshold50: true,
       alertThreshold80: true,
       alertThreshold100: true,
+      aiResidencyPinned: false,
       operatorCeilingUsd: 100,
       operatorAiDisabled: false,
     }
@@ -100,6 +103,37 @@ describe("AI spend limit endpoints", () => {
       omitted: { ...base, monthlyBudgetUsd: 20, aiDisabled: true, defaultUserAgentAllowanceUsd: 3 },
       cleared: { ...base, monthlyBudgetUsd: 20, aiDisabled: false, defaultUserAgentAllowanceUsd: null },
       read: { ...base, monthlyBudgetUsd: 20, aiDisabled: false, defaultUserAgentAllowanceUsd: null },
+    })
+  })
+
+  test("should round-trip the residency pin and report it to the policy reader", async () => {
+    const { workspaceId: ws } = await seedWorkspace()
+    const residency = new WorkspaceAIResidencyPolicy({ pool })
+    const budget = async (body: Record<string, unknown>) =>
+      ((await call(handlers.updateBudget, mockReq(ws, { body }))).body as { budget: AIBudgetConfig }).budget
+
+    const unset = await residency.isPinned(ws)
+    const pinnedBudget = await budget({ aiResidencyPinned: true })
+    const pinned = await residency.isPinned(ws)
+    // An unrelated update must not silently drop the pin.
+    const afterUnrelated = await budget({ monthlyBudgetUsd: 20 })
+    const unpinnedBudget = await budget({ aiResidencyPinned: false })
+    const unpinned = await residency.isPinned(ws)
+
+    expect({
+      unset,
+      pinnedBudget: pinnedBudget.aiResidencyPinned,
+      pinned,
+      afterUnrelated: afterUnrelated.aiResidencyPinned,
+      unpinnedBudget: unpinnedBudget.aiResidencyPinned,
+      unpinned,
+    }).toEqual({
+      unset: false,
+      pinnedBudget: true,
+      pinned: true,
+      afterUnrelated: true,
+      unpinnedBudget: false,
+      unpinned: false,
     })
   })
 
@@ -195,6 +229,7 @@ describe("AI spend limit endpoints", () => {
         alertThreshold100: true,
         aiDisabled: false,
         defaultUserAgentAllowanceUsd: null,
+        aiResidencyPinned: false,
         operatorCeilingUsd: 12.5,
         operatorAiDisabled: true,
       },
@@ -221,6 +256,7 @@ describe("AI spend limit endpoints", () => {
       alertThreshold100: true,
       aiDisabled: true,
       defaultUserAgentAllowanceUsd: 4,
+      aiResidencyPinned: false,
       operatorCeilingUsd: 500,
       operatorAiDisabled: false,
     })

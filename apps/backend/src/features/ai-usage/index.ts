@@ -5,6 +5,9 @@ export type { RecordUsageParams, AICostServiceConfig, AICostServiceLike } from "
 
 export { AISpendGate } from "./spend-gate"
 
+export { WorkspaceAIResidencyPolicy } from "./residency"
+export type { AIResidencyPolicy } from "./residency"
+
 export { AIUsageRepository } from "./usage-repository"
 export type {
   AIUsageOrigin,

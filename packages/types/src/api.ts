@@ -2404,6 +2404,13 @@ export interface AIBudgetConfig {
   aiDisabled: boolean
   /** Agent spend allowed per user per month when the user has no allowance of their own. Null means no default. */
   defaultUserAgentAllowanceUsd: number | null
+  /**
+   * Whether the workspace has pinned its AI to models that can be run in its own
+   * region. Pinned keeps every AI call on the regionally-runnable registry;
+   * unpinned trades that option away for whatever is best on quality, price and
+   * latency. Unpinned by default — pinning is the opt-in.
+   */
+  aiResidencyPinned: boolean
   /** Set by Threa, not editable by workspace admins. The enforced limit is min(monthlyBudgetUsd, operatorCeilingUsd). */
   operatorCeilingUsd: number
   operatorAiDisabled: boolean
@@ -2422,6 +2429,7 @@ export interface UpdateAIBudgetInput {
   alertThreshold80?: boolean
   alertThreshold100?: boolean
   aiDisabled?: boolean
+  aiResidencyPinned?: boolean
   defaultUserAgentAllowanceUsd?: number | null
 }
 

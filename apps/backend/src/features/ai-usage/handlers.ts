@@ -21,6 +21,7 @@ const updateBudgetSchema = z
     alertThreshold80: z.boolean().optional(),
     alertThreshold100: z.boolean().optional(),
     aiDisabled: z.boolean().optional(),
+    aiResidencyPinned: z.boolean().optional(),
     defaultUserAgentAllowanceUsd: z.number().min(0).nullable().optional(),
   })
   .strict()
@@ -215,6 +216,7 @@ function toBudgetConfig(budget: AIBudget | null): AIBudgetConfig {
     alertThreshold100: budget.alertThreshold100,
     aiDisabled: budget.aiDisabled,
     defaultUserAgentAllowanceUsd: budget.defaultUserAgentAllowanceUsd,
+    aiResidencyPinned: budget.aiResidencyPinned,
     operatorCeilingUsd: budget.operatorCeilingUsd,
     operatorAiDisabled: budget.operatorAiDisabled,
   }
