@@ -100,6 +100,16 @@ describe("extractMath", () => {
     })
   })
 
+  it("scans prose full of prices without rescanning it per dollar sign", () => {
+    // Every `$` here opens and never closes. Searching for the closer from each
+    // opener in turn was quadratic: this took 590 ms before the closers were
+    // collected in one pass, against ~6 ms after.
+    const prices = "lorem ipsum $dollar amounts $5 and $10 ".repeat(1500)
+    const started = performance.now()
+    expect(extractMath(prices)).toBe(prices)
+    expect(performance.now() - started).toBeLessThan(200)
+  })
+
   it("separates a price from real math in the same sentence", () => {
     expect(parts("The price is $5, so $p = 5$.")).toEqual([
       { text: "The price is $5, so " },

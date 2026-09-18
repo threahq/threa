@@ -15,7 +15,7 @@ const TOKEN_CLOSE = ""
 /** Base64's alphabet is inert to CommonMark and GFM everywhere a token can land. */
 const TOKEN = new RegExp(`${TOKEN_OPEN}([DI])([A-Za-z0-9+/=]*)${TOKEN_CLOSE}`, "g")
 
-export interface MathToken {
+interface MathToken {
   tex: string
   display: boolean
 }
@@ -23,7 +23,6 @@ export interface MathToken {
 export type MathPart = { text: string } | MathToken
 
 interface MathSpan extends MathToken {
-  start: number
   end: number
 }
 
@@ -42,11 +41,6 @@ const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
  */
 const PROTECTED = /\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
 
-interface Segment {
-  text: string
-  protect: boolean
-}
-
 /**
  * Replace every math run outside code and URLs with a token carrying its TeX.
  *
@@ -59,9 +53,48 @@ interface Segment {
  */
 export function extractMath(markdown: string): string {
   if (!markdown.includes("$") && !markdown.includes("\\(") && !markdown.includes("\\[")) return markdown
-  return segment(markdown)
-    .map((part) => (part.protect ? part.text : tokenize(part.text)))
-    .join("")
+
+  let out = ""
+  let plainStart = 0
+  let i = 0
+  PROTECTED.lastIndex = 0
+  let protectedMatch = PROTECTED.exec(markdown)
+
+  const keepVerbatim = (start: number, end: number) => {
+    out += tokenize(markdown.slice(plainStart, start)) + markdown.slice(start, end)
+    plainStart = end
+  }
+
+  while (i < markdown.length) {
+    if (i === 0 || markdown[i - 1] === "\n") {
+      const end = fenceEnd(markdown, i)
+      if (end !== null) {
+        keepVerbatim(i, end)
+        i = end
+        continue
+      }
+    }
+    if (markdown[i] === "`") {
+      const end = codeSpanEnd(markdown, i)
+      if (end !== null) {
+        keepVerbatim(i, end)
+        i = end
+        continue
+      }
+    }
+    // One forward pass over the protected matches: re-running exec per character
+    // would rescan the rest of the message every time.
+    while (protectedMatch && protectedMatch.index < i) protectedMatch = PROTECTED.exec(markdown)
+    if (protectedMatch?.index === i) {
+      const end = i + protectedMatch[0].length
+      keepVerbatim(i, end)
+      i = end
+      continue
+    }
+    i++
+  }
+
+  return out + tokenize(markdown.slice(plainStart))
 }
 
 /**
@@ -84,33 +117,43 @@ export function splitMathTokens(text: string): MathPart[] | null {
 }
 
 function tokenize(text: string): string {
-  const spans = findMathSpans(text)
-  if (spans.length === 0) return text
+  const closers = inlineClosers(text)
+  let closerIndex = 0
   let out = ""
   let cursor = 0
-  for (const span of spans) {
-    out += text.slice(cursor, span.start) + encode(span)
-    cursor = span.end
+  let i = 0
+  while (i < text.length) {
+    while (closerIndex < closers.length && closers[closerIndex] <= i) closerIndex++
+    const span = readMath(text, i, closers[closerIndex] ?? -1)
+    if (!span) {
+      i++
+      continue
+    }
+    out += text.slice(cursor, i) + encode(span)
+    cursor = i = span.end
   }
   return out + text.slice(cursor)
 }
 
-function findMathSpans(text: string): MathSpan[] {
-  const spans: MathSpan[] = []
-  let i = 0
-  while (i < text.length) {
-    const span = readMath(text, i)
-    if (span) {
-      spans.push(span)
-      i = span.end
-      continue
-    }
-    i++
+/**
+ * Every `$` that can close inline math. The test is local to the position, so
+ * one pass up front keeps a failed opener from rescanning the rest of the
+ * message: prose full of prices is otherwise quadratic (58 kB took 590 ms).
+ */
+function inlineClosers(text: string): number[] {
+  const closers: number[] = []
+  for (let i = 1; i < text.length; i++) {
+    // A closer preceded by whitespace is the *next* price, not the end of math,
+    // and `$50-$60` means both were amounts.
+    if (text[i] !== "$" || /\s/.test(text[i - 1])) continue
+    const next = text[i + 1]
+    if (next && /[\d$]/.test(next)) continue
+    closers.push(i)
   }
-  return spans
+  return closers
 }
 
-function readMath(text: string, i: number): MathSpan | null {
+function readMath(text: string, i: number, closer: number): MathSpan | null {
   if (text[i] === "\\") {
     if (text[i - 1] === "\\") return null
     if (text[i + 1] === "[") return readBackslashMath(text, i, "\\]", true)
@@ -118,7 +161,7 @@ function readMath(text: string, i: number): MathSpan | null {
     return null
   }
   if (text[i] !== "$") return null
-  return text[i + 1] === "$" ? readDisplayMath(text, i) : readInlineMath(text, i)
+  return text[i + 1] === "$" ? readDisplayMath(text, i) : readInlineMath(text, i, closer)
 }
 
 function readBackslashMath(text: string, start: number, closer: string, display: boolean): MathSpan | null {
@@ -130,43 +173,34 @@ function readBackslashMath(text: string, start: number, closer: string, display:
       from = close + 2
       continue
     }
-    return accept(start, close + 2, text.slice(start + 2, close), display)
+    return accept(close + 2, text.slice(start + 2, close), display)
   }
 }
 
 function readDisplayMath(text: string, start: number): MathSpan | null {
   const close = text.indexOf("$$", start + 2)
   if (close < 0) return null
-  return accept(start, close + 2, text.slice(start + 2, close), true)
+  return accept(close + 2, text.slice(start + 2, close), true)
 }
 
-function readInlineMath(text: string, start: number): MathSpan | null {
+function readInlineMath(text: string, start: number, closer: number): MathSpan | null {
   const before = start > 0 ? text[start - 1] : ""
   // An opener glued to a word is part of that word, not a delimiter.
   if (before && /[\w$\\]/.test(before)) return null
   const after = text[start + 1]
-  if (!after || /\s/.test(after)) return null
+  if (!after || /\s/.test(after) || closer < 0) return null
 
-  for (let j = start + 1; j < text.length; j++) {
-    if (text[j] !== "$") continue
-    // A closer preceded by whitespace is the *next* price, not the end of math.
-    if (/\s/.test(text[j - 1])) continue
-    const next = text[j + 1]
-    // `$50-$60`: a digit right after the closer means both were amounts.
-    if (next && /[\d$]/.test(next)) continue
-    const tex = text.slice(start + 1, j)
-    // A second `$` inside the body means the opener was a price: in
-    // `costs $5 and $x$ here` the real equation starts at the third `$`.
-    if (tex.includes("$") || tex.includes("\n\n")) return null
-    return accept(start, j + 1, tex, false)
-  }
-  return null
+  const tex = text.slice(start + 1, closer)
+  // A `$` inside the body means the opener was a price: in `costs $5 and $x$
+  // here` the real equation starts at the third `$`.
+  if (tex.includes("$") || tex.includes("\n\n")) return null
+  return accept(closer + 1, tex, false)
 }
 
-function accept(start: number, end: number, raw: string, display: boolean): MathSpan | null {
+function accept(end: number, raw: string, display: boolean): MathSpan | null {
   const tex = raw.trim()
   if (!tex || NUMERIC_ONLY.test(tex)) return null
-  return { start, end, tex, display }
+  return { end, tex, display }
 }
 
 function encode({ tex, display }: MathToken): string {
@@ -179,52 +213,6 @@ function encode({ tex, display }: MathToken): string {
 function decode(payload: string): string {
   const binary = atob(payload)
   return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)))
-}
-
-function segment(markdown: string): Segment[] {
-  const segments: Segment[] = []
-  let plainStart = 0
-  let i = 0
-  PROTECTED.lastIndex = 0
-  let protectedMatch = PROTECTED.exec(markdown)
-
-  const pushProtected = (start: number, end: number) => {
-    if (start > plainStart) segments.push({ text: markdown.slice(plainStart, start), protect: false })
-    segments.push({ text: markdown.slice(start, end), protect: true })
-    plainStart = end
-  }
-
-  while (i < markdown.length) {
-    if (i === 0 || markdown[i - 1] === "\n") {
-      const end = fenceEnd(markdown, i)
-      if (end !== null) {
-        pushProtected(i, end)
-        i = end
-        continue
-      }
-    }
-    if (markdown[i] === "`") {
-      const end = codeSpanEnd(markdown, i)
-      if (end !== null) {
-        pushProtected(i, end)
-        i = end
-        continue
-      }
-    }
-    // One forward pass over the protected matches: re-running exec per character
-    // would rescan the rest of the message every time.
-    while (protectedMatch && protectedMatch.index < i) protectedMatch = PROTECTED.exec(markdown)
-    if (protectedMatch?.index === i) {
-      const end = i + protectedMatch[0].length
-      pushProtected(i, end)
-      i = end
-      continue
-    }
-    i++
-  }
-
-  if (plainStart < markdown.length) segments.push({ text: markdown.slice(plainStart), protect: false })
-  return segments
 }
 
 /** Index just past a fenced block opening at `start`, or null if none opens there. */
