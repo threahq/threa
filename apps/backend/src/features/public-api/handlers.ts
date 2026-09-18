@@ -25,6 +25,7 @@ import {
   type Stream,
   type DisplayNameContext,
   type StreamService,
+  type StreamWritePrincipal,
 } from "../streams"
 import { UserRepository } from "../workspaces"
 import { ConversationRepository, ConversationService, type Conversation } from "../conversations"
@@ -808,6 +809,39 @@ export function createPublicApiHandlers({
       return
     }
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  function streamWritePrincipal(req: Request): StreamWritePrincipal {
+    if (req.userApiKey) return { kind: "user", userId: req.user!.id }
+    if (req.botApiKey) return { kind: "bot", botId: req.botApiKey.botId }
+    throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  /** A nameless thread borrows its parent's name on the wire, so serializing one needs the parent row. */
+  async function displayNameContext(stream: Stream): Promise<DisplayNameContext | undefined> {
+    if (stream.type !== StreamTypes.THREAD || stream.displayName !== null || !stream.parentStreamId) return undefined
+    const parent = await StreamRepository.findById(pool, stream.parentStreamId)
+    return parent ? { parentStream: parent } : undefined
+  }
+
+  /**
+   * The service flip carries the authority check under lock, so the gate here
+   * only hides streams the key cannot see at all — archived included, or
+   * unarchive could never reach its own target.
+   */
+  function setStreamArchived(archived: boolean) {
+    return async function archiveHandler(req: Request, res: Response) {
+      const streamId = req.params.streamId
+      await assertStreamAccessible(req, streamId, { allowArchived: true })
+      const stream = await streamService.setStreamArchived(
+        req.workspaceId!,
+        streamId,
+        streamWritePrincipal(req),
+        archived
+      )
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
+      res.json({ data: serializeStream(stream, await displayNameContext(stream)) })
+    }
   }
 
   /**
@@ -2890,13 +2924,7 @@ export function createPublicApiHandlers({
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 
-      let context: DisplayNameContext | undefined
-      if (stream.type === "thread" && stream.displayName === null && stream.parentStreamId) {
-        const parent = await StreamRepository.findById(pool, stream.parentStreamId)
-        if (parent) context = { parentStream: parent }
-      }
-
-      res.json({ data: serializeStream(stream, context) })
+      res.json({ data: serializeStream(stream, await displayNameContext(stream)) })
     },
 
     async updateStream(req: Request, res: Response) {
@@ -2926,26 +2954,20 @@ export function createPublicApiHandlers({
         throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
       }
 
-      const principal = req.userApiKey
-        ? { kind: "user" as const, userId: req.user!.id }
-        : { kind: "bot" as const, botId: req.botApiKey!.botId }
       const updated = await streamService.updateStream(
         streamId,
         { description, actorId, actorType },
-        { workspaceId, principal }
+        { workspaceId, principal: streamWritePrincipal(req) }
       )
       if (!updated || updated.archivedAt) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 
-      let context: DisplayNameContext | undefined
-      if (updated.type === "thread" && updated.displayName === null && updated.parentStreamId) {
-        const parent = await StreamRepository.findById(pool, updated.parentStreamId)
-        if (parent) context = { parentStream: parent }
-      }
-
-      res.json({ data: serializeStream(updated, context) })
+      res.json({ data: serializeStream(updated, await displayNameContext(updated)) })
     },
+
+    archiveStream: setStreamArchived(true),
+    unarchiveStream: setStreamArchived(false),
 
     async listMembers(req: Request, res: Response) {
       const streamId = req.params.streamId

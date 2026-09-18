@@ -57,7 +57,8 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
   {
     slug: WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE,
     name: "Write streams",
-    description: "Grants access to set a stream's description (rich text) on accessible streams.",
+    description:
+      "Grants access to set a stream's description (rich text) and to archive or unarchive accessible streams.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,

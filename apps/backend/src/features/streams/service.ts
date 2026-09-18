@@ -1250,15 +1250,20 @@ export class StreamService {
   }
 
   async archiveStream(streamId: string, workspaceId: string, archivedBy: string): Promise<Stream | null> {
-    return withTransaction(this.pool, (client) =>
-      this.archiveStreamOn(client, workspaceId, streamId, { kind: "user", userId: archivedBy })
-    )
+    return this.setStreamArchived(workspaceId, streamId, { kind: "user", userId: archivedBy }, true)
   }
 
   async unarchiveStream(streamId: string, workspaceId: string, unarchivedBy: string): Promise<Stream | null> {
-    return withTransaction(this.pool, (client) =>
-      this.unarchiveStreamOn(client, workspaceId, streamId, { kind: "user", userId: unarchivedBy })
-    )
+    return this.setStreamArchived(workspaceId, streamId, { kind: "user", userId: unarchivedBy }, false)
+  }
+
+  async setStreamArchived(
+    workspaceId: string,
+    streamId: string,
+    principal: StreamWritePrincipal,
+    archived: boolean
+  ): Promise<Stream | null> {
+    return withTransaction(this.pool, (client) => this.setArchived(client, workspaceId, streamId, principal, archived))
   }
 
   async archiveStreamOn(
@@ -1300,6 +1305,9 @@ export class StreamService {
     const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
     await lockPrincipalAccess(client, workspaceId, root, principal)
     assertCanArchive(target, root, principal)
+    // Idempotent once authority is proven: a repeat flip would bump archived_at
+    // and append a second lifecycle event, so retries would litter the timeline.
+    if ((target.archivedAt !== null) === archived) return target
     const stream = await StreamRepository.update(client, streamId, { archivedAt: archived ? new Date() : null })
     if (!stream) return stream
     const event = await StreamEventRepository.insert(client, {

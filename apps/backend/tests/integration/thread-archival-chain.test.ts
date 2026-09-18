@@ -23,7 +23,16 @@ import {
 } from "../../src/features/streams"
 import { lockEffectiveStreams } from "../../src/features/streams/write-authority"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { botRuntimeSessionLinkId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { BotChannelAccessRepository } from "../../src/features/api-keys"
+import {
+  botApiKeyId,
+  botChannelAccessId,
+  botId,
+  botRuntimeSessionLinkId,
+  streamId,
+  userId,
+  workspaceId,
+} from "../../src/lib/id"
 
 describe("thread archival chain", () => {
   let pool: Pool
@@ -32,6 +41,7 @@ describe("thread archival chain", () => {
   let owner: string
   let author: string
   let bystander: string
+  let bot: string
   const ids = { A: "", B: "", C: "", D: "", E: "", F: "", G: "" }
 
   async function insertThread(id: string, parentStreamId: string, createdBy: string, archived = false) {
@@ -97,6 +107,19 @@ describe("thread archival chain", () => {
         createdBy: owner,
       })
       await StreamMemberRepository.insertMany(client, ids.A, [owner, author, bystander])
+      bot = botId()
+      await client.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1, $2, $3, 'Chain bot')", [
+        bot,
+        workspace,
+        botApiKeyId(),
+      ])
+      await BotChannelAccessRepository.grantAccess(client, {
+        id: botChannelAccessId(),
+        workspaceId: workspace,
+        botId: bot,
+        streamId: ids.A,
+        grantedBy: owner,
+      })
     })
   }, 30_000)
 
@@ -107,6 +130,10 @@ describe("thread archival chain", () => {
     await pool.query("DELETE FROM stream_events WHERE stream_id IN (SELECT id FROM streams WHERE workspace_id = $1)", [
       workspace,
     ])
+    await pool.query(
+      "DELETE FROM stream_members WHERE stream_id IN (SELECT id FROM streams WHERE workspace_id = $1 AND id <> $2)",
+      [workspace, ids.A]
+    )
     await pool.query("DELETE FROM streams WHERE workspace_id = $1 AND id <> $2", [workspace, ids.A])
     await pool.query("UPDATE streams SET archived_at = NULL WHERE id = $1", [ids.A])
     await insertThread(ids.B, ids.A, author)
@@ -122,6 +149,8 @@ describe("thread archival chain", () => {
     await pool.query("DELETE FROM bot_runtime_session_links WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM outbox WHERE payload->>'workspaceId' = $1", [workspace])
     await pool.query("DELETE FROM stream_members WHERE stream_id = $1", [ids.A])
+    await pool.query("DELETE FROM bot_channel_access WHERE workspace_id = $1", [workspace])
+    await pool.query("DELETE FROM bots WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM streams WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM users WHERE workspace_id = $1", [workspace])
     await pool.query("DELETE FROM workspaces WHERE id = $1", [workspace])
@@ -372,6 +401,80 @@ describe("thread archival chain", () => {
       reattachWhileSealed: null,
       reattachAfterRelease: "active",
       final: { D: "active", E: "active" },
+    })
+  })
+  test("a repeated flip is a no-op: same timestamp, one lifecycle event, one outbox notice", async () => {
+    const lifecycle = async (id: string) => ({
+      events: (
+        await pool.query<{ event_type: string }>(
+          "SELECT event_type FROM stream_events WHERE stream_id = $1 AND event_type IN ('stream_archived', 'stream_unarchived')",
+          [id]
+        )
+      ).rows.map((row) => row.event_type),
+      outbox: (
+        await pool.query<{ event_type: string }>(
+          "SELECT event_type FROM outbox WHERE payload->>'streamId' = $1 AND event_type IN ('stream:archived', 'stream:unarchived')",
+          [id]
+        )
+      ).rows.map((row) => row.event_type),
+    })
+
+    const first = await service.archiveStream(ids.B, workspace, author)
+    const repeat = await service.archiveStream(ids.B, workspace, author)
+    const unarchiveLive = await service.unarchiveStream(ids.E, workspace, author)
+    const deniedRepeat = await rejection(service.archiveStream(ids.B, workspace, bystander))
+
+    expect({
+      archivedAtHeld: repeat?.archivedAt?.getTime() === first?.archivedAt?.getTime(),
+      stillArchived: repeat?.archivedAt !== null,
+      unarchiveLive: unarchiveLive?.archivedAt,
+      deniedRepeat: { status: deniedRepeat.status, code: deniedRepeat.code },
+      B: await lifecycle(ids.B),
+      E: await lifecycle(ids.E),
+    }).toEqual({
+      archivedAtHeld: true,
+      stillArchived: true,
+      unarchiveLive: null,
+      deniedRepeat: { status: 403, code: "FORBIDDEN" },
+      B: { events: ["stream_archived"], outbox: ["stream:archived"] },
+      E: { events: [], outbox: [] },
+    })
+  })
+
+  test("the public API entry point flips a scratchpad for its creator and a bot's own thread", async () => {
+    const scratchpad = streamId()
+    await StreamRepository.insert(pool, {
+      id: scratchpad,
+      workspaceId: workspace,
+      type: StreamTypes.SCRATCHPAD,
+      visibility: Visibilities.PRIVATE,
+      createdBy: author,
+    })
+    await StreamMemberRepository.insertMany(pool, scratchpad, [author])
+    const botThread = streamId()
+    await insertThread(botThread, ids.A, bot)
+
+    const archivedPad = await service.setStreamArchived(workspace, scratchpad, { kind: "user", userId: author }, true)
+    const reopenedPad = await service.setStreamArchived(workspace, scratchpad, { kind: "user", userId: author }, false)
+    const botPrincipal = { kind: "bot", botId: bot } as const
+    const archivedByBot = await service.setStreamArchived(workspace, botThread, botPrincipal, true)
+    const botOnSomeoneElses = await rejection(service.setStreamArchived(workspace, ids.B, botPrincipal, true))
+    const otherPadDenied = await rejection(
+      service.setStreamArchived(workspace, scratchpad, { kind: "user", userId: bystander }, true)
+    )
+
+    expect({
+      archivedPad: archivedPad?.archivedAt !== null,
+      reopenedPad: reopenedPad?.archivedAt,
+      archivedByBot: archivedByBot?.archivedAt !== null,
+      botOnSomeoneElses: { status: botOnSomeoneElses.status, code: botOnSomeoneElses.code },
+      otherPadDenied: { status: otherPadDenied.status, code: otherPadDenied.code },
+    }).toEqual({
+      archivedPad: true,
+      reopenedPad: null,
+      archivedByBot: true,
+      botOnSomeoneElses: { status: 403, code: "FORBIDDEN" },
+      otherPadDenied: { status: 404, code: "STREAM_NOT_FOUND" },
     })
   })
 })
