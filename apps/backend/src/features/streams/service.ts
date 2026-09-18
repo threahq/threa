@@ -1257,7 +1257,6 @@ export class StreamService {
     return this.setStreamArchived(workspaceId, streamId, { kind: "user", userId: unarchivedBy }, false)
   }
 
-  /** Own-transaction lifecycle flip for any principal — the public API's bot keys included. */
   async setStreamArchived(
     workspaceId: string,
     streamId: string,

@@ -146,8 +146,7 @@ function archiveVerb(archived: boolean): VerbSpec {
       return setStreamArchived(ctx.client, ctx.resolver, { streamRef: ref, archived })
     },
     render: (payload) => {
-      const stream = (payload as { data?: StreamRow & { archivedAt?: string | null } }).data
-      if (!stream) return `${name}d`
+      const stream = (payload as { data: StreamRow & { archivedAt?: string | null } }).data
       return `${stream.id ?? "?"}  ${streamLabel(stream)}  ${stream.archivedAt ? `archived ${stream.archivedAt}` : "active"}`
     },
   }

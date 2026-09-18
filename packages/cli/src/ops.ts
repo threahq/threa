@@ -84,7 +84,6 @@ export async function readStream(client: ThreaApiClient, resolver: RefResolver, 
   return result
 }
 
-/** Flip a stream's archived state. Both directions return the stream row as it now stands. */
 export async function setStreamArchived(
   client: ThreaApiClient,
   resolver: RefResolver,

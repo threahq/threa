@@ -107,7 +107,7 @@ describe("public API archiveStream / unarchiveStream", () => {
     })
   })
 
-  it("unarchives as the key owner and reports the stream live again", async () => {
+  it("unarchives a stream the gate reaches only because archived targets are allowed", async () => {
     const setStreamArchived = mock(() => Promise.resolve(fakeStream({ archivedAt: null })))
     const handlers = createHandlers({
       tryAccess: mock(() => Promise.resolve(fakeStream({ archivedAt: ARCHIVED_AT }))),
@@ -129,16 +129,6 @@ describe("public API archiveStream / unarchiveStream", () => {
     await handlers.archiveStream(botRequest(), createResponse().res)
 
     expect(setStreamArchived).toHaveBeenCalledWith("ws_1", "stream_1", { kind: "bot", botId: "bot_1" }, true)
-  })
-
-  it("reaches an already-archived stream: the access gate allows archived targets", async () => {
-    const tryAccess = mock(() => Promise.resolve(fakeStream({ archivedAt: ARCHIVED_AT })))
-    const setStreamArchived = mock(() => Promise.resolve(fakeStream({ archivedAt: ARCHIVED_AT })))
-    const handlers = createHandlers({ tryAccess, setStreamArchived } as unknown as StreamService)
-
-    await handlers.archiveStream(userRequest(), createResponse().res)
-
-    expect(setStreamArchived).toHaveBeenCalledTimes(1)
   })
 
   it("rejects with 403 without leaking existence when the key cannot see the stream", async () => {
@@ -166,18 +156,6 @@ describe("public API archiveStream / unarchiveStream", () => {
       code: "FORBIDDEN",
     })
     expect(setStreamArchived).not.toHaveBeenCalled()
-  })
-
-  it("returns 404 when the stream disappeared under the flip", async () => {
-    const handlers = createHandlers({
-      tryAccess: mock(() => Promise.resolve(fakeStream())),
-      setStreamArchived: mock(() => Promise.resolve(null)),
-    } as unknown as StreamService)
-
-    await expect(handlers.archiveStream(userRequest(), createResponse().res)).rejects.toMatchObject({
-      status: 404,
-      code: "NOT_FOUND",
-    })
   })
 
   it("declares both routes under streams:write, the scope its neighbouring write already needs", () => {

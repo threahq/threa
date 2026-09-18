@@ -811,7 +811,6 @@ export function createPublicApiHandlers({
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
   }
 
-  /** The write principal behind the current key: the key owner, or the bot a workspace key authenticates. */
   function streamWritePrincipal(req: Request): StreamWritePrincipal {
     if (req.userApiKey) return { kind: "user", userId: req.user!.id }
     if (req.botApiKey) return { kind: "bot", botId: req.botApiKey.botId }
@@ -826,10 +825,9 @@ export function createPublicApiHandlers({
   }
 
   /**
-   * Archive/unarchive over the public API. The service flip carries the real
-   * authority check under lock (creator of the stream or of its access root),
-   * so the gate here only hides streams the key cannot see at all — archived
-   * included, or unarchive could never reach its own target.
+   * The service flip carries the authority check under lock, so the gate here
+   * only hides streams the key cannot see at all — archived included, or
+   * unarchive could never reach its own target.
    */
   function setStreamArchived(archived: boolean) {
     return async function archiveHandler(req: Request, res: Response) {
