@@ -1,6 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { E2eActorKind } from "@threahq/types"
+import { StreamTypes, type E2eActorKind } from "@threahq/types"
 
 interface E2eStreamActorRow {
   kind: E2eActorKind
@@ -14,6 +14,13 @@ export interface E2eStreamActor {
   actorId: string
   keyId: string | null
 }
+
+/**
+ * Upper bound on the grants a runtime is handed on reconnect. A bot with more
+ * live sealed scratchpads than this keys the most recently granted ones here
+ * and the rest on their next `bot:e2e_grant`, which keeps a cold hello bounded.
+ */
+export const E2E_GRANT_BOOTSTRAP_LIMIT = 50
 
 function mapRow(row: E2eStreamActorRow): E2eStreamActor {
   return { kind: row.kind, actorId: row.actor_id, keyId: row.key_id }
@@ -68,6 +75,32 @@ export const E2eStreamActorsRepository = {
       WHERE workspace_id = ${params.workspaceId} AND stream_id = ${params.fromStreamId}
       ON CONFLICT (workspace_id, stream_id, kind, actor_id) DO NOTHING
     `)
+  },
+
+  /**
+   * The sealed scratchpads this bot is an actor on — what a runtime asks for on
+   * reconnect so a grant that landed while it was offline still produces a key.
+   * Roots only: a thread copies its root's actor rows but carries no wraps of
+   * its own, so keying to one would address nothing. Archived scratchpads are
+   * left out — no turn runs in one, so a key for it would address nothing.
+   */
+  async listSealedRootsForBot(
+    db: Querier,
+    params: { workspaceId: string; botId: string; limit: number }
+  ): Promise<string[]> {
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT a.stream_id
+      FROM e2e_stream_actors a
+      JOIN streams s ON s.id = a.stream_id AND s.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${params.workspaceId}
+        AND a.kind = 'bot'
+        AND a.actor_id = ${params.botId}
+        AND s.type = ${StreamTypes.SCRATCHPAD}
+        AND s.archived_at IS NULL
+      ORDER BY a.added_at DESC, a.stream_id DESC
+      LIMIT ${params.limit}
+    `)
+    return result.rows.map((row) => row.stream_id)
   },
 
   async remove(db: Querier, workspaceId: string, streamId: string, kind: E2eActorKind, actorId: string): Promise<void> {

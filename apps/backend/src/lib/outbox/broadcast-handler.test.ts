@@ -909,6 +909,30 @@ describe("BroadcastHandler", () => {
     expect(resyncEmits.every((e) => e.namespace === "/bot")).toBe(true)
   })
 
+  it("routes bot:e2e_grant to every instance of the granted bot", async () => {
+    const event = makeEvent(8n, "bot:e2e_grant", {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      streamId: "stream_sealed",
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const grants = emitChains.filter((e) => e.eventType === "bot:e2e_grant")
+    expect(grants).toEqual([
+      {
+        namespace: "/bot",
+        room: "bot:ws_1:bot:bot_alice",
+        eventType: "bot:e2e_grant",
+        payload: { workspaceId: "ws_1", botId: "bot_alice", streamId: "stream_sealed" },
+      },
+    ])
+  })
+
   it("routes a label:assigned to the owning actor's user room", async () => {
     const event = makeEvent(1n, "label:assigned", {
       workspaceId: "ws_1",

@@ -11,6 +11,7 @@ import {
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
+  type BotE2eGrantOutboxPayload,
   type BotSessionArchivedOutboxPayload,
   type BotSessionRestoredOutboxPayload,
   type StreamDelegationCreatedOutboxPayload,
@@ -358,9 +359,7 @@ export class BroadcastHandler implements OutboxHandler {
       }
       const payload = parsed.data
       const socketEvent = event.eventType === "bot_decision:resolved" ? "decision:resolved" : "decision:cancelled"
-      botNs
-        .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
-        .emit(socketEvent, payload)
+      botNs.to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`).emit(socketEvent, payload)
       return
     }
 
@@ -379,6 +378,14 @@ export class BroadcastHandler implements OutboxHandler {
       for (const botId of payload.affectedBotIds) {
         botNs.to(`bot:${workspaceId}:bot:${botId}`).emit(event.eventType, payload)
       }
+      return
+    }
+
+    if (isOutboxEventType(event, "bot:e2e_grant")) {
+      const payload = event.payload as BotE2eGrantOutboxPayload
+      // Every instance of the granted bot: which of them mints a key for the
+      // stream is the runtime's key policy to decide, not routing's.
+      botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
       return
     }
 

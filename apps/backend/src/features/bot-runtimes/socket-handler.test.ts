@@ -72,6 +72,7 @@ function makeBootstrap(
     recentCancellations?: BotInvocationCancellation[]
     activeActorByStream?: StreamActiveActor[]
     activeSessionLinks?: BotRuntimeSessionLink[]
+    e2eGrantedStreamIds?: string[]
     serverGeneratedAt?: Date
   } = {}
 ) {
@@ -81,6 +82,7 @@ function makeBootstrap(
     ownedClaims: overrides.ownedClaims ?? [],
     recentCancellations: overrides.recentCancellations ?? [],
     activeActorByStream: overrides.activeActorByStream ?? [],
+    e2eGrantedStreamIds: overrides.e2eGrantedStreamIds ?? [],
     activeSessionLinks: overrides.activeSessionLinks ?? [],
   }
 }
@@ -498,7 +500,12 @@ describe("attachBotNamespace bot:hello", () => {
       updatedAt: new Date("2026-05-26T11:45:00Z"),
     }
     const { socket } = setup({
-      getBootstrapForRuntime: async () => makeBootstrap({ activeActorByStream: [actor], activeSessionLinks: [link] }),
+      getBootstrapForRuntime: async () =>
+        makeBootstrap({
+          activeActorByStream: [actor],
+          activeSessionLinks: [link],
+          e2eGrantedStreamIds: ["stream_sealed"],
+        }),
     })
     const ack = mock((_r: BotHelloResponse) => {})
 
@@ -509,6 +516,7 @@ describe("attachBotNamespace bot:hello", () => {
     expect(resp.activeActorByStream).toEqual([
       { rootStreamId: "stream_root", actorType: "bot", actorId: "bot_alice", updatedAt: actor.updatedAt.toISOString() },
     ])
+    expect(resp.e2eGrantedStreamIds).toEqual(["stream_sealed"])
     expect(resp.activeSessionLinks).toEqual([
       {
         rootStreamId: "stream_root",

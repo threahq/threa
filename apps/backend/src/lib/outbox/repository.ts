@@ -133,6 +133,7 @@ export type OutboxEventType =
   | "bot:resync"
   | "bot:session_archived"
   | "bot:session_restored"
+  | "bot:e2e_grant"
   | "label:created"
   | "label:updated"
   | "label:deleted"
@@ -1231,6 +1232,18 @@ export interface BotResyncOutboxPayload extends WorkspaceScopedPayload {
 }
 
 /**
+ * A bot was invited into a sealed scratchpad. Runtimes holding a stream-scoped
+ * key policy mint a key for `streamId` on receipt and register it, which is
+ * what the owner's next re-wrap addresses the SSK to. `streamId` is always the
+ * sealed root: a thread copies its root's actor rows but carries no wraps of
+ * its own, so there is nothing to key to a thread.
+ */
+export interface BotE2eGrantOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  streamId: string
+}
+
+/**
  * The scratchpad a runtime session was linked to has been archived; the link is
  * already `ended` server-side. The runtime should wind itself down (the Claude
  * channel pushes its branch and kills its own tmux window on receipt).
@@ -1413,6 +1426,7 @@ export interface OutboxEventPayloadMap {
   "bot:resync": BotResyncOutboxPayload
   "bot:session_archived": BotSessionArchivedOutboxPayload
   "bot:session_restored": BotSessionRestoredOutboxPayload
+  "bot:e2e_grant": BotE2eGrantOutboxPayload
   "label:created": LabelUpsertedOutboxPayload
   "label:updated": LabelUpsertedOutboxPayload
   "label:deleted": LabelDeletedOutboxPayload
@@ -1609,6 +1623,7 @@ export type BotScopedEventType =
   | "bot:session_restored"
   | "bot_decision:resolved"
   | "bot_decision:cancelled"
+  | "bot:e2e_grant"
 
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
@@ -1621,6 +1636,7 @@ const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot:session_restored",
   "bot_decision:resolved",
   "bot_decision:cancelled",
+  "bot:e2e_grant",
 ]
 
 /**
