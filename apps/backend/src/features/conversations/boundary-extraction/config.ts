@@ -351,7 +351,5 @@ export const BOUNDARY_NAMING_PROMPT = `## Conversation
 
 export const boundaryNamingResponseSchema = z.object({
   title: z.string().nullable().describe("2-5 word title, or null when no title was requested"),
-  summary: z.string().nullable().describe("~40 word summary, or null when no summary was requested"),
+  summary: z.string().nullable().describe("~40 word summary"),
 })
-
-export type BoundaryNamingResponse = z.infer<typeof boundaryNamingResponseSchema>

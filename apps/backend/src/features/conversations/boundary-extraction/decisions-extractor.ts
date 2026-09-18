@@ -131,8 +131,7 @@ export class DecisionsBoundaryExtractor {
     const joined = candidates.find((c) => c.id === primaryId)!
     const summary =
       noulAnswer(result, KEY.summaryStale(primaryId)) >= DECISION_SUMMARY_STALE_FLOOR
-        ? ((await this.writeProse(context, this.conversationMessages(context, joined), { summary: true })).summary ??
-          undefined)
+        ? ((await this.writeProse(context, this.conversationMessages(context, joined), false)).summary ?? undefined)
         : undefined
 
     return {
@@ -156,7 +155,7 @@ export class DecisionsBoundaryExtractor {
   ): Promise<ExtractionResult> {
     const moving = new Set(reassignments.filter((r) => r.toConversationId === null).map((r) => r.messageId))
     const messages = [...context.recentMessages.filter((m) => moving.has(m.id)), context.newMessage]
-    const prose = await this.writeProse(context, messages, { title: true, summary: true })
+    const prose = await this.writeProse(context, messages, true)
 
     return {
       assignments: [{ conversationId: null, isPrimary: true }],
@@ -242,26 +241,25 @@ export class DecisionsBoundaryExtractor {
   }
 
   /**
-   * The one prose call: a title, a summary, or both, for a placement the
-   * decisions call already settled. Runs on the boundary component's own model
-   * and prompt config, so the two paths share one knob.
+   * The one prose call, for a placement the decisions call already settled: a
+   * summary always, and a title too when the message opens a conversation. Runs
+   * on the boundary component's own model and prompt config, so the two paths
+   * share one knob.
    */
   private async writeProse(
     context: ExtractionContext,
     messages: Message[],
-    want: { title?: boolean; summary?: boolean }
+    wantTitle: boolean
   ): Promise<{ title: string | null; summary: string | null }> {
     const requests = [
-      want.title ? "- title: a 2-5 word title for this conversation." : null,
-      want.summary ? '- summary: a refreshed "covers:" summary of what it has discussed and where it landed.' : null,
-      want.title ? null : "- title: null.",
-      want.summary ? null : "- summary: null.",
-    ].filter((line): line is string => line !== null)
+      wantTitle ? "- title: a 2-5 word title for this conversation." : "- title: null.",
+      '- summary: a refreshed "covers:" summary of what it has discussed and where it landed.',
+    ].join("\n")
 
     const config = await this.configResolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
     const prompt = BOUNDARY_NAMING_PROMPT.replace("{{MESSAGES}}", this.renderMessages(context, messages)).replace(
       "{{REQUESTS}}",
-      requests.join("\n")
+      requests
     )
 
     const { value } = await this.ai.generateObject({
