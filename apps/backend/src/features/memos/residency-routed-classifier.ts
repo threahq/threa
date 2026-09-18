@@ -1,3 +1,4 @@
+import { AISpendDeniedError, type DecisionsAvailability } from "@threahq/agent-runtime"
 import type { AIResidencyPolicy } from "../ai-usage"
 import { logger } from "../../lib/logger"
 import type {
@@ -17,21 +18,25 @@ import type { Memo } from "./repository"
  * Fallback only ever runs toward the stricter path. A decision-model failure on
  * an unpinned workspace degrades to inference, which costs more and promises
  * nothing the workspace did not already accept; a pinned workspace never
- * reaches the decision model at all.
+ * reaches the decision model at all. A spend denial is not a path failure and
+ * is rethrown: inference would only spend more.
  */
 export class ResidencyRoutedMemoClassifier implements ConversationClassifier {
   private readonly residency: AIResidencyPolicy
   private readonly decisions: ConversationClassifier
   private readonly inference: ConversationClassifier
+  private readonly availability: DecisionsAvailability
 
   constructor(deps: {
     residency: AIResidencyPolicy
     decisions: ConversationClassifier
     inference: ConversationClassifier
+    availability: DecisionsAvailability
   }) {
     this.residency = deps.residency
     this.decisions = deps.decisions
     this.inference = deps.inference
+    this.availability = deps.availability
   }
 
   async classifyConversation(
@@ -40,13 +45,15 @@ export class ResidencyRoutedMemoClassifier implements ConversationClassifier {
     existingMemos: Memo[],
     context: ClassifierContext
   ): Promise<ConversationClassification> {
-    if (await this.residency.isPinned(context.workspaceId)) {
+    if ((await this.residency.isPinned(context.workspaceId)) || !this.availability.isAvailable) {
       return this.inference.classifyConversation(conversation, formattedMessages, existingMemos, context)
     }
 
     try {
       return await this.decisions.classifyConversation(conversation, formattedMessages, existingMemos, context)
     } catch (error) {
+      if (error instanceof AISpendDeniedError) throw error
+      this.availability.recordFailure()
       logger.warn(
         { error, workspaceId: context.workspaceId, conversationId: conversation.id },
         "Decision-model memo classification failed, falling back to the inference path"

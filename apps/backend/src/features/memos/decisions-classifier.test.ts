@@ -1,12 +1,13 @@
 import { describe, test, expect, mock } from "bun:test"
 import type { AI, DecisionQuestion, GenerateDecisionsOptions } from "@threahq/agent-runtime"
 import { DecisionsMemoClassifier } from "./decisions-classifier"
+import { MEMO_DECISIONS_MODEL_ID } from "./config"
 import type { ClassifiableConversation } from "./classifier"
 import type { Memo } from "./repository"
 
 type Answers = Record<string, number | string>
 
-function createAI(answers: Answers, confidence = 0.92) {
+function createAI(answers: Answers, confidence = 0.92, probabilities: Record<string, number> = {}) {
   const calls: GenerateDecisionsOptions[] = []
   const generateDecisions = mock(async (options: GenerateDecisionsOptions) => {
     calls.push(options)
@@ -16,7 +17,7 @@ function createAI(answers: Answers, confidence = 0.92) {
         return [key, { type: "noul", noul: typeof value === "number" ? value : 0 }] as const
       }
       const choice = typeof value === "string" ? value : Object.keys((question as { criteria: object }).criteria)[0]
-      return [key, { type: "choice", choice, probabilities: {}, confidence }] as const
+      return [key, { type: "choice", choice, probabilities, confidence }] as const
     })
     return { answers: Object.fromEntries(entries), usage: {} }
   })
@@ -47,16 +48,33 @@ const classify = (ai: AI, existingMemos: Memo[] = []) =>
   })
 
 describe("DecisionsMemoClassifier", () => {
-  test("a produced decision is knowledge-worthy and carries the model's calibrated confidence", async () => {
-    const { ai } = createAI({ worth: "decision", action_items: 0.1 }, 0.94)
+  test("a produced decision is knowledge-worthy and runs on the decision model", async () => {
+    const { ai, calls } = createAI({ worth: "decision", action_items: 0.1 }, 0.94)
 
-    expect(await classify(ai)).toEqual({
-      isKnowledgeWorthy: true,
-      shouldReviseExisting: false,
-      revisionReason: null,
-      confidence: 0.94,
-      containsActionItems: false,
+    expect({
+      result: await classify(ai),
+      model: calls[0].model,
+      functionId: calls[0].telemetry?.functionId,
+    }).toEqual({
+      result: {
+        isKnowledgeWorthy: true,
+        shouldReviseExisting: false,
+        revisionReason: null,
+        confidence: 0.94,
+        containsActionItems: false,
+      },
+      model: MEMO_DECISIONS_MODEL_ID,
+      functionId: "memo-classify-conversation",
     })
+  })
+
+  test("confidence is the belief that the conversation is worth capturing, not in the option picked", async () => {
+    // Split evenly between two worthy options: near-certain worthiness that the
+    // pick's own confidence would report as a coin flip and the caller's floor
+    // would drop.
+    const { ai } = createAI({ worth: "decision" }, 0.46, { decision: 0.46, learning: 0.45, social: 0.09 })
+
+    expect((await classify(ai)).confidence).toBeCloseTo(0.91, 5)
   })
 
   test.each([["transient_status"], ["reaction_or_relay"], ["social"], ["unresolved"]])(

@@ -1,4 +1,5 @@
 import { describe, test, expect, mock } from "bun:test"
+import { AISpendDeniedError, DecisionsAvailability } from "@threahq/agent-runtime"
 import { ResidencyRoutedMemoClassifier } from "./residency-routed-classifier"
 import type { ClassifiableConversation, ConversationClassification } from "./classifier"
 
@@ -13,9 +14,9 @@ const INFERENCE: ConversationClassification = { ...DECISIONS, confidence: 0.97, 
 
 const conversation: ClassifiableConversation = { id: "conv_test", topicSummary: null, participantIds: [] }
 
-function createClassifier(options: { pinned: boolean; decisionsThrows?: boolean }) {
+function createClassifier(options: { pinned: boolean; decisionsThrows?: Error; availability?: DecisionsAvailability }) {
   const decisions = mock(async () => {
-    if (options.decisionsThrows) throw new Error("decisions endpoint is unreachable")
+    if (options.decisionsThrows) throw options.decisionsThrows
     return DECISIONS
   })
   const inference = mock(async () => INFERENCE)
@@ -25,6 +26,7 @@ function createClassifier(options: { pinned: boolean; decisionsThrows?: boolean 
     residency: { isPinned },
     decisions: { classifyConversation: decisions },
     inference: { classifyConversation: inference },
+    availability: options.availability ?? new DecisionsAvailability(),
   })
 
   const classify = () => classifier.classifyConversation(conversation, "<message/>", [], { workspaceId: "wsp_test" })
@@ -54,11 +56,49 @@ describe("ResidencyRoutedMemoClassifier", () => {
   })
 
   test("a failing decision call falls back to inference", async () => {
-    const { classify, inference } = createClassifier({ pinned: false, decisionsThrows: true })
+    const { classify, inference } = createClassifier({
+      pinned: false,
+      decisionsThrows: new Error("decisions endpoint is unreachable"),
+    })
 
     expect({ result: await classify(), inferenceCalls: inference.mock.calls.length }).toEqual({
       result: INFERENCE,
       inferenceCalls: 1,
     })
+  })
+
+  test("a failed decision call holds the next conversation on inference for the cooldown", async () => {
+    const availability = new DecisionsAvailability()
+    const failing = createClassifier({
+      pinned: false,
+      decisionsThrows: new Error("decisions endpoint is unreachable"),
+      availability,
+    })
+    const healthy = createClassifier({ pinned: false, availability })
+
+    await failing.classify()
+
+    expect({ result: await healthy.classify(), decisionCalls: healthy.decisions.mock.calls.length }).toEqual({
+      result: INFERENCE,
+      decisionCalls: 0,
+    })
+  })
+
+  test("a spend denial is rethrown instead of answered by the more expensive path", async () => {
+    const { classify, inference } = createClassifier({
+      pinned: false,
+      decisionsThrows: new AISpendDeniedError(
+        { workspaceId: "wsp_test", functionId: "memo-classify-conversation" },
+        "workspace_limit"
+      ),
+    })
+
+    expect({
+      rejected: await classify().then(
+        () => null,
+        (error) => error instanceof AISpendDeniedError
+      ),
+      inferenceCalls: inference.mock.calls.length,
+    }).toEqual({ rejected: true, inferenceCalls: 0 })
   })
 })

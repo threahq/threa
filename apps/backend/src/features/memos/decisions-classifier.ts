@@ -1,5 +1,6 @@
-import type { AI, DecisionQuestion } from "@threahq/agent-runtime"
+import type { AI, ChoiceAnswer, DecisionQuestion } from "@threahq/agent-runtime"
 import { choiceAnswer, noulAnswer } from "@threahq/agent-runtime"
+import { logger } from "../../lib/logger"
 import type { Memo } from "./repository"
 import type { ClassifiableConversation, ClassifierContext, ConversationClassification } from "./classifier"
 import { formatDate } from "../../lib/temporal"
@@ -19,13 +20,28 @@ const KEY = { worth: "worth", actionItems: "action_items", revise: "revise" }
 const WORTHY = new Set<string>(WORTHY_CHOICES)
 
 /**
+ * Belief that the conversation is worth capturing at all, which is what
+ * `MEMO_GEM_CONFIDENCE_FLOOR` was authored to gate on.
+ *
+ * The answer's own `confidence` is confidence in ONE option out of nine, so a
+ * belief split evenly between `decision` and `learning` reports ~0.45 while
+ * being near-certain the conversation is worthy — and the caller's fingerprint
+ * means a conversation dropped there is never re-asked. Summing the worthy
+ * options recovers the binary question the floor is about. An answer that
+ * carries no distribution at all falls back to the pick's own confidence.
+ */
+function worthinessConfidence(worth: ChoiceAnswer): number {
+  if (Object.keys(worth.probabilities).length === 0) return worth.confidence
+  return WORTHY_CHOICES.reduce((sum, choice) => sum + (worth.probabilities[choice] ?? 0), 0)
+}
+
+/**
  * The knowledge-worthiness gate as typed decisions instead of a prompt.
  *
  * Worthiness is a pick-one over what the conversation produced, so the answer
- * names the reason rather than asserting a boolean — and the model's calibrated
- * confidence in that pick is what `MEMO_GEM_CONFIDENCE_FLOOR` gates on. The
- * to-do and revision questions ride the same state for almost nothing, since a
- * decisions call answers every question in parallel against one shared input.
+ * names the reason rather than asserting a boolean. The to-do and revision
+ * questions ride the same state for almost nothing, since a decisions call
+ * answers every question in parallel against one shared input.
  *
  * `revisionReason` is always null here: the decision model cannot write prose,
  * and nothing downstream reads it. The inference path still fills it.
@@ -34,7 +50,10 @@ const WORTHY = new Set<string>(WORTHY_CHOICES)
  * `ResidencyRoutedMemoClassifier` owns that choice.
  */
 export class DecisionsMemoClassifier {
-  constructor(private ai: AI) {}
+  constructor(
+    private ai: AI,
+    private modelId: string = MEMO_DECISIONS_MODEL_ID
+  ) {}
 
   async classifyConversation(
     conversation: ClassifiableConversation,
@@ -45,7 +64,7 @@ export class DecisionsMemoClassifier {
     const messageCount = formattedMessages.split("<message").length - 1
 
     const result = await this.ai.generateDecisions({
-      model: MEMO_DECISIONS_MODEL_ID,
+      model: this.modelId,
       state: this.buildState(conversation, formattedMessages, existingMemos, context, messageCount),
       questions: this.buildQuestions(existingMemos),
       telemetry: {
@@ -60,12 +79,18 @@ export class DecisionsMemoClassifier {
     })
 
     const worth = choiceAnswer(result, KEY.worth)
+    if (!(worth.choice in WORTHINESS_CRITERIA)) {
+      logger.warn(
+        { choice: worth.choice, conversationId: conversation.id, workspaceId: context.workspaceId },
+        "Decision model returned an unoffered worthiness choice; treating the conversation as not worth capturing"
+      )
+    }
 
     return {
       isKnowledgeWorthy: WORTHY.has(worth.choice),
       shouldReviseExisting: existingMemos.length > 0 && noulAnswer(result, KEY.revise) >= MEMO_DECISION_REVISE_FLOOR,
       revisionReason: null,
-      confidence: worth.confidence,
+      confidence: worthinessConfidence(worth),
       containsActionItems: noulAnswer(result, KEY.actionItems) >= MEMO_DECISION_ACTION_ITEMS_FLOOR,
     }
   }
@@ -81,7 +106,7 @@ export class DecisionsMemoClassifier {
     return {
       topic: conversation.topicSummary,
       // Last 8 characters, matching the inference prompt: enough to tell two
-      // participants apart without putting user ids in the model's input.
+      // participants apart in a short list.
       participants: conversation.participantIds.map((id) => id.slice(-8)),
       messageCount,
       messages: formattedMessages,

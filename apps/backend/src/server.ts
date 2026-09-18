@@ -1068,6 +1068,7 @@ export async function startServer(): Promise<ServerInstance> {
           residency: aiResidency,
           decisions: new DecisionsMemoClassifier(ai),
           inference: new MemoClassifier(ai, configResolver, messageFormatter),
+          availability: decisionsAvailability,
         }),
         memorizer: new Memorizer(ai, configResolver, messageFormatter),
         embeddingService,
