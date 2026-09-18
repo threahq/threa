@@ -132,7 +132,9 @@ import {
   BoundaryExtractionHandler,
   createBoundaryExtractionWorker,
   createStalenessSweepWorker,
+  DecisionsBoundaryExtractor,
   LLMBoundaryExtractor,
+  ResidencyRoutedBoundaryExtractor,
   StubBoundaryExtractor,
   ConversationEmbeddingHandler,
   createConversationEmbeddingWorker,
@@ -204,7 +206,7 @@ import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
-import { AICostService, AISpendGate } from "./features/ai-usage"
+import { AICostService, AISpendGate, WorkspaceAIResidencyPolicy } from "./features/ai-usage"
 import {
   CommandRegistry,
   InviteCommand,
@@ -265,8 +267,7 @@ import type { AuthorType, ConversationDirective } from "@threahq/types"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
-import { createAI } from "@threahq/agent-runtime"
-import { createModelRegistry } from "@threahq/agent-runtime"
+import { createAI, createModelRegistry, DecisionsAvailability } from "@threahq/agent-runtime"
 import { createStaticConfigResolver } from "./lib/ai/static-config-resolver"
 import {
   QueueManager,
@@ -894,12 +895,21 @@ export async function startServer(): Promise<ServerInstance> {
   // so both transports persist through the identical path (INV-13).
   const botRuntimeWriteOps = createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
 
+  const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
+  // One breaker for the whole process: a decisions-endpoint outage is the same
+  // outage for every caller, so it is recorded once and read by all of them.
+  const decisionsAvailability = new DecisionsAvailability()
   // Constructed here (not at the worker registration below) so the HTTP routes can
   // reach it for the on-demand conversation-split endpoints; the boundary-extract
   // worker reuses the same instance (INV-13).
   const boundaryExtractor = config.useStubBoundaryExtraction
     ? new StubBoundaryExtractor()
-    : new LLMBoundaryExtractor(ai, configResolver)
+    : new ResidencyRoutedBoundaryExtractor({
+        residency: aiResidency,
+        decisions: new DecisionsBoundaryExtractor(ai, configResolver),
+        inference: new LLMBoundaryExtractor(ai, configResolver),
+        availability: decisionsAvailability,
+      })
   const boundaryExtractionService = new BoundaryExtractionService(pool, boundaryExtractor)
 
   registerRoutes(app, {

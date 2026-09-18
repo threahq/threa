@@ -12,6 +12,8 @@ export { BoardExclusionRepository } from "./board-exclusion-repository"
 export { BoundaryExtractionService } from "./boundary-extraction-service"
 
 export { LLMBoundaryExtractor } from "./boundary-extraction/llm-extractor"
+export { DecisionsBoundaryExtractor } from "./boundary-extraction/decisions-extractor"
+export { ResidencyRoutedBoundaryExtractor } from "./boundary-extraction/residency-routed-extractor"
 export { StubBoundaryExtractor } from "./boundary-extraction/stub-extractor"
 export type {
   BoundaryExtractor,
@@ -27,6 +29,7 @@ export type {
   SplitGroup,
 } from "./boundary-extraction/types"
 export {
+  BOUNDARY_DECISIONS_MODEL_ID,
   BOUNDARY_EXTRACTION_MODEL_ID,
   BOUNDARY_EXTRACTION_TEMPERATURE,
   BOUNDARY_EXTRACTION_SYSTEM_PROMPT,

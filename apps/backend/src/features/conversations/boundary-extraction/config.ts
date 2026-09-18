@@ -1,6 +1,7 @@
 // Co-located config (INV-43): production code and evals import from here.
 
 import { z } from "zod"
+import type { ConversationStatus } from "@threahq/types"
 import { CONVERSATION_STATUSES } from "@threahq/types"
 
 export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
@@ -248,3 +249,107 @@ export const extractionResponseSchema = z.object({
 })
 
 export type ExtractionResponse = z.infer<typeof extractionResponseSchema>
+
+// --- Decision-model path (unpinned workspaces) -----------------------------
+// The same classification, asked as typed questions instead of as a prompt.
+// A decisions model answers each question in parallel against one shared state
+// and cannot write prose, so the judgement that used to live in the system
+// prompt lives in the question instructions below, and the words a placement
+// needs (a new conversation's title and summary, a refreshed "covers:" line)
+// come from a second call to the prose model — only when a question says they
+// are needed.
+
+export const BOUNDARY_DECISIONS_MODEL_ID = "openrouter:typesafe/jev-1.13"
+
+/** The `placement` option that means "none of these — open a new conversation". */
+export const NEW_CONVERSATION_CHOICE = "new_conversation"
+
+/**
+ * Beliefs are read at a threshold rather than as a bare majority: a secondary
+ * assignment and a reassignment both edit placements the user can already see,
+ * so they need more than a coin-flip, while refreshing a summary is cheap to do
+ * and only costs a prose call.
+ */
+export const DECISION_SECONDARY_FLOOR = 0.8
+export const DECISION_REASSIGNMENT_FLOOR = 0.75
+export const DECISION_SUMMARY_STALE_FLOOR = 0.6
+
+/** Ordered lowest to highest; the answer indexes into it and is rescaled onto the 1-7 completeness scale. */
+export const COMPLETENESS_LADDER = [
+  "Just opened. No substance yet — an opener, a greeting, a question nobody has engaged with.",
+  "An exchange is under way and the question or task it is about is still open.",
+  "The exchange is well developed — options weighed, work reported — but nothing has been settled.",
+  'Reached an explicit conclusion: the problem confirmed solved, the question answered, or a plan agreed ("that fixed it", "works now", "låter som en plan").',
+] as const
+
+export const PLACEMENT_INSTRUCTIONS = `Which conversation does \`newMessage\` belong to? Pick the listed conversation it continues, or "${NEW_CONVERSATION_CHOICE}" to open a new one.
+
+Decide in this order.
+
+1. Explicit reply. When \`replyTargets\` is non-empty the author deliberately quoted an earlier message, and that is the strongest signal of continuity — it overrides recency and whatever exchange is currently live. Pick the quoted message's conversation even when a different conversation owns every recent message. Override this only when the new message's own words explicitly open a different subject while quoting ("unrelated, but…"). A reply that reacts, agrees, asks a follow-up, or builds on the quoted message ("samma här", "kör på det", "sounds good") ALWAYS stays in the quoted message's conversation; brevity is not a reason to leave it in the live exchange.
+
+2. Session check — read \`age\` on the newest entry in \`recentMessages\`. Chat happens in sessions: turns minutes apart are one live exchange, while a gap of several hours (an afternoon, overnight, a weekend) usually means the participants came back for a NEW conversation, even in the same stream between the same people.
+   - Minutes old, so you are inside a LIVE session. A session is not a conversation: one sitting routinely holds several conversations back-to-back, and the most damaging mistake is gluing a whole session into one ever-growing conversation. Recency tells you which exchange is live; it is never by itself a reason to attach a message to it. Decide by what the message DOES. If it takes the next turn of the live exchange — answers, agrees, reacts, jokes back, follows up ("samma här", "haha", "100%", "what?", "nice"), from either participant — continue that conversation; both sides of one exchange belong in the same conversation. If it changes the subject — asks about something the exchange was not about, starts making plans, pivots with "btw", "oh en annan grej", "unrelated but" — open a new conversation, even if the last message landed seconds ago. The test: would this message read as the next line of that exchange? A different answer to the same open question is NOT a subject change: another option, a counter-argument, a doubt, evidence for one side all continue the debate; only a genuinely different QUESTION opens a new conversation. A pasted artifact (screenshot, code block, link) wrapped in a first-person comment ("look at this", "är inte det här sjukt") opens a new conversation about the artifact's subject — unless the artifact answers the question the live exchange is debating, in which case it is that exchange's next turn. A fragment cannot open a conversation: a few words carrying no question, no proposal and no subject of their own — an exclamation, an emoji, an echo of a word the exchange just used (":fire: tokens", "så dyrt") — react to the live exchange and continue it. Opening requires the message to put something new on the table.
+   - Hours or days old, so this message OPENS A NEW SESSION. Default to a new conversation. Continue a stale conversation ONLY if the message explicitly picks up its specific topic — answers its open question, or names its concrete subject ("do you still have X running?"). Everything else, including short excited bursts ("nice", "haha wow", a one-line observation), is a fresh opener, NOT a late reaction to a conversation that ended hours ago. Never attach to a stale conversation because it is the most recent thing listed or the only candidate.
+
+3. A resolved conversation stays closed across a session gap unless the message directly reopens that exact topic. Within the session that resolved it, though, it is still the live exchange: participants routinely agree and then keep going with a fresh doubt or a deeper follow-up, and that continuation belongs in the conversation that just resolved, not in a new one.
+
+Three traps to resist.
+
+A shared name is not a shared topic. A person, product, model, project or place named in the message is a SUBJECT the conversation is about, not the conversation itself. "Fable is cheaper than GPT now", "does Fable handle Swedish well?" and "Fable is down again" are three conversations that merely share a word. Judge against what a conversation's \`summary\` and messages are actually about — a different question about the same recurring name opens a new conversation.
+
+A broad summary is not an invitation. A \`summary\` already spanning several loosely-related subjects is evidence the conversation has been over-extended; do not use its breadth as a reason to attach yet another subject.
+
+One misfiled message is not a conversation. \`recentMessages[].conversationId\` is where each earlier message is filed today, and a filing can be wrong. When the only thing tying \`newMessage\` to a listed conversation is one earlier message sitting inside it that is itself off-topic for that conversation's \`title\` and \`summary\`, open a new conversation — the misfiled message follows on its own, through the move questions.
+
+Attachments are content. An entry's \`attachments[].text\` is the extracted text of what was attached — a transcript, OCR, a parsed document. Judge topic continuity on it as part of the message: a voice memo whose transcript is about onboarding is an onboarding message even when its written body is empty.`
+
+export const SECONDARY_INSTRUCTIONS = `Does \`newMessage\` genuinely advance THIS conversation as well, separately from whichever one it primarily continues? True only for a message that really does take the next turn of two distinct ongoing conversations — a single ping that references two topics. Most messages advance exactly one conversation, so the answer is usually false; being related, sharing a subject, or coming from the same participants is not enough.`
+
+export const COMPLETENESS_INSTRUCTIONS = `How settled is this conversation, counting \`newMessage\` as its newest turn if it belongs here?`
+
+export const STATUS_INSTRUCTIONS = `What state is this conversation in, counting \`newMessage\` as its newest turn if it belongs here?`
+
+export const STATUS_CRITERIA: Record<ConversationStatus, string> = {
+  active: "Being talked about right now, or last touched within this session with something still open.",
+  stalled: "Left hanging — nobody has come back to it, and its open question was never answered or withdrawn.",
+  resolved:
+    "Explicitly concluded: the problem confirmed solved, the question answered, or a plan agreed. A conversation reopened by a new turn is active again, not resolved.",
+}
+
+export const REASSIGNMENT_INSTRUCTIONS = `Does this earlier message belong in the SAME conversation as \`newMessage\`? Answer for the two messages themselves — whether they are turns of one topic — not for where either is filed today.
+
+This is how misplacements get fixed once later context arrives: an earlier message read as part of the live exchange but was really the opening of the topic \`newMessage\` is now about, or two adjacent conversations turn out to be one specific topic. It is not a tidying pass. Same participants, same session, both naming the same person or product, or "both are casual chat" do NOT make one topic — a focused message never gets folded into a broader or busier conversation on that basis.`
+
+export const SUMMARY_STALE_INSTRUCTIONS = `Would this conversation's stored \`summary\` mislead someone who read it after \`newMessage\` is added — because the conversation has moved on to something it does not mention, or landed somewhere it does not state? False when the summary still describes what the conversation covers, even though the new turn is not spelled out in it.`
+
+// The prose the decisions path cannot produce: a new conversation's name and
+// one-sentence summary, and a refreshed "covers:" line for a conversation whose
+// stored summary the model just called stale. Runs on the prose model, only
+// when the answers above say words are needed.
+export const BOUNDARY_NAMING_SYSTEM_PROMPT = `You name and summarize conversations. You output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose outside the JSON.
+
+You are given a conversation's messages, already grouped — the grouping is settled and is not yours to question. Write the words it is missing.
+
+## Naming a conversation
+Write a short title of 2-5 words that names the topic itself. Never exceed 5 words.
+- Lead with the subject. Do NOT add framing like "Discussion about", "Chat about", "Conversation regarding", "Thoughts on", "Questions about", and do NOT describe the tone ("Casual chat", "Quick question", "Banter about"). That a conversation discusses something is already implied — name the thing, not the act of discussing it.
+- Never use a vague catch-all label as a title: "General chat", "Reaction message", "Random", "Misc", "Off-topic", and the like name nothing and become a magnet that wrongly absorbs later messages. Always name the concrete subject the messages are actually about; if a short opener has no subject of its own, name what it is reacting to.
+- Name the specific aspect, not a bare recurring name. When the topic is one facet of a person, product, model, or project that comes up repeatedly, put the facet in the title ("Fable-priser", "Fable på svenska"), never the bare name alone — a lone recurring proper noun is a magnet that wrongly absorbs every later mention of it, the same failure as a catch-all label.
+- Do NOT state which language the conversation is in (never write "in Swedish", "auf Deutsch", etc.); that label is noise next to the conversation.
+- Write the title in the dominant language of the conversation, not English by default. If the participants are talking in Swedish, the title is in Swedish; if in Japanese, in Japanese. When the messages mix languages, follow the language the topic is actually discussed in and reuse the participants' own phrasing.
+- Keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation. Never translate, localize, or re-spell them — carry the participants' own words into the title verbatim.
+
+## Summarizing a conversation
+A summary is at most ~40 words of plain prose in the conversation's own language, stating what has been discussed and where it landed.`
+
+export const BOUNDARY_NAMING_PROMPT = `## Conversation
+{{MESSAGES}}
+
+## Write
+{{REQUESTS}}`
+
+export const boundaryNamingResponseSchema = z.object({
+  title: z.string().nullable().describe("2-5 word title, or null when no title was requested"),
+  summary: z.string().nullable().describe("~40 word summary"),
+})

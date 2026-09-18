@@ -15,6 +15,9 @@
  *   # Compare models
  *   bun run eval -- -s boundary-extraction -m openrouter:openai/gpt-5.4-nano,openrouter:anthropic/claude-haiku-4.5
  *
+ *   # Compare the two residency paths (decision model vs inference)
+ *   bun run eval -- -s boundary-extraction -m openrouter:typesafe/jev-1.13,openrouter:openai/gpt-5.6-luna
+ *
  * ## Key Evaluators
  *
  * - conversation-decision: Correct new vs existing decision?
@@ -23,6 +26,7 @@
  * - completeness-update: Correct resolution detection?
  */
 
+import { isDecisionsModel } from "@threahq/agent-runtime"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { boundaryExtractionCases } from "./cases"
 import type {
@@ -43,11 +47,14 @@ import {
   averageConfidenceEvaluator,
 } from "./evaluators"
 import {
+  BOUNDARY_DECISIONS_MODEL_ID,
   BOUNDARY_EXTRACTION_MODEL_ID,
   BOUNDARY_EXTRACTION_TEMPERATURE,
+  DecisionsBoundaryExtractor,
   LLMBoundaryExtractor,
   type ExtractionContext,
 } from "../../../src/features/conversations"
+import type { AnyComponentConfig, ComponentConfig, ConfigResolver } from "../../../src/lib/ai/config-resolver"
 import type { Message } from "../../../src/features/messaging"
 import { ulid } from "ulid"
 
@@ -129,13 +136,32 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
 }
 
 /**
- * Task function that runs boundary extraction using the production LLMBoundaryExtractor.
+ * The decision model cannot write prose, so the decision path names new
+ * conversations with the inference model — in production and here. `-m` names
+ * the DECISION model, and the runner's permutation override would push it onto
+ * the naming call too, which the provider rejects outright. Pinning naming to
+ * the production model keeps `-m` comparing what it claims to compare, and
+ * bills the decision path for the naming call it really makes.
+ */
+const NAMING_CONFIG_RESOLVER: ConfigResolver = {
+  async resolve<T extends AnyComponentConfig = ComponentConfig>(): Promise<T> {
+    return { modelId: BOUNDARY_EXTRACTION_MODEL_ID, temperature: BOUNDARY_EXTRACTION_TEMPERATURE } as T
+  },
+}
+
+/**
+ * Runs boundary extraction through the production extractors. Which one is the
+ * model under test: the decision model routes to `DecisionsBoundaryExtractor`
+ * (what an unpinned workspace gets), anything else to `LLMBoundaryExtractor`
+ * (what a residency-pinned one gets), so `-m` compares the two real paths.
  */
 async function runBoundaryExtractionTask(
   input: BoundaryExtractionInput,
   ctx: EvalContext
 ): Promise<BoundaryExtractionOutput> {
-  const extractor = new LLMBoundaryExtractor(ctx.ai, ctx.configResolver)
+  const extractor = isDecisionsModel(ctx.permutation.model)
+    ? new DecisionsBoundaryExtractor(ctx.ai, NAMING_CONFIG_RESOLVER, ctx.permutation.model)
+    : new LLMBoundaryExtractor(ctx.ai, ctx.configResolver)
   const extractionContext = buildExtractionContext(input, ctx.workspaceId)
 
   try {
@@ -196,11 +222,11 @@ export const boundaryExtractionSuite: EvalSuite<
 
   runEvaluators: [accuracyEvaluator, decisionAccuracyEvaluator, averageConfidenceEvaluator],
 
+  // The decision model first: it is what every unpinned workspace runs, which
+  // is every workspace today. The inference model is the residency-pinned path.
   defaultPermutations: [
-    {
-      model: BOUNDARY_EXTRACTION_MODEL_ID,
-      temperature: BOUNDARY_EXTRACTION_TEMPERATURE,
-    },
+    { model: BOUNDARY_DECISIONS_MODEL_ID },
+    { model: BOUNDARY_EXTRACTION_MODEL_ID, temperature: BOUNDARY_EXTRACTION_TEMPERATURE },
   ],
 }
 
