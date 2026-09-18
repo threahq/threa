@@ -446,12 +446,15 @@ function createBotKeyring(): BotKeyring {
         instanceId: config?.instanceId ?? "pi-remote",
         identitySeed: config?.apiKey ?? "",
       })
+      const files = new FileKeyStore({ dir })
       return new E2eKeyring({
         store: resolveKeyStore({
           ...(configuredKeyStore() ? { requested: configuredKeyStore()! } : {}),
           platform: process.platform,
           dir,
-          hasExistingFileKey: new FileKeyStore({ dir }).read(account) !== undefined,
+          // The per-stream policy has no single account to probe for — its keys
+          // are named after scratchpads it has not been granted yet.
+          hasExistingFileKey: account === null ? files.hasAny() : files.read(account) !== undefined,
         }),
         account,
         mint: mintE2eKeyRecord,
@@ -480,6 +483,33 @@ function configuredKeyStore(): E2eKeyStoreKind | undefined {
 }
 
 let botKeyring = createBotKeyring()
+/** The keyring as last advertised, so a grant only writes presence when it added a key. */
+let advertisedKeyIds = ""
+
+/**
+ * Hold a key for each sealed scratchpad this bot was granted, then advertise
+ * the keyring. Under the default policy the one key already covers them and
+ * this changes nothing; under the per-stream policy the key is minted here,
+ * and until presence carries it the owner has nothing to re-wrap to.
+ */
+async function keyGrantedStreams(streamIds: string[], ctx?: ExtensionContext): Promise<void> {
+  for (const streamId of streamIds) await botKeyring.ensureForStream(streamId)
+  await advertiseKeyring(ctx)
+}
+
+/**
+ * Push presence when the held keyring is no longer what the server was last
+ * told. A key the server has not registered is one no wrap can be addressed
+ * to, so this runs before the wraps that name it.
+ */
+async function advertiseKeyring(ctx?: ExtensionContext): Promise<void> {
+  const advertised = botKeyring.identities.map((identity) => identity.publicKeyId).join(",")
+  if (advertised === advertisedKeyIds) return
+  advertisedKeyIds = advertised
+  await heartbeat(pending ? "busy" : "available", pending ? "Working on Threa invocation…" : undefined, ctx).catch(
+    () => undefined
+  )
+}
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -1084,6 +1114,7 @@ function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTra
     fetchTimeoutMs: FETCH_TIMEOUT_MS,
     callbacks: {
       onInvocationAvailable: () => void claimIfIdle(pi, ctx).catch(() => undefined),
+      onE2eGrant: (payload) => void keyGrantedStreams([payload.streamId], ctx).catch(() => undefined),
       onBootstrap: (bootstrap) => {
         if (bootstrap.serverGeneratedAt) {
           const current = getCurrentSessionLink(ctx)
@@ -1095,6 +1126,10 @@ function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTra
         // A reconnect is exactly when an archive push went missing, so
         // re-derive before trusting the link the bootstrap arrived on.
         void probeArchiveState(ctx)
+        // Catch-up for the grants that landed while this install was down.
+        if (bootstrap.e2eGrantedStreamIds.length > 0) {
+          void keyGrantedStreams(bootstrap.e2eGrantedStreamIds, ctx).catch(() => undefined)
+        }
         if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) {
           void claimIfIdle(pi, ctx).catch(() => undefined)
         }
@@ -1555,8 +1590,6 @@ function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string
  */
 async function resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
   if (!config) throw new Error("Threa remote config not loaded")
-  const [bik] = await botKeyring.ensure()
-  if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see stderr)")
   try {
     const body = await request<{ data: { keyId: string; publicKey: string } }>(
       `/api/v1/workspaces/${config.workspaceId}/bot-runtime/owner-e2e-key`
@@ -1583,8 +1616,9 @@ async function provisionE2eStreamKey(
   e2e: { ownerKeyId: string; ownerPublicKey: string }
 ): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
-  const [bik] = await botKeyring.ensure()
-  if (!bik) throw new Error("BIK unavailable for provisioning")
+  const bik = await botKeyring.identityForStream(rootStreamId)
+  if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see stderr)")
+  await advertiseKeyring()
   const { wraps } = await mintStreamKeyWraps({
     streamId: rootStreamId,
     keyGeneration: 0,
@@ -2280,7 +2314,9 @@ async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext
   })
   await Promise.all(
     [invocation, ...restoredSteers.map((item) => item.invocation)].map(async (restored) => {
-      if (restored.sealing) restored.sealedIdentities = await botKeyring.ensure()
+      if (restored.sealing) {
+        restored.sealedIdentities = await botKeyring.ensureForStream(restored.rootStreamId ?? restored.activeStreamId)
+      }
     })
   )
   pending = invocation
@@ -3007,11 +3043,11 @@ async function hydrateSealedClaim(
   }
   const sealed = parseSealedTurnContext(claimed.sealedContext)
   if (!sealed) return fail("malformed sealedContext")
-  const identities = await botKeyring.ensure()
-  if (identities.length === 0) return fail("no bot identity key")
   // Wraps and the owner's message AAD bind to the ROOT stream that owns the
   // E2E key (a thread inherits the root's key), so hydrate against it.
   const streamId = claimed.rootStreamId ?? claimed.activeStreamId
+  const identities = await botKeyring.ensureForStream(streamId)
+  if (identities.length === 0) return fail("no bot identity key")
   try {
     const opened = await openSealedTurnContext({ sealed, identities, streamId })
     const historyLines = opened.history.map((item: DecryptedHistoryItem) => `- ${item.role}: ${item.contentMarkdown}`)
@@ -3090,10 +3126,10 @@ async function sealSessionControlAck(
 ): Promise<SealedReplyBody | undefined> {
   const ack = parseSealedAckContext(invocation.sealedAck)
   if (!ack) return undefined
-  const identities = await botKeyring.ensure()
+  const streamId = invocation.rootStreamId ?? invocation.activeStreamId
+  const identities = await botKeyring.ensureForStream(streamId)
   if (identities.length === 0) return undefined
   try {
-    const streamId = invocation.rootStreamId ?? invocation.activeStreamId
     const sealing = await openSealedAck({ ack, identities, streamId })
     return await sealReply(sealing, markdown)
   } catch {
@@ -5403,6 +5439,7 @@ async function setStorageDirectoryForTesting(directory: string): Promise<void> {
   BIK_PATH = join(resolved, "threa-remote-bik.json")
   E2E_KEY_DIR = join(resolved, "e2e-keys")
   botKeyring = createBotKeyring()
+  advertisedKeyIds = ""
 }
 
 async function resetRuntimeForTesting(): Promise<void> {

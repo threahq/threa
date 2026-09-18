@@ -8,6 +8,7 @@ import {
   MacKeychainStore,
   SecretServiceStore,
   e2eKeyAccount,
+  e2eStreamKeyAccount,
   readLegacyBikFile,
   resolveKeyStore,
   type CommandRunner,
@@ -44,7 +45,13 @@ describe("e2eKeyAccount", () => {
   test("host is the default and every runtime on one box lands on it", () => {
     const account = e2eKeyAccount({ ...base, scope: "host" })
     expect(account).toBe(e2eKeyAccount({ ...base, scope: "host", instanceId: "inst/two" }))
-    expect(account.startsWith("host-")).toBe(true)
+    expect(account).toMatch(/^host-/)
+  })
+
+  test("the stream scope has no default account — every key is minted per stream", () => {
+    expect(e2eKeyAccount({ ...base, scope: "stream" })).toBeNull()
+    expect(e2eStreamKeyAccount("stream_a")).not.toBe(e2eStreamKeyAccount("stream_b"))
+    expect(e2eStreamKeyAccount("stream_a")).toBe(e2eStreamKeyAccount("stream_a"))
   })
 
   test("a different host, identity, or instance is a different account", () => {
@@ -202,6 +209,61 @@ describe("E2eKeyring", () => {
       log: () => {},
     })
     await keyring.ensure()
+    expect(keyring.presenceFields()).toEqual({
+      e2eKeys: [{ keyId: "bik_1", publicKey: "pub" }],
+      publicKey: "pub",
+      publicKeyId: "bik_1",
+    })
+  })
+
+  test("the per-stream policy holds nothing until a grant, then one key per stream", async () => {
+    let minted = 0
+    const keyring = new E2eKeyring({
+      store: new FileKeyStore({ dir: tempDir() }),
+      account: null,
+      mint: async () => ({ ...RECORD, keyId: `bik_${++minted}` }),
+      legacy: () => ({ keyId: "bik_legacy", publicKey: "pub", privateKey: "priv" }),
+      log: () => {},
+    })
+
+    expect(await keyring.ensure()).toEqual([])
+    await keyring.ensureForStream("stream_a")
+    await keyring.ensureForStream("stream_b")
+    await keyring.ensureForStream("stream_a")
+
+    expect(keyring.presenceFields()).toEqual({
+      e2eKeys: [
+        { keyId: "bik_1", publicKey: "pub", streamId: "stream_a" },
+        { keyId: "bik_2", publicKey: "pub", streamId: "stream_b" },
+      ],
+    })
+  })
+
+  test("concurrent grants for one stream mint a single key", async () => {
+    let minted = 0
+    const keyring = new E2eKeyring({
+      store: new FileKeyStore({ dir: tempDir() }),
+      account: null,
+      mint: async () => {
+        await Bun.sleep(1)
+        return { ...RECORD, keyId: `bik_${++minted}` }
+      },
+      log: () => {},
+    })
+
+    await Promise.all([keyring.ensureForStream("stream_a"), keyring.ensureForStream("stream_a")])
+    expect(keyring.current.map((key) => key.keyId)).toEqual(["bik_1"])
+  })
+
+  test("a default key already covers every stream, so a grant mints nothing", async () => {
+    const keyring = new E2eKeyring({
+      store: new FileKeyStore({ dir: tempDir() }),
+      account: "host-abc",
+      mint: async () => RECORD,
+      log: () => {},
+    })
+    await keyring.ensure()
+    await keyring.ensureForStream("stream_a")
     expect(keyring.presenceFields()).toEqual({
       e2eKeys: [{ keyId: "bik_1", publicKey: "pub" }],
       publicKey: "pub",

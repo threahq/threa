@@ -20,6 +20,7 @@ export type {
   StepFrame,
   BotRuntimeHello,
   BotHelloBootstrap,
+  BotE2eGrantPayload,
   BotRuntimeTransportCallbacks,
   BotRuntimeTransportOptions,
   DelegationAvailableNudge,
@@ -82,6 +83,7 @@ export {
   MacKeychainStore,
   SecretServiceStore,
   e2eKeyAccount,
+  e2eStreamKeyAccount,
   readLegacyBikFile,
   resolveKeyStore,
   type CommandRunner,
@@ -90,5 +92,6 @@ export {
   type E2eKeyStore,
   type E2eKeyStoreKind,
   type E2eKeyringOptions,
+  type HeldE2eKey,
   type ResolveKeyStoreInput,
 } from "./keyring"

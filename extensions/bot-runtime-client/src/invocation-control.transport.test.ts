@@ -515,8 +515,45 @@ describe("BotRuntimeTransport observed claims", () => {
           serverGeneratedAt: "2026-08-01T00:00:00.000Z",
           availableInvocations: [{ arbitrary: true }],
           ownedClaims: [{ id: 42, sourceRevision: -1 }],
+          e2eGrantedStreamIds: [],
         },
       ],
+    })
+    transport.disconnect()
+  })
+
+  it("delivers a sealed-scratchpad grant live and the offline ones on hello", async () => {
+    stubFetch((request) => (request.url.endsWith("/config") ? json({ wsUrl: "https://ws.example.test" }) : json({})))
+    const socket = fakeSocket((event, _payload, callback) => {
+      if (event === "bot:hello") {
+        callback(null, {
+          ok: true,
+          ownedClaims: [],
+          recentCancellations: [],
+          availableInvocations: [],
+          e2eGrantedStreamIds: ["stream_offline", 7],
+        })
+      }
+    })
+    spySocket(socket)
+    const grants: unknown[] = []
+    const bootstraps: string[][] = []
+    const transport = makeTransport({
+      callbacks: {
+        onE2eGrant: (payload) => grants.push(payload),
+        onBootstrap: (bootstrap) => bootstraps.push(bootstrap.e2eGrantedStreamIds),
+      },
+    })
+
+    await transport.connect()
+    socket.handlers.connect!()
+    await waitFor(() => bootstraps.length > 0)
+    socket.handlers["bot:e2e_grant"]!({ workspaceId: "ws_1", botId: "bot_1", streamId: "stream_live" })
+
+    expect({ grants, bootstraps }).toEqual({
+      grants: [{ workspaceId: "ws_1", botId: "bot_1", streamId: "stream_live" }],
+      // A non-string id is dropped rather than minted a key for.
+      bootstraps: [["stream_offline"]],
     })
     transport.disconnect()
   })
