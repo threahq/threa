@@ -1,15 +1,24 @@
 import { memo, useMemo, type ReactNode } from "react"
-import Markdown from "react-markdown"
+import Markdown, { type Options } from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { normalizeMarkdownTables, parseMentionPointerHref } from "@threahq/prosemirror"
+import rehypeKatex from "rehype-katex"
+import "katex/dist/katex.min.css"
+import { normalizeMarkdownTables, normalizeMathDelimiters, parseMentionPointerHref } from "@threahq/prosemirror"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
+import { remarkThreaMath } from "@/lib/markdown/remark-math"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
 import { AttachmentProvider } from "@/lib/markdown/attachment-context"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import type { Mentionable } from "@/components/editor/triggers/types"
 
 export { AttachmentProvider }
+
+const remarkPlugins = [remarkGfm, remarkThreaMath]
+// `strict: "ignore"` — KaTeX's warnings are about TeX we can't control (pasted
+// unicode, \newline in display mode) and would otherwise flood the console on
+// every message that carries math.
+const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, { strict: "ignore" }]]
 
 interface MarkdownContentProps {
   content: string
@@ -80,13 +89,21 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
   // remark-gfm rejects tables with blank lines between rows, which LLM output
   // and some pasted markdown contain. Collapsing those blanks lets the table
   // render instead of falling through to plain paragraphs.
-  const normalizedContent = useMemo(() => normalizeMarkdownTables(content), [content])
+  //
+  // `\(…\)` / `\[…\]` have to be rewritten here too: CommonMark reads `\[` as an
+  // escaped bracket, so by the time remark builds a tree the delimiter is gone.
+  const normalizedContent = useMemo(() => normalizeMathDelimiters(normalizeMarkdownTables(content)), [content])
   const body = (
     // min-w-0 + break-words: prevent long URLs, paths, and tokens from
     // overflowing the flex message-content column. overflow-wrap inherits,
     // so links, inline code, and mention chips pick it up automatically.
     <div className={cn("markdown-content min-w-0 break-words", className)}>
-      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={urlTransform}>
+      <Markdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
+        components={markdownComponents}
+        urlTransform={urlTransform}
+      >
         {normalizedContent}
       </Markdown>
     </div>

@@ -181,6 +181,15 @@ export default defineConfig({
   build: {
     // Maps are uploaded to PostHog and deleted before deploy (deploy-cloudflare.yml).
     sourcemap: "hidden",
+    rollupOptions: {
+      output: {
+        // KaTeX is 270 kB and the entry chunk sits ~35 kB under the service
+        // worker's 2 MiB precache ceiling; inside it, nothing precaches at all.
+        // Its own chunk is still a static import of the entry, so it loads
+        // before first paint and math never renders twice.
+        manualChunks: (id: string) => (id.includes("/node_modules/katex/") ? "katex" : undefined),
+      },
+    },
   },
   test: {
     maxWorkers: process.env.CI ? undefined : 2,

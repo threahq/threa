@@ -501,6 +501,73 @@ Some **bold** and *italic* text with \`code\`.
     })
   })
 
+  describe("math", () => {
+    // KaTeX round-trips the source into a MathML <annotation>, so this reads the
+    // TeX the renderer actually parsed rather than its glyph layout.
+    const renderedTex = (container: HTMLElement) =>
+      [...container.querySelectorAll("annotation[encoding='application/x-tex']")].map((node) => node.textContent)
+
+    it("should render inline math between single dollars", () => {
+      const { container } = render(<MarkdownContent content={"Euler: $e^{i\\pi} + 1 = 0$ nice"} />)
+      expect(renderedTex(container)).toEqual(["e^{i\\pi} + 1 = 0"])
+      expect(container.querySelector(".katex-display")).toBeNull()
+    })
+
+    it("should render display math between double dollars", () => {
+      const { container } = render(<MarkdownContent content={"$$\n\\frac{9}{31}\n$$"} />)
+      expect(renderedTex(container)).toEqual(["\\frac{9}{31}"])
+      expect(container.querySelector(".katex-display")).not.toBeNull()
+    })
+
+    it("should render the backslash delimiters LLM answers arrive in", () => {
+      const { container } = render(<MarkdownContent content={"\\[\n\n0.31 + 0.31w > 0.40\n\n\\]"} />)
+      expect(renderedTex(container)).toEqual(["0.31 + 0.31w > 0.40"])
+      expect(container.querySelector(".katex-display")).not.toBeNull()
+    })
+
+    it("should render every equation in a run of display blocks", () => {
+      const answer = [
+        "at least about **29% as much as his own**:",
+        "\\[\n\n0.31 + 0.31w > 0.40\n\n\\]",
+        "\\[\n\n0.31w > 0.09\n\n\\]",
+        "\\[\n\nw > \\frac{9}{31} \\approx 0.29\n\n\\]",
+      ].join("\n\n")
+      const { container } = render(<MarkdownContent content={answer} />)
+      expect(renderedTex(container)).toEqual(["0.31 + 0.31w > 0.40", "0.31w > 0.09", "w > \\frac{9}{31} \\approx 0.29"])
+    })
+
+    it("should render inline backslash delimiters", () => {
+      const { container } = render(<MarkdownContent content={"inline \\( x^2 \\) here"} />)
+      expect(renderedTex(container)).toEqual(["x^2"])
+      expect(container.querySelector(".katex-display")).toBeNull()
+    })
+
+    it("should render math inside a table cell", () => {
+      const { container } = render(<MarkdownContent content={"| a | b |\n|---|---|\n| $x^2$ | 2 |"} />)
+      expect(renderedTex(container)).toEqual(["x^2"])
+    })
+
+    it("should surface unparseable TeX instead of dropping it", () => {
+      const { container } = render(<MarkdownContent content={"broken $\\frac{1}{x$ oops"} />)
+      const error = container.querySelector(".katex-error")
+      expect(error).not.toBeNull()
+      expect(error).toHaveTextContent("\\frac{1}{x")
+      expect(error?.getAttribute("title")).toContain("KaTeX parse error")
+    })
+
+    it("should leave prices as text", () => {
+      const { container } = render(<MarkdownContent content="costs $5 and $10 total" />)
+      expect(renderedTex(container)).toEqual([])
+      expect(screen.getByText("costs $5 and $10 total")).toBeInTheDocument()
+    })
+
+    it("should leave dollars inside code alone", () => {
+      const { container } = render(<MarkdownContent content="run `echo $HOME` and $PATH" />)
+      expect(renderedTex(container)).toEqual([])
+      expect(screen.getByText("echo $HOME").tagName).toBe("CODE")
+    })
+  })
+
   describe("memoization", () => {
     it("should be memoized to prevent unnecessary re-renders", () => {
       const { rerender } = render(<MarkdownContent content="test" />)
