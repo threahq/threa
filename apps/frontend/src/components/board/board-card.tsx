@@ -27,8 +27,8 @@ import {
 } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
 import { AgentRunningChip } from "@/components/timeline/agent-activity-header-chip"
-import { getSessionId } from "@/components/timeline/session-grouping"
-import { useAgentSessionActivities } from "@/stores/agent-activity-store"
+import { useConversationRunningChip } from "@/hooks/use-conversation-running-chip"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
   useConversationGraph,
@@ -350,21 +350,8 @@ export function BoardCard({
     [railEvents, conversation.id, memberMessageIds, currentUserId, archivedAsideIds]
   )
 
-  // The card's own running agent sessions: session ids come from the rows the
-  // card already resolved (conversation-scoped by construction — a sibling
-  // conversation's session on the same stream is not among them), live counts from
-  // the activity store. Covers the long-running session whose `started` event has
-  // scrolled above the card's "N earlier" boundary.
-  const cardSessionIds = useMemo(
-    () =>
-      eventRows.flatMap((row) => {
-        if (row.kind !== "session") return []
-        const sessionId = row.events.reduce<string | null>((found, event) => found ?? getSessionId(event), null)
-        return sessionId ? [sessionId] : []
-      }),
-    [eventRows]
-  )
-  const runningChipEntries = useAgentSessionActivities(workspaceId, cardSessionIds)
+  const runningChipEntries = useConversationRunningChip(workspaceId, eventRows)
+  const isMobile = useIsMobile()
 
   // Per-thread-boundary grouping: soft-thread seams, nested branch conversations,
   // and "branched from" provenance derive from the stream graph + the shared
@@ -1010,7 +997,9 @@ export function BoardCard({
     <span data-running-chip-slot className="flex shrink-0 items-center">
       {/* Mounted only with entries: the chip reads useTrace, so the idle card
           must not require a TraceProvider (and skips the component entirely). */}
-      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} />}
+      {/* Compact on mobile: the full pill is `shrink-0`, so at phone width a
+          running agent's name + step count squeezed the card title to nothing. */}
+      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} compact={isMobile} />}
     </span>
   )
   const massBadge = (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ActiveAgentSession } from "@threahq/types"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import {
@@ -35,6 +36,8 @@ import {
   BRANCH_ACCENTED_SETTLING_RAIL_CLASS,
 } from "@/components/board/branch-rows"
 import { resolveBoardEventRows } from "@/lib/board/board-event-rows"
+import { AgentRunningChip } from "@/components/timeline/agent-activity-header-chip"
+import { useConversationRunningChip } from "@/hooks/use-conversation-running-chip"
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
   useConversationGraph,
@@ -164,6 +167,8 @@ interface ConversationPanelHeaderProps {
   locator: string
   isHidden: boolean
   copyDone: boolean
+  /** Agent sessions running in this conversation, for the header's chip. */
+  runningChipEntries: readonly ActiveAgentSession[]
   onCopyLink: () => void
   onClose: () => void
 }
@@ -184,6 +189,7 @@ function ConversationPanelHeader({
   locator,
   isHidden,
   copyDone,
+  runningChipEntries,
   onCopyLink,
   onClose,
 }: ConversationPanelHeaderProps) {
@@ -226,6 +232,11 @@ function ConversationPanelHeader({
           </>
         )}
       </SidePanelTitle>
+      {/* Same live pill as the stream header and the board card, over this
+          conversation's own sessions. Compact on mobile so it can't squeeze the
+          topic out of the row. Mounted only with entries: the chip reads
+          useTrace, so an idle panel must not require a TraceProvider. */}
+      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} compact={isMobile} />}
       {revealed ? (
         <ConversationActionsMenu
           workspaceId={workspaceId}
@@ -471,7 +482,13 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
-      <ConversationPanelHeader {...headerProps} post={null} isHidden={false} phase={shellPhase} />
+      <ConversationPanelHeader
+        {...headerProps}
+        post={null}
+        isHidden={false}
+        runningChipEntries={[]}
+        phase={shellPhase}
+      />
       <SidePanelContent className="relative flex flex-col">
         {/* The column's padding, so the placeholder rows sit exactly where the
             real ones will. */}
@@ -493,7 +510,7 @@ interface ConversationPanelBodyProps {
   /** Bumped each time the panel is opened via "Reply in conversation" — opens the composer. */
   openReplySignal: number
   /** Rendered here, not by the parent, so it flips on the same `phase` the rows do. */
-  header: Omit<ConversationPanelHeaderProps, "phase">
+  header: Omit<ConversationPanelHeaderProps, "phase" | "runningChipEntries">
   /** Publishes the scroll container as the mobile floating-composer anchor. */
   contentRef: (el: HTMLElement | null) => void
   /** The shell already painted the skeleton — pick it up rather than blanking. */
@@ -667,6 +684,7 @@ function ConversationPanelBody({
       }),
     [railEvents, conversation.id, memberMessageIds, currentUserId, archivedAsideIds]
   )
+  const runningChipEntries = useConversationRunningChip(workspaceId, eventRows)
 
   // Per-thread-boundary grouping — same derivation as the board card (the panel
   // is the always-expanded peer). Overflow rows link into the thread's own stream
@@ -1055,7 +1073,7 @@ function ConversationPanelBody({
   return (
     // Quote reply from a row routes into this conversation's reply composer.
     <ConversationReadProvider value={conversationReadValue}>
-      <ConversationPanelHeader {...header} phase={phase} />
+      <ConversationPanelHeader {...header} runningChipEntries={runningChipEntries} phase={phase} />
       {/* `relative` + the anchor: on mobile an open reply/branch composer portals
           to this container's bottom as the shared floating pill (same as the
           stream page) instead of sitting in the scrolled flow. */}
