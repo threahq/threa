@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes, type Bot, type Stream } from "@threahq/types"
 import { StreamBotsSection } from "./members-tab"
 import * as workspaceStoreModule from "@/stores/workspace-store"
-import * as inviteActorModule from "@/hooks/use-invite-actor"
+import * as inviteActorModule from "@/hooks/use-e2e-actors"
 import * as useMobileModule from "@/hooks/use-mobile"
 import { botsApi } from "@/api/bots"
 
@@ -21,6 +21,7 @@ function makeBot(overrides: Partial<Bot> = {}): Bot {
 }
 
 type InviteFn = ReturnType<typeof inviteActorModule.useInviteActor>["invite"]
+type RevokeFn = ReturnType<typeof inviteActorModule.useRevokeActor>["revoke"]
 
 function makeStream(overrides: Partial<Stream> = {}): Stream {
   return {
@@ -43,13 +44,14 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
   }
 }
 
-function renderSection(stream: Stream | undefined, invite: InviteFn, isUnlocked = true) {
+function renderSection(stream: Stream | undefined, invite: InviteFn, isUnlocked = true, revoke: RevokeFn = vi.fn()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
   vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([makeBot()] as unknown as ReturnType<
     typeof workspaceStoreModule.useWorkspaceBots
   >)
   vi.spyOn(inviteActorModule, "useInviteActor").mockReturnValue({ invite, isInviting: false, isUnlocked })
+  vi.spyOn(inviteActorModule, "useRevokeActor").mockReturnValue({ revoke, isRevoking: false, isUnlocked })
   return render(
     <QueryClientProvider client={queryClient}>
       <StreamBotsSection workspaceId="ws_1" streamId="stream_1" stream={stream} />
@@ -122,5 +124,80 @@ describe("StreamBotsSection bot grant consent", () => {
 
     await waitFor(() => expect(botsApi.grantStreamAccess).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1"))
     expect(invite).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamBotsSection bot removal", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    Element.prototype.scrollIntoView = vi.fn()
+    vi.spyOn(botsApi, "listStreamBots").mockResolvedValue(["bot_1"])
+    vi.spyOn(botsApi, "revokeStreamAccess").mockResolvedValue(undefined)
+  })
+
+  async function clickRemove(user: ReturnType<typeof userEvent.setup>) {
+    const row = (await screen.findByText("Helper")).closest("div.group")!
+    await user.click(row.querySelector("button")!)
+  }
+
+  it("removes a bot from a plaintext stream immediately — no revoke, no dialog", async () => {
+    const user = userEvent.setup()
+    const revoke = vi.fn()
+    renderSection(makeStream({ e2eEnabled: false }), vi.fn(), true, revoke)
+
+    await clickRemove(user)
+
+    await waitFor(() => expect(botsApi.revokeStreamAccess).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1"))
+    expect(revoke).not.toHaveBeenCalled()
+  })
+
+  it("confirms before revoking an E2E actor, then revokes the key and the channel grant", async () => {
+    const user = userEvent.setup()
+    const revoke = vi.fn().mockResolvedValue(undefined)
+    renderSection(
+      makeStream({ e2eEnabled: true, e2eActors: [{ kind: "bot", actorId: "bot_1" }] }),
+      vi.fn(),
+      true,
+      revoke
+    )
+
+    await clickRemove(user)
+
+    expect(await screen.findByText(/loses access to everything sent from now on/i)).toBeInTheDocument()
+    expect(revoke).not.toHaveBeenCalled()
+    expect(botsApi.revokeStreamAccess).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole("button", { name: "Remove bot" }))
+
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith("bot", "bot_1"))
+    await waitFor(() => expect(botsApi.revokeStreamAccess).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1"))
+  })
+
+  it("leaves the channel grant alone when the revoke fails, so the bot is never half-removed", async () => {
+    const user = userEvent.setup()
+    const revoke = vi.fn().mockRejectedValue(new Error("nope"))
+    renderSection(
+      makeStream({ e2eEnabled: true, e2eActors: [{ kind: "bot", actorId: "bot_1" }] }),
+      vi.fn(),
+      true,
+      revoke
+    )
+
+    await clickRemove(user)
+    await user.click(await screen.findByRole("button", { name: "Remove bot" }))
+
+    await waitFor(() => expect(revoke).toHaveBeenCalled())
+    expect(botsApi.revokeStreamAccess).not.toHaveBeenCalled()
+  })
+
+  it("removes a bot that has a channel grant but no E2E actor row without a dialog", async () => {
+    const user = userEvent.setup()
+    const revoke = vi.fn()
+    renderSection(makeStream({ e2eEnabled: true, e2eActors: [] }), vi.fn(), true, revoke)
+
+    await clickRemove(user)
+
+    await waitFor(() => expect(botsApi.revokeStreamAccess).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1"))
+    expect(revoke).not.toHaveBeenCalled()
   })
 })

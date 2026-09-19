@@ -11,7 +11,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { cn } from "@/lib/utils"
-import { useInviteActor } from "@/hooks/use-invite-actor"
+import { useInviteActor } from "@/hooks/use-e2e-actors"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useWorkspaceBots, type CachedBot } from "@/stores/workspace-store"
 import { StreamTypes } from "@threahq/types"

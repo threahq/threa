@@ -1,5 +1,5 @@
 import { api } from "./client"
-import type { E2eActorKind, InviteActorResponse } from "@threahq/types"
+import type { E2eActorKind, E2eActorMutationResponse } from "@threahq/types"
 
 export const e2eActorsApi = {
   /**
@@ -14,10 +14,26 @@ export const e2eActorsApi = {
     streamId: string,
     kind: E2eActorKind,
     actorId?: string
-  ): Promise<InviteActorResponse> {
-    return api.post<InviteActorResponse>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actors`, {
+  ): Promise<E2eActorMutationResponse> {
+    return api.post<E2eActorMutationResponse>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actors`, {
       kind,
       actorId,
     })
+  },
+
+  /**
+   * Take an actor back off an E2E scratchpad. Owner-only; removes it from the
+   * root and every thread under it, drops the wraps only that actor could open,
+   * and returns the roll that re-keys the stream to whoever is left.
+   */
+  async revoke(
+    workspaceId: string,
+    streamId: string,
+    kind: E2eActorKind,
+    actorId: string
+  ): Promise<E2eActorMutationResponse> {
+    return api.delete<E2eActorMutationResponse>(
+      `/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actors/${kind}/${encodeURIComponent(actorId)}`
+    )
   },
 }

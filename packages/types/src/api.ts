@@ -654,8 +654,8 @@ export interface E2eKeyRoll {
   recipients: E2eKeyRollRecipient[]
 }
 
-/** Response to inviting an actor: the updated stream plus the roll the client must perform. */
-export interface InviteActorResponse {
+/** Response to inviting or revoking an actor: the updated stream plus the roll the client must perform. */
+export interface E2eActorMutationResponse {
   stream: Stream
   keyRoll: E2eKeyRoll | null
 }
