@@ -84,7 +84,6 @@ export interface HermesTurnRunnerOptions {
 interface ConsumedRun {
   runId: string
   streamId: string
-  sealed: boolean
   batcher: StepBatcher
   signal: AbortSignal
   answered: Set<string>
@@ -482,14 +481,7 @@ export class HermesTurnRunner {
     // A replayed admission points at a run whose event transport may be gone
     // already (Hermes drops it when the first subscriber leaves), so its status
     // is the source of truth from the start.
-    void this.consume(
-      turn.invocationId,
-      created.runId,
-      turn.streamId,
-      turn.sealed === true,
-      abort,
-      created.replayed
-    ).catch((error) => {
+    void this.consume(turn.invocationId, created.runId, turn.streamId, abort, created.replayed).catch((error) => {
       this.log(`run ${created.runId} bridge failed: ${this.summarize(error)}`)
       void this.session.failTurn(turn.invocationId, this.summarize(error)).catch(() => undefined)
     })
@@ -506,7 +498,6 @@ export class HermesTurnRunner {
     invocationId: string,
     runId: string,
     streamId: string,
-    sealed: boolean,
     abort: AbortController,
     replayed: boolean
   ): Promise<void> {
@@ -514,7 +505,6 @@ export class HermesTurnRunner {
     const run: ConsumedRun = {
       runId,
       streamId,
-      sealed,
       batcher,
       signal: abort.signal,
       answered: new Set(),
@@ -638,24 +628,10 @@ export class HermesTurnRunner {
    * deny the command, so a lost card never parks the run forever.
    */
   private async resolveApproval(run: ConsumedRun, event: HermesRunEvent): Promise<void> {
-    const { runId, streamId, batcher, signal } = run
+    const { runId, streamId, signal } = run
     const choices = Array.isArray(event.choices) ? event.choices.flatMap((c) => text(c) ?? []) : []
     const requestId = text(event.request_id)
     const command = text(event.command) ?? "(command withheld)"
-    if (run.sealed) {
-      batcher.add({
-        stepType: "tool_error",
-        content: `Approval denied: this scratchpad is encrypted and decision cards cannot be shown there yet (${command})`,
-      })
-      try {
-        await this.client.respondApproval(runId, { choice: "deny", ...(requestId ? { requestId } : {}) })
-      } catch (error) {
-        this.log(`run ${runId} sealed approval denial failed: ${this.summarize(error)}`)
-        return
-      }
-      await this.flushRunSteers(runId)
-      return
-    }
     const options = approvalOptions(choices)
     if (options.length === 0) {
       this.log(`run ${runId} approval request carried no usable choices`)

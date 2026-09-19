@@ -113,6 +113,8 @@ export interface BotDecisionPayload {
   /** The sealed half of the answer's note, on an encrypted stream; `note` is null there. */
   noteCiphertext: string | null
   noteEnvelope: StreamEnvelope | null
+  /** Who answered — a sealed note's AAD names them, so opening one needs it. */
+  decidedBy: string | null
   version: number
 }
 

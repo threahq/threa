@@ -1,4 +1,5 @@
 import { describe, expect, jest, spyOn, test } from "bun:test"
+import { base64ToBytes, bytesToBase64, openMessageAsString, sealMessage } from "@threahq/bot-runtime-client"
 import type {
   BotRuntimeHello,
   CreateDecisionRequestBody,
@@ -4659,6 +4660,21 @@ describe("RemoteSession decisions", () => {
     ...overrides,
   })
 
+  /** The sealed path awaits real WebCrypto, so the card lands a few ticks after the call. */
+  async function waitForRequest(calls: { request: unknown[] }): Promise<void> {
+    for (let i = 0; i < 100 && calls.request.length === 0; i += 1) await new Promise((r) => setTimeout(r, 1))
+  }
+
+  /** Enough of a `TurnRoute` for a decision to find its sealing state and keep the turn alive. */
+  function fakeRoute(responseStreamId: string, sealing: unknown) {
+    return {
+      state: "open",
+      invocation: { id: "binv_sealed", responseStreamId, sealing },
+      touchIdleTimeout: () => {},
+      revoke: () => {},
+    }
+  }
+
   const input = {
     title: "Run `Bash`?",
     body: "Run a command",
@@ -4670,6 +4686,113 @@ describe("RemoteSession decisions", () => {
     externalRef: "krjtt",
     streamId: "stream_root",
   }
+
+  test("a sealed turn seals the question and gets the answer's note back opened", async () => {
+    const ssk = crypto.getRandomValues(new Uint8Array(32))
+    const sealing = {
+      streamId: "stream_root",
+      replyKeyGeneration: 3,
+      replySenderId: "bot_1",
+      replySsk: ssk,
+      callbackToken: "cbtok_1",
+    }
+    const { session, calls, push, internals } = decisionSession({
+      requestDecision: async (_streamId, body) =>
+        makeDecision({ id: body.decisionId!, streamId: "stream_thread", title: "\u200b" }),
+    })
+    internals.botId = "bot_1"
+    // The card is posted on a thread whose key hangs off stream_root, so the
+    // question's AAD must name the thread and the wrap still name the root.
+    internals.inflight.set("binv_sealed", fakeRoute("stream_thread", sealing))
+
+    const pending = session.requestDecision({ ...input, streamId: "stream_thread" })
+    await waitForRequest(calls)
+    const body = calls.request[0]!.body
+    expect({ title: body.title, options: body.options, sealed: !!body.sealed }).toEqual({
+      title: undefined,
+      options: [
+        { id: "allow", tone: "primary" },
+        { id: "deny", tone: "destructive" },
+      ],
+      sealed: true,
+    })
+    expect(new TextDecoder().decode(base64ToBytes(body.sealed!.envelope.aad))).toBe(
+      `stream_thread|decision|${body.decisionId}|bot_1`
+    )
+    expect(
+      JSON.parse(
+        await openMessageAsString({
+          key: ssk,
+          envelope: body.sealed!.envelope,
+          ciphertext: base64ToBytes(body.sealed!.ciphertext),
+        })
+      )
+    ).toEqual({
+      title: "Run `Bash`?",
+      bodyMarkdown: "Run a command",
+      optionLabels: { allow: "Allow", deny: "Deny" },
+    })
+
+    const note = await sealMessage({
+      key: ssk,
+      keyGeneration: 3,
+      payload: "only this once",
+      aad: new TextEncoder().encode(`stream_thread|decision-note|${body.decisionId}|usr_1`),
+    })
+    push(
+      resolvedPush({
+        decisionId: body.decisionId,
+        streamId: "stream_thread",
+        note: null,
+        noteCiphertext: bytesToBase64(note.ciphertext),
+        noteEnvelope: note.envelope,
+        decidedBy: "usr_1",
+      })
+    )
+    const outcome = await pending
+    expect(outcome.status === "resolved" && outcome.note).toBe("only this once")
+    await session.shutdown()
+  })
+
+  test("a sealed note bound to another decider settles the answer without a note", async () => {
+    const ssk = crypto.getRandomValues(new Uint8Array(32))
+    const sealing = {
+      streamId: "stream_root",
+      replyKeyGeneration: 3,
+      replySenderId: "bot_1",
+      replySsk: ssk,
+      callbackToken: "cbtok_1",
+    }
+    const { session, calls, push, internals } = decisionSession({
+      requestDecision: async (_streamId, body) => makeDecision({ id: body.decisionId! }),
+    })
+    internals.botId = "bot_1"
+    internals.inflight.set("binv_sealed", fakeRoute("stream_root", sealing))
+    const pending = session.requestDecision(input)
+    await waitForRequest(calls)
+    const decisionId = calls.request[0]!.body.decisionId!
+    const note = await sealMessage({
+      key: ssk,
+      keyGeneration: 3,
+      payload: "only this once",
+      aad: new TextEncoder().encode(`stream_root|decision-note|${decisionId}|usr_other`),
+    })
+    push(
+      resolvedPush({
+        decisionId,
+        note: null,
+        noteCiphertext: bytesToBase64(note.ciphertext),
+        noteEnvelope: note.envelope,
+        decidedBy: "usr_1",
+      })
+    )
+    const outcome = await pending
+    expect({ status: outcome.status, note: outcome.status === "resolved" ? outcome.note : undefined }).toEqual({
+      status: "resolved",
+      note: null,
+    })
+    await session.shutdown()
+  })
 
   test("posts the card with the session's runtime session id and resolves from the socket push", async () => {
     const { session, calls, push, pendingCount } = decisionSession()

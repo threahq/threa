@@ -1286,8 +1286,9 @@ describe("HermesTurnRunner threads", () => {
 })
 
 describe("HermesTurnRunner sealed turns", () => {
-  test("an approval on a sealed turn is denied with a status frame instead of a card", async () => {
-    const { session, calls } = makeSession()
+  test("an approval on a sealed turn gets the same card as any other", async () => {
+    const { session, calls, setOutcome } = makeSession()
+    setOutcome(resolvedWith("once"))
     const gate = makeGatedClient()
     const runner = makeRunner(gate.client, session)
     await runner.deliverTurn({ ...TURN, sealed: true })
@@ -1299,36 +1300,12 @@ describe("HermesTurnRunner sealed turns", () => {
 
     expect({
       approvals: gate.approvals,
-      decisions: calls.decisions,
+      titles: calls.decisions.map((decision) => decision.title),
       frames: calls.steps.flatMap((call) => call.frames),
     }).toEqual({
-      approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
-      decisions: [],
-      frames: [
-        { stepType: "tool_call", content: "Waiting for approval: rm -rf build" },
-        {
-          stepType: "tool_error",
-          content:
-            "Approval denied: this scratchpad is encrypted and decision cards cannot be shown there yet (rm -rf build)",
-        },
-      ],
-    })
-  })
-
-  test("a sealed approval with no usable choices is still denied", async () => {
-    const { session, calls } = makeSession()
-    const gate = makeGatedClient()
-    const runner = makeRunner(gate.client, session)
-    await runner.deliverTurn({ ...TURN, sealed: true })
-    gate.push({ ...APPROVAL_EVENT, choices: [] })
-    await settle()
-    gate.push({ event: "run.completed", run_id: "run_1", output: "done" })
-    gate.close()
-    await settle()
-
-    expect({ approvals: gate.approvals, decisions: calls.decisions }).toEqual({
-      approvals: [{ runId: "run_1", choice: "deny", requestId: "req_1" }],
-      decisions: [],
+      approvals: [{ runId: "run_1", choice: "once", requestId: "req_1" }],
+      titles: ["Hermes wants to run a command"],
+      frames: [{ stepType: "tool_call", content: "Waiting for approval: rm -rf build" }],
     })
   })
 })
