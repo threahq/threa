@@ -17,7 +17,16 @@
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { BotTraits, E2E_PLACEHOLDER_CONTENT_MARKDOWN, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
-import { botApiGet, createBot, createBotKey, createChannel, createWorkspace, loginAs, TestClient } from "../client"
+import {
+  botApiGet,
+  createBot,
+  createBotKey,
+  createChannel,
+  createWorkspace,
+  getBaseUrl,
+  loginAs,
+  TestClient,
+} from "../client"
 import {
   base64ToBytes,
   buildMessageAad,
@@ -34,6 +43,7 @@ import {
   type StreamEnvelope,
 } from "../../../../extensions/bot-runtime-client/src/crypto"
 import { mintStreamKeyWraps, type BotIdentityKey } from "../../../../extensions/bot-runtime-client/src/sealed"
+import { SealedStreamClient } from "../../../../extensions/bot-runtime-client/src/sealed-stream-client"
 
 setDefaultTimeout(120_000)
 
@@ -55,6 +65,17 @@ interface WireMessage {
   id: string
   content: string
   sealed?: { ciphertext: string; envelope: StreamEnvelope }
+}
+
+/** The first-party stream wire, which carries the ciphertext on the event payload. */
+interface OwnerWireEvent {
+  eventType: string
+  payload: {
+    messageId?: string
+    contentMarkdown?: string
+    ciphertext?: string
+    envelope?: StreamEnvelope
+  }
 }
 
 /**
@@ -437,5 +458,90 @@ describe("public API sealed sends", () => {
       { Authorization: `Bearer ${writeKey}` }
     )
     expect(neither.status).toBe(400)
+  })
+})
+
+describe("SealedStreamClient over the public API", () => {
+  test("opens what the owner sealed and seals a reply the owner opens", async () => {
+    const { client, workspace, ownerUserId, bot, ownerKeyPair, ownerKeyId, bik, rootStreamId } =
+      await setupSealedScratchpad("sdk")
+    // The scopes a sealed CLI or granted bot holds: read the stream, read its
+    // messages, write one back. No runtime, no invocation scope.
+    const apiKey = await createBotKey(
+      client,
+      workspace.id,
+      bot.id,
+      [
+        WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
+        WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ,
+        WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE,
+      ],
+      "sdk-client"
+    )
+
+    const ownerWrapsRes = await client.get<{ wraps: Array<Record<string, string | number>> }>(
+      `/api/workspaces/${workspace.id}/streams/${rootStreamId}/e2e/key-wraps`
+    )
+    const ownerWrap = ownerWrapsRes.data.wraps.find((w) => w.recipientKeyId === ownerKeyId)!
+    const ownerSsk = await unwrapStreamKey({
+      enc: base64ToBytes(String(ownerWrap.wrapEnc)),
+      ct: base64ToBytes(String(ownerWrap.wrapCt)),
+      recipientPrivateKey: ownerKeyPair.privateKey,
+      aad: buildWrapAad({ streamId: rootStreamId, keyGeneration: 0, recipientKeyId: ownerKeyId }),
+    })
+    const fromOwner = `sdk-owner-${testRunId}`
+    const ownerMessageId = `msg_sdkowner_${testRunId}`
+    const ownerSealed = await sealMessage({
+      key: ownerSsk,
+      keyGeneration: 0,
+      payload: serializeSealedPayload(fromOwner),
+      aad: buildMessageAad({ streamId: rootStreamId, messageId: ownerMessageId, senderId: ownerUserId }),
+    })
+    const ownerSend = await client.post<{ message: { id: string } }>(`/api/workspaces/${workspace.id}/messages`, {
+      streamId: rootStreamId,
+      ciphertext: bytesToBase64(ownerSealed.ciphertext),
+      envelope: ownerSealed.envelope,
+      e2eVersion: 2,
+    })
+    expect(ownerSend.status).toBe(201)
+
+    // Everything below is the SDK surface a bot author gets: no wrap fetch, no
+    // unwrap, no AAD — a key source and two calls.
+    const sealedClient = new SealedStreamClient({
+      baseUrl: getBaseUrl(),
+      apiKey,
+      workspaceId: workspace.id,
+      keys: { keysForStream: async () => [{ keyId: bik.publicKeyId, privateKey: bik.privateKey }] },
+    })
+
+    const page = await sealedClient.readMessages(rootStreamId)
+    const read = page.messages.find((m) => m.id === ownerSend.data.message.id)
+    expect(read).toMatchObject({ contentMarkdown: fromOwner, authorType: "user", authorId: ownerUserId })
+
+    const fromBot = `sdk-bot-${testRunId}`
+    const reply = await sealedClient.sendMessage(rootStreamId, fromBot)
+
+    // The owner reads it back through the first-party wire and opens it with
+    // the key it already had — the round trip the two ends actually need.
+    const ownerView = await client.get<{ events: OwnerWireEvent[] }>(
+      `/api/workspaces/${workspace.id}/streams/${rootStreamId}/events`
+    )
+    const event = ownerView.data.events.find(
+      (candidate) => candidate.eventType === "message_created" && candidate.payload.messageId === reply.messageId
+    )
+    expect(event).toBeDefined()
+    expect(event!.payload.contentMarkdown).toBe(E2E_PLACEHOLDER_CONTENT_MARKDOWN)
+    expect(JSON.stringify(ownerView.data.events)).not.toContain(fromBot)
+    const opened = await openMessageAsString({
+      key: ownerSsk,
+      ciphertext: base64ToBytes(event!.payload.ciphertext!),
+      envelope: event!.payload.envelope!,
+    })
+    expect(parseSealedPayload(opened).contentMarkdown).toBe(fromBot)
+    // The AAD names the bot the API key belongs to and the id the client
+    // minted, so the stored body cannot be replayed under another author or id.
+    expect(base64ToBytes(event!.payload.envelope!.aad)).toEqual(
+      buildMessageAad({ streamId: rootStreamId, messageId: reply.clientMessageId, senderId: bot.id })
+    )
   })
 })

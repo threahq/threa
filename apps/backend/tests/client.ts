@@ -14,7 +14,7 @@ import {
   type WorkspacePermissionSlug,
 } from "@threahq/types"
 
-function getBaseUrl(): string {
+export function getBaseUrl(): string {
   // Read at call time, not import time, so setup.ts can set it
   return process.env.TEST_BASE_URL || "http://localhost:3001"
 }
