@@ -104,6 +104,12 @@ threa delegations finish dlg_123 --outcome complete --result - < report.md
 threa delegations finish dlg_123 --outcome fail --error "build broke"
 threa delegations request-access dlg_123            # bot-key only
 
+# end-to-end encryption (your own key, on this machine)
+threa e2e unlock                                    # passphrase at the prompt, or piped on stdin
+threa e2e unlock --key-store file --key-dir ./keys  # keep it in a 0600 file instead of the OS keychain
+threa e2e status                                    # what this machine holds, and whether it is current
+threa e2e lock                                      # forget the key here
+
 # mcp head
 threa mcp serve
 ```
@@ -111,6 +117,8 @@ threa mcp serve
 Any stream argument (`streams read`, `messages send`, `labels add`, `labels remove`, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
 
 `messages send` and `messages edit` take content as an argument; `messages send` reads stdin when the content argument is `-`. `delegations finish --result -` also reads the result markdown from stdin.
+
+`e2e unlock` fetches the encrypted bundle holding your identity key, opens it with your passphrase, and files the key where the bot runtimes keep theirs (`~/.threa/e2e-keys`, or `THREA_E2E_KEY_DIR`). The passphrase is read from the terminal without echo, or from stdin when one is piped; it never leaves the machine, and neither does the key. Where the key lands is an explicit choice — an unavailable OS keychain is an error naming both options, never a quiet move to disk. Run `unlock` again after changing your passphrase or rotating the key; `status` is what tells you the two have drifted apart.
 
 ## Delegation state file
 
