@@ -92,6 +92,7 @@ export {
   SecretServiceStore,
   e2eKeyAccount,
   e2eStreamKeyAccount,
+  e2eUserKeyAccount,
   readLegacyBikFile,
   resolveKeyStore,
   type CommandRunner,
@@ -103,5 +104,5 @@ export {
   type HeldE2eKey,
   type ResolveKeyStoreInput,
 } from "./keyring"
-export { deriveKEK, unwrapPrivate, unlockUserKey, DEFAULT_KDF_PARAMS } from "./user-key"
+export { deriveKEK, unwrapPrivate, unlockUserKey, WrongPassphraseError, DEFAULT_KDF_PARAMS } from "./user-key"
 export type { KdfParams, UnlockUserKeyInput } from "./user-key"

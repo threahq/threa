@@ -6,6 +6,7 @@ import { TokenStore } from "./token-store"
 import { attachmentsNoun } from "./commands/attachments"
 import { conversationsNoun } from "./commands/conversations"
 import { delegationsNoun } from "./commands/delegations"
+import { e2eNoun } from "./commands/e2e"
 import { whoamiCommand } from "./commands/identity"
 import { labelsNoun } from "./commands/labels"
 import { mcpCommand, serveMcp } from "./commands/mcp"
@@ -41,6 +42,7 @@ const NOUNS: NounSpec[] = [
   attachmentsNoun,
   labelsNoun,
   delegationsNoun,
+  e2eNoun,
 ]
 
 const FLAT_REGISTRY = new Map(FLAT_COMMANDS.map((c) => [c.name, c]))

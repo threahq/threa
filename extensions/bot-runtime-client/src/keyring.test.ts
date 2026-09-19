@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -9,6 +9,7 @@ import {
   SecretServiceStore,
   e2eKeyAccount,
   e2eStreamKeyAccount,
+  e2eUserKeyAccount,
   readLegacyBikFile,
   resolveKeyStore,
   type CommandRunner,
@@ -38,6 +39,8 @@ const MISSING: ReturnType<CommandRunner> = { status: -1, stdout: "", stderr: "EN
 function secretOf(record: E2eKeyRecord): string {
   return Buffer.from(JSON.stringify(record), "utf8").toString("base64")
 }
+
+const ROTATED: E2eKeyRecord = { keyId: "bik_2", publicKey: "pub2", privateKey: "priv2" }
 
 describe("e2eKeyAccount", () => {
   const base = { hostname: "box.local", instanceId: "inst/one", identitySeed: "bot_key_secret" }
@@ -72,6 +75,18 @@ describe("e2eKeyAccount", () => {
       expect(account).not.toContain("bot_key_secret")
       expect(account).toMatch(/^[A-Za-z0-9_-]+$/)
     }
+  })
+})
+
+describe("e2eUserKeyAccount", () => {
+  test("a person's own key is filed per workspace and per user, never on a bot scope", () => {
+    const base = { hostname: "box.local", instanceId: "inst/one", identitySeed: "bot_key_secret" }
+    const mine = e2eUserKeyAccount("ws_1", "usr_1")
+
+    expect(mine).toBe(e2eUserKeyAccount("ws_1", "usr_1"))
+    expect(new Set([mine, e2eUserKeyAccount("ws_2", "usr_1"), e2eUserKeyAccount("ws_1", "usr_2")]).size).toBe(3)
+    expect(mine).not.toBe(e2eKeyAccount({ ...base, scope: "host" }))
+    expect(mine).toMatch(/^user-[0-9a-f]{16}$/)
   })
 })
 
@@ -134,6 +149,35 @@ describe("resolveKeyStore", () => {
   })
 })
 
+describe("FileKeyStore", () => {
+  test("write replaces a rotated key where createExclusive would keep the old one", () => {
+    const store = new FileKeyStore({ dir: tempDir() })
+    store.createExclusive("user-abc", RECORD)
+
+    expect(store.createExclusive("user-abc", ROTATED)).toEqual(RECORD)
+    store.write("user-abc", ROTATED)
+
+    expect(store.read("user-abc")).toEqual(ROTATED)
+  })
+
+  test("a written key is readable only by its owner", () => {
+    const dir = tempDir()
+    new FileKeyStore({ dir }).write("user-abc", RECORD)
+
+    expect(statSync(join(dir, "user-abc.json")).mode & 0o777).toBe(0o600)
+  })
+
+  test("remove forgets the account, and asking twice is not an error", () => {
+    const store = new FileKeyStore({ dir: tempDir() })
+    store.write("user-abc", RECORD)
+
+    store.remove("user-abc")
+    store.remove("user-abc")
+
+    expect(store.read("user-abc")).toBeUndefined()
+  })
+})
+
 describe("MacKeychainStore", () => {
   test("writes the secret on stdin, never in argv, and returns what the keychain then holds", () => {
     const calls: { args: string[]; input?: string }[] = []
@@ -159,6 +203,53 @@ describe("MacKeychainStore", () => {
     const store = new MacKeychainStore({ exec: () => MISSING })
     expect(() => store.read("host-abc")).toThrow("macOS keychain unavailable")
   })
+
+  test("write updates an account the keychain already holds, with the secret still on stdin", () => {
+    let held: string | undefined = secretOf(RECORD)
+    let update: string | undefined
+    const exec: CommandRunner = (_command, args, input) => {
+      if (args[0] === "-i") {
+        // Without `-U` the real tool refuses an account that already exists.
+        if (!input?.includes(" -U ")) return { status: 45, stdout: "", stderr: "already exists", unavailable: false }
+        update = input
+        held = secretOf(ROTATED)
+        return ok()
+      }
+      return held ? ok(`${held}\n`) : NOT_FOUND
+    }
+    const store = new MacKeychainStore({ exec })
+
+    store.write("user-abc", ROTATED)
+
+    expect(store.read("user-abc")).toEqual(ROTATED)
+    expect(update).toContain(secretOf(ROTATED))
+  })
+
+  test("a write the keychain rejects throws instead of reading back the old account", () => {
+    const held = secretOf(RECORD)
+    const exec: CommandRunner = (_command, args) =>
+      args[0] === "-i" ? { status: 45, stdout: "", stderr: "denied", unavailable: false } : ok(`${held}\n`)
+
+    expect(() => new MacKeychainStore({ exec }).write("user-abc", ROTATED)).toThrow("rejected the key")
+  })
+
+  test("remove deletes the account and tolerates one that was never there", () => {
+    let held: string | undefined = secretOf(RECORD)
+    const exec: CommandRunner = (_command, args) => {
+      if (args[0] === "delete-generic-password") {
+        if (!held) return NOT_FOUND
+        held = undefined
+        return ok()
+      }
+      return held ? ok(`${held}\n`) : NOT_FOUND
+    }
+    const store = new MacKeychainStore({ exec })
+
+    store.remove("user-abc")
+    store.remove("user-abc")
+
+    expect(store.read("user-abc")).toBeUndefined()
+  })
 })
 
 describe("SecretServiceStore", () => {
@@ -169,6 +260,41 @@ describe("SecretServiceStore", () => {
       return ok(`${stored}\n`)
     }
     expect(new SecretServiceStore({ exec }).createExclusive("host-abc", RECORD).keyId).toBe("bik_winner")
+  })
+
+  test("write replaces the stored account and remove clears it", () => {
+    let held: string | undefined = secretOf(RECORD)
+    const exec: CommandRunner = (_command, args, input) => {
+      if (args[0] === "store") {
+        held = input?.trim()
+        return ok()
+      }
+      if (args[0] === "clear") {
+        held = undefined
+        return ok()
+      }
+      return held ? ok(`${held}\n`) : NOT_FOUND
+    }
+    const store = new SecretServiceStore({ exec })
+
+    store.write("user-abc", ROTATED)
+    expect(store.read("user-abc")).toEqual(ROTATED)
+
+    store.remove("user-abc")
+    expect(store.read("user-abc")).toBeUndefined()
+  })
+
+  test("a store that keeps the old private half under the same id is not mistaken for success", () => {
+    const stale = secretOf({ ...RECORD, privateKey: "stale" })
+    const exec: CommandRunner = (_command, args) => (args[0] === "store" ? ok() : ok(`${stale}\n`))
+
+    expect(() => new SecretServiceStore({ exec }).write("user-abc", RECORD)).toThrow("did not store the key")
+  })
+
+  test("a keyring that swallows the write is reported, not mistaken for success", () => {
+    const exec: CommandRunner = (_command, args) => (args[0] === "store" ? ok() : NOT_FOUND)
+
+    expect(() => new SecretServiceStore({ exec }).write("user-abc", RECORD)).toThrow("did not store the key")
   })
 })
 

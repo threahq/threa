@@ -17,7 +17,7 @@
 
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
 export const E2E_KEY_SCOPES = ["host", "identity", "instance", "stream"] as const
@@ -50,6 +50,15 @@ export interface E2eKeyStore {
   readonly describe: string
   read(account: string): E2eKeyRecord | undefined
   createExclusive(account: string, record: E2eKeyRecord): E2eKeyRecord
+  /**
+   * Replace whatever is filed under `account`. For a person acting on their own
+   * key — unlocking it on this machine, or replacing it after a rotation. A
+   * runtime converging with its peers on a shared key wants `createExclusive`,
+   * which never clobbers the winner of that race.
+   */
+  write(account: string, record: E2eKeyRecord): void
+  /** Forget the account. Silent when nothing is filed there. */
+  remove(account: string): void
 }
 
 function hash16(value: string): string {
@@ -87,6 +96,16 @@ export function e2eKeyAccount(params: {
 /** The account one stream's key is filed under. */
 export function e2eStreamKeyAccount(streamId: string): string {
   return `stream-${hash16(streamId)}`
+}
+
+/**
+ * The account a person's own identity key is filed under, once they unlock it
+ * on this machine. Separate from the bot scopes above: this is the key the web
+ * app minted from their passphrase, and a CLI holding it reads their streams as
+ * them, not as a runtime.
+ */
+export function e2eUserKeyAccount(workspaceId: string, userId: string): string {
+  return `user-${hash16(`${workspaceId}:${userId}`)}`
 }
 
 function decodeRecord(raw: string): E2eKeyRecord | undefined {
@@ -148,6 +167,16 @@ export class FileKeyStore implements E2eKeyStore {
       return winner
     }
   }
+
+  write(account: string, record: E2eKeyRecord): void {
+    const path = this.path(account)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 })
+  }
+
+  remove(account: string): void {
+    rmSync(this.path(account), { force: true })
+  }
 }
 
 interface CommandResult {
@@ -188,6 +217,9 @@ const KEYCHAIN_SERVICE = "threa-e2e"
  * and reinstalled loses access to its own key — `security` is a stable system
  * binary and keeps it.
  */
+const sameRecord = (a: E2eKeyRecord, b: E2eKeyRecord): boolean =>
+  a.keyId === b.keyId && a.publicKey === b.publicKey && a.privateKey === b.privateKey
+
 export class MacKeychainStore implements E2eKeyStore {
   readonly kind = "keychain" as const
   readonly describe = `macOS keychain (service ${KEYCHAIN_SERVICE})`
@@ -224,6 +256,31 @@ export class MacKeychainStore implements E2eKeyStore {
     if (!stored) throw new Error(`macOS keychain accepted no key for ${account}: ${result.stderr || result.stdout}`)
     return stored
   }
+
+  write(account: string, record: E2eKeyRecord): void {
+    // `-U` updates in place; without it `add-generic-password` fails on an
+    // account that already exists. Secret on stdin, as above.
+    const result = this.exec(
+      "/usr/bin/security",
+      ["-i"],
+      `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${account} -w ${encodeSecret(record)}\n`
+    )
+    if (result.unavailable) throw new Error(`macOS keychain unavailable: ${result.stderr}`)
+    if (result.status !== 0) {
+      throw new Error(`macOS keychain rejected the key for ${account}: ${result.stderr || result.stdout}`)
+    }
+    const stored = this.read(account)
+    if (!stored || !sameRecord(stored, record)) {
+      throw new Error(`macOS keychain did not store the key for ${account}: ${result.stderr || result.stdout}`)
+    }
+  }
+
+  remove(account: string): void {
+    const result = this.exec("/usr/bin/security", ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account])
+    if (result.unavailable) throw new Error(`macOS keychain unavailable: ${result.stderr}`)
+    // A non-zero status here is "no such item", which is the state asked for.
+    if (this.read(account)) throw new Error(`macOS keychain kept the key for ${account}: ${result.stderr}`)
+  }
 }
 
 /**
@@ -259,6 +316,28 @@ export class SecretServiceStore implements E2eKeyStore {
     const stored = this.read(account)
     if (!stored) throw new Error(`Secret Service stored no key for ${account}: ${result.stderr || result.stdout}`)
     return stored
+  }
+
+  write(account: string, record: E2eKeyRecord): void {
+    const result = this.exec(
+      "secret-tool",
+      ["store", "--label", `Threa E2E key ${account}`, "service", KEYCHAIN_SERVICE, "account", account],
+      encodeSecret(record)
+    )
+    if (result.unavailable) throw new Error(`Secret Service unavailable: ${result.stderr}`)
+    if (result.status !== 0) {
+      throw new Error(`Secret Service rejected the key for ${account}: ${result.stderr || result.stdout}`)
+    }
+    const stored = this.read(account)
+    if (!stored || !sameRecord(stored, record)) {
+      throw new Error(`Secret Service did not store the key for ${account}: ${result.stderr || result.stdout}`)
+    }
+  }
+
+  remove(account: string): void {
+    const result = this.exec("secret-tool", ["clear", "service", KEYCHAIN_SERVICE, "account", account])
+    if (result.unavailable) throw new Error(`Secret Service unavailable: ${result.stderr}`)
+    if (this.read(account)) throw new Error(`Secret Service kept the key for ${account}: ${result.stderr}`)
   }
 }
 
