@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, createEvent, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import type { Editor } from "@tiptap/react"
+import { Editor as TipTapEditor } from "@tiptap/core"
 import { EditorToolbar } from "./editor-toolbar"
+import { createEditorExtensions } from "./editor-extensions"
 import * as editorBehaviors from "./editor-behaviors"
 import * as contextsModule from "@/contexts"
 
@@ -133,6 +135,25 @@ describe("EditorToolbar", () => {
     expect(editor.__chainState.focus).toHaveBeenCalled()
     expect(editor.__chainState.toggleBold).toHaveBeenCalled()
     expect(editor.__run).toHaveBeenCalled()
+  })
+
+  it("wraps the selection in math delimiters from the Math button", async () => {
+    const user = userEvent.setup()
+    const element = document.createElement("div")
+    document.body.append(element)
+    const realEditor = new TipTapEditor({
+      element,
+      extensions: createEditorExtensions({ placeholder: "Type a message..." }),
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "area x^2" }] }] },
+    })
+    realEditor.commands.setTextSelection({ from: 6, to: 9 })
+
+    render(<EditorToolbar editor={realEditor as unknown as Editor} isVisible inline />)
+    await user.click(screen.getByRole("button", { name: "Math" }))
+
+    expect(realEditor.getText()).toBe("area $x^2$")
+    realEditor.destroy()
+    element.remove()
   })
 
   it("omits dead shortcut hints when a global shortcut claims the editor binding", async () => {
