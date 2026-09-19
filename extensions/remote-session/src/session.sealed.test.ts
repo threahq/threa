@@ -56,7 +56,7 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-function makeConfig(bikPath: string): RemoteSessionConfig {
+function makeConfig(dir: string): RemoteSessionConfig {
   return {
     baseUrl: "https://app.threa.io",
     workspaceId: "ws_1",
@@ -69,7 +69,10 @@ function makeConfig(bikPath: string): RemoteSessionConfig {
     idleTimeoutMs: 3_600_000,
     sealedFullTrace: true,
     traceMode: "headline",
-    bikPath,
+    keyScope: "host",
+    keyStore: "file",
+    keyDir: dir,
+    bikPath: join(dir, "bik.json"),
   }
 }
 
@@ -223,7 +226,7 @@ function makeSealedSession(delegate: Partial<RemoteSessionDelegate> = {}) {
     updatePresence: async () => {},
   }
   const session = new RemoteSession({
-    config: makeConfig(join(dir, "bik.json")),
+    config: makeConfig(dir),
     client: client as unknown as ThreaClient,
     delegate: { deliverTurn: async () => {}, ...delegate },
     runtime: RUNTIME,
@@ -239,7 +242,8 @@ async function ownerBuildsSealedClaim(
   promptExtras?: SealedPayloadExtras
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const bik = await (session as any).bik.ensure()
+  const [bik] = await (session as any).bik.ensure()
+  if (!bik) throw new Error("no key")
   const ssk = new Uint8Array(32)
   crypto.getRandomValues(ssk)
   const raw = base64ToBytes(bik.publicKeyBase64)
@@ -936,7 +940,7 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
       recordSealedSteps: async () => {},
     }
     const session = new RemoteSession({
-      config: { ...makeConfig(join(dir, "bik.json")), e2e: true },
+      config: { ...makeConfig(dir), e2e: true },
       client: client as unknown as ThreaClient,
       delegate: { deliverTurn: async () => {} },
       runtime: RUNTIME,

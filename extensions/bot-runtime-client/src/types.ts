@@ -50,10 +50,15 @@ export interface BotRuntimeHello {
   /** ISO cursor echoed from the previous hello ack so the bootstrap only replays unseen events. */
   sinceCursor?: string
   /**
-   * Base64 X25519 public half of this install's BIK (see `BikKeystore`). Must
-   * ride every hello AND presence write together with `publicKeyId` — the
-   * server's instance upsert overwrites the stored key by default, so omitting
-   * it on a heartbeat clears the registration and breaks sealed-claim coverage.
+   * This install's end-to-end keyring (see `E2eKeyring`). The server stores the
+   * advertised set as the instance's complete keyring, so it must ride every
+   * hello AND presence write: omitting it on a heartbeat leaves the stored set
+   * alone, and sending `[]` unregisters every key.
+   */
+  e2eKeys?: { keyId: string; publicKey: string; streamId?: string }[]
+  /**
+   * The keyring's default key, for a server from before the registry. Both name
+   * the same key, so a mixed-version rollout addresses one key either way.
    */
   publicKey?: string
   publicKeyId?: string

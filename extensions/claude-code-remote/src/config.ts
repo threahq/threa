@@ -21,8 +21,9 @@ export const CLAUDE_CONNECTOR_IDENTITY: ConnectorIdentity = {
 export function loadChannelConfig(input: LoadConfigInput): LoadConfigResult {
   const result = loadConfig(input, CLAUDE_CONNECTOR_IDENTITY)
   if ("error" in result) return result
-  // Colocate the channel's BIK (its sealed-scratchpad identity key) with its
-  // config, unless the user pointed it elsewhere (THREA_BIK_PATH / file bikPath).
+  // Where this channel's pre-keyring BIK was colocated with its config. The
+  // keyring adopts that key rather than minting a fresh one, so the sealed
+  // scratchpads an owner already wrapped to it keep opening.
   return {
     config: { ...result.config, localCwd: input.cwd, bikPath: result.config.bikPath ?? join(CONFIG_DIR, "bik.json") },
   }

@@ -14,8 +14,10 @@ import {
   serializeSealedPayload,
   type SealedPayloadExtras,
 } from "./crypto"
+import { E2eKeyring, FileKeyStore, readLegacyBikFile, type E2eKeyRecord } from "./keyring"
 import {
-  BikKeystore,
+  BotKeyring,
+  mintE2eKeyRecord,
   openSealedTurnContext,
   parseSealedTurnContext,
   scrubSealedError,
@@ -82,64 +84,110 @@ function randomSsk(): Uint8Array {
   return key
 }
 
-describe("BikKeystore", () => {
-  test("generates, persists 0600, and reloads the same key", async () => {
-    const path = join(tempDir(), "bik.json")
-    const store = new BikKeystore({ path, log: () => {} })
-    const bik = await store.ensure()
-    expect(bik).toBeDefined()
-    expect(bik!.publicKeyId.startsWith("bik_")).toBe(true)
+const ACCOUNT = "host-test"
+
+function keyring(dir: string, legacy?: () => E2eKeyRecord | undefined): BotKeyring {
+  return new BotKeyring({
+    keyring: () =>
+      new E2eKeyring({
+        store: new FileKeyStore({ dir }),
+        account: ACCOUNT,
+        mint: mintE2eKeyRecord,
+        log: () => {},
+        ...(legacy ? { legacy } : {}),
+      }),
+    log: () => {},
+  })
+}
+
+describe("BotKeyring", () => {
+  test("mints, persists 0600, and reloads the same key", async () => {
+    const dir = tempDir()
+    const store = keyring(dir)
+    const [key] = await store.ensure()
+    expect(key).toBeDefined()
+    expect(key!.publicKeyId.startsWith("bik_")).toBe(true)
+    const path = join(dir, `${ACCOUNT}.json`)
     expect(existsSync(path)).toBe(true)
     expect(statSync(path).mode & 0o777).toBe(0o600)
-    expect(store.presenceFields()).toEqual({ publicKey: bik!.publicKeyBase64, publicKeyId: bik!.publicKeyId })
+    expect(store.presenceFields()).toEqual({
+      e2eKeys: [{ keyId: key!.publicKeyId, publicKey: key!.publicKeyBase64 }],
+      publicKey: key!.publicKeyBase64,
+      publicKeyId: key!.publicKeyId,
+    })
 
-    const reloaded = await new BikKeystore({ path, log: () => {} }).ensure()
-    expect(reloaded!.publicKeyId).toBe(bik!.publicKeyId)
-    expect(reloaded!.publicKeyBase64).toBe(bik!.publicKeyBase64)
+    const [reloaded] = await keyring(dir).ensure()
+    expect(reloaded!.publicKeyId).toBe(key!.publicKeyId)
+    expect(reloaded!.publicKeyBase64).toBe(key!.publicKeyBase64)
   })
 
   test("concurrent ensure() calls mint exactly one keypair", async () => {
-    const path = join(tempDir(), "bik.json")
-    const store = new BikKeystore({ path, log: () => {} })
+    const dir = tempDir()
+    const store = keyring(dir)
     const [a, b] = await Promise.all([store.ensure(), store.ensure()])
-    expect(a!.publicKeyId).toBe(b!.publicKeyId)
-    const persisted = JSON.parse(readFileSync(path, "utf8")) as { publicKeyId: string }
-    expect(persisted.publicKeyId).toBe(a!.publicKeyId)
+    expect(a[0]!.publicKeyId).toBe(b[0]!.publicKeyId)
+    const persisted = JSON.parse(readFileSync(join(dir, `${ACCOUNT}.json`), "utf8")) as { keyId: string }
+    expect(persisted.keyId).toBe(a[0]!.publicKeyId)
   })
 
-  test("two stores racing on the same path end up with the one key that reached disk", async () => {
-    const path = join(tempDir(), "bik.json")
-    const [a, b] = await Promise.all([
-      new BikKeystore({ path, log: () => {} }).ensure(),
-      new BikKeystore({ path, log: () => {} }).ensure(),
-    ])
-    const persisted = JSON.parse(readFileSync(path, "utf8")) as { publicKeyId: string }
-    expect(a!.publicKeyId).toBe(persisted.publicKeyId)
-    expect(b!.publicKeyId).toBe(persisted.publicKeyId)
+  test("two keyrings racing on one account end up with the key that reached disk", async () => {
+    const dir = tempDir()
+    const [a, b] = await Promise.all([keyring(dir).ensure(), keyring(dir).ensure()])
+    const persisted = JSON.parse(readFileSync(join(dir, `${ACCOUNT}.json`), "utf8")) as { keyId: string }
+    expect(a[0]!.publicKeyId).toBe(persisted.keyId)
+    expect(b[0]!.publicKeyId).toBe(persisted.keyId)
   })
 
-  test("a malformed file is replaced with a fresh key, loudly", async () => {
-    const path = join(tempDir(), "bik.json")
+  test("two runtimes sharing an account share one key, so the owner wraps to one recipient", async () => {
+    const dir = tempDir()
+    const [first] = await keyring(dir).ensure()
+    const [second] = await keyring(dir).ensure()
+    expect(second!.publicKeyId).toBe(first!.publicKeyId)
+    expect(second!.publicKeyBase64).toBe(first!.publicKeyBase64)
+  })
+
+  test("a single-key BIK file from before keyrings is adopted, keeping its id", async () => {
+    const dir = tempDir()
+    const legacyPath = join(tempDir(), "bik.json")
+    const minted = await mintE2eKeyRecord()
+    await Bun.write(
+      legacyPath,
+      JSON.stringify({ publicKeyId: minted.keyId, publicKey: minted.publicKey, privateKey: minted.privateKey })
+    )
+    const [adopted] = await keyring(dir, () => readLegacyBikFile(legacyPath)).ensure()
+    expect(adopted!.publicKeyId).toBe(minted.keyId)
+    const persisted = JSON.parse(readFileSync(join(dir, `${ACCOUNT}.json`), "utf8")) as { keyId: string }
+    expect(persisted.keyId).toBe(minted.keyId)
+  })
+
+  test("an unreadable stored key fails loudly instead of being overwritten", async () => {
+    const dir = tempDir()
+    const path = join(dir, `${ACCOUNT}.json`)
     await Bun.write(path, "not json")
     const logs: string[] = []
-    const bik = await new BikKeystore({ path, log: (m) => logs.push(m) }).ensure()
-    expect(bik).toBeDefined()
-    expect(logs.length).toBeGreaterThan(0)
+    const store = new BotKeyring({
+      keyring: () =>
+        new E2eKeyring({ store: new FileKeyStore({ dir }), account: ACCOUNT, mint: mintE2eKeyRecord, log: () => {} }),
+      log: (message) => logs.push(message),
+    })
+    expect(await store.ensure()).toEqual([])
+    expect(logs.join("\n")).toContain(path)
+    expect(readFileSync(path, "utf8")).toBe("not json")
   })
 
   test("presenceFields is empty before ensure()", () => {
-    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
-    expect(store.presenceFields()).toEqual({})
+    expect(keyring(tempDir()).presenceFields()).toEqual({})
   })
 })
 
 describe("openSealedTurnContext", () => {
-  async function buildSealedClaim(bikStore: BikKeystore): Promise<{
+  async function buildSealedClaim(bikStore: BotKeyring): Promise<{
     sealed: SealedTurnContext
     ssk: Uint8Array
     oldSsk: Uint8Array
   }> {
-    const bik = (await bikStore.ensure())!
+    const [bik] = await bikStore.ensure()
+    if (!bik) throw new Error("no key")
     const oldSsk = randomSsk()
     const ssk = randomSsk()
     const wrapFor = (generation: number, key: Uint8Array) =>
@@ -172,9 +220,9 @@ describe("openSealedTurnContext", () => {
   }
 
   test("opens prompt + multi-generation history and yields a working SealingState", async () => {
-    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
+    const store = keyring(tempDir())
     const { sealed, ssk } = await buildSealedClaim(store)
-    const opened = await openSealedTurnContext({ sealed, identity: store.current!, streamId: STREAM_ID })
+    const opened = await openSealedTurnContext({ sealed, identities: store.identities, streamId: STREAM_ID })
 
     expect(opened.promptMarkdown).toBe("Do the thing, please")
     expect(opened.promptAttachmentRefs).toEqual([])
@@ -188,19 +236,20 @@ describe("openSealedTurnContext", () => {
   })
 
   test("history sealed under an ungranted generation is skipped, not fatal", async () => {
-    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
+    const store = keyring(tempDir())
     const { sealed } = await buildSealedClaim(store)
     // Drop the generation-1 wrap: its history row becomes unopenable.
     sealed.wraps = sealed.wraps.filter((w) => w.keyGeneration !== 1)
-    const opened = await openSealedTurnContext({ sealed, identity: store.current!, streamId: STREAM_ID })
+    const opened = await openSealedTurnContext({ sealed, identities: store.identities, streamId: STREAM_ID })
     expect(opened.history).toEqual([
       { role: "assistant", sequence: "11", contentMarkdown: "earlier answer", attachmentRefs: [] },
     ])
   })
 
   test("attachment refs sealed into the prompt and history payloads surface on the opened turn", async () => {
-    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
-    const bik = (await store.ensure())!
+    const store = keyring(tempDir())
+    const [bik] = await store.ensure()
+    if (!bik) throw new Error("no key")
     const ssk = randomSsk()
     const wrap = await ownerWrapSsk(
       ssk,
@@ -230,7 +279,7 @@ describe("openSealedTurnContext", () => {
         prompt,
         reply: { keyGeneration: 0, senderId: SENDER_ID },
       },
-      identity: bik,
+      identities: [bik],
       streamId: STREAM_ID,
     })
     expect(opened.promptAttachmentRefs).toEqual([promptRef])
@@ -238,19 +287,37 @@ describe("openSealedTurnContext", () => {
   })
 
   test("a missing reply-generation wrap is fatal", async () => {
-    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
+    const store = keyring(tempDir())
     const { sealed } = await buildSealedClaim(store)
     sealed.wraps = sealed.wraps.filter((w) => w.keyGeneration !== 2)
-    await expect(openSealedTurnContext({ sealed, identity: store.current!, streamId: STREAM_ID })).rejects.toThrow(
+    await expect(openSealedTurnContext({ sealed, identities: store.identities, streamId: STREAM_ID })).rejects.toThrow(
       "no SSK wrap"
     )
   })
 
-  test("a wrap bound to a different stream id does not open (AAD binding)", async () => {
-    const store = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
+  test("a keyring tries every key, so a turn wrapped to a non-default one still opens", async () => {
+    const store = keyring(tempDir())
+    const other = keyring(tempDir())
+    const { sealed, ssk } = await buildSealedClaim(store)
+    const identities = [...(await other.ensure()), ...store.identities]
+    const opened = await openSealedTurnContext({ sealed, identities, streamId: STREAM_ID })
+    expect(bytesToBase64(opened.sealing.replySsk)).toBe(bytesToBase64(ssk))
+  })
+
+  test("a turn wrapped to a key the runtime does not hold is fatal", async () => {
+    const store = keyring(tempDir())
+    const other = keyring(tempDir())
     const { sealed } = await buildSealedClaim(store)
     await expect(
-      openSealedTurnContext({ sealed, identity: store.current!, streamId: "stream_01OTHER" })
+      openSealedTurnContext({ sealed, identities: await other.ensure(), streamId: STREAM_ID })
+    ).rejects.toThrow()
+  })
+
+  test("a wrap bound to a different stream id does not open (AAD binding)", async () => {
+    const store = keyring(tempDir())
+    const { sealed } = await buildSealedClaim(store)
+    await expect(
+      openSealedTurnContext({ sealed, identities: store.identities, streamId: "stream_01OTHER" })
     ).rejects.toThrow()
   })
 })
@@ -355,7 +422,8 @@ describe("scrubSealedError", () => {
 describe("openSealedAck (session-control command acks)", () => {
   test("unwraps the SSK and yields a SealingState that seals an ack the owner opens", async () => {
     const { openSealedAck, parseSealedAckContext, sealReply } = await import("./sealed")
-    const bik = (await new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} }).ensure())!
+    const [bik] = await keyring(tempDir()).ensure()
+    if (!bik) throw new Error("no key")
     const ssk = randomSsk()
     const wrap = await ownerWrapSsk(
       ssk,
@@ -368,7 +436,7 @@ describe("openSealedAck (session-control command acks)", () => {
     })
     expect(ack).toBeDefined()
 
-    const sealing = await openSealedAck({ ack: ack!, identity: bik, streamId: STREAM_ID })
+    const sealing = await openSealedAck({ ack: ack!, identities: [bik], streamId: STREAM_ID })
     expect(sealing.replyKeyGeneration).toBe(2)
     expect(sealing.callbackToken).toBe("")
 
@@ -386,11 +454,12 @@ describe("openSealedAck (session-control command acks)", () => {
 
   test("throws when no wrap covers the reply generation", async () => {
     const { openSealedAck } = await import("./sealed")
-    const bik = (await new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} }).ensure())!
+    const [bik] = await keyring(tempDir()).ensure()
+    if (!bik) throw new Error("no key")
     await expect(
       openSealedAck({
         ack: { wraps: [], reply: { keyGeneration: 2, senderId: SENDER_ID } },
-        identity: bik,
+        identities: [bik],
         streamId: STREAM_ID,
       })
     ).rejects.toThrow("no SSK wrap")
@@ -410,8 +479,9 @@ describe("mintStreamKeyWraps (harness-created E2E scratchpads)", () => {
   test("each recipient's wrap unwraps to the same key under its own slot AAD", async () => {
     const owner = await ownerSuite.kem.generateKeyPair()
     const ownerPublicKey = bytesToBase64(new Uint8Array(await ownerSuite.kem.serializePublicKey(owner.publicKey)))
-    const bikStore = new BikKeystore({ path: join(tempDir(), "bik.json"), log: () => {} })
-    const bik = (await bikStore.ensure())!
+    const bikStore = keyring(tempDir())
+    const [bik] = await bikStore.ensure()
+    if (!bik) throw new Error("no key")
 
     const { mintStreamKeyWraps } = await import("./sealed")
     const { unwrapStreamKey } = await import("./crypto")

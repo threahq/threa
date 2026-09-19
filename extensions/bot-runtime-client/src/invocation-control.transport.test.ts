@@ -625,7 +625,7 @@ describe("BotRuntimeTransport observed claims", () => {
     const transport = makeTransport()
     transport.observeClaim({
       ...observation((update) => (updates.push(update), "applied")),
-      sealed: { identity, streamId, callbackToken: "callback_secret" },
+      sealed: { identities: [identity], streamId, callbackToken: "callback_secret" },
     })
     await waitFor(() => updates.length === 1)
 
@@ -668,7 +668,7 @@ describe("BotRuntimeTransport observed claims", () => {
     const transport = makeTransport({ log: (message) => logs.push(message), controlRetryDelayMs: 1_000 })
     const handle = transport.observeClaim({
       ...observation(callback),
-      sealed: { identity, streamId: "stream_root", callbackToken: "callback_secret" },
+      sealed: { identities: [identity], streamId: "stream_root", callbackToken: "callback_secret" },
     })
     await waitFor(() => requests.some((request) => request.body?.restartRequiredRevision === 3))
 

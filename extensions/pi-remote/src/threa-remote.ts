@@ -15,15 +15,23 @@ import { homedir, hostname, platform, tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import {
   attachmentLocalPath,
-  BikKeystore,
+  BotKeyring,
   BotRuntimeTransport,
   THREA_CALLBACK_TOKEN_HEADER,
   base64ToBytes,
   bytesToBase64,
   decryptAttachmentBytes,
   encryptAttachmentBytes,
+  E2E_KEY_SCOPES,
+  E2E_KEY_STORE_KINDS,
+  E2eKeyring,
+  FileKeyStore,
+  e2eKeyAccount,
+  mintE2eKeyRecord,
   mintStreamKeyWraps,
   openSealedAck,
+  readLegacyBikFile,
+  resolveKeyStore,
   openSealedTurnContext,
   parseSealedAckContext,
   parseSealedTurnContext,
@@ -35,6 +43,8 @@ import {
   type AttachmentRef,
   type BotIdentityKey,
   type BotRuntimeHello,
+  type E2eKeyScope,
+  type E2eKeyStoreKind,
   type InvocationInputUpdate,
   type ObservedClaimHandle,
   type DecryptedHistoryItem,
@@ -89,6 +99,14 @@ let CONFIG_PATH = join(DEFAULT_STORAGE_DIRECTORY, "threa-remote.json")
 // stable across restarts — the owner's wraps target its `publicKeyId`, so
 // rotating it would orphan every wrap.
 let BIK_PATH = join(DEFAULT_STORAGE_DIRECTORY, "threa-remote-bik.json")
+// Threa's E2E keys live beside Threa rather than beside this runtime: the
+// default scope is one key per host, so every Threa runtime on the box has to
+// look in the same place to find it. Tests keep theirs in the per-run storage
+// directory and never reach for the operator's real keychain.
+let E2E_KEY_DIR = isTestEntrypoint()
+  ? join(DEFAULT_STORAGE_DIRECTORY, "e2e-keys")
+  : join(homedir(), ".threa", "e2e-keys")
+const E2E_KEY_STORE_DEFAULT: E2eKeyStoreKind | undefined = isTestEntrypoint() ? "file" : undefined
 // Per-session sidecar (`threa-remote-pending-<runtimeSessionId>.json`) carrying
 // the in-flight claim across `/reload`: Pi clears the extension module cache on
 // reload, so every top-level binding (pending, observations, captured texts)
@@ -216,6 +234,16 @@ type Config = {
    * GAM memory extraction).
    */
   e2e?: boolean
+  /**
+   * Which installs share one end-to-end key: `host` (the default — every Threa
+   * runtime on this box), `identity` (this bot, wherever it runs), or
+   * `instance` (this install alone).
+   */
+  keyScope?: E2eKeyScope
+  /** Where that key is kept. Unset lets a working OS keychain win over a 0600 file. */
+  keyStore?: E2eKeyStoreKind
+  /** Directory for the file store. Defaults to `~/.threa/e2e-keys`. */
+  keyDir?: string
   /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
@@ -271,9 +299,9 @@ type ClaimedInvocation = {
   trigger?: string
   requiredCapability?: string
   metadata?: Record<string, unknown>
-  /** Present on a sealed (E2E) claim; absent on plaintext. The bot opened it with its BIK at claim time. */
+  /** Present on a sealed (E2E) claim; absent on plaintext. The bot opened it with its keyring at claim time. */
   sealing?: SealingState
-  sealedIdentity?: BotIdentityKey
+  sealedIdentities?: BotIdentityKey[]
   /** Decrypted prior-message context, pre-formatted for the prompt (no plaintext fetch on E2E). */
   sealedContextText?: string
   /** Immutable history text/attachment paths retained while source attachments are replaced by edits. */
@@ -403,18 +431,55 @@ let archiveKillWindow: typeof killOwnWindow = killOwnWindow
 // when the socket is down). Built lazily once the session ctx is known; torn
 // down + rebuilt on a workspace/auth change so it never reuses a stale target.
 let transport: BotRuntimeTransport | undefined
-// This install's BIK. `ensure()`d before the first presence write so the public
-// half rides every hello/presence body — the backend's instance upsert
-// overwrites the stored key by default, so omitting it on a heartbeat would
-// clear the registration and break sealed-claim wrap coverage.
-function createBikKeystore(path: string): BikKeystore {
-  return new BikKeystore({
-    path,
+// This install's E2E keyring. `ensure()`d before the first presence write so it
+// rides every hello/presence body — the backend stores the advertised set as
+// this instance's keyring, so omitting it on a heartbeat leaves a stale set
+// registered and sending none would break sealed-claim wrap coverage.
+function createBotKeyring(): BotKeyring {
+  return new BotKeyring({
+    keyring: () => {
+      const scope = configuredKeyScope()
+      const dir = config?.keyDir ?? E2E_KEY_DIR
+      const account = e2eKeyAccount({
+        scope,
+        hostname: hostname(),
+        instanceId: config?.instanceId ?? "pi-remote",
+        identitySeed: config?.apiKey ?? "",
+      })
+      return new E2eKeyring({
+        store: resolveKeyStore({
+          ...(configuredKeyStore() ? { requested: configuredKeyStore()! } : {}),
+          platform: process.platform,
+          dir,
+          hasExistingFileKey: new FileKeyStore({ dir }).read(account) !== undefined,
+        }),
+        account,
+        mint: mintE2eKeyRecord,
+        legacy: () => readLegacyBikFile(BIK_PATH),
+        log: (message) => console.error(`Threa remote: ${message}`),
+      })
+    },
     log: (message) => console.error(`Threa remote: ${message}`),
   })
 }
 
-let bikKeystore = createBikKeystore(BIK_PATH)
+function configuredKeyScope(): E2eKeyScope {
+  const configured = config?.keyScope
+  if (configured && !E2E_KEY_SCOPES.includes(configured)) {
+    throw new Error(`Invalid keyScope: ${configured} (expected ${E2E_KEY_SCOPES.join(", ")})`)
+  }
+  return configured ?? "host"
+}
+
+function configuredKeyStore(): E2eKeyStoreKind | undefined {
+  const configured = config?.keyStore
+  if (configured && !E2E_KEY_STORE_KINDS.includes(configured)) {
+    throw new Error(`Invalid keyStore: ${configured} (expected ${E2E_KEY_STORE_KINDS.join(", ")})`)
+  }
+  return configured ?? E2E_KEY_STORE_DEFAULT
+}
+
+let botKeyring = createBotKeyring()
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -954,7 +1019,7 @@ function presenceBody(status: "available" | "busy" | "offline" | "error", status
     manifest: PI_MANIFEST,
     capabilities: buildRuntimeCapabilities(ctx),
     statusText,
-    ...bikKeystore.presenceFields(),
+    ...botKeyring.presenceFields(),
   }
 }
 
@@ -966,7 +1031,7 @@ async function heartbeat(
   if (!config || (sessionTearingDown && status !== "offline")) return
   // Cached after the first call; awaiting here guarantees no presence write
   // ever omits the BIK (the upsert would clear the registered key).
-  await bikKeystore.ensure()
+  await botKeyring.ensure()
   const body = presenceBody(status, statusText, ctx)
   // Prefer the socket once the transport exists (it falls back to HTTP itself
   // when the socket is down); before the transport is built (a heartbeat that
@@ -1490,7 +1555,7 @@ function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string
  */
 async function resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
   if (!config) throw new Error("Threa remote config not loaded")
-  const bik = await bikKeystore.ensure()
+  const [bik] = await botKeyring.ensure()
   if (!bik) throw new Error("e2e is enabled but this install could not create a bot identity key (see stderr)")
   try {
     const body = await request<{ data: { keyId: string; publicKey: string } }>(
@@ -1518,7 +1583,7 @@ async function provisionE2eStreamKey(
   e2e: { ownerKeyId: string; ownerPublicKey: string }
 ): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
-  const bik = await bikKeystore.ensure()
+  const [bik] = await botKeyring.ensure()
   if (!bik) throw new Error("BIK unavailable for provisioning")
   const { wraps } = await mintStreamKeyWraps({
     streamId: rootStreamId,
@@ -1934,7 +1999,7 @@ async function observeInvocation(
 ): Promise<boolean> {
   const activeTransport = ensureTransport(pi, ctx)
   if (!activeTransport) return false
-  const identity = invocation.sealedIdentity
+  const identities = invocation.sealedIdentities ?? []
   let observed!: ObservedInvocationContext
   const handle = activeTransport.observeClaim({
     invocationId: invocation.id,
@@ -1947,10 +2012,10 @@ async function observeInvocation(
       onCancelled: () => cancelObservedTurn(invocation, pi, ctx),
       onClaimLost: () => cancelObservedTurn(invocation, pi, ctx),
     },
-    ...(invocation.sealing && identity
+    ...(invocation.sealing && identities.length > 0
       ? {
           sealed: {
-            identity,
+            identities,
             streamId: invocation.rootStreamId ?? invocation.activeStreamId,
             callbackToken: invocation.sealing.callbackToken,
           },
@@ -1992,7 +2057,7 @@ function pendingSnapshotPath(runtimeSessionId: string): string {
 }
 
 function serializeInvocationForSnapshot(invocation: ClaimedInvocation): Record<string, unknown> {
-  const { sealing, sealedIdentity: _sealedIdentity, ...rest } = invocation
+  const { sealing, sealedIdentities: _sealedIdentities, ...rest } = invocation
   if (!sealing) return rest
   return {
     ...rest,
@@ -2215,7 +2280,7 @@ async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext
   })
   await Promise.all(
     [invocation, ...restoredSteers.map((item) => item.invocation)].map(async (restored) => {
-      if (restored.sealing) restored.sealedIdentity = (await bikKeystore.ensure()) ?? undefined
+      if (restored.sealing) restored.sealedIdentities = await botKeyring.ensure()
     })
   )
   pending = invocation
@@ -2942,13 +3007,13 @@ async function hydrateSealedClaim(
   }
   const sealed = parseSealedTurnContext(claimed.sealedContext)
   if (!sealed) return fail("malformed sealedContext")
-  const bik = await bikKeystore.ensure()
-  if (!bik) return fail("no bot identity key")
+  const identities = await botKeyring.ensure()
+  if (identities.length === 0) return fail("no bot identity key")
   // Wraps and the owner's message AAD bind to the ROOT stream that owns the
   // E2E key (a thread inherits the root's key), so hydrate against it.
   const streamId = claimed.rootStreamId ?? claimed.activeStreamId
   try {
-    const opened = await openSealedTurnContext({ sealed, identity: bik, streamId })
+    const opened = await openSealedTurnContext({ sealed, identities, streamId })
     const historyLines = opened.history.map((item: DecryptedHistoryItem) => `- ${item.role}: ${item.contentMarkdown}`)
     const historyText =
       historyLines.length > 0 ? ["Recent Threa stream context (oldest first):", ...historyLines].join("\n") : ""
@@ -2957,7 +3022,7 @@ async function hydrateSealedClaim(
       sealedContext: undefined,
       promptMarkdown: opened.promptMarkdown,
       sealing: opened.sealing,
-      sealedIdentity: bik,
+      sealedIdentities: identities,
       sealedHistoryContextText: historyText,
       sealedContextText: historyText,
       sealedSourceAttachmentRefs: opened.promptAttachmentRefs,
@@ -3025,11 +3090,11 @@ async function sealSessionControlAck(
 ): Promise<SealedReplyBody | undefined> {
   const ack = parseSealedAckContext(invocation.sealedAck)
   if (!ack) return undefined
-  const bik = await bikKeystore.ensure()
-  if (!bik) return undefined
+  const identities = await botKeyring.ensure()
+  if (identities.length === 0) return undefined
   try {
     const streamId = invocation.rootStreamId ?? invocation.activeStreamId
-    const sealing = await openSealedAck({ ack, identity: bik, streamId })
+    const sealing = await openSealedAck({ ack, identities, streamId })
     return await sealReply(sealing, markdown)
   } catch {
     return undefined
@@ -5336,7 +5401,8 @@ async function setStorageDirectoryForTesting(directory: string): Promise<void> {
   CONFIG_PATH = join(resolved, "threa-remote.json")
   CONFIG_LOCK_PATH = `${CONFIG_PATH}.lock`
   BIK_PATH = join(resolved, "threa-remote-bik.json")
-  bikKeystore = createBikKeystore(BIK_PATH)
+  E2E_KEY_DIR = join(resolved, "e2e-keys")
+  botKeyring = createBotKeyring()
 }
 
 async function resetRuntimeForTesting(): Promise<void> {
