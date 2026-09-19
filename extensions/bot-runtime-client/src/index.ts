@@ -92,6 +92,7 @@ export {
   SecretServiceStore,
   e2eKeyAccount,
   e2eStreamKeyAccount,
+  e2eUserKeyAccount,
   readLegacyBikFile,
   resolveKeyStore,
   type CommandRunner,
