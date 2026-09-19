@@ -1202,6 +1202,9 @@ function ConversationPanelBody({
             <VirtualizedScroller
               scrollKey={conversation.id}
               items={scrollerItems}
+              // The app shell's pull-to-refresh is global; without this the
+              // conversation list drags the page instead of scrolling on touch.
+              data-suppress-pull-refresh="true"
               registerScroller={registerScroller}
               scrollerRef={scrollerRef}
               listRef={listRef}
