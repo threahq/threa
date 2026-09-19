@@ -190,6 +190,15 @@ function installContentAwareScrollMetrics({ skeletonHeight = 300, contentHeight 
 }
 
 /**
+ * Opt-in windowing for the scroller stub below, which otherwise renders every
+ * row. Keys listed here are left out of the DOM and the stub reports the first
+ * RENDERED index through a minimal `VirtualizerHandle` — the shape the panel
+ * falls back to when a row it needs to place is outside the window. Off by
+ * default: every other test wants real nodes for every row.
+ */
+let hiddenRowKeys: string[] | null = null
+
+/**
  * A synthetic vertical layout for the panel's rows: every `[data-message-id]`
  * row is `rowHeight` tall, stacked in DOM order, inside a `viewportHeight`
  * scroller whose top edge is at y=0. jsdom returns an all-zero rect for
@@ -199,18 +208,9 @@ function installContentAwareScrollMetrics({ skeletonHeight = 300, contentHeight 
  * Unlike `installScrollMetrics` this gives `getBoundingClientRect` real numbers,
  * which is what the refine loop in `useScrollToMessage` steers on. Landed
  * `scrollTop` then names the row the landing chose: with the defaults below,
- * `TAIL_SCROLL_TOP` is the tail and `rowStartScrollTop`/`rowCenterScrollTop`
- * give the top- and centre-aligned positions for a row index.
+ * `rowStartScrollTop`/`rowCenterScrollTop` give the top- and centre-aligned
+ * positions for a row index; the tail is `rowHeight` times the row count.
  */
-/**
- * Opt-in windowing for the scroller stub below, which otherwise renders every
- * row. Keys listed here are left out of the DOM and the stub reports the first
- * RENDERED index through a minimal `VirtualizerHandle` — the shape the panel
- * falls back to when a row it needs to place is outside the window. Off by
- * default: every other test wants real nodes for every row.
- */
-let hiddenRowKeys: string[] | null = null
-
 function installRowLayout({ rowHeight = 400, viewportHeight = 300 } = {}) {
   const tops = new WeakMap<HTMLElement, number>()
   const descriptors = {
@@ -1059,6 +1059,37 @@ describe("ConversationPanel", () => {
       await user.click(screen.getByRole("button", { name: "Dismiss unread marker" }))
       await waitFor(() => expect(el.scrollTop).toBe(800))
       await waitFor(() => expect(screen.queryByText("New")).toBeNull())
+    } finally {
+      restore()
+    }
+  })
+
+  it("tails the bottom when dismiss lands while the banner's jump is still refining", async () => {
+    // The banner's jump owns the scroller for up to a second, re-pinning the
+    // marker every 60ms. Dismiss asks for the tail, so that loop has to be
+    // released — otherwise its next tick drags the reader straight back up and
+    // the tail never holds. The test above waits for the jump to settle first,
+    // which is why this race only ever showed up under load.
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installRowLayout()
+    try {
+      const user = userEvent.setup()
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+      const el = scroller()
+      await new Promise((r) => setTimeout(r, 200))
+      act(() => fireEvent.pointerDown(el))
+      el.scrollTop = 600
+      act(() => fireEvent.scroll(el))
+
+      await user.click(await screen.findByRole("button", { name: "1 new message" }))
+      await user.click(screen.getByRole("button", { name: "Dismiss unread marker" }))
+      expect(el.scrollTop).toBe(800)
+      // Past the refine loop's stable window, so a surviving loop has ticked.
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 300))
+      })
+      expect(el.scrollTop).toBe(800)
     } finally {
       restore()
     }

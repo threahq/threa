@@ -344,7 +344,7 @@ export interface BranchedBoardRowProps {
   ledgerEventExpansion?: { isExpanded: (key: string) => boolean; toggle: (key: string) => void }
 }
 
-export interface BranchedBoardRowsProps extends BranchedBoardRowProps {
+interface BranchedBoardRowsProps extends BranchedBoardRowProps {
   rows: BoardRow[]
 }
 

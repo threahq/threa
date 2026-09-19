@@ -92,7 +92,7 @@ import { useConversationBoardPost, useSplitThread } from "@/hooks/use-conversati
 import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useTimelineScroll } from "@/hooks/use-timeline-scroll"
-import { useScrollToMessage, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
+import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
@@ -1022,7 +1022,7 @@ function ConversationPanelBody({
     composerHeightVar: FLOATING_COMPOSER_HEIGHT_VAR,
   })
 
-  const { scrollToMessage } = useScrollToMessage({
+  const { scrollToMessage, scrollAbortRef } = useScrollToMessage({
     findIndex: findRowIndex,
     findLiveIndex: findLiveRowIndex,
     scrollerRef,
@@ -1189,7 +1189,7 @@ function ConversationPanelBody({
   const scrollToMarker = useCallback(() => {
     if (markerMessageId == null) return
     userInteractedAtRef.current = 0
-    scrollToMessage(markerMessageId, { align: "start", topOffsetPx: UNREAD_MARKER_TOP_GAP_PX })
+    scrollToMessage(markerMessageId, { align: "start" })
   }, [markerMessageId, scrollToMessage])
 
   const rowRenderProps: BranchedBoardRowProps = {
@@ -1236,9 +1236,6 @@ function ConversationPanelBody({
             <VirtualizedScroller
               scrollKey={conversation.id}
               items={scrollerItems}
-              // The app shell's pull-to-refresh is global; without this the
-              // conversation list drags the page instead of scrolling on touch.
-              data-suppress-pull-refresh="true"
               registerScroller={registerScroller}
               scrollerRef={scrollerRef}
               listRef={listRef}
@@ -1259,8 +1256,6 @@ function ConversationPanelBody({
                 ) : undefined,
               }}
               hasRenderedContent={hasRenderedContent}
-              // pb-3 baseline, plus room for the floating composer pill so the
-              // conversation tail can scroll above it.
               style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
               itemClassName={PANEL_ROW_WIDTH_CLASS}
               footer={
@@ -1303,6 +1298,10 @@ function ConversationPanelBody({
                 size="icon"
                 className="pointer-events-auto h-9 w-9 shadow-lg"
                 onClick={() => {
+                  // The banner's jump may still own the scroller: its refine
+                  // loop re-pins the marker for up to a second and would drag
+                  // the reader back off the tail this click just asked for.
+                  scrollAbortRef.current?.()
                   dismiss()
                   scrollToBottom({ force: true })
                 }}

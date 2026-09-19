@@ -46,7 +46,6 @@ export type BoardRow =
   | { kind: "day"; key: string; dayStartMs: number; displayDepth?: number }
   | { kind: "unread"; key: "unread"; isDimmed?: boolean; displayDepth?: number }
 
-/** Whether a nested branch conversation's subtree carries `messageId`. */
 function branchCarriesMessage(branch: BranchConversationView, messageId: string): boolean {
   if (branch.messages.some((m) => m.id === messageId)) return true
   return branch.children.some((child) => branchCarriesMessage(child, messageId))
