@@ -28,10 +28,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
-import { buildBranchedBoardRows, injectBoardDayDividers, injectUnreadDivider } from "@/components/board/board-row-item"
 import {
-  BranchedBoardRows,
+  buildBranchedBoardRows,
+  findBoardRowIndex,
+  injectBoardDayDividers,
+  injectUnreadDivider,
+} from "@/components/board/board-row-item"
+import {
+  renderBranchedBoardRow,
   BranchProvenanceRow,
+  type BranchedBoardRowProps,
   BRANCH_SETTLING_RAIL_CLASS,
   BRANCH_ACCENTED_SETTLING_RAIL_CLASS,
 } from "@/components/board/branch-rows"
@@ -41,6 +47,7 @@ import { useConversationRunningChip } from "@/hooks/use-conversation-running-chi
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
   useConversationGraph,
+  useConversationGraphReady,
   useStreamStructuralIndex,
   deriveBranchConversations,
   collectBranchThreadStreamIds,
@@ -84,7 +91,9 @@ import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/
 import { useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
 import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-messages"
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
-import { useScrollBehavior } from "@/hooks/use-scroll-behavior"
+import { useTimelineScroll } from "@/hooks/use-timeline-scroll"
+import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
+import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -116,6 +125,19 @@ const SKELETON_ROWS: { continuation: boolean; width: string }[] = [
   { continuation: true, width: "w-10/12" },
   { continuation: true, width: "w-2/3" },
 ]
+
+/** Reading column shared by the panel's rows, skeleton, and empty states. */
+const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6"
+
+/** Headroom above the first row for its hover toolbar, which floats ~14px above
+ *  the row. The stream timeline reserves the same room in its header spacer. */
+const PANEL_TOP_SPACER_PX = 16
+
+/** `BranchProvenanceRow` is one non-wrapping `text-xs` line under a `mt-3`, so
+ *  its height is a constant the panel knows before it renders — which is what
+ *  `startMargin` needs, since virtua computes its offsets from the first value
+ *  it is given and never re-derives them from a later measurement. */
+const PANEL_PROVENANCE_ROW_PX = 28
 
 /**
  * The panel's loading shape, rendered by the same component that renders the
@@ -581,6 +603,7 @@ function ConversationPanelBody({
   // branch composer derives the branch thread streams (and pending sub-topic
   // draft rails) the panel subscribes to as extra rails.
   const conversationGraph = useConversationGraph(workspaceId)
+  const graphReady = useConversationGraphReady(workspaceId)
   const structuralIndex = useStreamStructuralIndex(workspaceId)
   const inlineComposer = useInlineBranchComposer({
     workspaceId,
@@ -793,7 +816,13 @@ function ConversationPanelBody({
   // neither map, and no read event ever writes one. Gating on it unbounded would
   // hold a blank panel forever, so the wait is bounded across every input: the
   // divider (or a still-syncing leg) is worth a beat, never the whole panel.
-  const panelLoading = (loadingMore && all.length === 0) || !readStateResolved
+  // `graphReady` is the board's own gate (INV-35) and belongs here for a reason
+  // the other two terms do not have: `provenance` decides `startMargin`, and
+  // virtua records the FIRST value it is handed without ever re-deriving the
+  // offsets it computed from it. Revealing against an unresolved graph mounts at
+  // 16px, learns 44px a frame later, and every index-driven scroll lands 28px
+  // off. Branch grouping reads the same graph, so it also stops popping in late.
+  const panelLoading = (loadingMore && all.length === 0) || !readStateResolved || !graphReady
   const [revealTimedOut, setRevealTimedOut] = useState(false)
   useEffect(() => {
     setRevealTimedOut(false)
@@ -845,6 +874,10 @@ function ConversationPanelBody({
   // re-pin must not force the tail out from under the marker's scroll (which
   // lands first, so a "pending" flag would already be clear by then).
   const markerHeldRef = useRef(false)
+  // True until the landing effect below picks this open's viewport position.
+  // The cold-load settle parks its reveal behind the mask while it is set, so a
+  // marker that resolves a frame late can't jump the viewer off a revealed tail.
+  const landingPendingRef = useRef(true)
   const rows = injectUnreadDivider(baseRows, markerMessageId, isDimmed)
   // "Move to sub-topic" re-file — same gesture as the board card (membership move
   // within one root; the hook hides the action when a row has nowhere to go).
@@ -935,41 +968,70 @@ function ConversationPanelBody({
   // opener lives in the parent stream).
   const lastActiveStreamId = displayedReplies.at(-1)?.streamId ?? conversation.streamId
 
-  // Scopes text-selection quoting to this panel's message list.
-  const listRef = useRef<HTMLDivElement>(null)
-
   // True while any of the panel's composers (footer reply, branch tail, new
   // sub-topic) floats in the mobile pill over this panel.
   const anchor = useFloatingComposerAnchor()
   const anchorEl = anchor?.el ?? null
   const floatingComposerOpen = anchor?.claimantId != null
 
-  const { scrollContainerRef, handleScroll, isScrolledFarFromBottom, scrollToBottom, disableAutoScroll } =
-    useScrollBehavior({
-      // The hook pins once: it must fire on the first frame that has rows, so
-      // "loading" is "no rows on screen yet" — not the backfill's status (rows
-      // now reveal while it is in flight; keying on it would spend the pin
-      // late, yanking a panel the viewer already sees) and not `revealed` alone
-      // (the reveal-timeout path mounts with zero rows, and the pin would land
-      // against an empty container).
-      isLoading: !revealed || rows.length === 0,
-      itemCount: rows.length,
-      resetKey: conversation.id,
-      // Only treat the user as "at the bottom" when they are essentially flush, so
-      // a small scroll-up to reference an older reply while typing is not snapped
-      // back when the composer grows (thread-path parity).
-      bottomThreshold: 4,
-      skipInitialScroll: highlightMessageId != null || markerMessageId != null,
-    })
-  // Both consumers of `listRef` (text-selection quoting, viewport auto-read) are
-  // keyed to the scroller node, so the two refs name the same element.
-  const attachListRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      listRef.current = node
-      scrollContainerRef.current = node
-    },
-    [scrollContainerRef]
-  )
+  // The panel virtualizes on the same engine as the stream timeline
+  // (`useTimelineScroll` + `VirtualizedScroller`), so a long conversation costs
+  // a viewport of rows, not all of them, and a cold open lands at the tail
+  // behind the settle mask instead of painting the top first.
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  const findRowIndex = useCallback((targetId: string) => findBoardRowIndex(rows, targetId), [rows])
+  const findLiveRowIndex = useCallback((targetId: string) => findBoardRowIndex(rowsRef.current, targetId), [])
+
+  // One scroll intent per conversation: both stamps reset on a switch, in
+  // render, so the new conversation's landing is not vetoed by a gesture the
+  // viewer made in the previous one.
+  const userInteractedAtRef = useRef(0)
+  const programmaticScrollAtRef = useRef(0)
+
+  const {
+    listRef,
+    scrollerRef,
+    registerScroller,
+    contentRef: listContentRef,
+    shift,
+    isScrolledFarFromBottom,
+    isInitialSettling,
+    isFollowingTailRef,
+    scrollToBottom,
+    disableAutoScroll,
+    handleScroll,
+    holdSettleForRestore,
+    revealSettle,
+    releaseDeferredReveal,
+  } = useTimelineScroll({
+    // "No rows on screen yet" — not the backfill's status (rows now reveal
+    // while it is in flight) and not `revealed` alone (the reveal-timeout path
+    // mounts with zero rows, and the pin would land against an empty list).
+    itemCount: revealed ? rows.length : 0,
+    getFirstKey: () => rows[0]?.key ?? null,
+    getLastKey: () => rows.at(-1)?.key ?? null,
+    resetKey: conversation.id,
+    landingPendingRef,
+    userInteractedAtRef,
+    programmaticScrollAtRef,
+    // The panel reserves its floating pill under a different variable than the
+    // stream's `--composer-height`, which is a `:root` fallback set at boot —
+    // so the default name resolves everywhere, to the STREAM composer's height
+    // (144px on desktop), and every cold open would land that far off the tail.
+    composerHeightVar: FLOATING_COMPOSER_HEIGHT_VAR,
+  })
+
+  const { scrollToMessage, scrollAbortRef } = useScrollToMessage({
+    findIndex: findRowIndex,
+    findLiveIndex: findLiveRowIndex,
+    scrollerRef,
+    listRef,
+    disableAutoScroll,
+    isFollowingTailRef,
+    userInteractedAtRef,
+    programmaticScrollAtRef,
+  })
 
   // The pill is absolutely positioned, so its growth changes only the scroller's
   // padding-bottom — the scroller's own ResizeObserver never sees it. Re-pin from
@@ -982,8 +1044,8 @@ function ConversationPanelBody({
     (_px: number, opts: { initial: boolean }) => {
       // Only the OPENING force-scroll defers to the panel's opening anchor (a
       // `?m=` row, or an unread marker held until dismissed): a child layout
-      // effect runs before the parent's marker effect, so on a first-commit
-      // latch this fires first and the guard is what saves the marker's scroll.
+      // effect runs before the parent's landing effect, so on a first-commit
+      // latch this fires first and the guard is what saves the landing's scroll.
       // The runtime re-pin is unconditional — it is the un-forced call, which
       // no-ops unless the user is already at the bottom, so the tail can't slide
       // behind a growing composer.
@@ -1009,7 +1071,7 @@ function ConversationPanelBody({
   // conversation's visible tail reads it up to there.
   const autoReadRows = readableRows
   useConversationAutoRead({
-    containerRef: listRef,
+    containerRef: scrollerRef,
     messages: autoReadRows,
     rootStreamId: conversation.streamId,
     rowState: conversationReadValue.state,
@@ -1018,57 +1080,143 @@ function ConversationPanelBody({
     getReadTruth,
   })
 
-  const findMarkerRow = useCallback(() => {
-    const container = listRef.current
-    if (!container || !markerMessageId) return null
-    return container.querySelector<HTMLElement>(`[data-message-id="${markerMessageId}"]`)
-  }, [markerMessageId])
-  const scrollToMarker = useCallback(() => {
-    const row = findMarkerRow()
-    if (!row) return false
-    disableAutoScroll()
-    row.scrollIntoView({ block: "start" })
-    return true
-  }, [findMarkerRow, disableAutoScroll])
-
-  // Open at the first unread instead of the tail. Runs on every render until it
-  // lands: the one-shot is consumed ONLY once a scroll actually happened, so a
-  // render where the marker's row is not in the DOM yet (rows still loading)
-  // leaves it armed rather than parking the panel at the bottom with a divider
-  // the user was never taken to. `?m=` wins — its own row scroll is the intent.
-  // The body is not keyed on the conversation, so it survives a switch: the
-  // one-shot is reset here in render on conversation change, never inferred from
-  // the key differing — a switch away and back re-latches the same message id,
-  // and a ref still holding it would leave the revisit scrolling nowhere at all.
-  const scrolledMarkerRef = useRef<{ conversationId: string; key: string | null }>({
+  // The panel's peer of INV-70: the open's viewport position is decided exactly
+  // once, by priority — deep link (`?m=`) › unread marker › tail — and executed
+  // by the one landing effect below. Never add a second on-open scroll: stacked
+  // landers fighting each other is the regression this shape exists to prevent.
+  const landingTargetId = highlightMessageId ?? markerMessageId
+  const landedRef = useRef<{ conversationId: string; key: string | null }>({
     conversationId: conversation.id,
     key: null,
   })
-  if (scrolledMarkerRef.current.conversationId !== conversation.id) {
-    scrolledMarkerRef.current = { conversationId: conversation.id, key: null }
+  const landingIntentRef = useRef(highlightMessageId)
+  if (landedRef.current.conversationId !== conversation.id) {
+    landedRef.current = { conversationId: conversation.id, key: null }
+    landingPendingRef.current = true
+    userInteractedAtRef.current = 0
+    programmaticScrollAtRef.current = 0
+  } else if (highlightMessageId != null && highlightMessageId !== landingIntentRef.current) {
+    // A new `?m=` while the same conversation stays open — the in-panel shared
+    // message block, an activity item, a saved item — is a new landing, not the
+    // one already taken. Both latches have to drop for it: the one-shot below,
+    // and the gesture stamp `scrollToMessage` bails the whole loop on, which a
+    // panel someone has been reading always carries. `scrollToMarker` and the
+    // stream timeline clear the same pair on a fresh intent.
+    landedRef.current.key = null
+    userInteractedAtRef.current = 0
+    programmaticScrollAtRef.current = 0
   }
+  landingIntentRef.current = highlightMessageId
   markerHeldRef.current = markerMessageId != null
-  const markerScrollKey = markerMessageId
+
+  // Unkeyed: it re-attempts every render until `scrollToMessage` engages, so a
+  // render where the target is not a row yet (older replies still backfilling)
+  // leaves the landing armed rather than parking the panel at the tail with a
+  // divider the viewer was never taken to. The one-shot is reset in render
+  // above on a conversation change, never inferred from the key differing — a
+  // switch away and back re-latches the same id.
   useEffect(() => {
-    if (highlightMessageId != null || markerScrollKey == null) return
-    if (scrolledMarkerRef.current.key === markerScrollKey) return
-    if (scrollToMarker()) scrolledMarkerRef.current.key = markerScrollKey
+    if (!revealed) return
+    if (landingTargetId == null) {
+      // Tail is the landing only once the marker's inputs have settled; until
+      // then the settle stays parked so a late marker doesn't jump the viewer
+      // off a revealed tail.
+      if (!readStateResolved) return
+      landingPendingRef.current = false
+      releaseDeferredReveal()
+      return
+    }
+    if (landedRef.current.key === landingTargetId) return
+    if (
+      !scrollToMessage(landingTargetId, {
+        align: highlightMessageId != null ? "center" : "start",
+        onFirstSettle: () => {
+          landingPendingRef.current = false
+          revealSettle()
+        },
+      })
+    ) {
+      return
+    }
+    // Held only after the loop engaged — a hold with no loop to reveal it would
+    // leave the mask up forever on a `?m=` pointing outside this conversation.
+    holdSettleForRestore()
+    landedRef.current.key = landingTargetId
   })
 
   // The banner shows only while the divider has left the top of the viewport.
+  // Its row is often virtualized away when scrolled past, so the DOM answers
+  // only when it is mounted; otherwise the row index against virtua's first
+  // rendered index is the authority.
   const [markerAboveViewport, setMarkerAboveViewport] = useState(false)
   const syncMarkerPosition = useCallback(() => {
-    const container = listRef.current
-    const row = findMarkerRow()
-    setMarkerAboveViewport(
-      container != null && row != null && row.getBoundingClientRect().top < container.getBoundingClientRect().top
-    )
-  }, [findMarkerRow])
+    const container = scrollerRef.current
+    if (container == null || markerMessageId == null) {
+      setMarkerAboveViewport(false)
+      return
+    }
+    const row = container.querySelector<HTMLElement>(`[data-message-id="${markerMessageId}"]`)
+    if (row != null) {
+      setMarkerAboveViewport(row.getBoundingClientRect().top < container.getBoundingClientRect().top)
+      return
+    }
+    // No handle, or virtua's offset tree not yet populated: the banner would
+    // otherwise keep whatever it last showed — a stuck jump to a divider the
+    // reader is already at. Unknown reads as "not above".
+    const list = listRef.current
+    if (list == null) {
+      setMarkerAboveViewport(false)
+      return
+    }
+    const markerIndex = findRowIndex(markerMessageId)
+    let topIndex: number
+    try {
+      topIndex = list.findItemIndex(list.scrollOffset)
+    } catch {
+      setMarkerAboveViewport(false)
+      return
+    }
+    setMarkerAboveViewport(markerIndex >= 0 && markerIndex < topIndex)
+  }, [markerMessageId, findRowIndex, scrollerRef, listRef])
   useEffect(syncMarkerPosition)
   const handleListScroll = useCallback(() => {
     handleScroll()
     syncMarkerPosition()
   }, [handleScroll, syncMarkerPosition])
+
+  // The unread banner's own jump reuses the landing's scroller, so it lands with
+  // the same gap above the divider that opening at the marker gives.
+  const scrollToMarker = useCallback(() => {
+    if (markerMessageId == null) return
+    userInteractedAtRef.current = 0
+    scrollToMessage(markerMessageId, { align: "start" })
+  }, [markerMessageId, scrollToMessage])
+
+  const rowRenderProps: BranchedBoardRowProps = {
+    workspaceId,
+    renderMessage,
+    continueThreadTo: (streamId) => getPanelUrl(streamId),
+    onSplitThread: (threadStreamId) => splitThread.mutate({ conversationId: conversation.id, threadStreamId }),
+    renderBranchMessage,
+    renderBranchTail: archivedReason ? undefined : inlineComposer.renderBranchTail,
+    renderAfterMessage: archivedReason ? undefined : inlineComposer.renderAfterMessage,
+    onRedirectSession: () => setFocusSeq((n) => n + 1),
+  }
+  const scrollerItems = revealed
+    ? rows.map((row) => ({ key: row.key, node: renderBranchedBoardRow(row, rowRenderProps) }))
+    : []
+  const hasRenderedContent = useRenderedContentLatch(scrollerItems.length)
+  // A cold backfill can fail with no rows at all, and the scroller renders its
+  // footer only once it has items — so the retry lives in both slots.
+  const backfillRetry = backfillFailed ? (
+    <button
+      type="button"
+      onClick={() => void refetchMessages()}
+      className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
+    >
+      Couldn't load the full conversation. Retry.
+    </button>
+  ) : null
 
   return (
     // Quote reply from a row routes into this conversation's reply composer.
@@ -1080,53 +1228,51 @@ function ConversationPanelBody({
       <SidePanelContent ref={contentRef} className="relative flex flex-col">
         <QuoteReplyProvider disabled={!!archivedReason}>
           {/* Desktop text-selection → floating "Quote" button, scoped to this list. */}
-          {!archivedReason && <TextSelectionQuote streamId={conversation.streamId} containerRef={listRef} />}
+          {!archivedReason && <TextSelectionQuote streamId={conversation.streamId} containerRef={scrollerRef} />}
           {moveToSubtopic.moveDialog}
-          <div
-            ref={attachListRef}
-            onScroll={handleListScroll}
-            // pt-4 reserves headroom for the first row's hover toolbar, which floats
-            // ~14px above its row (MessageItem's float-above chip). Without it the
-            // scroll container's top edge clips the first message's toolbar — the
-            // stream timeline reserves the same room via its header spacer.
-            className="min-h-0 flex-1 overflow-y-auto pt-4"
-            // pb-3 baseline, plus room for the floating composer pill so the
-            // conversation tail can scroll above it.
-            style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
-          >
-            <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">
-              {phase === "skeleton" && <ConversationRowsSkeleton />}
-              {revealed && provenance && (
-                <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
-              )}
-              {revealed && (
-                <BranchedBoardRows
-                  rows={rows}
-                  workspaceId={workspaceId}
-                  renderMessage={renderMessage}
-                  continueThreadTo={(streamId) => getPanelUrl(streamId)}
-                  onSplitThread={(threadStreamId) =>
-                    splitThread.mutate({ conversationId: conversation.id, threadStreamId })
-                  }
-                  renderBranchMessage={renderBranchMessage}
-                  renderBranchTail={archivedReason ? undefined : inlineComposer.renderBranchTail}
-                  renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
-                  onRedirectSession={() => setFocusSeq((n) => n + 1)}
-                />
-              )}
-              {revealed && loadingMore && (
-                <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>
-              )}
-              {backfillFailed && (
-                <button
-                  type="button"
-                  onClick={() => void refetchMessages()}
-                  className="mt-3 block w-fit text-xs text-destructive underline underline-offset-2"
-                >
-                  Couldn't load the full conversation. Retry.
-                </button>
-              )}
-            </div>
+          {/* `relative` scopes the scroller's settle mask to the list, so it
+              never covers the docked composer. */}
+          <div className="relative min-h-0 flex-1">
+            <VirtualizedScroller
+              scrollKey={conversation.id}
+              items={scrollerItems}
+              registerScroller={registerScroller}
+              scrollerRef={scrollerRef}
+              listRef={listRef}
+              contentRef={listContentRef}
+              shift={shift}
+              isInitialSettling={isInitialSettling}
+              onScroll={handleListScroll}
+              // Headroom for the first row's hover toolbar, which floats ~14px
+              // above its row. virtua has to own it as a start margin — as CSS
+              // padding it would sit outside the measured window and every
+              // offset the scroller computes would be short by it.
+              startMargin={{
+                heightPx: PANEL_TOP_SPACER_PX + (provenance ? PANEL_PROVENANCE_ROW_PX : 0),
+                content: provenance ? (
+                  <div className={PANEL_ROW_WIDTH_CLASS}>
+                    <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+                  </div>
+                ) : undefined,
+              }}
+              hasRenderedContent={hasRenderedContent}
+              style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
+              itemClassName={PANEL_ROW_WIDTH_CLASS}
+              footer={
+                <div className={PANEL_ROW_WIDTH_CLASS}>
+                  {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
+                  {backfillRetry}
+                </div>
+              }
+              skeleton={
+                <div className="h-full overflow-y-auto pt-4">
+                  <div className={PANEL_ROW_WIDTH_CLASS}>
+                    {phase === "skeleton" && <ConversationRowsSkeleton />}
+                    {backfillRetry}
+                  </div>
+                </div>
+              }
+            />
           </div>
           {markerMessageId != null && markerAboveViewport && unreadCount > 0 && (
             // Same affordance as the timeline's, in the same place: below the
@@ -1152,6 +1298,10 @@ function ConversationPanelBody({
                 size="icon"
                 className="pointer-events-auto h-9 w-9 shadow-lg"
                 onClick={() => {
+                  // The banner's jump may still own the scroller: its refine
+                  // loop re-pins the marker for up to a second and would drag
+                  // the reader back off the tail this click just asked for.
+                  scrollAbortRef.current?.()
                   dismiss()
                   scrollToBottom({ force: true })
                 }}

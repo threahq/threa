@@ -16,6 +16,7 @@ import { AsideAnchorEvent } from "@/components/timeline/aside-anchor-event"
 import { useSocket, useTrace } from "@/contexts"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { streamLabel } from "@/lib/streams"
+import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { LedgerEventGroup, LedgerEventRow, type LedgerEventDescriptor } from "@/components/board/ledger-row"
 import type { BoardEventRow } from "@/lib/board/board-event-rows"
 import { coalesceLedgerItems, ledgerEventContent, type LedgerItemKind } from "@/lib/board/ledger"
@@ -44,6 +45,38 @@ export type BoardRow =
   | { kind: "continue-thread"; key: string; streamId: string; hiddenCount: number; displayDepth?: number }
   | { kind: "day"; key: string; dayStartMs: number; displayDepth?: number }
   | { kind: "unread"; key: "unread"; isDimmed?: boolean; displayDepth?: number }
+
+function branchCarriesMessage(branch: BranchConversationView, messageId: string): boolean {
+  if (branch.messages.some((m) => m.id === messageId)) return true
+  return branch.children.some((child) => branchCarriesMessage(child, messageId))
+}
+
+/** Whether an event row draws `target` — a `?m=` value is a message id or, for
+ *  the card rows, a raw `event_…` id, and {@link matchesDeepLinkTarget} is the
+ *  one matcher every deep-link path shares. */
+function eventRowMatches(row: BoardEventRow, target: string): boolean {
+  const events = "events" in row ? row.events : [row.event]
+  return events.some((event) => matchesDeepLinkTarget(event, target))
+}
+
+/**
+ * Index of the row that RENDERS `target`: its own row, the branch group whose
+ * subtree draws it (a nested branch's messages get no row of their own), or the
+ * event/ledger row a card deep link points at. -1 when nothing renders it. This
+ * is the row-list peer of the timeline's `findTimelineTargetIndex` — a
+ * virtualized surface scrolls by index, and the target row is usually outside
+ * the DOM when the scroll is requested.
+ */
+export function findBoardRowIndex(rows: readonly BoardRow[], target: string): number {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row.kind === "message" && row.message.id === target) return i
+    if (row.kind === "branch-group" && branchCarriesMessage(row.branch, target)) return i
+    if ((row.kind === "event" || row.kind === "ledger-event") && eventRowMatches(row.row, target)) return i
+    if (row.kind === "ledger-event-group" && row.rows.some((r) => eventRowMatches(r, target))) return i
+  }
+  return -1
+}
 
 function rowDayStartMs(row: BoardRow): number | null {
   // Only depth-0 rows are globally time-sorted; indented thread runs are spliced

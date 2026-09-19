@@ -320,8 +320,7 @@ export function ContinueThreadRow({ to, hiddenCount }: { to: string; hiddenCount
   )
 }
 
-interface BranchedBoardRowsProps {
-  rows: BoardRow[]
+export interface BranchedBoardRowProps {
   workspaceId: string
   renderMessage: (message: RenderableMessage, continuation: boolean) => ReactNode
   /** Where a spanning-overflow row links, given the deep thread's stream. */
@@ -345,7 +344,11 @@ interface BranchedBoardRowsProps {
   ledgerEventExpansion?: { isExpanded: (key: string) => boolean; toggle: (key: string) => void }
 }
 
-function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNode {
+interface BranchedBoardRowsProps extends BranchedBoardRowProps {
+  rows: BoardRow[]
+}
+
+function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNode {
   const {
     workspaceId,
     renderMessage,
@@ -412,9 +415,10 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
     case "day":
       return <DayDivider key={row.key} dayStartMs={row.dayStartMs} />
     case "unread":
-      // UnreadDivider is absolute and overlays the gap above its row; the panel
-      // is not virtualized, so an in-flow spacer that reserves the gap is all it
-      // needs. It dims by colour, so nothing shifts when it settles (INV-21).
+      // UnreadDivider is absolutely positioned inside this box and paints within
+      // its 24px — so the box is what a virtualizer measures, and the divider
+      // cannot be clipped or mismeasured. It dims by colour, so nothing shifts
+      // when it settles (INV-21).
       return (
         <div key={row.key} className="relative h-6">
           <UnreadDivider isDimmed={row.isDimmed} />
@@ -432,25 +436,27 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
 }
 
 /**
- * Render a branch-grouped row list: message rows through the surface's own
- * renderer, event/branch chrome through the components above, each indented by
- * its `displayDepth` via a wrapper element (indent never touches `MessageItem`).
- * A branch group adds its own nested left rail INSIDE the row indent, so a
- * branch off an already-indented spanning row nests one level deeper.
+ * One branch-grouped row: its content through the switch above, indented by its
+ * `displayDepth` via a wrapper element (indent never touches `MessageItem`). A
+ * branch group adds its own nested left rail INSIDE the row indent, so a branch
+ * off an already-indented spanning row nests one level deeper.
+ *
+ * Exported so a virtualized surface can emit rows one at a time, passing the
+ * per-row half of {@link BranchedBoardRows}' props.
  */
-export function BranchedBoardRows(props: BranchedBoardRowsProps) {
+export function renderBranchedBoardRow(row: BoardRow, props: BranchedBoardRowProps): ReactNode {
+  const content = renderRowContent(row, props)
+  const depth = row.displayDepth ?? 0
+  if (depth === 0) return content
   return (
-    <>
-      {props.rows.map((row) => {
-        const depth = row.displayDepth ?? 0
-        const content = renderRowContent(row, props)
-        if (depth === 0) return content
-        return (
-          <div key={row.key} className={INDENT_CLASS[depth]}>
-            {content}
-          </div>
-        )
-      })}
-    </>
+    <div key={row.key} className={INDENT_CLASS[depth]}>
+      {content}
+    </div>
   )
+}
+
+/** Render a branch-grouped row list in flow — the unvirtualized surfaces (board
+ *  card). A virtualized one maps {@link renderBranchedBoardRow} itself. */
+export function BranchedBoardRows(props: BranchedBoardRowsProps) {
+  return <>{props.rows.map((row) => renderBranchedBoardRow(row, props))}</>
 }

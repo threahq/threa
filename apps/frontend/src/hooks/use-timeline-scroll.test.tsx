@@ -154,6 +154,37 @@ describe("useTimelineScroll — tail replace", () => {
     expect(scrollToIndex).toHaveBeenCalledWith(54, expect.objectContaining({ align: "end" }))
   })
 
+  it("re-takes the landing when a backfill lands rows between the cached head and tail", () => {
+    // The conversation panel opens on the board's cached rail — opening message
+    // plus the few newest — so the server page arrives in the MIDDLE and both
+    // the first and the last key are unchanged.
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 6, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    scrollToIndex.mockClear()
+
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(scrollToIndex).toHaveBeenCalledWith(39, expect.objectContaining({ align: "end" }))
+  })
+
+  it("re-takes the landing when a single row fills a hole mid-window", () => {
+    // One out-of-order event landing in a gap: count+1, first and last keys
+    // unchanged. By count alone that is indistinguishable from an append, and
+    // the append carve-out used to swallow it — leaving virtua an estimate
+    // where it now has a real row.
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    scrollToIndex.mockClear()
+
+    harness.rerender(opts({ itemCount: 41, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(scrollToIndex).toHaveBeenCalledWith(40, expect.objectContaining({ align: "end" }))
+  })
+
   it("ignores an own send's echo swapping the last row's key in place", () => {
     // The optimistic row carries a client id; the socket echo replaces it with
     // the event id. Same count, same first row, new last key — no row arrives
@@ -1072,5 +1103,40 @@ describe("useTimelineScroll — cold-load settle mask", () => {
     expect(harness.current.isInitialSettling).toBe(false)
     harness.rerender(opts({ resetKey: "stream_2", itemCount: 3, getFirstKey: () => "e0" }))
     expect(harness.current.isInitialSettling).toBe(true)
+  })
+})
+
+describe("useTimelineScroll — reserved composer height", () => {
+  /**
+   * The offset is the whole point of the landing: it puts the last row above the
+   * composer reserve instead of behind it. `--composer-height` is a `:root`
+   * fallback set at boot, so it resolves on EVERY element — a surface that
+   * reserves its space under another name and forgets `composerHeightVar` reads
+   * the stream composer's height and lands that far off, silently. Both vars are
+   * set here so the assertion can only pass by reading the named one.
+   */
+  function landWith(composerHeightVar?: string): number | undefined {
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, composerHeightVar }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    el.style.setProperty("--composer-height", "144px")
+    el.style.setProperty("--floating-composer-height", "56px")
+    document.body.appendChild(el)
+    try {
+      harness.current.scrollerRef.current = el
+      harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+      harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", composerHeightVar }))
+      return scrollToIndex.mock.calls.at(-1)?.[1]?.offset
+    } finally {
+      el.remove()
+    }
+  }
+
+  it("lands above the default composer reserve when no variable is named", () => {
+    expect(landWith()).toBe(144)
+  })
+
+  it("lands above the named reserve, not the :root default", () => {
+    expect(landWith("--floating-composer-height")).toBe(56)
   })
 })
