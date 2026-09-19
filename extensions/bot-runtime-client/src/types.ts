@@ -72,6 +72,13 @@ export interface BotE2eGrantPayload {
   streamId: string
 }
 
+/** `bot:e2e_revoke`: this bot is no longer an actor on a sealed scratchpad root. */
+export interface BotE2eRevokePayload {
+  workspaceId: string
+  botId: string
+  streamId: string
+}
+
 /** The bootstrap snapshot the server returns in the `bot:hello` ack. */
 export interface BotHelloBootstrap {
   serverGeneratedAt?: string
@@ -190,6 +197,8 @@ export interface BotRuntimeTransportCallbacks {
   onActiveActorChanged?: (payload: unknown) => void
   /** This bot was invited into a sealed scratchpad; a per-stream keyring mints its key here. */
   onE2eGrant?: (payload: BotE2eGrantPayload) => void
+  /** This bot's grant on a sealed scratchpad was taken back; a per-stream keyring drops its key here. */
+  onE2eRevoke?: (payload: BotE2eRevokePayload) => void
   /** The server asked the runtime to re-announce itself; the transport re-sends hello automatically and also fires this. */
   onResync?: () => void
   /** The scratchpad this runtime session is linked to was archived; the link is ended server-side. Wind down. */

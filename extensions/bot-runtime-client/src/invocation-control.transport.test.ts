@@ -558,6 +558,26 @@ describe("BotRuntimeTransport observed claims", () => {
     transport.disconnect()
   })
 
+  it("delivers a sealed-scratchpad revoke so a per-stream keyring can drop that key", async () => {
+    stubFetch((request) => (request.url.endsWith("/config") ? json({ wsUrl: "https://ws.example.test" }) : json({})))
+    const socket = fakeSocket((event, _payload, callback) => {
+      if (event === "bot:hello") {
+        callback(null, { ok: true, ownedClaims: [], recentCancellations: [], availableInvocations: [] })
+      }
+    })
+    spySocket(socket)
+    const revokes: unknown[] = []
+    const transport = makeTransport({ callbacks: { onE2eRevoke: (payload) => revokes.push(payload) } })
+
+    await transport.connect()
+    socket.handlers.connect!()
+    await waitFor(() => Boolean(socket.handlers["bot:e2e_revoke"]))
+    socket.handlers["bot:e2e_revoke"]!({ workspaceId: "ws_1", botId: "bot_1", streamId: "stream_gone" })
+
+    expect(revokes).toEqual([{ workspaceId: "ws_1", botId: "bot_1", streamId: "stream_gone" }])
+    transport.disconnect()
+  })
+
   it("handles live WS update and cancellation hints with authoritative metadata-only sync", async () => {
     stubFetch((request) => (request.url.endsWith("/config") ? json({ wsUrl: "https://ws.example.test" }) : json({})))
     let renewCalls = 0

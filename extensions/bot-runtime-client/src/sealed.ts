@@ -205,6 +205,15 @@ export class BotKeyring {
     return record ? identities.find((identity) => identity.publicKeyId === record.keyId) : undefined
   }
 
+  /**
+   * Forget the key held for a stream this bot was just revoked from, so the
+   * next presence write stops advertising it. A no-op under every policy but
+   * per-stream, where the key exists for that one scratchpad and nothing else.
+   */
+  async dropStream(streamId: string): Promise<BotIdentityKey[]> {
+    return this.enqueue(async (keyring) => keyring.dropStream(streamId))
+  }
+
   /** The fields to spread into every `bot:hello` and presence body. Empty until `ensure()` resolves. */
   presenceFields(): ReturnType<E2eKeyring["presenceFields"]> {
     return this.records?.presenceFields() ?? {}

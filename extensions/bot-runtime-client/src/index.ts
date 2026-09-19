@@ -21,6 +21,7 @@ export type {
   BotRuntimeHello,
   BotHelloBootstrap,
   BotE2eGrantPayload,
+  BotE2eRevokePayload,
   BotRuntimeTransportCallbacks,
   BotRuntimeTransportOptions,
   DelegationAvailableNudge,

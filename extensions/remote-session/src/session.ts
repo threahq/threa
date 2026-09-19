@@ -571,6 +571,7 @@ export class RemoteSession {
             ? { onDelegationAvailable: (payload: DelegationAvailableNudge) => options.onDelegationAvailable?.(payload) }
             : {}),
           onE2eGrant: (payload) => void this.keyGrantedStreams([payload.streamId]),
+          onE2eRevoke: (payload) => void this.keyRevokedStream(payload.streamId),
           onBootstrap: (bootstrap) => {
             if (bootstrap.botId) this.botId = bootstrap.botId
             // A reconnect is exactly when an archive push went missing, so
@@ -3265,6 +3266,17 @@ export class RemoteSession {
    */
   private async keyGrantedStreams(streamIds: string[]): Promise<void> {
     for (const streamId of streamIds) await this.bik.ensureForStream(streamId)
+    await this.advertiseKeyring()
+  }
+
+  /**
+   * Give up the key held for a scratchpad this bot was revoked from, then
+   * re-advertise. The server has already deleted the wraps only that key could
+   * open, so holding it buys nothing — under the default policy there is no
+   * such key and the shared one stays, which is the point of one key per host.
+   */
+  private async keyRevokedStream(streamId: string): Promise<void> {
+    await this.bik.dropStream(streamId)
     await this.advertiseKeyring()
   }
 

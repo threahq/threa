@@ -5472,3 +5472,35 @@ describe("parallel turns across streams", () => {
     expect(opened).toEqual(["stream_a"])
   })
 })
+
+describe("RemoteSession sealed keyring", () => {
+  test("a revoke drops that scratchpad's key and re-advertises what is left", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "revoke-keyring-"))
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const session = new RemoteSession({
+      config: makeConfig({ keyScope: "stream", keyStore: "file", keyDir: dir }),
+      client,
+      delegate: { deliverTurn: async () => {} },
+      runtime: RUNTIME,
+      transport,
+    })
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (session as any).keyGrantedStreams(["stream_a", "stream_b"])
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (session as any).keyRevokedStream("stream_a")
+
+      // Presence is where the server learns which keys are live, and an
+      // advertised keyring REPLACES the stored one — so the revoke has to reach
+      // it, or the owner keeps wrapping new generations to a key that is gone.
+      const advertised = presence.map((body) =>
+        ((body.e2eKeys as Array<{ streamId?: string }> | undefined) ?? []).map((key) => key.streamId)
+      )
+      expect(advertised).toEqual([["stream_a", "stream_b"], ["stream_b"]])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
