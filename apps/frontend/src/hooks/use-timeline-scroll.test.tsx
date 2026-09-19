@@ -1105,3 +1105,38 @@ describe("useTimelineScroll — cold-load settle mask", () => {
     expect(harness.current.isInitialSettling).toBe(true)
   })
 })
+
+describe("useTimelineScroll — reserved composer height", () => {
+  /**
+   * The offset is the whole point of the landing: it puts the last row above the
+   * composer reserve instead of behind it. `--composer-height` is a `:root`
+   * fallback set at boot, so it resolves on EVERY element — a surface that
+   * reserves its space under another name and forgets `composerHeightVar` reads
+   * the stream composer's height and lands that far off, silently. Both vars are
+   * set here so the assertion can only pass by reading the named one.
+   */
+  function landWith(composerHeightVar?: string): number | undefined {
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null, composerHeightVar }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    el.style.setProperty("--composer-height", "144px")
+    el.style.setProperty("--floating-composer-height", "56px")
+    document.body.appendChild(el)
+    try {
+      harness.current.scrollerRef.current = el
+      harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+      harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10", composerHeightVar }))
+      return scrollToIndex.mock.calls.at(-1)?.[1]?.offset
+    } finally {
+      el.remove()
+    }
+  }
+
+  it("lands above the default composer reserve when no variable is named", () => {
+    expect(landWith()).toBe(144)
+  })
+
+  it("lands above the named reserve, not the :root default", () => {
+    expect(landWith("--floating-composer-height")).toBe(56)
+  })
+})

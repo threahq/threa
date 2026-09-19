@@ -202,6 +202,15 @@ function installContentAwareScrollMetrics({ skeletonHeight = 300, contentHeight 
  * `TAIL_SCROLL_TOP` is the tail and `rowStartScrollTop`/`rowCenterScrollTop`
  * give the top- and centre-aligned positions for a row index.
  */
+/**
+ * Opt-in windowing for the scroller stub below, which otherwise renders every
+ * row. Keys listed here are left out of the DOM and the stub reports the first
+ * RENDERED index through a minimal `VirtualizerHandle` — the shape the panel
+ * falls back to when a row it needs to place is outside the window. Off by
+ * default: every other test wants real nodes for every row.
+ */
+let hiddenRowKeys: string[] | null = null
+
 function installRowLayout({ rowHeight = 400, viewportHeight = 300 } = {}) {
   const tops = new WeakMap<HTMLElement, number>()
   const descriptors = {
@@ -338,6 +347,7 @@ function mountPanel(opts: {
 beforeEach(async () => {
   // The panel seeds its backfill into IDB now, so a leaked conversation's rows
   // would widen the next test's member set.
+  hiddenRowKeys = null
   await db.conversationMessages.clear()
   await db.drafts.clear()
   __resetConversationMessageSnapshots()
@@ -357,8 +367,8 @@ beforeEach(async () => {
       style,
       scrollerProps,
       itemClassName,
+      listRef,
       startMargin,
-      header,
       footer,
       overlay,
       mask,
@@ -368,6 +378,12 @@ beforeEach(async () => {
       hasRenderedContent,
     }) => {
       if (items.length === 0) return hasRenderedContent ? <div className="h-full" aria-hidden /> : <>{skeleton}</>
+      const hidden = hiddenRowKeys
+      const rendered = hidden == null ? items : items.filter((item) => !hidden.includes(item.key))
+      if (hidden != null) {
+        const topIndex = items.findIndex((item) => !hidden.includes(item.key))
+        listRef.current = { findItemIndex: () => topIndex, scrollOffset: 0 } as never
+      }
       return (
         <>
           <div
@@ -383,14 +399,14 @@ beforeEach(async () => {
             <div ref={contentRef}>
               {startMargin != null && (
                 <div
-                  aria-hidden={header == null}
+                  aria-hidden={startMargin.content == null}
                   className="flex flex-col justify-end overflow-hidden"
-                  style={{ height: startMargin }}
+                  style={{ height: startMargin.heightPx }}
                 >
-                  {header}
+                  {startMargin.content}
                 </div>
               )}
-              {items.map((item) => (
+              {rendered.map((item) => (
                 <div key={item.key} className={itemClassName}>
                   {item.node}
                 </div>
@@ -1043,6 +1059,44 @@ describe("ConversationPanel", () => {
       await user.click(screen.getByRole("button", { name: "Dismiss unread marker" }))
       await waitFor(() => expect(el.scrollTop).toBe(800))
       await waitFor(() => expect(screen.queryByText("New")).toBeNull())
+    } finally {
+      restore()
+    }
+  })
+
+  it("shows the N-new banner when the marker row is windowed out above the viewport", async () => {
+    // On a virtualized panel the marker row is usually NOT in the DOM when the
+    // reader has scrolled past it — `querySelector` finds nothing, and the
+    // geometry read that answers "is it above me" cannot run. The index fallback
+    // (marker row index vs. the window's top index) is the only thing keeping the
+    // banner alive there, and it is invisible to every DOM-based assertion.
+    // Everything is unread, so the divider leads: rows are the divider (0),
+    // msg_1 (1), msg_2 (2). The window holds msg_2 alone, putting the marker's
+    // row index above the window's top index.
+    hiddenRowKeys = ["unread", "msg_1"]
+    installReadState({ lastReadAt: "2026-06-22T10:30:00.000Z" })
+    const restore = installRowLayout()
+    try {
+      mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+      expect(screen.queryByText("Opening message body.")).toBeNull()
+      expect(await screen.findByRole("button", { name: /new message/ })).toBeTruthy()
+    } finally {
+      restore()
+    }
+  })
+
+  it("holds the banner when the windowed-out marker is BELOW the viewport", async () => {
+    // The same fallback, the other way round: a reader at the top of a long
+    // conversation has the marker below them, and an index comparison that only
+    // checked "not rendered" would point the "jump up" affordance downward.
+    hiddenRowKeys = ["unread", "msg_2"]
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installRowLayout()
+    try {
+      mountPanel(unreadFixture())
+      await screen.findByText("Opening message body.")
+      expect(screen.queryByRole("button", { name: "1 new message" })).toBeNull()
     } finally {
       restore()
     }

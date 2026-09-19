@@ -47,6 +47,7 @@ import { useConversationRunningChip } from "@/hooks/use-conversation-running-chi
 import { groupBranches, type BranchConversationView } from "@/lib/board/branch-grouping"
 import {
   useConversationGraph,
+  useConversationGraphReady,
   useStreamStructuralIndex,
   deriveBranchConversations,
   collectBranchThreadStreamIds,
@@ -125,14 +126,6 @@ const SKELETON_ROWS: { continuation: boolean; width: string }[] = [
   { continuation: true, width: "w-2/3" },
 ]
 
-/**
- * The panel's loading shape, rendered by the same component that renders the
- * rows and built from the same layout constants `MessageItem` uses
- * (`MESSAGE_ROW_*_PADDING`, the `md` avatar box, `gap-3`, and the column's own
- * `px-3 sm:px-6` break-out). Same geometry means the swap to real rows moves
- * nothing (INV-21) — the previous `p-4`/`gap-2` shape pushed the first row down
- * 16px and in 28px.
- */
 /** Reading column shared by the panel's rows, skeleton, and empty states. */
 const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6"
 
@@ -146,6 +139,14 @@ const PANEL_TOP_SPACER_PX = 16
  *  it is given and never re-derives them from a later measurement. */
 const PANEL_PROVENANCE_ROW_PX = 28
 
+/**
+ * The panel's loading shape, rendered by the same component that renders the
+ * rows and built from the same layout constants `MessageItem` uses
+ * (`MESSAGE_ROW_*_PADDING`, the `md` avatar box, `gap-3`, and the column's own
+ * `px-3 sm:px-6` break-out). Same geometry means the swap to real rows moves
+ * nothing (INV-21) — the previous `p-4`/`gap-2` shape pushed the first row down
+ * 16px and in 28px.
+ */
 function ConversationRowsSkeleton() {
   return (
     <div aria-hidden>
@@ -602,6 +603,7 @@ function ConversationPanelBody({
   // branch composer derives the branch thread streams (and pending sub-topic
   // draft rails) the panel subscribes to as extra rails.
   const conversationGraph = useConversationGraph(workspaceId)
+  const graphReady = useConversationGraphReady(workspaceId)
   const structuralIndex = useStreamStructuralIndex(workspaceId)
   const inlineComposer = useInlineBranchComposer({
     workspaceId,
@@ -814,7 +816,13 @@ function ConversationPanelBody({
   // neither map, and no read event ever writes one. Gating on it unbounded would
   // hold a blank panel forever, so the wait is bounded across every input: the
   // divider (or a still-syncing leg) is worth a beat, never the whole panel.
-  const panelLoading = (loadingMore && all.length === 0) || !readStateResolved
+  // `graphReady` is the board's own gate (INV-35) and belongs here for a reason
+  // the other two terms do not have: `provenance` decides `startMargin`, and
+  // virtua records the FIRST value it is handed without ever re-deriving the
+  // offsets it computed from it. Revealing against an unresolved graph mounts at
+  // 16px, learns 44px a frame later, and every index-driven scroll lands 28px
+  // off. Branch grouping reads the same graph, so it also stops popping in late.
+  const panelLoading = (loadingMore && all.length === 0) || !readStateResolved || !graphReady
   const [revealTimedOut, setRevealTimedOut] = useState(false)
   useEffect(() => {
     setRevealTimedOut(false)
@@ -1008,8 +1016,9 @@ function ConversationPanelBody({
     userInteractedAtRef,
     programmaticScrollAtRef,
     // The panel reserves its floating pill under a different variable than the
-    // stream's `--composer-height`; reading the wrong name silently returns 0
-    // and every cold open lands a composer short of the tail.
+    // stream's `--composer-height`, which is a `:root` fallback set at boot —
+    // so the default name resolves everywhere, to the STREAM composer's height
+    // (144px on desktop), and every cold open would land that far off the tail.
     composerHeightVar: FLOATING_COMPOSER_HEIGHT_VAR,
   })
 
@@ -1241,22 +1250,24 @@ function ConversationPanelBody({
               // above its row. virtua has to own it as a start margin — as CSS
               // padding it would sit outside the measured window and every
               // offset the scroller computes would be short by it.
-              startMargin={PANEL_TOP_SPACER_PX + (provenance ? PANEL_PROVENANCE_ROW_PX : 0)}
+              startMargin={{
+                heightPx: PANEL_TOP_SPACER_PX + (provenance ? PANEL_PROVENANCE_ROW_PX : 0),
+                content: provenance ? (
+                  <div className={PANEL_ROW_WIDTH_CLASS}>
+                    <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
+                  </div>
+                ) : undefined,
+              }}
               hasRenderedContent={hasRenderedContent}
               // pb-3 baseline, plus room for the floating composer pill so the
               // conversation tail can scroll above it.
               style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
               itemClassName={PANEL_ROW_WIDTH_CLASS}
-              header={
-                provenance ? (
-                  <BranchProvenanceRow conversationId={provenance.parentConversationId} title={provenance.title} />
-                ) : undefined
-              }
               footer={
-                <>
+                <div className={PANEL_ROW_WIDTH_CLASS}>
                   {loadingMore && <span className="mt-3 block text-xs text-muted-foreground">Loading messages…</span>}
                   {backfillRetry}
-                </>
+                </div>
               }
               skeleton={
                 <div className="h-full overflow-y-auto pt-4">

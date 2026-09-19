@@ -441,9 +441,8 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNod
  * branch group adds its own nested left rail INSIDE the row indent, so a branch
  * off an already-indented spanning row nests one level deeper.
  *
- * Exported so a virtualized surface can emit rows one at a time; `props.rows` is
- * ignored here, so a caller mapping its own list passes the same props object it
- * would hand {@link BranchedBoardRows}.
+ * Exported so a virtualized surface can emit rows one at a time, passing the
+ * per-row half of {@link BranchedBoardRows}' props.
  */
 export function renderBranchedBoardRow(row: BoardRow, props: BranchedBoardRowProps): ReactNode {
   const content = renderRowContent(row, props)

@@ -59,6 +59,16 @@ function addRow(id: string) {
   rowEls.set(id, el)
 }
 
+function removeRow(id: string) {
+  rowEls.get(id)?.remove()
+}
+
+/** MutationObserver records are delivered on a microtask, which fake timers do
+ *  not drive — every DOM add/remove a test makes needs this before asserting. */
+async function flushMutations() {
+  await act(async () => {})
+}
+
 function io(): FakeIntersectionObserver {
   const instance = FakeIntersectionObserver.instances.at(-1)
   if (!instance) throw new Error("no IntersectionObserver constructed")
@@ -469,6 +479,61 @@ describe("useConversationAutoRead", () => {
 
     enter("m_a", "m_b")
     settle()
+    expect(markRead).toHaveBeenCalledTimes(1)
+    expect(markRead).toHaveBeenCalledWith("m_b")
+  })
+
+  it("arms a row that mounts into the window after the observer was built", async () => {
+    // The virtualized panel mounts rows as the viewer scrolls, with no change to
+    // the eligible id set — a one-shot arm would observe only what was in the DOM
+    // at mount and nothing scrolled to afterwards would ever dwell.
+    const messages = [msg("m_a", 0), msg("m_b", 1)]
+    addRow("m_a")
+    mount(messages, { m_a: "unread", m_b: "unread" })
+    expect(io().observed.size).toBe(1)
+
+    addRow("m_b")
+    await flushMutations()
+    expect(io().observed.has(rowEls.get("m_b")!)).toBe(true)
+
+    enter("m_b")
+    settle()
+    expect(markRead).toHaveBeenCalledWith("m_b")
+  })
+
+  it("cancels a pending dwell when the row scrolls out of the DOM", async () => {
+    // An unmounted row reports no further intersection entries, so its dwell
+    // would complete unobserved and mark a row that left the viewport.
+    const messages = [msg("m_a", 0)]
+    addRow("m_a")
+    mount(messages, { m_a: "unread" })
+
+    enter("m_a")
+    advance(500)
+    removeRow("m_a")
+    await flushMutations()
+    settle()
+
+    expect(markRead).not.toHaveBeenCalled()
+  })
+
+  it("releases a pinned row's suppression when the row leaves the DOM", async () => {
+    // An active suppression blocks auto-read for the WHOLE conversation, so a
+    // suppressed row that unmounts without releasing wedges the surface: the
+    // per-row viewport-exit release never fires for a row with no observer.
+    const messages = [msg("m_a", 0), msg("m_b", 1)]
+    messages.forEach((m) => addRow(m.id))
+    mount(messages, { m_a: "unread", m_b: "unread" })
+
+    act(() => explicitUnreadPin?.())
+    messages.forEach((m) => removeRow(m.id))
+    await flushMutations()
+
+    messages.forEach((m) => addRow(m.id))
+    await flushMutations()
+    enter("m_a", "m_b")
+    settle()
+
     expect(markRead).toHaveBeenCalledTimes(1)
     expect(markRead).toHaveBeenCalledWith("m_b")
   })

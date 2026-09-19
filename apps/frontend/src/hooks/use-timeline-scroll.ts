@@ -115,10 +115,12 @@ interface UseTimelineScrollOptions {
   programmaticScrollAtRef?: React.MutableRefObject<number>
   /**
    * CSS variable the scroller's reserved composer height is published under.
-   * Defaults to {@link DEFAULT_COMPOSER_HEIGHT_VAR}; the conversation panel
-   * reserves its floating pill under `--floating-composer-height` instead, and
-   * reading the wrong name would silently return 0 — a tail that lands a
-   * composer short on every cold open.
+   * Defaults to {@link DEFAULT_COMPOSER_HEIGHT_VAR}, which
+   * `applyPersistedComposerHeight` sets on `:root` at boot — so it resolves on
+   * every element, and a surface that reserves its own space elsewhere (the
+   * conversation panel's floating pill, under `--floating-composer-height`) and
+   * forgets to say so lands the tail off by the STREAM composer's height
+   * (144px on desktop), silently and everywhere.
    */
   composerHeightVar?: string
 }

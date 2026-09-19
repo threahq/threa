@@ -21,6 +21,16 @@ test.describe.configure({ timeout: 120_000 })
 const SCROLLER = "[data-suppress-pull-refresh]:has([data-message-id])"
 const MESSAGE_COUNT = 40
 
+/** Six filler paragraphs per message. `bufferSize` is PIXELS, not rows (2000 in
+ *  `virtualized-scroller.tsx`), so 40 single-line rows — ~1100px all told — stay
+ *  mounted and the "row 1 is not in the DOM" assertion below cannot fail. Tall
+ *  rows put the list past 5000px, which is what makes this a virtualization
+ *  test rather than a row-count test. */
+const BODY_FILLER = Array.from(
+  { length: 6 },
+  (_, i) => `Filler line ${i + 1} — height so the window has something to leave behind.`
+).join("\n\n")
+
 interface Sample {
   t: number
   distanceFromBottom: number
@@ -90,7 +100,7 @@ function rowByNum(page: Page, prefix: string, num: number) {
 async function seedConversation(page: Page, workspaceId: string, streamId: string, count: number, prefix: string) {
   const post = async (num: number, conversation: Record<string, string>) => {
     const res = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
-      data: { streamId, content: label(prefix, num), conversation },
+      data: { streamId, content: `${label(prefix, num)}\n\n${BODY_FILLER}`, conversation },
     })
     await expectApiOk(res, `Send message ${num}`)
     return (await res.json()) as { message: { id: string }; conversationId?: string }
@@ -152,9 +162,10 @@ test.describe("Conversation panel landing", () => {
       scrollerBox!.height * 0.5
     )
 
-    // The opening message is 39 rows up: on a virtualized panel it is not in the
-    // DOM at all. Asserting its geometry only when a box came back would pass on
-    // an unvirtualized panel that rendered every row — count is the claim here.
+    // The opening message is 39 tall rows up — past `bufferSize` — so on a
+    // virtualized panel it is not in the DOM at all. Asserting its geometry only
+    // when a box came back would pass on an unvirtualized panel that rendered
+    // every row; count is the claim here.
     await expect(rowByNum(page, prefix, 1)).toHaveCount(0)
 
     // And it holds — no post-reveal bounce, no drift.
