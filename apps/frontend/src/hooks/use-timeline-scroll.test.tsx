@@ -154,6 +154,37 @@ describe("useTimelineScroll — tail replace", () => {
     expect(scrollToIndex).toHaveBeenCalledWith(54, expect.objectContaining({ align: "end" }))
   })
 
+  it("re-takes the landing when a backfill lands rows between the cached head and tail", () => {
+    // The conversation panel opens on the board's cached rail — opening message
+    // plus the few newest — so the server page arrives in the MIDDLE and both
+    // the first and the last key are unchanged.
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 6, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    scrollToIndex.mockClear()
+
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(scrollToIndex).toHaveBeenCalledWith(39, expect.objectContaining({ align: "end" }))
+  })
+
+  it("re-takes the landing when a single row fills a hole mid-window", () => {
+    // One out-of-order event landing in a gap: count+1, first and last keys
+    // unchanged. By count alone that is indistinguishable from an append, and
+    // the append carve-out used to swallow it — leaving virtua an estimate
+    // where it now has a real row.
+    const scrollToIndex = vi.fn()
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.current.scrollerRef.current = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800 })
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
+    harness.rerender(opts({ itemCount: 40, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    scrollToIndex.mockClear()
+
+    harness.rerender(opts({ itemCount: 41, getFirstKey: () => "e1", getLastKey: () => "e40" }))
+    expect(scrollToIndex).toHaveBeenCalledWith(40, expect.objectContaining({ align: "end" }))
+  })
+
   it("ignores an own send's echo swapping the last row's key in place", () => {
     // The optimistic row carries a client id; the socket echo replaces it with
     // the event id. Same count, same first row, new last key — no row arrives

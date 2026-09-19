@@ -152,13 +152,10 @@ test.describe("Conversation panel landing", () => {
       scrollerBox!.height * 0.5
     )
 
-    // The opening message is 39 rows up, so it must be off-screen.
-    const oldestBox = await rowByNum(page, prefix, 1).boundingBox()
-    if (oldestBox) {
-      expect(oldestBox.y + oldestBox.height, "opening message should be above the viewport").toBeLessThan(
-        scrollerBox!.y
-      )
-    }
+    // The opening message is 39 rows up: on a virtualized panel it is not in the
+    // DOM at all. Asserting its geometry only when a box came back would pass on
+    // an unvirtualized panel that rendered every row — count is the claim here.
+    await expect(rowByNum(page, prefix, 1)).toHaveCount(0)
 
     // And it holds — no post-reveal bounce, no drift.
     const posA = (await newest.boundingBox())!.y

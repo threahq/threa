@@ -320,8 +320,7 @@ export function ContinueThreadRow({ to, hiddenCount }: { to: string; hiddenCount
   )
 }
 
-export interface BranchedBoardRowsProps {
-  rows: BoardRow[]
+export interface BranchedBoardRowProps {
   workspaceId: string
   renderMessage: (message: RenderableMessage, continuation: boolean) => ReactNode
   /** Where a spanning-overflow row links, given the deep thread's stream. */
@@ -345,7 +344,11 @@ export interface BranchedBoardRowsProps {
   ledgerEventExpansion?: { isExpanded: (key: string) => boolean; toggle: (key: string) => void }
 }
 
-function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNode {
+export interface BranchedBoardRowsProps extends BranchedBoardRowProps {
+  rows: BoardRow[]
+}
+
+function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNode {
   const {
     workspaceId,
     renderMessage,
@@ -442,7 +445,7 @@ function renderRowContent(row: BoardRow, props: BranchedBoardRowsProps): ReactNo
  * ignored here, so a caller mapping its own list passes the same props object it
  * would hand {@link BranchedBoardRows}.
  */
-export function renderBranchedBoardRow(row: BoardRow, props: BranchedBoardRowsProps): ReactNode {
+export function renderBranchedBoardRow(row: BoardRow, props: BranchedBoardRowProps): ReactNode {
   const content = renderRowContent(row, props)
   const depth = row.displayDepth ?? 0
   if (depth === 0) return content

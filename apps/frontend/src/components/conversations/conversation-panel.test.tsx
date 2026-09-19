@@ -294,10 +294,14 @@ function mountPanel(opts: {
   const startId = opts.conversationId ?? CONVERSATION_ID
   // Captures the router's navigate so a test can switch the panel to another
   // conversation in place (initialEntries only apply at mount).
-  const nav: { openConversation: (id: string) => void } = { openConversation: () => {} }
+  const nav: { openConversation: (id: string) => void; openMessage: (messageId: string) => void } = {
+    openConversation: () => {},
+    openMessage: () => {},
+  }
   function Navigator() {
     const navigate = useNavigate()
     nav.openConversation = (id) => navigate(`/w/${WORKSPACE_ID}/board?panel=conv:${id}`)
+    nav.openMessage = (messageId) => navigate(`/w/${WORKSPACE_ID}/board?panel=conv:${startId}&m=${messageId}`)
     return null
   }
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -361,11 +365,13 @@ beforeEach(async () => {
       skeleton,
       isInitialSettling,
       scrollKey,
+      hasRenderedContent,
     }) => {
-      if (items.length === 0) return <>{skeleton}</>
+      if (items.length === 0) return hasRenderedContent ? <div className="h-full" aria-hidden /> : <>{skeleton}</>
       return (
         <>
           <div
+            {...scrollerProps}
             key={scrollKey}
             ref={registerScroller}
             className={["h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", className]
@@ -373,13 +379,19 @@ beforeEach(async () => {
               .join(" ")}
             style={{ overflowAnchor: "none", ...style }}
             onScroll={onScroll}
-            {...scrollerProps}
           >
             <div ref={contentRef}>
-              {startMargin != null && <div aria-hidden style={{ height: startMargin }} />}
-              {header}
+              {startMargin != null && (
+                <div
+                  aria-hidden={header == null}
+                  className="flex flex-col justify-end overflow-hidden"
+                  style={{ height: startMargin }}
+                >
+                  {header}
+                </div>
+              )}
               {items.map((item) => (
-                <div key={item.key} className={[itemClassName, item.className].filter(Boolean).join(" ")}>
+                <div key={item.key} className={itemClassName}>
                   {item.node}
                 </div>
               ))}
@@ -1015,8 +1027,12 @@ describe("ConversationPanel", () => {
       await waitFor(() => expect(scroller().scrollTop).toBe(rowStartScrollTop(1)))
 
       // The reader scrolls past the marker row, which puts it above the viewport.
+      // `pointerDown` first: without a real gesture the landing's refine loop
+      // keeps re-pinning row 1 on its own for MAX_MS, and the banner-click
+      // assertion below would hold whether or not the click did anything.
       const el = scroller()
       await new Promise((r) => setTimeout(r, 200))
+      act(() => fireEvent.pointerDown(el))
       el.scrollTop = 600
       act(() => fireEvent.scroll(el))
 
@@ -1027,6 +1043,31 @@ describe("ConversationPanel", () => {
       await user.click(screen.getByRole("button", { name: "Dismiss unread marker" }))
       await waitFor(() => expect(el.scrollTop).toBe(800))
       await waitFor(() => expect(screen.queryByText("New")).toBeNull())
+    } finally {
+      restore()
+    }
+  })
+
+  it("lands a new ?m= in the same conversation after the reader has scrolled", async () => {
+    // The gesture stamp that `scrollToMessage` bails on is set for the rest of
+    // the panel's life, and the landing one-shot used to clear only on a
+    // conversation change — so an in-panel shared-message link, an activity item
+    // or a saved item silently did nothing once the reader had touched the panel.
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installRowLayout()
+    try {
+      const { nav } = mountPanel(unreadFixture())
+      await screen.findByText("Reply two body.")
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowStartScrollTop(1)))
+
+      const el = scroller()
+      await new Promise((r) => setTimeout(r, 200))
+      act(() => fireEvent.pointerDown(el))
+      el.scrollTop = 600
+      act(() => fireEvent.scroll(el))
+
+      act(() => nav.openMessage("msg_1"))
+      await waitFor(() => expect(el.scrollTop).toBe(rowCenterScrollTop(0)))
     } finally {
       restore()
     }

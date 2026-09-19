@@ -37,7 +37,7 @@ import {
 import {
   renderBranchedBoardRow,
   BranchProvenanceRow,
-  type BranchedBoardRowsProps,
+  type BranchedBoardRowProps,
   BRANCH_SETTLING_RAIL_CLASS,
   BRANCH_ACCENTED_SETTLING_RAIL_CLASS,
 } from "@/components/board/branch-rows"
@@ -92,7 +92,7 @@ import { applySettlingAll, useBoardCardMessages } from "@/hooks/use-board-card-m
 import { useConversationBackfill } from "@/hooks/use-conversation-backfill"
 import { useTimelineScroll } from "@/hooks/use-timeline-scroll"
 import { useScrollToMessage, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
-import { VirtualizedScroller } from "@/components/timeline/virtualized-scroller"
+import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import { buildConversationLink } from "@/lib/stream-links"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
@@ -139,6 +139,12 @@ const PANEL_ROW_WIDTH_CLASS = "mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6
 /** Headroom above the first row for its hover toolbar, which floats ~14px above
  *  the row. The stream timeline reserves the same room in its header spacer. */
 const PANEL_TOP_SPACER_PX = 16
+
+/** `BranchProvenanceRow` is one non-wrapping `text-xs` line under a `mt-3`, so
+ *  its height is a constant the panel knows before it renders — which is what
+ *  `startMargin` needs, since virtua computes its offsets from the first value
+ *  it is given and never re-derives them from a later measurement. */
+const PANEL_PROVENANCE_ROW_PX = 28
 
 function ConversationRowsSkeleton() {
   return (
@@ -1074,12 +1080,24 @@ function ConversationPanelBody({
     conversationId: conversation.id,
     key: null,
   })
+  const landingIntentRef = useRef(highlightMessageId)
   if (landedRef.current.conversationId !== conversation.id) {
     landedRef.current = { conversationId: conversation.id, key: null }
     landingPendingRef.current = true
     userInteractedAtRef.current = 0
     programmaticScrollAtRef.current = 0
+  } else if (highlightMessageId != null && highlightMessageId !== landingIntentRef.current) {
+    // A new `?m=` while the same conversation stays open — the in-panel shared
+    // message block, an activity item, a saved item — is a new landing, not the
+    // one already taken. Both latches have to drop for it: the one-shot below,
+    // and the gesture stamp `scrollToMessage` bails the whole loop on, which a
+    // panel someone has been reading always carries. `scrollToMarker` and the
+    // stream timeline clear the same pair on a fresh intent.
+    landedRef.current.key = null
+    userInteractedAtRef.current = 0
+    programmaticScrollAtRef.current = 0
   }
+  landingIntentRef.current = highlightMessageId
   markerHeldRef.current = markerMessageId != null
 
   // Unkeyed: it re-attempts every render until `scrollToMessage` engages, so a
@@ -1133,13 +1151,20 @@ function ConversationPanelBody({
       setMarkerAboveViewport(row.getBoundingClientRect().top < container.getBoundingClientRect().top)
       return
     }
+    // No handle, or virtua's offset tree not yet populated: the banner would
+    // otherwise keep whatever it last showed — a stuck jump to a divider the
+    // reader is already at. Unknown reads as "not above".
     const list = listRef.current
-    if (list == null) return
+    if (list == null) {
+      setMarkerAboveViewport(false)
+      return
+    }
     const markerIndex = findRowIndex(markerMessageId)
     let topIndex: number
     try {
       topIndex = list.findItemIndex(list.scrollOffset)
     } catch {
+      setMarkerAboveViewport(false)
       return
     }
     setMarkerAboveViewport(markerIndex >= 0 && markerIndex < topIndex)
@@ -1158,8 +1183,7 @@ function ConversationPanelBody({
     scrollToMessage(markerMessageId, { align: "start", topOffsetPx: UNREAD_MARKER_TOP_GAP_PX })
   }, [markerMessageId, scrollToMessage])
 
-  const rowRenderProps: BranchedBoardRowsProps = {
-    rows,
+  const rowRenderProps: BranchedBoardRowProps = {
     workspaceId,
     renderMessage,
     continueThreadTo: (streamId) => getPanelUrl(streamId),
@@ -1172,6 +1196,7 @@ function ConversationPanelBody({
   const scrollerItems = revealed
     ? rows.map((row) => ({ key: row.key, node: renderBranchedBoardRow(row, rowRenderProps) }))
     : []
+  const hasRenderedContent = useRenderedContentLatch(scrollerItems.length)
   // A cold backfill can fail with no rows at all, and the scroller renders its
   // footer only once it has items — so the retry lives in both slots.
   const backfillRetry = backfillFailed ? (
@@ -1216,7 +1241,8 @@ function ConversationPanelBody({
               // above its row. virtua has to own it as a start margin — as CSS
               // padding it would sit outside the measured window and every
               // offset the scroller computes would be short by it.
-              startMargin={PANEL_TOP_SPACER_PX}
+              startMargin={PANEL_TOP_SPACER_PX + (provenance ? PANEL_PROVENANCE_ROW_PX : 0)}
+              hasRenderedContent={hasRenderedContent}
               // pb-3 baseline, plus room for the floating composer pill so the
               // conversation tail can scroll above it.
               style={{ paddingBottom: `calc(var(${FLOATING_COMPOSER_HEIGHT_VAR}, 0px) + 0.75rem)` }}
