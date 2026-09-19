@@ -219,7 +219,7 @@ function ConversationPanelHeader({
     <>
       <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
       {resolved && <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />}
-      <span className={cn("truncate", resolved && "text-muted-foreground")}>{title}</span>
+      <SidePanelTitle className={cn("min-w-0 truncate", resolved && "text-muted-foreground")}>{title}</SidePanelTitle>
       {post && (
         <RelativeTime
           date={post.conversation.lastActivityAt}
@@ -251,14 +251,14 @@ function ConversationPanelHeader({
             onClick={() => setMenuOpen(true)}
             aria-label={`${title} — conversation details and actions`}
             aria-haspopup="dialog"
-            className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left font-semibold transition-colors active:bg-accent/50"
+            className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors active:bg-accent/50"
           >
             {identity}
             <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           </button>
         </StreamTitlePreview>
       ) : (
-        <SidePanelTitle className="flex min-w-0 flex-1 items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {revealed ? (
             <StreamTitlePreview name={title}>
               <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
@@ -269,7 +269,7 @@ function ConversationPanelHeader({
               {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
             </>
           )}
-        </SidePanelTitle>
+        </div>
       )}
       {/* Same live pill as the stream header and the board card, over this
           conversation's own sessions. Compact on mobile so it can't squeeze the
