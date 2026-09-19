@@ -249,7 +249,7 @@ function ConversationPanelHeader({
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
-            aria-label={`${title} — conversation details and actions`}
+            aria-label={`${resolved ? "Resolved — " : ""}${title} — conversation details and actions`}
             aria-haspopup="dialog"
             className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors active:bg-accent/50"
           >

@@ -98,7 +98,7 @@ export function ConversationActionsMenu({
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const menuOpen = open ?? uncontrolledOpen
   const setMenuOpen = (next: boolean) => {
-    setUncontrolledOpen(next)
+    if (open === undefined) setUncontrolledOpen(next)
     onOpenChange?.(next)
   }
   const [renameOpen, setRenameOpen] = useState(false)
@@ -115,6 +115,7 @@ export function ConversationActionsMenu({
   const unhide = useUnhideConversation(workspaceId)
   const resolved = status === ConversationStatuses.RESOLVED
   const renameStream = useRenameStream(workspaceId, streamId ?? "")
+  const renamesScratchpad = isScratchpad && !!streamId
   const regeneration = useRegenerateTitle(
     workspaceId,
     isScratchpad && stream
@@ -123,7 +124,7 @@ export function ConversationActionsMenu({
   )
 
   const actions: SidebarActionItem[] = []
-  if (!isScratchpad || !streamId) {
+  if (!renamesScratchpad) {
     actions.push({ id: "rename", label: "Rename topic…", icon: Pencil, onSelect: () => setRenameOpen(true) })
   } else if (renameStream.canRename) {
     actions.push({ id: "rename", label: "Rename scratchpad…", icon: Pencil, onSelect: () => setRenameOpen(true) })
@@ -198,7 +199,11 @@ export function ConversationActionsMenu({
     <>
       {isTouch ? (
         <>
-          {cloneElement(triggerNode, { onClick: () => setMenuOpen(true) })}
+          {cloneElement(triggerNode, {
+            onClick: () => setMenuOpen(true),
+            "aria-haspopup": "dialog",
+            "aria-expanded": menuOpen,
+          })}
           <SidebarActionDrawer
             open={menuOpen}
             onOpenChange={setMenuOpen}
@@ -234,23 +239,17 @@ export function ConversationActionsMenu({
           onOpenChange={setMenuOpen}
         />
       )}
-      {isScratchpad && streamId ? (
-        <ScratchpadRenameDialog
-          workspaceId={workspaceId}
-          streamId={streamId}
-          open={renameOpen}
-          onOpenChange={setRenameOpen}
-          initialTopic={effectiveTitle ?? ""}
-        />
-      ) : (
-        <RenameConversationDialog
-          open={renameOpen}
-          onOpenChange={setRenameOpen}
-          initialTopic={effectiveTitle ?? ""}
-          title="Rename topic"
-          onSave={(next) => update.mutateAsync({ conversationId, topicSummary: next }).then(() => undefined)}
-        />
-      )}
+      <RenameConversationDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        initialTopic={effectiveTitle ?? ""}
+        title={renamesScratchpad ? "Rename scratchpad" : "Rename topic"}
+        onSave={
+          renamesScratchpad
+            ? renameStream.rename
+            : (next) => update.mutateAsync({ conversationId, topicSummary: next }).then(() => undefined)
+        }
+      />
       {streamId && !isScratchpad && (
         <ConversationSplitDialog
           workspaceId={workspaceId}
@@ -261,25 +260,6 @@ export function ConversationActionsMenu({
         />
       )}
     </>
-  )
-}
-
-function ScratchpadRenameDialog(props: {
-  workspaceId: string
-  streamId: string
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  initialTopic: string
-}) {
-  const renameStream = useRenameStream(props.workspaceId, props.streamId)
-  return (
-    <RenameConversationDialog
-      open={props.open}
-      onOpenChange={props.onOpenChange}
-      initialTopic={props.initialTopic}
-      title="Rename scratchpad"
-      onSave={renameStream.rename}
-    />
   )
 }
 
