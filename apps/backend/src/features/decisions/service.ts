@@ -1,17 +1,20 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
 import { withTransaction } from "../../db"
-import { HttpError } from "../../lib/errors"
+import { HttpError, isUniqueViolation } from "../../lib/errors"
 import { decisionRequestId, eventId } from "../../lib/id"
 import { OutboxRepository } from "../../lib/outbox"
 import {
   AuthorTypes,
   BotTypes,
   DecisionRequestStatuses,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   type DecisionOption,
+  type DecisionOptionTone,
   type DecisionRequestedEventPayload,
   type DecisionResolution,
   type DecisionResolvedEventPayload,
+  type EnclaveStreamEnvelope,
 } from "@threahq/types"
 import { BotInvocationRepository, BotRuntimeSessionLinkRepository } from "../bot-runtimes"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -32,15 +35,28 @@ interface DecisionServiceDeps {
   botChannelService: BotStreamAccessChecker
 }
 
+/** A body sealed under the stream key; the server stores it and reads neither half. */
+export interface SealedBody {
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+}
+
 export interface RequestDecisionParams {
   workspaceId: string
   streamId: string
   botId: string
   runtimeSessionId?: string
   invocationId?: string
-  title: string
+  /**
+   * Required on a sealed stream: the AAD binds the card to its id, so the
+   * requester mints it before sealing and the server stores it under that id.
+   */
+  decisionId?: string
+  title?: string
   bodyMarkdown?: string
-  options: DecisionOption[]
+  /** `label` is absent on a sealed card; the labels live inside `sealed`. */
+  options: Array<{ id: string; label?: string; tone: DecisionOptionTone }>
+  sealed?: SealedBody
   allowNote: boolean
   externalRef?: string
   expiresAt?: Date
@@ -52,6 +68,8 @@ export interface ResolveDecisionParams {
   userId: string
   optionId: string
   note?: string
+  /** The answer's note on a sealed card; mutually exclusive with `note`. */
+  sealedNote?: SealedBody
   version: number
 }
 
@@ -94,12 +112,10 @@ export class DecisionService {
       }
       const rootStreamId = stream.rootStreamId ?? stream.id
 
-      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, rootStreamId)) {
-        throw new HttpError("Decisions on an end-to-end encrypted stream are not supported yet", {
-          status: 400,
-          code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
-        })
-      }
+      const card = sealOrPlaintextCard(
+        params,
+        await E2eStreamsRepository.isE2eStream(client, params.workspaceId, rootStreamId)
+      )
 
       const invocation = params.invocationId
         ? await BotInvocationRepository.findLiveClaimedForBot(client, {
@@ -157,16 +173,18 @@ export class DecisionService {
         })
       }
 
-      const decision = await DecisionRequestRepository.insert(client, {
-        id: decisionRequestId(),
+      const decision = await insertDecision(client, {
+        id: card.id,
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         requesterBotId: params.botId,
         requesterRuntimeSessionId: runtimeSessionId,
         requesterInvocationId: invocation?.id ?? null,
-        title: params.title,
-        bodyMarkdown: params.bodyMarkdown ?? null,
-        options: params.options,
+        title: card.title,
+        bodyMarkdown: card.bodyMarkdown,
+        options: card.options,
+        ciphertext: card.ciphertext,
+        envelope: card.envelope,
         allowNote: params.allowNote,
         externalRef: params.externalRef ?? null,
         expiresAt: params.expiresAt ?? null,
@@ -222,13 +240,42 @@ export class DecisionService {
       if (!decision.options.some((option) => option.id === params.optionId)) {
         throw new HttpError("Unknown option for this decision", { status: 400, code: "DECISION_OPTION_UNKNOWN" })
       }
-      if (params.note !== undefined && !decision.allowNote) {
+      if ((params.note !== undefined || params.sealedNote !== undefined) && !decision.allowNote) {
         throw new HttpError("This decision does not accept a note", { status: 400, code: "DECISION_NOTE_NOT_ALLOWED" })
+      }
+      // The note is the one thing the answerer writes, so it follows the card it
+      // answers: sealed on a sealed card, plaintext on a plaintext one (INV-E1).
+      // The card's own ciphertext is the authority here, not a second stream
+      // lookup — it is what the note is sealed to.
+      const sealedCard = decision.ciphertext !== null
+      if (sealedCard && params.note !== undefined) {
+        throw new HttpError("This decision is sealed; send a sealed note", {
+          status: 400,
+          code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
+        })
+      }
+      if (!sealedCard && params.sealedNote !== undefined) {
+        throw new HttpError("This decision is not sealed; send a plaintext note", {
+          status: 400,
+          code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
+        })
+      }
+      if (
+        params.sealedNote !== undefined &&
+        params.sealedNote.envelope.aad !== decisionAad("decision-note", decision.streamId, decision.id, params.userId)
+      ) {
+        throw new HttpError("The sealed note is bound to a different answer", {
+          status: 400,
+          code: "DECISION_SEAL_AAD_MISMATCH",
+        })
       }
 
       const resolution: DecisionResolution = {
         optionId: params.optionId,
         note: params.note,
+        ...(params.sealedNote === undefined
+          ? {}
+          : { noteCiphertext: params.sealedNote.ciphertext, noteEnvelope: params.sealedNote.envelope }),
         decidedBy: params.userId,
         decidedAt: new Date().toISOString(),
       }
@@ -326,7 +373,130 @@ export class DecisionService {
       status: decision.status,
       optionId: decision.resolution?.optionId ?? null,
       note: decision.resolution?.note ?? null,
+      noteCiphertext: decision.resolution?.noteCiphertext ?? null,
+      noteEnvelope: decision.resolution?.noteEnvelope ?? null,
+      decidedBy: decision.resolution?.decidedBy ?? null,
       version: decision.version,
+    })
+  }
+}
+
+/**
+ * `buildDecisionAad` / `buildDecisionNoteAad` in @threahq/crypto, spelled out:
+ * the server holds no keys and does not link the crypto package (the
+ * sealed-name check in `streams/service.ts` builds its AAD the same way). It
+ * cannot open the ciphertext, but it can refuse one bound to another stream,
+ * another decision or another actor — a seal written to the wrong slot would
+ * otherwise store fine and open for nobody.
+ */
+function decisionAad(
+  label: "decision" | "decision-note",
+  streamId: string,
+  decisionId: string,
+  actorId: string
+): string {
+  return Buffer.from(`${streamId}|${label}|${decisionId}|${actorId}`, "utf8").toString("base64")
+}
+
+/**
+ * INV-E1 for a card, both ways: a sealed stream takes a sealed question and
+ * nothing readable, a plaintext one takes the question in clear. On the sealed
+ * path the NOT NULL projection columns take the placeholder messages use, the
+ * requester's minted id keys the row, and option ids and tones stay readable so
+ * the server can validate an answer against them. The labels are sealed with
+ * the question, so a card that won't open has nothing to put on its buttons.
+ *
+ * The envelope's AAD is checked against the slot the card is being written to.
+ */
+function sealOrPlaintextCard(
+  params: RequestDecisionParams,
+  isE2eStream: boolean
+): {
+  id: string
+  title: string
+  bodyMarkdown: string | null
+  options: DecisionOption[]
+  ciphertext: string | null
+  envelope: EnclaveStreamEnvelope | null
+} {
+  if (isE2eStream) {
+    if (!params.sealed) {
+      throw new HttpError("Stream is end-to-end encrypted; seal the decision", {
+        status: 400,
+        code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
+      })
+    }
+    if (!params.decisionId) {
+      throw new HttpError("A sealed decision carries the id its ciphertext is bound to", {
+        status: 400,
+        code: "DECISION_ID_REQUIRED",
+      })
+    }
+    if (params.title !== undefined || params.bodyMarkdown !== undefined || params.options.some((o) => o.label)) {
+      throw new HttpError("Stream is end-to-end encrypted; the question travels sealed, not in title or labels", {
+        status: 400,
+        code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      })
+    }
+    if (params.sealed.envelope.aad !== decisionAad("decision", params.streamId, params.decisionId, params.botId)) {
+      throw new HttpError("The sealed decision is bound to a different card", {
+        status: 400,
+        code: "DECISION_SEAL_AAD_MISMATCH",
+      })
+    }
+    return {
+      id: params.decisionId,
+      title: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+      bodyMarkdown: null,
+      options: params.options.map((option) => ({
+        id: option.id,
+        label: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+        tone: option.tone,
+      })),
+      ciphertext: params.sealed.ciphertext,
+      envelope: params.sealed.envelope,
+    }
+  }
+
+  if (params.sealed) {
+    throw new HttpError("Stream is not end-to-end encrypted; send the decision in plaintext", {
+      status: 400,
+      code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
+    })
+  }
+  const labelled = params.options.map((option) => ({ id: option.id, label: option.label, tone: option.tone }))
+  if (params.title === undefined || labelled.some((option) => option.label === undefined)) {
+    throw new HttpError("A plaintext decision needs a title and a label on every option", {
+      status: 400,
+      code: "DECISION_PLAINTEXT_INCOMPLETE",
+    })
+  }
+  return {
+    id: params.decisionId ?? decisionRequestId(),
+    title: params.title,
+    bodyMarkdown: params.bodyMarkdown ?? null,
+    options: labelled as DecisionOption[],
+    ciphertext: null,
+    envelope: null,
+  }
+}
+
+/**
+ * The requester mints a sealed card's id, so a retry of a POST whose response
+ * was lost arrives as a duplicate. The PK catches it; this turns that into an
+ * answer the client can act on rather than a 500.
+ */
+async function insertDecision(
+  client: Querier,
+  params: Parameters<typeof DecisionRequestRepository.insert>[1]
+): Promise<DecisionRequestRecord> {
+  try {
+    return await DecisionRequestRepository.insert(client, params)
+  } catch (error) {
+    if (!isUniqueViolation(error, "decision_requests_pkey")) throw error
+    throw new HttpError("A decision with this id already exists", {
+      status: 409,
+      code: "DECISION_ALREADY_EXISTS",
     })
   }
 }

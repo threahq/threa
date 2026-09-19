@@ -427,6 +427,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
 
         const response: BotHelloResponse = {
           ok: true,
+          botId,
           serverGeneratedAt: bootstrap.serverGeneratedAt.toISOString(),
           availableInvocations: bootstrap.available.map(serializeInvocation),
           ownedClaims: bootstrap.ownedClaims.map(serializeInvocation),
@@ -711,6 +712,11 @@ export interface SerializedBotSessionLink {
 export type BotHelloResponse =
   | {
       ok: true
+      /**
+       * The authenticated bot's own id. A sealed decision's AAD names its
+       * requester, so a runtime has to know who it is before it can seal one.
+       */
+      botId: string
       serverGeneratedAt: string
       availableInvocations: SerializedBotInvocation[]
       ownedClaims: SerializedBotInvocation[]

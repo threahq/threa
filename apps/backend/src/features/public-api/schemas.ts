@@ -40,8 +40,7 @@ import {
 import {
   messageMetadataSchema,
   messageMetadataFilterSchema,
-  e2eEnvelopeV2Schema,
-  MAX_E2E_CIPHERTEXT_BASE64_BYTES,
+  sealedBodySchema,
 } from "../messaging"
 import { botE2eKeyringFields, botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 
@@ -501,20 +500,10 @@ export const publicConversationDirectiveSchema = z.discriminatedUnion("intent", 
   z.object({ intent: z.literal("existing"), conversationId: z.string().min(1).max(64) }),
 ])
 
-// A message body sealed client-side under the stream's symmetric key, for a
-// stream that is end-to-end encrypted. Only the current (per-stream-key)
-// envelope is accepted: the legacy fan-out shape is read-compat, never
-// something a new client should mint. The server stores the bytes and the
-// framing verbatim and can open neither.
-export const sealedMessageBodySchema = z.object({
-  ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
-  envelope: e2eEnvelopeV2Schema,
-})
-
 export const sendMessageSchema = z
   .object({
     content: z.string().min(1, "content is required").optional(),
-    sealed: sealedMessageBodySchema.optional(),
+    sealed: sealedBodySchema.optional(),
     clientMessageId: z.string().max(128).optional(),
     metadata: messageMetadataSchema.optional(),
     conversation: publicConversationDirectiveSchema.optional(),
@@ -628,27 +617,55 @@ export const requestDelegationAccessSchema = z.object({
 const decisionOptionSchema = z.object({
   /** Stable id echoed back by the resolver — what the runtime branches on. */
   id: z.string().min(1).max(DECISION_OPTION_ID_MAX_CHARS),
-  label: z.string().min(1).max(DECISION_OPTION_LABEL_MAX_CHARS),
+  /** Absent on a sealed card: the labels ride inside the ciphertext instead. */
+  label: z.string().min(1).max(DECISION_OPTION_LABEL_MAX_CHARS).optional(),
   tone: z.enum(DECISION_OPTION_TONES).default("neutral"),
 })
 
-export const createDecisionSchema = z.object({
-  title: z.string().min(1).max(DECISION_TITLE_MAX_CHARS),
-  bodyMarkdown: z.string().max(DECISION_BODY_MAX_CHARS).optional(),
-  options: z
-    .array(decisionOptionSchema)
-    .min(1)
-    .max(DECISION_OPTIONS_MAX)
-    .refine((options) => new Set(options.map((option) => option.id)).size === options.length, {
-      message: "Option ids must be unique",
-    }),
-  /** Whether the resolver may attach a free-text note to their answer. */
-  allowNote: z.boolean().default(false),
-  /** The runtime's own reference for the call (e.g. a tool-call id). */
-  externalRef: z.string().max(DECISION_EXTERNAL_REF_MAX_CHARS).optional(),
-  /** Deadline, relative to now. The sweep expires the card once it passes. */
-  expiresInMs: z.number().int().min(1000).max(DECISION_MAX_EXPIRES_IN_MS).optional(),
-  /** The asking session / invocation; either proves the bot is running here. */
-  runtimeSessionId: z.string().min(1).optional(),
-  invocationId: z.string().min(1).optional(),
-})
+export const createDecisionSchema = z
+  .object({
+    /**
+     * Sealed cards only: the id the ciphertext's AAD is bound to, so the
+     * requester mints it before sealing and the server stores the row under it.
+     */
+    decisionId: z
+      .string()
+      .regex(/^dreq_[0-9A-HJKMNP-TV-Z]{26}$/, "decisionId must be a dreq_ id")
+      .optional(),
+    title: z.string().min(1).max(DECISION_TITLE_MAX_CHARS).optional(),
+    bodyMarkdown: z.string().max(DECISION_BODY_MAX_CHARS).optional(),
+    /** The question, sealed under the stream key, for an encrypted stream. */
+    sealed: sealedBodySchema.optional(),
+    options: z
+      .array(decisionOptionSchema)
+      .min(1)
+      .max(DECISION_OPTIONS_MAX)
+      .refine((options) => new Set(options.map((option) => option.id)).size === options.length, {
+        message: "Option ids must be unique",
+      }),
+    /** Whether the resolver may attach a free-text note to their answer. */
+    allowNote: z.boolean().default(false),
+    /** The runtime's own reference for the call (e.g. a tool-call id). */
+    externalRef: z.string().max(DECISION_EXTERNAL_REF_MAX_CHARS).optional(),
+    /** Deadline, relative to now. The sweep expires the card once it passes. */
+    expiresInMs: z.number().int().min(1000).max(DECISION_MAX_EXPIRES_IN_MS).optional(),
+    /** The asking session / invocation; either proves the bot is running here. */
+    runtimeSessionId: z.string().min(1).optional(),
+    invocationId: z.string().min(1).optional(),
+  })
+  // A card is readable or sealed, never both and never neither. Which one the
+  // stream demands is the service's INV-E1 gate; this only rejects a body that
+  // is neither shape.
+  .refine((body) => (body.title == null) !== (body.sealed == null), {
+    message: "Send either title or sealed, not both",
+    path: ["title"],
+  })
+  .refine((body) => body.options.every((option) => (option.label == null) === (body.sealed != null)), {
+    message: "Label every option, or none when the card is sealed",
+    path: ["options"],
+  })
+  // The id binds the ciphertext; the server cannot mint one after the fact.
+  .refine((body) => body.sealed == null || body.decisionId != null, {
+    message: "A sealed decision carries the decisionId its ciphertext is bound to",
+    path: ["decisionId"],
+  })

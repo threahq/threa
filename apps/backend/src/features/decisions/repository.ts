@@ -6,6 +6,7 @@ import {
   type DecisionRequest,
   type DecisionRequestStatus,
   type DecisionResolution,
+  type EnclaveStreamEnvelope,
 } from "@threahq/types"
 
 interface DecisionRequestRow {
@@ -18,6 +19,8 @@ interface DecisionRequestRow {
   title: string
   body_markdown: string | null
   options: DecisionOption[]
+  ciphertext: string | null
+  envelope: EnclaveStreamEnvelope | null
   allow_note: boolean
   external_ref: string | null
   status: string
@@ -39,6 +42,8 @@ export interface DecisionRequestRecord {
   title: string
   bodyMarkdown: string | null
   options: DecisionOption[]
+  ciphertext: string | null
+  envelope: EnclaveStreamEnvelope | null
   allowNote: boolean
   externalRef: string | null
   status: DecisionRequestStatus
@@ -59,6 +64,9 @@ export interface InsertDecisionRequestParams {
   title: string
   bodyMarkdown: string | null
   options: DecisionOption[]
+  /** Sealed card: the question itself, opaque here (INV-E7). Both or neither. */
+  ciphertext: string | null
+  envelope: EnclaveStreamEnvelope | null
   allowNote: boolean
   externalRef: string | null
   expiresAt: Date | null
@@ -66,7 +74,7 @@ export interface InsertDecisionRequestParams {
 
 const COLUMNS = `
   id, workspace_id, stream_id, requester_bot_id, requester_runtime_session_id, requester_invocation_id,
-  title, body_markdown, options, allow_note, external_ref, status, resolution,
+  title, body_markdown, options, ciphertext, envelope, allow_note, external_ref, status, resolution,
   expires_at, version, created_at, updated_at
 `
 
@@ -81,6 +89,8 @@ function mapRow(row: DecisionRequestRow): DecisionRequestRecord {
     title: row.title,
     bodyMarkdown: row.body_markdown,
     options: row.options,
+    ciphertext: row.ciphertext,
+    envelope: row.envelope,
     allowNote: row.allow_note,
     externalRef: row.external_ref,
     status: row.status as DecisionRequestStatus,
@@ -104,6 +114,9 @@ export function serializeDecisionRequest(record: DecisionRequestRecord): Decisio
     title: record.title,
     bodyMarkdown: record.bodyMarkdown ?? undefined,
     options: record.options,
+    ...(record.ciphertext === null || record.envelope === null
+      ? {}
+      : { ciphertext: record.ciphertext, envelope: record.envelope }),
     allowNote: record.allowNote,
     externalRef: record.externalRef ?? undefined,
     status: record.status,
@@ -120,11 +133,12 @@ export const DecisionRequestRepository = {
     const result = await db.query<DecisionRequestRow>(sql`
       INSERT INTO decision_requests (
         id, workspace_id, stream_id, requester_bot_id, requester_runtime_session_id, requester_invocation_id,
-        title, body_markdown, options, allow_note, external_ref, status, expires_at
+        title, body_markdown, options, ciphertext, envelope, allow_note, external_ref, status, expires_at
       ) VALUES (
         ${params.id}, ${params.workspaceId}, ${params.streamId}, ${params.requesterBotId},
         ${params.requesterRuntimeSessionId}, ${params.requesterInvocationId},
         ${params.title}, ${params.bodyMarkdown}, ${JSON.stringify(params.options)},
+        ${params.ciphertext}, ${params.envelope === null ? null : JSON.stringify(params.envelope)},
         ${params.allowNote}, ${params.externalRef}, ${DecisionRequestStatuses.OPEN}, ${params.expiresAt}
       )
       RETURNING ${sql.raw(COLUMNS)}

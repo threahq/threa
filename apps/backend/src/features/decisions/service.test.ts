@@ -10,6 +10,7 @@ import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository } from "../streams"
 import * as streamsModule from "../streams"
 import * as dbModule from "../../db"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threahq/types"
 
 const NOW = new Date("2026-09-16T12:00:00.000Z")
 
@@ -27,6 +28,8 @@ function fakeDecision(overrides: Partial<DecisionRequestRecord> = {}): DecisionR
       { id: "yes", label: "Deploy", tone: "primary" },
       { id: "no", label: "Hold", tone: "neutral" },
     ],
+    ciphertext: null,
+    envelope: null,
     allowNote: false,
     externalRef: null,
     status: DecisionRequestStatuses.OPEN,
@@ -65,6 +68,33 @@ const REQUEST_PARAMS = {
     { id: "no", label: "Hold", tone: "neutral" as const },
   ],
   allowNote: false,
+}
+
+const SEALED_ID = "dreq_01K5M0000000000000000000ZZ"
+/** base64 of `stream_1|decision|<SEALED_ID>|bot_1` — the slot the card is sealed to. */
+const SEALED_CARD_AAD = "c3RyZWFtXzF8ZGVjaXNpb258ZHJlcV8wMUs1TTAwMDAwMDAwMDAwMDAwMDAwMDBaWnxib3RfMQ=="
+/** base64 of `stream_1|decision-note|dreq_1|usr_1` — the slot the answer's note is sealed to. */
+const SEALED_NOTE_AAD = "c3RyZWFtXzF8ZGVjaXNpb24tbm90ZXxkcmVxXzF8dXNyXzE="
+const SEALED_BODY = {
+  ciphertext: "c2VhbGVk",
+  envelope: { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: SEALED_CARD_AAD },
+} as const
+const SEALED_NOTE = {
+  ciphertext: "bm90ZQ==",
+  envelope: { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: SEALED_NOTE_AAD },
+} as const
+
+const SEALED_REQUEST_PARAMS = {
+  workspaceId: "ws_1",
+  streamId: "stream_1",
+  botId: "bot_1",
+  decisionId: SEALED_ID,
+  options: [
+    { id: "yes", tone: "primary" as const },
+    { id: "no", tone: "neutral" as const },
+  ],
+  sealed: SEALED_BODY,
+  allowNote: true,
 }
 
 function stubRunningSession() {
@@ -110,7 +140,7 @@ describe("DecisionService.request", () => {
     })
   })
 
-  it("refuses a decision on an end-to-end encrypted stream", async () => {
+  it("refuses a plaintext decision on an end-to-end encrypted stream", async () => {
     stubTransaction()
     stubRunningSession()
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
@@ -119,13 +149,99 @@ describe("DecisionService.request", () => {
 
     await expect(makeService().request(REQUEST_PARAMS)).rejects.toMatchObject({
       status: 400,
-      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
     })
     expect({
       inserted: insert.mock.calls.length,
       events: insertEvent.mock.calls.length,
       outbox: insertOutbox.mock.calls.length,
     }).toEqual({ inserted: 0, events: 0, outbox: 0 })
+  })
+
+  it("refuses a sealed decision on a plaintext stream", async () => {
+    stubTransaction()
+    stubRunningSession()
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+
+    await expect(makeService().request(SEALED_REQUEST_PARAMS)).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
+    })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("refuses a sealed decision that carries a readable title or label", async () => {
+    stubTransaction()
+    stubRunningSession()
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+
+    await expect(
+      makeService().request({ ...SEALED_REQUEST_PARAMS, title: "Deploy the migration?" })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" })
+    await expect(
+      makeService().request({
+        ...SEALED_REQUEST_PARAMS,
+        options: [{ id: "yes", label: "Deploy", tone: "primary" as const }],
+      })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED" })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("stores a sealed card under the requester's id, with placeholders where the question would be", async () => {
+    stubTransaction()
+    stubRunningSession()
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+    stubEventAppend()
+
+    await makeService().request(SEALED_REQUEST_PARAMS)
+
+    expect(insert.mock.calls[0]![1]).toMatchObject({
+      id: SEALED_ID,
+      title: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+      bodyMarkdown: null,
+      options: [
+        { id: "yes", label: E2E_PLACEHOLDER_CONTENT_MARKDOWN, tone: "primary" },
+        { id: "no", label: E2E_PLACEHOLDER_CONTENT_MARKDOWN, tone: "neutral" },
+      ],
+      ciphertext: SEALED_BODY.ciphertext,
+      envelope: SEALED_BODY.envelope,
+    })
+  })
+
+  it("refuses a card sealed to another stream, id or bot", async () => {
+    stubTransaction()
+    stubRunningSession()
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+    stubEventAppend()
+
+    for (const params of [
+      { ...SEALED_REQUEST_PARAMS, streamId: "stream_2" },
+      { ...SEALED_REQUEST_PARAMS, decisionId: "dreq_01K5M0000000000000000000YY" },
+      { ...SEALED_REQUEST_PARAMS, botId: "bot_2" },
+    ]) {
+      await expect(makeService().request(params)).rejects.toMatchObject({
+        status: 400,
+        code: "DECISION_SEAL_AAD_MISMATCH",
+      })
+    }
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("turns a replayed sealed id into a 409 rather than a 500", async () => {
+    stubTransaction()
+    stubRunningSession()
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(DecisionRequestRepository, "insert").mockRejectedValue(
+      Object.assign(new Error("duplicate key"), { code: "23505", constraint: "decision_requests_pkey" })
+    )
+
+    await expect(makeService().request(SEALED_REQUEST_PARAMS)).rejects.toMatchObject({
+      status: 409,
+      code: "DECISION_ALREADY_EXISTS",
+    })
   })
 
   it("refuses a bot with no running session and no in-flight invocation", async () => {
@@ -284,8 +400,93 @@ describe("DecisionService.resolve", () => {
       status: "resolved",
       optionId: "yes",
       note: null,
+      noteCiphertext: null,
+      noteEnvelope: null,
+      decidedBy: "usr_1",
       version: 2,
     })
+  })
+
+  it("seals the note onto a sealed card and pushes it back sealed", async () => {
+    const sealedCard = stubResolvable(fakeDecision({ allowNote: true, ...SEALED_BODY }))
+    const resolve = spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(
+      fakeDecision({
+        ...SEALED_BODY,
+        status: DecisionRequestStatuses.RESOLVED,
+        version: 2,
+        resolution: {
+          optionId: "yes",
+          noteCiphertext: SEALED_NOTE.ciphertext,
+          noteEnvelope: SEALED_NOTE.envelope,
+          decidedBy: "usr_1",
+          decidedAt: NOW.toISOString(),
+        },
+      })
+    )
+    const { insertOutbox } = stubEventAppend()
+
+    await makeService().resolve({
+      ...RESOLVE_PARAMS,
+      sealedNote: SEALED_NOTE,
+    })
+
+    expect(sealedCard.ciphertext).toBe(SEALED_BODY.ciphertext)
+    expect(resolve.mock.calls[0]![1].resolution).toEqual({
+      optionId: "yes",
+      note: undefined,
+      noteCiphertext: SEALED_NOTE.ciphertext,
+      noteEnvelope: SEALED_NOTE.envelope,
+      decidedBy: "usr_1",
+      decidedAt: expect.any(String),
+    })
+    expect(insertOutbox).toHaveBeenCalledWith(expect.anything(), "bot_decision:resolved", {
+      workspaceId: "ws_1",
+      botId: "bot_1",
+      streamId: "stream_1",
+      runtimeSessionId: "sess_1",
+      decisionId: "dreq_1",
+      status: "resolved",
+      optionId: "yes",
+      note: null,
+      noteCiphertext: SEALED_NOTE.ciphertext,
+      noteEnvelope: SEALED_NOTE.envelope,
+      decidedBy: "usr_1",
+      version: 2,
+    })
+  })
+
+  it("refuses a plaintext note on a sealed card and a sealed note on a plaintext one", async () => {
+    stubResolvable(fakeDecision({ allowNote: true, ...SEALED_BODY }))
+    const resolve = spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(fakeDecision())
+
+    await expect(makeService().resolve({ ...RESOLVE_PARAMS, note: "ship it" })).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
+    })
+
+    mock.restore()
+    stubResolvable(fakeDecision({ allowNote: true }))
+    spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(fakeDecision())
+    await expect(
+      makeService().resolve({
+        ...RESOLVE_PARAMS,
+        sealedNote: SEALED_NOTE,
+      })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM" })
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it("refuses a note sealed to another answer", async () => {
+    stubResolvable(fakeDecision({ allowNote: true, ...SEALED_BODY }))
+    const resolve = spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(fakeDecision())
+
+    await expect(
+      makeService().resolve({
+        ...RESOLVE_PARAMS,
+        sealedNote: { ...SEALED_NOTE, envelope: { ...SEALED_NOTE.envelope, aad: SEALED_CARD_AAD } },
+      })
+    ).rejects.toMatchObject({ status: 400, code: "DECISION_SEAL_AAD_MISMATCH" })
+    expect(resolve).not.toHaveBeenCalled()
   })
 
   it("rejects an option that is not on the card", async () => {

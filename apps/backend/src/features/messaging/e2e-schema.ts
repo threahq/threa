@@ -56,3 +56,16 @@ export const e2eEnvelopeV2Schema = z.object({
  * the path new messages take.
  */
 export const e2eEnvelopeSchema = z.union([e2eEnvelopeV2Schema, e2eEnvelopeV1Schema])
+
+/**
+ * A body sealed client-side under the stream's symmetric key: the bytes plus
+ * their framing, both stored verbatim. One definition for every sealed slot a
+ * client writes (message, decision card, decision note) so a client that can
+ * seal for one door can seal for the next (INV-33). Only the current envelope
+ * shape is accepted: the legacy fan-out shape is read-compat, never something
+ * a new client should mint.
+ */
+export const sealedBodySchema = z.object({
+  ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
+  envelope: e2eEnvelopeV2Schema,
+})
