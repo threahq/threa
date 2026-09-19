@@ -23,6 +23,7 @@ import {
   type DeliveredTurn,
   type RemoteSessionDelegate,
   type RuntimeDescriptor,
+  type RuntimePresenceReport,
   type SessionControlActuator,
 } from "./session"
 import type { RemoteSessionConfig } from "./identity"
@@ -5502,5 +5503,81 @@ describe("RemoteSession sealed keyring", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("presence reporting", () => {
+  const asInternal = (session: RemoteSession) =>
+    session as unknown as {
+      syncPresence: () => Promise<void>
+      enqueueOfflinePresence: (isCurrent: () => boolean) => Promise<void>
+    }
+
+  const actuator: SessionControlActuator = {
+    commands: ["model", "compact"],
+    interrupt: () => true,
+    runCommand: async () => ({ ok: true, message: "ok" }),
+  }
+
+  test("hands a supervisor the descriptive half of every presence it publishes", async () => {
+    const { client } = makeFakeClient()
+    const { transport, presence } = makeFakeTransport()
+    const reports: RuntimePresenceReport[] = []
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: { deliverTurn: async () => {}, sessionControl: actuator },
+      runtime: RUNTIME,
+      transport,
+      onPresence: (report) => reports.push(report),
+    })
+
+    await asInternal(session).syncPresence()
+    await asInternal(session).enqueueOfflinePresence(() => true)
+
+    expect(reports).toEqual([
+      {
+        runtimeKind: RUNTIME.kind,
+        instanceId: "rt-test",
+        runtimeSessionId: "rts-test",
+        displayName: "Test Runtime - test",
+        status: "available",
+        capabilities: runtimeCapabilitiesFor("rts-test", actuator),
+        manifest: effectiveRuntimeManifest(RUNTIME.manifest, actuator),
+      },
+      {
+        runtimeKind: RUNTIME.kind,
+        instanceId: "rt-test",
+        runtimeSessionId: "rts-test",
+        displayName: "Test Runtime - test",
+        status: "offline",
+        capabilities: runtimeCapabilitiesFor("rts-test", actuator),
+        manifest: effectiveRuntimeManifest(RUNTIME.manifest, actuator),
+      },
+    ])
+    expect(presence.map((body) => body.status)).toEqual(["available", "offline"])
+    await session.shutdown()
+  })
+
+  test("reports nothing the presence write did not land", async () => {
+    const { client } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    ;(transport as unknown as { updatePresence: () => Promise<void> }).updatePresence = async () => {
+      throw new Error("presence write failed")
+    }
+    const reports: RuntimePresenceReport[] = []
+    const session = new RemoteSession({
+      config: makeConfig(),
+      client,
+      delegate: { deliverTurn: async () => {}, sessionControl: actuator },
+      runtime: RUNTIME,
+      transport,
+      onPresence: (report) => reports.push(report),
+    })
+
+    await asInternal(session).syncPresence()
+
+    expect(reports).toEqual([])
+    await session.shutdown()
   })
 })

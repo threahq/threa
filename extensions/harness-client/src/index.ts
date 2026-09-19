@@ -38,6 +38,13 @@ export {
   type SpawnRuntimeOption,
 } from "./spawn-runtimes"
 export {
+  clearSessionPresence,
+  readSessionPresence,
+  sessionPresenceDir,
+  writeSessionPresence,
+  type SessionPresenceSnapshot,
+} from "./session-presence"
+export {
   takeSessionWakeNote,
   wakeNotesDir,
   writeSessionWakeNote,
