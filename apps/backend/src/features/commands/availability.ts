@@ -37,6 +37,31 @@ import {
   SPAWN_THINKING_ARG,
 } from "./catalog"
 
+/**
+ * The capability harnessd sets on presence it publishes for a session whose
+ * process is not running, so a wound-down agent keeps its commands and a user
+ * never has to wake one to change its model. The command is queued and applied
+ * when the session resumes.
+ */
+const SUPERVISOR_HELD_CAPABILITY = "supervisorHeld"
+
+/**
+ * How long held presence stands without a refresh. The supervisor re-posts it
+ * every watch pass (60s); five missed passes is a supervisor that stopped, and
+ * the commands it advertised would have nothing left to deliver them. Scoped to
+ * held presence on purpose: a session that speaks for itself posts presence on
+ * change, not on a timer, so the same check would hide a live agent that has
+ * been quiet for an hour.
+ */
+const SUPERVISOR_HELD_PRESENCE_TTL_MS = 5 * 60_000
+
+export function supervisorHeldPresenceExpired(presence: BotRuntimeInstance, nowMs = Date.now()): boolean {
+  if (presence.capabilities[SUPERVISOR_HELD_CAPABILITY] !== true) return false
+  const lastSeenMs = presence.lastSeenAt.getTime()
+  if (!Number.isFinite(lastSeenMs)) return true
+  return nowMs - lastSeenMs > SUPERVISOR_HELD_PRESENCE_TTL_MS
+}
+
 const READ_ONLY_COMMAND_NAMES = new Set(["invite", "stop", "status"])
 
 export function commandRequiresWritableAuthority(name: string): boolean {
@@ -243,6 +268,7 @@ async function resolveRuntimeCommandTarget(
   // it advertises in `sessionControlCommands`.
   if (resolveRuntimeKindConfig(presence.runtimeKind).sessionLinking === "none") return null
   if (presence.status !== BotRuntimeStatuses.AVAILABLE && presence.status !== BotRuntimeStatuses.BUSY) return null
+  if (supervisorHeldPresenceExpired(presence)) return null
 
   const runtimeSessionId =
     typeof presence.capabilities.runtimeSessionId === "string" ? presence.capabilities.runtimeSessionId : null

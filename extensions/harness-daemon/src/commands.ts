@@ -34,6 +34,7 @@ import {
 } from "./inventory"
 import { acquireProcessLock, resumeActiveLockPath } from "./lock"
 import { IDLE_SUSPEND_AFTER_MS, idleSuspendEnabled } from "./idle"
+import { createHeldPresence } from "./held-presence"
 import { defaultSuspendDeps, suspendAgent, wakeAgent, type SuspendDeps, type SuspendOutcome } from "./suspend"
 import { inspectProfiles, DEFAULT_PROFILE } from "./profiles"
 import { commandExists, output } from "./shell"
@@ -529,6 +530,22 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
     return reconcileChain
   }
 
+  // Runs whether or not suspension is enabled, and after it on the same chain:
+  // rows wound down by an earlier build — or by the pass that just ran — are
+  // the ones with nothing left to speak for them.
+  const holdPresence = createHeldPresence()
+  const holdSuspendedPresence = (): Promise<void> => {
+    reconcileChain = reconcileChain
+      .then(async () => {
+        if (options.dryRun) return
+        await holdPresence(readInventory())
+      })
+      .catch((error) => {
+        console.error(`harnessd: held presence failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    return reconcileChain
+  }
+
   await startupReconciliation(defaultStartupReconciliationDeps(() => reconcile(), options.dryRun ?? false))
   const vanishedPanes = createVanishedPaneSweep()
 
@@ -575,6 +592,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
       await briefs.record(matchOomKills(kills, { ...pass, scopeOfPid, panePidOfScope }))
       await briefs.deliver(pass.live)
       void sweepIdle()
+      void holdSuspendedPresence()
     },
     sleep: Bun.sleep,
     intervalMs: reconnectIntervalMs,
