@@ -343,6 +343,7 @@
       "dependencies": {
         "@astrojs/sitemap": "^3.7.3",
         "astro": "^5.6.1",
+        "katex": "^0.16.47",
       },
       "devDependencies": {
         "@astrojs/check": "^0.9.4",
