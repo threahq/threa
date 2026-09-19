@@ -4,6 +4,7 @@ import {
   Eye,
   EyeOff,
   EllipsisVertical,
+  Link2,
   MessageSquareDashed,
   Pencil,
   RotateCcw,
@@ -42,6 +43,7 @@ import { effectiveConversationTitle } from "@/lib/conversations/title"
 import { useRenameStream } from "@/hooks/use-rename-stream"
 import { isProtectedRegenerableTitle, useRegenerateTitle } from "@/hooks/use-regenerate-title"
 import { useOpenAside } from "@/hooks/use-open-aside"
+import { copyConversationLink } from "@/lib/stream-links"
 
 interface ConversationActionsMenuProps {
   workspaceId: string
@@ -156,6 +158,10 @@ export function ConversationActionsMenu({
           >
             {resolved ? <RotateCcw className="h-4 w-4" /> : <CircleCheck className="h-4 w-4" />}
             {resolved ? "Reopen" : "Mark resolved"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => void copyConversationLink(workspaceId, conversationId)}>
+            <Link2 className="h-4 w-4" />
+            Copy link
           </DropdownMenuItem>
           {streamId && !isScratchpad && (
             <DropdownMenuItem

@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ActiveAgentSession } from "@threahq/types"
 import { useSearchParams } from "react-router-dom"
-import { toast } from "sonner"
 import {
   ChevronLeft,
   Hash,
   FileEdit,
   User,
   MessageSquareText,
-  Link2,
-  Check,
   CircleCheck,
   ArrowDown,
   ArrowUp,
@@ -24,7 +21,6 @@ import {
   SidePanelContent,
 } from "@/components/ui/side-panel"
 import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
@@ -95,7 +91,6 @@ import { useTimelineScroll } from "@/hooks/use-timeline-scroll"
 import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
-import { buildConversationLink } from "@/lib/stream-links"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
@@ -180,7 +175,6 @@ function ConversationRowsSkeleton() {
 
 interface ConversationPanelHeaderProps {
   workspaceId: string
-  conversationId: string | null
   post: BoardViewPost | null
   /** The panel's coordinated phase — the header lands with the rows, never before. */
   phase: CoordinatedPhase
@@ -188,10 +182,8 @@ interface ConversationPanelHeaderProps {
   hostStreamType: string | undefined
   locator: string
   isHidden: boolean
-  copyDone: boolean
   /** Agent sessions running in this conversation, for the header's chip. */
   runningChipEntries: readonly ActiveAgentSession[]
-  onCopyLink: () => void
   onClose: () => void
 }
 
@@ -203,16 +195,13 @@ interface ConversationPanelHeaderProps {
  */
 function ConversationPanelHeader({
   workspaceId,
-  conversationId,
   post,
   phase,
   isMobile,
   hostStreamType,
   locator,
   isHidden,
-  copyDone,
   runningChipEntries,
-  onCopyLink,
   onClose,
 }: ConversationPanelHeaderProps) {
   const ContextGlyph = (hostStreamType && TYPE_GLYPH[hostStreamType]) || MessageSquareText
@@ -221,10 +210,14 @@ function ConversationPanelHeader({
   return (
     <SidePanelHeader>
       {isMobile && <SidebarToggle location="page" />}
-      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose}>
-        <ChevronLeft className="h-4 w-4" />
-        <span className="sr-only">Back</span>
-      </Button>
+      {/* Mobile replaces the X close with a back chevron; desktop keeps the X
+          alone. Both affordances at once was this header's own invention. */}
+      {isMobile && (
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose}>
+          <ChevronLeft className="h-4 w-4" />
+          <span className="sr-only">Back</span>
+        </Button>
+      )}
       {/* Nothing here paints before the column does: the glyph, the topic and the
           stream locator all resolve with the rows, and rendering their fallbacks
           first made the header show a generic icon over the literal word
@@ -272,22 +265,6 @@ function ConversationPanelHeader({
         />
       ) : (
         <div className="h-8 w-8 shrink-0" />
-      )}
-      {conversationId && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-              aria-label={copyDone ? "Link copied" : "Copy link to conversation"}
-              onClick={onCopyLink}
-            >
-              {copyDone ? <Check className="h-4 w-4" /> : <Link2 className="h-4 w-4" />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{copyDone ? "Copied" : "Copy link"}</TooltipContent>
-        </Tooltip>
       )}
       {!isMobile && <SidePanelClose onClose={onClose} />}
     </SidePanelHeader>
@@ -395,31 +372,6 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
     return () => document.removeEventListener("keydown", onKeyDown)
   }, [onClose])
 
-  // Header "Copy link" confirms in place — the icon swaps to a checkmark for a
-  // beat (same footprint, no shift per INV-21) rather than a toast, because a
-  // persistent header button is an on-screen anchor (INV-63; mirrors the
-  // image-gallery toolbar). Only the anchorless callers (the mod+Shift+L
-  // shortcut, the message-menu item) keep `copyConversationLink`'s toast.
-  const [copyDone, setCopyDone] = useState(false)
-  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(
-    () => () => {
-      if (copyResetRef.current) clearTimeout(copyResetRef.current)
-    },
-    []
-  )
-  const handleCopyLink = useCallback(async () => {
-    if (!conversationId) return
-    try {
-      await navigator.clipboard.writeText(buildConversationLink(workspaceId, conversationId))
-      setCopyDone(true)
-      if (copyResetRef.current) clearTimeout(copyResetRef.current)
-      copyResetRef.current = setTimeout(() => setCopyDone(false), 1200)
-    } catch {
-      toast.error("Failed to copy link")
-    }
-  }, [conversationId, workspaceId])
-
   const anchorStreamId = post?.conversation.streamId
   const hostStream = useStreamFromStore(anchorStreamId)
   const hostStreamType = hostStream?.type
@@ -451,12 +403,9 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
 
   const headerProps = {
     workspaceId,
-    conversationId,
     hostStreamType,
     locator,
     isMobile,
-    copyDone,
-    onCopyLink: () => void handleCopyLink(),
     onClose,
   }
 
