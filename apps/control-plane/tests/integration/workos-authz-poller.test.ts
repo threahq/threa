@@ -117,7 +117,7 @@ describe("WorkosAuthzPoller", () => {
     ])
   })
 
-  test("a role change within the same millisecond is not dropped by the mirror's timestamp guard", async () => {
+  test("back-to-back stub role changes both land: the second is not dropped", async () => {
     const { stub, lock, poller } = makeStack()
     await lock.ensureRow()
 
@@ -127,6 +127,21 @@ describe("WorkosAuthzPoller", () => {
 
     const row = await WorkosAuthzRepository.getByOrgAndUser(pool, orgId, userId)
     expect(row).toMatchObject({ role_slugs: ["owner"] })
+  })
+
+  test("the mirror drops a second event carrying an equal last_event_at", async () => {
+    const { stub, lock, poller } = makeStack()
+    await lock.ensureRow()
+
+    const sameInstant = new Date("2026-09-19T10:00:00.000Z")
+    stub.pushMirrorEvent(makeEvent("event_same_1", "organization_membership.created", sameInstant))
+    stub.pushMirrorEvent(
+      makeEvent("event_same_2", "organization_membership.updated", sameInstant, { roleSlugs: ["owner"] })
+    )
+    await poller.tick()
+
+    const row = await WorkosAuthzRepository.getByOrgAndUser(pool, orgId, userId)
+    expect(row).toMatchObject({ role_slugs: ["member"] })
   })
 
   test("no-events tick: claims, drains nothing, releases", async () => {
