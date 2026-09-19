@@ -1,17 +1,21 @@
 import { afterEach, describe, expect, it } from "vitest"
-import { Editor } from "@tiptap/core"
+import { Editor, type JSONContent } from "@tiptap/core"
 import { TextSelection } from "@tiptap/pm/state"
 import { scanMathSpans } from "@threahq/prosemirror"
 import { createEditorExtensions } from "./editor-extensions"
 import { insertMath } from "./insert-math"
 
 function createEditor(text?: string) {
+  return createEditorWith(text ? [{ type: "paragraph", content: [{ type: "text", text }] }] : undefined)
+}
+
+function createEditorWith(blocks?: JSONContent[]) {
   const element = document.createElement("div")
   document.body.append(element)
   const editor = new Editor({
     element,
     extensions: createEditorExtensions({ placeholder: "Type a message..." }),
-    content: text ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] } : undefined,
+    content: blocks ? { type: "doc", content: blocks } : undefined,
   })
   editor.view.hasFocus = () => true
   editor.on("destroy", () => element.remove())
@@ -62,5 +66,39 @@ describe("insertMath", () => {
     insertMath(editor)
 
     expect(editor.getText()).toBe("$a < b$")
+  })
+
+  it("keeps a mention in the selection instead of wrapping it away", () => {
+    editor = createEditorWith([
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "hi " },
+          { type: "mention", attrs: { id: "usr_1", slug: "alice", mentionType: "user" } },
+          { type: "text", text: " yo" },
+        ],
+      },
+    ])
+    select(editor, 1, 8)
+    insertMath(editor)
+
+    // The pill survives; the pair lands after the selection with the caret in it.
+    expect(editor.state.doc.firstChild?.childCount).toBe(3)
+    expect(editor.state.doc.firstChild?.child(1).type.name).toBe("mention")
+    expect(editor.state.doc.textContent).toBe("hi  yo $$")
+    expect(editor.state.selection.from).toBe(10)
+  })
+
+  it("does not merge two paragraphs into one equation", () => {
+    editor = createEditorWith([
+      { type: "paragraph", content: [{ type: "text", text: "abc" }] },
+      { type: "paragraph", content: [{ type: "text", text: "def" }] },
+    ])
+    select(editor, 2, 7)
+    insertMath(editor)
+
+    expect(editor.state.doc.childCount).toBe(2)
+    expect(editor.state.doc.child(0).textContent).toBe("abc")
+    expect(editor.state.doc.child(1).textContent).toBe("d $$ef")
   })
 })
