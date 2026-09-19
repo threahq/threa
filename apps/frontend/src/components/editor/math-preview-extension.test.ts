@@ -94,6 +94,23 @@ describe("math preview", () => {
     expect(previews(editor)).toHaveLength(0)
   })
 
+  it("clicking an equation puts the caret at the end of its source, revealing the TeX", () => {
+    editor = createEditor("$a^2$ tail")
+    caretToStart(editor)
+
+    // Typed ahead of the equation first: the click must land on where the span
+    // is now, not where it was drawn.
+    editor.view.dispatch(editor.state.tr.insertText("xx ", 1))
+    caretToStart(editor)
+
+    const [preview] = previews(editor)
+    preview?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+
+    // `xx $a^2$ tail`: the source ends at doc position 9.
+    expect(editor.state.selection.from).toBe(9)
+    expect(previews(editor)).toHaveLength(0)
+  })
+
   it("ignores math delimiters inside a code block", () => {
     editor = createEditor("$a^2$")
     editor.commands.setTextSelection({ from: 1, to: 6 })
