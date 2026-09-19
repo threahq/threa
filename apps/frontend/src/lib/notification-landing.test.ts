@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { installFakeCaches, uninstallFakeCaches } from "@/test/fake-caches"
 import { createNotificationLanding, type NotificationLandingDeps } from "./notification-landing"
 import { stashNotificationTarget } from "./notification-target-storage"
+import { takeNotificationIntent } from "./notification-intent"
 
 beforeEach(installFakeCaches)
 afterEach(() => {
@@ -69,6 +70,27 @@ describe("notification landing", () => {
     await land()
 
     expect(calls).toEqual([])
+  })
+
+  it("arms the account flip for a tap under a parked account, even on the open stream", async () => {
+    await stashNotificationTarget({ url: TARGET, workosUserId: "user_01AAA" })
+    const { land } = landing({ at: TARGET })
+
+    await land()
+
+    expect(takeNotificationIntent("ws_1")).toBe("user_01AAA")
+  })
+
+  it("replaces on the retry, so a target the app redirects away from lands on one entry", async () => {
+    await stashNotificationTarget({ url: "/w/ws_1" })
+    const state = landing({ navigate: () => state.arriveAt("/w/ws_1/s/last_seen") })
+
+    await state.land()
+
+    expect(state.calls).toEqual([
+      { url: "/w/ws_1", replace: false },
+      { url: "/w/ws_1", replace: true },
+    ])
   })
 
   it("refuses a destination that would leave the app", async () => {

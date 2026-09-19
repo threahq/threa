@@ -730,7 +730,7 @@ function openTarget(targetUrl: string, workosUserId: string | undefined): Promis
 self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data as PushData | undefined
   const notification = event.notification as Notification & { actions?: ReadonlyArray<{ action: string }> }
-  const action = resolveClickedAction(event.action, notification.actions)
+  const action = resolveClickedAction(event.action, notification.actions, self.navigator.userAgent)
   // Synchronous, before any await: the card must go away on the tap itself.
   event.notification.close()
 

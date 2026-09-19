@@ -271,33 +271,40 @@ describe("resolveActions", () => {
   })
 })
 
+const ANDROID_UA =
+  "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+const MAC_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+
 describe("resolveClickedAction", () => {
   const card = [{ action: "mark_read" }]
 
   it("reads a body tap as no action", () => {
-    expect(resolveClickedAction("", card)).toBe("")
-    expect(resolveClickedAction(undefined, card)).toBe("")
+    expect(resolveClickedAction("", card, MAC_UA)).toBe("")
+    expect(resolveClickedAction(undefined, card, MAC_UA)).toBe("")
   })
 
   it("keeps an id the card actually rendered", () => {
-    expect(resolveClickedAction("mark_read", card)).toBe("mark_read")
+    expect(resolveClickedAction("mark_read", card, MAC_UA)).toBe("mark_read")
   })
 
   it("drops an id the card never carried, so a misrelayed tap still opens the app", () => {
-    expect(resolveClickedAction("remind", card)).toBe("")
-    expect(resolveClickedAction("remind", [])).toBe("")
+    expect(resolveClickedAction("remind", card, MAC_UA)).toBe("")
+    expect(resolveClickedAction("remind", [], MAC_UA)).toBe("")
   })
 
   it("trusts the id on a browser that does not expose the card's actions", () => {
-    expect(resolveClickedAction("remind", undefined)).toBe("remind")
+    expect(resolveClickedAction("remind", undefined, MAC_UA)).toBe("remind")
+  })
+
+  it("reads any press as a body tap on Android, including a card the old worker rendered", () => {
+    expect(resolveClickedAction("mark_read", card, ANDROID_UA)).toBe("")
   })
 })
 
 describe("resolvePushActionLimit", () => {
-  const android =
-    "Mozilla/5.0 (Linux; Android 16; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
-  const mac =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+  const android = ANDROID_UA
+  const mac = MAC_UA
 
   it("renders no buttons on Android, where the pressed one cannot be identified", () => {
     expect([android, mac].map(resolvePushActionLimit)).toEqual([0, 2])

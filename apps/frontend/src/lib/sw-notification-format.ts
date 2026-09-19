@@ -188,16 +188,22 @@ export function resolveActions(
 }
 
 /**
- * The button the user pressed, or "" for the notification body. Only an id the
- * card actually carries counts. Chrome on Android relays button identity
- * unreliably, and a successful action deliberately suppresses the navigation,
- * so an id we never rendered would cost the user the stream they tapped.
+ * The button the user pressed, or "" for the notification body. Chrome on Android
+ * relays button identity unreliably and a successful action deliberately
+ * suppresses the navigation, so a misread id costs the user the stream they
+ * tapped. Two tests, because neither alone covers the rollout: the platform must
+ * be one whose button identity can be read at all (the same
+ * {@link resolvePushActionLimit} rule that decides what gets rendered — a card
+ * rendered by the previous worker version still sits in the shade), and the id
+ * must be one the card actually carries.
  */
 export function resolveClickedAction(
   rawAction: string | undefined,
-  actions: ReadonlyArray<{ action: string }> | undefined
+  actions: ReadonlyArray<{ action: string }> | undefined,
+  userAgent: string
 ): string {
   if (!rawAction) return ""
+  if (resolvePushActionLimit(userAgent) === 0) return ""
   if (!actions) return rawAction
   return actions.some((candidate) => candidate.action === rawAction) ? rawAction : ""
 }

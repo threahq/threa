@@ -40,6 +40,12 @@ void landOnNotificationTarget()
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") void landOnNotificationTarget()
 })
+// `pageshow` too, per `use-page-resume`: a standalone PWA restored from bfcache
+// fires no `visibilitychange`, and a frozen page is exactly what the stash exists
+// for. A claim with nothing stashed is a no-op, so the overlap costs nothing.
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) void landOnNotificationTarget()
+})
 
 navigator.serviceWorker?.addEventListener("message", (event) => {
   if (event.data?.type === SW_MSG_NOTIFICATION_CLICK) {
