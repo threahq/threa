@@ -12,7 +12,7 @@ import { isSameOriginPath, takeNotificationTarget, type NotificationTarget } fro
 import { setNotificationIntent } from "./notification-intent"
 
 export interface NotificationLandingDeps {
-  navigate: (url: string, options: { replace: boolean }) => Promise<unknown> | unknown
+  navigate: (url: string, options: { replace: boolean }) => unknown
   /** The path+search the viewer is on now. */
   currentUrl: () => string
   /** False on a launch, where the claim replaces `start_url` instead of stacking on it. */
@@ -37,11 +37,10 @@ async function claim(deps: NotificationLandingDeps, fallback: NotificationTarget
   const replace = !deps.hasHistoryBeneath()
   await deps.navigate(target.url, { replace })
   // `RootRedirect`'s own redirect aborts a navigation still resolving its lazy
-  // route, and the data router reports that abort as an ordinary completion.
-  // The stash is already consumed, so the retry is the only thing left. It always
-  // replaces: a target the app deliberately redirects away from (`/w/:id` lands on
-  // a stream) reaches here too, and pushing again would stack a second entry on
-  // the same place.
+  // route, and the data router reports that abort as an ordinary completion. The
+  // stash is already consumed, so the retry is all that is left; it replaces
+  // because a target the app itself redirects away from (`/w/:id` lands on a
+  // stream) arrives here too, and a push would stack a second entry on one place.
   if (deps.currentUrl() === target.url) return
   await deps.navigate(target.url, { replace: true })
 }

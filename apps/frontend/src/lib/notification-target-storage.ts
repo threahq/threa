@@ -28,12 +28,7 @@ const RESOLUTION_BASE = "https://notification-target.invalid"
  * reads one of them as local.
  */
 export function isSameOriginPath(url: string): boolean {
-  if (!url.startsWith("/")) return false
-  try {
-    return new URL(url, RESOLUTION_BASE).origin === RESOLUTION_BASE
-  } catch {
-    return false
-  }
+  return url.startsWith("/") && new URL(url, RESOLUTION_BASE).origin === RESOLUTION_BASE
 }
 
 export interface NotificationTarget {
