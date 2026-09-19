@@ -4,6 +4,7 @@ import { logger } from "../logger"
 import type {
   WorkosAppInvitation,
   WorkosMembershipEvent,
+  WorkosMirrorEventType,
   WorkosOrgService,
   WorkosOrganizationMembership,
   WorkosUserSummary,
@@ -15,10 +16,12 @@ export class StubWorkosOrgService implements WorkosOrgService {
   /** Test helper: let callers pre-populate a user lookup table. */
   public users = new Map<string, WorkosUserSummary>()
   /**
-   * Test helper: in-memory stack of mirror events. Tests push into this with
-   * `pushMirrorEvent` and the poller drains via `listMirrorEvents`.
+   * In-memory event queue the poller drains via `listMirrorEvents`. Membership
+   * writes append to it the way WorkOS would; tests can also push directly
+   * with `pushMirrorEvent`.
    */
   private mirrorEvents: WorkosMembershipEvent[] = []
+  private lastEventAtMs = 0
   /**
    * Test helper: in-memory stack of raw WorkOS events for the `auth_log`
    * consumer. Tests push with `pushEvent` and the poller drains via
@@ -164,17 +167,20 @@ export class StubWorkosOrgService implements WorkosOrgService {
     const existing = memberships.find((m) => m.userId === params.userId)
     if (existing) {
       existing.roleSlugs = [params.roleSlug]
-      existing.updatedAt = new Date()
+      existing.updatedAt = this.nextEventAt()
+      this.emitMembershipEvent("organization_membership.updated", existing)
     } else {
-      memberships.push({
+      const created: WorkosOrganizationMembership = {
         id: `om_stub_${ulid()}`,
         organizationId: params.organizationId,
         userId: params.userId,
         status: "active",
         roleSlugs: [params.roleSlug],
-        updatedAt: new Date(),
-      })
+        updatedAt: this.nextEventAt(),
+      }
+      memberships.push(created)
       this.membershipsByOrg.set(params.organizationId, memberships)
+      this.emitMembershipEvent("organization_membership.created", created)
     }
     logger.info(
       { organizationId: params.organizationId, userId: params.userId, roleSlug: params.roleSlug },
@@ -195,7 +201,8 @@ export class StubWorkosOrgService implements WorkosOrgService {
       return
     }
     found.membership.roleSlugs = [params.roleSlug]
-    found.membership.updatedAt = new Date()
+    found.membership.updatedAt = this.nextEventAt()
+    this.emitMembershipEvent("organization_membership.updated", found.membership)
     logger.info(
       { organizationMembershipId: params.organizationMembershipId, roleSlug: params.roleSlug },
       "Stub: Changed organization membership role"
@@ -210,7 +217,32 @@ export class StubWorkosOrgService implements WorkosOrgService {
     }
     found.memberships.splice(found.index, 1)
     if (found.memberships.length === 0) this.membershipsByOrg.delete(found.orgId)
+    this.emitMembershipEvent("organization_membership.deleted", {
+      ...found.membership,
+      updatedAt: this.nextEventAt(),
+    })
     logger.info({ organizationMembershipId }, "Stub: Removed organization membership")
+  }
+
+  /**
+   * WorkOS emits a membership event for every write, and draining those events
+   * is the only path that fills `workspace_user_permissions`. Without them a
+   * stub-auth workspace has no permission rows at all, so every user API key
+   * against it fails with OWNER_INACTIVE.
+   */
+  private emitMembershipEvent(type: WorkosMirrorEventType, membership: WorkosOrganizationMembership): void {
+    this.mirrorEvents.push({
+      id: `event_stub_${ulid()}`,
+      type,
+      createdAt: membership.updatedAt,
+      membership: { ...membership },
+    })
+  }
+
+  /** The mirror upsert guard is a strict `<` on last_event_at, so two writes within one millisecond would drop the second. */
+  private nextEventAt(): Date {
+    this.lastEventAtMs = Math.max(Date.now(), this.lastEventAtMs + 1)
+    return new Date(this.lastEventAtMs)
   }
 
   private findMembershipById(organizationMembershipId: string): {
