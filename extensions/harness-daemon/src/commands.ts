@@ -81,6 +81,8 @@ import {
 import { defaultReapDeps, reapArchivedWorktrees } from "./reap"
 import { defaultTombstoneDeps, summarizeTombstones, tombstoneAbandonedRows, type TombstoneOutcome } from "./tombstone"
 import { restorableWorktreeSource, restoreManagedWorktree } from "./worktree"
+import { createSourceChangeWatch } from "./source-version"
+import { formatWakeFailureNotice, wakeFailureDetail } from "./wake"
 import { runWatchLoop, unavailableBackoffMs, uniqueSupervisorTargets, watchIntervalMs } from "./watch"
 
 export function restoredSessionMatches(
@@ -335,6 +337,10 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const targets = runtimeSupervisorTargets(claudeConfig, piConfig)
   if (targets.length === 0) throw new Error("harnessd: no Threa credentials found for the supervisor socket")
 
+  // Taken before any work: startup reconciliation can run for minutes, and a
+  // tree that moves during it must read as changed, not as the baseline.
+  const sourceChanged = createSourceChangeWatch()
+
   let reconcileChain = Promise.resolve()
   let unavailablePasses = 0
   let retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -357,28 +363,38 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
     read: () => readRecentOomKills(Math.ceil(oomWindowMs / 1000)),
     windowMs: oomWindowMs,
   })
+  // One path to a managed session's scratchpad, so every notice harnessd posts
+  // about it credentials a thread-attached runtime the same way.
+  const postAgentNotice = async (agent: ManagedAgent, purpose: string, content: string): Promise<boolean> => {
+    const scratchpad = agent.scratchpadUrl ? parseScratchpadUrl(agent.scratchpadUrl) : undefined
+    const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
+    const credentials =
+      agent.activeStreamId && agent.activeStreamId !== scratchpad?.streamId
+        ? requireThreadSessionTarget(runtimeConfig, `post ${purpose} for the attached runtime`)
+        : runtimeLifecycleTarget(runtimeConfig)
+    if (!scratchpad || !credentials) return false
+    return await postScratchpadNotice({
+      ...credentials,
+      workspaceId: scratchpad.workspaceId || credentials.workspaceId,
+      streamId: scratchpad.streamId,
+      content,
+    }).then(
+      () => true,
+      (error) => {
+        console.warn(
+          `harnessd: ${purpose} for ${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+        return false
+      }
+    )
+  }
+
   const briefs = createBriefQueue({
     type: typeBrief,
     dryRun: Boolean(options.dryRun),
     log: console.log,
     notify: async (agent, content) => {
-      const scratchpad = agent.scratchpadUrl ? parseScratchpadUrl(agent.scratchpadUrl) : undefined
-      const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
-      const credentials =
-        agent.activeStreamId && agent.activeStreamId !== scratchpad?.streamId
-          ? requireThreadSessionTarget(runtimeConfig, "post an OOM notice for the attached runtime")
-          : runtimeLifecycleTarget(runtimeConfig)
-      if (!scratchpad || !credentials) return
-      await postScratchpadNotice({
-        ...credentials,
-        workspaceId: scratchpad.workspaceId || credentials.workspaceId,
-        streamId: scratchpad.streamId,
-        content,
-      }).catch((error) => {
-        console.warn(
-          `harnessd: OOM notice for ${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`
-        )
-      })
+      await postAgentNotice(agent, "an OOM notice", content)
     },
   })
 
@@ -391,7 +407,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
         if (!options.dryRun) ensureTmuxSession(session, true)
         // Unarchive/boot revival restores pruned worktrees: unarchiving on Threa
         // is an explicit revive request. Manual `up` requires --recreate-worktree.
-        const unavailable = await resumeActive(
+        const { unavailable } = await resumeActive(
           { ...options, tmux: session, recreateWorktree: true, respectProbeBackoff: true },
           target
         )
@@ -432,7 +448,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           console.log(`harnessd: pane vanished for ${agent.name} (${agent.tmuxPaneId ?? "no pane recorded"}); reviving`)
         }
         if (!options.dryRun) ensureTmuxSession(session, true)
-        const unavailable = await resumeActive({
+        const { unavailable } = await resumeActive({
           ...options,
           tmux: session,
           agentIds: new Set(agents.map((agent) => agent.id)),
@@ -452,6 +468,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   // for it, and the revival that follows is the ordinary one, so a wake and a
   // crash recovery differ only in who noticed.
   const suspendDeps = defaultSuspendDeps()
+  const notifiedWakeFailures = new Set<string>()
   const wake = (payload: BotInvocationAvailablePayload): Promise<void> => {
     reconcileChain = reconcileChain
       .then(async () => {
@@ -469,8 +486,27 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           release()
         }
         ensureTmuxSession(session, true)
-        const unavailable = await resumeActive({ ...options, tmux: session, agentIds: new Set([woken.id]) })
+        const { unavailable, outcomes } = await resumeActive({
+          ...options,
+          tmux: session,
+          agentIds: new Set([woken.id]),
+        })
         if (unavailable) scheduleUnavailableRetry()
+        // A wake that fails takes the pane with it (`wakeAgent` killed the
+        // window) and leaves the invocation pending, so the scratchpad would
+        // otherwise just go quiet. Once per failure streak: a second message
+        // into a dead session must not post a second notice.
+        const failure = wakeFailureDetail(outcomes.get(woken.id))
+        if (!failure) {
+          notifiedWakeFailures.delete(woken.id)
+          return
+        }
+        console.error(`harnessd: wake of ${woken.name} failed: ${failure}`)
+        if (notifiedWakeFailures.has(woken.id)) return
+        // Recorded on delivery, not on attempt: a notice the network ate would
+        // otherwise suppress every later one and restore the silence.
+        const delivered = await postAgentNotice(woken, "a wake-failure notice", formatWakeFailureNotice(failure))
+        if (delivered) notifiedWakeFailures.add(woken.id)
       })
       .catch((error) => {
         console.error(`harnessd: wake failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -514,6 +550,15 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   }
   await runWatchLoop({
     runPass: async () => {
+      // The daemon runs the checkout directly, so an edit to it reaches every
+      // new process and never this one: a wake here validates today's session
+      // config with whatever code booted. Exiting hands the restart to systemd;
+      // the chain is drained first so no revival is cut in half.
+      if (sourceChanged()) {
+        console.warn("harnessd: source changed on disk; exiting so systemd restarts it on current code")
+        await reconcileChain
+        process.exit(0)
+      }
       await Promise.all(transports.map((transport) => transport.connect()))
       const pass = vanishedPanes.next()
       let kills: OomKill[] = []
@@ -578,7 +623,17 @@ export function installBootResumeAgent(options: ResumeOptions): void {
   installBootResume(options.tmux ?? "threa-agents")
 }
 
-export async function resumeActive(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
+export interface ResumeSweepResult {
+  /** Threa was unreachable, so the sweep stopped early and owes a backoff retry. */
+  unavailable: boolean
+  /** Per-agent decision, keyed by agent id, for a caller that revived one row and needs to know how it went. */
+  outcomes: Map<string, ReviveOutcome>
+}
+
+export async function resumeActive(
+  options: ResumeOptions,
+  target?: BotSessionRestoredPayload
+): Promise<ResumeSweepResult> {
   if (options.dryRun) return resumeActiveUnlocked(options, target)
   const release = await acquireProcessLock(resumeActiveLockPath())
   try {
@@ -968,7 +1023,10 @@ export async function reviveAgent(
   return { status: "started", detail }
 }
 
-async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionRestoredPayload): Promise<boolean> {
+async function resumeActiveUnlocked(
+  options: ResumeOptions,
+  target?: BotSessionRestoredPayload
+): Promise<ResumeSweepResult> {
   const deps = defaultReviveDeps()
   const rows = readInventory()
   // A targeted restore is the server saying this scratchpad came back, which is
@@ -978,9 +1036,10 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
   )
   const excluded = target || options.agentIds ? 0 : rows.filter((agent) => agent.tombstonedAt).length
   if (excluded > 0) console.log(`harnessd: ${excluded} tombstoned row(s) not evaluated`)
+  const outcomes = new Map<string, ReviveOutcome>()
   if (agents.length === 0) {
     console.log("No managed agents.")
-    return false
+    return { unavailable: false, outcomes }
   }
   const counts = new Map<ReviveStatus, number>()
   let unavailable = false
@@ -989,6 +1048,7 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
     evaluated += 1
     const outcome = await reviveAgent(agent, options, deps, target)
     if (!outcome) continue
+    outcomes.set(agent.id, outcome)
     console.log(`${outcome.status}\t${agent.name}${outcome.detail ? `\t${outcome.detail}` : ""}`)
     counts.set(outcome.status, (counts.get(outcome.status) ?? 0) + 1)
     if (outcome.status === "skipped unavailable") {
@@ -1001,7 +1061,7 @@ async function resumeActiveUnlocked(options: ResumeOptions, target?: BotSessionR
     parts.push(`${agents.length - evaluated} not evaluated (sweep aborted while Threa unavailable)`)
   }
   if (parts.length > 0) console.log(`harnessd: ${parts.join(", ")}`)
-  return unavailable
+  return { unavailable, outcomes }
 }
 
 /**
