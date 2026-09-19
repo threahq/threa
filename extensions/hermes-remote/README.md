@@ -31,7 +31,8 @@ environment variables win.
 - `~/.threa/hermes-remote/work`: the connector's working directory, where reply attachments are resolved from.
 - `~/.threa/hermes-remote/threa-cli.json`: a `ThreaConfig` (0600) for the `threa` MCP server on the Hermes side, so
   Hermes speaks to the same workspace as the same bot. Point that server's `THREA_CONFIG` at this file.
-- `~/.threa/bik-hermes.json`: this install's Bot Identity Key, for sealed scratchpads.
+- `~/.threa/e2e-keys/`: the fall-back home for this install's end-to-end key when you ask for the file store rather
+  than the OS keychain. See [Encrypted scratchpads](#encrypted-scratchpads).
 
 Hermes' `MEDIA: <path>` output lines are rewritten to `THREA_ATTACH: <path>`, so the SDK uploads them as attachments;
 an output of exactly `THREA_NO_RESPONSE` closes the turn silently.
@@ -92,11 +93,32 @@ Hermes' own `MEDIA: <path>` lines are rewritten to `THREA_ATTACH:` first, so bot
 
 ## Encrypted scratchpads
 
-Set `THREA_E2E=1` to run against a sealed scratchpad. The connector's Bot Identity Key is written to
-`~/.threa/bik-hermes.json` on first start; invite the bot on the encrypted scratchpad so its key is wrapped for it.
-Turns, replies, steps and attachments are then sealed end to end, and so are approval cards: the question and its
-button labels travel inside the ciphertext, and a note you attach to the answer comes back to the agent decrypted. The
-server sees the option ids and tones, which is what it needs to check that an answer names a button on the card.
+Set `THREA_E2E=1` and the scratchpad the connector links is created sealed. Turns, replies, steps and attachments are
+encrypted end to end, and so are approval cards: the question and its button labels travel inside the ciphertext, and a
+note you attach to the answer comes back to the agent decrypted. The server sees the option ids and tones, which is
+what it needs to check that an answer names a button on the card.
+
+You have to set up encryption in Threa first, under Settings, so there is an owner key to wrap the scratchpad to. Until
+then the connector logs why it cannot create the scratchpad and retries on each poll.
+
+Turning `THREA_E2E=1` on later does not seal the scratchpad you already have. The connector resumes it, warns that it
+is plaintext and keeps going; archive it and the next start creates an encrypted one.
+
+On first start the connector mints an identity key of its own and files it in the OS keychain, reached through that
+keychain's command-line tool so a runtime upgrade does not lose it. `THREA_E2E_KEY_STORE=file` keeps it as a `0600`
+file under `~/.threa/e2e-keys` instead (`THREA_E2E_KEY_DIR` moves that directory). If no keychain is available and you
+have not chosen, start-up fails and names both options rather than quietly writing to disk. A `~/.threa/bik-hermes.json`
+from an older build is adopted on first start, so scratchpads already sealed to it keep opening.
+
+One key covers every sealed scratchpad this box serves. `THREA_E2E_KEY_SCOPE` narrows that: `identity` is one key for
+this bot wherever it runs, `instance` one for this install alone, and `stream` mints a key per scratchpad as the bot is
+invited into it, so a leaked key opens one scratchpad instead of all of them.
+
+To let the agent into a scratchpad you created yourself, use "Invite agent" in its header and pick the bot. That is
+what wraps the stream key to the connector's key. Removing the bot again deletes the wraps it could open and rolls the
+scratchpad's key forward, so it reads nothing sent from then on; messages it already read stay readable to it. The
+connector is told, drops the key it held for that scratchpad and re-advertises the rest. Under the default host scope
+there is nothing to drop: the same key still opens your other scratchpads, and the roll is what closed this one.
 
 ## Installing
 
@@ -128,7 +150,7 @@ server sees the option ids and tones, which is what it needs to check that an an
    THREA_WORKSPACE_ID=ws_...
    THREA_API_KEY=...
    THREA_BASE_URL=https://app.threa.io
-   THREA_E2E=0
+   THREA_E2E=0          # 1 seals the scratchpad end to end
    HERMES_API_URL=http://127.0.0.1:8642
    HERMES_API_KEY=...
    ```
@@ -146,6 +168,33 @@ server sees the option ids and tones, which is what it needs to check that an an
    including an existing unit it would refuse. `--profile <name>` installs a second agent instead (below). Any other
    argument is rejected. Logs land in `~/.threa/hermes-remote/log/connector.log`. Linux only.
 
+## From nothing to a sealed scratchpad
+
+The whole path on a fresh box, if you have a Threa workspace and nothing else. It takes about fifteen minutes, most of
+it waiting on the Hermes install.
+
+1. **Set up your encryption key.** In Threa: Settings, the AI tab, "Encrypted scratchpads", "Set up encryption". Pick
+   a passphrase and save it somewhere you trust. There is no recovery, and losing it loses every sealed scratchpad.
+   Everything below wraps to this key, so it has to exist first.
+
+2. **Make the bot.** Workspace settings, the Bots tab, "Create personal bot". Give it the `mentionable` and
+   `active-scratchpad` traits. Then "Create key" on that bot with the scopes `bot-runtime:write`,
+   `bot-invocations:write`, `messages:write`, `streams:read`, `messages:read` and `attachments:read`. Add
+   `attachments:write` if you want the agent to send files back. Copy the `threa_bk_…` key; it is shown once.
+
+3. **Install Hermes and the connector** as under [Installing](#installing), with `THREA_E2E=1` in the env file.
+
+4. **Watch the scratchpad appear.** On first start the connector mints its own key, files it in your OS keychain, and
+   creates a sealed scratchpad linked to itself. Write in it and the agent answers; the bodies, the trace steps, the
+   attachments and the approval cards are all ciphertext on the server.
+
+5. **Read it from the terminal, as you.** `threa e2e unlock` asks for the passphrase from step 1 and files your key
+   next to the connector's. `threa streams read <stream_id>` then prints the messages rather than the placeholders the
+   server stores, and `threa messages send <stream_id> "…"` seals before anything leaves the machine.
+
+If step 4 logs that it cannot create the scratchpad, step 1 has not happened for the account the bot's key belongs to.
+The connector retries on every poll, so finishing the setup in Threa is enough. No restart.
+
 ## Several agents on one box
 
 Every path above belongs to one install. A second agent is a second Hermes profile with a connector of its own, and
@@ -158,10 +207,14 @@ bun run install-service --profile muse --start
 ```
 
 The named install shares nothing with the default one: unit `threa-hermes-muse.service`, env file
-`~/.config/threa/hermes-muse.env`, config, work dir, logs and MCP config under `~/.threa/hermes-muse/`, its own Bot
-Identity Key at `~/.threa/hermes-muse/bik.json`, and `SOUL.md` plus the `threa` skill in the profile's home,
-`~/.hermes/profiles/muse/`. Give it its own `THREA_API_KEY`. A bot is one agent, and two connectors on one key would
-answer each other's mentions.
+`~/.config/threa/hermes-muse.env`, config, work dir, logs and MCP config under `~/.threa/hermes-muse/`, and `SOUL.md`
+plus the `threa` skill in the profile's home, `~/.hermes/profiles/muse/`. Give it its own `THREA_API_KEY`. A bot is one
+agent, and two connectors on one key would answer each other's mentions.
+
+The end-to-end key is the one thing they do share, on purpose: the default `host` scope is one key for every Threa
+runtime on the machine, so inviting either agent into a sealed scratchpad lets both open it. Set
+`THREA_E2E_KEY_SCOPE=identity` on each if they must be separable. `~/.threa/hermes-muse/bik.json` is only the
+pre-keyring file a named install would adopt if one were ever written there.
 
 Two things on the Hermes side:
 
