@@ -217,6 +217,9 @@ const KEYCHAIN_SERVICE = "threa-e2e"
  * and reinstalled loses access to its own key — `security` is a stable system
  * binary and keeps it.
  */
+const sameRecord = (a: E2eKeyRecord, b: E2eKeyRecord): boolean =>
+  a.keyId === b.keyId && a.publicKey === b.publicKey && a.privateKey === b.privateKey
+
 export class MacKeychainStore implements E2eKeyStore {
   readonly kind = "keychain" as const
   readonly describe = `macOS keychain (service ${KEYCHAIN_SERVICE})`
@@ -263,8 +266,11 @@ export class MacKeychainStore implements E2eKeyStore {
       `add-generic-password -U -s ${KEYCHAIN_SERVICE} -a ${account} -w ${encodeSecret(record)}\n`
     )
     if (result.unavailable) throw new Error(`macOS keychain unavailable: ${result.stderr}`)
+    if (result.status !== 0) {
+      throw new Error(`macOS keychain rejected the key for ${account}: ${result.stderr || result.stdout}`)
+    }
     const stored = this.read(account)
-    if (!stored || stored.keyId !== record.keyId) {
+    if (!stored || !sameRecord(stored, record)) {
       throw new Error(`macOS keychain did not store the key for ${account}: ${result.stderr || result.stdout}`)
     }
   }
@@ -319,8 +325,11 @@ export class SecretServiceStore implements E2eKeyStore {
       encodeSecret(record)
     )
     if (result.unavailable) throw new Error(`Secret Service unavailable: ${result.stderr}`)
+    if (result.status !== 0) {
+      throw new Error(`Secret Service rejected the key for ${account}: ${result.stderr || result.stdout}`)
+    }
     const stored = this.read(account)
-    if (!stored || stored.keyId !== record.keyId) {
+    if (!stored || !sameRecord(stored, record)) {
       throw new Error(`Secret Service did not store the key for ${account}: ${result.stderr || result.stdout}`)
     }
   }

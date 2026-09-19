@@ -65,13 +65,17 @@ const unlockVerb: VerbSpec = {
     "  --json                      force JSON output\n" +
     "  --help                      show this help",
   options: { "key-store": { type: "string" }, "key-dir": { type: "string" } },
-  run: async (ctx, _positionals, values) =>
-    unlockE2eKey({
+  run: async (ctx, _positionals, values) => {
+    // The store choice is validated before the prompt: an unusable --key-store
+    // should not first make someone type a passphrase that goes nowhere.
+    const choice = storeChoice(values)
+    return unlockE2eKey({
       client: ctx.client,
       workspaceId: ctx.config.workspaceId,
       passphrase: await readPassphrase(ctx.readStdin),
-      choice: storeChoice(values),
-    }),
+      choice,
+    })
+  },
   render: (payload) => {
     const p = payload as { keyId?: string; storeDescription?: string; unchanged?: boolean }
     return p.unchanged

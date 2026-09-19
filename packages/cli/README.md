@@ -118,7 +118,7 @@ Any stream argument (`streams read`, `messages send`, `labels add`, `labels remo
 
 `messages send` and `messages edit` take content as an argument; `messages send` reads stdin when the content argument is `-`. `delegations finish --result -` also reads the result markdown from stdin.
 
-`e2e unlock` fetches the encrypted bundle holding your identity key, opens it with your passphrase, and files the key where the bot runtimes keep theirs (`~/.threa/e2e-keys`, or `THREA_E2E_KEY_DIR`). The passphrase is read from the terminal without echo, or from stdin when one is piped; it never leaves the machine, and neither does the key. Where the key lands is an explicit choice — an unavailable OS keychain is an error naming both options, never a quiet move to disk. Run `unlock` again after changing your passphrase or rotating the key; `status` is what tells you the two have drifted apart.
+`e2e unlock` fetches the encrypted bundle holding your identity key, opens it with your passphrase, and files the key where the bot runtimes keep theirs: the OS keychain by default (macOS Keychain, or the freedesktop Secret Service through `secret-tool`). `--key-store file` puts it in a 0600 file under `~/.threa/e2e-keys` instead, or `THREA_E2E_KEY_DIR` when that is set. The passphrase is read from the terminal without echo, or from stdin when one is piped; it never leaves the machine, and neither does the key. Where the key lands is an explicit choice — an unavailable OS keychain is an error naming both options, never a quiet move to disk. Run `unlock` again after changing your passphrase or rotating the key; `status` is what tells you the two have drifted apart.
 
 ## Delegation state file
 

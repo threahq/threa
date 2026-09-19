@@ -210,13 +210,18 @@ describe("threa e2e unlock", () => {
     expect(result.stderr).toContain("belong to a person")
   })
 
-  test("an unknown key store is a usage error before any request", async () => {
+  test("an unknown key store is a usage error before the passphrase prompt or any request", async () => {
+    let prompted = false
     const result = await run(["e2e", "unlock", "--key-store", "gnome-keyring"], {
       config: TEST_CONFIG,
-      readStdin: () => Promise.resolve(PASSPHRASE),
+      readStdin: () => {
+        prompted = true
+        return Promise.resolve(PASSPHRASE)
+      },
     })
 
     expect(result.exitCode).toBe(2)
+    expect(prompted).toBe(false)
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

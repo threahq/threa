@@ -23,7 +23,11 @@ import {
   type E2eKeyStoreKind,
 } from "../../../extensions/bot-runtime-client/src/keyring"
 import { bytesToBase64, base64ToBytes, exportPrivateKey } from "../../../extensions/bot-runtime-client/src/crypto"
-import { unlockUserKey, type KdfParams } from "../../../extensions/bot-runtime-client/src/user-key"
+import {
+  unlockUserKey,
+  WrongPassphraseError,
+  type KdfParams,
+} from "../../../extensions/bot-runtime-client/src/user-key"
 import { ThreaApiError, type ThreaApiClient } from "./api-client"
 
 export interface ServerUserKey {
@@ -90,14 +94,18 @@ export async function unlockE2eKey(params: {
   const key = (await params.client.get<{ data: ServerUserKey }>("/me/e2e-key")).data
 
   // The GCM tag is the only check there is: a wrong passphrase derives a wrong
-  // key and fails here, never later as garbled plaintext.
+  // key and fails here, never later as garbled plaintext. Anything else the
+  // unlock throws is a real fault and keeps its own message.
   const privateKey = await unlockUserKey({
     passphrase: params.passphrase,
     encryptedPrivateBundle: base64ToBytes(key.encryptedPrivateBundle),
     kdfSalt: base64ToBytes(key.kdfSalt),
     kdfParams: key.kdfParams,
-  }).catch(() => {
-    throw new Error("threa: that passphrase does not open your encryption key")
+  }).catch((error: unknown) => {
+    if (error instanceof WrongPassphraseError) {
+      throw new Error("threa: that passphrase does not open your encryption key")
+    }
+    throw error
   })
 
   const record: E2eKeyRecord = {

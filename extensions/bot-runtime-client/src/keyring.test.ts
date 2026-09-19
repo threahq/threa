@@ -225,6 +225,14 @@ describe("MacKeychainStore", () => {
     expect(update).toContain(secretOf(ROTATED))
   })
 
+  test("a write the keychain rejects throws instead of reading back the old account", () => {
+    const held = secretOf(RECORD)
+    const exec: CommandRunner = (_command, args) =>
+      args[0] === "-i" ? { status: 45, stdout: "", stderr: "denied", unavailable: false } : ok(`${held}\n`)
+
+    expect(() => new MacKeychainStore({ exec }).write("user-abc", ROTATED)).toThrow("rejected the key")
+  })
+
   test("remove deletes the account and tolerates one that was never there", () => {
     let held: string | undefined = secretOf(RECORD)
     const exec: CommandRunner = (_command, args) => {
@@ -274,6 +282,13 @@ describe("SecretServiceStore", () => {
 
     store.remove("user-abc")
     expect(store.read("user-abc")).toBeUndefined()
+  })
+
+  test("a store that keeps the old private half under the same id is not mistaken for success", () => {
+    const stale = secretOf({ ...RECORD, privateKey: "stale" })
+    const exec: CommandRunner = (_command, args) => (args[0] === "store" ? ok() : ok(`${stale}\n`))
+
+    expect(() => new SecretServiceStore({ exec }).write("user-abc", RECORD)).toThrow("did not store the key")
   })
 
   test("a keyring that swallows the write is reported, not mistaken for success", () => {

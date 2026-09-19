@@ -72,10 +72,19 @@ export async function deriveKEK(
   return crypto.subtle.importKey("raw", new Uint8Array(raw), { name: "AES-GCM" }, false, ["decrypt"])
 }
 
+/** The GCM tag rejected the derived KEK: a wrong passphrase, or a tampered bundle. */
+export class WrongPassphraseError extends Error {
+  constructor() {
+    super("Wrapped private bundle did not open with this passphrase")
+    this.name = "WrongPassphraseError"
+  }
+}
+
 /**
  * Open a `[version (1) | iv (12) | AES-GCM ciphertext]` bundle and re-import
- * the X25519 private key. Throws on a tampered bundle or the wrong KEK — the
- * GCM tag is the only passphrase check there is.
+ * the X25519 private key. A tag mismatch is a `WrongPassphraseError`; a
+ * malformed or unsupported bundle throws its own error, so a caller can tell
+ * "you typed it wrong" from "this bundle is not what we can read".
  */
 export async function unwrapPrivate(bundle: Uint8Array, kek: WebCryptoKey): Promise<WebCryptoKey> {
   if (bundle.length < 1 + IV_LENGTH + 1) {
@@ -87,7 +96,10 @@ export async function unwrapPrivate(bundle: Uint8Array, kek: WebCryptoKey): Prom
   }
   const iv = bundle.slice(1, 1 + IV_LENGTH)
   const ciphertext = bundle.slice(1 + IV_LENGTH)
-  const privBytes = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, kek, ciphertext))
+  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, kek, ciphertext).catch(() => {
+    throw new WrongPassphraseError()
+  })
+  const privBytes = new Uint8Array(plaintext)
   return importRecipientPrivateKey(privBytes)
 }
 
