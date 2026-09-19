@@ -75,6 +75,14 @@ export {
   type SealedSourceItem,
   type StreamEnvelope,
 } from "./crypto"
+export { SealedStreamClient, SealedStreamApiError, keyringKeySource } from "./sealed-stream-client"
+export type {
+  SealedKeyIdentity,
+  SealedKeySource,
+  SealedStreamClientOptions,
+  SealedStreamMessage,
+  SealedStreamPage,
+} from "./sealed-stream-client"
 export {
   E2E_KEY_SCOPES,
   E2E_KEY_STORE_KINDS,
