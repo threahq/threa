@@ -17,6 +17,7 @@ import {
   serializeSealedPayload,
   type AttachmentRef,
   type BotRuntimeTransport,
+  type E2eKeyScope,
   type InvocationInputUpdate,
   type ObserveClaimParams,
   type SealedPayloadExtras,
@@ -897,13 +898,18 @@ describe("sealed late delivery after completion", () => {
 })
 
 describe("harness-created E2E scratchpad (two-phase create)", () => {
-  function makeE2eCreateSession(opts: { e2eEnabledOnCreate: boolean; provisionFailures?: number }) {
+  function makeE2eCreateSession(opts: {
+    e2eEnabledOnCreate: boolean
+    provisionFailures?: number
+    keyScope?: E2eKeyScope
+  }) {
     const dir = mkdtempSync(join(tmpdir(), "sealed-create-"))
     tempDirs.push(dir)
     const calls = {
       createBodies: [] as Array<Record<string, unknown>>,
       provisioned: [] as Array<{ streamId: string; body: { keyGeneration: number; wraps: unknown[] } }>,
       ownerKeyFetches: 0,
+      presence: [] as Array<Record<string, unknown>>,
     }
     let remainingFailures = opts.provisionFailures ?? 0
     const client = {
@@ -935,12 +941,14 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
       connect: async () => {},
       disconnect: () => {},
       socketConnected: false,
-      updatePresence: async () => {},
+      updatePresence: async (body: Record<string, unknown>) => {
+        calls.presence.push(body)
+      },
       recordSteps: async () => {},
       recordSealedSteps: async () => {},
     }
     const session = new RemoteSession({
-      config: { ...makeConfig(dir), e2e: true },
+      config: { ...makeConfig(dir), e2e: true, ...(opts.keyScope ? { keyScope: opts.keyScope } : {}) },
       client: client as unknown as ThreaClient,
       delegate: { deliverTurn: async () => {} },
       runtime: RUNTIME,
@@ -992,6 +1000,23 @@ describe("harness-created E2E scratchpad (two-phase create)", () => {
     await (session as any).ensureLink()
 
     expect(calls.provisioned).toHaveLength(1)
+  })
+
+  test("the per-stream policy keys to the new scratchpad and advertises that key", async () => {
+    await ownerKeyPair()
+    const { session, calls } = makeE2eCreateSession({ e2eEnabledOnCreate: true, keyScope: "stream" })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (session as any).ensureLink()
+
+    const wraps = calls.provisioned[0]!.body.wraps as Array<{ recipientKind: string; recipientKeyId: string }>
+    const botWrap = wraps.find((wrap) => wrap.recipientKind === "bot")!
+    // The key the wraps name is registered as this stream's, and only this
+    // stream's — an unscoped entry would claim it covers every scratchpad.
+    expect(calls.presence.at(-1)).toMatchObject({
+      e2eKeys: [{ keyId: botWrap.recipientKeyId, streamId: ROOT_STREAM }],
+    })
+    expect(calls.presence.at(-1)).not.toHaveProperty("publicKeyId")
   })
 
   test("a plaintext resume warns instead of provisioning", async () => {

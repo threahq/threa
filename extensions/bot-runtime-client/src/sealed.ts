@@ -156,7 +156,7 @@ export class BotKeyring {
   private readonly log: (message: string) => void
   private records: E2eKeyring | undefined
   private cached: BotIdentityKey[] = []
-  private inFlight: Promise<BotIdentityKey[]> | undefined
+  private queue: Promise<BotIdentityKey[]> = Promise.resolve([])
   private loaded = false
 
   constructor(opts: { keyring: () => E2eKeyring; log?: (message: string) => void }) {
@@ -178,19 +178,29 @@ export class BotKeyring {
    */
   async ensure(): Promise<BotIdentityKey[]> {
     if (this.loaded) return this.cached
-    // Boot presence and `bot:hello` both ensure; without this they would each
-    // mint past the cache check and race the store.
-    this.inFlight ??= this.load()
-      .catch((error) => {
-        this.log(`Threa sealed: key load/create failed; sealed scratchpads are unavailable: ${String(error)}`)
-        return [] as BotIdentityKey[]
-      })
-      .finally(() => {
-        this.inFlight = undefined
-      })
-    this.cached = await this.inFlight
-    this.loaded = this.cached.length > 0
-    return this.cached
+    return this.enqueue((keyring) => keyring.ensure())
+  }
+
+  /**
+   * The key this install reads `streamId` with, imported alongside the rest.
+   * Under the default policy one key already covers every stream and this is
+   * the plain `ensure()`; under the per-stream policy it mints this stream's
+   * key, so presence can advertise it before the owner re-wraps.
+   */
+  async ensureForStream(streamId: string): Promise<BotIdentityKey[]> {
+    return this.enqueue((keyring) => keyring.ensureForStream(streamId))
+  }
+
+  /**
+   * The identity a wrap for `streamId` must be addressed to, minting it first
+   * if this install does not hold it yet. Undefined when no key could be
+   * created at all, which is the one case a caller must treat as "sealed is
+   * unavailable here" rather than falling back to another key.
+   */
+  async identityForStream(streamId: string): Promise<BotIdentityKey | undefined> {
+    const identities = await this.ensureForStream(streamId)
+    const record = this.records?.forStream(streamId)
+    return record ? identities.find((identity) => identity.publicKeyId === record.keyId) : undefined
   }
 
   /** The fields to spread into every `bot:hello` and presence body. Empty until `ensure()` resolves. */
@@ -198,19 +208,38 @@ export class BotKeyring {
     return this.records?.presenceFields() ?? {}
   }
 
-  private async load(): Promise<BotIdentityKey[]> {
-    this.records ??= this.buildRecords()
-    const records = await this.records.ensure()
-    const identities: BotIdentityKey[] = []
-    for (const record of records) {
-      identities.push({
-        publicKeyId: record.keyId,
-        publicKeyBase64: record.publicKey,
-        privateKey: await importRecipientPrivateKey(base64ToBytes(record.privateKey)),
-      })
-    }
-    return identities
+  /**
+   * One key operation at a time. Boot presence, `bot:hello` and a grant can all
+   * land together, and each rebuilds the imported set from the keyring's whole
+   * record list — interleaved, the slower one would publish a set missing the
+   * key the other had just added.
+   */
+  private enqueue(work: (keyring: E2eKeyring) => Promise<E2eKeyRecord[]>): Promise<BotIdentityKey[]> {
+    const next = this.queue.then(async () => {
+      try {
+        this.records ??= this.buildRecords()
+        this.cached = await importAll(await work(this.records))
+        this.loaded = this.cached.length > 0
+      } catch (error) {
+        this.log(`Threa sealed: key load/create failed; sealed scratchpads are unavailable: ${String(error)}`)
+      }
+      return this.cached
+    })
+    this.queue = next
+    return next
   }
+}
+
+async function importAll(records: E2eKeyRecord[]): Promise<BotIdentityKey[]> {
+  const identities: BotIdentityKey[] = []
+  for (const record of records) {
+    identities.push({
+      publicKeyId: record.keyId,
+      publicKeyBase64: record.publicKey,
+      privateKey: await importRecipientPrivateKey(base64ToBytes(record.privateKey)),
+    })
+  }
+  return identities
 }
 
 // ── sealed claim wire validation ─────────────────────────────────────────────

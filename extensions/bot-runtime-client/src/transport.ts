@@ -16,6 +16,7 @@ import {
 import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint"
 import type {
   BotDecisionPayload,
+  BotE2eGrantPayload,
   BotHelloBootstrap,
   BotRuntimeTransportCallbacks,
   DelegationAvailableNudge,
@@ -210,6 +211,7 @@ export class BotRuntimeTransport {
     socket.on("decision:cancelled", (payload: unknown) =>
       this.callbacks.onDecisionCancelled?.(payload as BotDecisionPayload)
     )
+    socket.on("bot:e2e_grant", (payload: unknown) => this.callbacks.onE2eGrant?.(payload as BotE2eGrantPayload))
     socket.on("bot:resync", () => {
       this.callbacks.onResync?.()
       this.teardownSocket()
@@ -243,6 +245,9 @@ export class BotRuntimeTransport {
             serverGeneratedAt: typeof ack.serverGeneratedAt === "string" ? ack.serverGeneratedAt : undefined,
             availableInvocations: Array.isArray(ack.availableInvocations) ? ack.availableInvocations : [],
             ownedClaims: Array.isArray(ack.ownedClaims) ? ack.ownedClaims : [],
+            e2eGrantedStreamIds: Array.isArray(ack.e2eGrantedStreamIds)
+              ? ack.e2eGrantedStreamIds.filter((id): id is string => typeof id === "string")
+              : [],
           }
           void this.controls.bootstrap(Array.isArray(ack.recentCancellations) ? ack.recentCancellations : [], () =>
             this.callbacks.onBootstrap?.(bootstrap)

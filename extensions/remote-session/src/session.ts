@@ -470,6 +470,8 @@ export class RemoteSession {
   private readonly transport: BotRuntimeTransport
   private readonly log: (message: string) => void
   private readonly bik: BotKeyring
+  /** The keyring as last advertised to the server, so a grant only writes presence when it added a key. */
+  private advertisedKeyIds = ""
   private readonly hello: BotRuntimeHello
   private link: RuntimeSessionLink | undefined
   private linkGeneration = 0
@@ -560,10 +562,13 @@ export class RemoteSession {
           ...(options.onDelegationAvailable
             ? { onDelegationAvailable: (payload: DelegationAvailableNudge) => options.onDelegationAvailable?.(payload) }
             : {}),
+          onE2eGrant: (payload) => void this.keyGrantedStreams([payload.streamId]),
           onBootstrap: (bootstrap) => {
             // A reconnect is exactly when an archive push went missing, so
             // re-derive before trusting the link the bootstrap arrived on.
             void this.probeArchiveBackstop()
+            // Catch-up for the grants that landed while this instance was down.
+            if (bootstrap.e2eGrantedStreamIds.length > 0) void this.keyGrantedStreams(bootstrap.e2eGrantedStreamIds)
             if (bootstrap.availableInvocations.length > 0 || bootstrap.ownedClaims.length > 0) void this.claimDrain()
             if (this.pendingDecisions.size > 0) this.scheduleDecisionPoll(0)
           },
@@ -641,13 +646,14 @@ export class RemoteSession {
       instanceId: this.config.instanceId,
       identitySeed: this.config.apiKey,
     })
+    const files = new FileKeyStore({ dir })
     const legacyPath = this.config.bikPath ?? join(homedir(), ".threa", `bik-${sanitizeId(this.runtime.kind)}.json`)
     return new E2eKeyring({
       store: resolveKeyStore({
         requested: this.config.keyStore,
         platform: process.platform,
         dir,
-        hasExistingFileKey: new FileKeyStore({ dir }).read(account) !== undefined,
+        hasExistingFileKey: account === null ? files.hasAny() : files.read(account) !== undefined,
       }),
       account,
       mint: mintE2eKeyRecord,
@@ -663,6 +669,7 @@ export class RemoteSession {
     // advertised keyring as the instance's complete set, so a write without
     // these fields unregisters every key and breaks sealed-claim wrap coverage.
     await this.bik.ensure()
+    this.advertisedKeyIds = this.bik.identities.map((identity) => identity.publicKeyId).join(",")
     Object.assign(this.hello, this.bik.presenceFields())
     await this.verifyPrincipal()
     await this.ensureLink()
@@ -848,15 +855,12 @@ export class RemoteSession {
 
   /**
    * Resolve the owner-key half of an E2E create. Throws with an actionable
-   * message when the owner has no encryption key or this install has no BIK —
-   * ensureLink logs it and retries each poll tick, so the session self-heals
-   * the moment the owner sets up encryption.
+   * message when the owner has no encryption key — ensureLink logs it and
+   * retries each poll tick, so the session self-heals the moment the owner
+   * sets up encryption. This install's own key is phase two's to mint: under
+   * the per-stream policy it is keyed to a scratchpad that does not exist yet.
    */
   private async resolveE2eCreateBlock(): Promise<{ ownerKeyId: string; ownerPublicKey: string }> {
-    const identities = await this.bik.ensure()
-    if (identities.length === 0) {
-      throw new Error("e2e is enabled but this install could not create a bot identity key (see earlier log)")
-    }
     let ownerKey: { keyId: string; publicKey: string }
     try {
       ownerKey = await this.client.getOwnerE2eKey()
@@ -882,8 +886,11 @@ export class RemoteSession {
     link: RuntimeSessionLink,
     e2e: { ownerKeyId: string; ownerPublicKey: string }
   ): Promise<void> {
-    const [bik] = this.bik.identities
-    if (!bik) throw new Error("BIK disappeared mid-provisioning")
+    const bik = await this.bik.identityForStream(link.rootStreamId)
+    if (!bik) {
+      throw new Error("e2e is enabled but this install could not create a bot identity key (see earlier log)")
+    }
+    await this.advertiseKeyring()
     const { wraps } = await mintStreamKeyWraps({
       streamId: link.rootStreamId,
       keyGeneration: 0,
@@ -1044,7 +1051,7 @@ export class RemoteSession {
     }
     const sealed = parseSealedTurnContext(invocation.sealedContext)
     if (!sealed) return fail("malformed sealedContext")
-    const identities = await this.bik.ensure()
+    const identities = await this.bik.ensureForStream(invocation.rootStreamId)
     if (identities.length === 0) return fail("no bot identity key")
     try {
       // Wraps and the message AAD bind to the ROOT stream that owns the E2E key.
@@ -1900,7 +1907,7 @@ export class RemoteSession {
   ): Promise<SealedReplyBody | undefined> {
     const ack = parseSealedAckContext(invocation.sealedAck)
     if (!ack) return undefined
-    const identities = await this.bik.ensure()
+    const identities = await this.bik.ensureForStream(invocation.rootStreamId)
     if (identities.length === 0) return undefined
     try {
       const sealing = await openSealedAck({ ack, identities, streamId: invocation.rootStreamId })
@@ -3167,6 +3174,31 @@ export class RemoteSession {
       if (this.reconnectFallbackTask === task) this.reconnectFallbackTask = undefined
     })
     this.reconnectFallbackTask = task
+  }
+
+  /**
+   * Hold a key for each sealed scratchpad this bot was granted, then advertise
+   * the keyring. Under the default policy the one key already covers them and
+   * this changes nothing; under the per-stream policy the key is minted here,
+   * and until presence carries it the owner has nothing to re-wrap to.
+   */
+  private async keyGrantedStreams(streamIds: string[]): Promise<void> {
+    for (const streamId of streamIds) await this.bik.ensureForStream(streamId)
+    await this.advertiseKeyring()
+  }
+
+  /**
+   * Push presence when the held keyring is no longer what the server was last
+   * told, and update the hello body so a reconnect re-announces the same set.
+   * A key the server has not registered is one no wrap can be addressed to, so
+   * this runs before the wraps that name it.
+   */
+  private async advertiseKeyring(): Promise<void> {
+    const advertised = this.bik.identities.map((identity) => identity.publicKeyId).join(",")
+    if (advertised === this.advertisedKeyIds) return
+    this.advertisedKeyIds = advertised
+    Object.assign(this.hello, this.bik.presenceFields())
+    await this.syncPresence()
   }
 
   private enqueuePresence(write: () => Promise<void>): Promise<void> {

@@ -64,11 +64,20 @@ export interface BotRuntimeHello {
   publicKeyId?: string
 }
 
+/** `bot:e2e_grant`: this bot became an actor on a sealed scratchpad root. */
+export interface BotE2eGrantPayload {
+  workspaceId: string
+  botId: string
+  streamId: string
+}
+
 /** The bootstrap snapshot the server returns in the `bot:hello` ack. */
 export interface BotHelloBootstrap {
   serverGeneratedAt?: string
   availableInvocations: unknown[]
   ownedClaims: unknown[]
+  /** Sealed scratchpads this bot is an actor on — the catch-up for `bot:e2e_grant`. */
+  e2eGrantedStreamIds: string[]
 }
 
 /** Wakeup/hint callbacks the transport fires from server→client socket events. */
@@ -152,6 +161,8 @@ export interface BotRuntimeTransportCallbacks {
   onInvocationClaimed?: (payload: unknown) => void
   /** The active scratchpad actor changed for some stream. */
   onActiveActorChanged?: (payload: unknown) => void
+  /** This bot was invited into a sealed scratchpad; a per-stream keyring mints its key here. */
+  onE2eGrant?: (payload: BotE2eGrantPayload) => void
   /** The server asked the runtime to re-announce itself; the transport re-sends hello automatically and also fires this. */
   onResync?: () => void
   /** The scratchpad this runtime session is linked to was archived; the link is ended server-side. Wind down. */

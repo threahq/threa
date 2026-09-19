@@ -192,7 +192,9 @@ in Threa first; until then `start()` logs the reason and retries on each poll.
 
 `keyScope` (`THREA_E2E_KEY_SCOPE`) decides which installs share that identity
 key: `host` (the default: every Threa runtime on this machine), `identity`
-(this bot, wherever it runs), or `instance` (this install alone). `keyStore`
+(this bot, wherever it runs), `instance` (this install alone), or `stream`
+(one key per sealed scratchpad, minted when the bot is invited into it, so a
+key that leaks opens that one scratchpad). `keyStore`
 (`THREA_E2E_KEY_STORE`) picks where it is kept — `keychain` drives the OS
 keychain through its command-line tool, which survives the runtime being
 rebuilt, and `file` writes `0600` files under `keyDir`
