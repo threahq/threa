@@ -204,6 +204,14 @@ there is no silent downgrade to disk. A single-key file from before the
 keyring (`bikPath`) is adopted under the configured scope, so scratchpads
 already sealed to it keep opening.
 
+When the owner takes the bot back off a sealed scratchpad, the server deletes
+the wraps only that bot could open and the owner rolls the stream key forward,
+so it reads nothing sent from then on. The runtime is told on the socket: it
+drops the key it minted for that scratchpad, re-advertises what it still holds,
+and the server stops registering the dropped one. Under any scope but `stream`
+there is no such key to drop — the one key still opens the other scratchpads,
+and the roll is what closed this one.
+
 ## Inside the Threa repo
 
 This directory is consumed by `extensions/claude-code-remote` through a
