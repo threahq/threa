@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { cloneElement, useEffect, useRef, useState, type ReactElement } from "react"
 import {
   CircleCheck,
   Eye,
@@ -15,17 +15,14 @@ import {
   MAX_CONVERSATION_TOPIC_LENGTH,
   StreamTypes,
   isAsideHostType,
-  type Stream,
   type TitleSource,
 } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+  SidebarActionDrawer,
+  SidebarActionMenu,
+  type SidebarActionItem,
+} from "@/components/layout/sidebar/sidebar-actions"
 import { Input } from "@/components/ui/input"
 import {
   ResponsiveDialog,
@@ -36,6 +33,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { cn } from "@/lib/utils"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useUpdateConversation, useHideConversation, useUnhideConversation } from "@/hooks/use-conversations"
 import { ConversationSplitDialog } from "./conversation-split-dialog"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
@@ -59,16 +57,27 @@ interface ConversationActionsMenuProps {
   /** Whether this conversation is currently hidden from the viewer's board —
    *  selects "Unhide" vs "Hide from board". */
   isHidden?: boolean
-  /** Extra classes for the trigger, so each surface can size it to its icon cluster. */
+  /** Shown as the touch drawer's title when the conversation has no topic of its
+   *  own — the panel passes the stream locator it falls back to in the header. */
+  titleFallback?: string
+  /** Extra classes for the default trigger, so each surface can size it to its icon cluster. */
   triggerClassName?: string
+  /** Replaces the default `⋮` trigger (the panel header uses the `⋯` its stream/thread peers use). */
+  trigger?: ReactElement<{ onClick?: () => void }>
+  /** Controlled open — lets a second affordance (the panel's title) drive the same menu. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 /**
- * The `⋯` overflow on a board card / conversation panel: rename the topic and
- * mark the conversation resolved (or reopen it). Both edits go through
- * {@link useUpdateConversation} — optimistic, silent on success (the title/label
- * change is the confirmation, INV-63). Rename opens a {@link RenameConversationDialog}
- * rather than editing inline, so the card never shifts layout mid-edit (INV-21).
+ * The overflow on a board card / conversation panel: rename the topic, resolve,
+ * copy, split, hide. Built as {@link SidebarActionItem}s so it renders through
+ * the same two surfaces every other menu in the app does — a dropdown on a fine
+ * pointer, the bottom drawer on touch — instead of a dropdown a thumb has to
+ * hit. Both edits go through {@link useUpdateConversation} — optimistic, silent
+ * on success (the title/label change is the confirmation, INV-63). Rename opens
+ * a {@link RenameConversationDialog} rather than editing inline, so the card
+ * never shifts layout mid-edit (INV-21).
  */
 export function ConversationActionsMenu({
   workspaceId,
@@ -78,9 +87,19 @@ export function ConversationActionsMenu({
   topicSummarySource,
   status,
   isHidden = false,
+  titleFallback,
   triggerClassName,
+  trigger,
+  open,
+  onOpenChange,
 }: ConversationActionsMenuProps) {
-  const [menuOpen, setMenuOpen] = useState(false)
+  const isTouch = useIsMobileOrCoarse()
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const menuOpen = open ?? uncontrolledOpen
+  const setMenuOpen = (next: boolean) => {
+    setUncontrolledOpen(next)
+    onOpenChange?.(next)
+  }
   const [renameOpen, setRenameOpen] = useState(false)
   const [splitOpen, setSplitOpen] = useState(false)
   const update = useUpdateConversation(workspaceId)
@@ -94,106 +113,116 @@ export function ConversationActionsMenu({
   const hide = useHideConversation(workspaceId)
   const unhide = useUnhideConversation(workspaceId)
   const resolved = status === ConversationStatuses.RESOLVED
+  const renameStream = useRenameStream(workspaceId, streamId ?? "")
+  const regeneration = useRegenerateTitle(
+    workspaceId,
+    isScratchpad && stream
+      ? { kind: "stream", stream, currentTitle: effectiveTitle ?? "" }
+      : { kind: "conversation", conversationId, currentTitle: effectiveTitle ?? "", source: topicSummarySource }
+  )
+
+  const actions: SidebarActionItem[] = []
+  if (!isScratchpad || !streamId) {
+    actions.push({ id: "rename", label: "Rename topic…", icon: Pencil, onSelect: () => setRenameOpen(true) })
+  } else if (renameStream.canRename) {
+    actions.push({ id: "rename", label: "Rename scratchpad…", icon: Pencil, onSelect: () => setRenameOpen(true) })
+  }
+  if (
+    effectiveTitle &&
+    isProtectedRegenerableTitle(effectiveTitle, isScratchpad ? stream?.displayNameSource : topicSummarySource) &&
+    (!isScratchpad || renameStream.canRename)
+  ) {
+    actions.push({
+      id: "regenerate",
+      label: regeneration.isPending ? "Regenerating…" : "Regenerate title",
+      icon: Sparkles,
+      // The hook toasts its own failures; swallow so the menu doesn't toast twice.
+      // Action rows carry no disabled state, so the in-flight guard lives here.
+      onSelect: () => {
+        if (regeneration.isPending) return
+        void regeneration.regenerate().catch(() => undefined)
+      },
+    })
+  }
+  actions.push({
+    id: "status",
+    label: resolved ? "Reopen" : "Mark resolved",
+    icon: resolved ? RotateCcw : CircleCheck,
+    onSelect: () =>
+      update.mutate({
+        conversationId,
+        status: resolved ? ConversationStatuses.ACTIVE : ConversationStatuses.RESOLVED,
+      }),
+  })
+  actions.push({
+    id: "copy-link",
+    label: "Copy link",
+    icon: Link2,
+    onSelect: () => copyConversationLink(workspaceId, conversationId),
+  })
+  if (streamId && !isScratchpad) {
+    actions.push({ id: "split", label: "Split with AI…", icon: Sparkles, onSelect: () => setSplitOpen(true) })
+  }
+  if (canOpenAside) {
+    actions.push({
+      id: "aside",
+      label: "Open an aside",
+      icon: MessageSquareDashed,
+      onSelect: () =>
+        openAside({ kind: "conversation", hostStreamId: streamId!, conversationId }).catch(() => {
+          /* toast already surfaced inside the hook */
+        }),
+    })
+  }
+  actions.push({
+    id: "visibility",
+    label: isHidden ? "Unhide from board" : "Hide from board",
+    icon: isHidden ? Eye : EyeOff,
+    separatorBefore: true,
+    onSelect: () => (isHidden ? unhide.mutate(conversationId) : hide.mutate(conversationId)),
+  })
+
+  const triggerNode = trigger ?? (
+    <Button
+      variant="ghost"
+      size="icon"
+      className={cn("h-8 w-8 text-muted-foreground hover:text-foreground", triggerClassName)}
+      aria-label="Conversation actions"
+    >
+      <EllipsisVertical className="h-3.5 w-3.5" />
+    </Button>
+  )
 
   return (
     <>
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("h-8 w-8 text-muted-foreground hover:text-foreground", triggerClassName)}
-            aria-label="Conversation actions"
-          >
-            <EllipsisVertical className="h-3.5 w-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {isScratchpad && streamId ? (
-            <ScratchpadRenameMenuItem
-              workspaceId={workspaceId}
-              streamId={streamId}
-              onSelect={() => {
-                setMenuOpen(false)
-                setRenameOpen(true)
-              }}
-            />
-          ) : (
-            <DropdownMenuItem
-              onSelect={(event) => {
-                event.preventDefault()
-                setMenuOpen(false)
-                setRenameOpen(true)
-              }}
-            >
-              <Pencil className="h-4 w-4" />
-              Rename topic…
-            </DropdownMenuItem>
-          )}
-          {isProtectedRegenerableTitle(
-            effectiveTitle,
-            isScratchpad ? stream?.displayNameSource : topicSummarySource
-          ) && (
-            <RegenerateTitleMenuItem
-              workspaceId={workspaceId}
-              target={
-                isScratchpad && stream
-                  ? { kind: "stream", stream, currentTitle: effectiveTitle! }
-                  : {
-                      kind: "conversation",
-                      conversationId,
-                      currentTitle: effectiveTitle!,
-                      source: topicSummarySource,
-                    }
-              }
-            />
-          )}
-          <DropdownMenuItem
-            onSelect={() =>
-              update.mutate({
-                conversationId,
-                status: resolved ? ConversationStatuses.ACTIVE : ConversationStatuses.RESOLVED,
-              })
+      {isTouch ? (
+        <>
+          {cloneElement(triggerNode, { onClick: () => setMenuOpen(true) })}
+          <SidebarActionDrawer
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            actions={actions}
+            title="Conversation actions"
+            description="Choose an action for this conversation."
+            header={
+              <div className="px-4 pt-2 pb-3">
+                <p className="break-words text-base font-semibold text-foreground">
+                  {effectiveTitle ?? titleFallback ?? "Conversation"}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">Conversation actions</p>
+              </div>
             }
-          >
-            {resolved ? <RotateCcw className="h-4 w-4" /> : <CircleCheck className="h-4 w-4" />}
-            {resolved ? "Reopen" : "Mark resolved"}
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => void copyConversationLink(workspaceId, conversationId)}>
-            <Link2 className="h-4 w-4" />
-            Copy link
-          </DropdownMenuItem>
-          {streamId && !isScratchpad && (
-            <DropdownMenuItem
-              onSelect={(event) => {
-                event.preventDefault()
-                setMenuOpen(false)
-                setSplitOpen(true)
-              }}
-            >
-              <Sparkles className="h-4 w-4" />
-              Split with AI…
-            </DropdownMenuItem>
-          )}
-          {canOpenAside && (
-            <DropdownMenuItem
-              onSelect={() => {
-                void openAside({ kind: "conversation", hostStreamId: streamId!, conversationId }).catch(() => {
-                  /* toast already surfaced inside the hook */
-                })
-              }}
-            >
-              <MessageSquareDashed className="h-4 w-4" />
-              Open an aside
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => (isHidden ? unhide.mutate(conversationId) : hide.mutate(conversationId))}>
-            {isHidden ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-            {isHidden ? "Unhide from board" : "Hide from board"}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          />
+        </>
+      ) : (
+        <SidebarActionMenu
+          actions={actions}
+          ariaLabel="Conversation actions"
+          trigger={triggerNode}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+        />
+      )}
       {isScratchpad && streamId ? (
         <ScratchpadRenameDialog
           workspaceId={workspaceId}
@@ -221,49 +250,6 @@ export function ConversationActionsMenu({
         />
       )}
     </>
-  )
-}
-
-function RegenerateTitleMenuItem(props: {
-  workspaceId: string
-  target:
-    | {
-        kind: "stream"
-        stream: Pick<Stream, "id" | "e2eEnabled" | "displayNameSource">
-        currentTitle: string
-      }
-    | { kind: "conversation"; conversationId: string; currentTitle: string; source?: TitleSource | null }
-}) {
-  const regeneration = useRegenerateTitle(props.workspaceId, props.target)
-  const renameStream = useRenameStream(props.workspaceId, props.target.kind === "stream" ? props.target.stream.id : "")
-  const disabled = regeneration.isPending || (props.target.kind === "stream" && !renameStream.canRename)
-  return (
-    <DropdownMenuItem
-      disabled={disabled}
-      onSelect={(event) => {
-        event.preventDefault()
-        void regeneration.regenerate().catch(() => undefined)
-      }}
-    >
-      <Sparkles className="h-4 w-4" />
-      {regeneration.isPending ? "Regenerating…" : "Regenerate title"}
-    </DropdownMenuItem>
-  )
-}
-
-function ScratchpadRenameMenuItem(props: { workspaceId: string; streamId: string; onSelect: () => void }) {
-  const renameStream = useRenameStream(props.workspaceId, props.streamId)
-  return (
-    <DropdownMenuItem
-      disabled={!renameStream.canRename}
-      onSelect={(event) => {
-        event.preventDefault()
-        props.onSelect()
-      }}
-    >
-      <Pencil className="h-4 w-4" />
-      Rename scratchpad…
-    </DropdownMenuItem>
   )
 }
 

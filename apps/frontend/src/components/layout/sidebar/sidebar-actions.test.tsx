@@ -43,9 +43,9 @@ describe("sidebar-actions", () => {
     registerOpenMenu.mockClear()
     openMenuClosers.length = 0
 
-    vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
+    vi.spyOn(contextsModule, "useOptionalSidebar").mockReturnValue({
       registerOpenMenu,
-    } as unknown as ReturnType<typeof contextsModule.useSidebar>)
+    } as unknown as ReturnType<typeof contextsModule.useOptionalSidebar>)
 
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
       date,
@@ -127,6 +127,20 @@ describe("sidebar-actions", () => {
 
       await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument())
       expect(openMenuClosers).toHaveLength(0)
+    })
+
+    it("opens outside the sidebar shell, where there is no menu registry", async () => {
+      vi.spyOn(contextsModule, "useOptionalSidebar").mockReturnValue(null)
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect }]
+
+      renderWithRouter(<SidebarActionMenu actions={actions} ariaLabel="Conversation actions" />)
+
+      await user.click(screen.getByRole("button", { name: "Conversation actions" }))
+      await user.click(screen.getByText("Settings"))
+
+      expect(onSelect).toHaveBeenCalled()
     })
   })
 

@@ -453,11 +453,16 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 }
 
 export function useSidebar() {
-  const context = useContext(SidebarContext)
+  const context = useOptionalSidebar()
   if (!context) {
     throw new Error("useSidebar must be used within a SidebarProvider")
   }
   return context
+}
+
+/** Null outside the sidebar shell: the sidebar's action menus also render on board cards and panel headers. */
+export function useOptionalSidebar() {
+  return useContext(SidebarContext)
 }
 
 export type { CollapseState }
