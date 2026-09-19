@@ -741,10 +741,36 @@ describe("ConversationPanel", () => {
     expect(document.querySelector(".lucide-quote")).toBeTruthy()
   })
 
-  it("offers a conversation-level copy-link affordance in the header", async () => {
+  it("copies the conversation link from the actions menu, where the stream panel keeps its own", async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
-    expect(screen.getByRole("button", { name: "Copy link to conversation" })).toBeTruthy()
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+    await user.click(await screen.findByText("Copy link"))
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`/board?panel=conv%3A${CONVERSATION_ID}`))
+    )
+  })
+
+  // The stream panel shows a back chevron only at phone width, where it stands in
+  // for the desktop X. This header used to show both at once on desktop.
+  it("hides the back chevron on desktop, where the close button already exits", async () => {
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Close" })).toBeTruthy()
+  })
+
+  it("shows the back chevron at phone width, where there is no close button", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    expect(screen.getByRole("button", { name: "Back" })).toBeTruthy()
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull()
   })
 
   it("shows a not-found state when the conversation is gone/unreadable", async () => {
