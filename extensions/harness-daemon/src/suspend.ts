@@ -13,8 +13,12 @@ import type { ManagedAgent } from "./types"
  * and an empty one says nothing about why the agent is gone.
  */
 export function suspendPlaceholderCommand(agent: ManagedAgent): string {
-  const notice = `harnessd: ${agent.name} is suspended (idle). The next message on its scratchpad resumes it.`
-  return `printf '%s\\n' ${shellQuote(notice)}; exec sleep 2147483647`
+  return `printf '%s\\n' ${shellQuote(suspendPlaceholderNotice(agent))}; exec sleep 2147483647`
+}
+
+/** Also how a supervisor recognises the placeholder among the panes, so the two can never drift apart. */
+export function suspendPlaceholderNotice(agent: Pick<ManagedAgent, "name">): string {
+  return `harnessd: ${agent.name} is suspended (idle). The next message on its scratchpad resumes it.`
 }
 
 export type SuspendStatus = "suspended" | "would suspend" | "skipped"

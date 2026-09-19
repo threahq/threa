@@ -1162,6 +1162,14 @@ export interface BotInvocationAvailableOutboxPayload extends WorkspaceScopedPayl
   requiredCapability: BotInvocationCapability
   targetInstanceId: string | null
   targetRuntimeSessionId: string | null
+  /**
+   * The session-control command's name, or null for any other invocation. A
+   * supervisor watching for a session it suspended answers some commands
+   * itself, and it has to decide that from the hint: a claim it should not have
+   * taken cannot be released. The name only — arguments and prompt stay off a
+   * socket that carries no invocation content.
+   */
+  sessionControlCommand: string | null
   createdAt: string
 }
 

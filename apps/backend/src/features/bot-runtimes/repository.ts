@@ -1483,6 +1483,7 @@ export const BotInvocationRepository = {
       maxAttempts: number
       responseStreamId?: string
       excludeResponseStreamIds?: string[]
+      invocationId?: string
     }
   ): Promise<BotInvocation | null> {
     const result = await db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
@@ -1501,6 +1502,7 @@ export const BotInvocationRepository = {
         AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
         AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
         AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
+        AND (${params.invocationId ?? null}::text IS NULL OR i.id = ${params.invocationId ?? null})
         AND (i.trigger = 'session-control' OR NOT (i.response_stream_id = ANY(${params.excludeResponseStreamIds ?? []}::text[])))
         AND i.attempts < ${params.maxAttempts}
         AND ${sealedStreamClaimGateSql(params.instanceId)}
@@ -1541,6 +1543,13 @@ export const BotInvocationRepository = {
        * runtime session itself and must not wait behind a busy stream.
        */
       excludeResponseStreamIds?: string[]
+      /**
+       * Claim this invocation or nothing. A supervisor that answers one command
+       * for a session that cannot answer for itself is told which invocation by
+       * the availability hint; FIFO order would otherwise hand it a different
+       * queued command it has no way to release.
+       */
+      invocationId?: string
     }
   ): Promise<BotInvocation | null> {
     // A composite message + steer shares one transaction timestamp; put the
@@ -1562,6 +1571,7 @@ export const BotInvocationRepository = {
           AND (i.target_runtime_session_id IS NULL OR i.target_runtime_session_id = ${params.runtimeSessionId ?? null})
           AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
           AND (${params.responseStreamId ?? null}::text IS NULL OR i.response_stream_id = ${params.responseStreamId ?? null})
+          AND (${params.invocationId ?? null}::text IS NULL OR i.id = ${params.invocationId ?? null})
           AND (i.trigger = 'session-control' OR NOT (i.response_stream_id = ANY(${params.excludeResponseStreamIds ?? []}::text[])))
           AND i.attempts < ${params.maxAttempts}
           AND ${sealedStreamClaimGateSql(params.instanceId)}
