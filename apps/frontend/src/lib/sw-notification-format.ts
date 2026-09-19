@@ -153,14 +153,21 @@ export function formatReminderDelay(minutes: number): string {
 }
 
 /**
- * How many buttons a card may carry on this device. Chrome on Android hands
- * `notificationclick` the LAST action's id whichever button was pressed
- * (verified on a WebAPK Sep 2026: [remind, react] fired `react` from both
- * buttons, [mark_read, remind] fired `remind` from both), so a second button
- * only makes the first one misfire. One button is the whole usable set there.
+ * How many buttons a card may carry on this device: none on Android.
+ *
+ * Chrome on Android hands `notificationclick` the LAST action's id whichever
+ * button was pressed (verified on a WebAPK Sep 2026: [remind, react] fired
+ * `react` from both buttons, [mark_read, remind] fired `remind` from both), so
+ * the id the worker receives there names an action the user did not choose.
+ * Capping at one button hid the mis-attribution without making the id
+ * trustworthy, and an action that "succeeds" suppresses the navigation — a
+ * misread tap costs the user the stream they were trying to open. A platform
+ * whose button identity cannot be read carries no buttons, and the test is the
+ * Android token rather than Chrome's: no Android browser has been shown to
+ * attribute a press, and the ones that render no buttons anyway lose nothing.
  */
 export function resolvePushActionLimit(userAgent: string): number {
-  return /\bAndroid\b/.test(userAgent) ? 1 : PUSH_ACTIONS_MAX
+  return /\bAndroid\b/.test(userAgent) ? 0 : PUSH_ACTIONS_MAX
 }
 
 /**
@@ -178,6 +185,27 @@ export function resolveActions(
   return actions
     .filter((action) => !(action === PushActions.REACT && activityType === ActivityTypes.REACTION))
     .map((action) => ({ action, title: actionTitle(action, prefs) }))
+}
+
+/**
+ * The button the user pressed, or "" for the notification body. Chrome on Android
+ * relays button identity unreliably and a successful action deliberately
+ * suppresses the navigation, so a misread id costs the user the stream they
+ * tapped. Two tests, because neither alone covers the rollout: the platform must
+ * be one whose button identity can be read at all (the same
+ * {@link resolvePushActionLimit} rule that decides what gets rendered — a card
+ * rendered by the previous worker version still sits in the shade), and the id
+ * must be one the card actually carries.
+ */
+export function resolveClickedAction(
+  rawAction: string | undefined,
+  actions: ReadonlyArray<{ action: string }> | undefined,
+  userAgent: string
+): string {
+  if (!rawAction) return ""
+  if (resolvePushActionLimit(userAgent) === 0) return ""
+  if (!actions) return rawAction
+  return actions.some((candidate) => candidate.action === rawAction) ? rawAction : ""
 }
 
 export interface NotificationActionTarget extends NotificationActionPrefs {

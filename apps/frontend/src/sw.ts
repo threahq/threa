@@ -7,6 +7,7 @@ import {
   withNotificationActionFailure,
   countNotifiedMessages,
   resolveLatestMessageId,
+  resolveClickedAction,
 } from "./lib/sw-notification-format"
 import { ACCOUNT_ASSERTION_HEADER, type PushAction } from "@threahq/types"
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
@@ -26,7 +27,6 @@ import {
   runBootstrapSync,
 } from "./lib/sw-bootstrap-prefetch"
 import {
-  SW_MSG_NOTIFICATION_CLICK,
   SW_MSG_SUBSCRIPTION_CHANGED,
   SW_MSG_CLEAR_NOTIFICATIONS,
   SW_MSG_QUEUE_BOOTSTRAP_SYNC,
@@ -40,6 +40,7 @@ import {
   SW_MSG_GC_REPLY,
 } from "./lib/sw-messages"
 import { stashShareTarget } from "./lib/share-target-storage"
+import { openNotificationTarget } from "./lib/sw-notification-open"
 
 declare const self: ServiceWorkerGlobalScope
 declare const __APP_VERSION__: string
@@ -722,32 +723,29 @@ function resolveNotificationTargetUrl(data: PushData | undefined): string {
   return "/"
 }
 
+function openTarget(targetUrl: string, workosUserId: string | undefined): Promise<void> {
+  return openNotificationTarget(self.clients, self.location.origin, targetUrl, workosUserId)
+}
+
 self.addEventListener("notificationclick", (event) => {
   const data = event.notification.data as PushData | undefined
+  const notification = event.notification as Notification & { actions?: ReadonlyArray<{ action: string }> }
+  const action = resolveClickedAction(event.action, notification.actions, self.navigator.userAgent)
+  // Synchronous, before any await: the card must go away on the tap itself.
+  event.notification.close()
 
   event.waitUntil(
     (async () => {
-      const outcome = event.action ? await performNotificationAction(event.action, data ?? {}) : null
-      event.notification.close()
-      await syncAppBadge()
-      if (outcome?.ok) return
-
       const deepLink = resolveNotificationTargetUrl(data)
-      const targetUrl = outcome ? withNotificationActionFailure(deepLink, event.action, outcome.reason) : deepLink
-      const absoluteUrl = new URL(targetUrl, self.location.origin).href
-      const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
-      for (const client of clients) {
-        if (new URL(client.url).origin === self.location.origin) {
-          await client.focus()
-          client.postMessage({
-            type: SW_MSG_NOTIFICATION_CLICK,
-            url: targetUrl,
-            workosUserId: data?.workosUserId,
-          })
-          return
+      if (!action) {
+        await openTarget(deepLink, data?.workosUserId)
+      } else {
+        const outcome = await performNotificationAction(action, data ?? {})
+        if (!outcome.ok) {
+          await openTarget(withNotificationActionFailure(deepLink, action, outcome.reason), data?.workosUserId)
         }
       }
-      await self.clients.openWindow(absoluteUrl)
+      await syncAppBadge()
     })()
   )
 })
