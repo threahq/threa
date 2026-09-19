@@ -20,7 +20,7 @@ import {
 import { X, UserPlus, BotIcon } from "lucide-react"
 import { useAddStreamMember, useRemoveStreamMember, streamKeys } from "@/hooks"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
-import { useInviteActor } from "@/hooks/use-invite-actor"
+import { useInviteActor, useRevokeActor } from "@/hooks/use-e2e-actors"
 import { useStreamService } from "@/contexts"
 import { botsApi } from "@/api/bots"
 import { useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
@@ -245,6 +245,7 @@ export function StreamBotsSection({
   const queryClient = useQueryClient()
   const allBots = useWorkspaceBots(workspaceId)
   const { invite, isInviting, isUnlocked } = useInviteActor(workspaceId, streamId)
+  const { revoke, isRevoking } = useRevokeActor(workspaceId, streamId)
 
   // On an E2E scratchpad the stream key must be wrapped to the bot before it can
   // participate; that grant is the owner's deliberate act, so it goes behind a
@@ -254,6 +255,7 @@ export function StreamBotsSection({
   const isE2e = stream?.e2eEnabled === true
   const e2eLocked = isE2e && !isUnlocked
   const [pendingGrantBot, setPendingGrantBot] = useState<(typeof allBots)[number] | null>(null)
+  const [pendingRevokeBot, setPendingRevokeBot] = useState<(typeof allBots)[number] | null>(null)
 
   const streamBotsQueryKey = ["stream-bots", workspaceId, streamId]
   const { data: grantedBotIds = [] } = useQuery({
@@ -314,6 +316,35 @@ export function StreamBotsSection({
     }
   }, [pendingGrantBot, stream?.e2eActors, invite, grantMutation])
 
+  const isE2eActor = useCallback(
+    (botId: string) => stream?.e2eActors?.some((a) => a.kind === "bot" && a.actorId === botId) ?? false,
+    [stream?.e2eActors]
+  )
+
+  const handleRemoveBot = useCallback(
+    (bot: (typeof allBots)[number]) => {
+      // Dropping the channel grant alone would leave the bot wrapped into the
+      // stream key, still able to read every message it syncs. On an E2E
+      // scratchpad removal is a revoke, and it goes behind a confirm because
+      // the re-key it triggers is not undoable by re-adding.
+      if (isE2eActor(bot.id)) setPendingRevokeBot(bot)
+      else revokeMutation.mutate(bot.id)
+    },
+    [isE2eActor, revokeMutation]
+  )
+
+  const confirmE2eRevoke = useCallback(async () => {
+    if (!pendingRevokeBot) return
+    const bot = pendingRevokeBot
+    setPendingRevokeBot(null)
+    try {
+      await revoke("bot", bot.id)
+      await revokeMutation.mutateAsync(bot.id)
+    } catch {
+      // revoke() and the mutation each surface their own error toast.
+    }
+  }, [pendingRevokeBot, revoke, revokeMutation])
+
   return (
     <div className="space-y-3">
       <Label className="text-sm font-medium">Bots ({botsWithAccess.length})</Label>
@@ -337,8 +368,8 @@ export function StreamBotsSection({
                   variant="ghost"
                   size="icon"
                   className="reveal-actions h-6 w-6 shrink-0"
-                  onClick={() => revokeMutation.mutate(bot.id)}
-                  disabled={revokeMutation.isPending}
+                  onClick={() => handleRemoveBot(bot)}
+                  disabled={revokeMutation.isPending || isRevoking}
                 >
                   <X className="h-3.5 w-3.5" />
                 </Button>
@@ -398,6 +429,27 @@ export function StreamBotsSection({
           <ResponsiveAlertDialogFooter>
             <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
             <ResponsiveAlertDialogAction onClick={confirmE2eGrant}>Add bot</ResponsiveAlertDialogAction>
+          </ResponsiveAlertDialogFooter>
+        </ResponsiveAlertDialogContent>
+      </ResponsiveAlertDialog>
+
+      <ResponsiveAlertDialog
+        open={pendingRevokeBot !== null}
+        onOpenChange={(open) => !open && setPendingRevokeBot(null)}
+      >
+        <ResponsiveAlertDialogContent>
+          <ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogTitle>
+              Remove {pendingRevokeBot?.name} from this encrypted scratchpad?
+            </ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogDescription>
+              It loses access to everything sent from now on, and the copies of the key it was given are deleted.
+              Messages it already downloaded stay readable to it. Adding it back grants it the conversation again.
+            </ResponsiveAlertDialogDescription>
+          </ResponsiveAlertDialogHeader>
+          <ResponsiveAlertDialogFooter>
+            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+            <ResponsiveAlertDialogAction onClick={confirmE2eRevoke}>Remove bot</ResponsiveAlertDialogAction>
           </ResponsiveAlertDialogFooter>
         </ResponsiveAlertDialogContent>
       </ResponsiveAlertDialog>

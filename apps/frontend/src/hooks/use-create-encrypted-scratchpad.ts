@@ -14,7 +14,7 @@ import { workspaceKeys } from "@/hooks/use-workspaces"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { provisionOwnerStreamKey } from "@/lib/crypto/stream-key-cache"
 import { useSyncEngine } from "@/sync/sync-engine"
-import { inviteActorToStream } from "@/hooks/use-invite-actor"
+import { inviteActorToStream } from "@/hooks/use-e2e-actors"
 
 export function useCreateEncryptedScratchpad(workspaceId: string, currentUserId: string | null) {
   const streamService = useStreamService()

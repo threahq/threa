@@ -1,7 +1,23 @@
+import { useState } from "react"
 import { Bot } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  ResponsiveAlertDialog,
+  ResponsiveAlertDialogAction,
+  ResponsiveAlertDialogCancel,
+  ResponsiveAlertDialogContent,
+  ResponsiveAlertDialogDescription,
+  ResponsiveAlertDialogFooter,
+  ResponsiveAlertDialogHeader,
+  ResponsiveAlertDialogTitle,
+} from "@/components/ui/responsive-alert-dialog"
 import { cn } from "@/lib/utils"
-import { useInviteActor, canInviteActor, isActorInvited, E2E_ACTOR_LABELS } from "@/hooks/use-invite-actor"
+import {
+  useInviteActor,
+  useRevokeActor,
+  canInviteActor,
+  E2E_ACTOR_LABELS,
+} from "@/hooks/use-e2e-actors"
 import type { E2eActorKind } from "@threahq/types"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
@@ -18,29 +34,66 @@ interface InviteActorButtonProps {
 
 /**
  * Header affordance for inviting a non-human actor (e.g. the enclave agent
- * Ariadne) into an encrypted scratchpad. Only shown for E2E scratchpads;
- * renders an inert pill once that actor is invited.
+ * Ariadne) into an encrypted scratchpad, and for taking that grant back. Only
+ * shown for E2E scratchpads.
  */
 export function InviteActorButton({ workspaceId, stream, kind }: InviteActorButtonProps) {
   const { invite, isInviting } = useInviteActor(workspaceId, stream.id)
+  const { revoke, isRevoking } = useRevokeActor(workspaceId, stream.id)
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false)
   const label = E2E_ACTOR_LABELS[kind]
 
   if (!stream.e2eEnabled) return null
 
-  if (isActorInvited(stream, kind)) {
+  // Revoke names the actor row as listed, so read the pinned id off the stream
+  // rather than assuming the kind's sentinel.
+  const invitedActor = stream.e2eActors?.find((a) => a.kind === kind)
+
+  if (invitedActor) {
     return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(pillBase, "border-border bg-secondary text-foreground")}
-            aria-label={`${label} is in this scratchpad`}
-          >
-            <Bot className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
-            <span>{label}</span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{label} is in this scratchpad.</TooltipContent>
-      </Tooltip>
+      <>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setConfirmingRevoke(true)}
+              disabled={isRevoking}
+              aria-label={`Remove ${label} from this scratchpad`}
+              className={cn(
+                pillBase,
+                "border-border bg-secondary text-foreground transition-colors hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:opacity-60"
+              )}
+            >
+              <Bot className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+              <span>{label}</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{label} is in this scratchpad. Click to remove.</TooltipContent>
+        </Tooltip>
+
+        <ResponsiveAlertDialog open={confirmingRevoke} onOpenChange={setConfirmingRevoke}>
+          <ResponsiveAlertDialogContent>
+            <ResponsiveAlertDialogHeader>
+              <ResponsiveAlertDialogTitle>Remove {label} from this scratchpad?</ResponsiveAlertDialogTitle>
+              <ResponsiveAlertDialogDescription>
+                {label} loses access to everything sent from now on, and the copies of the key it was given are
+                deleted. Messages it already read stay readable to it.
+              </ResponsiveAlertDialogDescription>
+            </ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogFooter>
+              <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+              <ResponsiveAlertDialogAction
+                onClick={() => {
+                  setConfirmingRevoke(false)
+                  void revoke(kind, invitedActor.actorId)
+                }}
+              >
+                Remove {label}
+              </ResponsiveAlertDialogAction>
+            </ResponsiveAlertDialogFooter>
+          </ResponsiveAlertDialogContent>
+        </ResponsiveAlertDialog>
+      </>
     )
   }
 

@@ -602,7 +602,7 @@ export type {
   E2eKeyWrapsResponse,
   E2eKeyRollRecipient,
   E2eKeyRoll,
-  InviteActorResponse,
+  E2eActorMutationResponse,
   E2eKeyWrapInput,
   E2eKeyRollInput,
   E2eActorRewrapInput,
