@@ -21,6 +21,7 @@ export {
   type RemoteSessionOptions,
   type RemoteSessionStatusSnapshot,
   type RuntimeDescriptor,
+  type RuntimePresenceReport,
   type SendResult,
   type SessionControlActuator,
   type SessionControlInvocationContext,

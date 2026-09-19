@@ -4,6 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
 import {
   claudeModelSuggestions,
+  clearSessionPresence,
   discardCommandClaim,
   discardSpawnBrief,
   harnessReconnectAvailable,
@@ -22,6 +23,7 @@ import {
   parseAllowedTmuxKey,
   sendAllowedTmuxKey,
   writeCommandClaim,
+  writeSessionPresence,
   writeSpawnBrief,
 } from "@threahq/harness-client"
 import {
@@ -674,6 +676,23 @@ export class ChannelServer {
       client,
       transport,
       onDelegationAvailable: (payload) => this.delegations?.notifyAvailable(payload),
+      // Harnessd keeps publishing this while the session is suspended, so a
+      // user never has to wake an agent to reach its commands. Offline is the
+      // session saying it ended on purpose — nothing to hold.
+      onPresence: (presence) => {
+        if (presence.status === "offline") {
+          clearSessionPresence(presence.runtimeSessionId)
+          return
+        }
+        writeSessionPresence({
+          runtimeKind: presence.runtimeKind,
+          instanceId: presence.instanceId,
+          runtimeSessionId: presence.runtimeSessionId,
+          displayName: presence.displayName,
+          capabilities: presence.capabilities,
+          manifest: presence.manifest,
+        })
+      },
       log,
       runtime: {
         kind: RUNTIME_KIND,
