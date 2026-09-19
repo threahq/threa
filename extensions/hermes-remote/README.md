@@ -79,7 +79,7 @@ Conversation history stays per stream, but Hermes's built-in memory does not. Wh
 `memory` tool lands in `~/.hermes/memories/MEMORY.md` and `USER.md`, which load into every new session on the profile,
 channel mentions included. `X-Hermes-Session-Key` is keyed by the turn's root stream, and it only separates an
 external memory provider (`memory.provider`, such as Honcho) and the prompt cache. Run a separate Hermes profile if a
-channel audience must never see what the scratchpad saved.
+channel audience must never see what the scratchpad saved (see [Several agents on one box](#several-agents-on-one-box)).
 
 ## Attachments
 
@@ -145,5 +145,32 @@ cards are THR-121.
    `--force`), creates `~/.threa/hermes-remote/log/`, installs the `threa` skill into `~/.hermes/skills/threa/SKILL.md`
    and a starting `~/.hermes/SOUL.md` if there is none, then runs `systemctl --user daemon-reload` and
    `enable`. `--start` also restarts the unit; `--dry-run` prints every file and command without doing any of it,
-   including an existing unit it would refuse. Any other argument is rejected. Logs land in
-   `~/.threa/hermes-remote/log/connector.log`. Linux only.
+   including an existing unit it would refuse. `--profile <name>` installs a second agent instead (below). Any other
+   argument is rejected. Logs land in `~/.threa/hermes-remote/log/connector.log`. Linux only.
+
+## Several agents on one box
+
+Every path above belongs to one install. A second agent is a second Hermes profile with a connector of its own, and
+`--profile <name>` is the only thing you pass differently: the name is the Hermes profile name, so one identifier
+names the persona, the memories, the gateway route and the Threa bot behind it.
+
+```sh
+hermes profile create muse            # required first: the connector refuses a profile Hermes does not know
+bun run install-service --profile muse --start
+```
+
+The named install shares nothing with the default one: unit `threa-hermes-muse.service`, env file
+`~/.config/threa/hermes-muse.env`, config, work dir, logs and MCP config under `~/.threa/hermes-muse/`, its own Bot
+Identity Key at `~/.threa/hermes-muse/bik.json`, and `SOUL.md` plus the `threa` skill in the profile's home,
+`~/.hermes/profiles/muse/`. Give it its own `THREA_API_KEY`. A bot is one agent, and two connectors on one key would
+answer each other's mentions.
+
+Two things on the Hermes side:
+
+- The gateway serves a secondary profile under `/p/<name>/` on the one listener, which is where the connector points
+  by default. It 404s a prefix it does not serve, so a misrouted connector fails instead of reaching the wrong agent.
+  Set `HERMES_API_URL` in the env file if your gateway is laid out differently.
+- `HERMES_API_KEY` is per profile: read the new profile's `API_SERVER_KEY`, not the default profile's.
+
+Point the profile's `threa` MCP server at its own config, `~/.threa/hermes-muse/threa-cli.json`, in
+`~/.hermes/profiles/muse/config.yaml`. The skill the installer writes into that profile already names these paths.

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { renderSystemdUnit, runInstall, SERVICE_NAME } from "./install"
+import { hermesInstall } from "./config"
+import { parseArgs, renderSystemdUnit, runInstall } from "./install"
 
 const PACKAGE_DIR = join(import.meta.dir, "..")
 
@@ -10,9 +11,16 @@ function tempHome(): string {
   return mkdtempSync(join(tmpdir(), "hermes-install-"))
 }
 
-function installOptions(homeDir: string) {
-  return { homeDir, packageDir: PACKAGE_DIR, bunPath: "/home/u/.bun/bin/bun", dryRun: true }
+function installOptions(homeDir: string, profile?: string) {
+  return {
+    install: hermesInstall({ homeDir, ...(profile === undefined ? {} : { profile }) }),
+    packageDir: PACKAGE_DIR,
+    bunPath: "/home/u/.bun/bin/bun",
+    dryRun: true,
+  }
 }
+
+const SERVICE_NAME = "threa-hermes-remote.service"
 
 describe("renderSystemdUnit", () => {
   test("renders the connector unit with absolute paths and appended logs", () => {
@@ -20,7 +28,7 @@ describe("renderSystemdUnit", () => {
       renderSystemdUnit({
         bunPath: "/home/u/.bun/bin/bun",
         entryPath: "/srv/threa/extensions/hermes-remote/src/index.ts",
-        homeDir: "/home/u",
+        logDir: "/home/u/.threa/hermes-remote/log",
         envFile: "/home/u/.config/threa/hermes-remote.env",
       })
     ).toEqual(
@@ -47,6 +55,28 @@ describe("renderSystemdUnit", () => {
       ].join("\n")
     )
   })
+
+  test("a profile names the unit's identity, after the env file so it cannot be repointed", () => {
+    const lines = renderSystemdUnit({
+      bunPath: "/home/u/.bun/bin/bun",
+      entryPath: "/srv/threa/extensions/hermes-remote/src/index.ts",
+      logDir: "/home/u/.threa/hermes-muse/log",
+      envFile: "/home/u/.config/threa/hermes-muse.env",
+      profile: "muse",
+    }).split("\n")
+
+    expect({
+      description: lines[1],
+      afterEnvFile:
+        lines.indexOf("Environment=THREA_HERMES_PROFILE=muse") >
+        lines.indexOf("EnvironmentFile=-/home/u/.config/threa/hermes-muse.env"),
+      log: lines.find((line) => line.startsWith("StandardOutput=")),
+    }).toEqual({
+      description: "Description=Threa Hermes connector (muse)",
+      afterEnvFile: true,
+      log: "StandardOutput=append:/home/u/.threa/hermes-muse/log/connector.log",
+    })
+  })
 })
 
 describe("renderSystemdUnit paths", () => {
@@ -55,10 +85,44 @@ describe("renderSystemdUnit paths", () => {
       renderSystemdUnit({
         bunPath: "/home/u/.bun/bin/bun",
         entryPath: "/home/my user/threa/extensions/hermes-remote/src/index.ts",
-        homeDir: "/home/my user",
+        logDir: "/home/my user/.threa/hermes-remote/log",
         envFile: "/home/my user/.config/threa/hermes-remote.env",
       })
     ).toThrow("whitespace and backslashes")
+  })
+})
+
+describe("parseArgs", () => {
+  test("reads a profile from either spelling and rejects anything else", () => {
+    expect({
+      bare: parseArgs([]),
+      spaced: parseArgs(["--profile", "muse", "--start"]),
+      equals: parseArgs(["--profile=muse", "--force", "--dry-run"]),
+      missingValue: (() => {
+        try {
+          parseArgs(["--profile", "--start"])
+        } catch (error) {
+          return (error as Error).message
+        }
+        return "no error"
+      })(),
+      unknown: (() => {
+        try {
+          parseArgs(["--name", "muse"])
+        } catch (error) {
+          return (error as Error).message
+        }
+        return "no error"
+      })(),
+    }).toEqual({
+      bare: { force: false, start: false, dryRun: false },
+      spaced: { profile: "muse", force: false, start: true, dryRun: false },
+      equals: { profile: "muse", force: true, start: false, dryRun: true },
+      missingValue:
+        "--profile needs a Hermes profile name. Usage: threa-hermes-install [--profile <name>] [--force] [--start] [--dry-run]",
+      unknown:
+        "Unknown argument --name. Usage: threa-hermes-install [--profile <name>] [--force] [--start] [--dry-run]",
+    })
   })
 })
 
@@ -87,6 +151,49 @@ describe("runInstall", () => {
 
     racingInstall(home, soulPath, "mine\n")()
     expect(readFileSync(soulPath, "utf8")).toBe("mine\n")
+  })
+
+  test("a profile Hermes does not know is refused before anything is written", () => {
+    const home = tempHome()
+
+    expect(() => runInstall({ ...installOptions(home, "muse"), dryRun: false, run: () => ({ status: 0 }) })).toThrow(
+      `Hermes profile "muse" has no home at ${join(home, ".hermes", "profiles", "muse")}. ` +
+        "Create it first: hermes profile create muse"
+    )
+    expect(existsSync(join(home, ".config"))).toBe(false)
+  })
+
+  test("a named profile installs beside the default one, sharing no path", () => {
+    const home = tempHome()
+    mkdirSync(join(home, ".hermes", "profiles", "muse"), { recursive: true })
+    const run = () => ({ status: 0 })
+
+    runInstall({ ...installOptions(home), dryRun: false, run })
+    runInstall({ ...installOptions(home, "muse"), dryRun: false, run })
+
+    const unitPath = join(home, ".config", "systemd", "user", "threa-hermes-muse.service")
+    expect({
+      unit: readFileSync(unitPath, "utf8").includes("Environment=THREA_HERMES_PROFILE=muse"),
+      skill: readFileSync(join(home, ".hermes", "profiles", "muse", "skills", "threa", "SKILL.md"), "utf8").includes(
+        "~/.threa/hermes-muse/work"
+      ),
+      skillNamesNoOtherInstall: !readFileSync(
+        join(home, ".hermes", "profiles", "muse", "skills", "threa", "SKILL.md"),
+        "utf8"
+      ).includes("hermes-remote"),
+      soul: existsSync(join(home, ".hermes", "profiles", "muse", "SOUL.md")),
+      log: existsSync(join(home, ".threa", "hermes-muse", "log")),
+      defaultUntouched: readFileSync(join(home, ".config", "systemd", "user", SERVICE_NAME), "utf8").includes(
+        "THREA_HERMES_PROFILE"
+      ),
+    }).toEqual({
+      unit: true,
+      skill: true,
+      skillNamesNoOtherInstall: true,
+      soul: true,
+      log: true,
+      defaultUntouched: false,
+    })
   })
 })
 

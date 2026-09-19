@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DEFAULT_HERMES_API_URL, loadHermesConfig, WORK_DIR, writeCliConfig } from "./config"
+import { DEFAULT_HERMES_API_URL, hermesInstall, loadHermesConfig, writeCliConfig } from "./config"
 
 const BASE_ENV = { THREA_WORKSPACE_ID: "ws_1", THREA_API_KEY: "threa_bk_test" }
+const INSTALL = hermesInstall({ homeDir: "/home/u" })
 
-function load(env: Record<string, string | undefined>, file?: Record<string, unknown>) {
-  return loadHermesConfig({ env, cwd: "/home/dev/project", hostname: "box", ...(file ? { file } : {}) })
+function load(env: Record<string, string | undefined>, file?: Record<string, unknown>, profile?: string) {
+  const install = profile === undefined ? INSTALL : hermesInstall({ homeDir: "/home/u", profile })
+  return loadHermesConfig({ env, cwd: "/home/dev/project", hostname: "box", install, ...(file ? { file } : {}) })
 }
 
 describe("loadHermesConfig", () => {
@@ -23,7 +25,7 @@ describe("loadHermesConfig", () => {
       displayName: result.config.displayName,
     }).toEqual({
       hermes: { apiUrl: DEFAULT_HERMES_API_URL, apiKey: "hermes-key" },
-      localCwd: WORK_DIR,
+      localCwd: INSTALL.workDir,
       instance: true,
       runtimeSession: true,
       displayName: "Hermes - project",
@@ -97,5 +99,98 @@ describe("writeCliConfig", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("hermesInstall", () => {
+  test("the default install keeps the paths it has always used", () => {
+    expect(hermesInstall({ homeDir: "/home/u" })).toEqual({
+      serviceName: "threa-hermes-remote.service",
+      unitPath: "/home/u/.config/systemd/user/threa-hermes-remote.service",
+      envFile: "/home/u/.config/threa/hermes-remote.env",
+      configDir: "/home/u/.threa/hermes-remote",
+      configPath: "/home/u/.threa/hermes-remote/config.json",
+      workDir: "/home/u/.threa/hermes-remote/work",
+      logDir: "/home/u/.threa/hermes-remote/log",
+      cliConfigPath: "/home/u/.threa/hermes-remote/threa-cli.json",
+      hermesHome: "/home/u/.hermes",
+      hermesApiUrl: DEFAULT_HERMES_API_URL,
+      identity: {
+        idPrefix: "hm",
+        sessionIdPrefix: "hms",
+        displayNamePrefix: "Hermes",
+        configPathHint: "/home/u/.threa/hermes-remote/config.json",
+      },
+    })
+  })
+
+  test("a named profile shares no path, no identity prefix and no gateway with the default one", () => {
+    const defaults = hermesInstall({ homeDir: "/home/u" })
+    const muse = hermesInstall({ homeDir: "/home/u", profile: "muse" })
+
+    expect({
+      muse,
+      sharedPaths: [muse.unitPath, muse.envFile, muse.configDir, muse.hermesHome].filter((path) =>
+        [defaults.unitPath, defaults.envFile, defaults.configDir, defaults.hermesHome].includes(path)
+      ),
+    }).toEqual({
+      muse: {
+        profile: "muse",
+        serviceName: "threa-hermes-muse.service",
+        unitPath: "/home/u/.config/systemd/user/threa-hermes-muse.service",
+        envFile: "/home/u/.config/threa/hermes-muse.env",
+        configDir: "/home/u/.threa/hermes-muse",
+        configPath: "/home/u/.threa/hermes-muse/config.json",
+        workDir: "/home/u/.threa/hermes-muse/work",
+        logDir: "/home/u/.threa/hermes-muse/log",
+        cliConfigPath: "/home/u/.threa/hermes-muse/threa-cli.json",
+        hermesHome: "/home/u/.hermes/profiles/muse",
+        hermesApiUrl: `${DEFAULT_HERMES_API_URL}/p/muse`,
+        identity: {
+          idPrefix: "hm-muse",
+          sessionIdPrefix: "hms-muse",
+          displayNamePrefix: "Hermes muse",
+          configPathHint: "/home/u/.threa/hermes-muse/config.json",
+        },
+        bikPath: "/home/u/.threa/hermes-muse/bik.json",
+      },
+      sharedPaths: [],
+    })
+  })
+
+  test("a name Hermes would not accept as a profile is refused", () => {
+    expect(() => hermesInstall({ homeDir: "/home/u", profile: "../evil" })).toThrow("Invalid Hermes profile name")
+  })
+})
+
+describe("loadHermesConfig per profile", () => {
+  test("two profiles on one box derive different instance ids from the same directory", () => {
+    const one = load({ ...BASE_ENV, HERMES_API_KEY: "k" }, undefined, "muse")
+    const two = load({ ...BASE_ENV, HERMES_API_KEY: "k" }, undefined, "scribe")
+    if ("error" in one || "error" in two) throw new Error("expected both to load")
+
+    expect({
+      muse: one.config.instanceId.startsWith("hm-muse-"),
+      scribe: two.config.instanceId.startsWith("hm-scribe-"),
+      distinct: one.config.instanceId !== two.config.instanceId,
+      bik: one.config.bikPath,
+      gateway: one.config.hermes.apiUrl,
+      work: one.config.localCwd,
+    }).toEqual({
+      muse: true,
+      scribe: true,
+      distinct: true,
+      bik: "/home/u/.threa/hermes-muse/bik.json",
+      gateway: `${DEFAULT_HERMES_API_URL}/p/muse`,
+      work: "/home/u/.threa/hermes-muse/work",
+    })
+  })
+
+  test("the default install keeps the pre-keyring BIK file, and an explicit one always wins", () => {
+    const defaults = load({ ...BASE_ENV, HERMES_API_KEY: "k" })
+    const overridden = load({ ...BASE_ENV, HERMES_API_KEY: "k", THREA_BIK_PATH: "/keys/bik.json" }, undefined, "muse")
+    if ("error" in defaults || "error" in overridden) throw new Error("expected both to load")
+
+    expect([defaults.config.bikPath, overridden.config.bikPath]).toEqual([undefined, "/keys/bik.json"])
   })
 })

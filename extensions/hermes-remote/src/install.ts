@@ -2,21 +2,22 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-
-export const SERVICE_NAME = "threa-hermes-remote.service"
+import { hermesInstall, type HermesInstall } from "./config"
 
 export interface SystemdUnitInput {
   bunPath: string
   entryPath: string
-  homeDir: string
+  logDir: string
   envFile: string
+  /** The Hermes profile this unit serves; unset is the default one. */
+  profile?: string
 }
 
 /** The unit text, modelled on the harnessd user unit: absolute paths, restart always, appended logs. */
 export function renderSystemdUnit(input: SystemdUnitInput): string {
-  for (const path of [input.bunPath, input.entryPath, input.homeDir, input.envFile]) {
+  for (const path of [input.bunPath, input.entryPath, input.logDir, input.envFile]) {
     if (/[\s\\\0]/.test(path)) {
       throw new Error(
         `Cannot write a systemd unit for ${JSON.stringify(path)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
@@ -24,10 +25,9 @@ export function renderSystemdUnit(input: SystemdUnitInput): string {
     }
   }
   const workingDir = dirname(dirname(input.entryPath))
-  const logDir = join(input.homeDir, ".threa", "hermes-remote", "log")
   return [
     "[Unit]",
-    "Description=Threa Hermes connector",
+    `Description=Threa Hermes connector${input.profile ? ` (${input.profile})` : ""}`,
     "After=network-online.target hermes-gateway.service",
     "Wants=hermes-gateway.service",
     "",
@@ -35,12 +35,15 @@ export function renderSystemdUnit(input: SystemdUnitInput): string {
     "Type=simple",
     `Environment=PATH=${dirname(input.bunPath)}:/usr/local/bin:/usr/bin:/bin`,
     `EnvironmentFile=-${input.envFile}`,
+    // After the env file on purpose: the profile is what this unit IS, and an
+    // env file shared between agents must not be able to repoint it.
+    ...(input.profile ? [`Environment=THREA_HERMES_PROFILE=${input.profile}`] : []),
     `WorkingDirectory=${workingDir}`,
     `ExecStart=${input.bunPath} ${input.entryPath}`,
     "Restart=always",
     "RestartSec=10",
-    `StandardOutput=append:${join(logDir, "connector.log")}`,
-    `StandardError=append:${join(logDir, "connector.error.log")}`,
+    `StandardOutput=append:${join(input.logDir, "connector.log")}`,
+    `StandardError=append:${join(input.logDir, "connector.error.log")}`,
     "",
     "[Install]",
     "WantedBy=default.target",
@@ -49,7 +52,7 @@ export function renderSystemdUnit(input: SystemdUnitInput): string {
 }
 
 export interface InstallOptions {
-  homeDir: string
+  install: HermesInstall
   packageDir: string
   bunPath: string
   force?: boolean
@@ -77,6 +80,15 @@ function readPackageFile(packageDir: string, ...parts: string[]): string {
   return readFileSync(join(packageDir, ...parts), "utf8")
 }
 
+/**
+ * The skill tells the agent where its work dir and MCP config are, and the
+ * shipped copy names the default install's. A profile's copy names its own, so
+ * a named agent is not sent to another agent's files.
+ */
+function forInstall(text: string, install: HermesInstall): string {
+  return text.replaceAll("~/.threa/hermes-remote", `~/.threa/${basename(install.configDir)}`)
+}
+
 interface InstallFile {
   path: string
   content: () => string
@@ -85,22 +97,22 @@ interface InstallFile {
 }
 
 /** The one list both the plan and the install walk, so a dry run shows exactly what a real run does. */
-function installFiles(options: InstallOptions, unitPath: string, unit: string): InstallFile[] {
-  const { homeDir, packageDir } = options
+function installFiles(options: InstallOptions, unit: string): InstallFile[] {
+  const { install, packageDir } = options
   return [
     {
-      path: unitPath,
+      path: install.unitPath,
       content: () => unit,
       ...(options.force
         ? {}
         : { ifExists: { keep: false, reason: "the unit already exists; pass --force to overwrite it" } }),
     },
     {
-      path: join(homeDir, ".hermes", "skills", "threa", "SKILL.md"),
-      content: () => readPackageFile(packageDir, "hermes", "skills", "threa", "SKILL.md"),
+      path: join(install.hermesHome, "skills", "threa", "SKILL.md"),
+      content: () => forInstall(readPackageFile(packageDir, "hermes", "skills", "threa", "SKILL.md"), install),
     },
     {
-      path: join(homeDir, ".hermes", "SOUL.md"),
+      path: join(install.hermesHome, "SOUL.md"),
       content: () => readPackageFile(packageDir, "hermes", "SOUL.md"),
       ifExists: { keep: true, reason: "a persona already exists there and is never overwritten" },
     },
@@ -108,28 +120,24 @@ function installFiles(options: InstallOptions, unitPath: string, unit: string): 
 }
 
 export function planInstall(options: InstallOptions): InstallPlan {
-  const { homeDir, bunPath } = options
-  const unitPath = join(homeDir, ".config", "systemd", "user", SERVICE_NAME)
+  const { install, bunPath } = options
   const unit = renderSystemdUnit({
     bunPath,
     entryPath: join(options.packageDir, "src", "index.ts"),
-    homeDir,
-    envFile: join(homeDir, ".config", "threa", "hermes-remote.env"),
+    logDir: install.logDir,
+    envFile: install.envFile,
+    ...(install.profile === undefined ? {} : { profile: install.profile }),
   })
   const commands: string[][] = [
     ["systemctl", "--user", "daemon-reload"],
-    ["systemctl", "--user", "enable", SERVICE_NAME],
+    ["systemctl", "--user", "enable", install.serviceName],
   ]
-  if (options.start) commands.push(["systemctl", "--user", "restart", SERVICE_NAME])
+  if (options.start) commands.push(["systemctl", "--user", "restart", install.serviceName])
   return {
-    unitPath,
+    unitPath: install.unitPath,
     unit,
-    directories: [
-      dirname(unitPath),
-      join(homeDir, ".threa", "hermes-remote", "log"),
-      join(homeDir, ".hermes", "skills", "threa"),
-    ],
-    writes: installFiles(options, unitPath, unit).map((file) =>
+    directories: [dirname(install.unitPath), install.logDir, join(install.hermesHome, "skills", "threa")],
+    writes: installFiles(options, unit).map((file) =>
       file.ifExists && existsSync(file.path) ? { path: file.path, skipped: file.ifExists.reason } : { path: file.path }
     ),
     commands,
@@ -138,6 +146,16 @@ export function planInstall(options: InstallOptions): InstallPlan {
 
 export function runInstall(options: InstallOptions): InstallPlan {
   const log = options.log ?? (() => {})
+  const { install } = options
+  // A named profile's home is Hermes's to create: writing a persona and a skill
+  // into a directory `hermes profile list` knows nothing about would look
+  // installed and never run.
+  if (install.profile && !existsSync(install.hermesHome)) {
+    throw new Error(
+      `Hermes profile "${install.profile}" has no home at ${install.hermesHome}. ` +
+        `Create it first: hermes profile create ${install.profile}`
+    )
+  }
   const plan = planInstall(options)
   const unitWrite = plan.writes.find((write) => write.path === plan.unitPath)
   if (unitWrite?.skipped && !options.dryRun) {
@@ -148,7 +166,7 @@ export function runInstall(options: InstallOptions): InstallPlan {
     log(`${options.dryRun ? "would create" : "creating"} ${dir}`)
     if (!options.dryRun) mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
-  for (const file of installFiles(options, plan.unitPath, plan.unit)) {
+  for (const file of installFiles(options, plan.unit)) {
     const skipped = plan.writes.find((write) => write.path === file.path)?.skipped
     if (skipped) {
       log(`keeping ${file.path}: ${skipped}`)
@@ -177,32 +195,70 @@ export function runInstall(options: InstallOptions): InstallPlan {
 }
 
 const FLAGS = new Set(["--force", "--start", "--dry-run"])
+const USAGE = "threa-hermes-install [--profile <name>] [--force] [--start] [--dry-run]"
+
+export interface ParsedArgs {
+  profile?: string
+  force: boolean
+  start: boolean
+  dryRun: boolean
+}
+
+/** `--profile` takes a value, so the arguments are walked rather than set-tested. */
+export function parseArgs(argv: string[]): ParsedArgs {
+  const flags = new Set<string>()
+  let profile: string | undefined
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index]!
+    if (arg === "--profile") {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith("--")) {
+        throw new Error(`--profile needs a Hermes profile name. Usage: ${USAGE}`)
+      }
+      profile = value
+      index += 1
+      continue
+    }
+    if (arg.startsWith("--profile=")) {
+      profile = arg.slice("--profile=".length)
+      if (profile.length === 0) throw new Error(`--profile needs a Hermes profile name. Usage: ${USAGE}`)
+      continue
+    }
+    if (!FLAGS.has(arg)) throw new Error(`Unknown argument ${arg}. Usage: ${USAGE}`)
+    flags.add(arg)
+  }
+  return {
+    ...(profile === undefined ? {} : { profile }),
+    force: flags.has("--force"),
+    start: flags.has("--start"),
+    dryRun: flags.has("--dry-run"),
+  }
+}
 
 function main(): void {
-  const args = new Set(process.argv.slice(2))
-  const unknown = [...args].filter((arg) => !FLAGS.has(arg))
-  if (unknown.length > 0) {
-    process.stderr.write(
-      `Unknown argument ${unknown.join(" ")}. Usage: threa-hermes-install [--force] [--start] [--dry-run]\n`
-    )
-    process.exit(2)
-  }
+  const args = parseArgs(process.argv.slice(2))
   if (process.platform !== "linux") {
     process.stderr.write(
       `threa-hermes-install only installs a systemd user unit, so it needs Linux (this is ${process.platform}). Run the connector with \`bun run start\` instead.\n`
     )
     process.exit(1)
   }
-  const plan = runInstall({
+  const install = hermesInstall({
     homeDir: homedir(),
+    ...(args.profile === undefined ? {} : { profile: args.profile }),
+  })
+  runInstall({
+    install,
     packageDir: dirname(dirname(fileURLToPath(import.meta.url))),
     bunPath: process.execPath,
-    force: args.has("--force"),
-    start: args.has("--start"),
-    dryRun: args.has("--dry-run"),
+    force: args.force,
+    start: args.start,
+    dryRun: args.dryRun,
     log: (message) => process.stdout.write(`${message}\n`),
   })
-  process.stdout.write(`unit: ${plan.unitPath}\n`)
+  process.stdout.write(`unit: ${install.unitPath}\n`)
+  process.stdout.write(`env file: ${install.envFile}\n`)
+  process.stdout.write(`gateway (unless HERMES_API_URL says otherwise): ${install.hermesApiUrl}\n`)
 }
 
 if (import.meta.main) {
