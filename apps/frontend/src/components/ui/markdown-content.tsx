@@ -7,6 +7,7 @@ import { extractMath, normalizeMarkdownTables, parseMentionPointerHref } from "@
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { remarkThreaMath } from "@/lib/markdown/remark-math"
+import { KATEX_OPTIONS } from "@/lib/markdown/katex-options"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
 import { AttachmentProvider } from "@/lib/markdown/attachment-context"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
@@ -15,12 +16,7 @@ import type { Mentionable } from "@/components/editor/triggers/types"
 export { AttachmentProvider }
 
 const remarkPlugins = [remarkGfm, remarkThreaMath]
-// `maxSize` caps \rule/\kern/\raisebox, whose lengths are otherwise unbounded:
-// `$\rule{1em}{200em}$` is a one-line 3200px black bar in everyone's timeline.
-// `strict: "ignore"` — KaTeX's warnings are about TeX we can't control (pasted
-// unicode, \newline in display mode) and would otherwise flood the console on
-// every message that carries math.
-const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, { strict: "ignore", maxSize: 10 }]]
+const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, KATEX_OPTIONS]]
 
 interface MarkdownContentProps {
   content: string

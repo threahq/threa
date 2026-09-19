@@ -5,8 +5,9 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import katex from "katex"
 import "katex/dist/katex.min.css"
 import { scanMathSpans } from "@threahq/prosemirror"
+import { KATEX_OPTIONS } from "@/lib/markdown/katex-options"
 
-const MathPreviewPluginKey = new PluginKey("mathPreview")
+const MathPreviewPluginKey = new PluginKey<DecorationSet>("mathPreview")
 
 /**
  * Draws a math span as the equation the message will render, the way
@@ -23,19 +24,22 @@ export const MathPreview = Extension.create({
 
   addProseMirrorPlugins() {
     const editor = this.editor
-    let cached = DecorationSet.empty
 
     return [
-      new Plugin({
+      new Plugin<DecorationSet>({
         key: MathPreviewPluginKey,
+        state: {
+          init: (_config, state) => buildMathDecorations(state),
+          // An IME composition owns the DOM around the caret. Rebuilding
+          // decorations under it drops the composition on Android, so the old
+          // set is mapped through the edit instead — the ranges keep covering
+          // the text they were built for until the composition ends.
+          apply: (tr, decorations, _old, state) =>
+            editor.view?.composing ? decorations.map(tr.mapping, tr.doc) : buildMathDecorations(state),
+        },
         props: {
           decorations(state) {
-            // An IME composition owns the DOM around the caret. Rebuilding
-            // decorations under it drops the composition on Android, and the
-            // span being composed into is the caret's own, which is raw anyway.
-            if (editor.view?.composing) return cached
-            cached = buildMathDecorations(state)
-            return cached
+            return MathPreviewPluginKey.getState(state)
           },
         },
       }),
@@ -51,10 +55,10 @@ function buildMathDecorations(state: EditorState): DecorationSet {
     if (node.type.name === "codeBlock") return false
     if (!node.isTextblock) return true
 
-    // Every inline leaf (a mention, an emoji, an attachment reference) is one
-    // position wide, so it must contribute exactly one character or every span
-    // after it decorates the wrong range. A hard break is the newline it
-    // serializes to, so `$$⏎x^2⏎$$` reads the same here as in the message.
+    // Every inline leaf is one position wide, so it must contribute exactly one
+    // character or every span after it decorates the wrong range. A hard break
+    // is the newline it serializes to, so `$$⏎x^2⏎$$` reads the same here as in
+    // the message.
     const text = node.textBetween(0, node.content.size, "\n", (leaf) => (leaf.type.name === "hardBreak" ? "\n" : "￼"))
 
     for (const span of scanMathSpans(text)) {
@@ -66,12 +70,12 @@ function buildMathDecorations(state: EditorState): DecorationSet {
       // equation lands the caret), sitting right before the opening one is not,
       // so typing ahead of an equation doesn't flicker it open.
       if (selection.to > from && selection.from <= to) continue
-      if (spanCarriesFormatting(node, span.from, span.to)) continue
+      if (messageWontRenderAsMath(node, span.from, span.to)) continue
 
       const html = renderMath(span.tex, span.display)
       decorations.push(Decoration.inline(from, to, { class: "math-source" }))
       decorations.push(
-        Decoration.widget(to, (view) => mathWidget(html, span.display, view, to), {
+        Decoration.widget(to, (view) => mathWidget(html, span.display, view), {
           side: 1,
           ignoreSelection: true,
           key: `${span.display ? "D" : "I"}:${span.tex}`,
@@ -85,40 +89,58 @@ function buildMathDecorations(state: EditorState): DecorationSet {
 }
 
 /**
- * True when a link or code mark covers any of the span. Both change what the
- * span means once it is sent: `extractMath` never looks inside a code span, and
- * a link's destination is not TeX. Drawing an equation over either would show
- * something the message will not render.
+ * True when the posted message will not render this span as math, which makes
+ * drawing an equation for it a lie about what sending does.
+ *
+ * A code mark is text `extractMath` never looks inside, and a link's
+ * destination is not TeX. An inline atom — a mention, an emoji, an attachment
+ * reference — serializes to a markdown link like `[@alice](user:usr_1)`, and
+ * `extractMath`'s PROTECTED pattern refuses to read `](…)` as math, so the
+ * message shows the raw `$…$`. A hard break is not an atom here: it serializes
+ * to the newline display math is written with.
  */
-function spanCarriesFormatting(node: ProseMirrorNode, from: number, to: number): boolean {
-  let formatted = false
+function messageWontRenderAsMath(node: ProseMirrorNode, from: number, to: number): boolean {
+  let refused = false
   node.nodesBetween(from, to, (child) => {
-    if (child.marks.some((mark) => mark.type.name === "code" || mark.type.name === "link")) formatted = true
+    if (child.marks.some((mark) => mark.type.name === "code" || mark.type.name === "link")) refused = true
+    if (child.isLeaf && !child.isText && child.type.name !== "hardBreak") refused = true
   })
-  return formatted
+  return refused
 }
 
 /**
- * The same call `MarkdownContent` makes through `rehype-katex`, with the same
- * options, so the composer cannot draw an equation the message renders
- * differently. TeX that does not compile becomes KaTeX's error box here exactly
- * as it does there; TeX that is merely half-typed has no closing delimiter yet,
- * so it is not a span at all and nothing is drawn.
+ * Every span in the document is re-rendered on every transaction, caret moves
+ * included, and KaTeX costs ~0.4ms per equation. Keyed by the same string the
+ * widget is keyed by; cleared wholesale rather than evicted because the entries
+ * are small and a composer rarely holds more than a handful of distinct spans.
  */
+const renderedMath = new Map<string, string>()
+
 function renderMath(tex: string, display: boolean): string {
-  return katex.renderToString(tex, { displayMode: display, throwOnError: false, strict: "ignore", maxSize: 10 })
+  const key = `${display ? "D" : "I"}:${tex}`
+  const cached = renderedMath.get(key)
+  if (cached !== undefined) return cached
+
+  const html = katex.renderToString(tex, { ...KATEX_OPTIONS, displayMode: display })
+  if (renderedMath.size >= 200) renderedMath.clear()
+  renderedMath.set(key, html)
+  return html
 }
 
-function mathWidget(html: string, display: boolean, view: EditorView, to: number): HTMLElement {
-  const element = document.createElement(display ? "div" : "span")
+function mathWidget(html: string, display: boolean, view: EditorView): HTMLElement {
+  const element = document.createElement("span")
   element.className = display ? "math-preview math-preview-block" : "math-preview math-preview-inline"
   element.innerHTML = html
   element.contentEditable = "false"
   // Clicking the equation puts the caret at the end of its source, which
   // reveals the TeX in place: one tap to edit, on a phone as on a desktop.
+  // The position is read from the DOM at click time — two equations with the
+  // same TeX share a decoration key, so this element may have been drawn for a
+  // span that later edits moved.
   element.addEventListener("mousedown", (event) => {
     event.preventDefault()
-    const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, to))
+    const pos = view.posAtDOM(element, 0)
+    const tr = view.state.tr.setSelection(TextSelection.create(view.state.doc, pos))
     view.dispatch(tr.scrollIntoView())
     view.focus()
   })

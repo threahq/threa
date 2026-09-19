@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest"
-import { Editor } from "@tiptap/core"
+import { Editor, type JSONContent } from "@tiptap/core"
 import { TextSelection } from "@tiptap/pm/state"
 import { createEditorExtensions } from "./editor-extensions"
 
 function createEditor(text?: string) {
+  return createEditorWith(text ? [{ type: "text", text }] : undefined)
+}
+
+function createEditorWith(inline?: JSONContent[]) {
   const element = document.createElement("div")
   document.body.append(element)
   const editor = new Editor({
     element,
     extensions: createEditorExtensions({ placeholder: "Type a message..." }),
-    content: text ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] } : undefined,
+    content: inline ? { type: "doc", content: [{ type: "paragraph", content: inline }] } : undefined,
   })
   editor.view.hasFocus = () => true
   editor.on("destroy", () => element.remove())
@@ -94,6 +98,20 @@ describe("math preview", () => {
     expect(previews(editor)).toHaveLength(0)
   })
 
+  it("never previews a span holding a mention — the message would not render it as math", () => {
+    editor = createEditorWith([
+      { type: "text", text: "$a + " },
+      { type: "mention", attrs: { id: "usr_1", slug: "alice", mentionType: "user" } },
+      { type: "text", text: "$" },
+    ])
+    caretToStart(editor)
+
+    // `$a + [@alice](user:usr_1)$` is not math to `extractMath`, so previewing
+    // it here would also hide the mention behind an equation nobody will see.
+    expect(previews(editor)).toHaveLength(0)
+    expect(editor.view.dom.querySelector(".math-source")).toBeNull()
+  })
+
   it("clicking an equation puts the caret at the end of its source, revealing the TeX", () => {
     editor = createEditor("$a^2$ tail")
     caretToStart(editor)
@@ -109,6 +127,23 @@ describe("math preview", () => {
     // `xx $a^2$ tail`: the source ends at doc position 9.
     expect(editor.state.selection.from).toBe(9)
     expect(previews(editor)).toHaveLength(0)
+  })
+
+  it("clicking an equation still lands at its source after the text before it shrank", () => {
+    editor = createEditor("$a$ zz $a$")
+    caretToStart(editor)
+    expect(previews(editor)).toHaveLength(2)
+
+    // Both equations render the same TeX, so both widgets carry the same key:
+    // ProseMirror reuses their DOM across the edit below.
+    editor.view.dispatch(editor.state.tr.delete(5, 8))
+    caretToStart(editor)
+
+    const second = previews(editor)[1]
+    second?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }))
+
+    // `$a$ $a$`: the second source ends at doc position 8.
+    expect(editor.state.selection.from).toBe(8)
   })
 
   it("ignores math delimiters inside a code block", () => {
