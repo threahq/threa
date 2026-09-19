@@ -789,6 +789,21 @@ describe("ConversationPanel", () => {
     expect(within(sheet).getByText("Copy link")).toBeTruthy()
   })
 
+  it("carries the conversation's state into the sheet header, the way the stream sheet does", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const user = userEvent.setup()
+    const post = makePost()
+    post.conversation.status = "resolved"
+    mountPanel({ cached: asCached(post) })
+    await screen.findByText("Opening message body.")
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+
+    const sheet = await screen.findByRole("dialog")
+    expect(within(sheet).getByText("Resolved")).toBeTruthy()
+    expect(within(sheet).getByText("Reopen")).toBeTruthy()
+  })
+
   it("opens that same sheet from the overflow button, not a desktop dropdown", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     const user = userEvent.setup()

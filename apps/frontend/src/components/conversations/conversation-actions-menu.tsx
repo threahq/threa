@@ -17,6 +17,7 @@ import {
   isAsideHostType,
   type TitleSource,
 } from "@threahq/types"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   SidebarActionDrawer,
@@ -57,9 +58,9 @@ interface ConversationActionsMenuProps {
   /** Whether this conversation is currently hidden from the viewer's board —
    *  selects "Unhide" vs "Hide from board". */
   isHidden?: boolean
-  /** Shown as the touch drawer's title when the conversation has no topic of its
-   *  own — the panel passes the stream locator it falls back to in the header. */
-  titleFallback?: string
+  /** The stream this conversation lives in (`#general`, a DM name): the drawer's
+   *  meta line, and its title when the conversation has no topic of its own. */
+  contextLabel?: string
   /** Extra classes for the default trigger, so each surface can size it to its icon cluster. */
   triggerClassName?: string
   /** Replaces the default `⋮` trigger (the panel header uses the `⋯` its stream/thread peers use). */
@@ -87,7 +88,7 @@ export function ConversationActionsMenu({
   topicSummarySource,
   status,
   isHidden = false,
-  titleFallback,
+  contextLabel,
   triggerClassName,
   trigger,
   open,
@@ -207,9 +208,19 @@ export function ConversationActionsMenu({
             header={
               <div className="px-4 pt-2 pb-3">
                 <p className="break-words text-base font-semibold text-foreground">
-                  {effectiveTitle ?? titleFallback ?? "Conversation"}
+                  {effectiveTitle ?? contextLabel ?? "Conversation"}
                 </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">Conversation actions</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {effectiveTitle ? contextLabel : "Conversation"}
+                  </span>
+                  {resolved && (
+                    <Badge variant="secondary" className="gap-1">
+                      <CircleCheck className="h-3 w-3" />
+                      Resolved
+                    </Badge>
+                  )}
+                </div>
               </div>
             }
           />

@@ -285,7 +285,7 @@ function ConversationPanelHeader({
           topicSummarySource={post.conversation.topicSummarySource}
           status={post.conversation.status}
           isHidden={isHidden}
-          titleFallback={locator}
+          contextLabel={locator}
           open={menuOpen}
           onOpenChange={setMenuOpen}
           trigger={
