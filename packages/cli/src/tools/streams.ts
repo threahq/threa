@@ -3,10 +3,16 @@ import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
 import { listStreams, readStream } from "../ops"
 import type { RefResolver } from "../resolver"
+import type { SealedStreams } from "../sealed"
 import { STREAM_TYPES } from "./constants"
 import { runTool } from "./result"
 
-export function registerStreamTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
+export function registerStreamTools(
+  server: McpServer,
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  sealed: SealedStreams
+): void {
   server.registerTool(
     "list_streams",
     {
@@ -42,7 +48,10 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient, r
         "`before` returns messages before that sequence (older), `after` returns messages after it (newer); " +
         "pass at most one, and walk pages by taking the boundary message's `sequence`. limit ≤ 100 (default " +
         "50) applies to messages. If the stream cannot be read the whole call errors — no partial data is " +
-        "returned.",
+        "returned. In an end-to-end-encrypted stream each body is opened with the key this machine holds, so " +
+        "rows read as normal content; a body sealed to a key generation this key was never wrapped to keeps a " +
+        "null `content` and says why in `unreadableReason`, and the call errors outright when no key is held " +
+        "here at all.",
       inputSchema: {
         stream_id: z.string(),
         include_members: z.boolean().optional(),
@@ -53,7 +62,14 @@ export function registerStreamTools(server: McpServer, client: ThreaApiClient, r
     },
     async ({ stream_id, include_members, before, after, limit }) =>
       runTool(() =>
-        readStream(client, resolver, { streamId: stream_id, includeMembers: include_members, before, after, limit })
+        readStream(client, resolver, {
+          streamId: stream_id,
+          includeMembers: include_members,
+          before,
+          after,
+          limit,
+          sealed,
+        })
       )
   )
 }

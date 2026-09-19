@@ -57,7 +57,7 @@ const sendVerb: VerbSpec = {
       metadata: metadataPairs ? kvPairs(metadataPairs) : undefined,
       conversationId,
       startConversation,
-      sealed: ctx.sealed(storeChoice(values)),
+      sealed: ctx.sealed(storeChoice(values, ctx.config)),
     })
   },
   render: (payload) => {

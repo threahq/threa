@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import {
+  E2E_KEY_SCOPES,
+  E2E_KEY_STORE_KINDS,
+  type E2eKeyScope,
+  type E2eKeyStoreKind,
+} from "../../../extensions/bot-runtime-client/src/keyring"
 
 export const OUTPUT_MODES = ["text", "json"] as const
 export type OutputMode = (typeof OUTPUT_MODES)[number]
@@ -14,6 +20,17 @@ export interface ThreaConfig {
   baseUrl: string
   output: OutputMode
   principal?: PrincipalKind
+  /**
+   * Which key a bot principal reads sealed streams with, mirroring the
+   * connector setting of the same name: the CLI must address the account the
+   * runtime that owns this key filed it under, or it looks in the wrong place.
+   * Unused by a user principal, whose key is filed under their own account.
+   */
+  keyScope?: E2eKeyScope
+  keyStore?: E2eKeyStoreKind
+  keyDir?: string
+  /** The runtime install this key belongs to. Required by `keyScope: "instance"`. */
+  instanceId?: string
 }
 
 const DEFAULT_BASE_URL = "https://app.threa.io"
@@ -24,6 +41,10 @@ interface FileConfig {
   baseUrl?: string
   output?: string
   principal?: string
+  keyScope?: string
+  keyStore?: string
+  keyDir?: string
+  instanceId?: string
 }
 
 function readFileConfig(): FileConfig {
@@ -82,6 +103,10 @@ export function loadConfig(): ThreaConfig {
   const principal = explicit
     ? (file.principal ?? process.env.THREA_PRINCIPAL)
     : (process.env.THREA_PRINCIPAL ?? file.principal)
+  const keyScope = pick(explicit, file.keyScope, process.env.THREA_E2E_KEY_SCOPE)
+  const keyStore = pick(explicit, file.keyStore, process.env.THREA_E2E_KEY_STORE)
+  const keyDir = pick(explicit, file.keyDir, process.env.THREA_E2E_KEY_DIR)
+  const instanceId = pick(explicit, file.instanceId, process.env.THREA_INSTANCE_ID)
 
   const missing: string[] = []
   if (!apiKey) missing.push("THREA_API_KEY")
@@ -103,6 +128,14 @@ export function loadConfig(): ThreaConfig {
     throw new Error(`[threa] Config "principal" must be one of ${PRINCIPAL_KINDS.join(", ")} — got "${principal}".`)
   }
 
+  if (keyScope !== undefined && !(E2E_KEY_SCOPES as readonly string[]).includes(keyScope)) {
+    throw new Error(`[threa] Config "keyScope" must be one of ${E2E_KEY_SCOPES.join(", ")} — got "${keyScope}".`)
+  }
+
+  if (keyStore !== undefined && !(E2E_KEY_STORE_KINDS as readonly string[]).includes(keyStore)) {
+    throw new Error(`[threa] Config "keyStore" must be one of ${E2E_KEY_STORE_KINDS.join(", ")} — got "${keyStore}".`)
+  }
+
   assertSafeBaseUrl(baseUrl)
 
   return {
@@ -111,7 +144,16 @@ export function loadConfig(): ThreaConfig {
     baseUrl,
     output: output as OutputMode,
     ...(principal === undefined ? {} : { principal: principal as PrincipalKind }),
+    ...(keyScope === undefined ? {} : { keyScope: keyScope as E2eKeyScope }),
+    ...(keyStore === undefined ? {} : { keyStore: keyStore as E2eKeyStoreKind }),
+    ...(keyDir === undefined ? {} : { keyDir }),
+    ...(instanceId === undefined ? {} : { instanceId }),
   }
+}
+
+/** A THREA_CONFIG file is the caller binding an identity, so it wins over the ambient environment. */
+function pick(explicit: boolean, fromFile: string | undefined, fromEnv: string | undefined): string | undefined {
+  return explicit ? (fromFile ?? fromEnv) : (fromEnv ?? fromFile)
 }
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"])

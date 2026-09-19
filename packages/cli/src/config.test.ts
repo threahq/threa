@@ -10,6 +10,10 @@ const ENV_KEYS = [
   "THREA_BASE_URL",
   "THREA_CONFIG",
   "THREA_PRINCIPAL",
+  "THREA_E2E_KEY_SCOPE",
+  "THREA_E2E_KEY_STORE",
+  "THREA_E2E_KEY_DIR",
+  "THREA_INSTANCE_ID",
   "HOME",
 ] as const
 
@@ -191,4 +195,46 @@ test("an invalid principal fails loudly", () => {
 test("no declaration leaves principal undefined", () => {
   writeConfigFile({ apiKey: "threa_uk_file", workspaceId: "ws_file" })
   expect(loadConfig().principal).toBeUndefined()
+})
+
+test("a runtime's key settings come through the config file it writes for the CLI", () => {
+  writeConfigFile({
+    apiKey: "threa_bk_file",
+    workspaceId: "ws_file",
+    principal: "bot",
+    keyScope: "instance",
+    keyStore: "file",
+    keyDir: "/var/lib/hermes/keys",
+    instanceId: "hermes-muse",
+  })
+  expect(loadConfig()).toEqual({
+    apiKey: "threa_bk_file",
+    workspaceId: "ws_file",
+    baseUrl: "https://app.threa.io",
+    output: "text",
+    principal: "bot",
+    keyScope: "instance",
+    keyStore: "file",
+    keyDir: "/var/lib/hermes/keys",
+    instanceId: "hermes-muse",
+  })
+})
+
+test("a THREA_CONFIG file's key scope wins over an ambient one from a shell", () => {
+  const path = writeConfigFile({
+    apiKey: "threa_bk_file",
+    workspaceId: "ws_file",
+    principal: "bot",
+    keyScope: "identity",
+  })
+  process.env.THREA_CONFIG = path
+  process.env.THREA_E2E_KEY_SCOPE = "host"
+  expect(loadConfig().keyScope).toBe("identity")
+})
+
+test("an invalid key scope or store in the config fails loudly", () => {
+  writeConfigFile({ apiKey: "threa_bk_file", workspaceId: "ws_file", keyScope: "galaxy" })
+  expect(() => loadConfig()).toThrow(/keyScope.*must be one of/i)
+  writeConfigFile({ apiKey: "threa_bk_file", workspaceId: "ws_file", keyStore: "vault" })
+  expect(() => loadConfig()).toThrow(/keyStore.*must be one of/i)
 })

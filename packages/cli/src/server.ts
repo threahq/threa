@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { ThreaApiClient } from "./api-client"
 import type { ThreaConfig } from "./config"
 import { RefResolver } from "./resolver"
+import { sealedStreams } from "./sealed"
 import { TokenStore } from "./token-store"
 import { registerAttachmentTools } from "./tools/attachments"
 import { registerConversationTools } from "./tools/conversations"
@@ -45,7 +46,9 @@ const INSTRUCTIONS =
   "finish_delegation (outcome complete or fail) or release_delegation for controlled stop. Historical expired tasks are not listed but can be inspected and claimed directly by id. " +
   "A completed result is posted in the thread anchored on the delegation card and enters the normal message pipeline, so workspace memory can capture it. Lifecycle tools reuse the " +
   "stored token; pass claim_token to override or to recover on another machine. request_delegation_access " +
-  "is bot-key only."
+  "is bot-key only. End-to-end-encrypted streams: read_stream and send_message open and seal bodies with the " +
+  "key this machine holds, so they read and write like any other stream; when no key is held here they say " +
+  "so rather than returning the placeholder the server stores."
 
 export interface ThreaMcpServerDeps {
   /** Injectable so tests point the persistent claim-token store at a temp file. */
@@ -61,11 +64,21 @@ export function createThreaMcpServer(config: ThreaConfig, deps: ThreaMcpServerDe
   })
   const resolver = new RefResolver({ client })
   const tokenStore = deps.tokenStore ?? new TokenStore()
+  // Resolves a key only once a sealed stream actually turns up, so a plaintext
+  // workspace never touches a key store.
+  const sealed = sealedStreams({
+    client,
+    config,
+    choice: {
+      ...(config.keyStore === undefined ? {} : { requested: config.keyStore }),
+      ...(config.keyDir === undefined ? {} : { dir: config.keyDir }),
+    },
+  })
 
   registerIdentityTools(server, client, config)
-  registerStreamTools(server, client, resolver)
+  registerStreamTools(server, client, resolver, sealed)
   registerUserTools(server, client)
-  registerMessageTools(server, client, resolver)
+  registerMessageTools(server, client, resolver, sealed)
   registerSearchTools(server, client, resolver)
   registerConversationTools(server, client, resolver)
   registerLabelTools(server, client, resolver)

@@ -8,6 +8,18 @@ afterEach(() => {
   fetchSpy.mockReset()
 })
 
+/**
+ * send_message asks what the stream is before it sends, so a plaintext send is
+ * two calls: the check, then the post. A fresh Response per call — one instance
+ * cannot be read twice.
+ */
+function answerPlaintextSend(post: unknown): void {
+  fetchSpy.mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) =>
+    (init?.method ?? "GET") === "GET"
+      ? jsonResponse(200, { data: { id: "stream_1", type: "channel" } })
+      : jsonResponse(201, post)) as unknown as typeof fetch)
+}
+
 test("find_messages_by_metadata maps stream_id to the wire `streamId` body field", async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, { data: [] }))
   const client = await connectClient()
@@ -23,7 +35,7 @@ test("find_messages_by_metadata maps stream_id to the wire `streamId` body field
 })
 
 test("send_message resumes an existing conversation and surfaces the returned conversationId", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(201, { data: { id: "msg_9" }, conversationId: "conv_1" }))
+  answerPlaintextSend({ data: { id: "msg_9" }, conversationId: "conv_1" })
   const client = await connectClient()
 
   const result = (await client.callTool({
@@ -38,11 +50,11 @@ test("send_message resumes an existing conversation and surfaces the returned co
   })) as CallToolResult
   expect(result.isError).toBeFalsy()
 
-  const init = requestInit(fetchSpy)
+  const init = requestInit(fetchSpy, 1)
   expect(init.method).toBe("POST")
-  const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
+  const url = new URL(String(fetchSpy.mock.calls[1]?.[0]))
   expect(url.pathname).toBe("/api/v1/workspaces/ws_1/streams/stream_1/messages")
-  expect(requestBody(fetchSpy)).toEqual({
+  expect(requestBody(fetchSpy, 1)).toEqual({
     content: "hello **world**",
     clientMessageId: "cmid_fixed",
     metadata: { "github.pr": "org/repo#42" },
@@ -53,10 +65,11 @@ test("send_message resumes an existing conversation and surfaces the returned co
   expect(payload.data).toEqual({ id: "msg_9" })
   expect(payload.conversationId).toBe("conv_1")
   expect(payload.clientMessageId).toBe("cmid_fixed")
+  expect(payload.sealed).toBe(false)
 })
 
 test("send_message with start_conversation sends a new-intent directive and auto-generates a client message id", async () => {
-  fetchSpy.mockResolvedValue(jsonResponse(201, { data: { id: "msg_10" }, conversationId: "conv_2" }))
+  answerPlaintextSend({ data: { id: "msg_10" }, conversationId: "conv_2" })
   const client = await connectClient()
 
   const result = (await client.callTool({
@@ -65,7 +78,7 @@ test("send_message with start_conversation sends a new-intent directive and auto
   })) as CallToolResult
   expect(result.isError).toBeFalsy()
 
-  const body = requestBody(fetchSpy)
+  const body = requestBody(fetchSpy, 1)
   expect(body.conversation).toEqual({ intent: "new" })
   expect(String(body.clientMessageId)).toMatch(/^mcp-/)
   expect(textPayload(result).clientMessageId).toBe(body.clientMessageId)

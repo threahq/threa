@@ -101,7 +101,7 @@ const readVerb: VerbSpec = {
       before: stringFlag(values, "before"),
       after: stringFlag(values, "after"),
       limit: intFlag(values, "limit"),
-      sealed: ctx.sealed(storeChoice(values)),
+      sealed: ctx.sealed(storeChoice(values, ctx.config)),
     })
   },
   render: (payload) => {

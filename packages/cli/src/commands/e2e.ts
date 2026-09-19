@@ -52,7 +52,7 @@ const unlockVerb: VerbSpec = {
   run: async (ctx, _positionals, values) => {
     // The store choice is validated before the prompt: an unusable --key-store
     // should not first make someone type a passphrase that goes nowhere.
-    const choice = storeChoice(values)
+    const choice = storeChoice(values, ctx.config)
     return unlockE2eKey({
       client: ctx.client,
       workspaceId: ctx.config.workspaceId,
@@ -82,7 +82,7 @@ const statusVerb: VerbSpec = {
     "  --help                      show this help",
   options: KEY_STORE_OPTIONS,
   run: (ctx, _positionals, values) =>
-    e2eKeyStatus({ client: ctx.client, workspaceId: ctx.config.workspaceId, choice: storeChoice(values) }),
+    e2eKeyStatus({ client: ctx.client, workspaceId: ctx.config.workspaceId, choice: storeChoice(values, ctx.config) }),
   render: (payload) => {
     const p = payload as { held?: boolean; keyId?: string; serverKeyId?: string; current?: boolean }
     if (!p.held) {
@@ -110,7 +110,7 @@ const lockVerb: VerbSpec = {
     "  --help                      show this help",
   options: KEY_STORE_OPTIONS,
   run: (ctx, _positionals, values) =>
-    lockE2eKey({ client: ctx.client, workspaceId: ctx.config.workspaceId, choice: storeChoice(values) }),
+    lockE2eKey({ client: ctx.client, workspaceId: ctx.config.workspaceId, choice: storeChoice(values, ctx.config) }),
   render: (payload) => {
     const p = payload as { removed?: boolean; storeDescription?: string }
     return p.removed ? `forgot the key in ${p.storeDescription ?? "?"}` : "no key was held on this machine"
