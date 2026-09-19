@@ -103,3 +103,5 @@ export {
   type HeldE2eKey,
   type ResolveKeyStoreInput,
 } from "./keyring"
+export { deriveKEK, unwrapPrivate, unlockUserKey, DEFAULT_KDF_PARAMS } from "./user-key"
+export type { KdfParams, UnlockUserKeyInput } from "./user-key"
