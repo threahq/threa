@@ -1,9 +1,16 @@
-import type { DecisionRequest } from "@threahq/types"
+import type { DecisionRequest, EnclaveStreamEnvelope } from "@threahq/types"
 import { api } from "./client"
 
 export interface ResolveDecisionInput {
   optionId: string
   note?: string
+  /**
+   * The note on a sealed card, sealed client-side under the stream's current SSK
+   * and bound to `streamId|decision-note|decisionId|decidedBy`. A sealed card
+   * takes only this, a plaintext card only `note` (INV-E1) — the backend rejects
+   * the mismatch rather than storing a note the other half can't read.
+   */
+  sealedNote?: { ciphertext: string; envelope: EnclaveStreamEnvelope }
   /** The version the resolver's card was showing — the CAS token (INV-66). */
   version: number
 }

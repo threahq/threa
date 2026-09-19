@@ -9,6 +9,7 @@ import * as hooksModule from "@/hooks"
 import * as contextsModule from "@/contexts"
 import { PanelProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { AuthContext } from "@/auth"
 import { resolveBoardEventRows, type BoardEventRow } from "@/lib/board/board-event-rows"
 import { BoardEventRowItem } from "./board-row-item"
 
@@ -142,17 +143,30 @@ function rowsFor(events: CachedEvent[]): BoardEventRow[] {
 function renderRow(row: BoardEventRow) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
-          <TraceProvider>
-            <PanelProvider>
-              <BoardEventRowItem row={row} workspaceId={WS} />
-            </PanelProvider>
-          </TraceProvider>
-        </MemoryRouter>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <AuthContext.Provider
+      value={
+        {
+          user: { id: "usr_me", email: "me@example.com", name: "Me" },
+          loading: false,
+          error: null,
+          login: () => {},
+          logout: () => {},
+          refetch: async () => {},
+        } as never
+      }
+    >
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
+            <TraceProvider>
+              <PanelProvider>
+                <BoardEventRowItem row={row} workspaceId={WS} />
+              </PanelProvider>
+            </TraceProvider>
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </AuthContext.Provider>
   )
 }
 
