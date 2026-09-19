@@ -202,6 +202,7 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
     ...(stream.parentStreamId != null && { parentStreamId: stream.parentStreamId }),
     ...(stream.rootStreamId != null && { rootStreamId: stream.rootStreamId }),
     ...(anchorId != null && { anchorId }),
+    ...(stream.e2eEnabled === true && { e2eEnabled: true }),
     createdAt: stream.createdAt.toISOString(),
     ...(stream.archivedAt != null && { archivedAt: stream.archivedAt.toISOString() }),
   }

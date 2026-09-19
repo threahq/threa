@@ -30,6 +30,8 @@ import {
   type VerbSpec,
 } from "./output"
 import { RefResolver } from "./resolver"
+import { sealedStreams } from "./sealed"
+import type { KeyStoreChoice } from "./e2e-keys"
 
 const FLAT_COMMANDS: CommandSpec[] = [whoamiCommand, searchCommand, skillCommand, mcpCommand]
 
@@ -167,7 +169,8 @@ async function executeLeaf(
     const resolver = new RefResolver({ client })
     const readStdin = deps.readStdin ?? (() => Bun.stdin.text())
     const tokenStore = deps.tokenStore ?? new TokenStore()
-    const payload = await leaf.run({ client, resolver, config, tokenStore, readStdin }, positionals, values)
+    const sealed = (choice: KeyStoreChoice) => sealedStreams({ client, config, choice })
+    const payload = await leaf.run({ client, resolver, config, tokenStore, readStdin, sealed }, positionals, values)
     return {
       exitCode: 0,
       stdout: `${formatSuccess(leaf, payload, { mode: flagMode ?? config.output })}\n`,

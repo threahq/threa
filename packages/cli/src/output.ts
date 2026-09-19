@@ -1,7 +1,9 @@
 import type { ParseArgsConfig } from "node:util"
 import { OUTPUT_MODES, type OutputMode, type ThreaConfig } from "./config"
 import type { ThreaApiClient } from "./api-client"
+import type { KeyStoreChoice } from "./e2e-keys"
 import type { RefResolver } from "./resolver"
+import type { SealedStreams } from "./sealed"
 import type { TokenStore } from "./token-store"
 import { toErrorShape, type ErrorShape } from "./tools/result"
 
@@ -19,6 +21,8 @@ export interface CommandContext {
   tokenStore: TokenStore
   /** Reads piped stdin for a `-` content arg. Injectable so tests feed content without a real pipe. */
   readStdin: () => Promise<string>
+  /** Opens and seals end-to-end-encrypted bodies with the key this machine holds. */
+  sealed: (choice: KeyStoreChoice) => SealedStreams
 }
 
 export type ParseOptions = NonNullable<ParseArgsConfig["options"]>

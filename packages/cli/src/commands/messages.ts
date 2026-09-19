@@ -1,5 +1,6 @@
 import { deleteMessage, findMessagesByMetadata, sendConversationArgError, sendMessage, updateMessage } from "../ops"
 import { arrayFlag, boolFlag, intFlag, kvPairs, stringFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
+import { KEY_STORE_FLAGS, KEY_STORE_OPTIONS, storeChoice } from "./key-store"
 
 async function resolveContent(raw: string, readStdin: () => Promise<string>): Promise<string> {
   const content = raw === "-" ? await readStdin() : raw
@@ -19,11 +20,16 @@ const sendVerb: VerbSpec = {
     "second positional, or `-` to read it from stdin. A client message id is auto-generated (mcp-<uuid>) when " +
     "you omit --client-message-id, so a retried send never double-posts; the effective id is returned as " +
     "clientMessageId.\n\n" +
+    'Into an end-to-end-encrypted stream the body is sealed here, with the key "threa e2e unlock" filed on this ' +
+    "machine — the plaintext never leaves it, and without a key the send fails rather than falling back. Such a " +
+    "stream takes no --metadata and no conversation: both would travel in the clear, so they are refused here " +
+    "rather than dropped.\n\n" +
     "Flags:\n" +
     "  --new-conversation      open a fresh conversation (mutually exclusive with --conversation)\n" +
     "  --conversation conv_id  append to an existing conversation under the same root stream\n" +
     "  --metadata k=v          stamp flat string metadata; repeatable\n" +
     "  --client-message-id id  set the idempotency key explicitly (<= 128 chars)\n" +
+    KEY_STORE_FLAGS +
     "  --json                  force JSON output\n" +
     "  --help                  show this help",
   options: {
@@ -31,6 +37,7 @@ const sendVerb: VerbSpec = {
     conversation: { type: "string" },
     metadata: { type: "string", multiple: true },
     "client-message-id": { type: "string" },
+    ...KEY_STORE_OPTIONS,
   },
   run: async (ctx, positionals, values) => {
     const ref = positionals[0]
@@ -50,11 +57,17 @@ const sendVerb: VerbSpec = {
       metadata: metadataPairs ? kvPairs(metadataPairs) : undefined,
       conversationId,
       startConversation,
+      sealed: ctx.sealed(storeChoice(values)),
     })
   },
   render: (payload) => {
-    const p = payload as { data?: { id?: string }; conversationId?: string; clientMessageId?: string }
-    const lines = [`sent ${p.data?.id ?? "?"}`]
+    const p = payload as {
+      data?: { id?: string }
+      conversationId?: string
+      clientMessageId?: string
+      sealed?: boolean
+    }
+    const lines = [`sent ${p.data?.id ?? "?"}${p.sealed ? " (sealed)" : ""}`]
     if (p.conversationId) lines.push(`conversation: ${p.conversationId}`)
     if (p.clientMessageId) lines.push(`clientMessageId: ${p.clientMessageId}`)
     return lines.join("\n")

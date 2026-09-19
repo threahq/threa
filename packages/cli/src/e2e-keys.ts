@@ -61,7 +61,13 @@ export function openKeyStore(choice: KeyStoreChoice, account: string): E2eKeySto
   })
 }
 
-async function accountForKey(client: ThreaApiClient, workspaceId: string): Promise<string> {
+async function principalForKey(
+  client: ThreaApiClient,
+  workspaceId: string
+): Promise<{
+  account: string
+  userId: string
+}> {
   const me = await client.get<{ data: { kind: string; userId?: string } }>("/me")
   const userId = me.data.userId
   if (!userId) {
@@ -70,7 +76,33 @@ async function accountForKey(client: ThreaApiClient, workspaceId: string): Promi
         `Use your own key, not a bot's.`
     )
   }
-  return e2eUserKeyAccount(workspaceId, userId)
+  return { account: e2eUserKeyAccount(workspaceId, userId), userId }
+}
+
+async function accountForKey(client: ThreaApiClient, workspaceId: string): Promise<string> {
+  return (await principalForKey(client, workspaceId)).account
+}
+
+export interface HeldUserKey {
+  account: string
+  /** The caller's own id, which outgoing sealed bodies are bound to. */
+  userId: string
+  record: E2eKeyRecord
+}
+
+/**
+ * The identity key this machine holds for the caller, or undefined when
+ * `threa e2e unlock` has not been run here. Sealed reads and sends resolve it
+ * once and keep the imported key for the process.
+ */
+export async function readHeldUserKey(params: {
+  client: ThreaApiClient
+  workspaceId: string
+  choice: KeyStoreChoice
+}): Promise<HeldUserKey | undefined> {
+  const { account, userId } = await principalForKey(params.client, params.workspaceId)
+  const record = openKeyStore(params.choice, account).read(account)
+  return record ? { account, userId, record } : undefined
 }
 
 export interface UnlockResult {

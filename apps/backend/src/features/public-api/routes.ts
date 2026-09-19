@@ -101,6 +101,12 @@ const streamSchema = z.object({
     .describe(
       "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only."
     ),
+  e2eEnabled: z
+    .boolean()
+    .optional()
+    .describe(
+      "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT."
+    ),
   createdAt: z.string().datetime(),
   archivedAt: z.string().datetime().optional(),
 })

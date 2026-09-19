@@ -2,6 +2,7 @@ import type { ThreaApiClient } from "./api-client"
 import type { ThreaConfig } from "./config"
 import { enrichConversation, enrichMessages, enrichStreamContext } from "./enrich"
 import type { RefResolver } from "./resolver"
+import type { SealedStreams } from "./sealed"
 import type { TokenStore } from "./token-store"
 import {
   CALLBACK_TOKEN_HEADER,
@@ -54,10 +55,49 @@ export interface ReadStreamParams {
   before?: string
   after?: string
   limit?: number
+  /**
+   * Opens the bodies of an end-to-end-encrypted stream. Without it the rows
+   * come back as the server stores them: a `sealed` envelope beside an opaque
+   * `content` placeholder.
+   */
+  sealed?: SealedStreams
+}
+
+interface SealedRow {
+  sealed?: { ciphertext: string; envelope: { v: number; keyGeneration: number; iv: string; aad: string } }
+}
+
+/**
+ * Replace each sealed row's placeholder with the body it stands for. The
+ * `sealed` envelope is dropped once opened — what is left is the same shape a
+ * plaintext row has, so one renderer serves both. A row whose generation no key
+ * here is wrapped to keeps a null `content` and says why, which costs the
+ * caller that row rather than the page.
+ */
+async function openSealedRows(sealed: SealedStreams, streamId: string, rows: unknown): Promise<unknown> {
+  if (!Array.isArray(rows)) return rows
+  const opened: unknown[] = []
+  for (const row of rows) {
+    const candidate = row as SealedRow & Record<string, unknown>
+    if (!row || typeof row !== "object" || !candidate.sealed) {
+      opened.push(row)
+      continue
+    }
+    const { sealed: envelope, ...rest } = candidate
+    const body = await sealed.open(streamId, envelope)
+    opened.push({
+      ...rest,
+      content: body.contentMarkdown,
+      ...(body.attachmentRefs.length > 0 ? { sealedAttachmentRefs: body.attachmentRefs } : {}),
+      ...(body.unreadableReason === undefined ? {} : { unreadableReason: body.unreadableReason }),
+    })
+  }
+  return opened
 }
 
 export async function readStream(client: ThreaApiClient, resolver: RefResolver, p: ReadStreamParams): Promise<unknown> {
-  const id = encodeURIComponent(await resolver.resolveStream(p.streamId))
+  const streamId = await resolver.resolveStream(p.streamId)
+  const id = encodeURIComponent(streamId)
   const streamReq = client.get<Envelope<unknown>>(`/streams/${id}`)
   const messagesReq = client.get<PagedEnvelope<unknown>>(
     `/streams/${id}/messages${buildQuery({ before: p.before, after: p.after, limit: p.limit })}`
@@ -70,9 +110,11 @@ export async function readStream(client: ThreaApiClient, resolver: RefResolver, 
     membersReq ?? Promise.resolve(undefined),
   ])
 
+  const enriched = await enrichMessages(messagesResp.data, resolver)
+  const messages = p.sealed ? await openSealedRows(p.sealed, streamId, enriched) : enriched
   const result: Record<string, unknown> = {
     stream: streamResp.data,
-    messages: { data: await enrichMessages(messagesResp.data, resolver), hasMore: messagesResp.hasMore ?? false },
+    messages: { data: messages, hasMore: messagesResp.hasMore ?? false },
   }
   if (membersResp) {
     result.members = {
@@ -318,6 +360,21 @@ export interface SendMessageParams {
   metadata?: Record<string, string>
   conversationId?: string
   startConversation?: boolean
+  /**
+   * Seals the body when the target stream is encrypted. Supplying it also buys
+   * the check that decides: without knowing first, the only way to learn is to
+   * post the plaintext and be rejected, which is one trip too late.
+   */
+  sealed?: SealedStreams
+}
+
+/** Everything a sealed body cannot carry — refused rather than dropped. */
+function sealedSendArgError(p: SendMessageParams): string | undefined {
+  if (p.metadata) return "An end-to-end-encrypted stream takes no metadata: it would travel in the clear."
+  if (p.conversationId || p.startConversation) {
+    return "Conversations are not available in an end-to-end-encrypted stream."
+  }
+  return undefined
 }
 
 export function sendConversationArgError(p: {
@@ -339,17 +396,28 @@ export async function sendMessage(
   if (argError) {
     throw new ToolInputError("INVALID_ARGUMENT", argError)
   }
+  const streamId = await resolver.resolveStream(p.streamRef)
+  if (p.sealed) {
+    const stream = await client.get<Envelope<{ e2eEnabled?: boolean }>>(`/streams/${encodeURIComponent(streamId)}`)
+    if (stream.data.e2eEnabled === true) {
+      const sealedArgError = sealedSendArgError(p)
+      if (sealedArgError) throw new ToolInputError("INVALID_ARGUMENT", sealedArgError)
+      const sent = await p.sealed.send(streamId, p.content, {
+        ...(p.clientMessageId === undefined ? {} : { clientMessageId: p.clientMessageId }),
+      })
+      return { data: { id: sent.messageId }, clientMessageId: sent.clientMessageId, sealed: true }
+    }
+  }
   const clientMessageId = p.clientMessageId ?? `mcp-${crypto.randomUUID()}`
   const body: Record<string, unknown> = { content: p.content, clientMessageId }
   if (p.metadata) body.metadata = p.metadata
   if (p.conversationId) body.conversation = { intent: "existing", conversationId: p.conversationId }
   else if (p.startConversation) body.conversation = { intent: "new" }
-  const streamId = await resolver.resolveStream(p.streamRef)
   const response = await client.post<{ data: unknown; conversationId?: string }>(
     `/streams/${encodeURIComponent(streamId)}/messages`,
     body
   )
-  return { ...response, clientMessageId }
+  return { ...response, clientMessageId, ...(p.sealed ? { sealed: false } : {}) }
 }
 
 export function updateMessage(client: ThreaApiClient, messageId: string, content: string): Promise<unknown> {

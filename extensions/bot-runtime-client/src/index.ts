@@ -77,8 +77,10 @@ export {
 } from "./crypto"
 export { SealedStreamClient, SealedStreamApiError, keyringKeySource } from "./sealed-stream-client"
 export type {
+  OpenedSealedBody,
   SealedKeyIdentity,
   SealedKeySource,
+  SealedMessageBody,
   SealedStreamClientOptions,
   SealedStreamMessage,
   SealedStreamPage,

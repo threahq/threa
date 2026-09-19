@@ -5329,6 +5329,10 @@
                           },
                           "parentStreamId": { "type": "string" },
                           "rootStreamId": { "type": "string" },
+                          "e2eEnabled": {
+                            "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
+                            "type": "boolean"
+                          },
                           "createdAt": { "type": "string", "format": "date-time" },
                           "archivedAt": { "type": "string", "format": "date-time" },
                           "parentMessageId": { "type": "string" }
@@ -5427,6 +5431,10 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "e2eEnabled": {
+                          "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
+                          "type": "boolean"
+                        },
                         "createdAt": { "type": "string", "format": "date-time" },
                         "archivedAt": { "type": "string", "format": "date-time" },
                         "parentMessageId": { "type": "string" }
@@ -5536,6 +5544,10 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "e2eEnabled": {
+                          "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
+                          "type": "boolean"
+                        },
                         "createdAt": { "type": "string", "format": "date-time" },
                         "archivedAt": { "type": "string", "format": "date-time" },
                         "parentMessageId": { "type": "string" }
@@ -5633,6 +5645,10 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "e2eEnabled": {
+                          "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
+                          "type": "boolean"
+                        },
                         "createdAt": { "type": "string", "format": "date-time" },
                         "archivedAt": { "type": "string", "format": "date-time" },
                         "parentMessageId": { "type": "string" }
@@ -5730,6 +5746,10 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "e2eEnabled": {
+                          "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
+                          "type": "boolean"
+                        },
                         "createdAt": { "type": "string", "format": "date-time" },
                         "archivedAt": { "type": "string", "format": "date-time" },
                         "parentMessageId": { "type": "string" }
