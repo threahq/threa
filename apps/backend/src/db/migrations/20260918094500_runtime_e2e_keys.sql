@@ -50,8 +50,14 @@ FROM bot_runtime_instances
 WHERE public_key IS NOT NULL AND public_key_id IS NOT NULL
 ORDER BY workspace_id, public_key_id, last_seen_at DESC;
 
+-- Only the instances whose own material is what the key row kept. An instance
+-- that lost the DISTINCT ON race above holds a different private half, so
+-- recording it as a holder would let it claim a turn sealed to the winner.
 INSERT INTO runtime_e2e_key_holders (workspace_id, key_id, bot_id, instance_id)
-SELECT workspace_id, public_key_id, bot_id, instance_id
-FROM bot_runtime_instances
-WHERE public_key IS NOT NULL AND public_key_id IS NOT NULL
+SELECT i.workspace_id, i.public_key_id, i.bot_id, i.instance_id
+FROM bot_runtime_instances i
+JOIN runtime_e2e_keys k
+  ON k.workspace_id = i.workspace_id
+ AND k.key_id = i.public_key_id
+ AND k.public_key = i.public_key
 ON CONFLICT DO NOTHING;

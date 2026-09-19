@@ -197,11 +197,18 @@ describe("runtime E2E key registry", () => {
         instanceId: "inst_a",
         streamId: sealedStream,
       }),
+      recipientsHere: await RuntimeE2eKeysRepository.listLiveForBot(pool, {
+        workspaceId: ws,
+        botId: botA,
+        streamId: sealedStream,
+        stalenessMs: BOT_RUNTIME_BIK_STALENESS_MS,
+      }),
     }).toEqual({
       recipientsElsewhere: [],
       eligibleElsewhere: [],
       claimedElsewhere: null,
       eligibleHere: ["rek_scoped"],
+      recipientsHere: [{ keyId: "rek_scoped", publicKey: b64("scoped"), streamId: sealedStream }],
     })
   })
 

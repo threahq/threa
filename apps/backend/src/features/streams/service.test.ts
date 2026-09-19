@@ -1172,6 +1172,25 @@ describe("StreamService.inviteActor", () => {
     })
   })
 
+  test("reads bot key eligibility under the E2E root when invited on a thread", async () => {
+    mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
+    mockFindByIdForWorkspace.mockResolvedValue({
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      rootStreamId: "stream_e2e",
+      e2eEnabled: true,
+    } as never)
+    mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_pi", keyId: null }])
+    mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", keyId: "bik_1", streamId: "stream_e2e" }] as never)
+
+    // The thread carries actor rows but no wraps of its own, so a key scoped to
+    // the root must still be a recipient.
+    const result = await service.inviteActor("ws_1", "stream_thread", "usr_owner", "bot", "bot_pi")
+
+    expect(mockFindLiveBiks).toHaveBeenCalledWith({}, expect.objectContaining({ streamId: "stream_e2e" }))
+    expect(result.keyRoll?.recipients).toEqual([{ recipientKeyId: "bik_1", recipientKind: "bot", publicKey: "Ymlr" }])
+  })
+
   test("wraps to every invited bot's BIKs when a scratchpad holds multiple bots", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
     mockListForStream.mockResolvedValue([
