@@ -1141,6 +1141,12 @@ html[data-input="mouse"]
   display: none;
 }
 
+/* A whole line of the source — the `$$` fences and the body between them —
+   behind one equation drawn where those lines were. */
+.math-source-block {
+  display: none;
+}
+
 .math-preview {
   cursor: text;
 }
