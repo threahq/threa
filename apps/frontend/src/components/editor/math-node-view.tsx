@@ -118,6 +118,7 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
             className="math-field"
             aria-label="Equation TeX"
             placeholder="TeX"
+            wrap="off"
             spellCheck={false}
             autoCapitalize="none"
             autoCorrect="off"

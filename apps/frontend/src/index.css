@@ -1196,7 +1196,11 @@ html[data-input="mouse"]
   border-radius: 0.25rem;
   padding: 0.125rem 0.375rem;
   resize: none;
-  overflow: hidden;
+  /* The width is set in `ch` from the TeX itself, so the box is the text. */
+  box-sizing: content-box;
+  white-space: pre;
+  overflow-x: auto;
+  overflow-y: hidden;
   outline: none;
 }
 
@@ -1205,6 +1209,7 @@ html[data-input="mouse"]
 }
 
 .math-node-display .math-field {
+  box-sizing: border-box;
   width: 100%;
 }
 
