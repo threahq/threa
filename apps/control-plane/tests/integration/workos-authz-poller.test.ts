@@ -22,6 +22,7 @@ describe("WorkosAuthzPoller", () => {
   beforeEach(async () => {
     await pool.query("DELETE FROM workos_event_poller_state WHERE name = $1", [lockName])
     await pool.query("DELETE FROM workos_organization_memberships WHERE workos_organization_id = $1", [orgId])
+    await pool.query("DELETE FROM outbox WHERE payload->>'workosOrganizationId' = $1", [orgId])
   })
 
   afterEach(() => {
@@ -95,6 +96,37 @@ describe("WorkosAuthzPoller", () => {
       [lockName]
     )
     expect(cursor.rows[0]).toMatchObject({ last_event_id: "event_03", locked_until: null })
+  })
+
+  test("a stub membership write reaches the mirror and the regional fan-out", async () => {
+    const { stub, lock, poller } = makeStack()
+    await lock.ensureRow()
+
+    await stub.ensureOrganizationMembership({ organizationId: orgId, userId, roleSlug: "owner" })
+    await poller.tick()
+
+    const row = await WorkosAuthzRepository.getByOrgAndUser(pool, orgId, userId)
+    expect(row).toMatchObject({ status: "active", role_slugs: ["owner"] })
+
+    const queued = await pool.query<{ event_type: string; payload: { roleSlugs: string[]; status: string } }>(
+      "SELECT event_type, payload FROM outbox WHERE payload->>'workosOrganizationId' = $1",
+      [orgId]
+    )
+    expect(queued.rows).toMatchObject([
+      { event_type: "authz_membership_changed", payload: { roleSlugs: ["owner"], status: "active" } },
+    ])
+  })
+
+  test("a role change within the same millisecond is not dropped by the mirror's timestamp guard", async () => {
+    const { stub, lock, poller } = makeStack()
+    await lock.ensureRow()
+
+    await stub.ensureOrganizationMembership({ organizationId: orgId, userId, roleSlug: "member" })
+    await stub.ensureOrganizationMembership({ organizationId: orgId, userId, roleSlug: "owner" })
+    await poller.tick()
+
+    const row = await WorkosAuthzRepository.getByOrgAndUser(pool, orgId, userId)
+    expect(row).toMatchObject({ role_slugs: ["owner"] })
   })
 
   test("no-events tick: claims, drains nothing, releases", async () => {
