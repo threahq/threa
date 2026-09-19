@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { RemoteSession, ThreaClient, writeFileAtomic, type ShutdownOptions } from "@threahq/remote-session"
-import { WORK_DIR, type HermesRemoteConfig } from "./config"
+import type { HermesRemoteConfig } from "./config"
 import { HermesRunsClient, type FetchLike } from "./hermes-client"
 import { HERMES_RUNTIME, HermesTurnRunner, type ConversationStore } from "./run-bridge"
 import { createHermesSessionControl } from "./session-control"
@@ -77,7 +77,7 @@ export function createHermesConnector(
     // per stream tree. Built-in memory (MEMORY.md, USER.md) is profile-wide and
     // ignores it. The conversation itself is selected by session_id.
     sessionKeyFor: (rootStreamId) => `threa:${config.workspaceId}:${rootStreamId}`,
-    conversationStore: createFileConversationStore(join(WORK_DIR, "conversations.json")),
+    conversationStore: createFileConversationStore(join(config.install.workDir, "conversations.json")),
     // The session control is constructed below; a fork only happens once a turn runs.
     onForked: (sourceId, forkId) => sessionControl.inheritModel(sourceId, forkId),
     log,
