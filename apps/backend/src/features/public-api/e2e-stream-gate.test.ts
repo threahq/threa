@@ -11,9 +11,10 @@ import * as streamsModule from "../streams"
 
 const SEALED_ENVELOPE = { v: 2, keyGeneration: 3, iv: "aXY=", aad: "YWFk" }
 
-// The public API has no ciphertext message-write path, so plaintext sends/edits
-// into an E2E stream must be rejected before any insert (mirrors the first-party
-// INV-E1 gate). These tests pin that gate by forcing `isE2eStream` true.
+// A plaintext body must never land in an E2E stream: sends take a sealed body
+// instead, and edits/trace steps have no ciphertext path at all, so both are
+// rejected before any insert (mirrors the first-party INV-E1 gate). These tests
+// pin that gate by forcing `isE2eStream` true.
 
 function createResponse(): Response {
   const res = {} as Response
@@ -92,7 +93,7 @@ describe("public API E2E-stream plaintext gate", () => {
 
     await expect(handlers.sendMessage(userRequest(), createResponse())).rejects.toMatchObject({
       status: 400,
-      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
     })
     expect(isE2e).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1")
     // The gate fires before any write.
