@@ -453,11 +453,21 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
 }
 
 export function useSidebar() {
-  const context = useContext(SidebarContext)
+  const context = useOptionalSidebar()
   if (!context) {
     throw new Error("useSidebar must be used within a SidebarProvider")
   }
   return context
+}
+
+/**
+ * Null with no provider above. The sidebar's action menus register an open
+ * menu so a swipe-close can dismiss it; with no sidebar there is nothing to
+ * close, so nothing to register. Only specs mounting a card bare hit this —
+ * the app mounts SidebarProvider once, above every surface.
+ */
+export function useOptionalSidebar() {
+  return useContext(SidebarContext)
 }
 
 export type { CollapseState }

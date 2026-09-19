@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/context-menu"
 import { RelativeTime } from "@/components/relative-time"
 import { Separator } from "@/components/ui/separator"
-import { useSidebar } from "@/contexts"
+import { useOptionalSidebar } from "@/contexts"
 import { groupVisibleActions } from "@/components/actions/action-model"
 import { cn } from "@/lib/utils"
 
@@ -209,11 +209,11 @@ function SidebarActionMenuGroup({ members }: { members: SidebarActionItem[] }) {
 
 /** Holds `close` registered with the sidebar while `open`, so a sidebar close dismisses the menu. */
 function useSidebarMenu(open: boolean, close: () => void) {
-  const { registerOpenMenu } = useSidebar()
+  const registerOpenMenu = useOptionalSidebar()?.registerOpenMenu
   const closeRef = useRef(close)
   closeRef.current = close
   useEffect(() => {
-    if (!open) return
+    if (!open || !registerOpenMenu) return
     return registerOpenMenu(() => closeRef.current())
   }, [open, registerOpenMenu])
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import type { Socket } from "socket.io-client"
@@ -28,6 +28,7 @@ import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as boardStoreModule from "@/stores/board-store"
+import * as useMobileModule from "@/hooks/use-mobile"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as revealAnchorModule from "@/hooks/use-board-card-reveal-anchor"
 import { setBoardFlash, resetBoardFlashStoreCache } from "@/stores/board-flash-store"
@@ -634,6 +635,19 @@ describe("BoardCard conversation actions", () => {
     // resolves, so assert via waitFor — a bare synchronous expect races the
     // dispatch and flakes under CI load (still asserting the exact call args).
     await waitFor(() => expect(updateConversation).toHaveBeenCalledWith(WS, "conv_1", { status: "resolved" }))
+  })
+
+  it("opens the same bottom sheet as the stream header on touch, titled with the card's context", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const user = userEvent.setup()
+    mountCard(makePost({ topicSummary: "Rotate the API tokens", status: "active" }))
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+
+    const sheet = await screen.findByRole("dialog")
+    expect(within(sheet).getByText("Rotate the API tokens")).toBeTruthy()
+    expect(within(sheet).getByText("#general")).toBeTruthy()
+    expect(screen.queryByRole("menu")).toBeNull()
   })
 
   it("hides the conversation from the board via the ⋯ menu", async () => {

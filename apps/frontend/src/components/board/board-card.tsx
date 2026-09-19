@@ -1054,6 +1054,7 @@ export function BoardCard({
         topicSummary={conversationTitle}
         topicSummarySource={conversation.topicSummarySource}
         status={conversation.status}
+        contextLabel={contextLabel}
         triggerClassName="shrink-0"
       />
     </>

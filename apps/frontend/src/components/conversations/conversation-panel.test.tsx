@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { act, render, screen, waitFor, fireEvent } from "@testing-library/react"
+import { act, render, screen, waitFor, within, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useNavigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -47,6 +47,7 @@ import * as autoReadModule from "@/components/message/use-conversation-auto-read
 import { registerWorkspaceSocketHandlers } from "@/sync/workspace-sync"
 import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as pointerModule from "@/hooks/use-pointer"
 import { UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
 import * as virtualizedScrollerModule from "@/components/timeline/virtualized-scroller"
 
@@ -773,6 +774,70 @@ describe("ConversationPanel", () => {
     await screen.findByText("Opening message body.")
     expect(screen.getByRole("button", { name: "Back" })).toBeTruthy()
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull()
+  })
+
+  it("makes the topic the actions-sheet trigger at phone width, the way the stream header's name is", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    await user.click(await screen.findByRole("button", { name: "CC Teams tokens — conversation details and actions" }))
+
+    const sheet = await screen.findByRole("dialog")
+    expect(within(sheet).getByText("CC Teams tokens")).toBeTruthy()
+    expect(within(sheet).getByText("Copy link")).toBeTruthy()
+  })
+
+  it("carries the conversation's state into the sheet header, the way the stream sheet does", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const user = userEvent.setup()
+    const post = makePost()
+    post.conversation.status = "resolved"
+    mountPanel({ cached: asCached(post) })
+    await screen.findByText("Opening message body.")
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+
+    const sheet = await screen.findByRole("dialog")
+    expect(within(sheet).getByText("Resolved")).toBeTruthy()
+    expect(within(sheet).getByText("Reopen")).toBeTruthy()
+  })
+
+  it("opens that same sheet from the overflow button, not a desktop dropdown", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const user = userEvent.setup()
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+
+    await user.click(await screen.findByRole("button", { name: "Conversation actions" }))
+
+    const sheet = await screen.findByRole("dialog")
+    expect(within(sheet).getByText("CC Teams tokens")).toBeTruthy()
+    expect(screen.queryByRole("menu")).toBeNull()
+  })
+
+  it("reveals the full topic on a press-and-hold without also opening the sheet", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    vi.spyOn(pointerModule, "useCoarsePointer").mockReturnValue(true)
+    mountPanel({ cached: asCached(makePost()) })
+    await screen.findByText("Opening message body.")
+    const trigger = await screen.findByRole("button", {
+      name: "CC Teams tokens — conversation details and actions",
+    })
+    expect(screen.getAllByText("CC Teams tokens")).toHaveLength(1)
+
+    fireEvent.touchStart(trigger, { touches: [{ clientX: 0, clientY: 0 }] })
+    // Real 500ms LONG_PRESS_THRESHOLD_MS timer; waitFor's 1s default is too thin a
+    // margin on a loaded shard.
+    await waitFor(() => expect(screen.getAllByText("CC Teams tokens")).toHaveLength(2), { timeout: 3000 })
+
+    // The release fires a trailing click on the trigger; the preview swallows it,
+    // so a hold reveals the topic instead of opening the actions sheet.
+    fireEvent.touchEnd(trigger)
+    fireEvent.click(trigger)
+
+    expect(screen.queryByRole("dialog")).toBeNull()
   })
 
   it("shows a not-found state when the conversation is gone/unreadable", async () => {

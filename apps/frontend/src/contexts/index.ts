@@ -61,6 +61,7 @@ export {
 export {
   SidebarProvider,
   useSidebar,
+  useOptionalSidebar,
   MIN_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
   SIDEBAR_COLLAPSE_THRESHOLD,

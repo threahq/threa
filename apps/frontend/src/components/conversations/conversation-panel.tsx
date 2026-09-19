@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ActiveAgentSession } from "@threahq/types"
 import { useSearchParams } from "react-router-dom"
 import {
+  ChevronDown,
   ChevronLeft,
   Hash,
   FileEdit,
@@ -10,6 +11,7 @@ import {
   CircleCheck,
   ArrowDown,
   ArrowUp,
+  MoreHorizontal,
   X,
   type LucideIcon,
 } from "lucide-react"
@@ -73,7 +75,7 @@ import {
 } from "@/components/composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
-import { SidebarToggle } from "@/components/layout"
+import { SidebarToggle, StreamTitlePreview } from "@/components/layout"
 import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
 import { useArchivedAsideIds } from "@/hooks/use-archived-aside-ids"
 import { useStashParamDraftRow } from "@/hooks/use-stash-composer"
@@ -207,8 +209,28 @@ function ConversationPanelHeader({
   const ContextGlyph = (hostStreamType && TYPE_GLYPH[hostStreamType]) || MessageSquareText
   const effectiveTitle = useConversationTitle(workspaceId, post?.conversation ?? { streamId: "", topicSummary: null })
   const revealed = phase === "ready" && post !== null
+  const [menuOpen, setMenuOpen] = useState(false)
+  const title = effectiveTitle ?? locator
+  const resolved = post?.conversation.status === "resolved"
+  // On touch the identity line IS the actions trigger, as the stream header's
+  // name is. The header is `relative` so the press-and-hold name overlay, which
+  // portals into its nearest <header>, can fill the bar here too.
+  const identity = (
+    <>
+      <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
+      {resolved && <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />}
+      <SidePanelTitle className={cn("min-w-0 truncate", resolved && "text-muted-foreground")}>{title}</SidePanelTitle>
+      {post && (
+        <RelativeTime
+          date={post.conversation.lastActivityAt}
+          terse
+          className="ml-1 shrink-0 text-xs font-normal text-muted-foreground"
+        />
+      )}
+    </>
+  )
   return (
-    <SidePanelHeader>
+    <SidePanelHeader className="relative">
       {isMobile && <SidebarToggle location="page" />}
       {/* Mobile replaces the X close with a back chevron; desktop keeps the X
           alone. Both affordances at once was this header's own invention. */}
@@ -222,31 +244,33 @@ function ConversationPanelHeader({
           stream locator all resolve with the rows, and rendering their fallbacks
           first made the header show a generic icon over the literal word
           "Conversation" and then swap. */}
-      <SidePanelTitle className="flex min-w-0 flex-1 items-center gap-1.5">
-        {revealed ? (
-          <>
-            <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
-            {post.conversation.status === "resolved" && (
-              <CircleCheck className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="Resolved" />
-            )}
-            {/* The topic is the conversation's identity — show it when set, falling
-                back to the stream locator (the pre-topic behavior). */}
-            <span className={cn("truncate", post.conversation.status === "resolved" && "text-muted-foreground")}>
-              {effectiveTitle ?? locator}
-            </span>
-            <RelativeTime
-              date={post.conversation.lastActivityAt}
-              terse
-              className="ml-1 shrink-0 text-xs font-normal text-muted-foreground"
-            />
-          </>
-        ) : (
-          <>
-            <div className="h-4 w-4 shrink-0" />
-            {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
-          </>
-        )}
-      </SidePanelTitle>
+      {revealed && isMobile ? (
+        <StreamTitlePreview name={title}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen(true)}
+            aria-label={`${resolved ? "Resolved — " : ""}${title} — conversation details and actions`}
+            aria-haspopup="dialog"
+            className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors active:bg-accent/50"
+          >
+            {identity}
+            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </button>
+        </StreamTitlePreview>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {revealed ? (
+            <StreamTitlePreview name={title}>
+              <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
+            </StreamTitlePreview>
+          ) : (
+            <>
+              <div className="h-4 w-4 shrink-0" />
+              {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
+            </>
+          )}
+        </div>
+      )}
       {/* Same live pill as the stream header and the board card, over this
           conversation's own sessions. Compact on mobile so it can't squeeze the
           topic out of the row. Mounted only with entries: the chip reads
@@ -261,7 +285,14 @@ function ConversationPanelHeader({
           topicSummarySource={post.conversation.topicSummarySource}
           status={post.conversation.status}
           isHidden={isHidden}
-          triggerClassName="shrink-0"
+          contextLabel={locator}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          trigger={
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Conversation actions">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          }
         />
       ) : (
         <div className="h-8 w-8 shrink-0" />
