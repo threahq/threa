@@ -109,6 +109,8 @@ threa e2e unlock                                    # passphrase at the prompt, 
 threa e2e unlock --key-store file --key-dir ./keys  # keep it in a 0600 file instead of the OS keychain
 threa e2e status                                    # what this machine holds, and whether it is current
 threa e2e lock                                      # forget the key here
+threa streams read stream_abc                       # a sealed stream opens with that key
+threa messages send stream_abc "ship it"            # sealed here; the plaintext never leaves
 
 # mcp head
 threa mcp serve
@@ -117,6 +119,8 @@ threa mcp serve
 Any stream argument (`streams read`, `messages send`, `labels add`, `labels remove`, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
 
 `messages send` and `messages edit` take content as an argument; `messages send` reads stdin when the content argument is `-`. `delegations finish --result -` also reads the result markdown from stdin.
+
+Once a key is unlocked, `streams read` and `messages send` work on an end-to-end-encrypted stream (a scratchpad or one of its threads) the same way they do on a plaintext one. A read opens each body locally, so what prints is the message rather than the opaque placeholder the server stores; a body sealed to a key generation you were never wrapped to keeps a null `content` and says why, costing you that row and not the page. A send checks the stream first and seals the body under the stream key before anything leaves the machine — the plaintext is never posted, not even once to be rejected. Both take `--key-store` and `--key-dir`. With no key unlocked here, each fails and names `threa e2e unlock` instead of falling back to plaintext. A sealed stream carries no `--metadata` and no conversation: both would travel in the clear, so they are refused rather than dropped.
 
 `e2e unlock` fetches the encrypted bundle holding your identity key, opens it with your passphrase, and files the key where the bot runtimes keep theirs: the OS keychain by default (macOS Keychain, or the freedesktop Secret Service through `secret-tool`). `--key-store file` puts it in a 0600 file under `~/.threa/e2e-keys` instead, or `THREA_E2E_KEY_DIR` when that is set. The passphrase is read from the terminal without echo, or from stdin when one is piped; it never leaves the machine, and neither does the key. Where the key lands is an explicit choice — an unavailable OS keychain is an error naming both options, never a quiet move to disk. Run `unlock` again after changing your passphrase or rotating the key; `status` is what tells you the two have drifted apart.
 

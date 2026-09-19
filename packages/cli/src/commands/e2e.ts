@@ -1,22 +1,6 @@
-import { e2eKeyStatus, lockE2eKey, unlockE2eKey, type KeyStoreChoice } from "../e2e-keys"
-import { E2E_KEY_STORE_KINDS, type E2eKeyStoreKind } from "../../../../extensions/bot-runtime-client/src/keyring"
-import { stringFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
-
-const STORE_FLAGS =
-  "  --key-store keychain|file   where to keep the key (default: the OS keychain)\n" +
-  "  --key-dir <path>            directory for a file store (default: ~/.threa/e2e-keys)\n"
-
-function storeChoice(values: Record<string, unknown>): KeyStoreChoice {
-  const requested = stringFlag(values, "key-store")
-  if (requested !== undefined && !(E2E_KEY_STORE_KINDS as readonly string[]).includes(requested)) {
-    throw new UsageError(`--key-store must be one of ${E2E_KEY_STORE_KINDS.join(", ")} — got "${requested}"`)
-  }
-  const dir = stringFlag(values, "key-dir")
-  return {
-    ...(requested === undefined ? {} : { requested: requested as E2eKeyStoreKind }),
-    ...(dir === undefined ? {} : { dir }),
-  }
-}
+import { e2eKeyStatus, lockE2eKey, unlockE2eKey } from "../e2e-keys"
+import { UsageError, type NounSpec, type VerbSpec } from "../output"
+import { KEY_STORE_FLAGS as STORE_FLAGS, KEY_STORE_OPTIONS, storeChoice } from "./key-store"
 
 /**
  * Read the passphrase without it reaching argv, a shell history, or the
@@ -64,7 +48,7 @@ const unlockVerb: VerbSpec = {
     STORE_FLAGS +
     "  --json                      force JSON output\n" +
     "  --help                      show this help",
-  options: { "key-store": { type: "string" }, "key-dir": { type: "string" } },
+  options: KEY_STORE_OPTIONS,
   run: async (ctx, _positionals, values) => {
     // The store choice is validated before the prompt: an unusable --key-store
     // should not first make someone type a passphrase that goes nowhere.
@@ -96,7 +80,7 @@ const statusVerb: VerbSpec = {
     STORE_FLAGS +
     "  --json                      force JSON output\n" +
     "  --help                      show this help",
-  options: { "key-store": { type: "string" }, "key-dir": { type: "string" } },
+  options: KEY_STORE_OPTIONS,
   run: (ctx, _positionals, values) =>
     e2eKeyStatus({ client: ctx.client, workspaceId: ctx.config.workspaceId, choice: storeChoice(values) }),
   render: (payload) => {
@@ -124,7 +108,7 @@ const lockVerb: VerbSpec = {
     STORE_FLAGS +
     "  --json                      force JSON output\n" +
     "  --help                      show this help",
-  options: { "key-store": { type: "string" }, "key-dir": { type: "string" } },
+  options: KEY_STORE_OPTIONS,
   run: (ctx, _positionals, values) =>
     lockE2eKey({ client: ctx.client, workspaceId: ctx.config.workspaceId, choice: storeChoice(values) }),
   render: (payload) => {

@@ -11,6 +11,7 @@ import {
   type VerbSpec,
 } from "../output"
 import { STREAM_TYPES } from "../tools/constants"
+import { KEY_STORE_FLAGS, KEY_STORE_OPTIONS, storeChoice } from "./key-store"
 
 interface StreamRow {
   id?: string
@@ -72,11 +73,16 @@ const readVerb: VerbSpec = {
     "Fetch a stream and a page of its messages. <ref> is a stream_ id or a #channel-slug.\n" +
     "Message paging is by numeric sequence, not a cursor: --before returns older messages, --after newer; " +
     "pass at most one and walk pages by the boundary message's sequence.\n\n" +
+    'An end-to-end-encrypted stream is read with the key this machine holds, so run "threa e2e unlock" ' +
+    "first — without it the bodies cannot be opened here, and the command says so rather than printing the " +
+    "placeholder the server stores. A message sealed to a key generation you were never wrapped to keeps a " +
+    "null content and reports why, alone among the page.\n\n" +
     "Flags:\n" +
     "  --members    also fetch the stream's members\n" +
     "  --before seq messages before this sequence (older)\n" +
     "  --after seq  messages after this sequence (newer)\n" +
     "  --limit n    max messages, <= 100 (default 50)\n" +
+    KEY_STORE_FLAGS +
     "  --json       force JSON output\n" +
     "  --help       show this help",
   options: {
@@ -84,6 +90,7 @@ const readVerb: VerbSpec = {
     before: { type: "string" },
     after: { type: "string" },
     limit: { type: "string" },
+    ...KEY_STORE_OPTIONS,
   },
   run: (ctx, positionals, values) => {
     const ref = positionals[0]
@@ -94,13 +101,20 @@ const readVerb: VerbSpec = {
       before: stringFlag(values, "before"),
       after: stringFlag(values, "after"),
       limit: intFlag(values, "limit"),
+      sealed: ctx.sealed(storeChoice(values)),
     })
   },
   render: (payload) => {
     const p = payload as {
       stream?: StreamRow
       messages?: {
-        data?: Array<{ sequence?: unknown; author?: { name?: string }; contentMarkdown?: string; content?: string }>
+        data?: Array<{
+          sequence?: unknown
+          author?: { name?: string }
+          contentMarkdown?: string
+          content?: string | null
+          unreadableReason?: string
+        }>
         hasMore?: boolean
       }
       members?: { data?: Array<{ id?: string; name?: string; slug?: string }> }
@@ -110,7 +124,9 @@ const readVerb: VerbSpec = {
     const msgs = p.messages?.data ?? []
     lines.push(`messages: ${msgs.length}${p.messages?.hasMore ? " (more)" : ""}`)
     for (const m of msgs) {
-      const body = (m.contentMarkdown ?? m.content ?? "").replace(/\s+/g, " ").trim()
+      const body = m.unreadableReason
+        ? `<unreadable: ${m.unreadableReason}>`
+        : (m.contentMarkdown ?? m.content ?? "").replace(/\s+/g, " ").trim()
       lines.push(`  [${String(m.sequence ?? "?")}] ${m.author?.name ?? "?"}: ${body.slice(0, 120)}`)
     }
     if (p.members) {

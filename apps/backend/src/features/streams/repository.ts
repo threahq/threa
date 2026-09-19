@@ -618,8 +618,11 @@ export const StreamRepository = {
     }
     values.push(limit)
 
+    // Joined on E2E so the public API's stream list reports `e2eEnabled` the
+    // same way `findById` does. Without it a client paging the list would read
+    // every sealed stream as plaintext and send plaintext into it.
     const result = await db.query<StreamRow>(
-      `SELECT ${SELECT_FIELDS_ALIASED} FROM streams s
+      `SELECT ${SELECT_FIELDS_WITH_E2E} FROM ${FROM_STREAMS_WITH_E2E}
         WHERE ${conditions.join(" AND ")}
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT $${paramIndex}`,

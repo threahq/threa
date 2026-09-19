@@ -104,6 +104,19 @@ export interface SealedStreamClientOptions {
   fetch?: typeof globalThis.fetch
 }
 
+/** The `sealed` field a message row carries in place of readable content. */
+export interface SealedMessageBody {
+  ciphertext: string
+  envelope: StreamEnvelope
+}
+
+/** What opening one {@link SealedMessageBody} produced. */
+export interface OpenedSealedBody {
+  contentMarkdown: string | null
+  attachmentRefs: AttachmentRef[]
+  unreadableReason?: string
+}
+
 interface WireMessage {
   id: string
   sequence: string
@@ -111,7 +124,7 @@ interface WireMessage {
   authorType: string
   authorDisplayName?: string
   createdAt: string
-  sealed?: { ciphertext: string; envelope: StreamEnvelope }
+  sealed?: SealedMessageBody
 }
 
 interface WireWraps {
@@ -130,6 +143,10 @@ export class SealedStreamApiError extends Error {
     this.status = status
     this.code = code
   }
+}
+
+function reasonOf(error: unknown): string {
+  return String(error instanceof Error ? error.message : error)
 }
 
 export class SealedStreamClient {
@@ -178,13 +195,13 @@ export class SealedStreamClient {
   async sendMessage(
     streamId: string,
     contentMarkdown: string,
-    opts: { attachmentRefs?: AttachmentRef[] } = {}
+    opts: { attachmentRefs?: AttachmentRef[]; clientMessageId?: string } = {}
   ): Promise<{ messageId: string; clientMessageId: string }> {
     const root = await this.resolveRoot(streamId)
     const keyGeneration = await this.currentGeneration(root)
     const key = await this.streamKey(root, keyGeneration)
     const senderId = await this.resolveSenderId()
-    const clientMessageId = `msg_${ulid()}`
+    const clientMessageId = opts.clientMessageId ?? `msg_${ulid()}`
     const sealed = await sealMessage({
       key,
       keyGeneration,
@@ -196,6 +213,41 @@ export class SealedStreamClient {
       clientMessageId,
     })
     return { messageId: created.data.id, clientMessageId }
+  }
+
+  /**
+   * Open one sealed body for a caller that fetched the row itself — a client
+   * reading the plaintext list route, where sealed rows arrive beside an opaque
+   * placeholder. `streamId` may be the thread the row lives in; its root's key
+   * is what opens it.
+   *
+   * A body this client cannot open comes back with a null `contentMarkdown` and
+   * a reason rather than throwing, so one unreadable generation never costs the
+   * caller the rest of the page.
+   */
+  async openSealedBody(streamId: string, sealed: SealedMessageBody): Promise<OpenedSealedBody> {
+    const root = await this.resolveRoot(streamId)
+    return this.openBody(root, sealed)
+  }
+
+  private async openBody(root: string, sealed: SealedMessageBody): Promise<OpenedSealedBody> {
+    let key: Uint8Array
+    try {
+      key = await this.streamKey(root, sealed.envelope.keyGeneration)
+    } catch (error) {
+      return { contentMarkdown: null, attachmentRefs: [], unreadableReason: reasonOf(error) }
+    }
+    try {
+      const raw = await openMessageAsString({
+        key,
+        ciphertext: base64ToBytes(sealed.ciphertext),
+        envelope: sealed.envelope,
+      })
+      const payload = parseSealedPayload(raw)
+      return { contentMarkdown: payload.contentMarkdown, attachmentRefs: payload.attachmentRefs ?? [] }
+    } catch (error) {
+      return { contentMarkdown: null, attachmentRefs: [], unreadableReason: reasonOf(error) }
+    }
   }
 
   private async openMessage(root: string, wire: WireMessage): Promise<SealedStreamMessage> {
@@ -211,31 +263,7 @@ export class SealedStreamClient {
     if (!wire.sealed) {
       return { ...base, contentMarkdown: null, unreadableReason: "Message carries no stream-key envelope" }
     }
-    let key: Uint8Array
-    try {
-      key = await this.streamKey(root, wire.sealed.envelope.keyGeneration)
-    } catch (error) {
-      return {
-        ...base,
-        contentMarkdown: null,
-        unreadableReason: String(error instanceof Error ? error.message : error),
-      }
-    }
-    try {
-      const raw = await openMessageAsString({
-        key,
-        ciphertext: base64ToBytes(wire.sealed.ciphertext),
-        envelope: wire.sealed.envelope,
-      })
-      const payload = parseSealedPayload(raw)
-      return { ...base, contentMarkdown: payload.contentMarkdown, attachmentRefs: payload.attachmentRefs ?? [] }
-    } catch (error) {
-      return {
-        ...base,
-        contentMarkdown: null,
-        unreadableReason: String(error instanceof Error ? error.message : error),
-      }
-    }
+    return { ...base, ...(await this.openBody(root, wire.sealed)) }
   }
 
   /**
