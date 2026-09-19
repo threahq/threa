@@ -1102,17 +1102,22 @@ html[data-input="mouse"]
 }
 
 /*
- * KaTeX math (rehype-katex output inside .markdown-content)
+ * KaTeX math. Two producers, one appearance: `rehype-katex` inside
+ * .markdown-content (a posted message) and MathPreview's widget inside the
+ * composer. The rules cover both rather than being copied per surface, so size,
+ * scroll containment and the error color cannot drift apart.
  */
 
 /* KaTeX sizes math at 1.21em, which reads as a heading next to chat text. */
-.markdown-content .katex {
+.markdown-content .katex,
+.math-preview .katex {
   font-size: 1.05em;
 }
 
 /* A long equation scrolls inside its own box instead of widening the message
    column — the same containment code blocks get. */
-.markdown-content .katex-display {
+.markdown-content .katex-display,
+.math-preview .katex-display {
   display: block;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1122,10 +1127,31 @@ html[data-input="mouse"]
 /* rehype-katex writes the error color as an inline style, so beating it needs
    !important. Unparseable TeX stays visible and hoverable (the title carries
    KaTeX's message) rather than silently rendering as prose. */
-.markdown-content .katex-error {
+.markdown-content .katex-error,
+.math-preview .katex-error {
   color: hsl(var(--destructive)) !important;
   font-family: "Commit Mono", monospace;
   font-size: 0.9em;
+}
+
+/* The author's `$…$` behind the equation drawn for it. It is still in the
+   document and still selectable by keyboard; putting the caret in it drops the
+   decoration, which is how an equation turns back into editable TeX. */
+.math-source {
+  display: none;
+}
+
+.math-preview {
+  cursor: text;
+}
+
+.math-preview-inline {
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+.math-preview-block {
+  display: block;
 }
 
 /*

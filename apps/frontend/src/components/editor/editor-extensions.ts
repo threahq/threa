@@ -37,6 +37,7 @@ import { InAppLinkExtension } from "./in-app-link-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
+import { MathPreview } from "./math-preview-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 
@@ -139,6 +140,10 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     GiphyEmbedExtension,
 
     ComposerPillDragExtension,
+
+    // Draws a finished `$…$` / `\[…\]` as the equation it will send, except
+    // the one the caret is in. View-only, so the document stays the text typed.
+    MathPreview,
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,
