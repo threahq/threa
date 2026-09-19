@@ -5,8 +5,6 @@ import { cn } from "@/lib/utils"
 export interface VirtualizedScrollerItem {
   /** Stable across renders — this is the virtualizer's identity for the row. */
   key: string
-  /** Merged onto the row wrapper after `itemClassName` (indent, per-row state). */
-  className?: string
   node: ReactNode
 }
 
@@ -28,8 +26,13 @@ export interface VirtualizedScrollerProps {
   isInitialSettling: boolean
   onScroll: () => void
   /**
-   * Top inset, in px. Handed to virtua *and* used to size the spacer element, so
-   * it must be a number the caller knows on its FIRST render rather than a
+   * Height in px of EVERYTHING above the virtualized window inside the scroll
+   * container, `header` included — virtua resolves an index to an offset by
+   * adding it, so a header rendered outside it puts every offset query that far
+   * out. The component renders `header` inside a box of exactly this height so
+   * the declaration cannot drift from the DOM.
+   *
+   * It must be a number the caller knows on its FIRST render rather than a
    * measurement: virtua records a later startMargin without re-deriving the
    * offsets it already computed from the old one, and an anchor restore loses
    * its target row that way.
@@ -42,7 +45,12 @@ export interface VirtualizedScrollerProps {
   "data-suppress-pull-refresh"?: "true"
   "data-stream-scroller"?: string
   itemClassName?: string
-  /** In flow above the virtualized window, inside the measured content box. */
+  /**
+   * From `useRenderedContentLatch`, called ABOVE the caller's loading
+   * early-returns — see the hook.
+   */
+  hasRenderedContent: boolean
+  /** In flow above the virtualized window, inside the `startMargin` box. */
   header?: ReactNode
   /** In flow below it — composer spacer, load-more affordances. */
   footer?: ReactNode
@@ -52,8 +60,19 @@ export interface VirtualizedScrollerProps {
   mask?: ReactNode
   /** Shown instead of the list before anything has ever rendered. */
   skeleton?: ReactNode
-  /** Sizing for the blank held across a subject switch (see the mount guard). */
-  blankClassName?: string
+}
+
+/**
+ * Latches true the first time the window has rows. Call it ABOVE the caller's
+ * loading early-returns: it picks skeleton vs. blank for the mid-switch gap
+ * where the window is briefly empty, and a latch that unmounts with the
+ * scroller answers "skeleton" there and flashes one over chrome the reader is
+ * already looking at.
+ */
+export function useRenderedContentLatch(itemCount: number): boolean {
+  const latched = useRef(false)
+  if (itemCount > 0) latched.current = true
+  return latched.current
 }
 
 /**
@@ -83,16 +102,14 @@ export function VirtualizedScroller({
   style,
   scrollerProps,
   itemClassName,
+  hasRenderedContent,
   header,
   footer,
   overlay,
   mask,
   skeleton,
-  blankClassName,
   ...dataAttributes
 }: VirtualizedScrollerProps) {
-  const hasRenderedContentRef = useRef(false)
-
   // Never mount the list empty: the initial landing and the settle mask in
   // useTimelineScroll both arm when items first exist, so a list mounted with
   // zero items paints an empty top-anchored frame and the populate + pin a
@@ -104,29 +121,31 @@ export function VirtualizedScroller({
   // skeleton, so the skeleton→content handoff has no blank frame in it. After
   // content has rendered once (a subject switch) a brief blank beats a skeleton
   // flash on top of chrome the reader is already looking at.
-  if (items.length > 0) hasRenderedContentRef.current = true
   if (items.length === 0) {
-    return hasRenderedContentRef.current ? (
-      <div className={cn("h-full", blankClassName)} aria-hidden />
-    ) : (
-      <>{skeleton}</>
-    )
+    return hasRenderedContent ? <div className="h-full" aria-hidden /> : <>{skeleton}</>
   }
 
   return (
     <>
       <div
+        {...scrollerProps}
         key={scrollKey}
         ref={registerScroller}
         className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", className)}
         style={{ overflowAnchor: "none", ...style }}
         onScroll={onScroll}
         {...dataAttributes}
-        {...scrollerProps}
       >
         <div ref={contentRef}>
-          {startMargin != null && <div aria-hidden style={{ height: startMargin }} />}
-          {header}
+          {startMargin != null && (
+            <div
+              aria-hidden={header == null}
+              className="flex flex-col justify-end overflow-hidden"
+              style={{ height: startMargin }}
+            >
+              {header}
+            </div>
+          )}
           <Virtualizer
             ref={listRef}
             scrollRef={scrollerRef}
@@ -143,7 +162,7 @@ export function VirtualizedScroller({
             bufferSize={2000}
           >
             {items.map((item) => (
-              <div key={item.key} className={cn(itemClassName, item.className)}>
+              <div key={item.key} className={itemClassName}>
                 {item.node}
               </div>
             ))}

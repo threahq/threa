@@ -143,7 +143,7 @@ import { clearTimelineAnchor, loadTimelineAnchor, saveTimelineAnchor } from "@/l
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
 import { useReadMessageIds } from "@/hooks/use-unread-counts"
 import { deepLinkDebug } from "./deep-link-debug"
-import { VirtualizedScroller } from "./virtualized-scroller"
+import { VirtualizedScroller, useRenderedContentLatch } from "./virtualized-scroller"
 import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
@@ -3394,6 +3394,11 @@ function TimelineMessageList({
     </div>
   )
 
+  // Latched above the early returns: the scroller unmounts on them, so a latch
+  // living inside it would answer "nothing rendered yet" on the next empty
+  // window and flash a skeleton over a stream the reader is already in.
+  const hasRenderedContent = useRenderedContentLatch(visibleItems.length)
+
   if (isLoading || holdForDeepLink) {
     return skeleton
   }
@@ -3446,6 +3451,7 @@ function TimelineMessageList({
       isInitialSettling={isInitialSettling}
       onScroll={handleScroll}
       startMargin={startMargin}
+      hasRenderedContent={hasRenderedContent}
       className={cn(batch?.enabled && "select-none")}
       data-suppress-pull-refresh="true"
       data-stream-scroller={streamId}
