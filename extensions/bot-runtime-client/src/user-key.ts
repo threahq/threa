@@ -1,5 +1,5 @@
 import { argon2id } from "hash-wasm"
-import { importRecipientPrivateKey } from "./crypto"
+import { importRecipientPrivateKey, type WebCryptoKey } from "./crypto"
 
 /**
  * Recovering a user's identity key from a passphrase, outside the browser.
@@ -49,7 +49,7 @@ export async function deriveKEK(
   passphrase: string,
   salt: Uint8Array,
   params: KdfParams = DEFAULT_KDF_PARAMS
-): Promise<CryptoKey> {
+): Promise<WebCryptoKey> {
   if (params.algorithm !== "argon2id") {
     throw new Error(`Unsupported KDF algorithm: ${params.algorithm}`)
   }
@@ -77,7 +77,7 @@ export async function deriveKEK(
  * the X25519 private key. Throws on a tampered bundle or the wrong KEK — the
  * GCM tag is the only passphrase check there is.
  */
-export async function unwrapPrivate(bundle: Uint8Array, kek: CryptoKey): Promise<CryptoKey> {
+export async function unwrapPrivate(bundle: Uint8Array, kek: WebCryptoKey): Promise<WebCryptoKey> {
   if (bundle.length < 1 + IV_LENGTH + 1) {
     throw new Error("Wrapped private bundle is too short")
   }
@@ -101,7 +101,7 @@ export interface UnlockUserKeyInput {
 }
 
 /** The whole passphrase → private key path in one call. */
-export async function unlockUserKey(input: UnlockUserKeyInput): Promise<CryptoKey> {
+export async function unlockUserKey(input: UnlockUserKeyInput): Promise<WebCryptoKey> {
   const kek = await deriveKEK(input.passphrase, input.kdfSalt, input.kdfParams)
   return unwrapPrivate(input.encryptedPrivateBundle, kek)
 }
