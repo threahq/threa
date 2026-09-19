@@ -12,10 +12,12 @@
  * Nothing here ever sends the passphrase or the private key anywhere.
  */
 
-import { homedir } from "node:os"
+import { homedir, hostname } from "node:os"
 import { join } from "node:path"
 import {
   FileKeyStore,
+  e2eKeyAccount,
+  e2eStreamKeyAccount,
   e2eUserKeyAccount,
   resolveKeyStore,
   type E2eKeyRecord,
@@ -29,6 +31,7 @@ import {
   type KdfParams,
 } from "../../../extensions/bot-runtime-client/src/user-key"
 import { ThreaApiError, type ThreaApiClient } from "./api-client"
+import type { ThreaConfig } from "./config"
 
 export interface ServerUserKey {
   keyId: string
@@ -47,7 +50,7 @@ export interface KeyStoreChoice {
 }
 
 export function keyDirOf(choice: KeyStoreChoice): string {
-  return choice.dir ?? process.env.THREA_E2E_KEY_DIR ?? join(homedir(), ".threa", "e2e-keys")
+  return choice.dir ?? join(homedir(), ".threa", "e2e-keys")
 }
 
 /** The store this machine keeps the key in, and the account it is filed under. */
@@ -61,6 +64,16 @@ export function openKeyStore(choice: KeyStoreChoice, account: string): E2eKeySto
   })
 }
 
+interface Principal {
+  kind: string
+  userId?: string
+  botId?: string
+}
+
+function fetchPrincipal(client: ThreaApiClient): Promise<Principal> {
+  return client.get<{ data: Principal }>("/me").then((response) => response.data)
+}
+
 async function principalForKey(
   client: ThreaApiClient,
   workspaceId: string
@@ -68,41 +81,73 @@ async function principalForKey(
   account: string
   userId: string
 }> {
-  const me = await client.get<{ data: { kind: string; userId?: string } }>("/me")
-  const userId = me.data.userId
+  const me = await fetchPrincipal(client)
+  const userId = me.userId
   if (!userId) {
     throw new Error(
-      `threa: end-to-end keys belong to a person, but this API key acts as ${me.data.kind}. ` +
+      `threa: end-to-end keys belong to a person, but this API key acts as ${me.kind}. ` +
         `Use your own key, not a bot's.`
     )
   }
   return { account: e2eUserKeyAccount(workspaceId, userId), userId }
 }
 
-async function accountForKey(client: ThreaApiClient, workspaceId: string): Promise<string> {
-  return (await principalForKey(client, workspaceId)).account
+/** How a caller addresses the key that opens one stream, and what to say when it is not here. */
+export interface SealedKeyAccounts {
+  /** The actor id bound into outgoing sealed bodies. */
+  senderId: string
+  /** Where this machine files the key for `streamId`. */
+  accountFor(streamId: string): string
+  /** Told to the operator when that account holds nothing. */
+  missingKeyHint(account: string, store: E2eKeyStore): string
 }
 
-export interface HeldUserKey {
-  account: string
-  /** The caller's own id, which outgoing sealed bodies are bound to. */
-  userId: string
-  record: E2eKeyRecord
-}
+export const NO_USER_KEY_HINT =
+  'threa: this stream is end-to-end encrypted, and no key is unlocked on this machine — run "threa e2e unlock"'
 
 /**
- * The identity key this machine holds for the caller, or undefined when
- * `threa e2e unlock` has not been run here. Sealed reads and sends resolve it
- * once and keep the imported key for the process.
+ * Which key this invocation reads sealed streams with. A person reads with the
+ * identity key `threa e2e unlock` filed for them; a bot key reads with the key
+ * its runtime holds, under the scope that runtime was configured with — so a
+ * CLI launched beside a connector addresses the same account the connector
+ * advertised to the workspace.
  */
-export async function readHeldUserKey(params: {
+export async function resolveSealedKeyAccounts(params: {
   client: ThreaApiClient
-  workspaceId: string
-  choice: KeyStoreChoice
-}): Promise<HeldUserKey | undefined> {
-  const { account, userId } = await principalForKey(params.client, params.workspaceId)
-  const record = openKeyStore(params.choice, account).read(account)
-  return record ? { account, userId, record } : undefined
+  config: ThreaConfig
+}): Promise<SealedKeyAccounts> {
+  const me = await fetchPrincipal(params.client)
+  if (me.kind !== "bot") {
+    const userId = me.userId
+    if (!userId) throw new Error(`threa: GET /me named no principal id for ${me.kind}`)
+    const account = e2eUserKeyAccount(params.config.workspaceId, userId)
+    return { senderId: userId, accountFor: () => account, missingKeyHint: () => NO_USER_KEY_HINT }
+  }
+
+  const botId = me.botId
+  if (!botId) throw new Error("threa: GET /me named no bot id")
+  const scope = params.config.keyScope ?? "host"
+  if (scope === "instance" && !params.config.instanceId) {
+    throw new Error('threa: keyScope "instance" needs an instanceId in the config (THREA_INSTANCE_ID)')
+  }
+  const account = e2eKeyAccount({
+    scope,
+    hostname: hostname(),
+    instanceId: params.config.instanceId ?? "",
+    identitySeed: params.config.apiKey,
+  })
+  return {
+    senderId: botId,
+    accountFor: (streamId) => account ?? e2eStreamKeyAccount(streamId),
+    missingKeyHint: (missing, store) =>
+      `threa: this stream is end-to-end encrypted, and this bot holds no key in ${store.describe} ` +
+      `as ${missing} — start the runtime that owns this key, or set keyScope to the one it uses ` +
+      `(currently "${scope}")`,
+  }
+}
+
+async function accountForKey(client: ThreaApiClient, workspaceId: string): Promise<string> {
+  return (await principalForKey(client, workspaceId)).account
 }
 
 export interface UnlockResult {

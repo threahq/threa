@@ -27,6 +27,10 @@ async function main(): Promise<void> {
     apiKey: config.apiKey,
     workspaceId: config.workspaceId,
     baseUrl: config.baseUrl,
+    keyScope: config.keyScope,
+    ...(config.keyStore === undefined ? {} : { keyStore: config.keyStore }),
+    ...(config.keyDir === undefined ? {} : { keyDir: config.keyDir }),
+    instanceId: config.instanceId,
   })
 
   const connector = createHermesConnector(config, {

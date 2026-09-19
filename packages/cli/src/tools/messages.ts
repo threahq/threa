@@ -3,9 +3,15 @@ import { z } from "zod"
 import type { ThreaApiClient } from "../api-client"
 import { deleteMessage, findMessagesByMetadata, sendMessage, updateMessage } from "../ops"
 import type { RefResolver } from "../resolver"
+import type { SealedStreams } from "../sealed"
 import { runTool } from "./result"
 
-export function registerMessageTools(server: McpServer, client: ThreaApiClient, resolver: RefResolver): void {
+export function registerMessageTools(
+  server: McpServer,
+  client: ThreaApiClient,
+  resolver: RefResolver,
+  sealed: SealedStreams
+): void {
   server.registerTool(
     "send_message",
     {
@@ -21,7 +27,9 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient, 
         "double-posts — the effective id is returned as `clientMessageId`. `metadata` is a flat string→string " +
         "map (≤20 keys, no `threa.` key prefix) stamped on the message for later lookup via " +
         "find_messages_by_metadata. The result carries the created message plus `conversationId` when a " +
-        "conversation directive was applied.",
+        "conversation directive was applied. Into an end-to-end-encrypted stream the content is sealed with " +
+        "the key this machine holds before it leaves this process, and the result carries `sealed: true`; " +
+        "`metadata` and the conversation args are rejected there because they would travel in the clear.",
       inputSchema: {
         stream_id: z.string(),
         content: z.string().min(1),
@@ -40,6 +48,7 @@ export function registerMessageTools(server: McpServer, client: ThreaApiClient, 
           metadata,
           conversationId: conversation_id,
           startConversation: start_conversation,
+          sealed,
         })
       )
   )

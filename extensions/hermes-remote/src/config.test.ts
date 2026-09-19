@@ -56,13 +56,27 @@ describe("loadHermesConfig", () => {
 })
 
 describe("writeCliConfig", () => {
-  test("writes the four CLI fields at 0600 and replaces an existing file", () => {
+  test("hands the CLI this install's identity and key settings at 0600, replacing an existing file", () => {
     const dir = mkdtempSync(join(tmpdir(), "hermes-cli-config-"))
     const path = join(dir, "nested", "threa-cli.json")
     try {
-      writeCliConfig(path, { apiKey: "threa_bk_1", workspaceId: "ws_1", baseUrl: "https://app.threa.io" })
+      writeCliConfig(path, {
+        apiKey: "threa_bk_1",
+        workspaceId: "ws_1",
+        baseUrl: "https://app.threa.io",
+        keyScope: "host",
+        instanceId: "inst_1",
+      })
       writeFileSync(path, "stale")
-      writeCliConfig(path, { apiKey: "threa_bk_2", workspaceId: "ws_2", baseUrl: "https://eu.threa.io" })
+      writeCliConfig(path, {
+        apiKey: "threa_bk_2",
+        workspaceId: "ws_2",
+        baseUrl: "https://eu.threa.io",
+        keyScope: "instance",
+        keyStore: "file",
+        keyDir: "/keys",
+        instanceId: "inst_2",
+      })
 
       expect({
         content: JSON.parse(readFileSync(path, "utf8")) as unknown,
@@ -72,6 +86,10 @@ describe("writeCliConfig", () => {
           apiKey: "threa_bk_2",
           workspaceId: "ws_2",
           baseUrl: "https://eu.threa.io",
+          keyScope: "instance",
+          keyStore: "file",
+          keyDir: "/keys",
+          instanceId: "inst_2",
           principal: "bot",
         },
         mode: 0o600,

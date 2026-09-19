@@ -68,6 +68,11 @@ export interface CliConfigInput {
   apiKey: string
   workspaceId: string
   baseUrl: string
+  /** The connector's own key settings, so the MCP addresses the key this install advertised. */
+  keyScope: RemoteSessionConfig["keyScope"]
+  keyStore?: RemoteSessionConfig["keyStore"]
+  keyDir?: string
+  instanceId: string
 }
 
 /** The `THREA_CONFIG` file the Hermes-side `threa` MCP server reads; 0600 because it carries the bot key. */
