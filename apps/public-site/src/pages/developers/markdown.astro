@@ -10,6 +10,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   sections={[
     { id: "the-content-field", label: "The content field" },
     { id: "formatting", label: "Standard markdown" },
+    { id: "math", label: "Math" },
     { id: "mentions", label: "Mentions and channels" },
     { id: "attachments", label: "Attachments" },
     { id: "emoji", label: "Emoji" },
@@ -71,6 +72,45 @@ import CodeBlock from "../../components/CodeBlock.astro"
     <code>user:</code> or <code>attachment:</code>) is a typed reference, not a
     plain link; Threa renders it as a chip or card. Use <code>https://</code>,
     <code>mailto:</code>, or a relative path for ordinary links.
+  </div>
+
+  <h2 id="math">Math</h2>
+  <p>
+    TeX between math delimiters renders as an equation. Both the dollar and the
+    backslash form work, so a formula pasted out of a paper or a model's answer
+    arrives as written.
+  </p>
+  <div class="docs-table-wrap">
+  <table class="docs-table">
+    <thead><tr><th>Placement</th><th>Syntax</th></tr></thead>
+    <tbody>
+      <tr><td>Inline, inside a sentence</td><td><code>$e^&#123;i\pi&#125;+1=0$</code>, <code>\(e^&#123;i\pi&#125;+1=0\)</code></td></tr>
+      <tr><td>Display, centered on its own line</td><td><code>$$\frac&#123;9&#125;&#123;31&#125;$$</code>, <code>\[\frac&#123;9&#125;&#123;31&#125;\]</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <CodeBlock
+    lang="text"
+    label="You write"
+    code={`Sample share is \\( \\frac{9}{31} \\approx 29\\% \\), so
+
+\\[ \\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi} \\]`}
+  />
+  <p>
+    What sits between the delimiters is TeX, not markdown: <code>\&#123;</code>,
+    <code>\\</code>, <code>*</code> and <code>_</code> keep their TeX meaning and
+    reach the renderer untouched. Math is content rather than a typed reference,
+    so it has no scheme and no resolved form; you read back the string you sent.
+  </p>
+  <div class="note">
+    <strong>Dollar amounts stay prose</strong>
+    A single <code>$</code> opens math only when it hugs its content and the
+    closing <code>$</code> isn't followed by a digit, so
+    <code>costs $5 and $10 total</code>, <code>$50-$60</code>,
+    <code>$1,000</code> and <code>$PATH</code> are left alone.
+    <code>The price is $5, so $p = 5$.</code> renders the second pair and only
+    that. A <code>$</code> inside a code span, a fence, or a URL is never a
+    delimiter.
   </div>
 
   <h2 id="mentions">Mentions and channels</h2>
