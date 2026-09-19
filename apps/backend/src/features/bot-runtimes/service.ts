@@ -46,6 +46,7 @@ import {
   type StreamActiveActor,
 } from "./repository"
 import { RuntimeE2eKeysRepository, type RuntimeE2eKeyRegistration } from "./runtime-e2e-keys"
+import { parseRuntimeCommandInvocationMetadata } from "../commands"
 import type { LabelAssignmentService } from "../labels"
 import {
   assertStreamWritable,
@@ -1189,6 +1190,10 @@ export class BotRuntimeService {
   }
 
   private async emitAvailabilityHint(db: Querier, invocation: BotInvocation): Promise<void> {
+    const command =
+      invocation.trigger === BotInvocationTriggers.SESSION_CONTROL
+        ? parseRuntimeCommandInvocationMetadata(invocation.metadata)
+        : null
     await OutboxRepository.insert(db, "bot_invocation:available", {
       workspaceId: invocation.workspaceId,
       botId: invocation.actorId,
@@ -1196,6 +1201,7 @@ export class BotRuntimeService {
       requiredCapability: invocation.requiredCapability,
       targetInstanceId: invocation.targetInstanceId,
       targetRuntimeSessionId: invocation.targetRuntimeSessionId,
+      sessionControlCommand: command?.name ?? null,
       createdAt: invocation.createdAt.toISOString(),
     })
   }
@@ -1484,6 +1490,8 @@ export class BotRuntimeService {
     responseStreamId?: string
     /** Skip invocations answering into these streams (see `claimOne`). */
     excludeResponseStreamIds?: string[]
+    /** Claim this invocation or nothing (see `claimOne`). */
+    invocationId?: string
   }): Promise<BotInvocation | null> {
     // Parking is independent lifecycle cleanup. Commit it before taking any
     // stream authority locks so exhausted-row cleanup can never invert the

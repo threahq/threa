@@ -284,6 +284,11 @@ export const claimInvocationSchema = z.object({
   // Skip invocations answering into these streams, so a runtime busy in some
   // streams can still pick up work elsewhere. Session control is never skipped.
   excludeResponseStreamIds: z.array(z.string().min(1).max(64)).max(32).optional(),
+  // Claim this invocation or nothing. A supervisor answering one command for a
+  // session that cannot answer for itself was told which invocation by the
+  // availability hint; without the filter FIFO order could hand it a different
+  // queued command, and a claim it should not have taken cannot be released.
+  invocationId: z.string().min(1).max(128).optional(),
 })
 
 export const renewInvocationClaimSchema = z.object({

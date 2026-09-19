@@ -13,6 +13,7 @@ import {
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
+import { buildRuntimeCommandInvocationMetadata } from "../commands"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { StreamEventRepository } from "../streams"
 import * as routeResolver from "./invocation-route-resolver"
@@ -163,6 +164,63 @@ describe("BotRuntimeService outbox emission", () => {
         targetInstanceId: null,
         targetRuntimeSessionId: null,
       })
+    })
+
+    it("names the session-control command on the availability hint", async () => {
+      patchWithTransaction()
+      const inv = makeInvocation({
+        trigger: "session-control",
+        requiredCapability: "session-control",
+        metadata: buildRuntimeCommandInvocationMetadata({ commandId: "cmd_1", name: "done", args: "--force" }),
+      })
+      spyOn(BotInvocationRepository, "insertIdempotent").mockResolvedValue({
+        invocation: inv,
+        wasNewlyInserted: true,
+      })
+      const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      await service.createInvocation({
+        workspaceId: inv.workspaceId,
+        rootStreamId: inv.rootStreamId,
+        activeStreamId: inv.activeStreamId,
+        sourceMessageId: inv.sourceMessageId,
+        responseStreamId: inv.responseStreamId,
+        actorId: inv.actorId,
+        trigger: "session-control",
+        requiredCapability: "session-control",
+        promptMarkdown: inv.promptMarkdown,
+        authorUserId: inv.authorUserId,
+        metadata: inv.metadata,
+      })
+
+      expect((insertSpy.mock.calls[0]?.[2] as unknown as Record<string, unknown>).sessionControlCommand).toBe("done")
+    })
+
+    it("leaves the command null for any other trigger", async () => {
+      patchWithTransaction()
+      spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue(sourceState())
+      spyOn(BotInvocationRepository, "insertIdempotent").mockResolvedValue({
+        invocation: makeInvocation({ requiredCapability: "mentionable" }),
+        wasNewlyInserted: true,
+      })
+      const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      await service.createInvocation({
+        workspaceId: "ws_1",
+        rootStreamId: "stream_root",
+        activeStreamId: "stream_active",
+        sourceMessageId: "msg_src",
+        responseStreamId: "stream_resp",
+        actorId: "bot_alice",
+        trigger: "mention",
+        requiredCapability: "mentionable",
+        promptMarkdown: "do a thing",
+        authorUserId: "usr_owner",
+      })
+
+      expect((insertSpy.mock.calls[0]?.[2] as unknown as Record<string, unknown>).sessionControlCommand).toBeNull()
     })
 
     it("does not emit when the row was an idempotent retry (ON CONFLICT)", async () => {

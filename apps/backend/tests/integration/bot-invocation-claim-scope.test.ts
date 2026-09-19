@@ -70,7 +70,7 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
     })
   }
 
-  const claim = (responseStreamId?: string, excludeResponseStreamIds?: string[]) =>
+  const claim = (responseStreamId?: string, excludeResponseStreamIds?: string[], invocationId?: string) =>
     BotInvocationRepository.claimOne(pool, {
       workspaceId: ws,
       botId,
@@ -82,9 +82,10 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
       maxAttempts: 5,
       ...(responseStreamId ? { responseStreamId } : {}),
       ...(excludeResponseStreamIds ? { excludeResponseStreamIds } : {}),
+      ...(invocationId ? { invocationId } : {}),
     })
 
-  const findNext = (excludeResponseStreamIds?: string[]) =>
+  const findNext = (excludeResponseStreamIds?: string[], invocationId?: string) =>
     BotInvocationRepository.findNextClaimable(pool, {
       workspaceId: ws,
       botId,
@@ -93,6 +94,7 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
       supportedCapabilities: ["active-scratchpad", "session-control"],
       maxAttempts: 5,
       ...(excludeResponseStreamIds ? { excludeResponseStreamIds } : {}),
+      ...(invocationId ? { invocationId } : {}),
     })
 
   test("should persist the actual runtime session on every successful claim", async () => {
@@ -259,6 +261,36 @@ describe("BotInvocationRepository.claimOne response-stream scope", () => {
         found: (await findNext([]))?.id,
         claimed: (await claim(undefined, []))?.id,
       }).toEqual({ found: "binv_empty_first", claimed: "binv_empty_first" })
+    })
+  })
+
+  describe("invocationId", () => {
+    test("should claim the named invocation past FIFO-earlier work on the same session", async () => {
+      await seed("binv_named_second_in_line", rootStream, "msg_earlier", "session-control")
+      await seed("binv_named_target", rootStream, "msg_target", "session-control")
+
+      expect({
+        found: (await findNext(undefined, "binv_named_target"))?.id,
+        claimed: (await claim(undefined, undefined, "binv_named_target"))?.id,
+      }).toEqual({ found: "binv_named_target", claimed: "binv_named_target" })
+    })
+
+    test("should claim nothing when the named invocation is already claimed", async () => {
+      await seed("binv_named_taken", rootStream, "msg_taken", "session-control")
+      await seed("binv_named_bystander", rootStream, "msg_bystander", "session-control")
+      await claim(undefined, undefined, "binv_named_taken")
+
+      expect({
+        found: await findNext(undefined, "binv_named_taken"),
+        claimed: await claim(undefined, undefined, "binv_named_taken"),
+      }).toEqual({ found: null, claimed: null })
+    })
+
+    test("should claim nothing for an id that does not exist", async () => {
+      await seed("binv_named_present", rootStream, "msg_present", "session-control")
+
+      expect(await claim(undefined, undefined, "binv_no_such_row")).toBeNull()
+      expect((await claim(undefined, undefined, "binv_named_present"))?.id).toBe("binv_named_present")
     })
   })
 })
