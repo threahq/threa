@@ -266,7 +266,12 @@ function readEnvelopeVersion(raw: unknown): number | null {
   return typeof v === "number" ? v : null
 }
 
-function parseStreamEnvelope(raw: unknown): StreamEnvelope | null {
+/**
+ * Read a v2 stream envelope off the wire, or null if the framing isn't one.
+ * Shared with the sealed-decision read path (`decision-card`), which parses the
+ * same envelope before checking its AAD (INV-35).
+ */
+export function parseStreamEnvelope(raw: unknown): StreamEnvelope | null {
   if (!raw || typeof raw !== "object") return null
   const candidate = raw as Partial<StreamEnvelope>
   if (

@@ -8,6 +8,11 @@ import { toast } from "sonner"
 import { decisionsApi } from "@/api"
 import { ApiError } from "@/api/client"
 import * as hooksModule from "@/hooks"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
+import * as decisionCacheModule from "@/lib/crypto/decision-cache"
+import * as decisionCardModule from "@/lib/crypto/decision-card"
+import * as e2eSessionModule from "@/stores/e2e-session-store"
+import * as streamStoreModule from "@/stores/stream-store"
 import { PanelProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DecisionEvent } from "./decision-event"
@@ -20,6 +25,7 @@ beforeEach(() => {
     getActorName: (actorId: string | null) => (actorId === "usr_kris" ? "Kristoffer Remback" : "Someone"),
     getBot: (botId: string) => (botId === BOT.id ? BOT : undefined),
   } as unknown as ReturnType<typeof hooksModule.useActors>)
+  vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_kris")
 })
 
 function decision(overrides: Partial<DecisionRequest> = {}): DecisionRequest {
@@ -300,5 +306,157 @@ describe("DecisionEvent", () => {
       </MemoryRouter>
     )
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+/**
+ * A sealed card on an encrypted stream: the wire carries placeholders where the
+ * question is, and the words live in `ciphertext`. These cases drive the card
+ * through the decrypt layer's states with the cache and session stubbed — the
+ * crypto itself is covered in `lib/crypto/decision-card.test.ts`.
+ */
+describe("DecisionEvent (sealed card)", () => {
+  const PLACEHOLDER = "\u200b"
+
+  function sealedDecision(overrides: Partial<DecisionRequest> = {}): DecisionRequest {
+    return decision({
+      title: PLACEHOLDER,
+      bodyMarkdown: PLACEHOLDER,
+      options: [
+        { id: "opt_yes", label: PLACEHOLDER, tone: "primary" },
+        { id: "opt_wait", label: PLACEHOLDER, tone: "neutral" },
+      ],
+      ciphertext: "Y2lwaGVy",
+      envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
+      ...overrides,
+    })
+  }
+
+  function unlock() {
+    vi.spyOn(e2eSessionModule, "useE2eSession").mockReturnValue({
+      status: "unlocked",
+      keyId: "ek_1",
+      publicKey: null,
+      privateKey: {} as CryptoKey,
+      deviceTrusted: true,
+      error: null,
+    } as ReturnType<typeof e2eSessionModule.useE2eSession>)
+    vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue({
+      id: "stream_1",
+      rootStreamId: null,
+    } as ReturnType<typeof streamStoreModule.useStreamFromStore>)
+    vi.spyOn(decisionCacheModule, "requestSealedDecision").mockResolvedValue({ status: "pending", value: null })
+    vi.spyOn(decisionCacheModule, "requestSealedDecisionNote").mockResolvedValue({ status: "pending", value: null })
+  }
+
+  function cacheCard(value: { title: string; bodyMarkdown?: string; optionLabels: Record<string, string> }) {
+    vi.spyOn(decisionCacheModule, "getCachedSealedDecision").mockReturnValue({ status: "decrypted", value })
+  }
+
+  it("shows a lock notice and no way to answer while the session is locked", () => {
+    renderCard({ request: sealedDecision({ allowNote: true }) })
+
+    expect(screen.getByText("Unlock this scratchpad to read this decision")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /.+/ })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Note (optional)")).not.toBeInTheDocument()
+  })
+
+  it("renders the decrypted question and option labels once the card opens", () => {
+    unlock()
+    cacheCard({
+      title: "Force-push the rebased branch?",
+      bodyMarkdown: "The rebase dropped **two** commits.",
+      optionLabels: { opt_yes: "Force-push", opt_wait: "Wait for me" },
+    })
+
+    renderCard({ request: sealedDecision() })
+
+    expect(screen.getByText("Force-push the rebased branch?")).toBeInTheDocument()
+    expect(screen.getByText(/The rebase dropped/)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Force-push" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Wait for me" })).toBeInTheDocument()
+  })
+
+  it("seals the note and sends it in place of the plaintext one", async () => {
+    unlock()
+    cacheCard({ title: "Force-push?", optionLabels: { opt_yes: "Force-push", opt_wait: "Wait for me" } })
+    const envelope = { v: 2, keyGeneration: 1, iv: "aXY=", aad: "bm90ZQ==" }
+    const seal = vi
+      .spyOn(decisionCardModule, "sealDecisionNote")
+      .mockResolvedValue({ ciphertext: "c2VhbGVk", envelope })
+    const resolve = vi.spyOn(decisionsApi, "resolve").mockResolvedValue({
+      decision: sealedDecision({
+        status: "resolved",
+        version: 4,
+        resolution: {
+          optionId: "opt_yes",
+          noteCiphertext: "c2VhbGVk",
+          noteEnvelope: envelope,
+          decidedBy: "usr_kris",
+          decidedAt: "2026-09-16T09:05:00.000Z",
+        },
+      }),
+    })
+
+    renderCard({ request: sealedDecision({ allowNote: true }) })
+    await userEvent.type(screen.getByLabelText("Note (optional)"), "only if CI is green")
+    await userEvent.click(screen.getByRole("button", { name: "Force-push" }))
+
+    await waitFor(() => expect(resolve).toHaveBeenCalled())
+    expect(seal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionId: "dec_1",
+        streamId: "stream_1",
+        decidedBy: "usr_kris",
+        note: "only if CI is green",
+      })
+    )
+    expect(resolve).toHaveBeenCalledWith("ws_1", "dec_1", {
+      optionId: "opt_yes",
+      note: undefined,
+      sealedNote: { ciphertext: "c2VhbGVk", envelope },
+      version: 3,
+    })
+  })
+
+  it("keeps the answer unsent when the note can't be sealed", async () => {
+    unlock()
+    cacheCard({ title: "Force-push?", optionLabels: { opt_yes: "Force-push", opt_wait: "Wait for me" } })
+    vi.spyOn(decisionCardModule, "sealDecisionNote").mockRejectedValue(new Error("no key"))
+    const resolve = vi.spyOn(decisionsApi, "resolve")
+    const error = vi.spyOn(toast, "error")
+
+    renderCard({ request: sealedDecision({ allowNote: true }) })
+    await userEvent.type(screen.getByLabelText("Note (optional)"), "only if CI is green")
+    await userEvent.click(screen.getByRole("button", { name: "Force-push" }))
+
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Couldn't seal your note"))
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it("shows the decrypted note on a card that has been answered", () => {
+    unlock()
+    cacheCard({ title: "Force-push?", optionLabels: { opt_yes: "Force-push", opt_wait: "Wait for me" } })
+    vi.spyOn(decisionCacheModule, "getCachedSealedDecisionNote").mockReturnValue({
+      status: "decrypted",
+      value: "only if CI is green",
+    })
+
+    renderCard({
+      request: sealedDecision({
+        status: "resolved",
+        version: 4,
+        resolution: {
+          optionId: "opt_yes",
+          noteCiphertext: "c2VhbGVk",
+          noteEnvelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "bm90ZQ==" },
+          decidedBy: "usr_kris",
+          decidedAt: "2026-09-16T09:05:00.000Z",
+        },
+      }),
+    })
+
+    expect(screen.getByText("only if CI is green")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Force-push/ })).toBeInTheDocument()
   })
 })

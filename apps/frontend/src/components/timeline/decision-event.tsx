@@ -8,6 +8,7 @@ import {
   type DecisionRequestedEventPayload,
   type DecisionResolution,
   type DecisionResolvedEventPayload,
+  type EnclaveStreamEnvelope,
   type DecisionRequestStatus,
   type StreamEvent,
   type ThreadSummary,
@@ -18,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { useActors, useThreadDraft } from "@/hooks"
+import { useDecryptedDecision } from "@/hooks/use-decrypted-decision"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { ThreadSlot } from "./thread-slot"
@@ -62,6 +64,13 @@ const CHOSEN_PILL_CLASS: Record<DecisionOption["tone"], string> = {
     "bg-[hsl(142_76%_36%/0.14)] text-[hsl(142,76%,30%)] hover:bg-[hsl(142_76%_36%/0.14)] hover:text-[hsl(142,76%,30%)]",
   neutral: "bg-muted text-foreground/80 hover:bg-muted hover:text-foreground/80",
   destructive: "bg-destructive/10 text-destructive hover:bg-destructive/10 hover:text-destructive",
+}
+
+/** Stand-in for a sealed card's question when it can't be read (locked / decrypting / failed). */
+const DECISION_DECRYPT_NOTICE_TEXT: Record<"locked" | "pending" | "failed", string> = {
+  locked: "Unlock this scratchpad to read this decision",
+  pending: "Decrypting…",
+  failed: "Couldn't decrypt this decision",
 }
 
 const RAIL_CLASS: Record<DecisionOption["tone"] | "open" | "closed", string> = {
@@ -113,23 +122,36 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
     if (!seen || statusPatch.version > seen.version) highestPatch.current = statusPatch
   }
 
-  if (!payload || !decision) return null
-
+  // Resolved before the early return so the sealed-card hook can be given the
+  // winning resolution (its note is sealed under the same key as the card).
   const patch = highestPatch.current
-  let snapshot: DecisionSnapshot = {
-    status: decision.status,
-    resolution: decision.resolution,
-    version: decision.version,
-  }
-  if (patch && patch.version >= snapshot.version) {
+  let snapshot: DecisionSnapshot | null = decision
+    ? { status: decision.status, resolution: decision.resolution, version: decision.version }
+    : null
+  if (snapshot && patch && patch.version >= snapshot.version) {
     snapshot = { status: patch.status, resolution: patch.resolution, version: patch.version }
   }
-  if (local && local.version >= snapshot.version) snapshot = local
+  if (snapshot && local && local.version >= snapshot.version) snapshot = local
+
+  const sealed = useDecryptedDecision(workspaceId, decision, snapshot?.resolution)
+
+  if (!payload || !decision || !snapshot) return null
 
   const { status, resolution, version } = snapshot
   const open = status === "open"
 
   const requesterLabel = (decision.requesterBotId ? getBot(decision.requesterBotId)?.name : null) ?? "A bot"
+
+  const cardIsSealed = sealed.status !== "plaintext"
+  // A sealed card that can't be opened has zero-width placeholders where its
+  // question and its option labels should be, so it shows a notice and no
+  // buttons: nobody answers a question they can't read, and a locked viewer
+  // couldn't seal the note anyway.
+  const unreadable = cardIsSealed && sealed.status !== "decrypted" ? sealed.status : null
+  const title = sealed.content?.title ?? decision.title
+  const bodyMarkdown = cardIsSealed ? sealed.content?.bodyMarkdown : decision.bodyMarkdown
+  const labelFor = (option: DecisionOption) => sealed.content?.optionLabels[option.id] ?? option.label
+  const shownNote = cardIsSealed ? sealed.note : resolution?.note
 
   const handleResolve = async (optionId: string) => {
     // Re-entrancy guard instead of `disabled`: disabling would blur the button
@@ -138,9 +160,26 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
     setPendingOptionId(optionId)
     const trimmed = note.trim()
     try {
+      // A sealed card takes only a sealed note and a plaintext one only plaintext
+      // (INV-E1) — the seal happens here, client-side, or the answer goes without
+      // a note rather than sending one the server could read.
+      let sealedNote: { ciphertext: string; envelope: EnclaveStreamEnvelope } | undefined
+      if (cardIsSealed && trimmed.length > 0) {
+        if (!sealed.sealNote) {
+          toast.error("Unlock this scratchpad before answering")
+          return
+        }
+        try {
+          sealedNote = await sealed.sealNote(trimmed)
+        } catch {
+          toast.error("Couldn't seal your note")
+          return
+        }
+      }
       const { decision: resolved } = await decisionsApi.resolve(workspaceId, decision.id, {
         optionId,
-        note: trimmed.length > 0 ? trimmed : undefined,
+        note: !cardIsSealed && trimmed.length > 0 ? trimmed : undefined,
+        sealedNote,
         version,
       })
       setLocal({ status: resolved.status, resolution: resolved.resolution, version: resolved.version })
@@ -160,9 +199,9 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   }
 
   const chosenOption = resolution ? decision.options.find((option) => option.id === resolution.optionId) : undefined
-  const chosenLabel = resolution ? (chosenOption?.label ?? resolution.optionId) : null
+  const chosenLabel = chosenOption ? labelFor(chosenOption) : (resolution?.optionId ?? null)
   const chosenTone: DecisionOption["tone"] = chosenOption?.tone ?? "neutral"
-  let terminalLine: string | null = chosenLabel
+  let terminalLine: string | null = unreadable ? null : chosenLabel
   if (!terminalLine && status === "cancelled") terminalLine = "Cancelled"
   if (!terminalLine && status === "expired") terminalLine = "Expired"
   const deciderName = resolution?.decidedBy ? getActorName(resolution.decidedBy, "user") : null
@@ -175,7 +214,8 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   // Terminal with a resolution keeps ONLY the chosen option's Button mounted, in
   // the same slot with the same key, so the button the viewer just pressed keeps
   // focus and its relabeling is announced (the bot-access pattern).
-  const shownOptions = open ? decision.options : decision.options.filter((option) => option.id === resolution?.optionId)
+  let shownOptions = open ? decision.options : decision.options.filter((option) => option.id === resolution?.optionId)
+  if (unreadable) shownOptions = []
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
@@ -188,7 +228,13 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
             aria-hidden="true"
           />
           <div className="min-w-0 flex-1">
-            <p className="text-[14px] font-semibold leading-snug text-foreground">{decision.title}</p>
+            {unreadable ? (
+              <p className="text-[14px] italic leading-snug text-muted-foreground">
+                {DECISION_DECRYPT_NOTICE_TEXT[unreadable]}
+              </p>
+            ) : (
+              <p className="text-[14px] font-semibold leading-snug text-foreground">{title}</p>
+            )}
             <p className="mt-0.5 text-[12px] text-muted-foreground">
               <span className="font-medium text-foreground/70">{requesterLabel}</span>{" "}
               {open ? "needs a decision" : "asked for a decision"}
@@ -196,10 +242,10 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
           </div>
         </div>
 
-        {decision.bodyMarkdown && (
+        {bodyMarkdown && (
           <div className="mt-2 pl-6">
             <MarkdownContent
-              content={decision.bodyMarkdown}
+              content={bodyMarkdown}
               messageId={event.id}
               className="text-[13px] leading-relaxed text-foreground/90"
             />
@@ -213,7 +259,7 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
               open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-2 gap-y-1"
             )}
           >
-            {open && decision.allowNote && (
+            {open && decision.allowNote && !unreadable && (
               <Textarea
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
@@ -257,7 +303,7 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
                     {chosen && !pendingOptionId && chosenTone !== "destructive" && (
                       <Check className="mr-1 h-3 w-3" aria-hidden="true" />
                     )}
-                    {option.label}
+                    {labelFor(option)}
                   </Button>
                 )
               })}
@@ -279,9 +325,9 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
             )}
           </div>
 
-          {!open && resolution?.note && (
+          {!open && shownNote && (
             <p className="mt-2 whitespace-pre-wrap border-l-2 border-border pl-2.5 text-[13px] leading-relaxed text-foreground/80">
-              {resolution.note}
+              {shownNote}
             </p>
           )}
         </div>
