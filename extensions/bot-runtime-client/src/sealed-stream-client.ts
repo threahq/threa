@@ -221,13 +221,21 @@ export class SealedStreamClient {
         unreadableReason: String(error instanceof Error ? error.message : error),
       }
     }
-    const raw = await openMessageAsString({
-      key,
-      ciphertext: base64ToBytes(wire.sealed.ciphertext),
-      envelope: wire.sealed.envelope,
-    })
-    const payload = parseSealedPayload(raw)
-    return { ...base, contentMarkdown: payload.contentMarkdown, attachmentRefs: payload.attachmentRefs ?? [] }
+    try {
+      const raw = await openMessageAsString({
+        key,
+        ciphertext: base64ToBytes(wire.sealed.ciphertext),
+        envelope: wire.sealed.envelope,
+      })
+      const payload = parseSealedPayload(raw)
+      return { ...base, contentMarkdown: payload.contentMarkdown, attachmentRefs: payload.attachmentRefs ?? [] }
+    } catch (error) {
+      return {
+        ...base,
+        contentMarkdown: null,
+        unreadableReason: String(error instanceof Error ? error.message : error),
+      }
+    }
   }
 
   /**
@@ -246,9 +254,12 @@ export class SealedStreamClient {
     return key
   }
 
+  /**
+   * Never cached: sealing under a stale generation after the owner rolled the
+   * key would hand the revoked generation's holders a readable message, and the
+   * send path validates only the envelope's shape.
+   */
   private async currentGeneration(root: string): Promise<number> {
-    const known = this.generations.get(root)
-    if (known !== undefined) return known
     await this.loadWraps(root)
     return this.generations.get(root) ?? 0
   }
@@ -282,9 +293,12 @@ export class SealedStreamClient {
   private async resolveRoot(streamId: string): Promise<string> {
     let pending = this.roots.get(streamId)
     if (!pending) {
-      pending = this.request<{ data: { id: string; rootStreamId?: string } }>("GET", `/streams/${streamId}`).then(
-        (stream) => stream.data.rootStreamId ?? stream.data.id
-      )
+      pending = this.request<{ data: { id: string; rootStreamId?: string } }>("GET", `/streams/${streamId}`)
+        .then((stream) => stream.data.rootStreamId ?? stream.data.id)
+        .catch((error: unknown) => {
+          this.roots.delete(streamId)
+          throw error
+        })
       this.roots.set(streamId, pending)
     }
     return pending
@@ -293,13 +307,16 @@ export class SealedStreamClient {
   private async resolveSenderId(): Promise<string> {
     if (this.opts.senderId) return this.opts.senderId
     if (!this.sender) {
-      this.sender = this.request<{ data: { kind: string; userId?: string; botId?: string } }>("GET", "/me").then(
-        (me) => {
+      this.sender = this.request<{ data: { kind: string; userId?: string; botId?: string } }>("GET", "/me")
+        .then((me) => {
           const id = me.data.kind === "bot" ? me.data.botId : me.data.userId
           if (!id) throw new Error("GET /me named no principal id")
           return id
-        }
-      )
+        })
+        .catch((error: unknown) => {
+          this.sender = undefined
+          throw error
+        })
     }
     return this.sender
   }
@@ -315,14 +332,21 @@ export class SealedStreamClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     const text = await response.text()
-    const parsed = text.length > 0 ? (JSON.parse(text) as Record<string, unknown>) : {}
     if (!response.ok) {
+      // A gateway or proxy answers in HTML; the status and the fallback code are
+      // what the caller acts on, so they must survive an unparseable body.
+      let parsed: Record<string, unknown> = {}
+      try {
+        if (text.length > 0) parsed = JSON.parse(text) as Record<string, unknown>
+      } catch {
+        parsed = {}
+      }
       throw new SealedStreamApiError(
         typeof parsed.message === "string" ? parsed.message : `${method} ${path} failed`,
         response.status,
         typeof parsed.code === "string" ? parsed.code : "UNKNOWN"
       )
     }
-    return parsed as T
+    return (text.length > 0 ? (JSON.parse(text) as Record<string, unknown>) : {}) as T
   }
 }

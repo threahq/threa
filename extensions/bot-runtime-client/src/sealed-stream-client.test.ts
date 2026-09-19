@@ -200,6 +200,13 @@ describe("SealedStreamClient", () => {
             ciphertext: bytesToBase64(readable.ciphertext),
             envelope: { ...readable.envelope, keyGeneration: 7 },
           }),
+          wireMessage("msg_tampered", {
+            ciphertext: bytesToBase64(readable.ciphertext),
+            envelope: {
+              ...readable.envelope,
+              aad: bytesToBase64(buildMessageAad({ streamId: ROOT, messageId: "msg_other", senderId: "usr_owner" })),
+            },
+          }),
           wireMessage("msg_2", { ciphertext: bytesToBase64(readable.ciphertext), envelope: readable.envelope }),
         ],
         hasMore: true,
@@ -218,6 +225,7 @@ describe("SealedStreamClient", () => {
     expect(page.messages.map((message) => [message.id, message.contentMarkdown, message.unreadableReason])).toEqual([
       ["msg_legacy", null, "Message carries no stream-key envelope"],
       ["msg_rotated", null, `No key wrap for generation 7 of ${ROOT} is addressed to a key this client holds`],
+      ["msg_tampered", null, expect.any(String)],
       ["msg_2", "still readable", undefined],
     ])
   })
@@ -252,6 +260,95 @@ describe("SealedStreamClient", () => {
     expect(base64ToBytes(posted.sealed.envelope.aad)).toEqual(
       buildMessageAad({ streamId: ROOT, messageId: sent.clientMessageId, senderId: SENDER })
     )
+  })
+
+  test("seals under the generation the stream is at now, not the one it opened with", async () => {
+    const pair = await generateKeyPair()
+    const publicKey = await importRecipientPublicKey(await exportPublicKey(pair.publicKey))
+    const wrapFor = async (key: Uint8Array, keyGeneration: number) => {
+      const wrapped = await wrapStreamKey({
+        key,
+        recipientPublicKey: publicKey,
+        aad: buildWrapAad({ streamId: ROOT, keyGeneration, recipientKeyId: KEY_ID }),
+      })
+      return {
+        keyGeneration,
+        recipientKeyId: KEY_ID,
+        recipientKind: "bot",
+        wrapEnc: bytesToBase64(wrapped.enc),
+        wrapCt: bytesToBase64(wrapped.ct),
+      }
+    }
+    const first = generateStreamKey()
+    const rotated = generateStreamKey()
+    const wire: Wire = { wraps: { currentKeyGeneration: 0, wraps: [await wrapFor(first, 0)] } }
+    const { fetch, calls } = fakeApi(wire)
+    const client = new SealedStreamClient({
+      baseUrl: "https://api.test",
+      apiKey: "k",
+      workspaceId: WORKSPACE,
+      keys: { keysForStream: async () => [{ keyId: KEY_ID, privateKey: pair.privateKey }] },
+      fetch,
+    })
+
+    await client.sendMessage(ROOT, "before the roll")
+    wire.wraps = { currentKeyGeneration: 1, wraps: [await wrapFor(first, 0), await wrapFor(rotated, 1)] }
+    const sent = await client.sendMessage(ROOT, "after the roll")
+
+    const posted = calls.filter((call) => call.method === "POST").at(-1)!.body as {
+      sealed: { ciphertext: string; envelope: StreamEnvelope }
+    }
+    expect(posted.sealed.envelope.keyGeneration).toBe(1)
+    const opened = await openMessageAsString({
+      key: rotated,
+      ciphertext: base64ToBytes(posted.sealed.ciphertext),
+      envelope: posted.sealed.envelope,
+    })
+    expect(parseSealedPayload(opened).contentMarkdown).toBe("after the roll")
+    expect(base64ToBytes(posted.sealed.envelope.aad)).toEqual(
+      buildMessageAad({ streamId: ROOT, messageId: sent.clientMessageId, senderId: SENDER })
+    )
+  })
+
+  test("keeps the HTTP status when the error body is not JSON", async () => {
+    const { keys } = await sealedFixture()
+    const fetch = (async (_url: string | URL, _init?: RequestInit) =>
+      new Response("<html>gateway</html>", { status: 502 })) as typeof globalThis.fetch
+    const client = new SealedStreamClient({
+      baseUrl: "https://api.test",
+      apiKey: "k",
+      workspaceId: WORKSPACE,
+      keys,
+      fetch,
+    })
+
+    await expect(client.readMessages(ROOT)).rejects.toMatchObject({
+      name: "SealedStreamApiError",
+      status: 502,
+      code: "UNKNOWN",
+    })
+  })
+
+  test("retries a lookup whose first attempt failed", async () => {
+    const { keys, wraps } = await sealedFixture()
+    const { fetch: happy } = fakeApi({ wraps })
+    let attempts = 0
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      attempts += 1
+      if (attempts === 1) return new Response(JSON.stringify({ code: "INTERNAL", message: "boom" }), { status: 500 })
+      return happy(url as never, init as never)
+    }) as typeof globalThis.fetch
+    const client = new SealedStreamClient({
+      baseUrl: "https://api.test",
+      apiKey: "k",
+      workspaceId: WORKSPACE,
+      keys,
+      fetch: fetchImpl,
+    })
+
+    await expect(client.readMessages(ROOT)).rejects.toMatchObject({ status: 500 })
+
+    expect(await client.readMessages(ROOT)).toEqual({ messages: [], hasMore: false })
   })
 
   test("resolves a thread to its root before touching keys", async () => {
