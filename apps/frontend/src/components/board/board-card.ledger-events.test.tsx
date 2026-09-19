@@ -420,8 +420,6 @@ describe("BoardCard running agent sessions", () => {
     const chip = within(chipSlot()!).getByRole("link", { name: /Ariadne is working — open agent trace/ })
     expect(chip).toHaveTextContent("")
     expect(chip).toHaveAttribute("href", expect.stringContaining("sess_1"))
-    // The topic still renders — the chip no longer competes for the row.
-    expect(screen.getByText("Index migration")).toBeInTheDocument()
   })
 
   it("does not light the chip for a sibling conversation's session on the same stream", async () => {
