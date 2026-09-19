@@ -1462,6 +1462,104 @@
           "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
+      },
+      "get": {
+        "operationId": "listStreamE2eKeyWraps",
+        "summary": "List the key wraps for an end-to-end-encrypted stream",
+        "tags": ["Streams"],
+        "description": "Every wrap of the stream's symmetric key, so a recipient can recover it and read the stream. A wrap is HPKE ciphertext addressed to one public key; open the one whose `recipientKeyId` you hold the private half of, then decrypt each message's `sealed.ciphertext` under the generation its envelope names. Threads inherit their root's key, so ask for the root. 400 when the stream is not encrypted.",
+        "security": [{ "apiKey": ["streams:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "streamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Stream ID (prefixed ULID)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "currentKeyGeneration": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991,
+                          "description": "Generation new messages are sealed under"
+                        },
+                        "ownerUserId": { "type": "string" },
+                        "wraps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                              "recipientKeyId": { "type": "string" },
+                              "recipientKind": { "type": "string", "enum": ["user", "bot", "enclave"] },
+                              "wrapEnc": { "type": "string", "description": "Base64 HPKE encapsulation" },
+                              "wrapCt": { "type": "string", "description": "Base64 HPKE-wrapped stream key" }
+                            },
+                            "required": ["keyGeneration", "recipientKeyId", "recipientKind", "wrapEnc", "wrapCt"],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": ["currentKeyGeneration", "ownerUserId", "wraps"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
       }
     },
     "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/rename": {
@@ -3577,7 +3675,31 @@
                                   "description": "1 for the original body, +1 per edit"
                                 },
                                 "editedAt": { "type": "string", "format": "date-time" },
-                                "createdAt": { "type": "string", "format": "date-time" }
+                                "createdAt": { "type": "string", "format": "date-time" },
+                                "sealed": {
+                                  "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                                  "type": "object",
+                                  "properties": {
+                                    "ciphertext": { "type": "string" },
+                                    "envelope": {
+                                      "type": "object",
+                                      "properties": {
+                                        "v": { "type": "number" },
+                                        "keyGeneration": {
+                                          "type": "integer",
+                                          "minimum": 0,
+                                          "maximum": 9007199254740991
+                                        },
+                                        "iv": { "type": "string" },
+                                        "aad": { "type": "string" }
+                                      },
+                                      "required": ["v", "keyGeneration", "iv", "aad"],
+                                      "additionalProperties": false
+                                    }
+                                  },
+                                  "required": ["ciphertext", "envelope"],
+                                  "additionalProperties": false
+                                }
                               },
                               "required": [
                                 "id",
@@ -5855,7 +5977,27 @@
                             "description": "1 for the original body, +1 per edit"
                           },
                           "editedAt": { "type": "string", "format": "date-time" },
-                          "createdAt": { "type": "string", "format": "date-time" }
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "sealed": {
+                            "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                            "type": "object",
+                            "properties": {
+                              "ciphertext": { "type": "string" },
+                              "envelope": {
+                                "type": "object",
+                                "properties": {
+                                  "v": { "type": "number" },
+                                  "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                  "iv": { "type": "string" },
+                                  "aad": { "type": "string" }
+                                },
+                                "required": ["v", "keyGeneration", "iv", "aad"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": ["ciphertext", "envelope"],
+                            "additionalProperties": false
+                          }
                         },
                         "required": [
                           "id",
@@ -6041,7 +6183,27 @@
                           "description": "1 for the original body, +1 per edit"
                         },
                         "editedAt": { "type": "string", "format": "date-time" },
-                        "createdAt": { "type": "string", "format": "date-time" }
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "sealed": {
+                          "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                          "type": "object",
+                          "properties": {
+                            "ciphertext": { "type": "string" },
+                            "envelope": {
+                              "type": "object",
+                              "properties": {
+                                "v": { "type": "number" },
+                                "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                "iv": { "type": "string" },
+                                "aad": { "type": "string" }
+                              },
+                              "required": ["v", "keyGeneration", "iv", "aad"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": ["ciphertext", "envelope"],
+                          "additionalProperties": false
+                        }
                       },
                       "required": [
                         "id",
@@ -6449,7 +6611,27 @@
                             "description": "1 for the original body, +1 per edit"
                           },
                           "editedAt": { "type": "string", "format": "date-time" },
-                          "createdAt": { "type": "string", "format": "date-time" }
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "sealed": {
+                            "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                            "type": "object",
+                            "properties": {
+                              "ciphertext": { "type": "string" },
+                              "envelope": {
+                                "type": "object",
+                                "properties": {
+                                  "v": { "type": "number" },
+                                  "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                  "iv": { "type": "string" },
+                                  "aad": { "type": "string" }
+                                },
+                                "required": ["v", "keyGeneration", "iv", "aad"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": ["ciphertext", "envelope"],
+                            "additionalProperties": false
+                          }
                         },
                         "required": [
                           "id",
@@ -6627,7 +6809,27 @@
                             "description": "1 for the original body, +1 per edit"
                           },
                           "editedAt": { "type": "string", "format": "date-time" },
-                          "createdAt": { "type": "string", "format": "date-time" }
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "sealed": {
+                            "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                            "type": "object",
+                            "properties": {
+                              "ciphertext": { "type": "string" },
+                              "envelope": {
+                                "type": "object",
+                                "properties": {
+                                  "v": { "type": "number" },
+                                  "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                  "iv": { "type": "string" },
+                                  "aad": { "type": "string" }
+                                },
+                                "required": ["v", "keyGeneration", "iv", "aad"],
+                                "additionalProperties": false
+                              }
+                            },
+                            "required": ["ciphertext", "envelope"],
+                            "additionalProperties": false
+                          }
                         },
                         "required": [
                           "id",
@@ -6782,7 +6984,27 @@
                           "description": "1 for the original body, +1 per edit"
                         },
                         "editedAt": { "type": "string", "format": "date-time" },
-                        "createdAt": { "type": "string", "format": "date-time" }
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "sealed": {
+                          "description": "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe.",
+                          "type": "object",
+                          "properties": {
+                            "ciphertext": { "type": "string" },
+                            "envelope": {
+                              "type": "object",
+                              "properties": {
+                                "v": { "type": "number" },
+                                "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                "iv": { "type": "string" },
+                                "aad": { "type": "string" }
+                              },
+                              "required": ["v", "keyGeneration", "iv", "aad"],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": ["ciphertext", "envelope"],
+                          "additionalProperties": false
+                        }
                       },
                       "required": [
                         "id",
