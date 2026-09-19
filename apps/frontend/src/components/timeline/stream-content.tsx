@@ -2,7 +2,7 @@ import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useNavigationType, useSearchParams } from "react-router-dom"
-import { Virtualizer, type VirtualizerHandle } from "virtua"
+import { type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useCoverClose } from "@/hooks/use-cover-close"
@@ -142,23 +142,12 @@ import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-r
 import { clearTimelineAnchor, loadTimelineAnchor, saveTimelineAnchor } from "@/lib/timeline-anchor-storage"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
 import { useReadMessageIds } from "@/hooks/use-unread-counts"
+import { deepLinkDebug } from "./deep-link-debug"
+import { VirtualizedScroller } from "./virtualized-scroller"
+import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
-
-/**
- * Opt-in deep-link scroll tracing. Off by default (zero console noise in
- * production). Enable from the browser console with
- * `window.__threaDeepLinkDebug = true`, then reproduce a deep-link (`?m=`)
- * navigation — every jump result, skeleton-hold transition, scroll bail
- * reason, and convergence decision is logged so a remaining "never scrolls
- * into view" miss is diagnosable without another instrumentation round-trip.
- */
-function deepLinkDebug(...args: unknown[]) {
-  if (typeof window !== "undefined" && (window as { __threaDeepLinkDebug?: boolean }).__threaDeepLinkDebug) {
-    console.debug("[deeplink]", ...args)
-  }
-}
 
 /**
  * Per-tick terminal policy for the post-jump scroll driver.
@@ -234,14 +223,6 @@ export function shouldStartHighlightClear(args: {
  */
 export const DEEP_LINK_HOLD_MAX_MS = 600
 
-/**
- * Gap between the viewport top and a top-aligned scroll target (the unread
- * divider row): clears the sticky date header and leaves a sliver of context
- * above so the unread run reads from the top. Shared by the jump-to-first-
- * unread pill and the marker-open scroll so both land identically.
- */
-const UNREAD_MARKER_TOP_GAP_PX = 56
-
 // Top-spacer heights, in px. These are handed to virtua as `startMargin` and
 // also size the spacer element itself, so they are numbers this component knows
 // on its FIRST render rather than a measurement: virtua records a later
@@ -254,14 +235,6 @@ const STREAM_HEADER_SPACER_SM_PX = 24
 // `absolute top-0` outside the scroller; this reserves matching room inside it
 // so the topmost item never sits permanently underneath either bar.
 const BAR_TOP_SPACER_PX = 44
-
-/**
- * Consecutive 60ms refine ticks the scrollToMessage target must hold its
- * aligned position before `onFirstSettle` fires — long enough that virtua's
- * measurement reflow has genuinely converged, short enough (~180ms) that the
- * anchor restore's skeleton hold is imperceptible on top of the load itself.
- */
-const SCROLL_SETTLE_STABLE_TICKS = 3
 
 /**
  * Whether the timeline should keep showing the skeleton while a deep-link
@@ -511,21 +484,6 @@ export function resolveStreamLanding(args: {
     if (args.dividerEventId) return { kind: "marker", dividerEventId: args.dividerEventId }
   }
   return { kind: "tail" }
-}
-
-/** The topmost timeline row intersecting the scroller viewport, with its
- *  offset from the viewport top (negative when partially scrolled off). */
-function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: number } | null {
-  const sr = el.getBoundingClientRect()
-  let best: { id: string; top: number } | null = null
-  for (const row of el.querySelectorAll<HTMLElement>("[data-message-id], [data-event-id]")) {
-    const rr = row.getBoundingClientRect()
-    if (rr.bottom <= sr.top + 1 || rr.top >= sr.bottom) continue
-    const id = row.dataset.messageId ?? row.dataset.eventId
-    if (!id) continue
-    if (!best || rr.top < best.top) best = { id, top: rr.top }
-  }
-  return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
 /**
@@ -1728,235 +1686,24 @@ export function StreamContent({
     [isJumpMode, skipInitialScroll, useVirtualized]
   )
 
-  // Scroll to a specific timeline row — addressed by message id or event id
-  // (any row `findTimelineTargetIndex` resolves, including session/command
-  // group cards) — and keep re-scrolling until the target element is actually
-  // visible in the scroller viewport. Items rendered with estimated heights —
-  // and link previews / long-message toggles that resolve later — drift the
-  // target after the first scroll; this loop keeps correcting for a bounded
-  // window rather than stopping at the first frame that looks right.
-  // User input (wheel / touch / key) aborts the loop immediately so manual
-  // scrolling always wins. `align: "center"` (default) centers the target
-  // (deep links); `align: "start"` pins its top near the viewport top (the
-  // unread marker open).
-  //
-  // This is the *only* thing that scrolls a highlighted row into view, on both
-  // scroll modes: the plain thread scroller renders every row, so it just takes
-  // the DOM branch and never reaches virtua. A second, ungated
-  // `scrollIntoView({behavior:"smooth"})` on the row itself used to race this
-  // loop — it re-fired every time virtua remounted the row, dragging a reader
-  // who had scrolled away back to the match.
-  //
-  // Implementation notes: Virtuoso's scrollToIndex expects the 0-based
-  // index within the current data array (NOT firstItemIndex + idx). Once
-  // the item is rendered in the DOM we use native scrollTo on the scroller
-  // to position it precisely — this sidesteps Virtuoso's internal offset
-  // estimation which tends to overshoot with unmeasured items.
-  const scrollRetryTimerRef = useRef<number | null>(null)
-  const scrollAbortRef = useRef<(() => void) | null>(null)
-  // Rolling detached-viewport snapshot: the topmost visible row and its offset
-  // from the viewport top, valid while the reader is parked off the tail.
-  // Refreshed by the debounced scroll snapshot (the anchor-persist effect), by
-  // the older-fetch arm, and by every programmatic scroll's first settle — so
-  // it always describes the position the reader currently owns. The detached
-  // viewport guard below re-pins this row when content resizes out from under
-  // a parked reader (virtua size-estimate corrections, prepends, late media) —
-  // every one of those otherwise slides the viewport through the content.
-  const detachedHoldRef = useRef<{ id: string; offsetPx: number; takenAt: number } | null>(null)
-  // Sticky "user grabbed the scroller" stamp for the *current* scroll intent.
-  // Reset to 0 whenever a new intent is established (deep-link nav, search
-  // jump, stream switch) and set by long-lived input listeners on the
-  // scroller (attached by useTimelineScroll's gesture-stamp effect). The
-  // refine loop reads this so
-  // a manual scroll always wins — including a gesture that began in the rAF
-  // gap before scrollToMessage attached its own abort listeners. That gap is
-  // exactly the "I scroll up to read context, then get yanked back to the
-  // linked message" deep-link bug.
-  const scrollToMessage = useCallback(
-    (
-      targetId: string,
-      opts?: {
-        align?: "center" | "start"
-        topOffsetPx?: number
-        /** Fires exactly once, the first time the target has held its aligned
-         *  position for a few ticks — or the loop ends without ever landing
-         *  (user abort, timeout, superseded). The anchor restore holds the
-         *  cold-load skeleton up until this, so the first revealed frame is
-         *  already at the restored position instead of a tail flash. */
-        onFirstSettle?: () => void
-      }
-    ) => {
-      const align = opts?.align ?? "center"
-      const engagedAt = performance.now()
-      let settleNotified = false
-      let stableTicks = 0
-      let everLanded = false
-      const notifySettled = () => {
-        if (settleNotified) return
-        settleNotified = true
-        // A genuine landing (or a user takeover) is the reader's new owned
-        // position: refresh the detached-viewport snapshot so the guard
-        // protects the landed spot instead of a stale pre-jump one. A timeout
-        // that never landed must NOT overwrite it — the caller-seeded target
-        // stays, and the guard keeps pulling toward it on later reflows.
-        const scrollerNow = scrollContainerRef.current
-        const userTookOver = userInteractedAtRef.current > engagedAt
-        if (scrollerNow && !isFollowingTailRef.current && (everLanded || userTookOver)) {
-          const snap = snapshotTopVisibleRow(scrollerNow)
-          detachedHoldRef.current = snap ? { ...snap, takenAt: performance.now() } : null
-        }
-        opts?.onFirstSettle?.()
-      }
-      // For "start": px between the viewport top and the target's top. The
-      // unread-marker default leaves a small context gap; an anchor restore
-      // passes the exact (possibly negative) offset the reader detached at.
-      const topOffsetPx = opts?.topOffsetPx ?? UNREAD_MARKER_TOP_GAP_PX
-      if (findTimelineTargetIndex(visibleItems, targetId) < 0) {
-        deepLinkDebug("scrollToMessage bail: target not a timeline item yet", targetId)
-        return false
-      }
-      // The user already took manual control for this scroll intent (e.g.
-      // started scrolling while jumpToEvent was loading the window). Don't
-      // start a retry loop that would fight them back to the target — the
-      // mount anchor already placed it close enough.
-      if (userInteractedAtRef.current > 0) {
-        deepLinkDebug("scrollToMessage bail: user already interacting", targetId)
-        return false
-      }
-
-      // Cancel any previous retry loop
-      if (scrollRetryTimerRef.current !== null) {
-        window.clearTimeout(scrollRetryTimerRef.current)
-        scrollRetryTimerRef.current = null
-      }
-      scrollAbortRef.current?.()
-      scrollAbortRef.current = null
-
-      // Disable auto-scroll so followOutput doesn't snap back to bottom
-      // while we're trying to scroll the target into view.
-      disableAutoScroll()
-
-      const scroller = scrollContainerRef.current
-      if (!scroller) {
-        deepLinkDebug("scrollToMessage bail: scroller not attached yet", targetId)
-        return false
-      }
-
-      // Abort the retry loop the moment the user takes over
-      let aborted = false
-      const abort = () => {
-        aborted = true
-        notifySettled()
-        if (scrollRetryTimerRef.current !== null) {
-          window.clearTimeout(scrollRetryTimerRef.current)
-          scrollRetryTimerRef.current = null
-        }
-        scroller.removeEventListener("wheel", abort)
-        scroller.removeEventListener("touchmove", abort)
-        scroller.removeEventListener("keydown", abort)
-        scrollAbortRef.current = null
-      }
-      scrollAbortRef.current = abort
-      scroller.addEventListener("wheel", abort, { passive: true })
-      scroller.addEventListener("touchmove", abort, { passive: true })
-      scroller.addEventListener("keydown", abort)
-
-      const started = performance.now()
-      // The loop watches for the whole window rather than stopping the moment
-      // the target first looks settled: a link preview card resolving above the
-      // target lands ~800ms after the window renders and shoves the target down
-      // under a reader already looking at it. Any real input aborts within one
-      // tick (the listeners above plus the shared gesture stamp, which also
-      // covers a scrollbar drag), so watching costs the user nothing.
-      const MAX_MS = 1200
-
-      const attempt = () => {
-        if (aborted) return
-        // A manual scroll landed after this loop began (caught by the
-        // long-lived scroller listeners even for a gesture that started
-        // before this loop's own abort listeners attached). Hand control
-        // back instead of re-centering on the target.
-        if (userInteractedAtRef.current > 0) {
-          abort()
-          return
-        }
-
-        // Message rows carry both attributes; non-message rows (session cards,
-        // command groups, retitles) only data-event-id — one query serves any
-        // row the unread divider can anchor on.
-        const escaped = CSS.escape(targetId)
-        const el = scroller.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
-
-        if (el) {
-          // Target is rendered — scroll via DOM so we get pixel-precise positioning
-          const sr = scroller.getBoundingClientRect()
-          const er = el.getBoundingClientRect()
-          const scCenter = (sr.top + sr.bottom) / 2
-          // "start" pins the target's top at topOffsetPx below the viewport
-          // top (the unread marker open, an anchor restore). "center" is the
-          // deep-link behavior, unchanged.
-          const desiredTop = sr.top + topOffsetPx
-          const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
-          if (Math.abs(delta) > 2) {
-            programmaticScrollAtRef.current = performance.now()
-            scroller.scrollTop += delta
-            stableTicks = 0
-          } else {
-            everLanded = true
-            if (++stableTicks >= SCROLL_SETTLE_STABLE_TICKS) {
-              // Landed and holding — the loop keeps watching for late reflows
-              // (link previews), but the position is presentable now.
-              notifySettled()
-            }
-          }
-        } else {
-          stableTicks = 0
-          // Target is virtualized out — ask Virtuoso to render it (0-based
-          // index). Re-resolve against the live timeline every tick: the
-          // window can shift under this loop, and a stale/out-of-range index
-          // makes react-virtuoso's offset-tree binary search dereference an
-          // undefined node, throwing "Cannot read properties of undefined
-          // (reading 'index')" which crashes the whole route.
-          const liveIdx = findTimelineTargetIndex(visibleItemsRef.current, targetId)
-          // liveIdx < 0 means the target is transiently out of the window
-          // (e.g. a jump-window swap mid-flight). Skip this tick rather than
-          // scroll to a wrong index; a later tick retries once it reappears,
-          // and MAX_MS still bounds the loop if it never does.
-          if (liveIdx >= 0) {
-            try {
-              programmaticScrollAtRef.current = performance.now()
-              listRef.current?.scrollToIndex(
-                liveIdx,
-                align === "start" ? { align: "start", offset: -topOffsetPx } : { align: "center" }
-              )
-            } catch {
-              // virtua can still throw internally on a freshly mounted,
-              // not-yet-measured list. Non-fatal: the next tick retries once
-              // sizes are populated, or the DOM path takes over once the row
-              // renders.
-            }
-          }
-        }
-
-        const elapsed = performance.now() - started
-        if (elapsed < MAX_MS) {
-          scrollRetryTimerRef.current = window.setTimeout(attempt, 60)
-        } else {
-          abort()
-        }
-      }
-      deepLinkDebug("scrollToMessage: refine loop engaged", targetId)
-      attempt()
-      return true
-    },
-    [visibleItems, listRef, disableAutoScroll, scrollContainerRef]
+  const findTargetIndex = useCallback(
+    (targetId: string) => findTimelineTargetIndex(visibleItems, targetId),
+    [visibleItems]
   )
-
-  useEffect(() => {
-    return () => {
-      scrollAbortRef.current?.()
-    }
-  }, [])
+  const findLiveTargetIndex = useCallback(
+    (targetId: string) => findTimelineTargetIndex(visibleItemsRef.current, targetId),
+    []
+  )
+  const { scrollToMessage, scrollAbortRef, detachedHoldRef } = useScrollToMessage({
+    findIndex: findTargetIndex,
+    findLiveIndex: findLiveTargetIndex,
+    scrollerRef: scrollContainerRef,
+    listRef,
+    disableAutoScroll,
+    isFollowingTailRef,
+    userInteractedAtRef,
+    programmaticScrollAtRef,
+  })
 
   // Set when a jump (deep-link `?m=`, out-of-window search, or date picker) has
   // loaded a new event window and the target still needs to be scrolled into
@@ -3386,14 +3133,6 @@ function TimelineMessageList({
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
   const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
 
-  // Tracks whether this component has ever rendered with real timeline content.
-  // Drives the empty fallback below: until the first paint, useEvents has not
-  // resolved IDB yet and the user just came off MainContentGate's skeleton —
-  // a blank frame here is the visible "skeleton, then nothing, then content"
-  // regression. Sticky across stream switches so fast switches keep the
-  // existing blank behaviour (no skeleton flash on top of prior chrome).
-  const hasRenderedContentRef = useRef(false)
-
   // A promoted draft's timeline mounts with the rows the user is already
   // looking at, so its settle mask carries those rows instead of a skeleton:
   // virtua paints nothing until its ResizeObserver reports the scroller size,
@@ -3676,113 +3415,65 @@ function TimelineMessageList({
     )
   }
 
-  // Grace-window gap: !isLoading, !isConfirmedEmpty, but events haven't been
-  // re-subscribed from IDB yet (the "render briefly blank, no skeleton flash"
-  // path in computeTimelineLoadState). Two sub-cases:
-  //
-  //  - First-ever render (cold boot): MainContentGate just released its
-  //    skeleton, useLiveQuery has not resolved yet. A blank gap here lets the
-  //    skeleton→content transition show a visible "nothing" frame, which is
-  //    exactly the regression report ("skeleton, then nothing again, then
-  //    content"). Keep the skeleton on screen until IDB resolves so the
-  //    handoff is seamless.
-  //  - Subsequent renders (stream switch): we've already painted content, so
-  //    a brief blank is preferable to a skeleton flash. The previous stream's
-  //    chrome is the visible background; rendering a skeleton on top of it
-  //    would jiggle the layout.
-  //
-  // Either way we mustn't mount the virtualized list empty: the initial
-  // scroll-to-bottom and the cold-load settle mask in useTimelineScroll both
-  // arm when items first exist, so a list mounted with zero items paints an
-  // empty top-anchored frame and the populate + pin a frame later is visible
-  // (the "loads in too low then jumps" report). Deferring the mount until
-  // data exists makes the keyed instance mount already-populated, exactly
-  // like cold boot, so the settle mask covers the measurement bounce.
-  if (visibleItems.length > 0) hasRenderedContentRef.current = true
-  if (visibleItems.length === 0) {
-    return hasRenderedContentRef.current ? <div className="h-full" aria-hidden /> : skeleton
-  }
+  // Built inline rather than memoized: `deferSecondaryHydration` reads
+  // `fullyHydratedRef` during render, so a memo keyed on the wave state could
+  // hand back rows still marked deferred after the ref flips.
+  const scrollerItems = visibleItems.map((item, index) => ({
+    key: getTimelineItemKey(item),
+    node: (
+      <TimelineItemContent
+        item={item}
+        ctx={renderCtx}
+        deferSecondaryHydration={
+          !fullyHydratedRef.current && (phase !== "ready" || index < visibleItems.length - releasedFromBottom)
+        }
+      />
+    ),
+  }))
 
   return (
-    // Remount per stream (keyed) so all scroll state — the owned scroller, the
-    // useTimelineScroll ResizeObserver, the deep-link jump latch — resets on a
-    // switch and the new stream mounts already-populated at its tail.
-    //
-    // During the cold-load settle the scroller is mounted (so virtua can measure
-    // item heights) but masked by a skeleton overlay, so the measurement bounce
-    // happens off-screen; the hook flips `isInitialSettling` false once the
-    // height stabilises. The overlay is pointer-events-none so an eager scroll
-    // still reaches the scroller (which aborts the settle and reveals at once).
-    <>
-      <div
-        key={streamId}
-        ref={registerScroller}
-        className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
-        style={{ overflowAnchor: "none" }}
-        data-suppress-pull-refresh="true"
-        data-stream-scroller={streamId}
-        onScroll={handleScroll}
-        {...batchPointerHandlers}
-      >
-        <div ref={contentRef}>
-          <div aria-hidden style={{ height: startMargin }} />
-          <Virtualizer
-            ref={listRef}
-            scrollRef={scrollerRef}
-            startMargin={startMargin}
-            // Maintain scroll from the end when an older page is prepended so the
-            // viewport doesn't move — the core reverse-infinite-scroll fix.
-            shift={shift}
-            // Off-screen px kept mounted so fast scrolling doesn't outrun
-            // mount+measure and flash blank rows. Was 1000 when every data tick
-            // re-rendered the whole window; with memoized rows the steady-state
-            // cost of extra mounted rows is near zero, so a larger buffer buys
-            // fling headroom. Mount cost still bounds it — don't raise further
-            // without profiling on a low-end device.
-            bufferSize={2000}
-          >
-            {visibleItems.map((item, index) => (
-              <div key={getTimelineItemKey(item)} className="relative mx-auto max-w-[800px]">
-                <TimelineItemContent
-                  item={item}
-                  ctx={renderCtx}
-                  deferSecondaryHydration={
-                    !fullyHydratedRef.current && (phase !== "ready" || index < visibleItems.length - releasedFromBottom)
-                  }
-                />
-              </div>
-            ))}
-          </Virtualizer>
-          <ComposerFooterSpacer />
-        </div>
-      </div>
-      <StreamDateHeader
-        dayStartMs={topDayMs}
-        visible={datePillVisible && !floatingChromeHidden}
-        onJumpToDate={onJumpToDate}
-        scrollerRef={scrollerRef}
-      />
-      {isInitialSettling && (
-        <div
-          aria-hidden
-          data-testid="settle-mask"
-          className="pointer-events-none absolute inset-0 z-10 overflow-hidden bg-background"
-        >
-          {continuesDraft ? (
-            <EventList
-              timelineItems={visibleItems}
-              isLoading={false}
-              workspaceId={workspaceId}
-              streamId={streamId}
-              viewerIsMember={viewerIsMember}
-              batch={batch}
-            />
-          ) : (
-            skeleton
-          )}
-        </div>
-      )}
-    </>
+    <VirtualizedScroller
+      // Remount per stream so all scroll state — the owned scroller, the
+      // useTimelineScroll ResizeObserver, the deep-link jump latch — resets on a
+      // switch and the new stream mounts already-populated at its landing.
+      scrollKey={streamId}
+      items={scrollerItems}
+      registerScroller={registerScroller}
+      scrollerRef={scrollerRef}
+      listRef={listRef}
+      contentRef={contentRef}
+      shift={shift}
+      isInitialSettling={isInitialSettling}
+      onScroll={handleScroll}
+      startMargin={startMargin}
+      className={cn(batch?.enabled && "select-none")}
+      data-suppress-pull-refresh="true"
+      data-stream-scroller={streamId}
+      scrollerProps={batchPointerHandlers}
+      itemClassName="relative mx-auto max-w-[800px]"
+      footer={<ComposerFooterSpacer />}
+      skeleton={skeleton}
+      overlay={
+        <StreamDateHeader
+          dayStartMs={topDayMs}
+          visible={datePillVisible && !floatingChromeHidden}
+          onJumpToDate={onJumpToDate}
+          scrollerRef={scrollerRef}
+        />
+      }
+      mask={
+        continuesDraft ? (
+          <EventList
+            timelineItems={visibleItems}
+            isLoading={false}
+            workspaceId={workspaceId}
+            streamId={streamId}
+            viewerIsMember={viewerIsMember}
+            batch={batch}
+          />
+        ) : undefined
+      }
+    />
   )
 }
 
