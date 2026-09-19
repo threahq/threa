@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Quote, Check, FolderInput } from "lucide-react"
@@ -421,14 +421,6 @@ export function MessageItem({
     return active
   }, [currentUserId, message.reactions])
   const allReactionShortcodes = useMemo(() => reactionShortcodes(message.reactions), [message.reactions])
-
-  // Scroll + flash the `?m=` deep-link target (conversation panel sets
-  // `isHighlighted`). Mirrors the timeline's highlight effect.
-  useEffect(() => {
-    if (isHighlighted && containerRef.current) {
-      containerRef.current.scrollIntoView({ behavior: "smooth", block: "center" })
-    }
-  }, [isHighlighted])
 
   // Reactions/copy/label plus copy-link (surface-specific via `conversationId`),
   // "View in channel/thread/…", and quote reply when a conversation composer is in

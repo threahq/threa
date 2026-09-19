@@ -47,6 +47,8 @@ import * as autoReadModule from "@/components/message/use-conversation-auto-read
 import { registerWorkspaceSocketHandlers } from "@/sync/workspace-sync"
 import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import * as useMobileModule from "@/hooks/use-mobile"
+import { UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
+import * as virtualizedScrollerModule from "@/components/timeline/virtualized-scroller"
 
 const WORKSPACE_ID = "ws_1"
 const CONVERSATION_ID = "conv_1"
@@ -187,6 +189,74 @@ function installContentAwareScrollMetrics({ skeletonHeight = 300, contentHeight 
   }
 }
 
+/**
+ * A synthetic vertical layout for the panel's rows: every `[data-message-id]`
+ * row is `rowHeight` tall, stacked in DOM order, inside a `viewportHeight`
+ * scroller whose top edge is at y=0. jsdom returns an all-zero rect for
+ * everything, which the timeline scroll engine reads as "already aligned" — so
+ * without this, every landing assertion passes vacuously.
+ *
+ * Unlike `installScrollMetrics` this gives `getBoundingClientRect` real numbers,
+ * which is what the refine loop in `useScrollToMessage` steers on. Landed
+ * `scrollTop` then names the row the landing chose: with the defaults below,
+ * `TAIL_SCROLL_TOP` is the tail and `rowStartScrollTop`/`rowCenterScrollTop`
+ * give the top- and centre-aligned positions for a row index.
+ */
+function installRowLayout({ rowHeight = 400, viewportHeight = 300 } = {}) {
+  const tops = new WeakMap<HTMLElement, number>()
+  const descriptors = {
+    scrollHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight"),
+    clientHeight: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight"),
+    scrollTop: Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollTop"),
+  }
+  const rowsOf = (el: HTMLElement) => Array.from(el.querySelectorAll<HTMLElement>("[data-message-id]"))
+  Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return rowsOf(this).length * rowHeight
+    },
+  })
+  Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => viewportHeight })
+  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+    configurable: true,
+    get(this: HTMLElement) {
+      return tops.get(this) ?? 0
+    },
+    set(this: HTMLElement, value: number) {
+      tops.set(this, value)
+    },
+  })
+  const originalRect = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+    const sc = document.querySelector<HTMLElement>(".overflow-y-auto")
+    if (!sc) return originalRect.call(this)
+    if (this === sc) return { top: 0, bottom: viewportHeight, height: viewportHeight } as DOMRect
+    const row = this.closest("[data-message-id]") as HTMLElement | null
+    const index = row ? rowsOf(sc).indexOf(row) : -1
+    if (index < 0) return originalRect.call(this)
+    const top = index * rowHeight - (tops.get(sc) ?? 0)
+    return { top, bottom: top + rowHeight, height: rowHeight } as DOMRect
+  }
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = originalRect
+    for (const [name, descriptor] of Object.entries(descriptors)) {
+      if (descriptor) Object.defineProperty(HTMLElement.prototype, name, descriptor)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>)[name]
+    }
+  }
+}
+
+/** Landed `scrollTop` for `installRowLayout` row `index` pinned near the top —
+ *  the unread-marker landing (`align: "start"`, `UNREAD_MARKER_TOP_GAP_PX`). */
+function rowStartScrollTop(index: number, { rowHeight = 400 } = {}) {
+  return index * rowHeight - UNREAD_MARKER_TOP_GAP_PX
+}
+
+/** Landed `scrollTop` for row `index` centred in the viewport — a `?m=` link. */
+function rowCenterScrollTop(index: number, { rowHeight = 400, viewportHeight = 300 } = {}) {
+  return index * rowHeight + rowHeight / 2 - viewportHeight / 2
+}
+
 function scroller(): HTMLElement {
   const el = document.querySelector<HTMLElement>(".overflow-y-auto")
   if (!el) throw new Error("panel scroller not found")
@@ -267,6 +337,65 @@ beforeEach(async () => {
   await db.conversationMessages.clear()
   await db.drafts.clear()
   __resetConversationMessageSnapshots()
+  // `virtua` measures its viewport through a ResizeObserver, which jsdom's
+  // zero-height layout never fires, so the real scroller renders zero rows here.
+  // Swap it for a passthrough with the same DOM shape — same scroller element,
+  // same `contentRef` box, same row wrappers — so `useTimelineScroll`, the
+  // auto-read observer and every row assertion still run against real nodes.
+  // The windowing itself is verified in a browser spec.
+  vi.spyOn(virtualizedScrollerModule, "VirtualizedScroller").mockImplementation(
+    ({
+      items,
+      registerScroller,
+      contentRef,
+      onScroll,
+      className,
+      style,
+      scrollerProps,
+      itemClassName,
+      startMargin,
+      header,
+      footer,
+      overlay,
+      mask,
+      skeleton,
+      isInitialSettling,
+      scrollKey,
+    }) => {
+      if (items.length === 0) return <>{skeleton}</>
+      return (
+        <>
+          <div
+            key={scrollKey}
+            ref={registerScroller}
+            className={["h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", className]
+              .filter(Boolean)
+              .join(" ")}
+            style={{ overflowAnchor: "none", ...style }}
+            onScroll={onScroll}
+            {...scrollerProps}
+          >
+            <div ref={contentRef}>
+              {startMargin != null && <div aria-hidden style={{ height: startMargin }} />}
+              {header}
+              {items.map((item) => (
+                <div key={item.key} className={[itemClassName, item.className].filter(Boolean).join(" ")}>
+                  {item.node}
+                </div>
+              ))}
+              {footer}
+            </div>
+          </div>
+          {overlay}
+          {isInitialSettling && (
+            <div aria-hidden data-testid="settle-mask" className="pointer-events-none absolute inset-0 z-10">
+              {mask ?? skeleton}
+            </div>
+          )}
+        </>
+      )
+    }
+  )
   // Default composer stub: the real form (desktop always-open since the
   // thread-semantics ruling) pulls auth/mention providers this harness doesn't
   // mount. Tests that inspect composer props install their own spy.
@@ -788,22 +917,6 @@ describe("ConversationPanel", () => {
     return post
   }
 
-  /** Records the element every scrollIntoView call landed on. */
-  function captureScrollIntoView() {
-    const targets: HTMLElement[] = []
-    const original = Element.prototype.scrollIntoView
-    Element.prototype.scrollIntoView = function (this: HTMLElement) {
-      targets.push(this)
-    }
-    return {
-      targets,
-      restore: () => {
-        Element.prototype.scrollIntoView = original
-      },
-      hitRow: (messageId: string) => targets.some((el) => el.closest(`[data-message-id="${messageId}"]`) != null),
-    }
-  }
-
   /**
    * True adjacency, not just ordering: the divider must follow `afterMessageId`
    * and precede `messageId`. Asserting only "the divider comes before the row"
@@ -824,18 +937,15 @@ describe("ConversationPanel", () => {
 
   it("opens at the unread divider instead of the tail when unread rows exist", async () => {
     installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
-    const restore = installScrollMetrics()
-    const scrolls = captureScrollIntoView()
+    const restore = installRowLayout()
     try {
       mountPanel(unreadFixture())
       await screen.findByText("Reply two body.")
 
-      await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
+      // msg_2 (row 1) pinned near the top, not the tail (scrollTop 800).
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowStartScrollTop(1)))
       expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)
-      // The tail scroll never ran — the marker owns the opening position.
-      expect(scroller().scrollTop).toBe(0)
     } finally {
-      scrolls.restore()
       restore()
     }
   })
@@ -879,52 +989,45 @@ describe("ConversationPanel", () => {
 
   it("lets the ?m= deep link win over the unread marker", async () => {
     installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
-    const restore = installScrollMetrics()
-    const scrolls = captureScrollIntoView()
+    const restore = installRowLayout()
     try {
       // Deep link to the READ row while msg_2 is the marker: only one of the two
       // can own the viewport, and the explicit link is the user's intent.
       mountPanel({ ...unreadFixture(), highlightMessageId: "msg_1" })
       await screen.findByText("Reply two body.")
 
-      await waitFor(() => expect(scrolls.hitRow("msg_1")).toBe(true))
-      expect(scrolls.hitRow("msg_2")).toBe(false)
+      // msg_1 (row 0) centred; the marker's own landing (scrollTop 344) lost.
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowCenterScrollTop(0)))
       // The divider still draws — the marker is a landmark, not a scroll claim.
       expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)
     } finally {
-      scrolls.restore()
       restore()
     }
   })
 
   it("shows the N-new banner while the divider sits above the viewport, and dismissing it tails the bottom", async () => {
     installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
-    const restore = installScrollMetrics()
-    const scrolls = captureScrollIntoView()
-    // jsdom has no layout: put the scroller's top edge below every row's, so the
-    // marker row reads as scrolled off the top.
-    const originalRect = HTMLElement.prototype.getBoundingClientRect
-    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
-      return { top: this.classList.contains("overflow-y-auto") ? 100 : 0 } as DOMRect
-    }
+    const restore = installRowLayout()
     try {
       const user = userEvent.setup()
       mountPanel(unreadFixture())
       await screen.findByText("Reply two body.")
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowStartScrollTop(1)))
+
+      // The reader scrolls past the marker row, which puts it above the viewport.
+      const el = scroller()
+      await new Promise((r) => setTimeout(r, 200))
+      el.scrollTop = 600
+      act(() => fireEvent.scroll(el))
 
       const banner = await screen.findByRole("button", { name: "1 new message" })
-      // The open-at-marker one-shot already scrolled to msg_2, and the capture
-      // only appends — clear it so the assertion discriminates the click.
-      scrolls.targets.length = 0
       await user.click(banner)
-      expect(scrolls.hitRow("msg_2")).toBe(true)
+      await waitFor(() => expect(el.scrollTop).toBe(rowStartScrollTop(1)))
 
       await user.click(screen.getByRole("button", { name: "Dismiss unread marker" }))
-      expect(scroller().scrollTop).toBe(1000)
+      await waitFor(() => expect(el.scrollTop).toBe(800))
       await waitFor(() => expect(screen.queryByText("New")).toBeNull())
     } finally {
-      HTMLElement.prototype.getBoundingClientRect = originalRect
-      scrolls.restore()
       restore()
     }
   })
@@ -935,8 +1038,7 @@ describe("ConversationPanel", () => {
     // re-latches the same message id, matches the stale ref, and scrolls nowhere
     // at all (skipInitialScroll suppresses the tail scroll too).
     installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
-    const restore = installScrollMetrics()
-    const scrolls = captureScrollIntoView()
+    const restore = installRowLayout()
     try {
       const second = postWithUnread()
       second.conversation = { ...second.conversation, id: "conv_2", messageIds: ["msg_9"] }
@@ -962,17 +1064,15 @@ describe("ConversationPanel", () => {
         ],
       })
       await screen.findByText("Reply two body.")
-      await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowStartScrollTop(1)))
 
       act(() => nav.openConversation("conv_2"))
       await screen.findByText("Second conversation opener.")
 
-      scrolls.targets.length = 0
       act(() => nav.openConversation(CONVERSATION_ID))
       await screen.findByText("Reply two body.")
-      await waitFor(() => expect(scrolls.hitRow("msg_2")).toBe(true))
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowStartScrollTop(1)))
     } finally {
-      scrolls.restore()
       restore()
     }
   })
@@ -992,8 +1092,8 @@ describe("ConversationPanel", () => {
     const originalRO = global.ResizeObserver
     const observers: (() => void)[] = []
     global.ResizeObserver = class {
-      constructor(cb: () => void) {
-        observers.push(cb)
+      constructor(cb: (entries: ResizeObserverEntry[]) => void) {
+        observers.push(() => cb([]))
       }
       observe() {}
       unobserve() {}
@@ -1089,7 +1189,7 @@ describe("ConversationPanel", () => {
   })
 
   it("keeps the deep-linked row when the backfill lands", async () => {
-    const restore = installScrollMetrics()
+    const restore = installRowLayout()
     try {
       const post = makePost()
       // Rail is short of the server's count → the panel backfills, growing the
@@ -1107,7 +1207,9 @@ describe("ConversationPanel", () => {
       })
       await screen.findByText("Backfilled reply four.")
 
-      expect(scroller().scrollTop).toBe(0)
+      // msg_2 (row 1) stays centred; the three rows the backfill appended below
+      // it must not drag the viewport to the new tail (scrollTop 1600).
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowCenterScrollTop(1)))
     } finally {
       restore()
     }

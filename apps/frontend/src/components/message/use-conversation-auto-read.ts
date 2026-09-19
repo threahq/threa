@@ -294,6 +294,13 @@ export function useConversationAutoRead({
   // all pending dwells) whenever attention drops or the eligible set changes;
   // the rebuild's initial entries restart dwells for rows still on screen.
   // Already-seen rows stay seen across rebuilds — they were legitimately read.
+  //
+  // The row set in the DOM is NOT the eligible set on a virtualized surface (the
+  // conversation panel): rows mount and unmount as the viewer scrolls, with no
+  // change to `eligibleIdsKey`, so a one-shot arm would observe only the rows
+  // present at mount and everything scrolled to afterwards would never dwell. A
+  // MutationObserver arms the late arrivals; `io.observe` is idempotent, so a row
+  // re-entering the DOM costs nothing.
   useEffect(() => {
     if (!canAutoRead || eligibleIdsKey === "") {
       autoReadDebug("observer: off", { canAutoRead, eligible: eligibleIdsKey })
@@ -330,16 +337,56 @@ export function useConversationAutoRead({
         }
       }
     })
-    let observed = 0
-    for (const el of container.querySelectorAll<HTMLElement>("[data-message-row]")) {
-      const id = el.dataset.messageId
-      if (id && eligibleIds.has(id)) {
-        io.observe(el)
-        observed++
+    const armRowsIn = (root: ParentNode): number => {
+      let armed = 0
+      for (const el of root.querySelectorAll<HTMLElement>("[data-message-row]")) {
+        const id = el.dataset.messageId
+        if (id && eligibleIds.has(id)) {
+          io.observe(el)
+          armed++
+        }
       }
+      return armed
     }
+    const observed = armRowsIn(container)
     autoReadDebug("observer: armed", { eligible: [...eligibleIds], observed })
+
+    let mutations: MutationObserver | null = null
+    if (typeof MutationObserver !== "undefined") {
+      mutations = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes) {
+            if (!(node instanceof Element)) continue
+            const self = node as HTMLElement
+            if (self.matches("[data-message-row]")) {
+              const id = self.dataset.messageId
+              if (id && eligibleIds.has(id)) io.observe(self)
+            }
+            armRowsIn(self)
+          }
+          for (const node of record.removedNodes) {
+            if (!(node instanceof Element)) continue
+            // A row leaving the DOM reports no further entries, so its dwell would
+            // hang and its suppression never release — the same cleanup the
+            // observer does on a genuine viewport leave.
+            for (const el of [
+              ...(node.matches("[data-message-row]") ? [node as HTMLElement] : []),
+              ...node.querySelectorAll<HTMLElement>("[data-message-row]"),
+            ]) {
+              io.unobserve(el)
+              const id = el.dataset.messageId
+              if (!id) continue
+              suppressedRef.current.delete(id)
+              cancelDwell(id)
+            }
+          }
+        }
+      })
+      mutations.observe(container, { childList: true, subtree: true })
+    }
+
     return () => {
+      mutations?.disconnect()
       io.disconnect()
       for (const timer of dwellTimersRef.current.values()) clearTimeout(timer)
       dwellTimersRef.current.clear()

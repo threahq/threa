@@ -45,6 +45,28 @@ export type BoardRow =
   | { kind: "day"; key: string; dayStartMs: number; displayDepth?: number }
   | { kind: "unread"; key: "unread"; isDimmed?: boolean; displayDepth?: number }
 
+/** Whether a nested branch conversation's subtree carries `messageId`. */
+function branchCarriesMessage(branch: BranchConversationView, messageId: string): boolean {
+  if (branch.messages.some((m) => m.id === messageId)) return true
+  return branch.children.some((child) => branchCarriesMessage(child, messageId))
+}
+
+/**
+ * Index of the row that RENDERS `messageId`: its own row, or the branch group
+ * whose subtree draws it (a nested branch's messages get no row of their own).
+ * -1 when nothing renders it. This is the row-list peer of the timeline's
+ * `findTimelineTargetIndex` — a virtualized surface scrolls by index, and the
+ * target row is usually outside the DOM when the scroll is requested.
+ */
+export function findBoardRowIndex(rows: readonly BoardRow[], messageId: string): number {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row.kind === "message" && row.message.id === messageId) return i
+    if (row.kind === "branch-group" && branchCarriesMessage(row.branch, messageId)) return i
+  }
+  return -1
+}
+
 function rowDayStartMs(row: BoardRow): number | null {
   // Only depth-0 rows are globally time-sorted; indented thread runs are spliced
   // in beside their fork point, so letting them open a day would emit

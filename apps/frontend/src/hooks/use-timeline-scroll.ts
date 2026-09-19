@@ -31,14 +31,22 @@ const TOUCH_DIRECTION_HYSTERESIS_PX = 8
 const DOCK_BAND_MAX_VIEWPORT_FRACTION = 0.25
 
 /**
- * Height (px) of the floating composer, published as `--composer-height` on the
- * editor zone and reserved by the timeline's footer spacer. The last message
- * sitting just above that spacer IS visually "at the bottom", so at-bottom math
- * must treat the spacer as dead space — otherwise the list reads ~a composer
- * height short of the bottom and wrongly disarms follow.
+ * Default CSS variable carrying the reserved composer height: `--composer-height`,
+ * published on the editor zone by `useComposerHeightPublish`. A surface whose
+ * composer publishes under another name (the conversation panel's floating pill,
+ * `--floating-composer-height`) passes `composerHeightVar`.
  */
-function readComposerHeight(el: HTMLElement): number {
-  const raw = getComputedStyle(el).getPropertyValue("--composer-height")
+const DEFAULT_COMPOSER_HEIGHT_VAR = "--composer-height"
+
+/**
+ * Height (px) of the floating composer, reserved at the bottom of the scroller
+ * (footer spacer or padding). The last message sitting just above that reserve
+ * IS visually "at the bottom", so at-bottom math must treat it as dead space —
+ * otherwise the list reads ~a composer height short of the bottom and wrongly
+ * disarms follow.
+ */
+function readComposerHeight(el: HTMLElement, varName: string): number {
+  const raw = getComputedStyle(el).getPropertyValue(varName)
   const px = Number.parseFloat(raw)
   return Number.isFinite(px) ? px : 0
 }
@@ -52,8 +60,8 @@ function readComposerHeight(el: HTMLElement): number {
  * undershoot; desktop composers are far under the cap, so nothing changes
  * there.
  */
-function dockBandPx(el: HTMLElement): number {
-  return Math.min(readComposerHeight(el), el.clientHeight * DOCK_BAND_MAX_VIEWPORT_FRACTION)
+function dockBandPx(el: HTMLElement, varName: string): number {
+  return Math.min(readComposerHeight(el, varName), el.clientHeight * DOCK_BAND_MAX_VIEWPORT_FRACTION)
 }
 
 interface UseTimelineScrollOptions {
@@ -105,6 +113,14 @@ interface UseTimelineScrollOptions {
    * user fling sweeps.
    */
   programmaticScrollAtRef?: React.MutableRefObject<number>
+  /**
+   * CSS variable the scroller's reserved composer height is published under.
+   * Defaults to {@link DEFAULT_COMPOSER_HEIGHT_VAR}; the conversation panel
+   * reserves its floating pill under `--floating-composer-height` instead, and
+   * reading the wrong name would silently return 0 — a tail that lands a
+   * composer short on every cold open.
+   */
+  composerHeightVar?: string
 }
 
 interface UseTimelineScrollReturn {
@@ -201,6 +217,7 @@ export function useTimelineScroll({
   userInteractedAtRef,
   landingPendingRef,
   programmaticScrollAtRef,
+  composerHeightVar = DEFAULT_COMPOSER_HEIGHT_VAR,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
@@ -628,7 +645,7 @@ export function useTimelineScroll({
     // "at the bottom". This prevents a small scroll-up — e.g. to read context
     // while typing — from being treated as still following, which then snaps
     // back when the composer grows.
-    const composerH = readComposerHeight(el)
+    const composerH = readComposerHeight(el, composerHeightVar)
     const atBottom = distanceFromBottom <= AT_BOTTOM_PX + (isInitialSettlingRef.current ? composerH : 0)
     // A deliberate user scroll-up — the scrollTop actually moved toward the top
     // AND a real gesture (wheel/trackpad/touch/key) is in play — must detach
@@ -656,7 +673,7 @@ export function useTimelineScroll({
     // While following we're effectively at the tail (the observer re-pins), so
     // never surface jump-to-latest; only when the user has actually scrolled up.
     setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
-  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef])
+  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef, composerHeightVar])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
   // layout effect (pre-paint) against the owned scroller so there is no visible
@@ -677,13 +694,13 @@ export function useTimelineScroll({
     isFollowingTailRef.current = true
     didInitialScrollRef.current = true
     try {
-      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
+      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el, composerHeightVar) })
     } catch {
       // Not-yet-measured list can throw; the pin + settle still converge.
     }
     pinToBottom()
     settleToBottom(2000)
-  }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom])
+  }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom, composerHeightVar])
 
   // A tail replace pinned by the ResizeObserver alone converges over several
   // frames: each pin scrolls into estimated space, virtua renders and measures
@@ -697,12 +714,12 @@ export function useTimelineScroll({
     const el = scrollerRef.current
     if (!el) return
     try {
-      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
+      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el, composerHeightVar) })
     } catch {
       // Not-yet-measured list can throw; the pin still lands.
     }
     pinToBottom()
-  }, [tailReplaced, itemCount, pinToBottom])
+  }, [tailReplaced, itemCount, pinToBottom, composerHeightVar])
 
   // The one observer that keeps the tail glued. Two observed targets:
   //  - content (contentRef): grows on a live append, on media decoding, as
@@ -916,7 +933,7 @@ export function useTimelineScroll({
       if (lastGestureScrollDirRef.current !== "down") return
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
       if (distanceFromBottom <= 1) return
-      if (distanceFromBottom > dockBandPx(el) + AT_BOTTOM_PX) return
+      if (distanceFromBottom > dockBandPx(el, composerHeightVar) + AT_BOTTOM_PX) return
       scrollToBottom({ force: true, behavior: "smooth" })
     }
     const schedule = () => {
@@ -958,7 +975,7 @@ export function useTimelineScroll({
       el.removeEventListener("mousedown", onMouseDown)
       window.removeEventListener("mouseup", onMouseUp)
     }
-  }, [scrollerEl, isJumpMode, scrollToBottom])
+  }, [scrollerEl, isJumpMode, scrollToBottom, composerHeightVar])
 
   // Abort an in-flight cold-load settle when the hook unmounts. Kept separate
   // from the ResizeObserver effect above so that effect can re-run when the
