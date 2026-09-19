@@ -16,17 +16,21 @@ function client(url: string, focus: () => Promise<unknown>) {
 
 function clients(windows: Array<ReturnType<typeof client>>) {
   const openWindow = vi.fn(async () => null)
-  const api: NotificationClients = { matchAll: async () => windows, openWindow }
-  return { api, openWindow }
+  const matchAll = vi.fn(async () => windows)
+  const api: NotificationClients = { matchAll, openWindow }
+  return { api, openWindow, matchAll }
 }
 
 describe("openNotificationTarget", () => {
   it("focuses a same-origin window and posts the destination to it", async () => {
     const window_ = client(`${ORIGIN}/w/ws_1/s/other`, async () => undefined)
-    const { api, openWindow } = clients([window_])
+    const { api, openWindow, matchAll } = clients([window_])
 
     await openNotificationTarget(api, ORIGIN, TARGET, "user_01AAA")
 
+    // includeUncontrolled: a window loaded before this worker took control is the
+    // one the viewer is looking at, and it is not in an uncontrolled-excluding match.
+    expect(matchAll).toHaveBeenCalledWith({ type: "window", includeUncontrolled: true })
     expect(window_.postMessage).toHaveBeenCalledWith({
       type: SW_MSG_NOTIFICATION_CLICK,
       url: TARGET,

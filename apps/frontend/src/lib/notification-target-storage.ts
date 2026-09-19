@@ -12,17 +12,28 @@
  * A read deletes the entry, and one older than {@link NOTIFICATION_TARGET_TTL_MS}
  * reads as absent so a tap can never redirect a later, deliberate visit.
  * CacheStorage has no compare-and-delete, so two overlapping reads can still see
- * the same entry: the claim chain in `main.tsx` is what runs the three entry
- * points one at a time.
+ * the same entry: `createNotificationLanding` in `notification-landing.ts` is
+ * what runs the three entry points one at a time.
  */
 
 import { NOTIFICATION_TARGET_CACHE } from "./sw-messages"
 
 const TARGET_KEY = "/_notify/target"
 
-/** A path this app can navigate to: same-origin, and not a protocol-relative `//host`. */
+const RESOLUTION_BASE = "https://notification-target.invalid"
+
+/**
+ * A path this app can navigate to. Resolved rather than pattern-matched: `//host`
+ * and `/\host` are both protocol-relative for a special scheme, so a prefix test
+ * reads one of them as local.
+ */
 export function isSameOriginPath(url: string): boolean {
-  return url.startsWith("/") && !url.startsWith("//")
+  if (!url.startsWith("/")) return false
+  try {
+    return new URL(url, RESOLUTION_BASE).origin === RESOLUTION_BASE
+  } catch {
+    return false
+  }
 }
 
 export interface NotificationTarget {
@@ -43,8 +54,8 @@ export async function stashNotificationTarget(target: NotificationTarget, now: n
   try {
     const cache = await caches.open(NOTIFICATION_TARGET_CACHE)
     await cache.put(TARGET_KEY, new Response(JSON.stringify({ ...target, at: now })))
-  } catch {
-    // Best-effort: the SW still focuses/opens a window without it.
+  } catch (error) {
+    console.warn("[notify] Could not stash the notification's destination:", error)
   }
 }
 
@@ -62,7 +73,8 @@ export async function takeNotificationTarget(now: number = Date.now()): Promise<
       url: raw.url,
       workosUserId: typeof raw.workosUserId === "string" ? raw.workosUserId : undefined,
     }
-  } catch {
+  } catch (error) {
+    console.warn("[notify] Could not read the stashed notification destination:", error)
     return null
   }
 }

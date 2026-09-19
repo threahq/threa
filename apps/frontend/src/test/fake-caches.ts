@@ -10,10 +10,6 @@ class FakeCache {
     return this.entries.get(request)?.clone()
   }
 
-  async keys(): Promise<string[]> {
-    return [...this.entries.keys()]
-  }
-
   async delete(request: string): Promise<boolean> {
     return this.entries.delete(request)
   }

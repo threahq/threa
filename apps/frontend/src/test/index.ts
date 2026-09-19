@@ -14,6 +14,4 @@ export { spyOnExport } from "./spy"
 
 export { stubImageLoading } from "./image"
 
-export { installFakeCaches, uninstallFakeCaches } from "./fake-caches"
-
 // Fixtures live in "@/test/fixtures" for data factories.
