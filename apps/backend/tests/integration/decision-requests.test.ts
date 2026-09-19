@@ -125,6 +125,7 @@ describe("decision requests", () => {
       note: "green build",
       noteCiphertext: null,
       noteEnvelope: null,
+      decidedBy: author,
       version: 2,
     })
   })
@@ -210,7 +211,11 @@ describe("decision requests", () => {
     })
 
     const minted = `dreq_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`
-    const envelope = { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: "YWFkYWFk" }
+    // The slot a seal is bound to, exactly as the service rebuilds it.
+    const slotAad = (label: string, decisionId: string, actorId: string) =>
+      Buffer.from(`${sealedStream}|${label}|${decisionId}|${actorId}`, "utf8").toString("base64")
+    const envelope = { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: slotAad("decision", minted, bot) }
+    const noteEnvelope = { ...envelope, aad: slotAad("decision-note", minted, author) }
     const decision = await service.request({
       workspaceId: workspace,
       streamId: sealedStream,
@@ -250,18 +255,31 @@ describe("decision requests", () => {
       })
     ).rejects.toMatchObject({ status: 409, code: "DECISION_ALREADY_EXISTS" })
 
+    // A card sealed to another bot's slot never reaches the table.
+    await expect(
+      service.request({
+        workspaceId: workspace,
+        streamId: sealedStream,
+        botId: bot,
+        decisionId: `${minted.slice(0, -1)}A`,
+        options: [{ id: "yes", tone: "primary" as const }],
+        sealed: { ciphertext: "c2VhbGVkLWNhcmQ=", envelope: { ...envelope, aad: slotAad("decision", minted, author) } },
+        allowNote: false,
+      })
+    ).rejects.toMatchObject({ status: 400, code: "DECISION_SEAL_AAD_MISMATCH" })
+
     const resolved = await service.resolve({
       workspaceId: workspace,
       id: decision.id,
       userId: author,
       optionId: "yes",
-      sealedNote: { ciphertext: "c2VhbGVkLW5vdGU=", envelope },
+      sealedNote: { ciphertext: "c2VhbGVkLW5vdGU=", envelope: noteEnvelope },
       version: decision.version,
     })
     expect(resolved.resolution).toMatchObject({
       optionId: "yes",
       noteCiphertext: "c2VhbGVkLW5vdGU=",
-      noteEnvelope: envelope,
+      noteEnvelope,
       decidedBy: author,
     })
     expect(resolved.resolution?.note).toBeUndefined()
@@ -283,7 +301,8 @@ describe("decision requests", () => {
         decisionId: decision.id,
         note: null,
         noteCiphertext: "c2VhbGVkLW5vdGU=",
-        noteEnvelope: envelope,
+        noteEnvelope,
+        decidedBy: author,
       })
     )
   })

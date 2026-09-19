@@ -402,6 +402,7 @@ describe("DecisionService.resolve", () => {
       note: null,
       noteCiphertext: null,
       noteEnvelope: null,
+      decidedBy: "usr_1",
       version: 2,
     })
   })
@@ -449,6 +450,7 @@ describe("DecisionService.resolve", () => {
       note: null,
       noteCiphertext: SEALED_NOTE.ciphertext,
       noteEnvelope: SEALED_NOTE.envelope,
+      decidedBy: "usr_1",
       version: 2,
     })
   })

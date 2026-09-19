@@ -1199,6 +1199,8 @@ export const botDecisionPayloadSchema = z.object({
    */
   noteCiphertext: z.string().nullable(),
   noteEnvelope: e2eEnvelopeV2Schema.nullable(),
+  /** Who answered — the sealed note's AAD names them, so the requester needs it to open one. */
+  decidedBy: z.string().nullable(),
   version: z.number().int().min(1),
 })
 

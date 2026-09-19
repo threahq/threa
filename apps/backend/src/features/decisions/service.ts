@@ -375,6 +375,7 @@ export class DecisionService {
       note: decision.resolution?.note ?? null,
       noteCiphertext: decision.resolution?.noteCiphertext ?? null,
       noteEnvelope: decision.resolution?.noteEnvelope ?? null,
+      decidedBy: decision.resolution?.decidedBy ?? null,
       version: decision.version,
     })
   }
