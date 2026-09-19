@@ -67,6 +67,22 @@ describe("PushActionsSection", () => {
     expect(screen.queryByLabelText("Notification preview")).not.toBeInTheDocument()
   })
 
+  it("hides the settings on Android, which reports buttons it cannot attribute", () => {
+    // jsdom defines userAgent on the prototype, so restoring means removing the
+    // own property this stub adds, not putting a captured descriptor back.
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (Linux; Android 16; Pixel 9) Chrome/140.0.0.0 Mobile Safari/537.36",
+    })
+    try {
+      mount({})
+      expect(screen.getByText(/This device can't show buttons/)).toBeInTheDocument()
+      expect(screen.queryByLabelText("Notification preview")).not.toBeInTheDocument()
+    } finally {
+      Reflect.deleteProperty(navigator, "userAgent")
+    }
+  })
+
   it("previews the default Mark read + 5m reminder card as the current user", () => {
     mount({})
     const preview = screen.getByLabelText("Notification preview")

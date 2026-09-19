@@ -65,3 +65,6 @@ export const SW_MSG_GC_REPLY = "GC_REPLY"
 
 /** Cache name used by the SW to stash share-target POST data (files + text) for the app to read. */
 export const SHARE_TARGET_CACHE = "share-target"
+
+/** Cache name used by the SW to stash a notification tap's destination for the app to claim. */
+export const NOTIFICATION_TARGET_CACHE = "notification-target"

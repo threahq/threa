@@ -6,7 +6,7 @@ import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker
 import { usePreferences } from "@/contexts"
 import { useAuth } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { formatBody, formatTitle, resolveActions } from "@/lib/sw-notification-format"
+import { formatBody, formatTitle, resolveActions, resolvePushActionLimit } from "@/lib/sw-notification-format"
 import {
   ActivityTypes,
   DEFAULT_PUSH_ACTIONS,
@@ -38,11 +38,15 @@ const REMINDER_OPTIONS = [
 ]
 
 /**
- * Chrome (Android and desktop) renders up to `Notification.maxActions`
- * buttons on a push; Safari, iOS included, reports none and ignores them.
+ * Desktop Chrome renders up to `Notification.maxActions` buttons on a push;
+ * Safari, iOS included, reports none and ignores them. Android reports a
+ * non-zero count but cannot tell the worker which button was pressed
+ * (`resolvePushActionLimit`), so the section stays hidden there rather than
+ * offering settings no card will honour.
  */
 export function supportsNotificationActions(): boolean {
   if (typeof Notification === "undefined") return false
+  if (typeof navigator !== "undefined" && resolvePushActionLimit(navigator.userAgent) === 0) return false
   const maxActions = (Notification as unknown as { maxActions?: number }).maxActions
   return typeof maxActions === "number" && maxActions > 0
 }
@@ -117,8 +121,7 @@ export function PushActionsSection({ workspaceId }: { workspaceId: string }) {
       <section className="space-y-1">
         <h3 className="text-sm font-medium">Notification buttons</h3>
         <p className="text-sm text-muted-foreground">
-          This device can't show buttons on a notification. Set them up from Android or desktop Chrome, where they
-          appear.
+          This device can't show buttons on a notification. Set them up from desktop Chrome, where they appear.
         </p>
       </section>
     )
