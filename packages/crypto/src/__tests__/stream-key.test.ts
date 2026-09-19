@@ -3,6 +3,8 @@ import { bytesToBase64, utf8Decode, utf8Encode } from "../encoding"
 import { buildMessageAad } from "../envelope"
 import { exportPublicKey, generateKeyPair } from "../hpke"
 import {
+  buildDecisionAad,
+  buildDecisionNoteAad,
   buildNameAad,
   buildSummaryAad,
   buildWrapAad,
@@ -51,6 +53,82 @@ describe("buildNameAad", () => {
     expect(() => buildNameAad({ streamId: "a|b", keyGeneration: 0 })).toThrow()
     expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: -1 })).toThrow()
     expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: 1.5 })).toThrow()
+  })
+})
+
+describe("buildDecisionAad", () => {
+  it("binds streamId, a fixed 'decision' label, the decision id and the requesting bot", () => {
+    const aad = buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_1", requesterBotId: "bot_1" })
+    expect(utf8Decode(aad)).toBe("stream_1|decision|dreq_1|bot_1")
+  })
+
+  it("is disjoint from the note AAD on the same card", () => {
+    const card = buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_1", requesterBotId: "bot_1" })
+    const note = buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "bot_1" })
+    expect(utf8Decode(card)).not.toBe(utf8Decode(note))
+  })
+
+  it("rejects an empty part and a delimiter in any of them", () => {
+    expect(() => buildDecisionAad({ streamId: "", decisionId: "dreq_1", requesterBotId: "bot_1" })).toThrow()
+    expect(() => buildDecisionAad({ streamId: "stream_1", decisionId: "", requesterBotId: "bot_1" })).toThrow()
+    expect(() => buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_1", requesterBotId: "" })).toThrow()
+    expect(() => buildDecisionAad({ streamId: "a|b", decisionId: "dreq_1", requesterBotId: "bot_1" })).toThrow()
+    expect(() => buildDecisionAad({ streamId: "stream_1", decisionId: "d|1", requesterBotId: "bot_1" })).toThrow()
+    expect(() => buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_1", requesterBotId: "b|1" })).toThrow()
+  })
+
+  it("seals a card that opens under its slot but rejects relocation to another card, stream or message", async () => {
+    const key = generateStreamKey()
+    const content = JSON.stringify({ title: "Run migrations on prod?", optionLabels: { allow: "Allow once" } })
+    const { envelope, ciphertext } = await sealMessage({
+      key,
+      keyGeneration: 0,
+      payload: content,
+      aad: buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_1", requesterBotId: "bot_1" }),
+    })
+
+    await expect(openMessageAsString({ key, envelope, ciphertext })).resolves.toBe(content)
+
+    for (const aad of [
+      buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_2", requesterBotId: "bot_1" }),
+      buildDecisionAad({ streamId: "stream_1", decisionId: "dreq_1", requesterBotId: "bot_2" }),
+      buildDecisionAad({ streamId: "stream_2", decisionId: "dreq_1", requesterBotId: "bot_1" }),
+      buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "bot_1" }),
+      MSG_AAD,
+    ]) {
+      const moved = { ...envelope, aad: bytesToBase64(aad) }
+      await expect(openMessageAsString({ key, envelope: moved, ciphertext })).rejects.toThrow()
+    }
+  })
+})
+
+describe("buildDecisionNoteAad", () => {
+  it("binds the card's slot plus the answering user under a 'decision-note' label", () => {
+    const aad = buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "usr_1" })
+    expect(utf8Decode(aad)).toBe("stream_1|decision-note|dreq_1|usr_1")
+  })
+
+  it("rejects an empty part and a delimiter in any of them", () => {
+    expect(() => buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "" })).toThrow()
+    expect(() => buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "u|1" })).toThrow()
+  })
+
+  it("rejects a note re-presented as another member's answer", async () => {
+    const key = generateStreamKey()
+    const { envelope, ciphertext } = await sealMessage({
+      key,
+      keyGeneration: 0,
+      payload: "Not while the release is out.",
+      aad: buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "usr_1" }),
+    })
+
+    await expect(openMessageAsString({ key, envelope, ciphertext })).resolves.toBe("Not while the release is out.")
+
+    const asOther = {
+      ...envelope,
+      aad: bytesToBase64(buildDecisionNoteAad({ streamId: "stream_1", decisionId: "dreq_1", decidedBy: "usr_2" })),
+    }
+    await expect(openMessageAsString({ key, envelope: asOther, ciphertext })).rejects.toThrow()
   })
 })
 

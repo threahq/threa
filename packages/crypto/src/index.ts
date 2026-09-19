@@ -37,6 +37,8 @@ export {
   buildWrapAad,
   buildNameAad,
   buildSummaryAad,
+  buildDecisionAad,
+  buildDecisionNoteAad,
   type StreamEnvelope,
   type SealMessageInput,
   type SealMessageResult,

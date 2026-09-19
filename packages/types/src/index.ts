@@ -670,6 +670,7 @@ export type {
   DecisionOption,
   DecisionResolution,
   DecisionRequest,
+  SealedDecisionContent,
   DecisionRequestedEventPayload,
   DecisionResolvedEventPayload,
   CallStartedEventPayload,
