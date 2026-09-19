@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { extractMath, splitMathTokens, type MathPart } from "./math"
+import { extractMath, scanMathSpans, splitMathTokens, type MathPart } from "./math"
 
 /** What the renderer sees: literal text runs and the math lifted out of them. */
 function parts(markdown: string): MathPart[] {
@@ -122,5 +122,23 @@ describe("extractMath", () => {
 describe("splitMathTokens", () => {
   it("returns null for text the extractor never touched", () => {
     expect(splitMathTokens("plain text with $5 in it")).toBeNull()
+  })
+})
+
+describe("scanMathSpans", () => {
+  it("locates each span by the offsets its delimiters occupy", () => {
+    const text = "Let $p = 5$ and \\[ x^2 \\] hold"
+    const spans = scanMathSpans(text)
+    expect(spans).toEqual([
+      { from: 4, to: 11, tex: "p = 5", display: false },
+      { from: 16, to: 25, tex: "x^2", display: true },
+    ])
+    expect(spans.map((span) => text.slice(span.from, span.to))).toEqual(["$p = 5$", "\\[ x^2 \\]"])
+  })
+
+  it("rejects what the extractor rejects", () => {
+    expect(scanMathSpans("costs $5 and $10 total")).toEqual([])
+    expect(scanMathSpans("$PATH is $unset")).toEqual([])
+    expect(scanMathSpans("half typed $\\frac{")).toEqual([])
   })
 })
