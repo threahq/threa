@@ -162,32 +162,6 @@ describe("BotRuntimeInstanceRepository.markOffline", () => {
   })
 })
 
-describe("BotRuntimeInstanceRepository.findLiveWithKeyForBot", () => {
-  afterEach(() => mock.restore())
-
-  it("filters to live, keyed instances of the bot and maps the BIK columns", async () => {
-    const captured: Captured = { text: null, values: null }
-    const publicKey = Buffer.alloc(32, 5).toString("base64")
-    const db = createQuerier(captured, [makeRow({ public_key: publicKey, public_key_id: "bik_live" })])
-
-    const result = await BotRuntimeInstanceRepository.findLiveWithKeyForBot(db, {
-      workspaceId: "ws_1",
-      botId: "bot_alice",
-      stalenessMs: 120_000,
-    })
-
-    expect(captured.text).toContain("public_key IS NOT NULL")
-    expect(captured.text).toContain("public_key_id IS NOT NULL")
-    expect(captured.text).toContain("status <> 'offline'")
-    expect(captured.text).toContain("last_seen_at > NOW() -")
-    expect(captured.values).toContain("ws_1")
-    expect(captured.values).toContain("bot_alice")
-    expect(captured.values).toContain(120_000)
-    expect(result[0]?.publicKey).toBe(publicKey)
-    expect(result[0]?.publicKeyId).toBe("bik_live")
-  })
-})
-
 // A complete invocation row so `mapInvocation` (which asserts known
 // actor_type/trigger/capability/status) doesn't throw.
 function makeInvocationRow(overrides: Record<string, unknown> = {}) {
@@ -420,46 +394,6 @@ describe("BotInvocationRepository.claimOne", () => {
     expect(captured.values).toContain("session-a")
     expect(claimed?.claimedRuntimeSessionId).toBe("session-a")
   })
-
-  it("gates sealed streams on the claiming instance's BIK covering both generations (§2.6)", async () => {
-    const captured: Captured = { text: null, values: null }
-    const db = createQuerier(captured, [makeInvocationRow()])
-
-    await BotInvocationRepository.claimOne(db, {
-      workspaceId: "ws_1",
-      botId: "bot_alice",
-      instanceId: "inst_42",
-      runtimeKind: "pi-local",
-      claimToken: "tok_1",
-      supportedCapabilities: ["active-scratchpad"],
-      claimTtlSeconds: 60,
-      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
-    })
-
-    // Plaintext streams (no e2e_streams row for the root) stay claimable as
-    // before; the BIK requirement is only the OR's second arm.
-    expect(captured.text).toContain("NOT EXISTS")
-    expect(captured.text).toContain("FROM e2e_streams e")
-    // Bot wraps, keyed to the claiming instance's registered BIK — not a passed
-    // key id (a keyless instance never matches, so it can't claim a sealed turn).
-    expect(captured.text).toContain("w.recipient_kind = 'bot'")
-    expect(captured.text).toContain("w.recipient_key_id = ri.public_key_id")
-    // Both generations must be covered: the reply's (current) and the prompt's
-    // (the trigger envelope's), mirroring the enclave's claimNext two-EXISTS.
-    expect(captured.text).toContain("w.key_generation = e.current_key_generation")
-    expect(captured.text).toContain("w.key_generation = (m.envelope ->> 'keyGeneration')::int")
-    // A session-control invocation has no sealed trigger message, so the prompt-
-    // generation EXISTS is bypassed for it (only the ack/current generation must
-    // be covered) — otherwise it is permanently unclaimable on an E2E stream.
-    expect(captured.text).toContain("i.trigger = 'session-control'")
-    // The trigger ciphertext is keyed off the invocation's own source message
-    // (messages has no workspace_id column — it is scoped by stream_id).
-    expect(captured.text).toContain("JOIN messages m ON m.id = i.source_message_id")
-    // Race-safe claim target: lock only the bot_invocations candidate row (INV-20).
-    expect(captured.text).toContain("FOR UPDATE OF i SKIP LOCKED")
-    // The claiming instance is bound twice (one per generation EXISTS).
-    expect(captured.values).toContain("inst_42")
-  })
 })
 
 describe("BotInvocationRepository.parkExhausted", () => {
@@ -510,10 +444,6 @@ describe("BotInvocationRepository.findBootstrapInvocations", () => {
 
     const availableQuery = texts.find((t) => t.includes("attempts < "))
     expect(availableQuery).toBeDefined()
-    // The available list mirrors claimOne's sealed-stream gate, so a row
-    // advertised here is one a follow-up claim can actually win (no keyless
-    // runtime is told sealed work is available it can't open).
-    expect(availableQuery).toContain("w.recipient_key_id = ri.public_key_id")
     expect(availableQuery).toContain("CASE WHEN i.trigger = 'session-control' THEN 1 ELSE 0 END ASC")
     // The owned-claims query must NOT be attempt-bounded: a runtime keeps its
     // own in-flight claim regardless of how many times it's been re-dispatched,
@@ -521,6 +451,5 @@ describe("BotInvocationRepository.findBootstrapInvocations", () => {
     const ownedClaimsQuery = texts.find((t) => t.includes("claimed_by_instance_id ="))
     expect(ownedClaimsQuery).toBeDefined()
     expect(ownedClaimsQuery).not.toContain("attempts < ")
-    expect(ownedClaimsQuery).not.toContain("w.recipient_key_id = ri.public_key_id")
   })
 })

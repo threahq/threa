@@ -13,7 +13,7 @@ import { MessageRepository } from "../messaging"
 import { StreamContextRepository } from "../stream-context"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { EnclaveRuntimesRepository } from "../enclave-runtimes"
-import { BotRuntimeInstanceRepository } from "../bot-runtimes/repository"
+import { RuntimeE2eKeysRepository } from "../bot-runtimes/runtime-e2e-keys"
 import { BotRepository } from "../public-api/bot-repository"
 import { BotChannelAccessRepository } from "../api-keys"
 import * as idModule from "../../lib/id"
@@ -1092,7 +1092,7 @@ describe("StreamService.inviteActor", () => {
   const mockListForStream = spyOn(E2eStreamActorsRepository, "listForStream")
   const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
   const mockFindBot = spyOn(BotRepository, "findById")
-  const mockFindLiveBiks = spyOn(BotRuntimeInstanceRepository, "findLiveWithKeyForBot")
+  const mockFindLiveBiks = spyOn(RuntimeE2eKeysRepository, "listLiveForBot")
 
   const updatedStream = {
     id: "stream_e2e",
@@ -1159,7 +1159,7 @@ describe("StreamService.inviteActor", () => {
   test("pins the bot by id and wraps to that bot's live BIKs (no active-actor guess)", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
     mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_pi", keyId: null }])
-    mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", publicKeyId: "bik_1" }] as never)
+    mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", keyId: "bik_1", streamId: null }] as never)
 
     const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi")
 
@@ -1172,6 +1172,25 @@ describe("StreamService.inviteActor", () => {
     })
   })
 
+  test("reads bot key eligibility under the E2E root when invited on a thread", async () => {
+    mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
+    mockFindByIdForWorkspace.mockResolvedValue({
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      rootStreamId: "stream_e2e",
+      e2eEnabled: true,
+    } as never)
+    mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_pi", keyId: null }])
+    mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", keyId: "bik_1", streamId: "stream_e2e" }] as never)
+
+    // The thread carries actor rows but no wraps of its own, so a key scoped to
+    // the root must still be a recipient.
+    const result = await service.inviteActor("ws_1", "stream_thread", "usr_owner", "bot", "bot_pi")
+
+    expect(mockFindLiveBiks).toHaveBeenCalledWith({}, expect.objectContaining({ streamId: "stream_e2e" }))
+    expect(result.keyRoll?.recipients).toEqual([{ recipientKeyId: "bik_1", recipientKind: "bot", publicKey: "Ymlr" }])
+  })
+
   test("wraps to every invited bot's BIKs when a scratchpad holds multiple bots", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
     mockListForStream.mockResolvedValue([
@@ -1181,8 +1200,8 @@ describe("StreamService.inviteActor", () => {
     mockFindLiveBiks.mockImplementation((_db, params: { botId: string }) =>
       Promise.resolve(
         params.botId === "bot_a"
-          ? ([{ publicKey: "QQ", publicKeyId: "bik_a" }] as never)
-          : ([{ publicKey: "Qg", publicKeyId: "bik_b" }] as never)
+          ? ([{ publicKey: "QQ", keyId: "bik_a", streamId: null }] as never)
+          : ([{ publicKey: "Qg", keyId: "bik_b", streamId: null }] as never)
       )
     )
 
@@ -1358,7 +1377,7 @@ describe("StreamService.reviveActorKeyWraps", () => {
   const mockEnclaveGenerations = spyOn(StreamE2eKeyWrapsRepository, "listGenerationsForRecipientKind")
   const mockListActors = spyOn(E2eStreamActorsRepository, "listForStream")
   const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
-  const mockFindLiveBiks = spyOn(BotRuntimeInstanceRepository, "findLiveWithKeyForBot")
+  const mockFindLiveBiks = spyOn(RuntimeE2eKeysRepository, "listLiveForBot")
 
   // A transaction client that answers the advisory-lock query the revive
   // issues before any repo call (same serialization as rollStreamKey).
@@ -1499,7 +1518,7 @@ describe("StreamService.reviveActorKeyWraps", () => {
 
   test("throws 400 for an older-generation wrap addressed to a bot key (no per-bot history attribution)", async () => {
     mockListActors.mockResolvedValue([{ kind: "bot", actorId: "bot_1", keyId: null }] as never)
-    mockFindLiveBiks.mockResolvedValue([{ publicKeyId: "bik_live", publicKey: "AA==" }] as never)
+    mockFindLiveBiks.mockResolvedValue([{ keyId: "bik_live", publicKey: "AA==", streamId: null }] as never)
     mockListLiveEiks.mockResolvedValue([] as never)
     // Older generations are enclave-only: the scoped read returns enclave rows,
     // so a bot recipient can never satisfy the older-generation rule.
@@ -1521,7 +1540,7 @@ describe("StreamService.reviveActorKeyWraps", () => {
 
   test("throws 400 when a wrap's kind doesn't match the live key's server-resolved kind", async () => {
     mockListActors.mockResolvedValue([{ kind: "bot", actorId: "bot_1", keyId: null }] as never)
-    mockFindLiveBiks.mockResolvedValue([{ publicKeyId: "bik_live", publicKey: "AA==" }] as never)
+    mockFindLiveBiks.mockResolvedValue([{ keyId: "bik_live", publicKey: "AA==", streamId: null }] as never)
     mockListLiveEiks.mockResolvedValue([] as never)
     // The enclave genuinely held generation 0 — but that must not help a live
     // bot key that merely relabels itself "enclave".

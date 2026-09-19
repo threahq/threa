@@ -79,7 +79,8 @@ import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../encl
 // Deep imports (not the barrel): the bot-runtimes/public-api barrels pull their
 // services, which risk a cycle back into streams. These repository modules are
 // leaves (db + types only). Same lesson as the BIK schema in lib/schemas.
-import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
+import { BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
+import { RuntimeE2eKeysRepository } from "../bot-runtimes/runtime-e2e-keys"
 import { BotRepository, serializeBot } from "../public-api/bot-repository"
 import {
   streamTypeSchema,
@@ -1612,6 +1613,16 @@ export class StreamService {
     const actors = await E2eStreamActorsRepository.listForStream(db, e2e.workspaceId, e2e.streamId)
     const recipients: E2eKeyRollRecipient[] = []
 
+    // A stream-scoped runtime key is scoped to the E2E ROOT. A thread carries
+    // its own actor rows but no wraps (a wrap is AAD-bound to the root's id),
+    // so reading eligibility under a thread id would drop the root-scoped key
+    // and the bot would be left out of the roll it is entitled to.
+    let keyStreamId = e2e.streamId
+    if (actors.some((actor) => actor.kind === "bot")) {
+      const stream = await StreamRepository.findByIdForWorkspace(db, e2e.streamId, e2e.workspaceId)
+      keyStreamId = stream?.rootStreamId ?? e2e.streamId
+    }
+
     for (const actor of actors) {
       if (actor.kind === "enclave") {
         // Wrap eligibility inherits the registration boundary (Phase 2.4c,
@@ -1630,19 +1641,20 @@ export class StreamService {
         continue
       }
 
-      // kind === "bot": the actor row pins the concrete bot_id, so wrap to that
-      // bot's live BIK-bearing instances directly — no active-actor guess.
-      const instances = await BotRuntimeInstanceRepository.findLiveWithKeyForBot(db, {
+      // kind === "bot": the actor row pins the concrete bot_id, so wrap to the
+      // keys that bot's live instances hold — no active-actor guess. A key
+      // scoped to another stream is not eligible here and gets no wrap.
+      const keys = await RuntimeE2eKeysRepository.listLiveForBot(db, {
         workspaceId: e2e.workspaceId,
         botId: actor.actorId,
+        streamId: keyStreamId,
         stalenessMs: BOT_RUNTIME_BIK_STALENESS_MS,
       })
-      for (const instance of instances) {
-        if (!instance.publicKey || !instance.publicKeyId) continue
+      for (const key of keys) {
         recipients.push({
-          recipientKeyId: instance.publicKeyId,
+          recipientKeyId: key.keyId,
           recipientKind: E2eKeyWrapRecipientKinds.BOT,
-          publicKey: instance.publicKey,
+          publicKey: key.publicKey,
         })
       }
     }

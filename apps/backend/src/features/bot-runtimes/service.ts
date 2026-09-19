@@ -45,6 +45,7 @@ import {
   type BotRuntimeSessionLink,
   type StreamActiveActor,
 } from "./repository"
+import { RuntimeE2eKeysRepository, type RuntimeE2eKeyRegistration } from "./runtime-e2e-keys"
 import type { LabelAssignmentService } from "../labels"
 import {
   assertStreamWritable,
@@ -97,6 +98,26 @@ function serializeBotForOutbox(bot: Bot) {
     return { ...common, type: "personal" as const, ownerUserId: bot.ownerUserId, readsAsOwner: bot.readsAsOwner }
   }
   return { ...common, type: "shared" as const, ownerUserId: null, readsAsOwner: false as const }
+}
+
+/**
+ * What a presence write states this instance's keyring to be, or `undefined`
+ * for "leave the stored one alone". A runtime that carries no key material at
+ * all is stating it holds none, so its keys are unregistered — the rule the
+ * single-BIK column already had, with `retainBik` still marking the
+ * server-internal writes that simply don't carry keys. The legacy scalar pair
+ * is one unscoped key, so a runtime from before the keyring registers exactly
+ * as it always did.
+ */
+function resolveAdvertisedKeys(params: {
+  publicKey?: string | null
+  publicKeyId?: string | null
+  e2eKeys?: RuntimeE2eKeyRegistration[]
+  retainBik?: boolean
+}): RuntimeE2eKeyRegistration[] | undefined {
+  if (params.e2eKeys) return params.e2eKeys
+  if (params.publicKey && params.publicKeyId) return [{ keyId: params.publicKeyId, publicKey: params.publicKey }]
+  return params.retainBik ? undefined : []
 }
 
 export class BotRuntimeService {
@@ -152,27 +173,40 @@ export class BotRuntimeService {
     statusText?: string | null
     publicKey?: string | null
     publicKeyId?: string | null
+    e2eKeys?: RuntimeE2eKeyRegistration[]
     mergeCapabilities?: boolean
     retainBik?: boolean
     retainManifest?: boolean
   }): Promise<BotRuntimeInstance> {
-    return BotRuntimeInstanceRepository.upsertPresence(this.pool, {
-      id: botRuntimeInstanceId(),
-      workspaceId: params.workspaceId,
-      botId: params.botId,
-      runtimeKind: params.runtimeKind,
-      instanceId: params.instanceId,
-      displayName: params.displayName,
-      status: params.status,
-      acceptingInvocations: params.acceptingInvocations,
-      capabilities: params.capabilities ?? {},
-      manifest: params.manifest,
-      statusText: params.statusText,
-      publicKey: params.publicKey,
-      publicKeyId: params.publicKeyId,
-      mergeCapabilities: params.mergeCapabilities,
-      retainBik: params.retainBik,
-      retainManifest: params.retainManifest,
+    const keys = resolveAdvertisedKeys(params)
+    return withTransaction(this.pool, async (client) => {
+      const presence = await BotRuntimeInstanceRepository.upsertPresence(client, {
+        id: botRuntimeInstanceId(),
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeKind: params.runtimeKind,
+        instanceId: params.instanceId,
+        displayName: params.displayName,
+        status: params.status,
+        acceptingInvocations: params.acceptingInvocations,
+        capabilities: params.capabilities ?? {},
+        manifest: params.manifest,
+        statusText: params.statusText,
+        publicKey: params.publicKey,
+        publicKeyId: params.publicKeyId,
+        mergeCapabilities: params.mergeCapabilities,
+        retainBik: params.retainBik,
+        retainManifest: params.retainManifest,
+      })
+      if (keys) {
+        await RuntimeE2eKeysRepository.replaceInstanceKeys(client, {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          instanceId: params.instanceId,
+          keys,
+        })
+      }
+      return presence
     })
   }
 

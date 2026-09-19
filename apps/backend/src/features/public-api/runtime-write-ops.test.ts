@@ -4,7 +4,7 @@ import * as agentRuntime from "@threahq/agent-runtime"
 import { createBotRuntimeWriteOps } from "./runtime-write-ops"
 import * as e2eStreams from "../e2e-streams"
 import { E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
-import { BotRuntimeInstanceRepository, type BotInvocation, type BotRuntimeService } from "../bot-runtimes"
+import { RuntimeE2eKeysRepository, type BotInvocation, type BotRuntimeService } from "../bot-runtimes"
 import { MessageRepository } from "../messaging"
 import { AgentSessionRepository } from "../agents"
 import { BotChannelAccessRepository } from "../api-keys"
@@ -218,9 +218,9 @@ describe("runtime renew control snapshot", () => {
       active = false
       return value
     }
-    spyOn(BotRuntimeInstanceRepository, "findByInstance").mockImplementation((db) => {
+    spyOn(RuntimeE2eKeysRepository, "listEligibleKeyIdsForInstance").mockImplementation((db) => {
       expect(db).toBe(client)
-      return guarded("instance", { publicKeyId: "bik_1" } as never)
+      return guarded("keys", ["bik_1"])
     })
     spyOn(E2eStreamsRepository, "getByStreamId").mockImplementation((db) => {
       expect(db).toBe(client)
@@ -246,7 +246,7 @@ describe("runtime renew control snapshot", () => {
 
     const result = await ops.renewClaim(params)
 
-    expect(calls).toEqual(["instance", "e2e", "wraps", "trigger"])
+    expect(calls).toEqual(["keys", "e2e", "wraps", "trigger"])
     expect(result).toMatchObject({
       status: "active",
       sourceRevision: 2,
@@ -267,7 +267,7 @@ describe("runtime renew control snapshot", () => {
       externalSealedDelivery: true,
     })
     spyOn(agentRuntime, "resolveDeliveryVerdict").mockReturnValue({ delivery: "sealed" })
-    spyOn(BotRuntimeInstanceRepository, "findByInstance").mockResolvedValue({ publicKeyId: "bik_1" } as never)
+    spyOn(RuntimeE2eKeysRepository, "listEligibleKeyIdsForInstance").mockResolvedValue(["bik_1"])
     spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({ currentKeyGeneration: 2 } as never)
     spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([])
     spyOn(MessageRepository, "findInvocationSourceStateForShare").mockResolvedValue({

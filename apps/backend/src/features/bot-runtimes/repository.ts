@@ -541,30 +541,6 @@ export const BotRuntimeInstanceRepository = {
     return result.rows[0] ? mapRuntimeInstance(result.rows[0]) : null
   },
 
-  /**
-   * Live instances of one bot that have registered a BIK, for SSK wrapping.
-   * "Live" mirrors the enclave model — recently seen and not offline — so a
-   * roll wraps to every instance that could currently claim an invocation,
-   * letting whichever one the dispatcher picks decrypt. Instances without a
-   * `public_key` (non-E2E runtimes) are excluded.
-   */
-  async findLiveWithKeyForBot(
-    db: Querier,
-    params: { workspaceId: string; botId: string; stalenessMs: number }
-  ): Promise<BotRuntimeInstance[]> {
-    const result = await db.query<BotRuntimeInstanceRow>(sql`
-      SELECT * FROM bot_runtime_instances
-      WHERE workspace_id = ${params.workspaceId}
-        AND bot_id = ${params.botId}
-        AND public_key IS NOT NULL
-        AND public_key_id IS NOT NULL
-        AND status <> 'offline'
-        AND last_seen_at > NOW() - (${params.stalenessMs} || ' milliseconds')::interval
-      ORDER BY last_seen_at DESC
-    `)
-    return result.rows.map(mapRuntimeInstance)
-  },
-
   async findLatestForBots(
     db: Querier,
     workspaceId: string,
@@ -598,12 +574,12 @@ export const BotRuntimeInstanceRepository = {
       retainManifest?: boolean
     }
   ): Promise<BotRuntimeInstance> {
-    // BIK is per-session key material, so a presence write OVERWRITES it by
-    // default — a session that registers no key clears any stale one, so
-    // `findLiveWithKeyForBot` never hands out wraps for a key the runtime has
-    // rotated away. Only the server-internal writes that legitimately don't
-    // carry the key (the invocation touch and the session-link path) pass
-    // `retainBik` to keep the live session's key instead of nulling it.
+    // Legacy single-BIK columns. `runtime_e2e_keys` is what the claim gate and
+    // wrap recipients read; these are still written so a rollback to the
+    // previous release finds the key where it used to live, and are dropped
+    // once that window closes. The overwrite rule is the keyring's: a presence
+    // write states the whole key set, and only the server-internal writes that
+    // carry none (the invocation touch, the session-link path) pass `retainBik`.
     const publicKey = params.publicKey ?? null
     const publicKeyId = params.publicKeyId ?? null
     const capabilitiesSet = params.mergeCapabilities
@@ -1055,11 +1031,13 @@ export const BotRuntimeSessionLinkRepository = {
  * a row offered as available must be one a follow-up claim can actually win.
  *
  * A plaintext invocation (no `e2e_streams` row for the root) is claimable by any
- * instance, as before; an E2E one only by the claiming instance's registered BIK
- * when the stream's wraps cover BOTH the reply generation (current) and the
- * prompt's (the trigger envelope's), mirroring the enclave's `claimNext`
- * two-EXISTS. A keyless instance (`public_key_id` NULL) never matches, so it
- * cannot claim a sealed turn it has no key to open. Conditional because this
+ * instance, as before; an E2E one only when ONE key from the claiming
+ * instance's keyring covers BOTH the reply generation (current) and the
+ * prompt's (the trigger envelope's). The two coverage checks are correlated to
+ * the same key row on purpose: satisfying them with two different keys would
+ * pass a claim that `buildSealedTurnContext` then has to refuse, since a turn
+ * is sealed to one key. An instance holding no eligible key never matches, so
+ * it cannot claim a sealed turn it has no key to open. Conditional because this
  * gate is applied on a path that also serves plaintext streams.
  *
  * Built with squid `sql` so it carries `$1..$k` placeholders that
@@ -1071,41 +1049,44 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
       SELECT 1 FROM e2e_streams e
       WHERE e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
     )
-    OR (
-      EXISTS (
-        SELECT 1 FROM stream_e2e_key_wraps w
-        JOIN e2e_streams e
-          ON e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
-        JOIN bot_runtime_instances ri
-          ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${instanceId}
-        WHERE w.workspace_id = i.workspace_id
-          AND w.stream_id = i.root_stream_id
-          AND w.recipient_kind = 'bot'
-          AND w.recipient_key_id = ri.public_key_id
-          AND w.key_generation = e.current_key_generation
-      )
-      AND (
-        -- A session-control invocation (e.g. slash-model) has no sealed trigger
-        -- to open: its source_message_id is a command event, not a sealed
-        -- messages row, so only the reply/ack generation (checked above) must be
-        -- covered. Requiring trigger coverage here would leave every
-        -- session-control invocation on an E2E stream permanently unclaimable.
-        i.trigger = 'session-control'
-        OR EXISTS (
+    OR EXISTS (
+      SELECT 1
+      FROM runtime_e2e_key_holders h
+      JOIN runtime_e2e_keys k ON k.workspace_id = h.workspace_id AND k.key_id = h.key_id
+      JOIN e2e_streams e
+        ON e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
+      WHERE h.workspace_id = i.workspace_id
+        AND h.bot_id = i.actor_id
+        AND h.instance_id = ${instanceId}
+        AND (k.stream_id IS NULL OR k.stream_id = i.root_stream_id)
+        AND EXISTS (
           SELECT 1 FROM stream_e2e_key_wraps w
-          -- messages has no workspace_id column (it is scoped by stream_id); the
-          -- join on the globally-unique source message id is the invocation's own
-          -- trigger, so it stays tenant-safe without one (as enclave claimNext does).
-          JOIN messages m ON m.id = i.source_message_id
-          JOIN bot_runtime_instances ri
-            ON ri.workspace_id = i.workspace_id AND ri.bot_id = i.actor_id AND ri.instance_id = ${instanceId}
           WHERE w.workspace_id = i.workspace_id
             AND w.stream_id = i.root_stream_id
             AND w.recipient_kind = 'bot'
-            AND w.recipient_key_id = ri.public_key_id
-            AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+            AND w.recipient_key_id = k.key_id
+            AND w.key_generation = e.current_key_generation
         )
-      )
+        AND (
+          -- A session-control invocation (e.g. slash-model) has no sealed trigger
+          -- to open: its source_message_id is a command event, not a sealed
+          -- messages row, so only the reply/ack generation (checked above) must be
+          -- covered. Requiring trigger coverage here would leave every
+          -- session-control invocation on an E2E stream permanently unclaimable.
+          i.trigger = 'session-control'
+          OR EXISTS (
+            SELECT 1 FROM stream_e2e_key_wraps w
+            -- messages has no workspace_id column (it is scoped by stream_id); the
+            -- join on the globally-unique source message id is the invocation's own
+            -- trigger, so it stays tenant-safe without one (as enclave claimNext does).
+            JOIN messages m ON m.id = i.source_message_id
+            WHERE w.workspace_id = i.workspace_id
+              AND w.stream_id = i.root_stream_id
+              AND w.recipient_kind = 'bot'
+              AND w.recipient_key_id = k.key_id
+              AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
+          )
+        )
     )
   )`
 }

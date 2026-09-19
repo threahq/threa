@@ -19,9 +19,12 @@ import type { Message } from "../messaging"
  */
 export interface BuildSealedTurnContextInputs {
   e2e: E2eStream
-  /** The claiming bot instance's BIK key id — the assignment seals to this key. */
-  bikKeyId: string
-  /** All SSK wraps for the stream (any recipient kind); bot wraps for `bikKeyId` are filtered out here. */
+  /**
+   * The claiming instance's eligible key ids, narrowest scope first. The turn
+   * seals to the first one whose wraps cover both required generations.
+   */
+  bikKeyIds: string[]
+  /** All SSK wraps for the stream (any recipient kind); the chosen key's bot wraps are filtered out here. */
   wraps: StreamE2eKeyWrap[]
   /** The triggering message (its ciphertext becomes the prompt). */
   trigger: Message
@@ -41,46 +44,82 @@ export interface BuildSealedTurnContextInputs {
 
 export interface BuildSealedInputUpdateInputs {
   e2e: E2eStream
-  bikKeyId: string
+  bikKeyIds: string[]
   wraps: StreamE2eKeyWrap[]
   trigger: Pick<Message, "ciphertext" | "envelope">
   replySenderId: string
   sourceRevision: number
 }
 
-export function buildSealedInputUpdate(
+/**
+ * The first of the instance's keys whose wraps cover every required generation.
+ * A turn is sealed to ONE key — the wire wraps carry no recipient id, so the
+ * runtime has nothing to disambiguate two keys' wraps with — and the claim gate
+ * applies the same one-key rule, so a claim that passed it finds a key here
+ * unless a roll or revoke landed in between.
+ */
+export function selectCoveringKeyId(
+  bikKeyIds: string[],
+  wraps: StreamE2eKeyWrap[],
+  requiredGenerations: Set<number>
+): string | null {
+  return (
+    bikKeyIds.find((keyId) =>
+      [...requiredGenerations].every((generation) =>
+        wraps.some(
+          (wrap) => wrap.recipientKind === "bot" && wrap.recipientKeyId === keyId && wrap.keyGeneration === generation
+        )
+      )
+    ) ?? null
+  )
+}
+
+function buildSealedInputUpdateForKey(
   inputs: BuildSealedInputUpdateInputs
-): Extract<InvocationInputUpdateWire, { delivery: "sealed" }> | null {
-  const { e2e, bikKeyId, wraps, trigger } = inputs
+): { bikKeyId: string; update: Extract<InvocationInputUpdateWire, { delivery: "sealed" }> } | null {
+  const { e2e, bikKeyIds, wraps, trigger } = inputs
   if (!trigger.ciphertext || !trigger.envelope) return null
   const triggerGeneration = (trigger.envelope as EnclaveStreamEnvelope).keyGeneration
   const requiredGenerations = new Set([triggerGeneration, e2e.currentKeyGeneration])
+  const bikKeyId = selectCoveringKeyId(bikKeyIds, wraps, requiredGenerations)
+  if (!bikKeyId) return null
   const chosen = wraps.filter(
     (wrap) =>
       wrap.recipientKind === "bot" && wrap.recipientKeyId === bikKeyId && requiredGenerations.has(wrap.keyGeneration)
   )
-  if ([...requiredGenerations].some((generation) => !chosen.some((wrap) => wrap.keyGeneration === generation)))
-    return null
   return {
-    delivery: "sealed",
-    sourceRevision: inputs.sourceRevision,
-    prompt: { ciphertext: trigger.ciphertext.toString("base64"), envelope: trigger.envelope as EnclaveStreamEnvelope },
-    wraps: chosen.map((wrap) => ({ keyGeneration: wrap.keyGeneration, wrapEnc: wrap.wrapEnc, wrapCt: wrap.wrapCt })),
-    reply: { keyGeneration: e2e.currentKeyGeneration, senderId: inputs.replySenderId },
+    bikKeyId,
+    update: {
+      delivery: "sealed",
+      sourceRevision: inputs.sourceRevision,
+      prompt: {
+        ciphertext: trigger.ciphertext.toString("base64"),
+        envelope: trigger.envelope as EnclaveStreamEnvelope,
+      },
+      wraps: chosen.map((wrap) => ({ keyGeneration: wrap.keyGeneration, wrapEnc: wrap.wrapEnc, wrapCt: wrap.wrapCt })),
+      reply: { keyGeneration: e2e.currentKeyGeneration, senderId: inputs.replySenderId },
+    },
   }
 }
 
+export function buildSealedInputUpdate(
+  inputs: BuildSealedInputUpdateInputs
+): Extract<InvocationInputUpdateWire, { delivery: "sealed" }> | null {
+  return buildSealedInputUpdateForKey(inputs)?.update ?? null
+}
+
 export function buildSealedTurnContext(inputs: BuildSealedTurnContextInputs): SealedTurnContext | null {
-  const { e2e, bikKeyId, wraps, trigger, priorMessages } = inputs
-  const update = buildSealedInputUpdate({
+  const { e2e, bikKeyIds, wraps, trigger, priorMessages } = inputs
+  const chosen = buildSealedInputUpdateForKey({
     e2e,
-    bikKeyId,
+    bikKeyIds,
     wraps,
     trigger,
     replySenderId: inputs.replySenderId,
     sourceRevision: 0,
   })
-  if (!update) return null
+  if (!chosen) return null
+  const { bikKeyId, update } = chosen
   // History spans older key generations; the update's wraps cover only trigger + current.
   const chosenWraps = wraps
     .filter((wrap) => wrap.recipientKind === "bot" && wrap.recipientKeyId === bikKeyId)

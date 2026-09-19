@@ -1167,7 +1167,26 @@
                     "maxLength": 44,
                     "pattern": "^[A-Za-z0-9+/]{43}=$"
                   },
-                  "publicKeyId": { "type": "string", "minLength": 1, "maxLength": 128 }
+                  "publicKeyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "e2eKeys": {
+                    "maxItems": 32,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "keyId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                        "publicKey": {
+                          "type": "string",
+                          "minLength": 44,
+                          "maxLength": 44,
+                          "pattern": "^[A-Za-z0-9+/]{43}=$"
+                        },
+                        "streamId": { "type": "string", "minLength": 1, "maxLength": 64 }
+                      },
+                      "required": ["keyId", "publicKey"],
+                      "additionalProperties": false
+                    }
+                  }
                 },
                 "required": ["runtimeKind", "instanceId", "status", "acceptingInvocations", "capabilities"],
                 "additionalProperties": false

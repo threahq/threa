@@ -57,13 +57,35 @@ export const workScheduleSchema = z.object({
 // presence schemas share one definition (INV-31) without importing across the
 // cyclic public-api ↔ bot-runtimes edge.
 const E2E_PUBLIC_KEY_BASE64_LEN = 44
+const e2ePublicKeySchema = z
+  .string()
+  .length(E2E_PUBLIC_KEY_BASE64_LEN)
+  .regex(/^[A-Za-z0-9+/]{43}=$/, "publicKey must be a 32-byte X25519 key (base64)")
+
 export const botIdentityKeyFields = {
-  publicKey: z
-    .string()
-    .length(E2E_PUBLIC_KEY_BASE64_LEN)
-    .regex(/^[A-Za-z0-9+/]{43}=$/, "publicKey must be a 32-byte X25519 key (base64)")
-    .optional(),
+  publicKey: e2ePublicKeySchema.optional(),
   publicKeyId: z.string().min(1).max(128).optional(),
+} as const
+
+// A runtime that holds more than one key advertises the whole keyring instead
+// of the scalar pair above: a key scoped to one stream sits next to the
+// unscoped default, and the server wraps a stream's SSK to each eligible one.
+// Present means "this is my complete keyring" — an empty array unregisters
+// every key the instance held — so an absent field is the only way to leave the
+// stored set alone.
+export const MAX_RUNTIME_E2E_KEYS = 32
+export const botE2eKeyringFields = {
+  e2eKeys: z
+    .array(
+      z.object({
+        keyId: z.string().min(1).max(128),
+        publicKey: e2ePublicKeySchema,
+        streamId: z.string().min(1).max(64).optional(),
+      })
+    )
+    .max(MAX_RUNTIME_E2E_KEYS)
+    .refine((keys) => new Set(keys.map((key) => key.keyId)).size === keys.length, "e2eKeys must have distinct keyIds")
+    .optional(),
 } as const
 
 // publicKey and publicKeyId are addressing partners — a wrap needs both — so

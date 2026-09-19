@@ -43,7 +43,7 @@ function msg(id: string, authorId: string, text: string, gen = 1): Message {
 function inputs(over: Partial<BuildSealedTurnContextInputs> = {}): BuildSealedTurnContextInputs {
   return {
     e2e: E2E,
-    bikKeyId: "bik_live",
+    bikKeyIds: ["bik_live"],
     wraps: [botWrap("bik_live", 1)],
     trigger: msg("msg_trigger", "usr_kris", "hello"),
     triggerAuthorName: "Kris",
@@ -59,7 +59,7 @@ describe("buildSealedInputUpdate", () => {
     const trigger = msg("msg_trigger", "usr_kris", "secret", 0)
     const update = buildSealedInputUpdate({
       e2e: E2E,
-      bikKeyId: "bik_live",
+      bikKeyIds: ["bik_live"],
       wraps: [
         botWrap("bik_live", 0),
         botWrap("bik_live", 1),
@@ -87,12 +87,28 @@ describe("buildSealedInputUpdate", () => {
     expect(update).not.toHaveProperty("mentionedActorSlugs")
   })
 
+  it("skips a key that covers only one generation and seals to the one that covers both", () => {
+    const trigger = msg("msg_trigger", "usr_kris", "secret", 0)
+    const update = buildSealedInputUpdate({
+      e2e: E2E,
+      bikKeyIds: ["bik_scoped", "bik_host"],
+      wraps: [botWrap("bik_scoped", 1), botWrap("bik_host", 0), botWrap("bik_host", 1)],
+      trigger,
+      replySenderId: "bot_pi",
+      sourceRevision: 1,
+    })
+    expect(update?.wraps).toEqual([
+      { keyGeneration: 0, wrapEnc: "enc_bik_host_0", wrapCt: "ct_bik_host_0" },
+      { keyGeneration: 1, wrapEnc: "enc_bik_host_1", wrapCt: "ct_bik_host_1" },
+    ])
+  })
+
   it("requires coverage for both trigger and reply generations", () => {
     const trigger = msg("msg_trigger", "usr_kris", "secret", 0)
     expect(
       buildSealedInputUpdate({
         e2e: E2E,
-        bikKeyId: "bik_live",
+        bikKeyIds: ["bik_live"],
         wraps: [botWrap("bik_live", 1)],
         trigger,
         replySenderId: "bot_pi",
@@ -103,6 +119,19 @@ describe("buildSealedInputUpdate", () => {
 })
 
 describe("buildSealedTurnContext", () => {
+  it("ships history wraps for the selected key only", () => {
+    const ctx = buildSealedTurnContext(
+      inputs({
+        bikKeyIds: ["bik_scoped", "bik_host"],
+        wraps: [botWrap("bik_scoped", 0), botWrap("bik_host", 0), botWrap("bik_host", 1)],
+      })
+    )
+    expect(ctx?.wraps).toEqual([
+      { keyGeneration: 0, wrapEnc: "enc_bik_host_0", wrapCt: "ct_bik_host_0" },
+      { keyGeneration: 1, wrapEnc: "enc_bik_host_1", wrapCt: "ct_bik_host_1" },
+    ])
+  })
+
   it("builds the sealed context for the claiming BIK", () => {
     const ctx = buildSealedTurnContext(inputs())
     expect(ctx).toMatchObject({

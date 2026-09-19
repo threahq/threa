@@ -15,7 +15,7 @@ import type { BotInvocation, BotInvocationCancellation, BotRuntimeSessionLink, S
 import type { BotRuntimeWriteOps } from "./runtime-write-ops"
 import type { BotApiKeyService } from "../public-api"
 import type { AccessLogService, AuditSubjectRef } from "../access-log"
-import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
+import { botE2eKeyringFields, botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 import { socketConnectionId } from "../../lib/id"
 import { socketHandshakeIp } from "../../lib/socket-ip"
 import { createBotSocketAuthMiddleware, readSocketToken, type BotSocketData } from "./socket-auth"
@@ -60,6 +60,7 @@ export const helloSchema = z
     // SSK can be wrapped to it once invited into an E2E scratchpad. Shared
     // definition with the HTTP presence schema (INV-31) so they can't drift.
     ...botIdentityKeyFields,
+    ...botE2eKeyringFields,
   })
   .refine(bothOrNeitherBotIdentityKey, {
     message: "publicKey and publicKeyId must be provided together",
@@ -94,6 +95,7 @@ export const presenceUpdateSchema = z
     manifest: botRuntimeManifestSchema.nullable().optional(),
     statusText: statusTextSchema,
     ...botIdentityKeyFields,
+    ...botE2eKeyringFields,
   })
   .refine(bothOrNeitherBotIdentityKey, {
     message: "publicKey and publicKeyId must be provided together",
@@ -399,6 +401,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           manifest: data.manifest ?? null,
           publicKey: data.publicKey,
           publicKeyId: data.publicKeyId,
+          e2eKeys: data.e2eKeys,
         })
 
         socket.join(botRoom)
@@ -491,6 +494,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           statusText: data.statusText,
           publicKey: data.publicKey,
           publicKeyId: data.publicKeyId,
+          e2eKeys: data.e2eKeys,
         })
         ack?.({ ok: true })
       } catch (err) {

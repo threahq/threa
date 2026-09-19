@@ -2,6 +2,7 @@ export { BotRuntimeService, serializeBotRuntimePresence } from "./service"
 export {
   BotInvocationRepository,
   BotRuntimeInstanceRepository,
+  BOT_RUNTIME_BIK_STALENESS_MS,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
   type BotInvocation,
@@ -9,6 +10,7 @@ export {
   type BotRuntimeSessionLink,
   type StreamActiveActor,
 } from "./repository"
+export { RuntimeE2eKeysRepository, type RuntimeE2eKey, type RuntimeE2eKeyRegistration } from "./runtime-e2e-keys"
 export { BotSocketRegistry, type BotSocketKey } from "./bot-socket-registry"
 export {
   attachBotNamespace,
