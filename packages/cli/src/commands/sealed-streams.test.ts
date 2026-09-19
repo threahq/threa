@@ -148,10 +148,13 @@ const SEALED_STREAM = () =>
 
 async function unlockInto(dir: string, body: unknown): Promise<void> {
   serve({ "/me": ME_USER, "/me/e2e-key": () => jsonResponse(200, { data: body }) })
-  await run(["e2e", "unlock", "--key-store", "file", "--key-dir", dir], {
+  const result = await run(["e2e", "unlock", "--key-store", "file", "--key-dir", dir], {
     config: TEST_CONFIG,
     readStdin: () => Promise.resolve(PASSPHRASE),
   })
+  // A silent failure here leaves no key on disk, and every assertion below
+  // would then be measuring a locked CLI rather than the sealed path.
+  if (result.exitCode !== 0) throw new Error(`unlock failed (${result.exitCode}): ${result.stderr}`)
 }
 
 describe("threa streams read on a sealed stream", () => {
