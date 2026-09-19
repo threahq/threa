@@ -39,9 +39,13 @@ const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
 /**
  * Regions whose `$` and `\[` are not delimiters. Code is the obvious one; URLs
  * matter because remark-gfm autolinks bare ones, and `https://x/a$b` next to
- * `https://y/c$d` would otherwise read as one inline equation.
+ * `https://y/c$d` would otherwise read as one inline equation. A link is
+ * protected from its opening bracket, not just its destination: an escaped
+ * bracket in the label — `[report\[final\].pdf](attachment:att_1)` — is a
+ * `\[…\]` pair, and reading it as display math ate the whole reference.
  */
-const PROTECTED = /\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
+const PROTECTED =
+  /\[(?:\\.|[^\]\n])*\]\([^)\n]*\)|\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
 
 /**
  * Replace every math run outside code and URLs with a token carrying its TeX.

@@ -110,6 +110,10 @@ const NODE_CASES: Record<string, { content: JSONContent; expected: string }> = {
     content: doc(paragraph({ type: "giphyEmbed", attrs: { title: "happy cat", giphyUrl: "https://giphy.test/cat" } })),
     expected: "GIF: happy cat",
   },
+  math: {
+    content: doc(paragraph({ type: "math", attrs: { tex: "e^{i\\pi}", display: false } })),
+    expected: "$e^{i\\pi}$",
+  },
   mention: {
     content: doc(paragraph({ type: "mention", attrs: { id: "usr_1", slug: "alice", mentionType: "user" } })),
     expected: "@alice",

@@ -802,6 +802,19 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
     }
   }
 
+  // `$$` then Enter opens a display equation, the way ``` opens a code block.
+  if ($from.parent.isTextblock && !editor.isActive("codeBlock") && $from.parent.textContent === "$$") {
+    return editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        tr.delete($from.start(), $from.end())
+        return true
+      })
+      .insertMath({ display: true })
+      .run()
+  }
+
   // In lists: exit on empty item, otherwise split to create new item
   if (editor.isActive("listItem")) {
     const listItem = $from.node($from.depth - 1)

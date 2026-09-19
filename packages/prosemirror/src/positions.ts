@@ -30,6 +30,7 @@ export const LEAF_NODE_TYPES: ReadonlySet<string> = new Set([
   "slashCommand",
   "command",
   "emoji",
+  "math",
   "attachmentReference",
   "memoEmbed",
   "giphyEmbed",

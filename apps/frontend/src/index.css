@@ -1103,21 +1103,21 @@ html[data-input="mouse"]
 
 /*
  * KaTeX math. Two producers, one appearance: `rehype-katex` inside
- * .markdown-content (a posted message) and MathPreview's widget inside the
- * composer. The rules cover both rather than being copied per surface, so size,
- * scroll containment and the error color cannot drift apart.
+ * .markdown-content (a posted message) and the composer's math node. The rules
+ * cover both rather than being copied per surface, so size, scroll containment
+ * and the error color cannot drift apart.
  */
 
 /* KaTeX sizes math at 1.21em, which reads as a heading next to chat text. */
 .markdown-content .katex,
-.math-preview .katex {
+.math-node .katex {
   font-size: 1.05em;
 }
 
 /* A long equation scrolls inside its own box instead of widening the message
    column — the same containment code blocks get. */
 .markdown-content .katex-display,
-.math-preview .katex-display {
+.math-node .katex-display {
   display: block;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1128,36 +1128,84 @@ html[data-input="mouse"]
    !important. Unparseable TeX stays visible and hoverable (the title carries
    KaTeX's message) rather than silently rendering as prose. */
 .markdown-content .katex-error,
-.math-preview .katex-error {
+.math-node .katex-error {
   color: hsl(var(--destructive)) !important;
   font-family: "Commit Mono", monospace;
   font-size: 0.9em;
 }
 
-/* The author's `$…$` behind the equation drawn for it. It is still in the
-   document and still selectable by keyboard; putting the caret in it drops the
-   decoration, which is how an equation turns back into editable TeX. */
-.math-source {
-  display: none;
-}
-
-/* A whole line of the source — the `$$` fences and the body between them —
-   behind one equation drawn where those lines were. */
-.math-source-block {
-  display: none;
-}
-
-.math-preview {
-  cursor: text;
-}
-
-.math-preview-inline {
+/* The composer's equation node. Inline by default because `$…$` sits in a
+   sentence; `$$…$$` takes the line it would be centered on when sent. */
+.math-node {
   display: inline-block;
   vertical-align: baseline;
 }
 
-.math-preview-block {
+.math-node-display {
   display: block;
+}
+
+/* Tapping the equation is how it is edited, so it reads as a target. */
+.math-node .math-drawn {
+  cursor: pointer;
+  border-radius: 0.25rem;
+  padding: 0 0.125rem;
+}
+
+.math-node .math-drawn:hover {
+  background-color: hsl(var(--muted));
+}
+
+.math-node.ProseMirror-selectednode {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
+  border-radius: 0.25rem;
+}
+
+/* Open, the node is the TeX field plus the equation it currently describes:
+   inline they sit side by side, display stacks them the way the sent message
+   will. The field is not a target for the equation's own pointer styling. */
+.math-node-editing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  outline: none;
+}
+
+.math-node-editing.math-node-display {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.math-node-editing .math-drawn {
+  cursor: default;
+}
+
+.math-node-editing .math-drawn:hover {
+  background-color: transparent;
+}
+
+.math-field {
+  font-family: "Commit Mono", monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+
+.math-field:focus {
+  border-color: hsl(var(--ring));
+}
+
+.math-node-display .math-field {
+  width: 100%;
 }
 
 /*
