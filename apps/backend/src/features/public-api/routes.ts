@@ -620,6 +620,26 @@ const runtimeSessionLinkSchema = z.object({
 const ownerE2eKeySchema = z.object({ keyId: z.string(), publicKey: z.string() })
 const provisionedWrapsSchema = z.object({ stored: z.number().int() })
 
+// The calling user's own key material. The private half travels sealed under
+// the user's passphrase — the server never holds the KEK — so handing the
+// bundle to a key the user themselves minted adds no plaintext exposure. The
+// KDF salt and parameters ride along because a client that only has a
+// passphrase cannot repeat the derivation without them.
+const myE2eKeySchema = z.object({
+  keyId: z.string(),
+  publicKey: z.string().describe("Base64 X25519 public key"),
+  encryptedPrivateBundle: z.string().describe("Base64 `[version | iv | AES-GCM ciphertext]` of the private key"),
+  kdfSalt: z.string().describe("Base64 Argon2id salt"),
+  kdfParams: z.object({
+    algorithm: z.literal("argon2id"),
+    m: z.number().int().describe("Memory cost in kibibytes"),
+    t: z.number().int().describe("Iterations"),
+    p: z.number().int().describe("Parallelism"),
+    version: z.number().int().describe("Argon2 version (19 = 0x13)"),
+  }),
+  createdAt: z.string(),
+})
+
 // Every wrap of a sealed stream's key, one per (generation, recipient key).
 // Handing out the whole set is safe: a wrap is HPKE ciphertext that opens only
 // under the recipient's private key, which never reaches the server (INV-E7).
@@ -944,6 +964,7 @@ export type OperationId =
   | "deleteLabel"
   | "getMe"
   | "listMyBots"
+  | "getMyE2eKey"
 
 export interface PublicApiRoute {
   method: "get" | "post" | "patch" | "delete"
@@ -1900,6 +1921,24 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: listMyBotsSchema,
     requestIn: "query",
     responseSchema: dataArrayEnvelope(personalBotSchema),
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/me/e2e-key",
+    operationId: "getMyE2eKey",
+    summary: "Get my encryption key, including the sealed private half",
+    description:
+      "For user-scoped keys: the calling user's active UIK. Unlike the bot-facing owner key route, this " +
+      "returns the passphrase-sealed private bundle too, so a client with nothing but an API key and the " +
+      "passphrase can recover the private key and read the user's own sealed streams. Derive the KEK with " +
+      "Argon2id over `kdfSalt`/`kdfParams`, then open `encryptedPrivateBundle`, laid out as " +
+      "`[version (1 byte) | iv (12 bytes) | AES-GCM ciphertext]`. Bot-scoped keys receive 403. 404 when the " +
+      "user has not set up encryption.",
+    tags: ["Identity"],
+    scopes: [],
+    parameters: [workspaceIdParam],
+    responseSchema: dataEnvelope(myE2eKeySchema),
+    canReturn404: true,
   },
 ]
 

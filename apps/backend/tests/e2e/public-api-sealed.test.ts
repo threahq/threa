@@ -43,6 +43,7 @@ import {
   type StreamEnvelope,
 } from "../../../../extensions/bot-runtime-client/src/crypto"
 import { mintStreamKeyWraps, type BotIdentityKey } from "../../../../extensions/bot-runtime-client/src/sealed"
+import { createTestPool } from "../integration/setup"
 import { SealedStreamClient } from "../../../../extensions/bot-runtime-client/src/sealed-stream-client"
 
 setDefaultTimeout(120_000)
@@ -543,5 +544,85 @@ describe("SealedStreamClient over the public API", () => {
     expect(base64ToBytes(event!.payload.envelope!.aad)).toEqual(
       buildMessageAad({ streamId: rootStreamId, messageId: reply.clientMessageId, senderId: bot.id })
     )
+  })
+})
+
+/**
+ * The door a CLI comes through on a machine that has never run the web app:
+ * an API key the user minted themselves fetches their own key, private half
+ * included. The bundle is sealed under the user's passphrase, which the server
+ * has never held, so what crosses the wire is useless on its own.
+ */
+describe("public API my encryption key", () => {
+  test("hands a user key its own sealed bundle and refuses a bot key", async () => {
+    const runId = `mykey-${testRunId}`
+    const client = new TestClient()
+    const workosUser = await loginAs(client, `${runId}@test.com`, "Key Owner")
+    const workspace = await createWorkspace(client, `MyKey WS ${runId}`)
+
+    // User-key auth clamps scopes against the owner's live workspace
+    // permissions, and the e2e harness runs without a control-plane to mirror
+    // them — without this row every user-key request 401s OWNER_INACTIVE.
+    const pool = createTestPool()
+    try {
+      await pool.query(
+        `INSERT INTO workspace_user_permissions (workspace_id, workos_user_id, role_slugs, status, last_event_at)
+         VALUES ($1, $2, '{owner}', 'active', now()) ON CONFLICT DO NOTHING`,
+        [workspace.id, workosUser.id]
+      )
+    } finally {
+      await pool.end()
+    }
+
+    const userKeyRes = await client.post<{ value: string }>(`/api/workspaces/${workspace.id}/user-api-keys`, {
+      name: runId,
+      scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+    })
+    expect(userKeyRes.status).toBe(201)
+    const userKey = userKeyRes.data.value
+
+    // Before setup the route says so, rather than inventing a key.
+    const missing = await botApiGet<{ code?: string }>(client, workspace.id, "/me/e2e-key", userKey)
+    expect(missing.status).toBe(404)
+    expect(missing.data.code).toBe("E2E_KEY_NOT_FOUND")
+
+    const bundle = bytesToBase64(crypto.getRandomValues(new Uint8Array(45)))
+    const salt = bytesToBase64(crypto.getRandomValues(new Uint8Array(16)))
+    const pair = await generateKeyPair()
+    const publicKey = bytesToBase64(await exportPublicKey(pair.publicKey))
+    const kdfParams = { algorithm: "argon2id", m: 65536, t: 3, p: 1, version: 19 }
+    const setKey = await client.post<{ key: { keyId: string } }>(`/api/workspaces/${workspace.id}/users/me/e2e-key`, {
+      publicKey,
+      encryptedPrivateBundle: bundle,
+      kdfSalt: salt,
+      kdfParams,
+    })
+    expect(setKey.status).toBe(201)
+
+    const mine = await botApiGet<{ data: Record<string, unknown> }>(client, workspace.id, "/me/e2e-key", userKey)
+    expect(mine.status).toBe(200)
+    expect(mine.data.data).toMatchObject({
+      keyId: setKey.data.key.keyId,
+      publicKey,
+      encryptedPrivateBundle: bundle,
+      kdfSalt: salt,
+      kdfParams,
+    })
+
+    const bot = await createBot(client, workspace.id, {
+      type: "personal",
+      name: `MyKey Bot ${runId}`,
+      slug: runId,
+      traits: [BotTraits.MENTIONABLE],
+    })
+    const botKey = await createBotKey(
+      client,
+      workspace.id,
+      bot.id,
+      [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
+      "mykey-bot"
+    )
+    const refused = await botApiGet(client, workspace.id, "/me/e2e-key", botKey)
+    expect(refused.status).toBe(403)
   })
 })
