@@ -208,12 +208,31 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
 }
 
 /**
- * The sealed body of an E2E message, or undefined for a plaintext row. The two
- * columns are written together on every sealed path, so a row holding one
- * without the other is corruption, not a shape this API can serve — decrypting
- * needs the generation and IV the envelope names, and a caller that received
- * ciphertext alone could never open it. Fail loudly rather than hand back a
- * message whose body is permanently unreadable (INV-11).
+ * The legacy v1 envelope: a per-message key fanned out to a recipient list,
+ * carrying its own inline ciphertext. Structurally disjoint from v2, which
+ * names an SSK generation and no recipients — the same shape test the web
+ * client routes on.
+ */
+function isFanoutEnvelope(envelope: unknown): boolean {
+  return (
+    typeof envelope === "object" &&
+    envelope !== null &&
+    Array.isArray((envelope as { recipients?: unknown }).recipients)
+  )
+}
+
+/**
+ * The sealed body of an E2E message, or undefined for a plaintext row.
+ *
+ * `sealed` describes the v2 (per-stream key) envelope only. A v1 fan-out row —
+ * the pre-SSK shape, still readable by the web client — ships as the
+ * placeholder alone rather than as a body no documented schema covers.
+ *
+ * Any other row with ciphertext is corruption, not a shape this API can serve:
+ * the two columns are written together on every sealed path and no DB
+ * constraint enforces both-or-neither, and decrypting needs the generation and
+ * IV the envelope names, so a caller handed ciphertext alone could never open
+ * it. Fail loudly rather than return a permanently unreadable body (INV-11).
  */
 function parseSealedMessage(message: {
   id: string
@@ -222,13 +241,14 @@ function parseSealedMessage(message: {
 }): WireSealedMessage | undefined {
   if (message.ciphertext == null) return undefined
   const envelope = sealedEnvelopeSchema.safeParse(message.envelope)
-  if (!envelope.success) {
-    throw new HttpError(`Message ${message.id} has ciphertext but no usable envelope`, {
-      status: 500,
-      code: "E2E_MESSAGE_ENVELOPE_INVALID",
-    })
+  if (envelope.success) {
+    return { ciphertext: message.ciphertext.toString("base64"), envelope: envelope.data }
   }
-  return { ciphertext: message.ciphertext.toString("base64"), envelope: envelope.data }
+  if (isFanoutEnvelope(message.envelope)) return undefined
+  throw new HttpError(`Message ${message.id} has ciphertext but no usable envelope`, {
+    status: 500,
+    code: "E2E_MESSAGE_ENVELOPE_INVALID",
+  })
 }
 
 function serializeMessage(

@@ -182,6 +182,25 @@ describe("public API sealed reads", () => {
     expect(sent.status).toBe(201)
     const sentMessageId = sent.data.message.id
 
+    // A message sealed under the pre-stream-key scheme (per-message key fanned
+    // out to a recipient list). The web client still reads these; the public
+    // wire has no shape for one, so it must ship as the placeholder alone
+    // rather than as a `sealed` body no schema describes.
+    const fanout = await client.post<{ message: { id: string } }>(`/api/workspaces/${workspace.id}/messages`, {
+      streamId: rootStreamId,
+      ciphertext: bytesToBase64(sealedBody.ciphertext),
+      envelope: {
+        v: 1,
+        ciphertext: bytesToBase64(sealedBody.ciphertext),
+        iv: sealedBody.envelope.iv,
+        aad: sealedBody.envelope.aad,
+        recipients: [{ recipientKeyId: ownerKeyId, enc: "ZW5j", ct: "Y3Q" }],
+      },
+      e2eVersion: 1,
+    })
+    expect(fanout.status).toBe(201)
+    const fanoutMessageId = fanout.data.message.id
+
     // What a CLI actually does, with nothing but the read key: take the wraps,
     // open the one addressed to a key it holds, then decrypt the listed bodies.
     const wrapsRes = await botApiGet<{ data: WireWraps }>(
@@ -215,6 +234,11 @@ describe("public API sealed reads", () => {
     // The plaintext field still carries only the placeholder the server stores.
     expect(row!.content).toBe(E2E_PLACEHOLDER_CONTENT_MARKDOWN)
     expect(row!.sealed?.envelope).toMatchObject({ v: STREAM_ENVELOPE_VERSION, keyGeneration: 0 })
+
+    const fanoutRow = listed.data.data.find((m) => m.id === fanoutMessageId)
+    expect(fanoutRow).toBeDefined()
+    expect(fanoutRow!.content).toBe(E2E_PLACEHOLDER_CONTENT_MARKDOWN)
+    expect(fanoutRow!.sealed).toBeUndefined()
 
     const opened = await openMessageAsString({
       key: ssk,

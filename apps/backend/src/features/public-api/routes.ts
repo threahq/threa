@@ -161,7 +161,7 @@ const messageSchema = z.object({
   sealed: sealedMessageSchema
     .optional()
     .describe(
-      "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope."
+      "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope. Absent on the handful of messages sealed under the pre-stream-key scheme, which this wire does not describe."
     ),
 })
 
