@@ -1572,7 +1572,10 @@ export class StreamService {
         await OutboxRepository.insert(client, "bot:e2e_grant", {
           workspaceId,
           botId: pinnedActorId,
-          streamId,
+          // The E2E root, even when the invite named a thread: wraps live on
+          // the root, so a key the runtime mints for a thread id would be
+          // registered under a scope the roll never wraps to.
+          streamId: stream.rootStreamId ?? stream.id,
         })
       }
 
