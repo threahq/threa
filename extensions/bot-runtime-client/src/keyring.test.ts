@@ -365,6 +365,44 @@ describe("E2eKeyring", () => {
     })
   })
 
+  test("a revoke drops that stream's key and forgets where it was filed", async () => {
+    let minted = 0
+    const store = new FileKeyStore({ dir: tempDir() })
+    const keyring = new E2eKeyring({
+      store,
+      account: null,
+      mint: async () => ({ ...RECORD, keyId: `bik_${++minted}` }),
+      log: () => {},
+    })
+    await keyring.ensureForStream("stream_a")
+    await keyring.ensureForStream("stream_b")
+
+    keyring.dropStream("stream_a")
+
+    // Only the revoked stream's key goes, and it goes from the store too — a
+    // record left on disk would come back on the next start and be advertised.
+    expect(keyring.presenceFields()).toEqual({
+      e2eKeys: [{ keyId: "bik_2", publicKey: "pub", streamId: "stream_b" }],
+    })
+    expect(store.read(e2eStreamKeyAccount("stream_a"))).toBeUndefined()
+    expect(store.read(e2eStreamKeyAccount("stream_b"))?.keyId).toBe("bik_2")
+  })
+
+  test("a revoke leaves the default key alone — it covers every other stream", async () => {
+    const store = new FileKeyStore({ dir: tempDir() })
+    const keyring = new E2eKeyring({ store, account: "host-abc", mint: async () => RECORD, log: () => {} })
+    await keyring.ensure()
+
+    keyring.dropStream("stream_a")
+
+    expect(keyring.presenceFields()).toEqual({
+      e2eKeys: [{ keyId: "bik_1", publicKey: "pub" }],
+      publicKey: "pub",
+      publicKeyId: "bik_1",
+    })
+    expect(store.read("host-abc")?.keyId).toBe("bik_1")
+  })
+
   test("concurrent grants for one stream mint a single key", async () => {
     let minted = 0
     const keyring = new E2eKeyring({

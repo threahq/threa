@@ -451,6 +451,21 @@ export class E2eKeyring {
   }
 
   /**
+   * Forget this stream's key: drop it from the held set and from the store.
+   * Under the default policy the key covers every stream this runtime serves,
+   * so a revoke on one of them must leave it alone — only a key minted FOR the
+   * revoked stream is dead, and only once its wraps are gone server-side.
+   */
+  dropStream(streamId: string): E2eKeyRecord[] {
+    const held = this.held.find((key) => key.streamId === streamId)
+    if (!held) return this.held
+    this.held = this.held.filter((key) => key !== held)
+    this.opts.store.remove(held.account)
+    this.log(`Threa sealed: dropped ${held.keyId}, the key for revoked stream ${streamId}`)
+    return this.held
+  }
+
+  /**
    * The key a wrap for `streamId` must be addressed to, once `ensureForStream`
    * has resolved. Under the default policy that is the unscoped key whatever
    * the stream; under the per-stream policy picking the first held key would

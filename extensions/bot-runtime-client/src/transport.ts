@@ -17,6 +17,7 @@ import { buildBotSocketUrl, isObject, parseWsHint, type WsHint } from "./ws-hint
 import type {
   BotDecisionPayload,
   BotE2eGrantPayload,
+  BotE2eRevokePayload,
   BotHelloBootstrap,
   BotRuntimeTransportCallbacks,
   DelegationAvailableNudge,
@@ -212,6 +213,7 @@ export class BotRuntimeTransport {
       this.callbacks.onDecisionCancelled?.(payload as BotDecisionPayload)
     )
     socket.on("bot:e2e_grant", (payload: unknown) => this.callbacks.onE2eGrant?.(payload as BotE2eGrantPayload))
+    socket.on("bot:e2e_revoke", (payload: unknown) => this.callbacks.onE2eRevoke?.(payload as BotE2eRevokePayload))
     socket.on("bot:resync", () => {
       this.callbacks.onResync?.()
       this.teardownSocket()

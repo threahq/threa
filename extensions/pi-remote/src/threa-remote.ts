@@ -498,6 +498,17 @@ async function keyGrantedStreams(streamIds: string[], ctx?: ExtensionContext): P
 }
 
 /**
+ * Give up the key held for a scratchpad this bot was revoked from, then
+ * re-advertise. The server has already deleted the wraps only that key could
+ * open, so holding it buys nothing — under the default policy there is no such
+ * key and the shared one stays, which is the point of one key per host.
+ */
+async function keyRevokedStream(streamId: string, ctx?: ExtensionContext): Promise<void> {
+  await botKeyring.dropStream(streamId)
+  await advertiseKeyring(ctx)
+}
+
+/**
  * Push presence when the held keyring is no longer what the server was last
  * told. A key the server has not registered is one no wrap can be addressed
  * to, so this runs before the wraps that name it.
@@ -1115,6 +1126,7 @@ function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTra
     callbacks: {
       onInvocationAvailable: () => void claimIfIdle(pi, ctx).catch(() => undefined),
       onE2eGrant: (payload) => void keyGrantedStreams([payload.streamId], ctx).catch(() => undefined),
+      onE2eRevoke: (payload) => void keyRevokedStream(payload.streamId, ctx).catch(() => undefined),
       onBootstrap: (bootstrap) => {
         if (bootstrap.serverGeneratedAt) {
           const current = getCurrentSessionLink(ctx)
