@@ -1,3 +1,4 @@
+import type { StreamEnvelope } from "./crypto"
 import type { InvocationControlScheduler } from "./invocation-control"
 
 /**
@@ -74,6 +75,12 @@ export interface BotE2eGrantPayload {
 /** The bootstrap snapshot the server returns in the `bot:hello` ack. */
 export interface BotHelloBootstrap {
   serverGeneratedAt?: string
+  /**
+   * This bot's own id, as the server authenticated it. A sealed decision card's
+   * AAD names its requester, so a runtime cannot seal one until it knows which
+   * bot it is. Absent against a server from before that field shipped.
+   */
+  botId?: string
   availableInvocations: unknown[]
   ownedClaims: unknown[]
   /** Sealed scratchpads this bot is an actor on — the catch-up for `bot:e2e_grant`. */
@@ -103,6 +110,11 @@ export interface BotDecisionPayload {
   status: DecisionRequestStatus
   optionId: string | null
   note: string | null
+  /** The sealed half of the answer's note, on an encrypted stream; `note` is null there. */
+  noteCiphertext: string | null
+  noteEnvelope: StreamEnvelope | null
+  /** Who answered — a sealed note's AAD names them, so opening one needs it. */
+  decidedBy: string | null
   version: number
 }
 
@@ -110,13 +122,17 @@ export type DecisionRequestStatus = "open" | "resolved" | "cancelled" | "expired
 
 export interface DecisionOption {
   id: string
-  label: string
+  /** Omitted on a sealed card: the labels travel inside the ciphertext. */
+  label?: string
   tone?: "primary" | "neutral" | "destructive"
 }
 
 export interface DecisionResolution {
   optionId: string
   note?: string
+  /** The sealed note, on an encrypted stream. */
+  noteCiphertext?: string
+  noteEnvelope?: StreamEnvelope
   /** Absent when the resolution was reconstructed from a socket push, which carries only the answer. */
   decidedBy?: string
   decidedAt?: string
@@ -124,9 +140,17 @@ export interface DecisionResolution {
 
 /** Body of `POST /streams/:streamId/decisions`. */
 export interface CreateDecisionRequestBody {
-  title: string
+  /** Omitted on a sealed card: the title travels inside the ciphertext. */
+  title?: string
   bodyMarkdown?: string
   options: DecisionOption[]
+  /**
+   * The card's id, minted by the requester. Required with `sealed` — the AAD
+   * binds the ciphertext to the id, so the id has to exist before the seal.
+   */
+  decisionId?: string
+  /** The sealed question, on an encrypted stream. Ids and tones stay in the clear. */
+  sealed?: { ciphertext: string; envelope: StreamEnvelope }
   allowNote?: boolean
   externalRef?: string
   expiresInMs?: number
@@ -145,6 +169,9 @@ export interface DecisionRequest {
   status: DecisionRequestStatus
   title: string
   options: DecisionOption[]
+  /** Present on a sealed card; `title` and every option `label` are placeholders then. */
+  ciphertext?: string
+  envelope?: StreamEnvelope
   allowNote: boolean
   externalRef?: string
   resolution?: DecisionResolution

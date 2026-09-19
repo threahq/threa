@@ -94,11 +94,9 @@ Hermes' own `MEDIA: <path>` lines are rewritten to `THREA_ATTACH:` first, so bot
 
 Set `THREA_E2E=1` to run against a sealed scratchpad. The connector's Bot Identity Key is written to
 `~/.threa/bik-hermes.json` on first start; invite the bot on the encrypted scratchpad so its key is wrapped for it.
-Turns, replies, steps and attachments are then sealed end to end.
-
-Decision cards are not sealed yet (the backend refuses `requestDecision` with `E2E_STREAM_PLAINTEXT_UNSUPPORTED`), so
-an approval request on a sealed turn is denied automatically and the denial is recorded as a step on the turn. Sealed
-cards are THR-121.
+Turns, replies, steps and attachments are then sealed end to end, and so are approval cards: the question and its
+button labels travel inside the ciphertext, and a note you attach to the answer comes back to the agent decrypted. The
+server sees the option ids and tones, which is what it needs to check that an answer names a button on the card.
 
 ## Installing
 

@@ -18,9 +18,11 @@ import { E2eKeyring, FileKeyStore, readLegacyBikFile, type E2eKeyRecord } from "
 import {
   BotKeyring,
   mintE2eKeyRecord,
+  openSealedDecisionNote,
   openSealedTurnContext,
   parseSealedTurnContext,
   scrubSealedError,
+  sealDecision,
   sealReply,
   sealStep,
   type SealedTurnContext,
@@ -366,6 +368,70 @@ describe("sealReply / sealStep", () => {
       ciphertext: base64ToBytes(frame.ciphertext),
     })
     expect(opened).toBe("$ rm -rf ./build\nexit 0")
+  })
+})
+
+describe("sealDecision / openSealedDecisionNote", () => {
+  const CARD_STREAM = "stream_01THREAD"
+  const DECIDER = "usr_01TEST"
+
+  function makeSealing(ssk: Uint8Array): SealingState {
+    return {
+      streamId: STREAM_ID,
+      replyKeyGeneration: 2,
+      replySenderId: SENDER_ID,
+      replySsk: ssk,
+      callbackToken: "cbtok_1",
+    }
+  }
+
+  test("a sealed card binds to the stream it is posted to, not the key's root", async () => {
+    const ssk = randomSsk()
+    const card = await sealDecision(
+      makeSealing(ssk),
+      { streamId: CARD_STREAM, requesterBotId: SENDER_ID },
+      { title: "Run it?", bodyMarkdown: "`rm -rf build`", optionLabels: { yes: "Allow once", no: "Deny" } }
+    )
+    expect(card.decisionId.startsWith("dreq_")).toBe(true)
+    expect(new TextDecoder().decode(base64ToBytes(card.envelope.aad))).toBe(
+      `${CARD_STREAM}|decision|${card.decisionId}|${SENDER_ID}`
+    )
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: card.envelope,
+      ciphertext: base64ToBytes(card.ciphertext),
+    })
+    expect(JSON.parse(opened)).toEqual({
+      title: "Run it?",
+      bodyMarkdown: "`rm -rf build`",
+      optionLabels: { yes: "Allow once", no: "Deny" },
+    })
+  })
+
+  test("the note the human attached opens under the note AAD", async () => {
+    const ssk = randomSsk()
+    const sealing = makeSealing(ssk)
+    const decisionId = "dreq_01TEST"
+    const sealed = await sealMessage({
+      key: ssk,
+      keyGeneration: 2,
+      payload: "hold off until the build is green",
+      aad: new TextEncoder().encode(`${CARD_STREAM}|decision-note|${decisionId}|${DECIDER}`),
+    })
+    const note = {
+      streamId: CARD_STREAM,
+      decisionId,
+      decidedBy: DECIDER,
+      ciphertext: bytesToBase64(sealed.ciphertext),
+      envelope: sealed.envelope,
+    }
+    expect(await openSealedDecisionNote(sealing, note)).toBe("hold off until the build is green")
+    // Another slot, and a generation this turn does not hold, both come back
+    // null so the answer still settles without its note.
+    expect(await openSealedDecisionNote(sealing, { ...note, decidedBy: "usr_other" })).toBeNull()
+    expect(
+      await openSealedDecisionNote(sealing, { ...note, envelope: { ...note.envelope, keyGeneration: 1 } })
+    ).toBeNull()
   })
 })
 

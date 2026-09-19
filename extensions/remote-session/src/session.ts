@@ -14,17 +14,21 @@ import {
   BotRuntimeTransport,
   mintStreamKeyWraps,
   openSealedAck,
+  openSealedDecisionNote,
   openSealedTurnContext,
   parseSealedAckContext,
   parseSealedTurnContext,
   scrubSealedError,
+  sealDecision,
   sealReply,
   sealStep,
   type BotDecisionPayload,
   type BotRuntimeHello,
+  type CreateDecisionRequestBody,
   type DecisionOption,
   type DecisionRequest,
   type DelegationAvailableNudge,
+  type SealingState,
   type InvocationInputUpdate,
   type ObservedClaimHandle,
   type SealedReplyBody,
@@ -452,6 +456,8 @@ export class DecisionAbandonedError extends Error {
 
 interface PendingDecision {
   decision: DecisionRequest
+  /** The turn's sealing state, kept so the answer's sealed note can be opened. */
+  sealing?: SealingState
   resolve: (outcome: DecisionOutcome) => void
   reject: (error: Error) => void
 }
@@ -473,6 +479,8 @@ export class RemoteSession {
   /** The keyring as last advertised to the server, so a grant only writes presence when it added a key. */
   private advertisedKeyIds = ""
   private readonly hello: BotRuntimeHello
+  /** This bot's own id, learned from the `bot:hello` ack — a sealed card's AAD names its requester. */
+  private botId: string | undefined
   private link: RuntimeSessionLink | undefined
   private linkGeneration = 0
   private claiming = false
@@ -564,6 +572,7 @@ export class RemoteSession {
             : {}),
           onE2eGrant: (payload) => void this.keyGrantedStreams([payload.streamId]),
           onBootstrap: (bootstrap) => {
+            if (bootstrap.botId) this.botId = bootstrap.botId
             // A reconnect is exactly when an archive push went missing, so
             // re-derive before trusting the link the bootstrap arrived on.
             void this.probeArchiveBackstop()
@@ -2846,11 +2855,18 @@ export class RemoteSession {
     const onlyStream = this.parallel ? [...this.inflightStreams()][0] : undefined
     const streamId = input.streamId ?? onlyStream ?? this.activeTurnStream ?? this.link?.rootStreamId
     if (!streamId) throw new Error("Cannot open a decision: this session has no active turn and no linked scratchpad.")
-    const invocationId = input.invocationId ?? this.routeForStream(streamId)?.invocation.id
+    const route = this.routeForStream(streamId)
+    const invocationId = input.invocationId ?? route?.invocation.id
+    const sealing = route?.invocation.sealing
+    const question = sealing
+      ? await this.sealedDecisionQuestion(streamId, input, sealing)
+      : {
+          title: input.title,
+          ...(input.body ? { bodyMarkdown: input.body } : {}),
+          options: input.options,
+        }
     const decision = await this.client.requestDecision(streamId, {
-      title: input.title,
-      ...(input.body ? { bodyMarkdown: input.body } : {}),
-      options: input.options,
+      ...question,
       ...(input.allowNote === undefined ? {} : { allowNote: input.allowNote }),
       ...(input.externalRef ? { externalRef: input.externalRef } : {}),
       ...(input.expiresInMs === undefined ? {} : { expiresInMs: input.expiresInMs }),
@@ -2859,7 +2875,9 @@ export class RemoteSession {
     })
     // A decision that landed non-open already (an instant resolve, an expiry
     // race) never gets a push — settle from what the POST returned.
-    if (decision.status !== "open") return this.outcomeFor(decision)
+    if (decision.status !== "open") {
+      return this.outcomeFor(decision, await this.decisionNote(decision, sealing))
+    }
     // shutdown() during the POST already ran abandonPendingDecisions over an
     // empty map, so registering now would strand this caller forever.
     if (this.stopped) {
@@ -2867,7 +2885,7 @@ export class RemoteSession {
       throw new DecisionAbandonedError(decision.id)
     }
     const promise = new Promise<DecisionOutcome>((resolve, reject) => {
-      this.pendingDecisions.set(decision.id, { decision, resolve, reject })
+      this.pendingDecisions.set(decision.id, { decision, ...(sealing ? { sealing } : {}), resolve, reject })
     })
     const abort = () => {
       if (!this.pendingDecisions.has(decision.id)) return
@@ -2892,11 +2910,65 @@ export class RemoteSession {
     await this.client.cancelDecision(decisionId)
   }
 
-  private outcomeFor(decision: DecisionRequest): DecisionOutcome {
+  /**
+   * The question half of a sealed create body: the title, body and option
+   * labels travel inside the ciphertext, leaving only ids and tones for the
+   * server to validate an answer against. The AAD binds the seal to the stream
+   * the card is posted to, which on a thread is not the root the key hangs off,
+   * and to an id minted here because the seal needs it before the row exists.
+   */
+  private async sealedDecisionQuestion(
+    streamId: string,
+    input: DecisionRequestInput,
+    sealing: SealingState
+  ): Promise<Pick<CreateDecisionRequestBody, "options" | "decisionId" | "sealed">> {
+    if (!this.botId) {
+      throw new Error("Cannot seal a decision: the bot plane never said which bot this session speaks as.")
+    }
+    const sealed = await sealDecision(
+      sealing,
+      { streamId, requesterBotId: this.botId },
+      {
+        title: input.title,
+        ...(input.body ? { bodyMarkdown: input.body } : {}),
+        optionLabels: Object.fromEntries(input.options.map((option) => [option.id, option.label ?? option.id])),
+      }
+    )
+    return {
+      options: input.options.map((option) => ({ id: option.id, tone: option.tone })),
+      decisionId: sealed.decisionId,
+      sealed: { ciphertext: sealed.ciphertext, envelope: sealed.envelope },
+    }
+  }
+
+  /**
+   * The note the human attached, opened when it is sealed. A note that will not
+   * open settles the decision without one: the answer itself is readable either
+   * way, and losing the note beats stranding the turn on it.
+   */
+  private async decisionNote(decision: DecisionRequest, sealing: SealingState | undefined): Promise<string | null> {
+    const resolution = decision.resolution
+    if (!resolution?.noteCiphertext || !resolution.noteEnvelope) return resolution?.note ?? null
+    if (!sealing || !resolution.decidedBy) {
+      this.log(`decision ${decision.id} carries a sealed note this session has no way to open`)
+      return null
+    }
+    const opened = await openSealedDecisionNote(sealing, {
+      streamId: decision.streamId,
+      decisionId: decision.id,
+      decidedBy: resolution.decidedBy,
+      ciphertext: resolution.noteCiphertext,
+      envelope: resolution.noteEnvelope,
+    })
+    if (opened === null) this.log(`decision ${decision.id} sealed note did not open`)
+    return opened
+  }
+
+  private outcomeFor(decision: DecisionRequest, note: string | null): DecisionOutcome {
     if (decision.status === "resolved") {
       const optionId = decision.resolution?.optionId
       if (!optionId) throw new Error(`Decision ${decision.id} resolved without an option id.`)
-      return { status: "resolved", optionId, note: decision.resolution?.note ?? null, decision }
+      return { status: "resolved", optionId, note, decision }
     }
     return { status: decision.status === "expired" ? "expired" : "cancelled", decision }
   }
@@ -2907,23 +2979,32 @@ export class RemoteSession {
     const pending = this.pendingDecisions.get(payload.decisionId)
     if (!pending) return
     if (payload.runtimeSessionId !== this.config.runtimeSessionId) return
-    this.settleDecision({
+    void this.settleDecision({
       ...pending.decision,
       status: payload.status,
       version: payload.version,
       ...(payload.status === "resolved" && payload.optionId
-        ? { resolution: { optionId: payload.optionId, ...(payload.note === null ? {} : { note: payload.note }) } }
+        ? {
+            resolution: {
+              optionId: payload.optionId,
+              ...(payload.note === null ? {} : { note: payload.note }),
+              ...(payload.noteCiphertext && payload.noteEnvelope
+                ? { noteCiphertext: payload.noteCiphertext, noteEnvelope: payload.noteEnvelope }
+                : {}),
+              ...(payload.decidedBy === null ? {} : { decidedBy: payload.decidedBy }),
+            },
+          }
         : {}),
     })
   }
 
-  private settleDecision(decision: DecisionRequest): void {
+  private async settleDecision(decision: DecisionRequest): Promise<void> {
     const pending = this.pendingDecisions.get(decision.id)
     if (!pending) return
     this.pendingDecisions.delete(decision.id)
     this.stopDecisionPollWhenIdle()
     try {
-      pending.resolve(this.outcomeFor(decision))
+      pending.resolve(this.outcomeFor(decision, await this.decisionNote(decision, pending.sealing)))
     } catch (error) {
       pending.reject(error instanceof Error ? error : new Error(String(error)))
     }
@@ -2977,7 +3058,7 @@ export class RemoteSession {
     for (const decisionId of [...this.pendingDecisions.keys()]) {
       try {
         const decision = await this.client.getDecision(decisionId)
-        if (decision.status !== "open") this.settleDecision(decision)
+        if (decision.status !== "open") await this.settleDecision(decision)
       } catch (error) {
         // A decision the requester can no longer read is never coming back;
         // everything else is transient and retried on the next tick.
