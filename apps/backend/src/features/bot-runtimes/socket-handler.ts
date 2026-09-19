@@ -433,6 +433,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           recentCancellations: bootstrap.recentCancellations,
           activeActorByStream: bootstrap.activeActorByStream.map(serializeActiveActor),
           activeSessionLinks: bootstrap.activeSessionLinks.map(serializeSessionLink),
+          e2eGrantedStreamIds: bootstrap.e2eGrantedStreamIds,
         }
         recordBotVerb({
           operation: "bot.hello_bootstrap",
@@ -716,6 +717,8 @@ export type BotHelloResponse =
       recentCancellations: BotInvocationCancellation[]
       activeActorByStream: SerializedStreamActiveActor[]
       activeSessionLinks: SerializedBotSessionLink[]
+      /** Sealed scratchpads this bot is an actor on — see `bot:e2e_grant`. */
+      e2eGrantedStreamIds: string[]
     }
   | {
       ok: false

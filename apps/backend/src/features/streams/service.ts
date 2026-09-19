@@ -1564,6 +1564,21 @@ export class StreamService {
         stream,
       })
 
+      // Tell the bot's runtimes they were granted this scratchpad. A runtime on
+      // a stream-scoped key policy has nothing to register until it hears this
+      // — the key it will be wrapped to does not exist at invite time, which is
+      // also why `keyRoll` can come back null below.
+      if (kind === "bot") {
+        await OutboxRepository.insert(client, "bot:e2e_grant", {
+          workspaceId,
+          botId: pinnedActorId,
+          // The E2E root, even when the invite named a thread: wraps live on
+          // the root, so a key the runtime mints for a thread id would be
+          // registered under a scope the roll never wraps to.
+          streamId: stream.rootStreamId ?? stream.id,
+        })
+      }
+
       // Hand the owner everything it needs to roll the SSK forward and wrap it
       // to the new recipient set (every live actor key). The roll itself is a
       // separate owner-authenticated POST — the client mints the SSK and we

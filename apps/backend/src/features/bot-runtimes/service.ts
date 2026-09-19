@@ -55,7 +55,7 @@ import {
   type StreamService,
 } from "../streams"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
-import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
+import { E2E_GRANT_BOOTSTRAP_LIMIT, E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import { MessageRepository, type InvocationSourceState } from "../messaging"
 import {
   buildCanonicalInvocationPrompt,
@@ -1364,6 +1364,7 @@ export class BotRuntimeService {
     recentCancellations: BotInvocationCancellation[]
     activeActorByStream: StreamActiveActor[]
     activeSessionLinks: BotRuntimeSessionLink[]
+    e2eGrantedStreamIds: string[]
   }> {
     const now = new Date()
     const lookbackFloor = new Date(now.getTime() - 24 * 60 * 60 * 1000)
@@ -1390,6 +1391,13 @@ export class BotRuntimeService {
           botId: params.botId,
           instanceId: params.instanceId,
         })
+        // Catch-up for `bot:e2e_grant`: an instance that was offline when the
+        // invite landed learns here which sealed scratchpads it can key to.
+        const e2eGrantedStreamIds = await E2eStreamActorsRepository.listSealedRootsForBot(db, {
+          workspaceId: params.workspaceId,
+          botId: params.botId,
+          limit: E2E_GRANT_BOOTSTRAP_LIMIT,
+        })
         await db.query("COMMIT")
         return {
           serverGeneratedAt: now,
@@ -1398,6 +1406,7 @@ export class BotRuntimeService {
           recentCancellations: bootstrap.recentCancellations,
           activeActorByStream,
           activeSessionLinks,
+          e2eGrantedStreamIds,
         }
       } catch (err) {
         await db.query("ROLLBACK").catch(() => {})

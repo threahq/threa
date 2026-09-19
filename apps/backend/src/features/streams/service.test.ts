@@ -1138,6 +1138,44 @@ describe("StreamService.inviteActor", () => {
     expect(result.keyRoll).toBeNull()
   })
 
+  test("does not emit a bot grant when the invited actor is the enclave", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+
+    await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "enclave")
+
+    expect(mockInsertOutbox).not.toHaveBeenCalledWith({}, "bot:e2e_grant", expect.anything())
+  })
+
+  test("emits bot:e2e_grant for an invited bot so its runtimes can key to the stream", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+
+    await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi")
+
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "bot:e2e_grant", {
+      workspaceId: "ws_1",
+      botId: "bot_pi",
+      streamId: "stream_e2e",
+    })
+  })
+
+  test("names the E2E root in bot:e2e_grant when the invite lands on a thread", async () => {
+    mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
+    mockFindByIdForWorkspace.mockResolvedValue({
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      rootStreamId: "stream_e2e",
+      e2eEnabled: true,
+    } as never)
+
+    await service.inviteActor("ws_1", "stream_thread", "usr_owner", "bot", "bot_pi")
+
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "bot:e2e_grant", {
+      workspaceId: "ws_1",
+      botId: "bot_pi",
+      streamId: "stream_e2e",
+    })
+  })
+
   test("returns a keyRoll wrapping the next generation to every live enclave EIK", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
     mockListLiveEiks.mockResolvedValue([
