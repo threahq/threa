@@ -2110,6 +2110,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     deleteLabel: publicApi.deleteLabel,
     getMe: publicApi.getMe,
     listMyBots: publicApi.listMyBots,
+    getMyE2eKey: publicApi.getMyE2eKey,
   }
 
   assertHandlerParity(Object.keys(publicHandlers))

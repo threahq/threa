@@ -3644,6 +3644,39 @@ export function createPublicApiHandlers({
       res.json({ data: bots.map(serializeBot) })
     },
 
+    /**
+     * The calling user's own active key, private half included. The bundle is
+     * sealed under the user's passphrase and the server has never held the KEK,
+     * so this is the one route that lets a client holding only an API key and a
+     * passphrase recover the private key on a machine that has never run the
+     * web app.
+     *
+     * Bot-scoped keys get 403 — a bot has its own BIK and reaches an owner's
+     * public half through the bot-runtime route, never the sealed private one.
+     */
+    async getMyE2eKey(req: Request, res: Response) {
+      if (req.botApiKey) {
+        throw new HttpError("Bot keys have no user encryption key", { status: 403, code: "FORBIDDEN" })
+      }
+      if (!req.userApiKey) {
+        throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+      }
+      const key = await UserE2eKeysRepository.getActiveByUser(pool, req.workspaceId!, req.user!.id)
+      if (!key) {
+        throw new HttpError("E2E key not set up", { status: 404, code: "E2E_KEY_NOT_FOUND" })
+      }
+      res.json({
+        data: {
+          keyId: key.keyId,
+          publicKey: key.publicKey.toString("base64"),
+          encryptedPrivateBundle: key.encryptedPrivateBundle.toString("base64"),
+          kdfSalt: key.kdfSalt.toString("base64"),
+          kdfParams: key.kdfParams,
+          createdAt: key.createdAt.toISOString(),
+        },
+      })
+    },
+
     async listLabels(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const actor = await resolveLabelActor(req, pool)
