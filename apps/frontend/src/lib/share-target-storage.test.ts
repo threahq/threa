@@ -1,54 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { installFakeCaches, uninstallFakeCaches } from "@/test/fake-caches"
 import { SHARE_TARGET_CACHE } from "./sw-messages"
 import { clearShareStash, readShareStash, readShareStashFiles, stashShareTarget } from "./share-target-storage"
 
 const OWNER_A = "user_01AAA"
 const OWNER_B = "user_01BBB"
 
-/** Minimal in-memory CacheStorage — jsdom ships none. */
-class FakeCache {
-  private readonly entries = new Map<string, Response>()
-
-  async put(request: string, response: Response): Promise<void> {
-    this.entries.set(request, response)
-  }
-
-  async match(request: string): Promise<Response | undefined> {
-    return this.entries.get(request)?.clone()
-  }
-
-  async keys(): Promise<string[]> {
-    return [...this.entries.keys()]
-  }
-
-  async delete(request: string): Promise<boolean> {
-    return this.entries.delete(request)
-  }
-}
-
-let caches_: Map<string, FakeCache>
-
-beforeEach(() => {
-  caches_ = new Map()
-  Object.defineProperty(globalThis, "caches", {
-    configurable: true,
-    value: {
-      open: async (name: string) => {
-        let cache = caches_.get(name)
-        if (!cache) {
-          cache = new FakeCache()
-          caches_.set(name, cache)
-        }
-        return cache
-      },
-      delete: async (name: string) => caches_.delete(name),
-    },
-  })
-})
-
-afterEach(() => {
-  Reflect.deleteProperty(globalThis, "caches")
-})
+beforeEach(installFakeCaches)
+afterEach(uninstallFakeCaches)
 
 function share(owner: string | null, files: File[] = []) {
   return stashShareTarget({ title: "T", text: "body", url: "https://example.com", files, owner })

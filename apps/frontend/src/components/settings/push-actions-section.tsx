@@ -132,7 +132,7 @@ export function PushActionsSection({ workspaceId }: { workspaceId: string }) {
       <div>
         <h3 className="text-sm font-medium">Notification buttons</h3>
         <p className="text-sm text-muted-foreground">
-          Act on a message straight from the notification. Buttons show on Android and desktop Chrome.
+          Act on a message straight from the notification. Buttons show in desktop Chrome.
         </p>
       </div>
 

@@ -11,7 +11,7 @@ let launchHandled = false
 
 /** The data router numbers each session entry in `history.state.idx`; a
  *  reload keeps it, so a positive index means history already sits beneath. */
-function hasHistoryBeneath(): boolean {
+export function hasHistoryBeneath(): boolean {
   const state: unknown = typeof window === "undefined" ? null : window.history.state
   const idx = (state as { idx?: unknown } | null)?.idx
   return typeof idx === "number" && idx > 0

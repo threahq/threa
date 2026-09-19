@@ -162,7 +162,9 @@ export function formatReminderDelay(minutes: number): string {
  * Capping at one button hid the mis-attribution without making the id
  * trustworthy, and an action that "succeeds" suppresses the navigation — a
  * misread tap costs the user the stream they were trying to open. A platform
- * whose button identity cannot be read carries no buttons.
+ * whose button identity cannot be read carries no buttons, and the test is the
+ * Android token rather than Chrome's: no Android browser has been shown to
+ * attribute a press, and the ones that render no buttons anyway lose nothing.
  */
 export function resolvePushActionLimit(userAgent: string): number {
   return /\bAndroid\b/.test(userAgent) ? 0 : PUSH_ACTIONS_MAX

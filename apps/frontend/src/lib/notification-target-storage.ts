@@ -9,14 +9,21 @@
  * window, and every entry point into the app claims it: the SW message, boot,
  * and the return-to-foreground transition.
  *
- * The read is one-shot, so those three racing is harmless, and stale beyond
- * {@link NOTIFICATION_TARGET_TTL_MS} so a tap can never redirect a later,
- * deliberate visit.
+ * A read deletes the entry, and one older than {@link NOTIFICATION_TARGET_TTL_MS}
+ * reads as absent so a tap can never redirect a later, deliberate visit.
+ * CacheStorage has no compare-and-delete, so two overlapping reads can still see
+ * the same entry: the claim chain in `main.tsx` is what runs the three entry
+ * points one at a time.
  */
 
 import { NOTIFICATION_TARGET_CACHE } from "./sw-messages"
 
 const TARGET_KEY = "/_notify/target"
+
+/** A path this app can navigate to: same-origin, and not a protocol-relative `//host`. */
+export function isSameOriginPath(url: string): boolean {
+  return url.startsWith("/") && !url.startsWith("//")
+}
 
 export interface NotificationTarget {
   /** Same-origin path the tap should land on. */
@@ -32,10 +39,7 @@ export interface NotificationTarget {
  */
 export const NOTIFICATION_TARGET_TTL_MS = 60_000
 
-export async function stashNotificationTarget(
-  target: NotificationTarget,
-  now: number = Date.now()
-): Promise<void> {
+export async function stashNotificationTarget(target: NotificationTarget, now: number = Date.now()): Promise<void> {
   try {
     const cache = await caches.open(NOTIFICATION_TARGET_CACHE)
     await cache.put(TARGET_KEY, new Response(JSON.stringify({ ...target, at: now })))
@@ -52,7 +56,7 @@ export async function takeNotificationTarget(now: number = Date.now()): Promise<
     if (!response) return null
     await cache.delete(TARGET_KEY)
     const raw = (await response.json()) as Partial<NotificationTarget> & { at?: unknown }
-    if (!raw || typeof raw.url !== "string" || !raw.url.startsWith("/")) return null
+    if (!raw || typeof raw.url !== "string" || !isSameOriginPath(raw.url)) return null
     if (typeof raw.at !== "number" || now - raw.at > NOTIFICATION_TARGET_TTL_MS) return null
     return {
       url: raw.url,

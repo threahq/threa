@@ -1,42 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { installFakeCaches, uninstallFakeCaches } from "@/test/fake-caches"
 import { SW_MSG_NOTIFICATION_CLICK } from "./sw-messages"
 import { openNotificationTarget, type NotificationClients } from "./sw-notification-open"
 import { takeNotificationTarget } from "./notification-target-storage"
 
-/** Minimal in-memory CacheStorage — jsdom ships none. */
-class FakeCache {
-  private readonly entries = new Map<string, Response>()
-  async put(request: string, response: Response): Promise<void> {
-    this.entries.set(request, response)
-  }
-  async match(request: string): Promise<Response | undefined> {
-    return this.entries.get(request)?.clone()
-  }
-  async delete(request: string): Promise<boolean> {
-    return this.entries.delete(request)
-  }
-}
-
-beforeEach(() => {
-  const caches_ = new Map<string, FakeCache>()
-  Object.defineProperty(globalThis, "caches", {
-    configurable: true,
-    value: {
-      open: async (name: string) => {
-        let cache = caches_.get(name)
-        if (!cache) {
-          cache = new FakeCache()
-          caches_.set(name, cache)
-        }
-        return cache
-      },
-    },
-  })
-})
-
-afterEach(() => {
-  Reflect.deleteProperty(globalThis, "caches")
-})
+beforeEach(installFakeCaches)
+afterEach(uninstallFakeCaches)
 
 const ORIGIN = "https://app.threa.io"
 const TARGET = "/w/ws_1/s/stream_1?m=msg_1"
@@ -87,7 +56,11 @@ describe("openNotificationTarget", () => {
 
     await openNotificationTarget(api, ORIGIN, TARGET, undefined)
 
-    expect(live.postMessage).toHaveBeenCalledTimes(1)
+    expect(live.postMessage).toHaveBeenCalledWith({
+      type: SW_MSG_NOTIFICATION_CLICK,
+      url: TARGET,
+      workosUserId: undefined,
+    })
     expect(openWindow).not.toHaveBeenCalled()
   })
 
@@ -109,5 +82,31 @@ describe("openNotificationTarget", () => {
     const focused = client(`${ORIGIN}/`, async () => undefined)
     await openNotificationTarget(clients([focused]).api, ORIGIN, TARGET, undefined)
     expect(await takeNotificationTarget()).toEqual({ url: TARGET, workosUserId: undefined })
+  })
+
+  it("stashes before it tries a window, so a relaunch racing the worker still reads it", async () => {
+    let stashedWhenOpening: unknown = null
+    const api: NotificationClients = {
+      matchAll: async () => [],
+      openWindow: async () => {
+        stashedWhenOpening = await takeNotificationTarget()
+        return null
+      },
+    }
+
+    await openNotificationTarget(api, ORIGIN, TARGET, undefined)
+
+    expect(stashedWhenOpening).toEqual({ url: TARGET, workosUserId: undefined })
+  })
+
+  it("settles when opening a window is refused, so the badge sync after it still runs", async () => {
+    const api: NotificationClients = {
+      matchAll: async () => [],
+      openWindow: async () => {
+        throw new DOMException("Not allowed to open a window", "InvalidAccessError")
+      },
+    }
+
+    await expect(openNotificationTarget(api, ORIGIN, TARGET, undefined)).resolves.toBeUndefined()
   })
 })

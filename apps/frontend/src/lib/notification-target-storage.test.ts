@@ -1,44 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { installFakeCaches, uninstallFakeCaches } from "@/test/fake-caches"
+import { NOTIFICATION_TARGET_CACHE } from "./sw-messages"
 import {
   NOTIFICATION_TARGET_TTL_MS,
   stashNotificationTarget,
   takeNotificationTarget,
 } from "./notification-target-storage"
 
-/** Minimal in-memory CacheStorage — jsdom ships none. */
-class FakeCache {
-  private readonly entries = new Map<string, Response>()
-  async put(request: string, response: Response): Promise<void> {
-    this.entries.set(request, response)
-  }
-  async match(request: string): Promise<Response | undefined> {
-    return this.entries.get(request)?.clone()
-  }
-  async delete(request: string): Promise<boolean> {
-    return this.entries.delete(request)
-  }
-}
-
-beforeEach(() => {
-  const caches_ = new Map<string, FakeCache>()
-  Object.defineProperty(globalThis, "caches", {
-    configurable: true,
-    value: {
-      open: async (name: string) => {
-        let cache = caches_.get(name)
-        if (!cache) {
-          cache = new FakeCache()
-          caches_.set(name, cache)
-        }
-        return cache
-      },
-    },
-  })
-})
-
-afterEach(() => {
-  Reflect.deleteProperty(globalThis, "caches")
-})
+beforeEach(installFakeCaches)
+afterEach(uninstallFakeCaches)
 
 const TARGET = { url: "/w/ws_1/s/stream_1?m=msg_1", workosUserId: "user_01AAA" }
 
@@ -61,6 +31,18 @@ describe("notification target stash", () => {
 
   it("reads as absent with nothing stashed", async () => {
     expect(await takeNotificationTarget()).toBeNull()
+  })
+
+  it("rejects a destination that would leave the app", async () => {
+    const cache = await caches.open(NOTIFICATION_TARGET_CACHE)
+    await cache.put("/_notify/target", new Response(JSON.stringify({ url: "//evil.example/x", at: 1_000 })))
+    expect(await takeNotificationTarget(1_000)).toBeNull()
+  })
+
+  it("rejects an entry with no timestamp rather than treating it as fresh", async () => {
+    const cache = await caches.open(NOTIFICATION_TARGET_CACHE)
+    await cache.put("/_notify/target", new Response(JSON.stringify({ url: TARGET.url })))
+    expect(await takeNotificationTarget(1_000)).toBeNull()
   })
 
   it("survives a browser with no Cache API", async () => {

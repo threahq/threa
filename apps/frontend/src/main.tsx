@@ -3,8 +3,8 @@ import { createRoot } from "react-dom/client"
 import { App } from "./App"
 import { router } from "./routes"
 import { SW_MSG_NOTIFICATION_CLICK, SW_MSG_SUBSCRIPTION_CHANGED } from "./lib/sw-messages"
-import { setNotificationIntent } from "./lib/notification-intent"
-import { takeNotificationTarget, type NotificationTarget } from "./lib/notification-target-storage"
+import { createNotificationLanding } from "./lib/notification-landing"
+import { hasHistoryBeneath } from "./hooks/use-launch-ancestors"
 import { hydrateCollapseCache } from "./lib/markdown/collapse-cache"
 import { applyPersistedComposerHeight } from "./lib/composer-height-storage"
 import { installCrashRecovery } from "./lib/crash-recovery"
@@ -30,36 +30,11 @@ installCrashRecovery()
 // mounted.
 applyPersistedComposerHeight()
 
-/**
- * Land on a tapped notification's destination. Claims the worker's stash first
- * — it is the one record that survives a frozen page missing the SW message or
- * a relaunch arriving at `start_url` — and falls back to a message that came
- * from a worker predating the stash. The claim is one-shot, so boot, resume and
- * the message racing each other is harmless: claims run one at a time, each
- * awaiting the previous navigation, so the loser reads an empty stash and finds
- * the URL already current instead of pushing a second history entry for it.
- */
-let landing: Promise<void> = Promise.resolve()
-
-function landOnNotificationTarget(fallback?: NotificationTarget): Promise<void> {
-  landing = landing.then(() => claimNotificationTarget(fallback))
-  return landing
-}
-
-async function claimNotificationTarget(fallback?: NotificationTarget): Promise<void> {
-  const target = (await takeNotificationTarget()) ?? fallback
-  if (!target || !target.url.startsWith("/")) return
-  if (target.url === `${window.location.pathname}${window.location.search}`) return
-  // Stash the notification's intended recipient *before* navigating so the
-  // freshly-mounted WorkspaceLayout's switch hook sees it. The hook flips
-  // the active account in place if the click landed under a different one.
-  const workspaceMatch = /^\/w\/([^/]+)/.exec(target.url)
-  if (target.workosUserId && workspaceMatch) {
-    setNotificationIntent(workspaceMatch[1], target.workosUserId)
-  }
-  // Client-side navigation preserves React tree, TanStack Query cache, and socket connection
-  await router.navigate(target.url)
-}
+const landOnNotificationTarget = createNotificationLanding({
+  navigate: (url, options) => router.navigate(url, options),
+  currentUrl: () => `${window.location.pathname}${window.location.search}`,
+  hasHistoryBeneath,
+})
 
 void landOnNotificationTarget()
 document.addEventListener("visibilitychange", () => {
