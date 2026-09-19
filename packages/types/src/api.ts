@@ -1523,9 +1523,10 @@ export interface DecisionResolution {
  * own words. Sealed under the stream key as one JSON body bound by AAD to
  * `streamId|decision|decisionId|requesterBotId`, so the server stores the
  * question it cannot read. Option *ids* and *tones* stay outside it, in the
- * clear `options` array: the server validates an answer against those ids and a
- * locked card still renders its buttons in the right order and colour, with the
- * labels filled in once the key is there.
+ * clear `options` array so the server can validate an answer against those ids.
+ * The labels are sealed with the rest, so a card that won't open has nothing to
+ * put on its buttons: the client shows a notice in their place until the key is
+ * there.
  */
 export interface SealedDecisionContent {
   title: string
