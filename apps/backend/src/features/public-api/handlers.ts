@@ -120,6 +120,8 @@ import { listMyBotsSchema } from "./schemas"
 import type {
   WireStream,
   WireMessage,
+  WireSealedMessage,
+  WireStreamE2eKeyWraps,
   WireConversation,
   WireSearchResult,
   WireUser,
@@ -135,6 +137,7 @@ import type {
   WireLabelAssignment,
   WireSlotMap,
 } from "./routes"
+import { sealedEnvelopeSchema } from "./routes"
 import { API_VERSIONS, CURRENT_API_VERSION } from "./versions"
 import {
   publicSearchSchema,
@@ -204,6 +207,30 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
   }
 }
 
+/**
+ * The sealed body of an E2E message, or undefined for a plaintext row. The two
+ * columns are written together on every sealed path, so a row holding one
+ * without the other is corruption, not a shape this API can serve — decrypting
+ * needs the generation and IV the envelope names, and a caller that received
+ * ciphertext alone could never open it. Fail loudly rather than hand back a
+ * message whose body is permanently unreadable (INV-11).
+ */
+function parseSealedMessage(message: {
+  id: string
+  ciphertext?: Buffer | null
+  envelope?: unknown
+}): WireSealedMessage | undefined {
+  if (message.ciphertext == null) return undefined
+  const envelope = sealedEnvelopeSchema.safeParse(message.envelope)
+  if (!envelope.success) {
+    throw new HttpError(`Message ${message.id} has ciphertext but no usable envelope`, {
+      status: 500,
+      code: "E2E_MESSAGE_ENVELOPE_INVALID",
+    })
+  }
+  return { ciphertext: message.ciphertext.toString("base64"), envelope: envelope.data }
+}
+
 function serializeMessage(
   message: {
     id: string
@@ -219,9 +246,15 @@ function serializeMessage(
     revision: number
     editedAt: Date | null
     createdAt: Date
+    ciphertext?: Buffer | null
+    envelope?: unknown
   },
   opts?: { authorDisplayName?: string | null; threadStreamId?: string | null; attachments?: Attachment[] }
 ): WireMessage {
+  // An E2E row carries the real body as ciphertext; `content` is the stored
+  // placeholder. Both ship, so a caller with no key still reads the timeline
+  // shape and a caller with one decrypts without a second request.
+  const sealed = parseSealedMessage(message)
   return {
     id: message.id,
     streamId: message.streamId,
@@ -241,6 +274,7 @@ function serializeMessage(
     revision: message.revision,
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
+    ...(sealed != null && { sealed }),
   }
 }
 
@@ -2970,6 +3004,21 @@ export function createPublicApiHandlers({
 
     archiveStream: setStreamArchived(true),
     unarchiveStream: setStreamArchived(false),
+
+    async listStreamE2eKeyWraps(req: Request, res: Response) {
+      const streamId = req.params.streamId
+      await assertStreamAccessible(req, streamId, { allowArchived: true })
+
+      // Threads inherit the root's key and hold no e2e_streams row of their
+      // own (INV-62), so a thread id lands on STREAM_NOT_E2E from the service.
+      // The stream's `rootStreamId` is what a caller asks for instead.
+      const { currentKeyGeneration, ownerUserId, wraps } = await streamService.listE2eKeyWraps(
+        req.workspaceId!,
+        streamId
+      )
+      const body: WireStreamE2eKeyWraps = { currentKeyGeneration, ownerUserId, wraps }
+      res.json({ data: body })
+    },
 
     async listMembers(req: Request, res: Response) {
       const streamId = req.params.streamId

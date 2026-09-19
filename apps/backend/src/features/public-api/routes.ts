@@ -32,6 +32,7 @@ import {
   DECISION_OPTION_TONES,
   DECISION_REQUEST_STATUSES,
   DELEGATION_STATUSES,
+  E2E_KEY_WRAP_RECIPIENT_KINDS,
 } from "@threahq/types"
 import type { WorkspacePermissionSlug } from "@threahq/types"
 import {
@@ -114,6 +115,27 @@ const attachmentSummarySchema = z.object({
   height: z.number().int().optional(),
 })
 
+// The sealed (E2EE) primitives, shared by the message wire shape and the
+// invocation-bound sealed turn context below. `ciphertext` is base64 AES-GCM;
+// the envelope names the SSK generation and the IV/AAD it was sealed under.
+const sealedEnvelopeSchema = z.object({
+  v: z.number(),
+  keyGeneration: z.number().int().min(0),
+  iv: z.string(),
+  aad: z.string(),
+})
+
+const sealedMessageSchema = z.object({
+  ciphertext: z.string(),
+  envelope: sealedEnvelopeSchema,
+})
+
+const sealedWrapSchema = z.object({
+  keyGeneration: z.number().int().min(0),
+  wrapEnc: z.string(),
+  wrapCt: z.string(),
+})
+
 const messageSchema = z.object({
   id: z.string(),
   streamId: z.string(),
@@ -136,6 +158,11 @@ const messageSchema = z.object({
   revision: z.number().int().positive().describe("1 for the original body, +1 per edit"),
   editedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
+  sealed: sealedMessageSchema
+    .optional()
+    .describe(
+      "Present only on messages in an end-to-end-encrypted stream. `content` is the placeholder the server stores in place of the body; this is the real one, which only a holder of a key the stream is wrapped to can open. Recover the stream key from GET /streams/{streamId}/e2e/key-wraps, then decrypt under the generation named in the envelope."
+    ),
 })
 
 // A conversation: a first-class grouping of messages under one effective root
@@ -533,24 +560,6 @@ const externalContextHandleSchema = z.object({
 // identity private key. Mutually exclusive with `context` (a stream resolves to
 // one verdict). Present only on sealed claims; the whole path is dark until the
 // `externalSealedDelivery` policy switch flips.
-const sealedEnvelopeSchema = z.object({
-  v: z.number(),
-  keyGeneration: z.number().int().min(0),
-  iv: z.string(),
-  aad: z.string(),
-})
-
-const sealedMessageSchema = z.object({
-  ciphertext: z.string(),
-  envelope: sealedEnvelopeSchema,
-})
-
-const sealedWrapSchema = z.object({
-  keyGeneration: z.number().int().min(0),
-  wrapEnc: z.string(),
-  wrapCt: z.string(),
-})
-
 const sealedTurnContextSchema = z.object({
   callbackToken: z.string(),
   wraps: z.array(sealedWrapSchema),
@@ -610,6 +619,24 @@ const runtimeSessionLinkSchema = z.object({
 })
 const ownerE2eKeySchema = z.object({ keyId: z.string(), publicKey: z.string() })
 const provisionedWrapsSchema = z.object({ stored: z.number().int() })
+
+// Every wrap of a sealed stream's key, one per (generation, recipient key).
+// Handing out the whole set is safe: a wrap is HPKE ciphertext that opens only
+// under the recipient's private key, which never reaches the server (INV-E7).
+// The caller picks the rows whose `recipientKeyId` it holds a private key for.
+const streamE2eKeyWrapSchema = z.object({
+  keyGeneration: z.number().int().min(0),
+  recipientKeyId: z.string(),
+  recipientKind: z.enum(E2E_KEY_WRAP_RECIPIENT_KINDS),
+  wrapEnc: z.string().describe("Base64 HPKE encapsulation"),
+  wrapCt: z.string().describe("Base64 HPKE-wrapped stream key"),
+})
+
+const streamE2eKeyWrapsSchema = z.object({
+  currentKeyGeneration: z.number().int().min(0).describe("Generation new messages are sealed under"),
+  ownerUserId: z.string(),
+  wraps: z.array(streamE2eKeyWrapSchema),
+})
 
 const renamedRuntimeSessionLinkSchema = runtimeSessionLinkSchema.extend({ displayName: z.string() })
 
@@ -898,6 +925,7 @@ export type OperationId =
   | "updateStream"
   | "archiveStream"
   | "unarchiveStream"
+  | "listStreamE2eKeyWraps"
   | "listMembers"
   | "listMessages"
   | "sendMessage"
@@ -1599,6 +1627,19 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestIn: "query",
     responseSchema: paginated(memberSchema),
   },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/streams/{streamId}/e2e/key-wraps",
+    operationId: "listStreamE2eKeyWraps",
+    summary: "List the key wraps for an end-to-end-encrypted stream",
+    description:
+      "Every wrap of the stream's symmetric key, so a recipient can recover it and read the stream. A wrap is HPKE ciphertext addressed to one public key; open the one whose `recipientKeyId` you hold the private half of, then decrypt each message's `sealed.ciphertext` under the generation its envelope names. Threads inherit their root's key, so ask for the root. 400 when the stream is not encrypted.",
+    tags: ["Streams"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.STREAMS_READ],
+    parameters: [workspaceIdParam, streamIdParam],
+    responseSchema: dataEnvelope(streamE2eKeyWrapsSchema),
+    canReturn404: true,
+  },
 
   {
     method: "get",
@@ -1862,6 +1903,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
 export {
   streamSchema,
   messageSchema,
+  sealedEnvelopeSchema,
+  streamE2eKeyWrapsSchema,
   conversationSchema,
   searchResultSchema,
   memberSchema,
@@ -1884,6 +1927,8 @@ export {
 // Wire types derived from schemas — serializers annotate their return types with these
 export type WireStream = z.infer<typeof streamSchema>
 export type WireMessage = z.infer<typeof messageSchema>
+export type WireSealedMessage = z.infer<typeof sealedMessageSchema>
+export type WireStreamE2eKeyWraps = z.infer<typeof streamE2eKeyWrapsSchema>
 export type WireSharedMessageSlot = z.infer<typeof sharedMessageSlotSchema>
 export type WireSlotMap = z.infer<typeof slotMapSchema>
 export type WireConversation = z.infer<typeof conversationSchema>
