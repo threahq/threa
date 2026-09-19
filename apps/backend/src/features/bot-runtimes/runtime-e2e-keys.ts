@@ -42,12 +42,17 @@ export const RuntimeE2eKeysRepository = {
    * Key rows are never deleted. They are addressed by wraps that outlive any
    * instance, and a runtime that comes back holding the same key must find the
    * same row.
+   *
+   * Returns the key ids this instance did not already hold. A steady heartbeat
+   * re-advertising the same keyring returns none, which is what keeps the
+   * missing-wrap nudge off the per-heartbeat path.
    */
   async replaceInstanceKeys(
     db: Querier,
     params: { workspaceId: string; botId: string; instanceId: string; keys: RuntimeE2eKeyRegistration[] }
-  ): Promise<void> {
+  ): Promise<string[]> {
     const keyIds = params.keys.map((key) => key.keyId)
+    let newlyHeld: string[] = []
 
     if (params.keys.length > 0) {
       const accepted = await db.query<{ key_id: string }>(sql`
@@ -67,12 +72,14 @@ export const RuntimeE2eKeysRepository = {
         })
       }
 
-      await db.query(sql`
+      const held = await db.query<{ key_id: string }>(sql`
         INSERT INTO runtime_e2e_key_holders (workspace_id, key_id, bot_id, instance_id)
         SELECT ${params.workspaceId}, key_id, ${params.botId}, ${params.instanceId}
         FROM unnest(${keyIds}::text[]) AS key_id
         ON CONFLICT DO NOTHING
+        RETURNING key_id
       `)
+      newlyHeld = held.rows.map((row) => row.key_id)
     }
 
     await db.query(sql`
@@ -82,6 +89,8 @@ export const RuntimeE2eKeysRepository = {
         AND instance_id = ${params.instanceId}
         AND NOT (key_id = ANY(${keyIds}::text[]))
     `)
+
+    return newlyHeld
   },
 
   /**

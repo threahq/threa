@@ -7,6 +7,7 @@ import {
   RuntimeE2eKeysRepository,
   BOT_RUNTIME_BIK_STALENESS_MS,
 } from "../../src/features/bot-runtimes"
+import { E2eStreamActorsRepository } from "../../src/features/e2e-streams"
 import { streamId, workspaceId, userId, messageId } from "../../src/lib/id"
 
 /**
@@ -45,9 +46,37 @@ describe("runtime E2E key registry", () => {
     await pool.query("DELETE FROM stream_e2e_key_wraps WHERE workspace_id = $1", [ws])
     await pool.query("DELETE FROM e2e_streams WHERE workspace_id = $1", [ws])
     await pool.query("DELETE FROM messages WHERE stream_id = ANY($1)", [[sealedStream, otherSealedStream]])
+    await pool.query("DELETE FROM e2e_stream_actors WHERE workspace_id = $1", [ws])
+    await pool.query("DELETE FROM enclave_rewrap_notifications WHERE workspace_id = $1", [ws])
+    await pool.query("DELETE FROM streams WHERE workspace_id = $1", [ws])
+    await pool.query("DELETE FROM outbox WHERE payload->>'workspaceId' = $1", [ws])
   }
 
   beforeEach(cleanup)
+
+  /** A stream row the actor/wrap queries can join against; no FKs, so nothing else is needed (INV-1). */
+  async function insertStream(id: string, opts: { type?: string; archived?: boolean } = {}): Promise<void> {
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, created_by, archived_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, ws, opts.type ?? "scratchpad", owner, opts.archived ? new Date() : null]
+    )
+  }
+
+  async function grantBot(streamId: string, botId: string): Promise<void> {
+    await E2eStreamActorsRepository.add(pool, ws, streamId, "bot", botId, null)
+  }
+
+  async function rewrapNudges(): Promise<{ rootStreamId: string; targetUserId: string }[]> {
+    const result = await pool.query<{ payload: { rootStreamId: string; targetUserId: string } }>(
+      "SELECT payload FROM outbox WHERE event_type = 'e2e:rewrap_needed' AND payload->>'workspaceId' = $1 ORDER BY id",
+      [ws]
+    )
+    return result.rows.map((row) => ({
+      rootStreamId: row.payload.rootStreamId,
+      targetUserId: row.payload.targetUserId,
+    }))
+  }
 
   async function sealStream(id: string, generation: number): Promise<void> {
     await pool.query(
@@ -285,5 +314,75 @@ describe("runtime E2E key registry", () => {
       "rek_host",
     ])
     expect(stored.rows).toEqual([{ public_key: b64("host") }])
+  })
+
+  test("a genuinely new key with no wrap asks the owner to re-wrap, and the next heartbeat asks nothing", async () => {
+    await insertStream(sealedStream)
+    await sealStream(sealedStream, 1)
+    await grantBot(sealedStream, botA)
+
+    await presence({ botId: botA, instanceId: "inst_a", keys: [{ keyId: "rek_fresh", publicKey: b64("fresh") }] })
+    const afterFirst = await rewrapNudges()
+    await presence({ botId: botA, instanceId: "inst_a", keys: [{ keyId: "rek_fresh", publicKey: b64("fresh") }] })
+
+    expect({ afterFirst, afterSecond: await rewrapNudges() }).toEqual({
+      afterFirst: [{ rootStreamId: sealedStream, targetUserId: owner }],
+      afterSecond: [{ rootStreamId: sealedStream, targetUserId: owner }],
+    })
+  })
+
+  test("a key the current generation already wraps to asks nothing", async () => {
+    await insertStream(sealedStream)
+    await sealStream(sealedStream, 2)
+    await grantBot(sealedStream, botA)
+    await wrap({ streamId: sealedStream, keyId: "rek_wrapped", generation: 2 })
+
+    await presence({ botId: botA, instanceId: "inst_a", keys: [{ keyId: "rek_wrapped", publicKey: b64("wrapped") }] })
+
+    expect(await rewrapNudges()).toEqual([])
+  })
+
+  test("a wrap at a superseded generation still asks — the roll left the bot unable to claim", async () => {
+    await insertStream(sealedStream)
+    await sealStream(sealedStream, 2)
+    await grantBot(sealedStream, botA)
+    await wrap({ streamId: sealedStream, keyId: "rek_stale", generation: 1 })
+
+    await presence({ botId: botA, instanceId: "inst_a", keys: [{ keyId: "rek_stale", publicKey: b64("stale") }] })
+
+    expect(await rewrapNudges()).toEqual([{ rootStreamId: sealedStream, targetUserId: owner }])
+  })
+
+  test("a stream-scoped key asks only about its own stream", async () => {
+    await insertStream(sealedStream)
+    await insertStream(otherSealedStream)
+    await sealStream(sealedStream, 1)
+    await sealStream(otherSealedStream, 1)
+    await grantBot(sealedStream, botA)
+    await grantBot(otherSealedStream, botA)
+
+    await presence({
+      botId: botA,
+      instanceId: "inst_a",
+      keys: [{ keyId: "rek_scoped", publicKey: b64("scoped"), streamId: sealedStream }],
+    })
+
+    expect(await rewrapNudges()).toEqual([{ rootStreamId: sealedStream, targetUserId: owner }])
+  })
+
+  test("an archived scratchpad and a thread never ask — neither carries wraps a key could serve", async () => {
+    const thread = streamId()
+    await insertStream(sealedStream, { archived: true })
+    await insertStream(thread, { type: "thread" })
+    await sealStream(sealedStream, 1)
+    await sealStream(thread, 1)
+    await grantBot(sealedStream, botA)
+    await grantBot(thread, botA)
+
+    await presence({ botId: botA, instanceId: "inst_a", keys: [{ keyId: "rek_quiet", publicKey: b64("quiet") }] })
+
+    expect(await rewrapNudges()).toEqual([])
+    await pool.query("DELETE FROM e2e_streams WHERE stream_id = $1", [thread])
+    await pool.query("DELETE FROM streams WHERE id = $1", [thread])
   })
 })

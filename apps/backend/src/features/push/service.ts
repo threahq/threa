@@ -21,7 +21,7 @@ import { HttpError } from "../../lib/errors"
 import type {
   ActivityCreatedOutboxPayload,
   SavedReminderFiredOutboxPayload,
-  EnclaveRewrapNudgeOutboxPayload,
+  E2eRewrapNudgeOutboxPayload,
   CallInvitationCreatedOutboxPayload,
   CallInvitationSettledOutboxPayload,
 } from "../../lib/outbox"
@@ -520,7 +520,7 @@ export class PushService {
    * Focus-suppression (via `getTargetSubscriptions`) keeps it off a device the
    * owner is already looking at — there the socket signal already healed it.
    */
-  async deliverRewrapNudge(payload: EnclaveRewrapNudgeOutboxPayload): Promise<void> {
+  async deliverRewrapNudge(payload: E2eRewrapNudgeOutboxPayload): Promise<void> {
     if (!this.canSend) return
 
     const { workspaceId, targetUserId, rootStreamId } = payload

@@ -743,7 +743,7 @@ export type {
   DraftListResponse,
   DraftUpsertedPayload,
   DraftDeletedPayload,
-  EnclaveRewrapNeededPayload,
+  E2eRewrapNeededPayload,
   // Labels
   CreateLabelInput,
   UpdateLabelInput,

@@ -18,7 +18,7 @@ import type { Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
 import { EnclaveInvocationsRepository, type EnclaveInvocation } from "./invocations-repository"
-import { EnclaveRewrapNotificationsRepository } from "./rewrap-notifications-repository"
+import { RewrapNotificationsRepository } from "../e2e-streams"
 import { EnclaveClaimService, enqueueEnclaveInvocation } from "./claim-service"
 import { ENCLAVE_INVOCATION_CHANNEL } from "./claim-nudge"
 
@@ -562,39 +562,39 @@ describe("EnclaveClaimService re-wrap nudge sweep", () => {
   }
 
   it("nudges the owner of a stuck stream over the socket immediately, holding web-push for the grace window", async () => {
-    spyOn(EnclaveRewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(true)
-    const webpush = spyOn(EnclaveRewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(true)
+    spyOn(RewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(true)
+    const webpush = spyOn(RewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(true)
     // Just enqueued — inside the web-push grace window.
     const { insertOutbox } = arrangeNudge(new Date())
 
     await service().claimTurn("eik_fresh")
 
     const types = insertOutbox.mock.calls.map((c) => c[1])
-    expect(types).toContain("enclave:rewrap_needed")
+    expect(types).toContain("e2e:rewrap_needed")
     // Grace not yet elapsed → the web-push slot is never even claimed.
     expect(webpush).not.toHaveBeenCalled()
-    expect(types).not.toContain("enclave:rewrap_nudge")
+    expect(types).not.toContain("e2e:rewrap_nudge")
     // The signal carries the owner + the root the heal targets — never plaintext.
-    const socketCall = insertOutbox.mock.calls.find((c) => c[1] === "enclave:rewrap_needed")!
+    const socketCall = insertOutbox.mock.calls.find((c) => c[1] === "e2e:rewrap_needed")!
     expect(socketCall[2]).toEqual({ workspaceId: "ws_1", targetUserId: "usr_owner", rootStreamId: "stream_root" })
   })
 
   it("escalates to a web-push once the stuck turn has outlived the grace window", async () => {
-    spyOn(EnclaveRewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(true)
-    spyOn(EnclaveRewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(true)
+    spyOn(RewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(true)
+    spyOn(RewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(true)
     // Stuck for five minutes — past the two-minute grace.
     const { insertOutbox } = arrangeNudge(new Date(Date.now() - 5 * 60 * 1000))
 
     await service().claimTurn("eik_fresh")
 
     const types = insertOutbox.mock.calls.map((c) => c[1])
-    expect(types).toContain("enclave:rewrap_needed")
-    expect(types).toContain("enclave:rewrap_nudge")
+    expect(types).toContain("e2e:rewrap_needed")
+    expect(types).toContain("e2e:rewrap_nudge")
   })
 
   it("stays silent on a channel another poller already claimed within its window (dedup)", async () => {
-    spyOn(EnclaveRewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(false)
-    spyOn(EnclaveRewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(false)
+    spyOn(RewrapNotificationsRepository, "claimSocketNudge").mockResolvedValue(false)
+    spyOn(RewrapNotificationsRepository, "claimWebpushNudge").mockResolvedValue(false)
     const { insertOutbox } = arrangeNudge(new Date(Date.now() - 5 * 60 * 1000))
 
     await service().claimTurn("eik_fresh")

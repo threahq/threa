@@ -86,7 +86,7 @@ import { AgentOutcomesExplorer, useOutcomesUrlState } from "@/components/agent-o
 import { SearchPanelProvider, useSearchPanel } from "@/components/search"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { CallDock, CallLaunchProvider, IncomingCallOverlay } from "@/components/call"
-import { EnclaveRewrapNudgeListener } from "@/components/encryption/enclave-rewrap-nudge-listener"
+import { RewrapNudgeListener } from "@/components/encryption/rewrap-nudge-listener"
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
@@ -597,7 +597,7 @@ export function WorkspaceLayout() {
                                       <AnalyticsConsentGate workspaceId={workspaceId} />
                                       <AnalyticsConsentBanner workspaceId={workspaceId} />
                                       <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
-                                      <EnclaveRewrapNudgeListener workspaceId={workspaceId} />
+                                      <RewrapNudgeListener workspaceId={workspaceId} />
                                       <MediaGalleryProvider>
                                         <CodeViewerProvider>
                                           <TraceProvider>

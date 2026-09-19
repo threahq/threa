@@ -2,15 +2,18 @@ import type { Querier } from "../../db"
 import { sql } from "../../db"
 
 /**
- * Per-channel dedup clock for proactive owner re-wrap nudges (see the
- * `enclave_rewrap_notifications` migration). Each `claim*` method is a
- * compare-and-set: it stamps the channel's clock and returns whether THIS
- * caller won the right to emit, so a stream stuck unservable across many claim
- * polls (and many enclave instances) emits at most once per re-emit window.
- * The guard lives in the upsert's conflict clause, so the dedup holds under
- * concurrent pollers without a lock (INV-20).
+ * Per-channel dedup clock for proactive owner re-wrap nudges. Each `claim*`
+ * method is a compare-and-set: it stamps the channel's clock and returns
+ * whether THIS caller won the right to emit, so a stream whose actors are
+ * unservable across many claim polls, instances and key registrations emits at
+ * most once per re-emit window. The guard lives in the upsert's conflict
+ * clause, so the dedup holds under concurrent callers without a lock (INV-20).
+ *
+ * The table is still named `enclave_rewrap_notifications`: it predates bots
+ * needing the same nudge, and renaming it mid-deploy would break the sweep on
+ * replicas still running the old code.
  */
-export const EnclaveRewrapNotificationsRepository = {
+export const RewrapNotificationsRepository = {
   /**
    * Try to claim the socket-nudge slot for a (workspace, root stream). Returns
    * true when the slot was free or its window has elapsed (caller emits), false

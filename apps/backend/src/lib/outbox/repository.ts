@@ -139,8 +139,8 @@ export type OutboxEventType =
   | "label:deleted"
   | "label:assigned"
   | "label:unassigned"
-  | "enclave:rewrap_needed"
-  | "enclave:rewrap_nudge"
+  | "e2e:rewrap_needed"
+  | "e2e:rewrap_nudge"
   | "github_route:register"
   | "github_route:unregister"
   | "call:invitation_created"
@@ -1024,17 +1024,17 @@ export interface BoardStreamMuteChangedOutboxPayload extends WorkspaceScopedPayl
 
 // Proactive owner re-wrap nudges. When an enclave turn can't be served because
 // no live EIK holds the stream's SSK wrap, only the owner's unlocked device can
-// re-wrap (INV-E7). `enclave:rewrap_needed` is user-scoped — it reaches the
-// owner's online tab, which heals in place. `enclave:rewrap_nudge` is push-only
+// re-wrap (INV-E7). `e2e:rewrap_needed` is user-scoped — it reaches the
+// owner's online tab, which heals in place. `e2e:rewrap_nudge` is push-only
 // (delivery-groups returns null, never broadcast): the push handler turns it
 // into a web-push that pulls an offline owner back to the app. Both carry the
 // root stream the heal targets — never any plaintext.
-export interface EnclaveRewrapNeededOutboxPayload extends WorkspaceScopedPayload {
+export interface E2eRewrapNeededOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   rootStreamId: string
 }
 
-export interface EnclaveRewrapNudgeOutboxPayload extends WorkspaceScopedPayload {
+export interface E2eRewrapNudgeOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   rootStreamId: string
 }
@@ -1432,8 +1432,8 @@ export interface OutboxEventPayloadMap {
   "label:deleted": LabelDeletedOutboxPayload
   "label:assigned": LabelAssignedOutboxPayload
   "label:unassigned": LabelUnassignedOutboxPayload
-  "enclave:rewrap_needed": EnclaveRewrapNeededOutboxPayload
-  "enclave:rewrap_nudge": EnclaveRewrapNudgeOutboxPayload
+  "e2e:rewrap_needed": E2eRewrapNeededOutboxPayload
+  "e2e:rewrap_nudge": E2eRewrapNudgeOutboxPayload
   "github_route:register": GithubRouteRegisterOutboxPayload
   "github_route:unregister": GithubRouteUnregisterOutboxPayload
   "call:invitation_created": CallInvitationCreatedOutboxPayload
@@ -1580,7 +1580,7 @@ export type UserScopedEventType =
   | "board:conversation_hide_changed"
   | "board:stream_mute_changed"
   | "feature_flags:updated"
-  | "enclave:rewrap_needed"
+  | "e2e:rewrap_needed"
   | "call:invitation_created"
   | "call:invitation_settled"
 
@@ -1599,7 +1599,7 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "board:conversation_hide_changed",
   "board:stream_mute_changed",
   "feature_flags:updated",
-  "enclave:rewrap_needed",
+  "e2e:rewrap_needed",
   "call:invitation_created",
   "call:invitation_settled",
 ]
