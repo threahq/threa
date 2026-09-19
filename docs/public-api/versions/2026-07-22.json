@@ -6070,7 +6070,7 @@
         "operationId": "sendMessage",
         "summary": "Send a message",
         "tags": ["Messages"],
-        "description": "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner. Optionally declare the message's conversation via `conversation`: `{intent: \"new\"}` starts a fresh conversation, `{intent: \"existing\", conversationId}` posts into one under the same root stream.",
+        "description": "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner. Optionally declare the message's conversation via `conversation`: `{intent: \"new\"}` starts a fresh conversation, `{intent: \"existing\", conversationId}` posts into one under the same root stream. In an end-to-end-encrypted stream send `sealed` in place of `content`: the body sealed under the stream key from GET /streams/{streamId}/e2e/key-wraps. Sending the wrong one of the two is a 400 (`E2E_STREAM_REQUIRES_CIPHERTEXT` / `E2E_PAYLOAD_REQUIRES_E2E_STREAM`); `conversation` is not supported for a sealed body.",
         "security": [{ "apiKey": ["messages:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -6098,6 +6098,25 @@
                 "type": "object",
                 "properties": {
                   "content": { "type": "string", "minLength": 1 },
+                  "sealed": {
+                    "type": "object",
+                    "properties": {
+                      "ciphertext": { "type": "string", "minLength": 1, "maxLength": 1000000 },
+                      "envelope": {
+                        "type": "object",
+                        "properties": {
+                          "v": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+                          "keyGeneration": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                          "iv": { "type": "string", "minLength": 1, "maxLength": 64 },
+                          "aad": { "type": "string", "minLength": 1, "maxLength": 4096 }
+                        },
+                        "required": ["v", "keyGeneration", "iv", "aad"],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": ["ciphertext", "envelope"],
+                    "additionalProperties": false
+                  },
                   "clientMessageId": { "type": "string", "maxLength": 128 },
                   "metadata": {
                     "type": "object",
@@ -6129,7 +6148,6 @@
                     ]
                   }
                 },
-                "required": ["content"],
                 "additionalProperties": false
               }
             }

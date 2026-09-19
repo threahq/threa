@@ -900,12 +900,12 @@ export function createPublicApiHandlers({
   }
 
   /**
-   * Reject a plaintext write into an end-to-end-encrypted stream. The public
-   * API has no ciphertext message path (send/update accept plaintext only), so
-   * a write here would persist a plaintext row in an E2E scratchpad and break
-   * the encryption guarantee — the same INV-E1 mismatch the first-party handler
-   * blocks. We fail before any insert. Lift this once the public API can carry
-   * a sealed payload.
+   * Reject a plaintext write into an end-to-end-encrypted stream. Used by the
+   * write paths that still carry plaintext only (message edits, the invocation
+   * response callback): a row there would break the encryption guarantee — the
+   * same INV-E1 mismatch the first-party handler blocks. We fail before any
+   * insert. `sendMessage` uses the symmetric gate below instead, since it can
+   * carry a sealed body.
    */
   async function assertNotE2eStream(workspaceId: string, streamId: string): Promise<void> {
     if (await E2eStreamsRepository.isE2eStream(pool, workspaceId, streamId)) {
@@ -914,6 +914,23 @@ export function createPublicApiHandlers({
         code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
       })
     }
+  }
+
+  /**
+   * INV-E1 both ways: a plaintext body must not land in a sealed stream and a
+   * sealed body must not land in a plaintext one. Same codes as the first-party
+   * handler, so a client that seals for one door reads the same failures at the
+   * other.
+   */
+  async function assertE2eMatchesStream(workspaceId: string, streamId: string, isSealedBody: boolean): Promise<void> {
+    const isE2eStream = await E2eStreamsRepository.isE2eStream(pool, workspaceId, streamId)
+    if (isE2eStream === isSealedBody) return
+    throw new HttpError(
+      isE2eStream
+        ? "Stream is end-to-end encrypted; send a sealed body"
+        : "Stream is not end-to-end encrypted; send plaintext content",
+      { status: 400, code: isE2eStream ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM" }
+    )
   }
 
   /**
@@ -3322,13 +3339,14 @@ export function createPublicApiHandlers({
 
     /**
      * Send a message. User-scoped keys send as the user, bot keys as the bot entity;
-     * both record the key in sentVia.
+     * both record the key in sentVia. A body may be plaintext `content` or a
+     * client-sealed `sealed` payload; which one the stream demands is INV-E1.
      */
     async sendMessage(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const streamId = req.params.streamId
 
-      const { content, clientMessageId, metadata, conversation } = validateRequest(sendMessageSchema, req.body)
+      const { content, sealed, clientMessageId, metadata, conversation } = validateRequest(sendMessageSchema, req.body)
 
       let principal: { kind: "user"; userId: string } | { kind: "bot"; botId: string } | null = null
       if (req.userApiKey) {
@@ -3338,18 +3356,41 @@ export function createPublicApiHandlers({
       }
       if (!principal) throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
       await eventService.assertStreamWritableForPrincipal(principal, workspaceId, streamId)
-      await assertNotE2eStream(workspaceId, streamId)
+      await assertE2eMatchesStream(workspaceId, streamId, sealed != null)
 
-      const contentMarkdown = normalizeMessage(content)
-      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
-      // Derive inline `attachment:` ids from the parsed contentJson so the
-      // create-time access gate runs and the attachment_references projection
-      // gets written. Public-API senders can post markdown like `[Image
-      // #1](attachment:att_x)`; without this they'd persist a message that
-      // references an attachment without ever validating read access. The
-      // schema doesn't accept fresh-upload ids today, so this list IS the
-      // full set.
-      const attachmentIds = collectAttachmentReferenceIds(contentJson)
+      // A sealed body is opaque: nothing to normalize, no inline references to
+      // gate, and the stored projection is the placeholder plaintext consumers
+      // short-circuit on. `e2eVersion` comes off the envelope rather than a
+      // third wire field that could disagree with it (INV-33).
+      let body: {
+        contentJson: JSONContent
+        contentMarkdown: string
+        attachmentIds?: string[]
+        ciphertext?: Buffer
+        envelope?: unknown
+        e2eVersion?: number
+      }
+      if (sealed) {
+        body = {
+          contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+          contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+          ciphertext: Buffer.from(sealed.ciphertext, "base64"),
+          envelope: sealed.envelope,
+          e2eVersion: sealed.envelope.v,
+        }
+      } else {
+        const contentMarkdown = normalizeMessage(content!)
+        const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+        // Derive inline `attachment:` ids from the parsed contentJson so the
+        // create-time access gate runs and the attachment_references projection
+        // gets written. Public-API senders can post markdown like `[Image
+        // #1](attachment:att_x)`; without this they'd persist a message that
+        // references an attachment without ever validating read access. The
+        // schema doesn't accept fresh-upload ids today, so this list IS the
+        // full set.
+        const attachmentIds = collectAttachmentReferenceIds(contentJson)
+        body = { contentJson, contentMarkdown, attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined }
+      }
 
       if (req.userApiKey) {
         const user = req.user!
@@ -3361,9 +3402,7 @@ export function createPublicApiHandlers({
             streamId,
             authorId: user.id,
             authorType: AuthorTypes.USER,
-            contentJson,
-            contentMarkdown,
-            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            ...body,
             clientMessageId,
             sentVia: sentViaApiKey(req.userApiKey.id),
             metadata,
@@ -3405,9 +3444,7 @@ export function createPublicApiHandlers({
             streamId,
             authorId: bot.id,
             authorType: AuthorTypes.BOT,
-            contentJson,
-            contentMarkdown,
-            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            ...body,
             clientMessageId,
             sentVia: sentViaApiKey(req.botApiKey.id),
             metadata,

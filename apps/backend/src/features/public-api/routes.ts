@@ -1666,7 +1666,11 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     description:
       "Send a message. Workspace-scoped keys send as a bot; user-scoped keys send on behalf of the key owner. " +
       'Optionally declare the message\'s conversation via `conversation`: `{intent: "new"}` starts a fresh ' +
-      'conversation, `{intent: "existing", conversationId}` posts into one under the same root stream.',
+      'conversation, `{intent: "existing", conversationId}` posts into one under the same root stream. ' +
+      "In an end-to-end-encrypted stream send `sealed` in place of `content`: the body sealed under the " +
+      "stream key from GET /streams/{streamId}/e2e/key-wraps. Sending the wrong one of the two is a 400 " +
+      "(`E2E_STREAM_REQUIRES_CIPHERTEXT` / `E2E_PAYLOAD_REQUIRES_E2E_STREAM`); `conversation` is not " +
+      "supported for a sealed body.",
     tags: ["Messages"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_WRITE],
     parameters: [workspaceIdParam, streamIdParam],

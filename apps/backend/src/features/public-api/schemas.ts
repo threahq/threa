@@ -37,7 +37,12 @@ import {
   LABELABLE_RESOURCE_TYPES,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threahq/types"
-import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
+import {
+  messageMetadataSchema,
+  messageMetadataFilterSchema,
+  e2eEnvelopeV2Schema,
+  MAX_E2E_CIPHERTEXT_BASE64_BYTES,
+} from "../messaging"
 import { botE2eKeyringFields, botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 
 const PUBLIC_SEARCH_MAX_LIMIT = 50
@@ -496,12 +501,38 @@ export const publicConversationDirectiveSchema = z.discriminatedUnion("intent", 
   z.object({ intent: z.literal("existing"), conversationId: z.string().min(1).max(64) }),
 ])
 
-export const sendMessageSchema = z.object({
-  content: z.string().min(1, "content is required"),
-  clientMessageId: z.string().max(128).optional(),
-  metadata: messageMetadataSchema.optional(),
-  conversation: publicConversationDirectiveSchema.optional(),
+// A message body sealed client-side under the stream's symmetric key, for a
+// stream that is end-to-end encrypted. Only the current (per-stream-key)
+// envelope is accepted: the legacy fan-out shape is read-compat, never
+// something a new client should mint. The server stores the bytes and the
+// framing verbatim and can open neither.
+export const sealedMessageBodySchema = z.object({
+  ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
+  envelope: e2eEnvelopeV2Schema,
 })
+
+export const sendMessageSchema = z
+  .object({
+    content: z.string().min(1, "content is required").optional(),
+    sealed: sealedMessageBodySchema.optional(),
+    clientMessageId: z.string().max(128).optional(),
+    metadata: messageMetadataSchema.optional(),
+    conversation: publicConversationDirectiveSchema.optional(),
+  })
+  // A message is plaintext or sealed, never both and never neither — which of
+  // the two the stream demands is the handler's INV-E1 gate, not this one.
+  .refine((body) => (body.content == null) !== (body.sealed == null), {
+    message: "Send either content or sealed, not both",
+    path: ["content"],
+  })
+  // The declared directive assigns the message to a conversation the boundary
+  // extractor would otherwise infer from its text. There is no text to infer
+  // from in a sealed stream, and the first-party sealed path takes no directive
+  // either — so reject it rather than accept a field that does nothing.
+  .refine((body) => body.sealed == null || body.conversation == null, {
+    message: "conversation is not supported for sealed messages",
+    path: ["conversation"],
+  })
 
 export const updateMessageSchema = z.object({
   content: z.string().min(1, "content is required"),

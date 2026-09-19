@@ -19,6 +19,10 @@ export {
   withDerivedMessageMetadata,
 } from "./metadata-schema"
 
+// Leaf module (zod only), safe this high in the barrel: the public API's sealed
+// send reaches the envelope shapes and caps through here.
+export { e2eEnvelopeV2Schema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
+
 export { deriveContentMarkdown } from "./content"
 
 export { MessageRepository, REPLY_COUNT_SUBQUERY } from "./repository"
