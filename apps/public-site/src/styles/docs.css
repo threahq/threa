@@ -599,6 +599,42 @@ a {
   padding: 0;
 }
 
+/* ---------- RENDERED MATH SAMPLE ---------- */
+/* The .pg-block frame with a light body: what's inside is the equation as a
+   reader sees it in Threa, not a code sample, so it doesn't go night. */
+.math-render {
+  margin: 20px 0;
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  background: hsl(var(--paper));
+}
+.math-render-head {
+  padding: 7px 12px;
+  border-bottom: 1px solid hsl(var(--line));
+  background: hsl(var(--paper-warm));
+  border-radius: 6px 6px 0 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: hsl(var(--muted));
+}
+.math-render-body {
+  padding: 14px 16px;
+  overflow-x: auto;
+  color: hsl(var(--ink));
+  line-height: 1.7;
+}
+.math-render-body p {
+  margin: 0;
+}
+/* Same scale the message surface sets on .katex, so what the page shows is the
+   size a reader gets in Threa. */
+.math-render-body .katex {
+  font-size: 1.05em;
+}
+.math-render-body .katex-display {
+  margin: 14px 0 0;
+}
+
 /* the live variable chip */
 .pg-var {
   font-family: var(--font-mono);

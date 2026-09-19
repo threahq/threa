@@ -1,6 +1,21 @@
 ---
+import katex from "katex"
+import "katex/dist/katex.min.css"
+
 import DocsLayout from "../../layouts/DocsLayout.astro"
 import CodeBlock from "../../components/CodeBlock.astro"
+
+// The math sample is written once and used twice: as the source in the "You
+// write" block and, rendered here at build time, as the equation under it. The
+// parse options match the message renderer (`markdown-content.tsx`); unlike it,
+// `throwOnError` stays on, so a broken sample fails the build instead of
+// shipping a red error box to the docs.
+const inlineTex = String.raw`\frac{9}{31} \approx 29\%`
+const displayTex = String.raw`\int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}`
+const mathSource = `Sample share is \\( ${inlineTex} \\), so\n\n\\[ ${displayTex} \\]`
+const renderTex = (tex: string, displayMode: boolean) =>
+  katex.renderToString(tex, { displayMode, strict: "ignore", maxSize: 10 })
+const mathRendered = `<p>Sample share is ${renderTex(inlineTex, false)}, so</p>${renderTex(displayTex, true)}`
 ---
 
 <DocsLayout
@@ -89,13 +104,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
     </tbody>
   </table>
   </div>
-  <CodeBlock
-    lang="text"
-    label="You write"
-    code={`Sample share is \\( \\frac{9}{31} \\approx 29\\% \\), so
-
-\\[ \\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi} \\]`}
-  />
+  <CodeBlock lang="text" label="You write" code={mathSource} />
+  <div class="math-render">
+    <div class="math-render-head">It renders as</div>
+    <div class="math-render-body" set:html={mathRendered}></div>
+  </div>
   <p>
     What sits between the delimiters is TeX, not markdown: <code>\&#123;</code>,
     <code>\\</code>, <code>*</code> and <code>_</code> keep their TeX meaning and

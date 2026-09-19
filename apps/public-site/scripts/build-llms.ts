@@ -200,6 +200,13 @@ function createConverter(): TurndownService {
     },
   })
 
+  // The rendered math sample is KaTeX markup of the TeX fenced directly above
+  // it; in markdown it would be noise duplicating that block.
+  td.addRule("math-render", {
+    filter: (node) => node.nodeName === "DIV" && hasClass(node, "math-render"),
+    replacement: () => "",
+  })
+
   // Callout boxes -> blockquotes.
   td.addRule("note", {
     filter: (node) => node.nodeName === "DIV" && hasClass(node, "note"),
