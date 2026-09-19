@@ -33,9 +33,9 @@ export function snapshotTopVisibleRow(el: HTMLElement): { id: string; offsetPx: 
   return best ? { id: best.id, offsetPx: Math.round(best.top - sr.top) } : null
 }
 
-export type DetachedHold = { id: string; offsetPx: number; takenAt: number }
+type DetachedHold = { id: string; offsetPx: number; takenAt: number }
 
-export interface ScrollToMessageOptions {
+interface ScrollToMessageOptions {
   align?: "center" | "start"
   topOffsetPx?: number
   /** Fires exactly once, the first time the target has held its aligned
@@ -46,7 +46,7 @@ export interface ScrollToMessageOptions {
   onFirstSettle?: () => void
 }
 
-export interface UseScrollToMessageOptions {
+interface UseScrollToMessageOptions {
   /**
    * Index of `targetId` in the rendered window, resolved at render scope. Gates
    * the entry bail, and its identity is the hook's only data dependency — memoize
@@ -78,7 +78,7 @@ export interface UseScrollToMessageOptions {
   programmaticScrollAtRef: React.MutableRefObject<number>
 }
 
-export interface ScrollToMessageApi {
+interface ScrollToMessageApi {
   /** Returns true when a refine loop engaged, false when it bailed. */
   scrollToMessage: (targetId: string, opts?: ScrollToMessageOptions) => boolean
   /** Non-null while a refine loop owns the viewport; calling it aborts the loop. */
@@ -177,7 +177,6 @@ export function useScrollToMessage({
         return false
       }
 
-      // Cancel any previous retry loop
       if (scrollRetryTimerRef.current !== null) {
         window.clearTimeout(scrollRetryTimerRef.current)
         scrollRetryTimerRef.current = null
@@ -195,7 +194,6 @@ export function useScrollToMessage({
         return false
       }
 
-      // Abort the retry loop the moment the user takes over
       let aborted = false
       const abort = () => {
         aborted = true
@@ -241,7 +239,6 @@ export function useScrollToMessage({
         const el = scroller.querySelector<HTMLElement>(`[data-message-id="${escaped}"], [data-event-id="${escaped}"]`)
 
         if (el) {
-          // Target is rendered — scroll via DOM so we get pixel-precise positioning
           const sr = scroller.getBoundingClientRect()
           const er = el.getBoundingClientRect()
           const scCenter = (sr.top + sr.bottom) / 2
@@ -264,8 +261,7 @@ export function useScrollToMessage({
           }
         } else {
           stableTicks = 0
-          // Target is virtualized out — ask the virtualizer to render it
-          // (0-based index). Re-resolve against the live window every tick: it
+          // Re-resolve the index against the live window every tick: it
           // can shift under this loop, and a stale/out-of-range index makes the
           // offset-tree binary search dereference an undefined node, throwing
           // "Cannot read properties of undefined (reading 'index')" which

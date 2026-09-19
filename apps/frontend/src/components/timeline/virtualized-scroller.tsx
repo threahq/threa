@@ -2,13 +2,13 @@ import { type CSSProperties, type ReactNode, useRef } from "react"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { cn } from "@/lib/utils"
 
-export interface VirtualizedScrollerItem {
+interface VirtualizedScrollerItem {
   /** Stable across renders — this is the virtualizer's identity for the row. */
   key: string
   node: ReactNode
 }
 
-export interface VirtualizedScrollerProps {
+interface VirtualizedScrollerProps {
   /**
    * Remount key. Every piece of scroll state — the owned scroller element, the
    * `useTimelineScroll` ResizeObserver, virtua's measurement cache — is keyed on
@@ -17,7 +17,6 @@ export interface VirtualizedScrollerProps {
    */
   scrollKey: string
   items: readonly VirtualizedScrollerItem[]
-  /** From `useTimelineScroll`. */
   registerScroller: (node: HTMLDivElement | null) => void
   scrollerRef: React.RefObject<HTMLDivElement | null>
   listRef: React.RefObject<VirtualizerHandle | null>
@@ -39,9 +38,7 @@ export interface VirtualizedScrollerProps {
   startMargin?: { heightPx: number; content?: ReactNode }
   className?: string
   style?: CSSProperties
-  /** Extra props for the scroller element (batch-selection pointer handlers). */
   scrollerProps?: React.HTMLAttributes<HTMLElement>
-  "data-suppress-pull-refresh"?: "true"
   "data-stream-scroller"?: string
   itemClassName?: string
   /**
@@ -49,9 +46,9 @@ export interface VirtualizedScrollerProps {
    * early-returns — see the hook.
    */
   hasRenderedContent: boolean
-  /** In flow below the virtualized window — composer spacer, load-more affordances. */
+  /** In flow below the virtualized window, inside the scrolled content. */
   footer?: ReactNode
-  /** Rendered after the scroller, under the settle mask (floating chrome). */
+  /** Floating chrome: outside the scroller, under the settle mask. */
   overlay?: ReactNode
   /**
    * Covers the list while `isInitialSettling`; falls back to `skeleton`. It is
@@ -60,7 +57,6 @@ export interface VirtualizedScrollerProps {
    * it — under a static parent the mask covers the whole app instead.
    */
   mask?: ReactNode
-  /** Shown instead of the list before anything has ever rendered. */
   skeleton?: ReactNode
 }
 
@@ -135,6 +131,9 @@ export function VirtualizedScroller({
         className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", className)}
         style={{ overflowAnchor: "none", ...style }}
         onScroll={onScroll}
+        // The app shell owns pull-to-refresh globally; without this a touch drag
+        // inside a timeline pulls the page instead of scrolling the list.
+        data-suppress-pull-refresh="true"
         {...dataAttributes}
       >
         <div ref={contentRef}>

@@ -2417,10 +2417,11 @@ export function StreamContent({
       landing.kind === "restore"
         ? { id: landing.targetId, offsetPx: landing.offsetPx }
         : { id: landing.dividerEventId, offsetPx: UNREAD_MARKER_TOP_GAP_PX }
-    const engaged =
-      landing.kind === "restore"
-        ? scrollToMessage(target.id, { align: "start", topOffsetPx: target.offsetPx, onFirstSettle: revealIfCurrent })
-        : scrollToMessage(target.id, { align: "start", onFirstSettle: revealIfCurrent })
+    const engaged = scrollToMessage(target.id, {
+      align: "start",
+      topOffsetPx: target.offsetPx,
+      onFirstSettle: revealIfCurrent,
+    })
     if (engaged) {
       holdSettleForRestore()
       sweepOriginRef.current = target.id
@@ -2821,7 +2822,6 @@ export function StreamContent({
                           batchMode && "select-none"
                         )}
                         style={{ paddingBottom: "var(--composer-height, 0px)" }}
-                        data-suppress-pull-refresh="true"
                         onScroll={plainHandleScroll}
                         {...batchPointerHandlers}
                       >
