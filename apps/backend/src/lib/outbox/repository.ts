@@ -6,6 +6,7 @@ import type { StreamEvent } from "../../features/streams"
 import type { User } from "../../features/workspaces"
 import type { ConversationWithStaleness } from "../../features/conversations"
 import type { HydratedSharedMessage } from "../../features/messaging/sharing"
+import { e2eEnvelopeV2Schema } from "../../features/messaging/e2e-schema"
 import type {
   MemoEmbedSummary,
   StreamEvent as WireStreamEvent,
@@ -1192,6 +1193,12 @@ export const botDecisionPayloadSchema = z.object({
   status: z.enum(DECISION_REQUEST_STATUSES),
   optionId: z.string().nullable(),
   note: z.string().nullable(),
+  /**
+   * A sealed card's note travels sealed too, and only one of the two is ever
+   * set — the requester decrypts this with the stream key it already holds.
+   */
+  noteCiphertext: z.string().nullable(),
+  noteEnvelope: e2eEnvelopeV2Schema.nullable(),
   version: z.number().int().min(1),
 })
 

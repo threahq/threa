@@ -5,7 +5,9 @@ import { BotChannelService } from "../../src/features/api-keys"
 import { DecisionRequestRepository, DecisionService } from "../../src/features/decisions"
 import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
 import { OutboxRepository } from "../../src/lib/outbox"
-import { streamId, userId } from "../../src/lib/id"
+import { botChannelAccessId, streamId, userId } from "../../src/lib/id"
+import { BotChannelAccessRepository } from "../../src/features/api-keys"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threahq/types"
 
 const OPTIONS = [
   { id: "yes", label: "Ship it", tone: "primary" as const },
@@ -121,6 +123,8 @@ describe("decision requests", () => {
       status: "resolved",
       optionId: "yes",
       note: "green build",
+      noteCiphertext: null,
+      noteEnvelope: null,
       version: 2,
     })
   })
@@ -174,6 +178,116 @@ describe("decision requests", () => {
     })
   })
 
+  test("a sealed card and its sealed note round-trip through the columns, leaving no readable text", async () => {
+    const watermark = await outboxWatermark()
+    const sealedStream = streamId()
+    await pool.query(
+      "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
+      [sealedStream, workspace, author]
+    )
+    await pool.query("INSERT INTO stream_members (stream_id, member_id) VALUES ($1, $2)", [sealedStream, author])
+    await BotChannelAccessRepository.grantAccess(pool, {
+      id: botChannelAccessId(),
+      workspaceId: workspace,
+      botId: bot,
+      streamId: sealedStream,
+      grantedBy: author,
+    })
+    await pool.query(
+      `INSERT INTO e2e_streams (stream_id, workspace_id, owner_user_id, owner_user_key_id, current_key_generation)
+       VALUES ($1, $2, $3, 'e2ek_owner', 1)`,
+      [sealedStream, workspace, author]
+    )
+    await botRuntimeServiceFor(pool).createOrLinkPiRemoteSession({
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "hermes",
+      instanceId: "hermes-instance",
+      runtimeSessionId: "hermes-sealed",
+      rootStreamId: sealedStream,
+      activeStreamId: sealedStream,
+      linkedBy: author,
+    })
+
+    const minted = `dreq_${crypto.randomUUID().replaceAll("-", "").slice(0, 26).toUpperCase()}`
+    const envelope = { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: "YWFkYWFk" }
+    const decision = await service.request({
+      workspaceId: workspace,
+      streamId: sealedStream,
+      botId: bot,
+      decisionId: minted,
+      options: [
+        { id: "yes", tone: "primary" as const },
+        { id: "no", tone: "neutral" as const },
+      ],
+      sealed: { ciphertext: "c2VhbGVkLWNhcmQ=", envelope },
+      allowNote: true,
+    })
+
+    expect(decision).toMatchObject({
+      id: minted,
+      streamId: sealedStream,
+      title: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+      bodyMarkdown: null,
+      ciphertext: "c2VhbGVkLWNhcmQ=",
+      envelope,
+      options: [
+        { id: "yes", label: E2E_PLACEHOLDER_CONTENT_MARKDOWN, tone: "primary" },
+        { id: "no", label: E2E_PLACEHOLDER_CONTENT_MARKDOWN, tone: "neutral" },
+      ],
+    })
+
+    // Minting the same id twice is a retry of a POST whose answer was lost.
+    await expect(
+      service.request({
+        workspaceId: workspace,
+        streamId: sealedStream,
+        botId: bot,
+        decisionId: minted,
+        options: [{ id: "yes", tone: "primary" as const }],
+        sealed: { ciphertext: "c2VhbGVkLWNhcmQ=", envelope },
+        allowNote: false,
+      })
+    ).rejects.toMatchObject({ status: 409, code: "DECISION_ALREADY_EXISTS" })
+
+    const resolved = await service.resolve({
+      workspaceId: workspace,
+      id: decision.id,
+      userId: author,
+      optionId: "yes",
+      sealedNote: { ciphertext: "c2VhbGVkLW5vdGU=", envelope },
+      version: decision.version,
+    })
+    expect(resolved.resolution).toMatchObject({
+      optionId: "yes",
+      noteCiphertext: "c2VhbGVkLW5vdGU=",
+      noteEnvelope: envelope,
+      decidedBy: author,
+    })
+    expect(resolved.resolution?.note).toBeUndefined()
+
+    const reread = await DecisionRequestRepository.findById(pool, workspace, decision.id)
+    expect(reread).toMatchObject({
+      ciphertext: "c2VhbGVkLWNhcmQ=",
+      envelope,
+      status: "resolved",
+      resolution: expect.objectContaining({ noteCiphertext: "c2VhbGVkLW5vdGU=" }),
+    })
+
+    expect(
+      (await outboxSince(watermark))
+        .filter((event) => event.eventType === "bot_decision:resolved")
+        .map((event) => event.payload as Record<string, unknown>)
+    ).toContainEqual(
+      expect.objectContaining({
+        decisionId: decision.id,
+        note: null,
+        noteCiphertext: "c2VhbGVkLW5vdGU=",
+        noteEnvelope: envelope,
+      })
+    )
+  })
+
   test("a personal bot's card in a public channel answers only to the bot's owner", async () => {
     const channel = streamId()
     const reader = userId()
@@ -191,6 +305,8 @@ describe("decision requests", () => {
       title: "Run rm -rf build?",
       bodyMarkdown: null,
       options: OPTIONS,
+      ciphertext: null,
+      envelope: null,
       allowNote: false,
       externalRef: null,
       expiresAt: null,
@@ -236,6 +352,8 @@ describe("decision requests", () => {
       title: "Merge?",
       bodyMarkdown: null,
       options: OPTIONS,
+      ciphertext: null,
+      envelope: null,
       allowNote: false,
       externalRef: null,
       expiresAt: null,
