@@ -58,6 +58,17 @@ describe("vendored crypto stays byte-compatible with @threahq/crypto", () => {
     )
   })
 
+  test("decision AADs produce identical bytes", () => {
+    const card = { streamId: STREAM_ID, decisionId: "dreq_01HZA", requesterBotId: SENDER_ID }
+    expect(vendored.bytesToBase64(vendored.buildDecisionAad(card))).toBe(
+      canonical.bytesToBase64(canonical.buildDecisionAad(card))
+    )
+    const note = { streamId: STREAM_ID, decisionId: "dreq_01HZA", decidedBy: "usr_01HZB" }
+    expect(vendored.bytesToBase64(vendored.buildDecisionNoteAad(note))).toBe(
+      canonical.bytesToBase64(canonical.buildDecisionNoteAad(note))
+    )
+  })
+
   test("a message sealed by one module opens with the other (both directions)", async () => {
     const ssk = canonical.generateStreamKey()
     const aad = canonical.buildMessageAad({ streamId: STREAM_ID, messageId: "msg_01HZB", senderId: SENDER_ID })

@@ -1500,13 +1500,38 @@ export interface DecisionOption {
   tone: DecisionOptionTone
 }
 
-/** What a resolved decision was decided to be, and by whom. */
+/**
+ * What a resolved decision was decided to be, and by whom. On a sealed stream
+ * the note is the one free-text field a member writes, so it travels as
+ * `noteCiphertext`/`noteEnvelope` (AAD `streamId|decision-note|decisionId|decidedBy`)
+ * and `note` is absent — never both. `optionId` stays clear: the server
+ * validates the answer against the card's options, and the id is a token the
+ * requester chose, not the member's words.
+ */
 export interface DecisionResolution {
   optionId: string
   note?: string
+  noteCiphertext?: string
+  noteEnvelope?: EnclaveStreamEnvelope
   /** The resolving user (UserId), or the system for an expiry sweep. */
   decidedBy: string
   decidedAt: string
+}
+
+/**
+ * The sealed half of a decision card: everything a card says in the requester's
+ * own words. Sealed under the stream key as one JSON body bound by AAD to
+ * `streamId|decision|decisionId|requesterBotId`, so the server stores the
+ * question it cannot read. Option *ids* and *tones* stay outside it, in the
+ * clear `options` array: the server validates an answer against those ids and a
+ * locked card still renders its buttons in the right order and colour, with the
+ * labels filled in once the key is there.
+ */
+export interface SealedDecisionContent {
+  title: string
+  bodyMarkdown?: string
+  /** Keyed by `DecisionOption.id`. Every clear option carries an entry. */
+  optionLabels: Record<string, string>
 }
 
 /**
@@ -1523,9 +1548,16 @@ export interface DecisionRequest {
   requesterBotId?: string
   requesterRuntimeSessionId?: string
   requesterInvocationId?: string
+  /**
+   * On a sealed stream `title`, `bodyMarkdown` and every option `label` hold
+   * the placeholder the server stores, and the real text is in `ciphertext`
+   * (a `SealedDecisionContent`) — the same split messages use.
+   */
   title: string
   bodyMarkdown?: string
   options: DecisionOption[]
+  ciphertext?: string
+  envelope?: EnclaveStreamEnvelope
   allowNote: boolean
   externalRef?: string
   status: DecisionRequestStatus

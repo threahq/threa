@@ -60,6 +60,8 @@ export type {
 } from "./sealed"
 export {
   base64ToBytes,
+  buildDecisionAad,
+  buildDecisionNoteAad,
   buildMessageAad,
   buildWrapAad,
   bytesToBase64,

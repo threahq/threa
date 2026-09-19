@@ -267,6 +267,65 @@ export function buildNameAad(parts: { streamId: string; keyGeneration: number })
 }
 
 /**
+ * Canonical AAD for a *sealed decision card* — the question a bot runtime puts
+ * to its human on an encrypted stream (`decision_requests.ciphertext`). Binds
+ * the ciphertext to its `(streamId, decisionId, requesterBotId)` slot plus a
+ * fixed `decision` label, so a malicious server can't move a card onto another
+ * stream, present one bot's question as another's, or swap it for a sealed
+ * message body (`streamId|messageId|senderId`). No generation: the decision id
+ * already names one slot, exactly as a message id does. Keep stable — changing
+ * it breaks every existing sealed card. Same delimiter-safety rules as
+ * `buildWrapAad`.
+ */
+export function buildDecisionAad(parts: {
+  streamId: string
+  decisionId: string
+  requesterBotId: string
+}): Uint8Array<ArrayBuffer> {
+  return decisionAad("buildDecisionAad", "decision", parts.streamId, parts.decisionId, parts.requesterBotId)
+}
+
+/**
+ * Canonical AAD for a *sealed decision note* — the free text a member attaches
+ * to their answer (`decision_requests.resolution.noteCiphertext`). Same slot as
+ * the card plus the answering user, under a `decision-note` label so the note
+ * and the question it answers can never be swapped for one another.
+ */
+export function buildDecisionNoteAad(parts: {
+  streamId: string
+  decisionId: string
+  decidedBy: string
+}): Uint8Array<ArrayBuffer> {
+  return decisionAad("buildDecisionNoteAad", "decision-note", parts.streamId, parts.decisionId, parts.decidedBy)
+}
+
+function decisionAad(
+  fn: string,
+  label: string,
+  streamId: string,
+  decisionId: string,
+  actorId: string
+): Uint8Array<ArrayBuffer> {
+  for (const [name, value] of [
+    ["streamId", streamId],
+    ["decisionId", decisionId],
+    ["actorId", actorId],
+  ] as const) {
+    if (value.length === 0) throw new Error(`${fn}: ${name} must be non-empty`)
+    if (value.includes("|")) throw new Error(`${fn}: ${name} must not contain '|'`)
+  }
+  return concatBytes(
+    utf8Encode(streamId),
+    utf8Encode("|"),
+    utf8Encode(label),
+    utf8Encode("|"),
+    utf8Encode(decisionId),
+    utf8Encode("|"),
+    utf8Encode(actorId)
+  )
+}
+
+/**
  * Canonical AAD for a stream's *sealed rolling conversation summary* (C-2) — the
  * enclave-computed running memory of the turns that overflow the verbatim window
  * (`agent_conversation_summaries.summary_ciphertext`). Binds the ciphertext to

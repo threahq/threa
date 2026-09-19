@@ -353,6 +353,40 @@ export function buildMessageAad(parts: {
   )
 }
 
+/**
+ * Canonical AAD for a sealed decision card and for the note a member attaches
+ * to their answer. Mirrors `buildDecisionAad` / `buildDecisionNoteAad` in
+ * `@threahq/crypto`; the label keeps the two apart, and both apart from a
+ * sealed message body. Keep stable.
+ */
+export function buildDecisionAad(parts: {
+  streamId: string
+  decisionId: string
+  requesterBotId: string
+}): Uint8Array<ArrayBuffer> {
+  return decisionAad("decision", parts.streamId, parts.decisionId, parts.requesterBotId)
+}
+
+export function buildDecisionNoteAad(parts: {
+  streamId: string
+  decisionId: string
+  decidedBy: string
+}): Uint8Array<ArrayBuffer> {
+  return decisionAad("decision-note", parts.streamId, parts.decisionId, parts.decidedBy)
+}
+
+function decisionAad(label: string, streamId: string, decisionId: string, actorId: string): Uint8Array<ArrayBuffer> {
+  return concatBytes(
+    utf8Encode(streamId),
+    utf8Encode("|"),
+    utf8Encode(label),
+    utf8Encode("|"),
+    utf8Encode(decisionId),
+    utf8Encode("|"),
+    utf8Encode(actorId)
+  )
+}
+
 // ── E2E attachment bytes (per-file single-use key) ────────────────────────────
 
 // Domain-separation label bound as GCM AAD. The per-attachment key is random
