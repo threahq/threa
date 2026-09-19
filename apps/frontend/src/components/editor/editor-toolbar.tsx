@@ -18,6 +18,7 @@ import {
   Rows3,
   Columns3,
   Trash2,
+  Sigma,
 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
@@ -27,6 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { LinkEditor } from "./link-editor"
 import { indentSelection, dedentSelection, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
 import { toggleMultilineBlock } from "./multiline-blocks"
+import { insertMath } from "./insert-math"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings, formatKeyBinding } from "@/lib/keyboard-shortcuts"
@@ -233,6 +235,14 @@ export function EditorToolbar({
         label="Inline code"
         shortcut={shortcutHint("formatCode")}
         isActive={editor.isActive("code")}
+        roomy={isMobileInlineToolbar}
+        showTooltip={!isMobileInlineToolbar}
+        keyboardAccessible={inline}
+      />
+      <ToolbarButton
+        onAction={() => insertMath(editor)}
+        icon={Sigma}
+        label="Math"
         roomy={isMobileInlineToolbar}
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}
