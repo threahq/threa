@@ -285,6 +285,13 @@ const inviteActorSchema = z
     path: ["actorId"],
   })
 
+// Revoke names the actor row as listed: `kind` plus the pinned id the row
+// carries, which for the enclave is its singleton sentinel.
+const revokeActorParamsSchema = z.object({
+  kind: z.enum(E2E_ACTOR_KINDS),
+  actorId: z.string().min(1).max(128),
+})
+
 /**
  * Owner SSK wrap body. The wraps are tiny (X25519 enc + AES-wrapped 32-byte
  * key, base64), so a kilobyte cap is generous while bounding a malformed
@@ -1285,6 +1292,18 @@ export function createStreamHandlers({
       // wire); `keyRoll` is already the wire shape. Mirrors how the other
       // stream handlers return `{ stream }` without a wire-type annotation.
       const { stream, keyRoll } = await streamService.inviteActor(workspaceId, streamId, userId, kind, actorId)
+      res.json({ stream, keyRoll })
+    },
+
+    async revokeActor(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+      const { kind, actorId } = revokeActorParamsSchema.parse(req.params)
+
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+
+      const { stream, keyRoll } = await streamService.revokeActor(workspaceId, streamId, userId, kind, actorId)
       res.json({ stream, keyRoll })
     },
 

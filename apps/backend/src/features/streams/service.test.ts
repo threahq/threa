@@ -1306,6 +1306,132 @@ describe("StreamService.inviteActor", () => {
   })
 })
 
+describe("StreamService.revokeActor", () => {
+  let service: StreamService
+
+  const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
+  const mockRemoveActor = spyOn(E2eStreamActorsRepository, "removeFromStreamTree")
+  const mockDeleteWraps = spyOn(StreamE2eKeyWrapsRepository, "deleteWrapsExclusiveToBot")
+  const mockFindByIdForWorkspace = spyOn(StreamRepository, "findByIdForWorkspace")
+  const mockListForStream = spyOn(E2eStreamActorsRepository, "listForStream")
+  const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
+  const mockFindLiveBiks = spyOn(RuntimeE2eKeysRepository, "listLiveForBot")
+
+  const updatedStream = { id: "stream_e2e", workspaceId: "ws_1", type: "scratchpad", e2eEnabled: true } as never
+
+  const ownedE2eStream = {
+    streamId: "stream_e2e",
+    workspaceId: "ws_1",
+    ownerUserId: "usr_owner",
+    ownerUserKeyId: "e2ek_owner",
+    currentKeyGeneration: 3,
+  } as never
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockGetByStreamId.mockReset().mockResolvedValue(ownedE2eStream)
+    mockRemoveActor.mockReset().mockResolvedValue(1)
+    mockDeleteWraps.mockReset().mockResolvedValue(0)
+    mockFindByIdForWorkspace.mockReset().mockResolvedValue(updatedStream)
+    mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
+    mockListForStream.mockReset().mockResolvedValue([])
+    mockListLiveEiks.mockReset().mockResolvedValue([])
+    mockFindLiveBiks.mockReset().mockResolvedValue([])
+  })
+
+  test("removes the bot from the whole stream tree, drops its exclusive wraps, and tells its runtimes", async () => {
+    await service.revokeActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi")
+
+    expect(mockRemoveActor).toHaveBeenCalledWith(
+      {},
+      { workspaceId: "ws_1", rootStreamId: "stream_e2e", kind: "bot", actorId: "bot_pi" }
+    )
+    expect(mockDeleteWraps).toHaveBeenCalledWith({}, { workspaceId: "ws_1", streamId: "stream_e2e", botId: "bot_pi" })
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "bot:e2e_revoke", {
+      workspaceId: "ws_1",
+      botId: "bot_pi",
+      streamId: "stream_e2e",
+    })
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:updated", {
+      workspaceId: "ws_1",
+      streamId: "stream_e2e",
+      stream: updatedStream,
+    })
+  })
+
+  test("returns the roll for whoever is left", async () => {
+    mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_keeps", keyId: null }])
+    mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", keyId: "bik_keeps", streamId: null }] as never)
+
+    const result = await service.revokeActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi")
+
+    expect(result.stream).toBe(updatedStream)
+    expect(result.keyRoll).toEqual({
+      nextGeneration: 4,
+      recipients: [{ recipientKeyId: "bik_keeps", recipientKind: "bot", publicKey: "Ymlr" }],
+    })
+  })
+
+  test("revokes the enclave by its sentinel id without touching bot wraps", async () => {
+    await service.revokeActor("ws_1", "stream_e2e", "usr_owner", "enclave")
+
+    expect(mockRemoveActor).toHaveBeenCalledWith(
+      {},
+      { workspaceId: "ws_1", rootStreamId: "stream_e2e", kind: "enclave", actorId: "enclave" }
+    )
+    expect(mockDeleteWraps).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalledWith({}, "bot:e2e_revoke", expect.anything())
+  })
+
+  test("revokes an archived bot — a bot that can no longer run still holds its old wraps", async () => {
+    const mockFindBot = spyOn(BotRepository, "findById")
+    mockFindBot.mockReset().mockResolvedValue(null)
+
+    await service.revokeActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_gone")
+
+    expect(mockFindBot).not.toHaveBeenCalled()
+    expect(mockDeleteWraps).toHaveBeenCalledWith({}, { workspaceId: "ws_1", streamId: "stream_e2e", botId: "bot_gone" })
+  })
+
+  test("throws 404 when that actor was never invited", async () => {
+    mockRemoveActor.mockResolvedValue(0)
+
+    const error = await service.revokeActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(404)
+    expect((error as HttpError).code).toBe("ACTOR_NOT_INVITED")
+    expect(mockDeleteWraps).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when revoking a bot without a bot id", async () => {
+    const error = await service.revokeActor("ws_1", "stream_e2e", "usr_owner", "bot").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("ACTOR_ID_REQUIRED")
+    expect(mockRemoveActor).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when the stream is not end-to-end encrypted", async () => {
+    mockGetByStreamId.mockResolvedValue(null)
+
+    const error = await service.revokeActor("ws_1", "stream_plain", "usr_owner", "enclave").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("STREAM_NOT_E2E")
+    expect(mockRemoveActor).not.toHaveBeenCalled()
+  })
+
+  test("throws 403 when the caller is not the stream owner", async () => {
+    const error = await service.revokeActor("ws_1", "stream_e2e", "usr_intruder", "enclave").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(403)
+    expect((error as HttpError).code).toBe("NOT_STREAM_OWNER")
+    expect(mockRemoveActor).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+})
+
 describe("StreamService.rollStreamKey", () => {
   let service: StreamService
 

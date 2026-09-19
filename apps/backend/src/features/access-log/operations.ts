@@ -94,6 +94,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "streams.set_notification_level",
   "streams.join",
   "streams.invite_actor",
+  "streams.revoke_actor",
   "streams.get_e2e_key_wraps",
   "streams.store_e2e_key_wrap",
   "streams.revive_e2e_actor_key_wraps",

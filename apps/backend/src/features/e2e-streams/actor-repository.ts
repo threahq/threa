@@ -109,4 +109,30 @@ export const E2eStreamActorsRepository = {
       WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND kind = ${kind} AND actor_id = ${actorId}
     `)
   },
+
+  /**
+   * Take an actor off a sealed root and every thread under it in one
+   * set-based delete (INV-56) — the mirror of `copyToStream`, which is what
+   * put the thread rows there. Leaving a thread row behind would keep the
+   * actor dispatching turns on that thread after the root revoked it.
+   *
+   * Returns how many rows went, so a revoke of an actor that was never
+   * invited is a 404 rather than a silent roll.
+   */
+  async removeFromStreamTree(
+    db: Querier,
+    params: { workspaceId: string; rootStreamId: string; kind: E2eActorKind; actorId: string }
+  ): Promise<number> {
+    const result = await db.query(sql`
+      DELETE FROM e2e_stream_actors a
+      USING streams s
+      WHERE a.workspace_id = ${params.workspaceId}
+        AND s.workspace_id = a.workspace_id
+        AND s.id = a.stream_id
+        AND (s.id = ${params.rootStreamId} OR s.root_stream_id = ${params.rootStreamId})
+        AND a.kind = ${params.kind}
+        AND a.actor_id = ${params.actorId}
+    `)
+    return result.rowCount ?? 0
+  },
 }

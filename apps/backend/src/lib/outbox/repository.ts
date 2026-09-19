@@ -135,6 +135,7 @@ export type OutboxEventType =
   | "bot:session_archived"
   | "bot:session_restored"
   | "bot:e2e_grant"
+  | "bot:e2e_revoke"
   | "label:created"
   | "label:updated"
   | "label:deleted"
@@ -1253,6 +1254,18 @@ export interface BotE2eGrantOutboxPayload extends WorkspaceScopedPayload {
 }
 
 /**
+ * The bot's grant on an E2E scratchpad was taken back. Its wraps for that
+ * stream are already gone and the owner is rolling to a fresh generation, so a
+ * runtime holding a stream-scoped key for `streamId` should drop it and stop
+ * advertising it. A host- or identity-scoped key stays — other streams still
+ * use it.
+ */
+export interface BotE2eRevokeOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  streamId: string
+}
+
+/**
  * The scratchpad a runtime session was linked to has been archived; the link is
  * already `ended` server-side. The runtime should wind itself down (the Claude
  * channel pushes its branch and kills its own tmux window on receipt).
@@ -1436,6 +1449,7 @@ export interface OutboxEventPayloadMap {
   "bot:session_archived": BotSessionArchivedOutboxPayload
   "bot:session_restored": BotSessionRestoredOutboxPayload
   "bot:e2e_grant": BotE2eGrantOutboxPayload
+  "bot:e2e_revoke": BotE2eRevokeOutboxPayload
   "label:created": LabelUpsertedOutboxPayload
   "label:updated": LabelUpsertedOutboxPayload
   "label:deleted": LabelDeletedOutboxPayload
@@ -1633,6 +1647,7 @@ export type BotScopedEventType =
   | "bot_decision:resolved"
   | "bot_decision:cancelled"
   | "bot:e2e_grant"
+  | "bot:e2e_revoke"
 
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
@@ -1646,6 +1661,7 @@ const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_decision:resolved",
   "bot_decision:cancelled",
   "bot:e2e_grant",
+  "bot:e2e_revoke",
 ]
 
 /**
