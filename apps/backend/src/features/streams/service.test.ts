@@ -1359,6 +1359,24 @@ describe("StreamService.revokeActor", () => {
     })
   })
 
+  test("names the E2E root in bot:e2e_revoke when the revoke lands on a thread", async () => {
+    mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
+    mockFindByIdForWorkspace.mockResolvedValue({
+      id: "stream_thread",
+      workspaceId: "ws_1",
+      rootStreamId: "stream_e2e",
+      e2eEnabled: true,
+    } as never)
+
+    await service.revokeActor("ws_1", "stream_thread", "usr_owner", "bot", "bot_pi")
+
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "bot:e2e_revoke", {
+      workspaceId: "ws_1",
+      botId: "bot_pi",
+      streamId: "stream_e2e",
+    })
+  })
+
   test("returns the roll for whoever is left", async () => {
     mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_keeps", keyId: null }])
     mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", keyId: "bik_keeps", streamId: null }] as never)

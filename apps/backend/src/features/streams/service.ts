@@ -1655,7 +1655,9 @@ export class StreamService {
         await OutboxRepository.insert(client, "bot:e2e_revoke", {
           workspaceId,
           botId: pinnedActorId,
-          streamId,
+          // The root, mirroring the grant: the key the runtime holds for this
+          // scratchpad is filed under the root id, so that is the one to drop.
+          streamId: stream.rootStreamId ?? stream.id,
         })
       }
 
