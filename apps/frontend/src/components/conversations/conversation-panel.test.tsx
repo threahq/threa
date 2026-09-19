@@ -752,7 +752,9 @@ describe("ConversationPanel", () => {
     await user.click(await screen.findByText("Copy link"))
 
     await waitFor(() =>
-      expect(writeText).toHaveBeenCalledWith(expect.stringContaining(`/board?panel=conv%3A${CONVERSATION_ID}`))
+      expect(writeText).toHaveBeenCalledWith(
+        expect.stringContaining(`/w/${WORKSPACE_ID}/board?panel=conv%3A${CONVERSATION_ID}`)
+      )
     )
   })
 
