@@ -20,6 +20,8 @@ import { ulid } from "ulid"
 import type { E2eKeyRecord, E2eKeyring } from "./keyring"
 import {
   base64ToBytes,
+  buildDecisionAad,
+  buildDecisionNoteAad,
   buildMessageAad,
   buildWrapAad,
   bytesToBase64,
@@ -467,6 +469,75 @@ export async function sealStep(
     ciphertext: bytesToBase64(sealed.ciphertext),
     envelope: sealed.envelope,
     ...(opts?.durationMs !== undefined ? { durationMs: opts.durationMs } : {}),
+  }
+}
+
+/** The words a sealed decision card carries; the wire row holds placeholders in their place. */
+export interface SealedDecisionContent {
+  title: string
+  bodyMarkdown?: string
+  /** Option id → the label to show on its button. Ids and tones stay in the clear. */
+  optionLabels: Record<string, string>
+}
+
+/** The sealed half of a decision card, with the id its AAD is bound to. */
+export interface SealedDecisionCard {
+  decisionId: string
+  ciphertext: string
+  envelope: StreamEnvelope
+}
+
+/**
+ * Seal a decision card's question under the stream key, bound to a fresh
+ * `dreq_…` id — the `decisionId` + `sealed` half of a sealed create.
+ *
+ * The AAD names the stream the CARD lives on, which on a thread is not
+ * `sealing.streamId` (that is the root the key hangs off, and what every wrap
+ * and message AAD binds to). Pass the stream being posted to; the server checks
+ * the same string and refuses a card sealed to another slot.
+ */
+export async function sealDecision(
+  sealing: SealingState,
+  card: { streamId: string; requesterBotId: string },
+  content: SealedDecisionContent
+): Promise<SealedDecisionCard> {
+  const decisionId = `dreq_${ulid()}`
+  const sealed = await sealMessage({
+    key: sealing.replySsk,
+    keyGeneration: sealing.replyKeyGeneration,
+    payload: JSON.stringify(content),
+    aad: buildDecisionAad({ streamId: card.streamId, decisionId, requesterBotId: card.requesterBotId }),
+  })
+  return { decisionId, ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
+}
+
+/**
+ * Open the sealed note a member attached to their answer. Returns null when the
+ * envelope names another slot, or a key generation this turn does not hold — a
+ * rotation between opening the card and answering it leaves the answer readable
+ * and its note not, and losing the note beats losing the answer.
+ */
+export async function openSealedDecisionNote(
+  sealing: SealingState,
+  note: { streamId: string; decisionId: string; decidedBy: string; ciphertext: string; envelope: StreamEnvelope }
+): Promise<string | null> {
+  const expected = bytesToBase64(
+    buildDecisionNoteAad({
+      streamId: note.streamId,
+      decisionId: note.decisionId,
+      decidedBy: note.decidedBy,
+    })
+  )
+  if (note.envelope.aad !== expected) return null
+  if (note.envelope.keyGeneration !== sealing.replyKeyGeneration) return null
+  try {
+    return await openMessageAsString({
+      key: sealing.replySsk,
+      envelope: note.envelope,
+      ciphertext: base64ToBytes(note.ciphertext),
+    })
+  } catch {
+    return null
   }
 }
 

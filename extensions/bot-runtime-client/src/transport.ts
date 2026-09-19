@@ -243,6 +243,7 @@ export class BotRuntimeTransport {
           if (typeof ack.serverGeneratedAt === "string") this.cursor = ack.serverGeneratedAt
           const bootstrap: BotHelloBootstrap = {
             serverGeneratedAt: typeof ack.serverGeneratedAt === "string" ? ack.serverGeneratedAt : undefined,
+            ...(typeof ack.botId === "string" ? { botId: ack.botId } : {}),
             availableInvocations: Array.isArray(ack.availableInvocations) ? ack.availableInvocations : [],
             ownedClaims: Array.isArray(ack.ownedClaims) ? ack.ownedClaims : [],
             e2eGrantedStreamIds: Array.isArray(ack.e2eGrantedStreamIds)
