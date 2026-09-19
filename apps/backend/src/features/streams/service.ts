@@ -1593,6 +1593,86 @@ export class StreamService {
   }
 
   /**
+   * Take an actor back off an E2E stream. Removes its row from the root and
+   * every thread under it, drops the wraps only that actor's keys could open,
+   * and returns the roll the owner must perform for the remaining set. Two
+   * halves, both needed: the roll closes the future, the wrap delete closes the
+   * history an offline bot could still have fetched afterwards. Owner-only,
+   * like invite.
+   */
+  async revokeActor(
+    workspaceId: string,
+    streamId: string,
+    userId: string,
+    kind: E2eActorKind,
+    actorId?: string
+  ): Promise<{ stream: Stream; keyRoll: E2eKeyRoll | null }> {
+    return withTransaction(this.pool, async (client) => {
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2e.ownerUserId !== userId) {
+        throw new HttpError("Only the stream owner can revoke an actor", { status: 403, code: "NOT_STREAM_OWNER" })
+      }
+
+      // Revoke resolves the principal the same way invite pinned it, but an
+      // archived bot must stay revocable — so no existence check here, just the
+      // enclave sentinel and the required id.
+      const pinnedActorId = kind === "enclave" ? E2E_ENCLAVE_ACTOR_ID : actorId
+      if (!pinnedActorId) {
+        throw new HttpError("A bot id is required to revoke a bot", { status: 400, code: "ACTOR_ID_REQUIRED" })
+      }
+
+      const removed = await E2eStreamActorsRepository.removeFromStreamTree(client, {
+        workspaceId,
+        rootStreamId: streamId,
+        kind,
+        actorId: pinnedActorId,
+      })
+      if (removed === 0) {
+        throw new HttpError("This actor is not invited to this stream", { status: 404, code: "ACTOR_NOT_INVITED" })
+      }
+
+      if (kind === "bot") {
+        await StreamE2eKeyWrapsRepository.deleteWrapsExclusiveToBot(client, {
+          workspaceId,
+          streamId,
+          botId: pinnedActorId,
+        })
+      }
+
+      const stream = await StreamRepository.findByIdForWorkspace(client, streamId, workspaceId)
+      if (!stream) throw new StreamNotFoundError()
+
+      await OutboxRepository.insert(client, "stream:updated", {
+        workspaceId,
+        streamId,
+        stream,
+      })
+
+      if (kind === "bot") {
+        await OutboxRepository.insert(client, "bot:e2e_revoke", {
+          workspaceId,
+          botId: pinnedActorId,
+          // The root, mirroring the grant: the key the runtime holds for this
+          // scratchpad is filed under the root id, so that is the one to drop.
+          streamId: stream.rootStreamId ?? stream.id,
+        })
+      }
+
+      // Same shape as invite: the owner rolls to a fresh generation wrapped to
+      // whoever is left, so nothing sent after this point is readable by the
+      // revoked actor. `null` only when no live actor key remains — the owner
+      // still holds the stream and re-keys when one appears.
+      const recipients = await this.resolveActorRecipients(client, e2e)
+      const keyRoll = recipients.length > 0 ? { nextGeneration: e2e.currentKeyGeneration + 1, recipients } : null
+
+      return { stream, keyRoll }
+    })
+  }
+
+  /**
    * Validate the principal an invite pins. The enclave is a singleton service,
    * so its actor row always carries the fixed sentinel id regardless of what
    * the client sent. A bot must name a real, non-archived bot in this

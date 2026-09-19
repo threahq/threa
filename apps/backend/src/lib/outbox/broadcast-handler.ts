@@ -12,6 +12,7 @@ import {
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
   type BotE2eGrantOutboxPayload,
+  type BotE2eRevokeOutboxPayload,
   type BotSessionArchivedOutboxPayload,
   type BotSessionRestoredOutboxPayload,
   type StreamDelegationCreatedOutboxPayload,
@@ -385,6 +386,12 @@ export class BroadcastHandler implements OutboxHandler {
       const payload = event.payload as BotE2eGrantOutboxPayload
       // Every instance of the granted bot: which of them mints a key for the
       // stream is the runtime's key policy to decide, not routing's.
+      botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
+      return
+    }
+
+    if (isOutboxEventType(event, "bot:e2e_revoke")) {
+      const payload = event.payload as BotE2eRevokeOutboxPayload
       botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
       return
     }

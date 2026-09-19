@@ -164,4 +164,41 @@ export const StreamE2eKeyWrapsRepository = {
     `)
     return result.rows.map((row) => ({ rootStreamId: row.stream_id, ownerUserId: row.owner_user_id }))
   },
+
+  /**
+   * Drop the wraps a just-revoked bot could still open, at every generation.
+   * The roll that follows a revoke only closes the future; without this, a bot
+   * that never came online during its grant could still fetch the whole
+   * history's wraps afterwards.
+   *
+   * Only keys no *remaining* actor on the stream holds are dropped. A host key
+   * shared by several agents is one key id: deleting its wrap because one of
+   * them was revoked would take the others' access with it. Called after the
+   * actor row is gone, so "remaining" is already the post-revoke set. Roots
+   * only — a thread carries no wraps of its own.
+   */
+  async deleteWrapsExclusiveToBot(
+    db: Querier,
+    params: { workspaceId: string; streamId: string; botId: string }
+  ): Promise<number> {
+    const result = await db.query(sql`
+      DELETE FROM stream_e2e_key_wraps w
+      WHERE w.workspace_id = ${params.workspaceId}
+        AND w.stream_id = ${params.streamId}
+        AND w.recipient_kind = ${E2eKeyWrapRecipientKinds.BOT}
+        AND EXISTS (
+          SELECT 1 FROM runtime_e2e_key_holders h
+          WHERE h.workspace_id = w.workspace_id AND h.bot_id = ${params.botId} AND h.key_id = w.recipient_key_id
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM runtime_e2e_key_holders h
+          JOIN e2e_stream_actors a
+            ON a.workspace_id = h.workspace_id AND a.stream_id = ${params.streamId}
+            AND a.kind = 'bot' AND a.actor_id = h.bot_id
+          WHERE h.workspace_id = w.workspace_id AND h.key_id = w.recipient_key_id
+        )
+    `)
+    return result.rowCount ?? 0
+  },
 }

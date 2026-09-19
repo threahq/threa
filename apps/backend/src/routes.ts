@@ -804,6 +804,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("streams.invite_actor", "write"),
     stream.inviteActor
   )
+  app.delete(
+    "/api/workspaces/:workspaceId/streams/:streamId/e2e/actors/:kind/:actorId",
+    ...authed,
+    audit("streams.revoke_actor", "write"),
+    stream.revokeActor
+  )
   app.get(
     "/api/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps",
     ...authed,
