@@ -71,9 +71,17 @@ const REQUEST_PARAMS = {
 }
 
 const SEALED_ID = "dreq_01K5M0000000000000000000ZZ"
+/** base64 of `stream_1|decision|<SEALED_ID>|bot_1` — the slot the card is sealed to. */
+const SEALED_CARD_AAD = "c3RyZWFtXzF8ZGVjaXNpb258ZHJlcV8wMUs1TTAwMDAwMDAwMDAwMDAwMDAwMDBaWnxib3RfMQ=="
+/** base64 of `stream_1|decision-note|dreq_1|usr_1` — the slot the answer's note is sealed to. */
+const SEALED_NOTE_AAD = "c3RyZWFtXzF8ZGVjaXNpb24tbm90ZXxkcmVxXzF8dXNyXzE="
 const SEALED_BODY = {
   ciphertext: "c2VhbGVk",
-  envelope: { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: "YWFkYWFk" },
+  envelope: { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: SEALED_CARD_AAD },
+} as const
+const SEALED_NOTE = {
+  ciphertext: "bm90ZQ==",
+  envelope: { v: 2, keyGeneration: 1, iv: "aXZpdml2", aad: SEALED_NOTE_AAD },
 } as const
 
 const SEALED_REQUEST_PARAMS = {
@@ -200,6 +208,26 @@ describe("DecisionService.request", () => {
       ciphertext: SEALED_BODY.ciphertext,
       envelope: SEALED_BODY.envelope,
     })
+  })
+
+  it("refuses a card sealed to another stream, id or bot", async () => {
+    stubTransaction()
+    stubRunningSession()
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
+    stubEventAppend()
+
+    for (const params of [
+      { ...SEALED_REQUEST_PARAMS, streamId: "stream_2" },
+      { ...SEALED_REQUEST_PARAMS, decisionId: "dreq_01K5M0000000000000000000YY" },
+      { ...SEALED_REQUEST_PARAMS, botId: "bot_2" },
+    ]) {
+      await expect(makeService().request(params)).rejects.toMatchObject({
+        status: 400,
+        code: "DECISION_SEAL_AAD_MISMATCH",
+      })
+    }
+    expect(insert).not.toHaveBeenCalled()
   })
 
   it("turns a replayed sealed id into a 409 rather than a 500", async () => {
@@ -387,8 +415,8 @@ describe("DecisionService.resolve", () => {
         version: 2,
         resolution: {
           optionId: "yes",
-          noteCiphertext: "bm90ZQ==",
-          noteEnvelope: SEALED_BODY.envelope,
+          noteCiphertext: SEALED_NOTE.ciphertext,
+          noteEnvelope: SEALED_NOTE.envelope,
           decidedBy: "usr_1",
           decidedAt: NOW.toISOString(),
         },
@@ -398,15 +426,15 @@ describe("DecisionService.resolve", () => {
 
     await makeService().resolve({
       ...RESOLVE_PARAMS,
-      sealedNote: { ciphertext: "bm90ZQ==", envelope: SEALED_BODY.envelope },
+      sealedNote: SEALED_NOTE,
     })
 
     expect(sealedCard.ciphertext).toBe(SEALED_BODY.ciphertext)
     expect(resolve.mock.calls[0]![1].resolution).toEqual({
       optionId: "yes",
       note: undefined,
-      noteCiphertext: "bm90ZQ==",
-      noteEnvelope: SEALED_BODY.envelope,
+      noteCiphertext: SEALED_NOTE.ciphertext,
+      noteEnvelope: SEALED_NOTE.envelope,
       decidedBy: "usr_1",
       decidedAt: expect.any(String),
     })
@@ -419,8 +447,8 @@ describe("DecisionService.resolve", () => {
       status: "resolved",
       optionId: "yes",
       note: null,
-      noteCiphertext: "bm90ZQ==",
-      noteEnvelope: SEALED_BODY.envelope,
+      noteCiphertext: SEALED_NOTE.ciphertext,
+      noteEnvelope: SEALED_NOTE.envelope,
       version: 2,
     })
   })
@@ -440,9 +468,22 @@ describe("DecisionService.resolve", () => {
     await expect(
       makeService().resolve({
         ...RESOLVE_PARAMS,
-        sealedNote: { ciphertext: "bm90ZQ==", envelope: SEALED_BODY.envelope },
+        sealedNote: SEALED_NOTE,
       })
     ).rejects.toMatchObject({ status: 400, code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM" })
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it("refuses a note sealed to another answer", async () => {
+    stubResolvable(fakeDecision({ allowNote: true, ...SEALED_BODY }))
+    const resolve = spyOn(DecisionRequestRepository, "resolve").mockResolvedValue(fakeDecision())
+
+    await expect(
+      makeService().resolve({
+        ...RESOLVE_PARAMS,
+        sealedNote: { ...SEALED_NOTE, envelope: { ...SEALED_NOTE.envelope, aad: SEALED_CARD_AAD } },
+      })
+    ).rejects.toMatchObject({ status: 400, code: "DECISION_SEAL_AAD_MISMATCH" })
     expect(resolve).not.toHaveBeenCalled()
   })
 

@@ -260,6 +260,15 @@ export class DecisionService {
           code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
         })
       }
+      if (
+        params.sealedNote !== undefined &&
+        params.sealedNote.envelope.aad !== decisionAad("decision-note", decision.streamId, decision.id, params.userId)
+      ) {
+        throw new HttpError("The sealed note is bound to a different answer", {
+          status: 400,
+          code: "DECISION_SEAL_AAD_MISMATCH",
+        })
+      }
 
       const resolution: DecisionResolution = {
         optionId: params.optionId,
@@ -372,12 +381,31 @@ export class DecisionService {
 }
 
 /**
+ * `buildDecisionAad` / `buildDecisionNoteAad` in @threahq/crypto, spelled out:
+ * the server holds no keys and does not link the crypto package (the
+ * sealed-name check in `streams/service.ts` builds its AAD the same way). It
+ * cannot open the ciphertext, but it can refuse one bound to another stream,
+ * another decision or another actor — a seal written to the wrong slot would
+ * otherwise store fine and open for nobody.
+ */
+function decisionAad(
+  label: "decision" | "decision-note",
+  streamId: string,
+  decisionId: string,
+  actorId: string
+): string {
+  return Buffer.from(`${streamId}|${label}|${decisionId}|${actorId}`, "utf8").toString("base64")
+}
+
+/**
  * INV-E1 for a card, both ways: a sealed stream takes a sealed question and
  * nothing readable, a plaintext one takes the question in clear. On the sealed
  * path the NOT NULL projection columns take the placeholder messages use, the
- * requester's minted id keys the row (its AAD binds it), and option ids and
- * tones stay readable so the server can validate an answer and a locked card
- * can still render its buttons.
+ * requester's minted id keys the row, and option ids and tones stay readable so
+ * the server can validate an answer against them. The labels are sealed with
+ * the question, so a card that won't open has nothing to put on its buttons.
+ *
+ * The envelope's AAD is checked against the slot the card is being written to.
  */
 function sealOrPlaintextCard(
   params: RequestDecisionParams,
@@ -407,6 +435,12 @@ function sealOrPlaintextCard(
       throw new HttpError("Stream is end-to-end encrypted; the question travels sealed, not in title or labels", {
         status: 400,
         code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      })
+    }
+    if (params.sealed.envelope.aad !== decisionAad("decision", params.streamId, params.decisionId, params.botId)) {
+      throw new HttpError("The sealed decision is bound to a different card", {
+        status: 400,
+        code: "DECISION_SEAL_AAD_MISMATCH",
       })
     }
     return {
