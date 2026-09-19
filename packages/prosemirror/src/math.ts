@@ -22,8 +22,10 @@ interface MathToken {
 
 export type MathPart = { text: string } | MathToken
 
-interface MathSpan extends MathToken {
-  end: number
+/** A math run located in a plain-text string: `[from, to)` with its TeX body. */
+export interface MathSpanRange extends MathToken {
+  from: number
+  to: number
 }
 
 /**
@@ -117,10 +119,28 @@ export function splitMathTokens(text: string): MathPart[] | null {
 }
 
 function tokenize(text: string): string {
-  const closers = inlineClosers(text)
-  let closerIndex = 0
   let out = ""
   let cursor = 0
+  for (const span of scanMathSpans(text)) {
+    out += text.slice(cursor, span.from) + encode(span)
+    cursor = span.to
+  }
+  return out + text.slice(cursor)
+}
+
+/**
+ * Every math run in a plain-text string, in order and non-overlapping. This is
+ * the definition `extractMath` tokenizes with, exported so a live preview draws
+ * exactly the spans the message will render: one rule for what counts as math,
+ * rather than two that drift.
+ *
+ * The input is text, not markdown - a caller that can hold code or URLs is
+ * responsible for excluding them, the way `extractMath` does before tokenizing.
+ */
+export function scanMathSpans(text: string): MathSpanRange[] {
+  const closers = inlineClosers(text)
+  const spans: MathSpanRange[] = []
+  let closerIndex = 0
   let i = 0
   while (i < text.length) {
     while (closerIndex < closers.length && closers[closerIndex] <= i) closerIndex++
@@ -129,10 +149,10 @@ function tokenize(text: string): string {
       i++
       continue
     }
-    out += text.slice(cursor, i) + encode(span)
-    cursor = i = span.end
+    spans.push(span)
+    i = span.to
   }
-  return out + text.slice(cursor)
+  return spans
 }
 
 /**
@@ -153,7 +173,7 @@ function inlineClosers(text: string): number[] {
   return closers
 }
 
-function readMath(text: string, i: number, closer: number): MathSpan | null {
+function readMath(text: string, i: number, closer: number): MathSpanRange | null {
   if (text[i] === "\\") {
     if (text[i - 1] === "\\") return null
     if (text[i + 1] === "[") return readBackslashMath(text, i, "\\]", true)
@@ -164,7 +184,7 @@ function readMath(text: string, i: number, closer: number): MathSpan | null {
   return text[i + 1] === "$" ? readDisplayMath(text, i) : readInlineMath(text, i, closer)
 }
 
-function readBackslashMath(text: string, start: number, closer: string, display: boolean): MathSpan | null {
+function readBackslashMath(text: string, start: number, closer: string, display: boolean): MathSpanRange | null {
   let from = start + 2
   for (;;) {
     const close = text.indexOf(closer, from)
@@ -173,17 +193,17 @@ function readBackslashMath(text: string, start: number, closer: string, display:
       from = close + 2
       continue
     }
-    return accept(close + 2, text.slice(start + 2, close), display)
+    return accept(start, close + 2, text.slice(start + 2, close), display)
   }
 }
 
-function readDisplayMath(text: string, start: number): MathSpan | null {
+function readDisplayMath(text: string, start: number): MathSpanRange | null {
   const close = text.indexOf("$$", start + 2)
   if (close < 0) return null
-  return accept(close + 2, text.slice(start + 2, close), true)
+  return accept(start, close + 2, text.slice(start + 2, close), true)
 }
 
-function readInlineMath(text: string, start: number, closer: number): MathSpan | null {
+function readInlineMath(text: string, start: number, closer: number): MathSpanRange | null {
   const before = start > 0 ? text[start - 1] : ""
   // An opener glued to a word is part of that word, not a delimiter.
   if (before && /[\w$\\]/.test(before)) return null
@@ -194,13 +214,13 @@ function readInlineMath(text: string, start: number, closer: number): MathSpan |
   // A `$` inside the body means the opener was a price: in `costs $5 and $x$
   // here` the real equation starts at the third `$`.
   if (tex.includes("$") || tex.includes("\n\n")) return null
-  return accept(closer + 1, tex, false)
+  return accept(start, closer + 1, tex, false)
 }
 
-function accept(end: number, raw: string, display: boolean): MathSpan | null {
+function accept(from: number, to: number, raw: string, display: boolean): MathSpanRange | null {
   const tex = raw.trim()
   if (!tex || NUMERIC_ONLY.test(tex)) return null
-  return { end, tex, display }
+  return { from, to, tex, display }
 }
 
 function encode({ tex, display }: MathToken): string {
