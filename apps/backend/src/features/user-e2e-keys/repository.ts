@@ -35,6 +35,14 @@ export interface UserE2eKey {
   revokedAt: Date | null
 }
 
+export interface UpdateUserE2eKeyBundleParams {
+  id: string
+  workspaceId: string
+  encryptedPrivateBundle: Buffer
+  kdfSalt: Buffer
+  kdfParams: KdfParams
+}
+
 export interface InsertUserE2eKeyParams {
   id: string
   userId: string
@@ -107,6 +115,28 @@ export const UserE2eKeysRepository = {
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return mapRow(result.rows[0]!)
+  },
+
+  /**
+   * Re-wrap the private bundle of an existing active key in place. The row's
+   * `key_id` is deliberately preserved: every `stream_e2e_key_wraps` row and
+   * `e2e_streams.owner_user_key_id` addresses the key by that id, and the wrap
+   * AAD binds it, so a new id would strand the user's sealed streams.
+   */
+  async updateBundle(db: Querier, params: UpdateUserE2eKeyBundleParams): Promise<UserE2eKey> {
+    const result = await db.query<UserE2eKeyRow>(sql`
+      UPDATE user_e2e_keys
+      SET encrypted_private_bundle = ${params.encryptedPrivateBundle},
+          kdf_salt = ${params.kdfSalt},
+          kdf_params = ${JSON.stringify(params.kdfParams)}::jsonb
+      WHERE id = ${params.id}
+        AND workspace_id = ${params.workspaceId}
+        AND revoked_at IS NULL
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    const row = result.rows[0]
+    if (!row) throw new Error("User E2E key vanished during re-wrap")
+    return mapRow(row)
   },
 
   async revokeActive(db: Querier, workspaceId: string, userId: string): Promise<number> {

@@ -37,8 +37,9 @@ interface InMemoryServerKey {
   createdAt: string
 }
 
-// Simulates the backend's single-active-key invariant: each `set` mints a
-// fresh keyId and replaces the active key.
+// Simulates the backend's single-active-key invariant: a `set` carrying the
+// same public key is a passphrase change and keeps the keyId; a new public key
+// mints one and replaces the active key.
 let serverKey: InMemoryServerKey | null = null
 let keyCounter = 0
 
@@ -48,8 +49,9 @@ beforeEach(() => {
   vi.spyOn(e2eKeysApi, "get").mockImplementation(async () => serverKey)
   vi.spyOn(e2eKeysApi, "set").mockImplementation(async (_ws, input) => {
     const rotated = serverKey !== null
+    const keptKeyId = serverKey?.publicKey === input.publicKey ? serverKey.keyId : null
     serverKey = {
-      keyId: `e2ek_test_${++keyCounter}`,
+      keyId: keptKeyId ?? `e2ek_test_${++keyCounter}`,
       publicKey: input.publicKey,
       encryptedPrivateBundle: input.encryptedPrivateBundle,
       kdfSalt: input.kdfSalt,
@@ -126,15 +128,19 @@ describe("e2e session store", () => {
     expect(state.error).toBeTruthy()
   })
 
-  it("rotatePassphrase replaces the wrapped bundle but keeps an unlocked session", async () => {
+  it("rotatePassphrase replaces the wrapped bundle, keeps the keyId and an unlocked session", async () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", { params: FAST_PARAMS })
     const initialKeyId = serverKey?.keyId
+    const initialBundle = serverKey?.encryptedPrivateBundle
 
     await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-pp", "new-pp", FAST_PARAMS)
     const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
     expect(state.status).toBe("unlocked")
-    expect(serverKey?.keyId).not.toBe(initialKeyId)
-    expect(state.keyId).toBe(serverKey?.keyId)
+    expect(serverKey?.encryptedPrivateBundle).not.toBe(initialBundle)
+    // Stream key wraps address the UIK by keyId, so a passphrase change must
+    // not mint a new one.
+    expect(state.keyId).toBe(initialKeyId)
+    expect(serverKey?.keyId).toBe(initialKeyId)
 
     // Old passphrase should no longer unlock anything; new passphrase should.
     await lock(WORKSPACE_ID, USER_ID)
@@ -311,19 +317,15 @@ describe("e2e session store — keep me unlocked on this device", () => {
       expect(after!.pinFailedAttempts).toBe(0)
     })
 
-    it("rotating the passphrase clears a PIN device key instead of silently downgrading", async () => {
+    it("rotating the passphrase leaves the PIN device key usable", async () => {
       await setupNewKey(WORKSPACE_ID, USER_ID, "old-passphrase", { params: FAST_PARAMS, pin: PIN })
       await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-passphrase", "new-passphrase", FAST_PARAMS)
 
-      // The PIN-gated device key is gone — not re-persisted as a plain auto-resume
-      // key, which would have dropped the PIN gate.
-      expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
-
-      // A reload now requires the passphrase (no PIN, no auto-resume).
+      // The PIN wraps the private key, which a passphrase change doesn't touch.
       await reload()
-      const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
-      expect(s.status).toBe("locked")
-      expect(s.pinProtected).toBeFalsy()
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).pinProtected).toBe(true)
+      await unlockWithPin(WORKSPACE_ID, USER_ID, PIN)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
     })
 
     it("forgets the PIN after MAX_PIN_ATTEMPTS so only the passphrase recovers", async () => {
@@ -484,7 +486,7 @@ describe("e2e session store — keep me unlocked on this device", () => {
     expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
   })
 
-  it("rotatePassphrase on a trusted device re-persists under the new keyId", async () => {
+  it("rotatePassphrase keeps a trusted device trusted", async () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", { params: FAST_PARAMS, trustDevice: true })
     await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-pp", "new-pp", FAST_PARAMS)
 
@@ -493,8 +495,24 @@ describe("e2e session store — keep me unlocked on this device", () => {
     const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
     expect(row?.keyId).toBe(state.keyId)
 
-    // The re-persisted key survives a reload (no relock from a phantom rotation).
+    // No phantom rotation on reload: the device key still matches the server key.
     await reload()
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+  })
+
+  it("rotatePassphrase drops device trust when the server mints a new keyId", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", { params: FAST_PARAMS, trustDevice: true })
+    const initialKeyId = serverKey!.keyId
+    // Another device rotated to a different key. This client still carries the
+    // old public key, so the server mints a fresh id instead of re-wrapping in
+    // place, and the persisted device key now addresses a dead one.
+    serverKey = { ...serverKey!, publicKey: btoa("a-different-public-key----------!") }
+
+    await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-pp", "new-pp", FAST_PARAMS)
+
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state).toMatchObject({ status: "unlocked", deviceTrusted: false })
+    expect(state.keyId).not.toBe(initialKeyId)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
   })
 })

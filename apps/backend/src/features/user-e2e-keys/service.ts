@@ -26,9 +26,11 @@ export class UserE2eKeysService {
   }
 
   /**
-   * Set the user's active E2E key. If one already exists, it's revoked in the
-   * same transaction so the unique-active index never sees two live rows
-   * (INV-20: race-safe write paths).
+   * Set the user's active E2E key. A payload carrying the same public key is a
+   * passphrase change: the bundle is replaced in place, keeping the keyId that
+   * existing wraps address. A different public key is a real key rotation, so
+   * the old row is revoked in the same transaction and the unique-active index
+   * never sees two live rows (INV-20: race-safe write paths).
    *
    * Two concurrent setUserKey calls (e.g. user clicks Setup twice quickly, or
    * two devices race a passphrase rotation) would otherwise both pass the
@@ -48,6 +50,18 @@ export class UserE2eKeysService {
       `)
 
       const existing = await UserE2eKeysRepository.getActiveByUser(client, input.workspaceId, input.userId)
+
+      if (existing && existing.publicKey.equals(input.publicKey)) {
+        const key = await UserE2eKeysRepository.updateBundle(client, {
+          id: existing.id,
+          workspaceId: input.workspaceId,
+          encryptedPrivateBundle: input.encryptedPrivateBundle,
+          kdfSalt: input.kdfSalt,
+          kdfParams: input.kdfParams,
+        })
+        return { key, rotated: true }
+      }
+
       if (existing) {
         await UserE2eKeysRepository.revokeActive(client, input.workspaceId, input.userId)
       }
