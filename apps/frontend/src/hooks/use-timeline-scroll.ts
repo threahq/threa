@@ -348,22 +348,30 @@ export function useTimelineScroll({
       shift = true
     }
   }
-  // While following the tail, a new last row that is not a single live append
-  // (a sweep landing a gap, a window replaced under the reader) is a tail
-  // replace: virtua has only estimated the rows below the old tail. Neither one
-  // appended row nor a same-size window whose last key changed in place (an own
-  // send's echo swapping the client id for the event id) leaves an unmeasured
-  // row, and re-requesting the last index for either lands virtua's deferred
-  // scroll after our pin, a few px above the true bottom.
+  // While following the tail, any window change that is not a single live
+  // append (a sweep landing a gap, a window replaced under the reader, a
+  // backfill filling rows BETWEEN the cached head and the cached tail) leaves
+  // virtua holding estimates where it now has real rows, so the landing has to
+  // be re-taken here, pre-paint. Keying this on the last row alone missed the
+  // mid-window case entirely: the conversation panel opens on the board's
+  // cached rail (opening message + the few newest), so the server page lands 34
+  // rows in the middle with the first and last keys unchanged — the pin then
+  // came from the ResizeObserver a frame or two late, after the off-tail
+  // position had already painted (INV-70), or not at all.
+  // Neither one appended row nor a same-size window whose last key changed in
+  // place (an own send's echo swapping the client id for the event id) leaves
+  // an unmeasured row, and re-requesting the last index for either lands
+  // virtua's deferred scroll after our pin, a few px above the true bottom.
   const lastKey = itemCount > 0 ? getLastKey() : null
   const windowStartHeld = firstKey === prevFirstKeyRef.current
   const appendedOneRow = itemCount === prevCountRef.current + 1 && windowStartHeld
   const swappedTailInPlace = itemCount === prevCountRef.current && windowStartHeld
+  const windowChanged = itemCount !== prevCountRef.current || lastKey !== prevLastKeyRef.current
   const tailReplaced =
     isFollowingTailRef.current &&
     prevCountRef.current > 0 &&
     prevLastKeyRef.current !== null &&
-    lastKey !== prevLastKeyRef.current &&
+    windowChanged &&
     !appendedOneRow &&
     !swappedTailInPlace
   // Record the baseline once per commit, in a layout effect — not during

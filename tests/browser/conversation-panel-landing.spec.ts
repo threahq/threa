@@ -143,6 +143,14 @@ test.describe("Conversation panel landing", () => {
         { timeout: 15000, message: "newest message should sit at the bottom of the panel" }
       )
       .toBeGreaterThanOrEqual(-4)
+    // …and not parked a screenful above it either: the only gap the tail leaves
+    // under the newest row is the floating composer's reserve.
+    const tailGap = await newest
+      .boundingBox()
+      .then((box) => scrollerBox!.y + scrollerBox!.height - (box!.y + box!.height))
+    expect(tailGap, "newest message should not sit a screenful above the panel bottom").toBeLessThan(
+      scrollerBox!.height * 0.5
+    )
 
     // The opening message is 39 rows up, so it must be off-screen.
     const oldestBox = await rowByNum(page, prefix, 1).boundingBox()
