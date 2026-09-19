@@ -21,6 +21,7 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
+import * as useMobileModule from "@/hooks/use-mobile"
 
 const WS = "ws_1"
 const CONV = "conv_1"
@@ -400,6 +401,24 @@ describe("BoardCard running agent sessions", () => {
     await screen.findByText("First reply.")
     const chip = within(chipSlot()!).getByRole("link", { name: /Ariadne is working — open agent trace/ })
     expect(chip).toHaveTextContent(/Ariadne\s*· 4 steps/)
+    expect(chip).toHaveAttribute("href", expect.stringContaining("sess_1"))
+  })
+
+  it("drops to the spinner-only chip at phone width so the card title keeps its room", async () => {
+    // The regression: the full pill is `shrink-0`, so "Ariadne · 4 steps" in the
+    // title row squeezed the topic to a single character on a phone.
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    seedAgentActivity(WS, [running({ stepCount: 4 })])
+    await db.events.bulkPut([
+      messageEvent("r1", 10, "First reply."),
+      sessionStartedEvent("evt_sess", 11, "sess_1", "r1"),
+    ])
+    await db.conversations.put(post())
+    mount()
+
+    await screen.findByText("First reply.")
+    const chip = within(chipSlot()!).getByRole("link", { name: /Ariadne is working — open agent trace/ })
+    expect(chip).toHaveTextContent("")
     expect(chip).toHaveAttribute("href", expect.stringContaining("sess_1"))
   })
 

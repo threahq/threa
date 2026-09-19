@@ -45,6 +45,8 @@ import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { formatDayDivider, localStartOfDayMs } from "@/lib/dates"
 import * as autoReadModule from "@/components/message/use-conversation-auto-read"
 import { registerWorkspaceSocketHandlers } from "@/sync/workspace-sync"
+import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
+import * as useMobileModule from "@/hooks/use-mobile"
 
 const WORKSPACE_ID = "ws_1"
 const CONVERSATION_ID = "conv_1"
@@ -1244,10 +1246,12 @@ function cachedStreamEvent(eventType: EventType, seconds: number, payload: Recor
 describe("ConversationPanel event rows", () => {
   beforeEach(async () => {
     __clearBoardRailRegistry()
+    resetAgentActivityStore()
     await db.events.clear()
   })
   afterEach(async () => {
     __clearBoardRailRegistry()
+    resetAgentActivityStore()
     await db.events.clear()
   })
 
@@ -1273,6 +1277,81 @@ describe("ConversationPanel event rows", () => {
     expect(await screen.findByText("Add rate limiting")).toBeTruthy()
     expect(screen.getByText(/· Running$/)).toBeTruthy()
     expect(screen.queryByText("Somebody else's task")).toBeNull()
+  })
+
+  it("lights the header chip for a session running in this conversation", async () => {
+    // The panel is the board card's always-expanded peer over the same
+    // `eventRows`; before this it was the one surface with no chip at all, so an
+    // agent visible in the feed vanished the moment you opened the conversation.
+    seedAgentActivity(WORKSPACE_ID, [
+      {
+        sessionId: "sess_run",
+        streamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentAnchorId: null,
+        personaName: "Ariadne",
+        startedAt: "2026-06-22T12:00:30.000Z",
+        currentStepType: "workspace_search",
+        stepCount: 5,
+        messageCount: 0,
+        substep: null,
+      },
+    ])
+    await db.events.bulkPut([
+      cachedStreamEvent("agent_session:started", 30, {
+        sessionId: "sess_run",
+        triggerMessageId: "msg_1",
+        personaName: "Ariadne",
+      }),
+    ])
+    mountPanel({ cached: asCached(makePost()) })
+
+    const chip = await screen.findByRole("link", { name: "Ariadne is working — open agent trace" })
+    expect(chip).toHaveTextContent(/Ariadne\s*· 5 steps/)
+    expect(chip).toHaveAttribute("href", expect.stringContaining("sess_run"))
+  })
+
+  it("keeps the header chip spinner-only at phone width", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    seedAgentActivity(WORKSPACE_ID, [
+      {
+        sessionId: "sess_run",
+        streamId: "stream_1",
+        rootStreamId: "stream_1",
+        parentAnchorId: null,
+        personaName: "Ariadne",
+        startedAt: "2026-06-22T12:00:30.000Z",
+        currentStepType: "workspace_search",
+        stepCount: 5,
+        messageCount: 0,
+        substep: null,
+      },
+    ])
+    await db.events.bulkPut([
+      cachedStreamEvent("agent_session:started", 30, {
+        sessionId: "sess_run",
+        triggerMessageId: "msg_1",
+        personaName: "Ariadne",
+      }),
+    ])
+    mountPanel({ cached: asCached(makePost()) })
+
+    const chip = await screen.findByRole("link", { name: "Ariadne is working — open agent trace" })
+    expect(chip).toHaveTextContent("")
+  })
+
+  it("leaves the header chip dark for a session that is not running", async () => {
+    await db.events.bulkPut([
+      cachedStreamEvent("agent_session:started", 30, {
+        sessionId: "sess_run",
+        triggerMessageId: "msg_1",
+        personaName: "Ariadne",
+      }),
+    ])
+    mountPanel({ cached: asCached(makePost()) })
+
+    await screen.findByText("Reply two body.")
+    expect(screen.queryByRole("link", { name: /is working — open agent trace/ })).toBeNull()
   })
 
   it("offers Redirect on a running agent trace, which bumps the panel composer's open signal", async () => {
