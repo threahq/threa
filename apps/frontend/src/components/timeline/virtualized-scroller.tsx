@@ -26,18 +26,17 @@ export interface VirtualizedScrollerProps {
   isInitialSettling: boolean
   onScroll: () => void
   /**
-   * Height in px of EVERYTHING above the virtualized window inside the scroll
-   * container, `header` included — virtua resolves an index to an offset by
-   * adding it, so a header rendered outside it puts every offset query that far
-   * out. The component renders `header` inside a box of exactly this height so
-   * the declaration cannot drift from the DOM.
+   * Everything above the virtualized window inside the scroll container. Virtua
+   * resolves an index to an offset by adding `heightPx`, so `content` renders
+   * inside a box of exactly that height — chrome rendered outside the box puts
+   * every offset query its height out, which is why the two travel as one prop.
    *
-   * It must be a number the caller knows on its FIRST render rather than a
-   * measurement: virtua records a later startMargin without re-deriving the
+   * `heightPx` must be a number the caller knows on its FIRST render rather than
+   * a measurement: virtua records a later startMargin without re-deriving the
    * offsets it already computed from the old one, and an anchor restore loses
    * its target row that way.
    */
-  startMargin?: number
+  startMargin?: { heightPx: number; content?: ReactNode }
   className?: string
   style?: CSSProperties
   /** Extra props for the scroller element (batch-selection pointer handlers). */
@@ -50,13 +49,16 @@ export interface VirtualizedScrollerProps {
    * early-returns — see the hook.
    */
   hasRenderedContent: boolean
-  /** In flow above the virtualized window, inside the `startMargin` box. */
-  header?: ReactNode
-  /** In flow below it — composer spacer, load-more affordances. */
+  /** In flow below the virtualized window — composer spacer, load-more affordances. */
   footer?: ReactNode
   /** Rendered after the scroller, under the settle mask (floating chrome). */
   overlay?: ReactNode
-  /** Covers the list while `isInitialSettling`; falls back to `skeleton`. */
+  /**
+   * Covers the list while `isInitialSettling`; falls back to `skeleton`. It is
+   * absolutely positioned against the caller's nearest positioned ancestor, so
+   * the surface mounting this component owns a `relative`/`absolute` box around
+   * it — under a static parent the mask covers the whole app instead.
+   */
   mask?: ReactNode
   /** Shown instead of the list before anything has ever rendered. */
   skeleton?: ReactNode
@@ -103,7 +105,6 @@ export function VirtualizedScroller({
   scrollerProps,
   itemClassName,
   hasRenderedContent,
-  header,
   footer,
   overlay,
   mask,
@@ -139,17 +140,17 @@ export function VirtualizedScroller({
         <div ref={contentRef}>
           {startMargin != null && (
             <div
-              aria-hidden={header == null}
+              aria-hidden={startMargin.content == null}
               className="flex flex-col justify-end overflow-hidden"
-              style={{ height: startMargin }}
+              style={{ height: startMargin.heightPx }}
             >
-              {header}
+              {startMargin.content}
             </div>
           )}
           <Virtualizer
             ref={listRef}
             scrollRef={scrollerRef}
-            startMargin={startMargin}
+            startMargin={startMargin?.heightPx}
             // Maintain scroll from the end when an older page is prepended so the
             // viewport doesn't move — the core reverse-infinite-scroll fix.
             shift={shift}

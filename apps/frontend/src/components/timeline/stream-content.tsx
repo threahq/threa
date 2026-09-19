@@ -3450,7 +3450,7 @@ function TimelineMessageList({
       shift={shift}
       isInitialSettling={isInitialSettling}
       onScroll={handleScroll}
-      startMargin={startMargin}
+      startMargin={{ heightPx: startMargin }}
       hasRenderedContent={hasRenderedContent}
       className={cn(batch?.enabled && "select-none")}
       data-suppress-pull-refresh="true"
