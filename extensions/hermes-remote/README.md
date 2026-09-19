@@ -101,6 +101,9 @@ what it needs to check that an answer names a button on the card.
 You have to set up encryption in Threa first, under Settings, so there is an owner key to wrap the scratchpad to. Until
 then the connector logs why it cannot create the scratchpad and retries on each poll.
 
+Turning `THREA_E2E=1` on later does not seal the scratchpad you already have. The connector resumes it, warns that it
+is plaintext and keeps going; archive it and the next start creates an encrypted one.
+
 On first start the connector mints an identity key of its own and files it in the OS keychain, reached through that
 keychain's command-line tool so a runtime upgrade does not lose it. `THREA_E2E_KEY_STORE=file` keeps it as a `0600`
 file under `~/.threa/e2e-keys` instead (`THREA_E2E_KEY_DIR` moves that directory). If no keychain is available and you
