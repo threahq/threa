@@ -1,11 +1,13 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join, resolve } from "node:path"
 
+interface PackageManifest {
+  dependencies?: Record<string, string>
+}
+
 /** The daemon runs its TypeScript straight from the checkout, so "its source" is its own tree plus every workspace package it links by path. */
 export function daemonSourceRoots(packageDir = resolve(import.meta.dir, "..")): string[] {
-  const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8")) as {
-    dependencies?: Record<string, string>
-  }
+  const manifest: PackageManifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"))
   const roots = [join(packageDir, "src")]
   for (const spec of Object.values(manifest.dependencies ?? {})) {
     if (spec.startsWith("file:")) roots.push(join(resolve(packageDir, spec.slice("file:".length)), "src"))

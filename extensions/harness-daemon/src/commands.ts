@@ -337,6 +337,10 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   const targets = runtimeSupervisorTargets(claudeConfig, piConfig)
   if (targets.length === 0) throw new Error("harnessd: no Threa credentials found for the supervisor socket")
 
+  // Taken before any work: startup reconciliation can run for minutes, and a
+  // tree that moves during it must read as changed, not as the baseline.
+  const sourceChanged = createSourceChangeWatch()
+
   let reconcileChain = Promise.resolve()
   let unavailablePasses = 0
   let retryTimer: ReturnType<typeof setTimeout> | undefined
@@ -361,31 +365,37 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   })
   // One path to a managed session's scratchpad, so every notice harnessd posts
   // about it credentials a thread-attached runtime the same way.
-  const postAgentNotice = async (agent: ManagedAgent, purpose: string, content: string): Promise<void> => {
+  const postAgentNotice = async (agent: ManagedAgent, purpose: string, content: string): Promise<boolean> => {
     const scratchpad = agent.scratchpadUrl ? parseScratchpadUrl(agent.scratchpadUrl) : undefined
     const runtimeConfig = agent.runtime === "pi" ? piConfig : claudeConfig
     const credentials =
       agent.activeStreamId && agent.activeStreamId !== scratchpad?.streamId
         ? requireThreadSessionTarget(runtimeConfig, `post ${purpose} for the attached runtime`)
         : runtimeLifecycleTarget(runtimeConfig)
-    if (!scratchpad || !credentials) return
-    await postScratchpadNotice({
+    if (!scratchpad || !credentials) return false
+    return await postScratchpadNotice({
       ...credentials,
       workspaceId: scratchpad.workspaceId || credentials.workspaceId,
       streamId: scratchpad.streamId,
       content,
-    }).catch((error) => {
-      console.warn(
-        `harnessd: ${purpose} for ${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`
-      )
-    })
+    }).then(
+      () => true,
+      (error) => {
+        console.warn(
+          `harnessd: ${purpose} for ${agent.name} failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+        return false
+      }
+    )
   }
 
   const briefs = createBriefQueue({
     type: typeBrief,
     dryRun: Boolean(options.dryRun),
     log: console.log,
-    notify: (agent, content) => postAgentNotice(agent, "an OOM notice", content),
+    notify: async (agent, content) => {
+      await postAgentNotice(agent, "an OOM notice", content)
+    },
   })
 
   // Returns the chain, not void: `startupReconciliation` runs the tombstone pass
@@ -493,8 +503,10 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
         }
         console.error(`harnessd: wake of ${woken.name} failed: ${failure}`)
         if (notifiedWakeFailures.has(woken.id)) return
-        notifiedWakeFailures.add(woken.id)
-        await postAgentNotice(woken, "a wake-failure notice", formatWakeFailureNotice(failure))
+        // Recorded on delivery, not on attempt: a notice the network ate would
+        // otherwise suppress every later one and restore the silence.
+        const delivered = await postAgentNotice(woken, "a wake-failure notice", formatWakeFailureNotice(failure))
+        if (delivered) notifiedWakeFailures.add(woken.id)
       })
       .catch((error) => {
         console.error(`harnessd: wake failed: ${error instanceof Error ? error.message : String(error)}`)
@@ -519,7 +531,6 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
 
   await startupReconciliation(defaultStartupReconciliationDeps(() => reconcile(), options.dryRun ?? false))
   const vanishedPanes = createVanishedPaneSweep()
-  const sourceChanged = createSourceChangeWatch()
 
   const transports = targets.map(
     (target) =>
@@ -539,11 +550,10 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
   }
   await runWatchLoop({
     runPass: async () => {
-      // The daemon runs the checkout directly, so an edit to it lands in every
-      // new process but never in this one. Nothing notices until a wake runs
-      // week-old code against a config only the new code understands, which is
-      // how sessions died silently until 2026-09-19. Exiting hands the restart
-      // to systemd; the chain is drained first so no revival is cut in half.
+      // The daemon runs the checkout directly, so an edit to it reaches every
+      // new process and never this one: a wake here validates today's session
+      // config with whatever code booted. Exiting hands the restart to systemd;
+      // the chain is drained first so no revival is cut in half.
       if (sourceChanged()) {
         console.warn("harnessd: source changed on disk; exiting so systemd restarts it on current code")
         await reconcileChain
