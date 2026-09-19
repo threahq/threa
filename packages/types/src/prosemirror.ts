@@ -219,6 +219,7 @@ export type ThreaInlineNode =
   | ThreaAttachmentReference
   | ThreaMemoEmbed
   | ThreaGiphyEmbed
+  | ThreaMath
   | ThreaHardBreak
 
 /**
@@ -328,6 +329,23 @@ export interface ThreaGiphyEmbed {
      */
     width?: number
     height?: number
+  }
+}
+
+/**
+ * A LaTeX equation. The body is the TeX alone — the `$…$` / `$$…$$` delimiters
+ * belong to the markdown wire format, so a round trip through either
+ * representation produces the same node. `display` is how it draws (centered on
+ * its own line) rather than where it sits: inline is `$…$`, display is `$$…$$`,
+ * and both live inside a paragraph.
+ */
+export interface ThreaMath {
+  type: "math"
+  attrs: {
+    /** TeX source, without delimiters. */
+    tex: string
+    /** Rendered as a centered block rather than inside the sentence. */
+    display: boolean
   }
 }
 
@@ -484,6 +502,14 @@ const giphyEmbedNodeSchema = z.object({
   }),
 })
 
+const mathNodeSchema = z.object({
+  type: z.literal("math"),
+  attrs: z.object({
+    tex: z.string(),
+    display: z.boolean(),
+  }),
+})
+
 // Inline node union
 const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   textNodeSchema,
@@ -494,6 +520,7 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   attachmentReferenceNodeSchema,
   memoEmbedNodeSchema,
   giphyEmbedNodeSchema,
+  mathNodeSchema,
   hardBreakNodeSchema,
 ])
 

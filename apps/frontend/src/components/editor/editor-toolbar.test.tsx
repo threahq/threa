@@ -6,6 +6,7 @@ import type { Editor } from "@tiptap/react"
 import { Editor as TipTapEditor } from "@tiptap/core"
 import { EditorToolbar } from "./editor-toolbar"
 import { createEditorExtensions } from "./editor-extensions"
+import { MathEditingKey } from "./math-extension"
 import * as editorBehaviors from "./editor-behaviors"
 import * as contextsModule from "@/contexts"
 
@@ -137,7 +138,7 @@ describe("EditorToolbar", () => {
     expect(editor.__run).toHaveBeenCalled()
   })
 
-  it("wraps the selection in math delimiters from the Math button", async () => {
+  it("turns the selection into an equation from the Math button and opens its TeX", async () => {
     const user = userEvent.setup()
     const element = document.createElement("div")
     document.body.append(element)
@@ -151,7 +152,23 @@ describe("EditorToolbar", () => {
     render(<EditorToolbar editor={realEditor as unknown as Editor} isVisible inline />)
     await user.click(screen.getByRole("button", { name: "Math" }))
 
-    expect(realEditor.getText()).toBe("area $x^2$")
+    // No `$` anywhere in the document: the delimiters are markdown, and what
+    // the button produces is the same node typing `$x^2$` produces.
+    expect(realEditor.getJSON()).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "area " },
+            { type: "math", attrs: { tex: "x^2", display: false } },
+          ],
+        },
+      ],
+    })
+    // And it is the node's TeX that is open, not a caret beside it.
+    expect(MathEditingKey.getState(realEditor.state)).toBe(6)
+
     realEditor.destroy()
     element.remove()
   })

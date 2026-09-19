@@ -14,6 +14,7 @@ import {
   serializeAttachmentMetadata,
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
+import { extractMath, splitMathTokens } from "./math"
 import {
   buildAgentBlockHref,
   buildGiphyHref,
@@ -473,15 +474,39 @@ function resolveSerializedLinkHref(displayText: string, href: string): string {
   return href
 }
 
+/**
+ * A math node back to the delimiters `scanMathSpans` reads it from, so a sent
+ * message renders the equation the composer drew.
+ *
+ * `$…$` is the readable form but it is deliberately fussy on the wire: an
+ * opener glued to a word is part of that word, a closer followed by a digit is
+ * a price, and a body holding another `$` is rejected outright. The `\(…\)`
+ * form carries all three, so it is what a span in those positions serializes
+ * to rather than text that would come back as prose.
+ */
+function serializeMath(node: JSONContent, before: string, after: string): string {
+  const raw = node.attrs?.tex
+  const tex = typeof raw === "string" ? raw.trim() : ""
+  if (!tex) return ""
+  if (node.attrs?.display) return tex.includes("$$") ? `\\[${tex}\\]` : `$$${tex}$$`
+  const ambiguous = tex.includes("$") || /[\w$\\]$/.test(before) || /^[\d$]/.test(after)
+  return ambiguous ? `\\(${tex}\\)` : `$${tex}$`
+}
+
 function serializeInline(nodes: JSONContent[] | undefined): string {
   if (!nodes) return ""
+
+  const texts = nodes.map((node) => (node.type === "math" ? "" : getNodeText(node)))
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].type !== "math") continue
+    texts[i] = serializeMath(nodes[i], texts.slice(0, i).join(""), texts.slice(i + 1).join(""))
+  }
 
   // Group consecutive nodes with the same effective marks.
   const groups: Array<{ text: string; marks: JSONContentMark[] }> = []
 
   for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i]
-    const text = getNodeText(node)
+    const text = texts[i]
     if (!text) continue
 
     const marks = getEffectiveMarks(nodes, i)
@@ -601,7 +626,11 @@ export function parseMarkdown(
     return { type: "doc", content: [{ type: "paragraph" }] }
   }
 
-  const lines = normalizeMarkdownTables(markdown).split("\n")
+  // Math is lifted into opaque tokens before anything reads the source, for the
+  // same reason the renderer does it (`extractMath`): a TeX body is not
+  // markdown. It also collapses a `$$` block written across lines into one
+  // token, so the line-based loop below never has to know about fences.
+  const lines = extractMath(normalizeMarkdownTables(markdown)).split("\n")
   const content: JSONContent[] = []
   let i = 0
 
@@ -1110,6 +1139,21 @@ function tokenizeBalancedLinkDestinations(
 
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
   if (!text) return []
+
+  const mathParts = splitMathTokens(text)
+  if (mathParts) {
+    const parsed: JSONContent[] = []
+    for (const [index, part] of mathParts.entries()) {
+      if ("tex" in part) {
+        parsed.push({ type: "math", attrs: { tex: part.tex, display: part.display } })
+        continue
+      }
+      // Only the first part starts the line, so a `/word` after an equation is
+      // prose, not a command.
+      parsed.push(...parseInlineMarkdown(part.text, index === 0 ? options : { ...options, enableSlashCommands: false }))
+    }
+    return parsed
+  }
 
   const result: JSONContent[] = []
   const { getMentionType, getEmoji } = options

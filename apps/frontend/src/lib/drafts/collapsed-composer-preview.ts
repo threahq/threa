@@ -101,6 +101,10 @@ function previewNode(node: JSONContent): string {
     const title = stringAttr(node, "title")
     return title ? `GIF: ${title}` : "GIF"
   }
+  if (node.type === "math") {
+    const tex = stringAttr(node, "tex")
+    return tex ? `$${tex}$` : "Equation"
+  }
   if (node.type === "horizontalRule") return "Divider"
   if (node.type === "table") return previewTable(node)
   if (node.type === "codeBlock") {
