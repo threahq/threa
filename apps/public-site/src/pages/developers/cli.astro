@@ -211,6 +211,12 @@ threa e2e lock                           # forget this machine's copy`}
   -- bun /path/to/threa/packages/cli/src/cli.ts mcp serve`}
   />
   <p>
+    Sealed streams work over MCP the same as in the shell: <code>read_stream</code>
+    opens bodies and <code>send_message</code> seals them, with the key
+    <code>threa e2e unlock</code> filed on this machine. A workspace with no sealed
+    streams never touches the key store.
+  </p>
+  <p>
     Other MCP hosts use their own registration format with the same command
     and environment. The tool names mirror the CLI surface:
     <code>search</code>, <code>read_stream</code>, <code>send_message</code>,
