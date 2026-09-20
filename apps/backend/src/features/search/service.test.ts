@@ -235,7 +235,7 @@ describe("SearchService deep mode", () => {
   test("the embedding-batch fallback keeps the searcher's identity, so spend stays attributed", async () => {
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("a")])
     spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
-    const score = mock(async () => null)
+    const score = mock<RelevanceScorerLike["score"]>(async () => null)
     const service = makeService({
       embeddingService: {
         embed: async () => [0],
