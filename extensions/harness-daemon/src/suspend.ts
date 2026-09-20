@@ -12,7 +12,7 @@ import type { ManagedAgent } from "./types"
  * take the window with it and lose the operator's place in the session list,
  * and an empty one says nothing about why the agent is gone.
  */
-export function suspendPlaceholderCommand(agent: ManagedAgent): string {
+export function suspendPlaceholderCommand(agent: Pick<ManagedAgent, "name">): string {
   return `printf '%s\\n' ${shellQuote(suspendPlaceholderNotice(agent))}; exec sleep 2147483647`
 }
 
@@ -100,7 +100,13 @@ export function suspendAgent(
   const recheck = readIdle(agent.worktree, deps, options.thresholdMs)
   if (!recheck.idle) {
     const rolledBackAt = new Date(deps.now()).toISOString()
-    deps.persist({ ...agent, status: "online", suspendedAt: undefined, heldPresence: undefined, updatedAt: rolledBackAt })
+    deps.persist({
+      ...agent,
+      status: "online",
+      suspendedAt: undefined,
+      heldPresence: undefined,
+      updatedAt: rolledBackAt,
+    })
     return { status: "skipped", detail: `took work up while winding down: ${recheck.reason}` }
   }
   deps.respawn(pane.pane.paneId, agent.worktree, suspendPlaceholderCommand(agent))

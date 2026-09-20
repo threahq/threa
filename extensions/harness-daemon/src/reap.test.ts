@@ -10,6 +10,8 @@ import { profileForWorktree, type MintedIdentity } from "./identity-store"
 import { suspendPlaceholderCommand } from "./suspend"
 import type { ManagedAgent } from "./types"
 
+type SuspendedAgent = Pick<ManagedAgent, "name" | "runtimeSessionId">
+
 // Every dep is injected, but a defaulted one would silently read the developer's
 // real stores — which is how a green test can depend on what happens to be in
 // ~/.threa/harnessd. Point them at an empty directory so a leak fails loudly.
@@ -216,8 +218,8 @@ describe("reapArchivedWorktrees", () => {
   })
 
   describe("a suspended session", () => {
-    const agent = { name: "feature", runtimeSessionId: "ccs-abc" } as ManagedAgent
-    const placeholder = (owner: ManagedAgent = agent) =>
+    const agent: SuspendedAgent = { name: "feature", runtimeSessionId: "ccs-abc" }
+    const placeholder = (owner: SuspendedAgent = agent) =>
       pane({ panePid: 9001, startCommand: suspendPlaceholderCommand(owner) })
     const untouched = { woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] }
 
