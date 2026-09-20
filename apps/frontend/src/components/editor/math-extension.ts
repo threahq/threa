@@ -262,16 +262,28 @@ function openAdjacentMath(editor: Editor, type: NodeType, direction: "left" | "r
   const { selection } = editor.state
   if (!(selection instanceof TextSelection) || !selection.empty) return false
 
-  const { $from } = selection
+  const $caret = editor.state.doc.resolve(domCaretPos(editor) ?? selection.from)
   if (direction === "left") {
-    const before = $from.nodeBefore
+    const before = $caret.nodeBefore
     if (before?.type !== type) return false
-    return editor.commands.openMathEditor($from.pos - before.nodeSize, "end")
+    return editor.commands.openMathEditor($caret.pos - before.nodeSize, "end")
   }
 
-  const after = $from.nodeAfter
+  const after = $caret.nodeAfter
   if (after?.type !== type) return false
-  return editor.commands.openMathEditor($from.pos, "start")
+  return editor.commands.openMathEditor($caret.pos, "start")
+}
+
+/**
+ * Where the browser's caret is. The editor learns of a native arrow move from
+ * `selectionchange`, which Chrome delivers after the next keydown when the keys
+ * come quickly — a held arrow — so the state's selection is one step behind and
+ * the caret would walk straight over the equation.
+ */
+function domCaretPos(editor: Editor): number | null {
+  const selection = editor.view.dom.ownerDocument.getSelection()
+  if (!selection?.isCollapsed || !selection.anchorNode || !editor.view.dom.contains(selection.anchorNode)) return null
+  return editor.view.posAtDOM(selection.anchorNode, selection.anchorOffset)
 }
 
 /**
