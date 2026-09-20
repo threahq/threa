@@ -11,6 +11,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
     { id: "install", label: "Install" },
     { id: "configure", label: "Configure" },
     { id: "commands", label: "Commands" },
+    { id: "e2e", label: "Sealed streams" },
     { id: "refs", label: "Referring to things" },
     { id: "output", label: "Output and exit codes" },
     { id: "mcp", label: "The MCP server" },
@@ -89,16 +90,22 @@ threa whoami`}
 threa search "release plan" --what messages|memos|attachments
 threa streams list --type channel
 threa streams read "#general" --members
+threa streams archive stream_...
+threa streams unarchive stream_...
 threa conversations list --stream "#general"
 threa conversations read conv_...
 threa messages send "#general" "Hello from the CLI"
 threa messages edit msg_... "Edited"
 threa messages delete msg_...
 threa messages find-by-metadata source=ci
+threa memos list --stream "#general"
 threa memos get memo_...
+threa attachments list --stream "#general"
 threa attachments get att_... --url
+threa attachments download att_... ./out.png
 threa labels list
 threa labels add triage "#general"
+threa labels remove triage "#general"
 threa users list
 threa delegations list
 threa delegations get dlg_...
@@ -106,6 +113,10 @@ threa delegations claim dlg_... --label "My machine"
 threa delegations update dlg_... --note "tests passing"
 threa delegations release dlg_...
 threa delegations finish dlg_... --outcome complete --result - < report.md
+threa delegations request-access dlg_...
+threa e2e unlock
+threa e2e status
+threa e2e lock
 threa mcp serve`}
   />
   <p>
@@ -116,6 +127,51 @@ threa mcp serve`}
     <code>--new-conversation</code> and continue one with
     <code>--conversation conv_...</code>, which is how an external agent keeps
     a thread of work going across runs.
+  </p>
+
+  <h2 id="e2e">Sealed streams</h2>
+  <p>
+    An end-to-end-encrypted stream stores only ciphertext, so reading or posting
+    needs the key that opens it. <code>threa e2e unlock</code> fetches the
+    encrypted bundle holding your identity key, opens it with your passphrase and
+    files the key on this machine. The passphrase is typed at the prompt, never
+    echoed, or piped on stdin; neither it nor the key is sent anywhere.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="Open a sealed stream"
+    code={`threa e2e unlock                         # prompts, then: unlocked uik_... into the OS keychain
+threa e2e status                         # holding uik_... (current)
+threa streams read stream_...            # bodies opened here, with that key
+threa messages send stream_... "on it"   # sealed here, then sent
+threa e2e lock                           # forget this machine's copy`}
+  />
+  <p>
+    The key goes in the OS keychain by default, reached through the keychain's
+    command-line tool so a reinstall does not lose it.
+    <code>--key-store file</code> writes a <code>0600</code> file under
+    <code>~/.threa/e2e-keys</code> instead, and <code>--key-dir</code> moves that
+    directory. Both also read from <code>keyStore</code> and <code>keyDir</code> in
+    the config file, or <code>THREA_E2E_KEY_STORE</code> and
+    <code>THREA_E2E_KEY_DIR</code> in the environment; a flag wins over both, which
+    is how a runtime hands its own settings to the CLI it launches. Every command
+    that touches a sealed stream takes the same two flags.
+  </p>
+  <p>
+    <code>threa e2e status</code> compares the key this machine holds against the
+    one the workspace has active for you. They differ after the web app rotates
+    your key, which is when sealed streams stop opening here until you unlock
+    again. <code>threa e2e lock</code> removes the copy on this machine and revokes
+    nothing.
+  </p>
+  <p>
+    Reads and writes fail loudly rather than degrade. Without a key,
+    <code>streams read</code> says so instead of printing the placeholder the
+    server stores, and <code>messages send</code> refuses rather than posting in
+    the clear. A single message sealed to a key generation you were never wrapped
+    to comes back with null content and its own reason, alone among the page. A
+    sealed stream takes no <code>--metadata</code> and no conversation flags: both
+    would travel in the clear, so they are refused instead of quietly dropped.
   </p>
 
   <h2 id="refs">Referring to things</h2>
