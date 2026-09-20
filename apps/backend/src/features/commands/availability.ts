@@ -18,6 +18,7 @@ import { withClient, type Querier } from "../../db"
 import { checkStreamAccess, projectStreamForUser, StreamRepository, type Stream } from "../streams"
 import { BotRepository } from "../public-api"
 import {
+  isSupervisorHeld,
   BotRuntimeInstanceRepository,
   type BotRuntimeInstance,
   type BotRuntimeSessionLink,
@@ -38,14 +39,6 @@ import {
 } from "./catalog"
 
 /**
- * The capability harnessd sets on presence it publishes for a session whose
- * process is not running, so a wound-down agent keeps its commands and a user
- * never has to wake one to change its model. The command is queued and applied
- * when the session resumes.
- */
-const SUPERVISOR_HELD_CAPABILITY = "supervisorHeld"
-
-/**
  * How long held presence stands without a refresh. The supervisor re-posts it
  * every watch pass (60s); five missed passes is a supervisor that stopped, and
  * the commands it advertised would have nothing left to deliver them. Scoped to
@@ -56,7 +49,7 @@ const SUPERVISOR_HELD_CAPABILITY = "supervisorHeld"
 const SUPERVISOR_HELD_PRESENCE_TTL_MS = 5 * 60_000
 
 export function supervisorHeldPresenceExpired(presence: BotRuntimeInstance, nowMs = Date.now()): boolean {
-  if (presence.capabilities[SUPERVISOR_HELD_CAPABILITY] !== true) return false
+  if (!isSupervisorHeld(presence.capabilities)) return false
   const lastSeenMs = presence.lastSeenAt.getTime()
   if (!Number.isFinite(lastSeenMs)) return true
   return nowMs - lastSeenMs > SUPERVISOR_HELD_PRESENCE_TTL_MS

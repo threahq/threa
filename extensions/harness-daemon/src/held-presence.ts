@@ -38,10 +38,10 @@ export interface HeldPresenceOutcome {
  * Presence for a session that is not running: available, taking invocations,
  * and advertising exactly what the session itself last advertised.
  *
- * No status text and no BIK. A user should not have to know their agent is
- * asleep, and the private key the session registered died with its process, so
- * a write on its behalf clears it rather than leaving the server wrapping
- * stream keys to a holder that no longer exists.
+ * No status text: a user should not have to know their agent is asleep. No
+ * BIK either — private key material has no business in a supervisor — and the
+ * `supervisorHeld` marker is what tells the server to keep the key the session
+ * registered instead of clearing it on a keyless write.
  */
 export function heldPresenceBody(snapshot: SessionPresenceSnapshot): Record<string, unknown> {
   return {
