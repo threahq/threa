@@ -78,6 +78,7 @@ function makeDoneDeps(
     links: () => [LINK],
     panes: () => panes,
     identities: () => [],
+    suspendedAgents: () => [],
     claudeProcessesIn: () => options.claudePids ?? [],
     pathExists: () => options.worktreeExists ?? true,
     canonicalPath: (path) => path,

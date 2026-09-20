@@ -23,9 +23,12 @@ import {
   resolveManagedAgentPane,
   type LocalTmuxPane,
 } from "./discovery"
+import { readInventoryReadonly } from "./inventory"
 import { processAlive } from "./lock"
 import { output } from "./shell"
 import { fetchScratchpadArchivedAt, fetchScratchpadStatus, type ScratchpadStatus } from "./resume"
+import { suspendPlaceholderNotice } from "./suspend"
+import type { ManagedAgent } from "./types"
 
 /**
  * The reaper: clean up worktrees whose scratchpad was archived while nothing
@@ -92,6 +95,8 @@ export interface ReapDeps {
   observingSinceMs?: number
   links: () => HarnessLink[]
   identities: () => MintedIdentity[]
+  /** Inventory rows whose pane is a suspend placeholder rather than a runtime. */
+  suspendedAgents: () => Pick<ManagedAgent, "name" | "runtimeSessionId">[]
   panes: () => LocalTmuxPane[]
   /** Live Claude pids in this worktree, corroborated against the process table. */
   claudeProcessesIn: (worktree: string) => number[]
@@ -122,6 +127,7 @@ export function defaultReapDeps(target: { baseUrl: string; workspaceId: string; 
   return {
     links: readHarnessLinks,
     identities: readMintedIdentities,
+    suspendedAgents: () => readInventoryReadonly().filter((agent) => agent.status === "suspended"),
     panes: listLocalTmuxPanes,
     claudeProcessesIn: liveClaudePidsIn,
     canonicalPath: canonicalOrRaw,
@@ -198,7 +204,10 @@ type WindowDecision =
 type WindDownWindow = { kind: "none" } | { kind: "kill"; pane: LocalTmuxPane }
 
 /** The slice of {@link ReapDeps} {@link decideWindow} reads, so `done` can apply the same vetoes without faking a reap. */
-export type WindowDecisionDeps = Pick<ReapDeps, "links" | "identities" | "claudeProcessesIn" | "canonicalPath">
+export type WindowDecisionDeps = Pick<
+  ReapDeps,
+  "links" | "identities" | "suspendedAgents" | "claudeProcessesIn" | "canonicalPath"
+>
 
 /** The slice of {@link ReapDeps} {@link windDownLinkedWorktree} needs — narrow so a caller like `done` need not fake the archive-detection fields it never reaches. */
 export type WindDownDeps = Pick<
@@ -301,6 +310,25 @@ export function decideWindow(link: HarnessLink, panes: LocalTmuxPane[], deps: Wi
   // there, and reaping one record per pass is what resolves the duplication.
   if (conflict.length > 0) {
     return { kind: "refuse", status: "skipped ambiguous", reason: conflictReason(link, conflict) }
+  }
+
+  // A suspended session's pane declares no identity: `suspendAgent` replaced
+  // the runtime with a placeholder, so the resolver below can never claim it and
+  // the record would be refused on every pass. The notice names the agent, and
+  // the inventory ties that agent to this record's session. The placeholder's
+  // pid is a `sleep`, so every live Claude in the directory is a stranger.
+  const suspended = deps.suspendedAgents().filter((agent) => agent.runtimeSessionId === link.runtimeSessionId)
+  if (
+    suspended.length === 1 &&
+    occupants.length === 1 &&
+    occupants[0]!.startCommand.includes(suspendPlaceholderNotice(suspended[0]!))
+  ) {
+    if (unaccountedPids.length === 0) return { kind: "kill", pane: occupants[0]! }
+    return {
+      kind: "refuse",
+      status: "skipped occupied",
+      reason: `${link.worktree} holds a Claude beside this record's suspend placeholder (pid ${unaccountedPids.join(", ")})`,
+    }
   }
 
   const resolved = resolveManagedAgentPane(

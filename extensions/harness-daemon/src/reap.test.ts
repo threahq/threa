@@ -7,6 +7,8 @@ import { join } from "node:path"
 import type { LocalTmuxPane } from "./discovery"
 import { DEFAULT_PROFILE, type Profile, type WindDownPolicy } from "./profiles"
 import { profileForWorktree, type MintedIdentity } from "./identity-store"
+import { suspendPlaceholderCommand } from "./suspend"
+import type { ManagedAgent } from "./types"
 
 // Every dep is injected, but a defaulted one would silently read the developer's
 // real stores — which is how a green test can depend on what happens to be in
@@ -73,6 +75,7 @@ function makeDeps(overrides: Partial<ReapDeps> = {}): { deps: ReapDeps; recorded
   const deps: ReapDeps = {
     links: () => [link()],
     identities: () => [],
+    suspendedAgents: () => [],
     panes: () => [pane()],
     claudeProcessesIn: () => [],
     canonicalPath: (path) => path,
@@ -209,6 +212,66 @@ describe("reapArchivedWorktrees", () => {
       forgotten: ["ccs-abc"],
       awaited: [4242],
       retired: [WORKTREE],
+    })
+  })
+
+  describe("a suspended session", () => {
+    const agent = { name: "feature", runtimeSessionId: "ccs-abc" } as ManagedAgent
+    const placeholder = (owner: ManagedAgent = agent) =>
+      pane({ panePid: 9001, startCommand: suspendPlaceholderCommand(owner) })
+    const untouched = { woundDown: [], killed: [], forgotten: [], awaited: [], retired: [] }
+
+    test("reaps through the placeholder its suspend left in the pane", async () => {
+      const { deps, recorded } = makeDeps({ panes: () => [placeholder()], suspendedAgents: () => [agent] })
+
+      const [outcome] = await reapArchivedWorktrees(deps)
+
+      expect(outcome).toMatchObject({ status: "reaped", worktree: WORKTREE })
+      expect(recorded).toEqual({
+        woundDown: [WORKTREE],
+        killed: ["@7"],
+        forgotten: ["ccs-abc"],
+        awaited: [9001],
+        retired: [WORKTREE],
+      })
+    })
+
+    test("refuses when a Claude runs beside the placeholder", async () => {
+      const { deps, recorded } = makeDeps({
+        panes: () => [placeholder()],
+        suspendedAgents: () => [agent],
+        claudeProcessesIn: () => [5150],
+      })
+
+      const [outcome] = await reapArchivedWorktrees(deps)
+
+      expect(outcome.status).toBe("skipped occupied")
+      expect(outcome.detail).toContain("5150")
+      expect(recorded).toEqual(untouched)
+    })
+
+    test("refuses a placeholder that names another agent", async () => {
+      const { deps, recorded } = makeDeps({
+        panes: () => [placeholder({ ...agent, name: "someone-else" })],
+        suspendedAgents: () => [agent],
+      })
+
+      const [outcome] = await reapArchivedWorktrees(deps)
+
+      expect(outcome.status).toBe("skipped occupied")
+      expect(recorded).toEqual(untouched)
+    })
+
+    test("refuses a placeholder when the suspended row belongs to another session", async () => {
+      const { deps, recorded } = makeDeps({
+        panes: () => [placeholder()],
+        suspendedAgents: () => [{ ...agent, runtimeSessionId: "ccs-other" }],
+      })
+
+      const [outcome] = await reapArchivedWorktrees(deps)
+
+      expect(outcome.status).toBe("skipped occupied")
+      expect(recorded).toEqual(untouched)
     })
   })
 
