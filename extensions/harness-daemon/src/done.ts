@@ -65,6 +65,7 @@ export function defaultDoneDeps(
     forgetIdentities: base.forgetIdentities,
     canonicalPath: base.canonicalPath,
     identities: base.identities,
+    suspendedAgents: base.suspendedAgents,
     log: base.log,
     findAgent,
     links: readHarnessLinks,

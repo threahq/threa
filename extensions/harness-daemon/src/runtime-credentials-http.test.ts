@@ -336,6 +336,7 @@ describe("runtime-scoped production HTTP wiring", () => {
       ],
       panes: () => [],
       identities: () => [],
+      suspendedAgents: () => [],
       claudeProcessesIn: () => [],
       pathExists: () => false,
       canonicalPath: (path: string) => path,
