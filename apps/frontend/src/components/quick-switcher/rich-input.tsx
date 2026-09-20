@@ -1,5 +1,6 @@
 import { useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, forwardRef, useMemo } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
+import Document from "@tiptap/extension-document"
 import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
 import { useChannelSuggestion } from "@/components/editor/triggers"
@@ -89,6 +90,10 @@ export interface RichInputRef {
 export type SearchEditorProps = RichInputProps
 /** @deprecated Use RichInputRef instead */
 export type SearchEditorRef = RichInputRef
+
+// A query is one line: a second paragraph has no meaning to the parser, and
+// the flex editor box would lay it out as a second column.
+const SingleLineDocument = Document.extend({ content: "paragraph" })
 
 /**
  * TipTap-based input with optional autocomplete triggers.
@@ -205,7 +210,9 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
   // We control visibility via hasTrigger() for popover state and rendering.
   const extensions = useMemo(
     () => [
+      SingleLineDocument,
       StarterKit.configure({
+        document: false,
         heading: false,
         codeBlock: false,
         bold: false,
@@ -222,7 +229,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
         hardBreak: false, // Prevent Shift+Enter from creating hard breaks
         paragraph: {
           HTMLAttributes: {
-            class: "m-0 p-0",
+            class: "m-0 p-0 whitespace-pre",
           },
         },
       }),
@@ -263,6 +270,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
       attributes: {
         class: cn(
           "flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none",
+          "overflow-x-auto overflow-y-hidden scrollbar-none",
           "placeholder:text-muted-foreground",
           "disabled:cursor-not-allowed disabled:opacity-50",
           editorClassName
@@ -272,15 +280,10 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
       handleKeyDown: (_view, event) => {
         // Enter to submit (unless a suggestion popover is open)
         // Check ref because this callback captures stale closure
-        if (event.key === "Enter" && !event.shiftKey && !isPopoverActiveRef.current) {
-          if (onSubmit) {
-            event.preventDefault()
-            const withModifier = event.metaKey || event.ctrlKey
-            onSubmit(withModifier)
-            return true
-          }
-          // No onSubmit handler - let event bubble to parent for handling
-          return false
+        if (event.key === "Enter" && !event.isComposing && !isPopoverActiveRef.current) {
+          event.preventDefault()
+          onSubmit?.(event.metaKey || event.ctrlKey)
+          return true
         }
         return false
       },
@@ -347,7 +350,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
   useImperativeHandle(ref, () => ({ focus, blur, closePopovers }), [focus, blur, closePopovers])
 
   return (
-    <div className={cn("relative flex-1", className)}>
+    <div className={cn("relative min-w-0 flex-1", className)}>
       <EditorContent editor={editor} />
       {hasTrigger("mention") && renderMentionList()}
       {hasTrigger("channel") && renderChannelList()}

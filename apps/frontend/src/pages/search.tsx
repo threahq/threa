@@ -8,7 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SidebarToggle } from "@/components/layout"
 import { StreamLoadingIndicator } from "@/components/loading"
-import { RichInput, SEARCH_FILTER_TRIGGERS } from "@/components/quick-switcher/rich-input"
+import { RichInput, SEARCH_FILTER_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
 import { extractSearchTerms } from "@/components/search/highlight"
@@ -50,6 +50,7 @@ export function SearchPage() {
   // Local state for typing; URL is written behind a debounce for bookmarkability.
   const [localQuery, setLocalQuery] = useState(() => searchParams.get("q") ?? "")
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null)
+  const inputRef = useRef<RichInputRef>(null)
   const refinesKey = searchParams.getAll("refine").join("\u0000")
   const refines = useMemo(() => boundRefines(refinesKey ? refinesKey.split("\u0000") : []), [refinesKey])
 
@@ -146,8 +147,11 @@ export function SearchPage() {
             <div className="flex max-w-xl items-center gap-2 rounded-md border border-border/50 bg-background/80 px-3 transition-all focus-within:border-primary/40">
               <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground/50" />
               <RichInput
+                ref={inputRef}
                 value={localQuery}
                 onChange={handleQueryChange}
+                // Results are already live; Enter on a phone just puts the keyboard away.
+                onSubmit={() => isMobile && inputRef.current?.blur()}
                 triggers={SEARCH_FILTER_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
