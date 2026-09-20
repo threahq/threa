@@ -187,8 +187,26 @@ interface CommandResult {
   unavailable: boolean
 }
 
-function run(command: string, args: string[], input?: string): CommandResult {
-  const result = spawnSync(command, args, { encoding: "utf8", input })
+// A locked keyring answers a lookup or store by raising a password prompt and
+// waiting on it. On a headless box nobody sees the prompt, and spawnSync holds
+// the event loop the whole time, so the host's MCP handshake starves with it.
+export const KEYCHAIN_COMMAND_TIMEOUT_MS = 5_000
+
+export function runKeychainCommand(
+  command: string,
+  args: string[],
+  input?: string,
+  timeoutMs: number = KEYCHAIN_COMMAND_TIMEOUT_MS
+): CommandResult {
+  const result = spawnSync(command, args, { encoding: "utf8", input, timeout: timeoutMs })
+  if ((result.error as { code?: string } | undefined)?.code === "ETIMEDOUT") {
+    return {
+      status: -1,
+      stdout: "",
+      stderr: `${command} gave no answer within ${timeoutMs}ms; the keyring is probably locked and waiting on a password prompt`,
+      unavailable: true,
+    }
+  }
   if (result.error) {
     return { status: -1, stdout: "", stderr: String(result.error), unavailable: true }
   }
@@ -226,7 +244,7 @@ export class MacKeychainStore implements E2eKeyStore {
   private readonly exec: CommandRunner
 
   constructor(opts: { exec?: CommandRunner } = {}) {
-    this.exec = opts.exec ?? run
+    this.exec = opts.exec ?? runKeychainCommand
   }
 
   read(account: string): E2eKeyRecord | undefined {
@@ -294,7 +312,7 @@ export class SecretServiceStore implements E2eKeyStore {
   private readonly exec: CommandRunner
 
   constructor(opts: { exec?: CommandRunner } = {}) {
-    this.exec = opts.exec ?? run
+    this.exec = opts.exec ?? runKeychainCommand
   }
 
   read(account: string): E2eKeyRecord | undefined {
@@ -378,7 +396,7 @@ export function resolveKeyStore(input: ResolveKeyStoreInput): E2eKeyStore {
   } catch (error) {
     throw new Error(
       `No OS keychain available for Threa's end-to-end keys (${String(error)}). ` +
-        `Set keyStore to "keychain" once one is installed, or "file" to keep them in ${input.dir} at mode 0600.`
+        `Set keyStore to "keychain" once one is installed and unlocked, or "file" to keep them in ${input.dir} at mode 0600.`
     )
   }
 }

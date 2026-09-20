@@ -5,6 +5,7 @@ import { join } from "node:path"
 import {
   claudeLaunchCommand,
   claudeResumeSessionId,
+  e2eKeyStoreEnvironment,
   linkPiRemoteSession,
   mcpConfigDir,
   mcpConfigPath,
@@ -93,6 +94,28 @@ test("a managed Pi launch carries one stable instance identity into every remote
   expect(launch).toContain("'THREA_INSTANCE_ID=pi-launch-instance'")
   expect(launch).toContain("'THREA_RUNTIME_SESSION_ID=runtime-session'")
   expect(launch).toContain("'/opt/pi' '--session-id' 'runtime-session'")
+})
+
+test("a Linux launch names the file key store, unless the operator chose another", () => {
+  const identity = { instanceId: "cc-child", runtimeSessionId: "11111111-2222-4333-8444-555555555555" }
+  const args = ["claude", "--dangerously-load-development-channels", "server:threa-channel"]
+  const saved = process.env.THREA_E2E_KEY_STORE
+  try {
+    delete process.env.THREA_E2E_KEY_STORE
+    expect(e2eKeyStoreEnvironment("linux")).toEqual({ THREA_E2E_KEY_STORE: "file" })
+    expect(e2eKeyStoreEnvironment("darwin")).toEqual({})
+
+    process.env.THREA_E2E_KEY_STORE = "keychain"
+    expect(e2eKeyStoreEnvironment("darwin")).toEqual({ THREA_E2E_KEY_STORE: "keychain" })
+    expect(parseClaudeLaunch(claudeLaunchCommand(args, identity))?.environment).toContainEqual({
+      name: "THREA_E2E_KEY_STORE",
+      value: "keychain",
+    })
+    expect(piLaunchCommand("/opt/pi", "runtime-session", "pi-one")).toContain("'THREA_E2E_KEY_STORE=keychain'")
+  } finally {
+    if (saved === undefined) delete process.env.THREA_E2E_KEY_STORE
+    else process.env.THREA_E2E_KEY_STORE = saved
+  }
 })
 
 test("a named model and thinking level reach each runtime's own launch flags", () => {

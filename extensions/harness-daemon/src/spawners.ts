@@ -177,8 +177,18 @@ export function piLaunchArgs(piBin: string, runtimeSessionId: string, choice: Ru
   return args
 }
 
+// A Linux session under harnessd has no desktop login behind it, and a login
+// keyring stays locked until someone types its password: every start would wait
+// on a prompt nobody sees. macOS unlocks its keychain at login, so a key already
+// there keeps being served. The operator's own choice wins on both.
+export function e2eKeyStoreEnvironment(platform: NodeJS.Platform = process.platform): Record<string, string> {
+  const store = process.env.THREA_E2E_KEY_STORE || (platform === "linux" ? "file" : undefined)
+  return store ? { THREA_E2E_KEY_STORE: store } : {}
+}
+
 function harnessDaemonEnvironment(): string[] {
   return [
+    ...Object.entries(e2eKeyStoreEnvironment()).map(([name, value]) => `${name}=${value}`),
     `THREA_HARNESSD_ENTRYPOINT=${process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts")}`,
     `THREA_HARNESSD_BUN_BIN=${process.env.THREA_HARNESSD_BUN_BIN || process.execPath}`,
   ]
@@ -1033,6 +1043,7 @@ export function claudeLaunchCommand(
     THREA_DEFAULT_LABEL: process.env.THREA_DEFAULT_LABEL || config.defaultLabel || "coding",
     THREA_HARNESSD_ENTRYPOINT: process.env.THREA_HARNESSD_ENTRYPOINT || join(import.meta.dir, "index.ts"),
     THREA_HARNESSD_BUN_BIN: process.env.THREA_HARNESSD_BUN_BIN || process.execPath,
+    ...e2eKeyStoreEnvironment(),
     THREA_COLD_START_IF_ARCHIVED: coldStartIfArchived,
     THREA_COLD_START_IF_MISSING: coldStartIfMissing,
     ...(expectedRootStreamId ? { THREA_EXPECTED_ROOT_STREAM_ID: expectedRootStreamId } : {}),
