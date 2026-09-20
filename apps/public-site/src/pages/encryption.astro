@@ -131,9 +131,11 @@ const schema = [
         <li>
           <h3>Read it from the terminal</h3>
           <p>
-            <code>threa e2e unlock</code> files your key in the OS keychain, so a
-            local agent reads and posts into a sealed scratchpad the same way you
-            do from the app.
+            <code>threa e2e unlock</code> once puts your key in the OS keychain.
+            After that the ordinary commands work on a sealed scratchpad the way
+            they work anywhere else: <code>threa streams read</code> prints it,
+            <code>threa messages send</code> posts to it. The terminal does the
+            encrypting, so an agent with a shell needs nothing else.
           </p>
         </li>
       </ol>
