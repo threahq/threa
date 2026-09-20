@@ -280,7 +280,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
       handleKeyDown: (_view, event) => {
         // Enter to submit (unless a suggestion popover is open)
         // Check ref because this callback captures stale closure
-        if (event.key === "Enter" && !isPopoverActiveRef.current) {
+        if (event.key === "Enter" && !event.isComposing && !isPopoverActiveRef.current) {
           event.preventDefault()
           onSubmit?.(event.metaKey || event.ctrlKey)
           return true

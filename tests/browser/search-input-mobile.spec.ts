@@ -22,11 +22,12 @@ test("the query stays one line inside its box and never widens the page", async 
   const input = page.getByLabel("Search messages", { exact: true })
   await expect(input).toBeVisible({ timeout: 30_000 })
   await input.click()
-  await page.keyboard.type("first line")
-  await page.keyboard.press("Enter")
-  await page.keyboard.type(` ${"unbreakable".repeat(12)}`)
+  await page.keyboard.type(`first line ${"unbreakable".repeat(12)}`)
+  await expect.poll(() => input.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
 
+  await page.keyboard.press("Enter")
   await expect(input.locator("p")).toHaveCount(1)
+  await expect(input).not.toBeFocused()
 
   const geometry = await page.evaluate(() => {
     const editor = document.querySelector('[aria-label="Search messages"]')!
