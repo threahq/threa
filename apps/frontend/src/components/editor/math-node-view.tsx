@@ -4,20 +4,25 @@ import katex from "katex"
 import "katex/dist/katex.min.css"
 import { KATEX_OPTIONS } from "@/lib/markdown/katex-options"
 import { cn } from "@/lib/utils"
-import type { MathAttrs } from "./math-extension"
+import type { MathAttrs, MathCaretSide, MathExitSide } from "./math-extension"
 
 /**
- * An equation in the composer: KaTeX until it is tapped, a TeX field while it
- * is being written, with the equation drawn live beside the field so what will
- * be sent is visible the whole time.
+ * An equation in the composer: KaTeX until the caret arrives, a TeX field while
+ * it is being written, with the equation drawn live beside the field so what
+ * will be sent is visible the whole time.
  *
- * Enter finishes it, Shift+Enter adds a line and makes it a display equation
- * (the only form that can hold one), and an empty field finishes by deleting
- * the node — so there is no way to leave an invisible equation behind.
+ * An inline equation is finished by Enter. A display one takes lines the way a
+ * code block does — Enter adds one, Enter on an empty last line finishes it —
+ * which is the only path a phone has, since its keyboard has no Shift. The
+ * toggle beside the field is how an equation becomes display without one.
+ * An empty field finishes by deleting the node, so there is no way to leave an
+ * invisible equation behind.
  */
 export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProps) {
   const attrs = node.attrs as MathAttrs
-  const editing = decorations.some((decoration) => decoration.spec?.mathEditing === true)
+  const editingDecoration = decorations.find((decoration) => decoration.spec?.mathEditing === true)
+  const editing = editingDecoration !== undefined
+  const caret: MathCaretSide = editingDecoration?.spec?.mathCaret === "start" ? "start" : "end"
 
   const [draft, setDraft] = useState(attrs.tex)
   const [display, setDisplay] = useState(attrs.display)
@@ -32,19 +37,22 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
     setDisplay(attrs.display)
     committed.current = false
     // Focusing is what makes the toolbar button an edit block rather than an
-    // insertion: the caret is in the TeX, not in the message. Claimed again on
-    // the next frame because the editor writes the node selection to the DOM
-    // after this view mounts, which takes the focus straight back.
+    // insertion: the caret is in the TeX, not in the message. It lands on the
+    // side the caret came in from, so arrowing through an equation reads as one
+    // continuous move. Claimed again on the next frame because the editor
+    // writes the node selection to the DOM after this view mounts, which takes
+    // the focus straight back.
     const claim = () => {
       const input = field.current
       if (!input) return
+      const offset = caret === "start" ? 0 : input.value.length
       input.focus()
-      input.setSelectionRange(input.value.length, input.value.length)
+      input.setSelectionRange(offset, offset)
     }
     claim()
     const frame = requestAnimationFrame(claim)
     return () => cancelAnimationFrame(frame)
-  }, [editing, attrs.tex, attrs.display])
+  }, [editing, caret, attrs.tex, attrs.display])
 
   /**
    * `refocus` is false for the blur that ends editing because the click that
@@ -52,12 +60,12 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
    * the user's next action.
    */
   const commit = useCallback(
-    (tex: string, asDisplay: boolean, refocus: boolean) => {
+    (tex: string, asDisplay: boolean, exit: MathExitSide, refocus: boolean) => {
       if (committed.current) return
       const pos = getPos()
       if (pos === undefined) return
       committed.current = true
-      editor.commands.commitMath(pos, { tex, display: asDisplay })
+      editor.commands.commitMath(pos, { tex, display: asDisplay }, exit)
       if (refocus) editor.commands.focus()
     },
     [editor, getPos]
@@ -68,9 +76,18 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
       // Nothing typed here is message input. Without this the composer's own
       // Enter would send the half-written equation.
       event.stopPropagation()
+      const input = event.currentTarget
+      const collapsed = input.selectionStart === input.selectionEnd
+      const atStart = collapsed && input.selectionStart === 0
+      const atEnd = collapsed && input.selectionEnd === draft.length
+
       if (event.key === "Enter" && !event.shiftKey) {
+        // In a display equation Enter is a line break until the last line is
+        // empty, which is the rule code blocks already use here.
+        const finishing = !display || (atEnd && /(?:^|\n)[ \t]*$/.test(draft))
+        if (!finishing) return
         event.preventDefault()
-        commit(draft, display, true)
+        commit(draft, display, "after", true)
         return
       }
       if (event.key === "Enter" && event.shiftKey) {
@@ -81,12 +98,26 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
       }
       if (event.key === "Escape") {
         event.preventDefault()
-        commit(draft, display, true)
+        commit(draft, display, "after", true)
         return
       }
       if (event.key === "Backspace" && draft === "") {
         event.preventDefault()
-        commit("", display, true)
+        commit("", display, "after", true)
+        return
+      }
+      // Arrowing off either end leaves the equation on that side, so the caret
+      // passes through it rather than getting stuck inside.
+      const onFirstLine = !draft.slice(0, input.selectionStart).includes("\n")
+      const onLastLine = !draft.slice(input.selectionEnd).includes("\n")
+      if ((event.key === "ArrowLeft" && atStart) || (event.key === "ArrowUp" && onFirstLine)) {
+        event.preventDefault()
+        commit(draft, display, "before", true)
+        return
+      }
+      if ((event.key === "ArrowRight" && atEnd) || (event.key === "ArrowDown" && onLastLine)) {
+        event.preventDefault()
+        commit(draft, display, "after", true)
       }
     },
     [commit, draft, display]
@@ -101,6 +132,9 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
 
   const lines = draft.split("\n")
   const columns = Math.max(8, ...lines.map((line) => line.length + 1))
+  // A multi-line equation has no inline form, so the toggle offers only the
+  // direction that exists.
+  const multiline = draft.includes("\n")
 
   return (
     <NodeViewWrapper
@@ -128,8 +162,20 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={onKeyDown}
-            onBlur={() => commit(draft, display, false)}
+            onBlur={() => commit(draft, display, "after", false)}
           />
+          <button
+            type="button"
+            className="math-display-toggle"
+            disabled={display && multiline}
+            aria-label={display ? "Make this an inline equation" : "Make this a display equation"}
+            // Keeping the focus in the TeX is what stops the tap from
+            // committing the equation out from under itself.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => setDisplay((current) => !current)}
+          >
+            {display ? "Inline" : "Block"}
+          </button>
           {html ? <span className="math-drawn" dangerouslySetInnerHTML={{ __html: html }} /> : null}
         </>
       ) : (

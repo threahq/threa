@@ -1156,7 +1156,10 @@ html[data-input="mouse"]
   background-color: hsl(var(--muted));
 }
 
-.math-node.ProseMirror-selectednode {
+/* Selected rather than open: the class goes on TipTap's renderer wrapper, not
+   on the node view's own element, and an equation that can be replaced by the
+   next keystroke has to look selected. */
+.node-math.ProseMirror-selectednode {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 1px;
   border-radius: 0.25rem;
@@ -1211,6 +1214,33 @@ html[data-input="mouse"]
 .math-node-display .math-field {
   box-sizing: border-box;
   width: 100%;
+}
+
+/* Inline or display, without a Shift key. */
+.math-display-toggle {
+  align-self: center;
+  flex: none;
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: hsl(var(--muted-foreground));
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.25rem;
+}
+
+.math-display-toggle:hover:not(:disabled) {
+  color: hsl(var(--foreground));
+}
+
+.math-display-toggle:disabled {
+  opacity: 0.5;
+}
+
+.math-node-editing.math-node-display .math-display-toggle {
+  align-self: flex-start;
+  margin-top: 0.25rem;
 }
 
 /*

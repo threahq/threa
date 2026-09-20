@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import { Editor, type JSONContent } from "@tiptap/core"
 import { TextSelection } from "@tiptap/pm/state"
 import { createEditorExtensions } from "./editor-extensions"
-import { MathEditingKey } from "./math-extension"
+import { mathEditingState, openSelectedMath } from "./math-extension"
 import { handleEnterTextBehavior } from "./multiline-blocks"
 
 function createEditorWith(inline?: JSONContent[]) {
@@ -26,6 +26,16 @@ function type(editor: Editor, text: string) {
     const handled = editor.view.someProp("handleTextInput", (handler) => handler(editor.view, from, to, char, insert))
     if (!handled) editor.view.dispatch(insert())
   }
+}
+
+/**
+ * A real keydown through the view: `keyboardShortcut` replays only the steps of
+ * the transaction it captures, so a handler that changes plugin state or the
+ * selection looks like it did nothing.
+ */
+function press(editor: Editor, key: string): boolean {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })
+  return editor.view.someProp("handleKeyDown", (handler) => handler(editor.view, event)) ?? false
 }
 
 function inline(editor: Editor): JSONContent[] {
@@ -92,7 +102,7 @@ describe("math node", () => {
       { type: "text", text: "area " },
       { type: "math", attrs: { tex: "x^2", display: false } },
     ])
-    expect(MathEditingKey.getState(editor.state)).toBe(6)
+    expect(mathEditingState(editor.state)).toEqual({ pos: 6, caret: "end" })
   })
 
   it("keeps a mention out of the TeX rather than flattening it into one", () => {
@@ -114,7 +124,7 @@ describe("math node", () => {
     editor = createEditorWith([{ type: "text", text: "so " }])
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)
     editor.commands.insertMath()
-    const pos = MathEditingKey.getState(editor.state) as number
+    const pos = mathEditingState(editor.state)!.pos
 
     editor.commands.commitMath(pos, { tex: "x^2", display: false })
 
@@ -122,7 +132,7 @@ describe("math node", () => {
       { type: "text", text: "so " },
       { type: "math", attrs: { tex: "x^2", display: false } },
     ])
-    expect(MathEditingKey.getState(editor.state)).toBeNull()
+    expect(mathEditingState(editor.state)).toBeNull()
     expect(editor.state.selection.$from.nodeBefore?.type.name).toBe("math")
   })
 
@@ -130,12 +140,12 @@ describe("math node", () => {
     editor = createEditorWith([{ type: "text", text: "so " }])
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)
     editor.commands.insertMath()
-    const pos = MathEditingKey.getState(editor.state) as number
+    const pos = mathEditingState(editor.state)!.pos
 
     editor.commands.commitMath(pos, { tex: "   ", display: false })
 
     expect(inline(editor)).toEqual([{ type: "text", text: "so " }])
-    expect(MathEditingKey.getState(editor.state)).toBeNull()
+    expect(mathEditingState(editor.state)).toBeNull()
   })
 
   it("opens a display equation from `$$` and Enter, the way ``` opens a code block", () => {
@@ -144,17 +154,56 @@ describe("math node", () => {
 
     expect(handleEnterTextBehavior(editor)).toBe(true)
     expect(inline(editor)).toEqual([{ type: "math", attrs: { tex: "", display: true } }])
-    expect(MathEditingKey.getState(editor.state)).not.toBeNull()
+    expect(mathEditingState(editor.state)).not.toBeNull()
   })
 
   it("follows the node when an edit before it moves it", () => {
     editor = createEditorWith([{ type: "text", text: "x" }])
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)
     editor.commands.insertMath()
-    const before = MathEditingKey.getState(editor.state) as number
+    const before = mathEditingState(editor.state)!.pos
 
     editor.view.dispatch(editor.state.tr.insertText("abc", 1, 1))
 
-    expect(MathEditingKey.getState(editor.state)).toBe(before + 3)
+    expect(mathEditingState(editor.state)?.pos).toBe(before + 3)
+  })
+
+  it("opens the TeX from the far end when the caret arrows into the equation", () => {
+    editor = createEditorWith([
+      { type: "text", text: "a" },
+      { type: "math", attrs: { tex: "x^2", display: false } },
+      { type: "text", text: "b" },
+    ])
+    // Right behind the equation: the next ArrowLeft would step over it.
+    editor.commands.setTextSelection(3)
+
+    expect(press(editor, "ArrowLeft")).toBe(true)
+    expect(mathEditingState(editor.state)).toEqual({ pos: 2, caret: "end" })
+
+    editor.commands.commitMath(2, { tex: "x^2", display: false }, "before")
+    expect(press(editor, "ArrowRight")).toBe(true)
+    expect(mathEditingState(editor.state)).toEqual({ pos: 2, caret: "start" })
+  })
+
+  it("leaves the caret on the side it left the field by", () => {
+    editor = createEditorWith([
+      { type: "text", text: "a" },
+      { type: "math", attrs: { tex: "x^2", display: false } },
+      { type: "text", text: "b" },
+    ])
+
+    editor.commands.commitMath(2, { tex: "x^2", display: false }, "before")
+    expect(editor.state.selection.$from.nodeAfter?.type.name).toBe("math")
+
+    editor.commands.commitMath(2, { tex: "x^2", display: false }, "after")
+    expect(editor.state.selection.$from.nodeBefore?.type.name).toBe("math")
+  })
+
+  it("opens a selected equation rather than letting Enter send the message", () => {
+    editor = createEditorWith([{ type: "math", attrs: { tex: "x^2", display: false } }])
+    editor.commands.setNodeSelection(1)
+
+    expect(openSelectedMath(editor)).toBe(true)
+    expect(mathEditingState(editor.state)).toEqual({ pos: 1, caret: "end" })
   })
 })

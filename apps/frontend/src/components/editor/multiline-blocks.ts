@@ -2,6 +2,7 @@ import type { JSONContent, Editor } from "@tiptap/react"
 import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from "@tiptap/pm/model"
 import { NodeSelection, Selection, type Transaction, type EditorState } from "@tiptap/pm/state"
 import { parseMarkdown, type EmojiLookup, type MentionTypeLookup, type ParseMarkdownOptions } from "./editor-markdown"
+import { openSelectedMath } from "./math-extension"
 
 export interface BeforeInputEventLike {
   inputType: string
@@ -780,6 +781,9 @@ export function insertPastedText(
  * Shared by keyboard shortcuts and mobile beforeinput handling.
  */
 export function handleEnterTextBehavior(editor: Editor): boolean {
+  // A selected equation opens its TeX rather than being replaced by a newline.
+  if (openSelectedMath(editor)) return true
+
   const { $from } = editor.state.selection
 
   // Check for ``` code block trigger

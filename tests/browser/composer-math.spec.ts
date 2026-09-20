@@ -102,8 +102,54 @@ test.describe("Composer math", () => {
 
     await expect(texField(page)).toBeFocused()
     await page.keyboard.type("\\frac{9}{31}")
+    // A display equation takes lines, so it finishes on the empty one — the
+    // rule a code block already uses here.
+    await page.keyboard.press("Enter")
     await page.keyboard.press("Enter")
 
+    await expect(equations(page).locator(".katex-display")).toBeVisible()
+
+    await sendComposer(page)
+    await expect(messageRows(page).locator(".katex-display")).toBeVisible({ timeout: 10000 })
+  })
+
+  test("the caret arrows into an equation and back out the other side", async ({ page }) => {
+    await page.keyboard.type("a ")
+    await clickMathButton(page)
+    await page.keyboard.type("x^2")
+    await page.keyboard.press("Enter")
+    await page.keyboard.type(" b")
+    await expect(texField(page)).toHaveCount(0)
+
+    // Back across " b", then onto the equation.
+    await page.keyboard.press("ArrowLeft")
+    await page.keyboard.press("ArrowLeft")
+    await page.keyboard.press("ArrowLeft")
+    await expect(texField(page)).toBeFocused()
+    await expect(texField(page)).toHaveValue("x^2")
+
+    // Off the far end the caret leaves the equation intact rather than being
+    // stuck in it — and the equation is still one node, not `$` characters.
+    await page.keyboard.press("ArrowRight")
+    await expect(texField(page)).toHaveCount(0)
+    await expect(equations(page)).toHaveCount(1)
+    await expect(composerEditor(page)).not.toContainText("$")
+  })
+
+  test("the toggle makes an equation a block, and then Enter adds lines to it", async ({ page }) => {
+    await clickMathButton(page)
+    await page.keyboard.type("a=1")
+    // The phone path to a display equation: its keyboard has no Shift.
+    await page.getByRole("main").getByRole("button", { name: "Make this a display equation" }).click()
+    await expect(texField(page)).toBeFocused()
+
+    await page.keyboard.press("Enter")
+    await page.keyboard.type("b=2")
+    await expect(texField(page)).toHaveValue("a=1\nb=2")
+
+    await page.keyboard.press("Enter")
+    await page.keyboard.press("Enter")
+    await expect(texField(page)).toHaveCount(0)
     await expect(equations(page).locator(".katex-display")).toBeVisible()
 
     await sendComposer(page)
