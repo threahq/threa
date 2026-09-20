@@ -50,9 +50,10 @@ const schema = [
             and your agent.
           </h1>
           <p class="lede">
-            Working with your own coding agent means trading commands, diffs and
-            real output. A sealed scratchpad encrypts all of it on your devices.
-            Threa's servers keep the ciphertext and can't open it.
+            Working with your own coding agent means pasting commands, diffs and
+            output you would not paste into a group chat. A sealed scratchpad
+            encrypts all of it on your devices. Threa's servers hold the
+            ciphertext and have no way to open it.
           </p>
         </div>
       </div>
@@ -66,9 +67,9 @@ const schema = [
     <div class="memo-shell">
       <h2>What the server never sees.</h2>
       <p class="lede enc-lede">
-        Encryption in Threa covers scratchpads and the threads under them. The
-        key is yours, so the parts that carry the work are sealed before they
-        leave your device.
+        Encryption covers scratchpads and the threads under them. The key is
+        yours. Everything written in one is encrypted in your browser, or on the
+        machine your agent runs on, before it is sent.
       </p>
 
       <div class="enc-duo">
@@ -83,9 +84,10 @@ const schema = [
         <div class="enc-q">
           <h3>Even the name</h3>
           <p>
-            The scratchpad's title is encrypted too. Your browser decrypts it for
-            the sidebar. The database row holds ciphertext, so a list of your
-            scratchpads gives away nothing about what is in them.
+            The title is encrypted too, and your browser decrypts it for the
+            sidebar. A list of your scratchpads gives away nothing about what is
+            in them. Threa names the others for you by reading them. This one you
+            name yourself.
           </p>
         </div>
         <div class="enc-q">
@@ -150,11 +152,10 @@ const schema = [
     <div class="memo-shell">
       <h2>What it costs.</h2>
       <p class="lede enc-built-lede">
-        Threa can't read a sealed scratchpad, which means it can't do the things
-        it does by reading. Nothing in one is searchable, and nothing in one
-        becomes a memo, so the knowledge Threa builds from your conversations
-        stops at the seal. A few in-app features that need the text server-side
-        are off there too.
+        Anything Threa does by reading your messages stops at the seal. Nothing
+        in a sealed scratchpad is searchable and nothing in one becomes a memo,
+        so the knowledge base Threa builds from your conversations skips it.
+        Scheduled messages and stream briefs are off there for the same reason.
       </p>
       <p class="lede enc-built-lede">
         Lose the passphrase and that content is gone for good. There is no reset,
