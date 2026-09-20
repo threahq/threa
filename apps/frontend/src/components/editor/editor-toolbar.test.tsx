@@ -6,7 +6,7 @@ import type { Editor } from "@tiptap/react"
 import { Editor as TipTapEditor } from "@tiptap/core"
 import { EditorToolbar } from "./editor-toolbar"
 import { createEditorExtensions } from "./editor-extensions"
-import { MathEditingKey } from "./math-extension"
+import { mathEditingState } from "./math-extension"
 import * as editorBehaviors from "./editor-behaviors"
 import * as contextsModule from "@/contexts"
 
@@ -167,7 +167,7 @@ describe("EditorToolbar", () => {
       ],
     })
     // And it is the node's TeX that is open, not a caret beside it.
-    expect(MathEditingKey.getState(realEditor.state)).toBe(6)
+    expect(mathEditingState(realEditor.state)).toEqual({ pos: 6, caret: "end" })
 
     realEditor.destroy()
     element.remove()

@@ -2,14 +2,17 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import katex from "katex"
 import "katex/dist/katex.min.css"
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { KATEX_OPTIONS } from "@/lib/markdown/katex-options"
 import { cn } from "@/lib/utils"
 import type { MathAttrs, MathCaretSide, MathExitSide } from "./math-extension"
 
 /**
  * An equation in the composer: KaTeX until the caret arrives, a TeX field while
- * it is being written, with the equation drawn live beside the field so what
- * will be sent is visible the whole time.
+ * it is being written. Open, it takes the footprint of the code it is — inline
+ * code in a sentence, a code block on its own line — and the equation is drawn
+ * live in a popover above, so what will be sent is visible the whole time
+ * without the message reflowing on every keystroke.
  *
  * An inline equation is finished by Enter. A display one takes lines the way a
  * code block does — Enter adds one, Enter on an empty last line finishes it —
@@ -146,42 +149,83 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
       className={cn("math-node", drawn && "math-node-display", editing && "math-node-editing")}
     >
       {editing ? (
-        <>
-          <textarea
-            ref={field}
-            className="math-field"
-            aria-label="Equation TeX"
-            placeholder="TeX"
-            wrap="off"
-            spellCheck={false}
-            autoCapitalize="none"
-            autoCorrect="off"
-            autoComplete="off"
-            rows={lines.length}
-            style={display ? undefined : { width: `${columns}ch` }}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={onKeyDown}
-            onBlur={() => commit(draft, display, "after", false)}
-          />
-          <button
-            type="button"
-            className="math-display-toggle"
-            disabled={display && multiline}
-            aria-label={display ? "Make this an inline equation" : "Make this a display equation"}
-            // Keeping the focus in the TeX is what stops the tap from
-            // committing the equation out from under itself.
+        // Inline, the equation floats over the field so the sentence does not
+        // reflow on every keystroke. A display equation already owns its line,
+        // so there it is drawn in the card, under the TeX — a popover would
+        // cover the sentence above it.
+        <Popover open={!display}>
+          <PopoverAnchor asChild>
+            <span className="math-card">
+              <textarea
+                ref={field}
+                className="math-field"
+                aria-label="Equation TeX"
+                placeholder="TeX"
+                wrap="off"
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
+                autoComplete="off"
+                rows={lines.length}
+                style={display ? undefined : { width: `${columns}ch` }}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={onKeyDown}
+                onBlur={() => commit(draft, display, "after", false)}
+              />
+              {display ? (
+                <span className="math-card-preview" onMouseDown={(event) => event.preventDefault()}>
+                  <span className="math-preview-drawn" dangerouslySetInnerHTML={{ __html: html }} />
+                  <MathDisplayToggle display disabled={multiline} onToggle={() => setDisplay(false)} />
+                </span>
+              ) : null}
+            </span>
+          </PopoverAnchor>
+          <PopoverContent
+            side="top"
+            align="start"
+            className="math-preview"
+            onOpenAutoFocus={(event) => event.preventDefault()}
+            onCloseAutoFocus={(event) => event.preventDefault()}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setDisplay((current) => !current)}
           >
-            {display ? "Inline" : "Block"}
-          </button>
-          {html ? <span className="math-drawn" dangerouslySetInnerHTML={{ __html: html }} /> : null}
-        </>
+            <span className="math-preview-drawn" dangerouslySetInnerHTML={{ __html: html }} />
+            <MathDisplayToggle display={false} disabled={false} onToggle={() => setDisplay(true)} />
+          </PopoverContent>
+        </Popover>
       ) : (
         <MathEquation html={html} onOpen={() => editor.commands.openMathEditor(getPos() ?? 0)} />
       )}
     </NodeViewWrapper>
+  )
+}
+
+/**
+ * Inline or display without a Shift key, which a phone does not have. Every
+ * surface that holds it prevents `mousedown`: the field keeps the focus for as
+ * long as the equation is open, or the tap would commit it out from under
+ * itself.
+ */
+function MathDisplayToggle({
+  display,
+  disabled,
+  onToggle,
+}: {
+  display: boolean
+  disabled: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="math-display-toggle"
+      disabled={disabled}
+      aria-label={display ? "Make this an inline equation" : "Make this a display equation"}
+      aria-pressed={display}
+      onClick={onToggle}
+    >
+      Block
+    </button>
   )
 }
 

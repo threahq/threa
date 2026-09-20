@@ -1152,95 +1152,174 @@ html[data-input="mouse"]
   padding: 0 0.125rem;
 }
 
-.math-node .math-drawn:hover {
-  background-color: hsl(var(--muted));
+/* Touch keeps `:hover` on the last thing tapped, which would leave a finished
+   equation sitting in a gray box. */
+@media (hover: hover) {
+  .math-node .math-drawn:hover {
+    background-color: hsl(var(--muted));
+  }
 }
 
 /* Selected rather than open: the class goes on TipTap's renderer wrapper, not
    on the node view's own element, and an equation that can be replaced by the
-   next keystroke has to look selected. */
+   next keystroke has to look selected — the way a selected mention does. */
 .node-math.ProseMirror-selectednode {
-  outline: 2px solid hsl(var(--ring));
+  border-radius: 0.375rem;
+  outline: 2px solid hsl(var(--primary));
   outline-offset: 1px;
-  border-radius: 0.25rem;
+  box-shadow: 0 0 0 4px hsl(var(--primary) / 0.22);
 }
 
-/* Open, the node is the TeX field plus the equation it currently describes:
-   inline they sit side by side, display stacks them the way the sent message
-   will. The field is not a target for the equation's own pointer styling. */
-.math-node-editing {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
+/* An open equation is selected too, and the field is its own focus state. */
+.node-math.ProseMirror-selectednode:has(.math-node-editing) {
   outline: none;
+  box-shadow: none;
 }
 
-.math-node-editing.math-node-display {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+/* A display equation is centered on its own line when sent; in the composer
+   KaTeX's 1em margins on top of that read as a hole in the message. */
+.math-node .katex-display {
+  margin: 0.25rem 0;
 }
 
-.math-node-editing .math-drawn {
-  cursor: default;
-}
-
-.math-node-editing .math-drawn:hover {
-  background-color: transparent;
+/* Open, the equation is the code it is written in, so it takes that footprint:
+   inline code inside a sentence, a code block on its own line. */
+.math-card {
+  @apply bg-muted rounded;
+  display: inline-block;
+  /* A textarea's baseline is its bottom edge, which drops it below the line. */
+  vertical-align: middle;
+  margin: 0 0.125rem;
+  max-width: 100%;
+  /* Inset, so the editor's own overflow clipping cannot shave the sides off. */
+  box-shadow: inset 0 0 0 1.5px hsl(var(--primary) / 0.5);
 }
 
 .math-field {
-  font-family: "Commit Mono", monospace;
-  font-size: 0.9em;
-  line-height: 1.5;
+  @apply font-mono text-sm;
+  display: block;
+  line-height: 1.25rem;
   color: hsl(var(--foreground));
-  background-color: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
-  border-radius: 0.25rem;
+  caret-color: hsl(var(--primary));
+  background: transparent;
+  border: 0;
   padding: 0.125rem 0.375rem;
   resize: none;
   /* The width is set in `ch` from the TeX itself, so the box is the text. */
   box-sizing: content-box;
+  max-width: 100%;
   white-space: pre;
   overflow-x: auto;
   overflow-y: hidden;
   outline: none;
 }
 
-.math-field:focus {
-  border-color: hsl(var(--ring));
+.math-field::placeholder {
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+
+.math-node-display .math-card {
+  @apply rounded-md my-2 mx-0;
+  display: block;
 }
 
 .math-node-display .math-field {
   box-sizing: border-box;
   width: 100%;
+  padding: 0.75rem 1rem 0.5rem;
+  line-height: 1.5;
+}
+
+.math-card-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 1rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.math-card-preview .math-preview-drawn {
+  justify-content: center;
+}
+
+/* The drawn equation is an inline span; around KaTeX's block it would split
+   into empty line boxes above and below. */
+.math-node-display .math-drawn,
+.math-preview-drawn .katex-display {
+  display: block;
+}
+
+/* The equation as it will be sent, floating over the field rather than beside
+   it: the message does not reflow while the TeX is half-written. */
+.math-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: auto;
+  min-width: 8rem;
+  max-width: min(calc(100vw - 2rem), 32rem);
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  border-radius: 0.75rem;
+}
+
+.math-preview-drawn {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.75rem;
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.math-preview-drawn .katex {
+  font-size: 1.1em;
+}
+
+.math-preview-drawn .katex-display {
+  margin: 0;
+  padding: 0.25rem 0;
+}
+
+.math-preview-drawn .katex-error {
+  color: hsl(var(--destructive)) !important;
+  font-family: "Commit Mono", monospace;
+  font-size: 0.8em;
+}
+
+/* Waiting for TeX, the preview holds its shape with the mark of what goes in it. */
+.math-preview-drawn:empty::before {
+  content: "Σ";
+  color: hsl(var(--muted-foreground) / 0.5);
 }
 
 /* Inline or display, without a Shift key. */
 .math-display-toggle {
-  align-self: center;
   flex: none;
-  height: 1.5rem;
-  padding: 0 0.5rem;
+  height: 1.75rem;
+  padding: 0 0.625rem;
   font-size: 0.75rem;
-  line-height: 1;
+  font-weight: 500;
   color: hsl(var(--muted-foreground));
-  background-color: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
-  border-radius: 0.25rem;
+  border-radius: 0.5rem;
+  transition:
+    background-color 120ms,
+    color 120ms;
 }
 
 .math-display-toggle:hover:not(:disabled) {
+  background-color: hsl(var(--muted));
   color: hsl(var(--foreground));
 }
 
-.math-display-toggle:disabled {
-  opacity: 0.5;
+.math-display-toggle[aria-pressed="true"] {
+  background-color: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
 }
 
-.math-node-editing.math-node-display .math-display-toggle {
-  align-self: flex-start;
-  margin-top: 0.25rem;
+.math-display-toggle:disabled {
+  opacity: 0.6;
 }
 
 /*

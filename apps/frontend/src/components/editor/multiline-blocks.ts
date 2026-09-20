@@ -786,8 +786,12 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
 
   const { $from } = editor.state.selection
 
+  // `textContent` skips atoms, so a fence typed after an equation or a mention
+  // would match and the trigger would delete the atom along with it.
+  const textOnly = $from.parent.content.size === $from.parent.textContent.length
+
   // Check for ``` code block trigger
-  if ($from.parent.isTextblock && !editor.isActive("codeBlock")) {
+  if ($from.parent.isTextblock && textOnly && !editor.isActive("codeBlock")) {
     const lineText = $from.parent.textContent
     const match = lineText.match(/^```(\w*)$/)
     if (match) {
@@ -807,7 +811,7 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
   }
 
   // `$$` then Enter opens a display equation, the way ``` opens a code block.
-  if ($from.parent.isTextblock && !editor.isActive("codeBlock") && $from.parent.textContent === "$$") {
+  if ($from.parent.isTextblock && textOnly && !editor.isActive("codeBlock") && $from.parent.textContent === "$$") {
     return editor
       .chain()
       .focus()

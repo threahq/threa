@@ -157,6 +157,19 @@ describe("math node", () => {
     expect(mathEditingState(editor.state)).not.toBeNull()
   })
 
+  it("keeps an equation when a code fence is typed after it", () => {
+    editor = createEditorWith([
+      { type: "math", attrs: { tex: "x^2", display: true } },
+      { type: "text", text: "```" },
+    ])
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+
+    handleEnterTextBehavior(editor)
+
+    expect(editor.getJSON().content?.some((block) => block.type === "codeBlock")).toBe(false)
+    expect(inline(editor)[0]).toEqual({ type: "math", attrs: { tex: "x^2", display: true } })
+  })
+
   it("follows the node when an edit before it moves it", () => {
     editor = createEditorWith([{ type: "text", text: "x" }])
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)

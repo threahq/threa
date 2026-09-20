@@ -140,7 +140,8 @@ test.describe("Composer math", () => {
     await clickMathButton(page)
     await page.keyboard.type("a=1")
     // The phone path to a display equation: its keyboard has no Shift.
-    await page.getByRole("main").getByRole("button", { name: "Make this a display equation" }).click()
+    // The toggle lives in the preview popover, which portals out of the composer.
+    await page.getByRole("button", { name: "Make this a display equation" }).click()
     await expect(texField(page)).toBeFocused()
 
     await page.keyboard.press("Enter")
