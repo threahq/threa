@@ -48,13 +48,43 @@ export const SEARCH_EXPANSION_MAX_VARIANTS = 3
 /** Rows pulled per query variant before fusion; the fused list is trimmed to the caller's limit after rerank. */
 export const SEARCH_DEEP_CANDIDATE_POOL = 60
 
-/** Top-K window handed to the reranker; the un-reranked tail is appended (recall protection). */
-export const SEARCH_RERANK_CANDIDATE_LIMIT = 30
-
-/** Content chars per candidate shown to the reranker. */
-export const SEARCH_RERANK_SNIPPET_CHARS = 600
+/** Content chars per candidate shown to the relevance scorer. */
+export const SEARCH_SCORE_SNIPPET_CHARS = 600
 
 export const SEARCH_RRF_K = 60
+
+/**
+ * Rows each hybrid leg fetches before RRF fusion. It is a recall ceiling, not a
+ * page size: a message neither leg returns is unreachable at any requested
+ * limit. Measured against GAM's own (memo title -> source messages) labels over
+ * prod, raising it from 50 to 200 took "every source message found" from 0.40 to
+ * 0.55 with no latency cost — the vector scan dominates either way.
+ */
+export const SEARCH_HYBRID_LEG_LIMIT = 200
+
+/**
+ * Candidates fetched and scored on an ordinary (non-deep) search before the
+ * list is cut to the caller's limit. Fusion alone put a relevant message in the
+ * top 10 for 0.32 of GAM-labelled queries; scoring this pool took that to 0.64,
+ * and the whole pool is one decision call either way.
+ */
+export const SEARCH_SCORE_CANDIDATE_POOL = 60
+
+/**
+ * Relevance below which a candidate is not shown at all. It is the first rung
+ * of `RELEVANCE_SCORE_LADDER` — "same general topic" — so the cut is a rung the
+ * model reasons about, not a tuned number: everything dropped is, by the
+ * model's own account, unrelated to the query.
+ *
+ * Measured over GAM-labelled queries (53 relevant candidates against 2,347
+ * others, 60-candidate pools): this floor keeps 0.89 of the labelled-relevant
+ * results and drops 0.68 of the rest. Lowering it to 0.2 keeps 0.93 and drops
+ * 0.46; raising it to 0.5 keeps 0.74 and drops 0.85.
+ *
+ * A list nothing clears comes back empty on purpose. Twenty confidently wrong
+ * rows teach people that search does not work; no rows say so honestly.
+ */
+export const SEARCH_RELEVANCE_FLOOR = 1 / 3
 
 export const searchExpansionSchema = z.object({
   variants: z.array(z.string()).max(SEARCH_EXPANSION_MAX_VARIANTS),

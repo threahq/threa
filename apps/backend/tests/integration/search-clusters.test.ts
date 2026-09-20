@@ -22,6 +22,7 @@ import {
 import type { Memo, MemoExplorerResult } from "../../src/features/memos"
 import { conversationId, memoId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { TitleSources } from "@threahq/types"
+import { StubRelevanceScorer } from "../../src/features/memos"
 
 const rrf = (...positions: number[]) => positions.reduce((sum, p) => sum + 1 / (SEARCH_RRF_K + p), 0)
 
@@ -180,7 +181,7 @@ describe("Search result clusters", () => {
       pool,
       embeddingService: { embed: async () => [], embedBatch: async (texts: string[]) => texts.map(() => []) },
       queryExpander: { expand: async () => [] },
-      reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
+      relevanceScorer: new StubRelevanceScorer(),
       memoSearch: { search: async () => memos },
       refiner: { refine: async () => null },
     })

@@ -8,6 +8,7 @@ import { SearchService, resolveUserAccessibleStreamIds, type SearchPermissions }
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { messageId, userId, workspaceId, streamId } from "../../src/lib/id"
 import { Visibilities, StreamTypes } from "@threahq/types"
+import { StubRelevanceScorer } from "../../src/features/memos"
 
 const EMBEDDING_DIMS = 1536
 
@@ -43,9 +44,9 @@ function makeService(pool: Pool, vector: number[] = unit(0)) {
     pool,
     embeddingService: fakeEmbeddingService(vector),
     queryExpander: { expand: async () => [] },
-    reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
     memoSearch: { search: async () => [] },
     refiner: { refine: async () => null },
+    relevanceScorer: new StubRelevanceScorer(),
   })
 }
 

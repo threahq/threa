@@ -53,7 +53,7 @@ import {
 } from "../../../src/features/agents"
 import { SearchService, SearchQueryExpander, SearchRefiner } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
-import { EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
+import { DecisionsRelevanceScorer, EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { MessageRepository, EventService } from "../../../src/features/messaging"
 import {
@@ -290,7 +290,11 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       pool: ctx.pool,
       embeddingService,
       queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
-      reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
+      relevanceScorer: new DecisionsRelevanceScorer({
+        ai: ctx.ai,
+        subject: "chat messages",
+        functionId: "search-score",
+      }),
       memoSearch: memoExplorerService,
       refiner: new SearchRefiner({ ai: ctx.ai }),
     })

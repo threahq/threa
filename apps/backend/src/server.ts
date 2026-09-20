@@ -112,6 +112,9 @@ import {
   MemoExplorerService,
   Reranker,
   StubReranker,
+  StubRelevanceScorer,
+  ResidencyRoutedRelevanceScorer,
+  DecisionsRelevanceScorer,
   StubMemoService,
   MemoClassifier,
   DecisionsMemoClassifier,
@@ -402,21 +405,30 @@ export async function startServer(): Promise<ServerInstance> {
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
 
+  const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
+  // One breaker for the whole process: a decisions-endpoint outage is the same
+  // outage for every caller, so it is recorded once and read by all of them.
+  const decisionsAvailability = new DecisionsAvailability()
+
   const embeddingService = config.useStubAI ? new StubEmbeddingService() : new EmbeddingService({ ai })
   const memoReranker = config.useStubAI
     ? new StubReranker()
     : new Reranker({ ai, subject: "knowledge memos", functionId: "memo-rerank" })
   const queryExpander = config.useStubAI ? new StubQueryExpander() : new SearchQueryExpander({ ai })
   const searchRefiner = config.useStubAI ? new StubSearchRefiner() : new SearchRefiner({ ai })
-  const messageReranker = config.useStubAI
-    ? new StubReranker()
-    : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
+  const messageRelevanceScorer = config.useStubAI
+    ? new StubRelevanceScorer()
+    : new ResidencyRoutedRelevanceScorer({
+        residency: aiResidency,
+        decisions: new DecisionsRelevanceScorer({ ai, subject: "chat messages", functionId: "search-score" }),
+        availability: decisionsAvailability,
+      })
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
   const searchService = new SearchService({
     pool,
     embeddingService,
     queryExpander,
-    reranker: messageReranker,
+    relevanceScorer: messageRelevanceScorer,
     memoSearch: memoExplorerService,
     refiner: searchRefiner,
   })
@@ -897,10 +909,6 @@ export async function startServer(): Promise<ServerInstance> {
   // so both transports persist through the identical path (INV-13).
   const botRuntimeWriteOps = createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
 
-  const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
-  // One breaker for the whole process: a decisions-endpoint outage is the same
-  // outage for every caller, so it is recorded once and read by all of them.
-  const decisionsAvailability = new DecisionsAvailability()
   // Constructed here (not at the worker registration below) so the HTTP routes can
   // reach it for the on-demand conversation-split endpoints; the boundary-extract
   // worker reuses the same instance (INV-13).

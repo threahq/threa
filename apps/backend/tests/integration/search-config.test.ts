@@ -16,6 +16,7 @@ import { SearchService, resolveUserAccessibleStreamIds, type SearchPermissions }
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { DEFAULT_SEARCH_CONFIG, SEARCH_TEXT_CONFIGS } from "../../src/lib/text-search-config"
 import { userId, workspaceId, streamId } from "../../src/lib/id"
+import { StubRelevanceScorer } from "../../src/features/memos"
 
 const EMBEDDING_DIMS = 1536
 const ZERO_VECTOR = new Array(EMBEDDING_DIMS).fill(0)
@@ -45,9 +46,9 @@ describe("Per-message text-search config", () => {
       pool,
       embeddingService: fakeEmbeddingService(),
       queryExpander: { expand: async () => [] },
-      reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
+      relevanceScorer: new StubRelevanceScorer(),
     })
   }
 
