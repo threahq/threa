@@ -25,6 +25,7 @@ function agent(overrides: Partial<ManagedAgent> = {}): ManagedAgent {
     runtime: "claude",
     status: "suspended",
     runtimeSessionId: "sess-1",
+    heldPresence: snapshot,
     command: [],
     createdAt: "2026-09-19T09:00:00.000Z",
     updatedAt: "2026-09-19T09:00:00.000Z",
@@ -43,7 +44,6 @@ function deps(overrides: Partial<HeldPresenceDeps> = {}): HeldPresenceDeps & { p
   return {
     posted,
     logs,
-    read: () => snapshot,
     target: () => ({ baseUrl: "https://app.threa.io", workspaceId: "ws_1", apiKey: "key" }),
     post: async (_target, path, body) => {
       posted.push({ path, body: body as Record<string, unknown> })
@@ -87,13 +87,18 @@ describe("holding presence for suspended sessions", () => {
   })
 
   it("skips a session with no snapshot rather than inventing one", async () => {
-    const d = deps({ read: () => undefined })
-    const outcomes = await createHeldPresence(d)([agent()])
+    const d = deps()
+    const outcomes = await createHeldPresence(d)([agent({ heldPresence: undefined })])
     expect(outcomes).toEqual([
-      { agent: "touch", runtimeSessionId: "sess-1", status: "skipped", detail: "no presence snapshot to replay" },
+      {
+        agent: "touch",
+        runtimeSessionId: "sess-1",
+        status: "skipped",
+        detail: "no presence snapshot captured at suspend",
+      },
     ])
     expect(d.posted).toEqual([])
-    expect(d.logs).toEqual(["harnessd: holding presence for touch: no presence snapshot to replay"])
+    expect(d.logs).toEqual(["harnessd: holding presence for touch: no presence snapshot captured at suspend"])
   })
 
   it("reports a rejected write and keeps going on the next pass", async () => {

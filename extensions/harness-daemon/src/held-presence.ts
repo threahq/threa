@@ -1,4 +1,4 @@
-import { readSessionPresence, type SessionPresenceSnapshot } from "@threahq/harness-client"
+import type { SessionPresenceSnapshot } from "@threahq/harness-client"
 import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { failureExcerpt, postThrea } from "./threa-http"
 import type { ManagedAgent } from "./types"
@@ -15,14 +15,13 @@ import type { ManagedAgent } from "./types"
 export const SUPERVISOR_HELD_CAPABILITY = "supervisorHeld"
 
 export interface HeldPresenceDeps {
-  read: (runtimeSessionId: string) => SessionPresenceSnapshot | undefined
   target: RuntimeTargetResolver
   post: typeof postThrea
   log: (message: string) => void
 }
 
 export function defaultHeldPresenceDeps(): HeldPresenceDeps {
-  return { read: readSessionPresence, target: runtimeThreaTarget, post: postThrea, log: console.warn }
+  return { target: runtimeThreaTarget, post: postThrea, log: console.warn }
 }
 
 export type HeldPresenceStatus = "held" | "skipped" | "failed"
@@ -60,7 +59,8 @@ export function heldPresenceBody(snapshot: SessionPresenceSnapshot): Record<stri
  * Keep every wound-down session reachable, so nobody has to wake an agent to
  * reach its commands: the queued command is what wakes it.
  *
- * A row with no snapshot is skipped and said out loud, never invented
+ * The snapshot is the one `suspendAgent` copied onto the row before killing
+ * the session. A row without one is skipped and said out loud, never invented
  * (INV-11) — presence assembled from the inventory would advertise a command
  * set harnessd made up. Reporting is change-only: the pass runs every minute,
  * and a line per suspended session per minute buries everything else.
@@ -85,13 +85,13 @@ export function createHeldPresence(deps: HeldPresenceDeps = defaultHeldPresenceD
 
 async function holdOne(agent: ManagedAgent, deps: HeldPresenceDeps): Promise<HeldPresenceOutcome> {
   if (!agent.runtimeSessionId) return { agent: agent.name, status: "skipped", detail: "no runtime session recorded" }
-  const snapshot = deps.read(agent.runtimeSessionId)
+  const snapshot = agent.heldPresence
   if (!snapshot) {
     return {
       agent: agent.name,
       runtimeSessionId: agent.runtimeSessionId,
       status: "skipped",
-      detail: "no presence snapshot to replay",
+      detail: "no presence snapshot captured at suspend",
     }
   }
   const result: Omit<HeldPresenceOutcome, "status" | "detail"> = {
