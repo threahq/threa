@@ -1535,6 +1535,22 @@ describe("@threahq/prosemirror markdown math", () => {
     ])
   })
 
+  it("keeps a pipe in a table cell's TeX the same across round trips", () => {
+    const cellTex = (markdown: string) => {
+      const texts: string[] = []
+      const walk = (node: JSONContent) => {
+        if (node.type === "math") texts.push(String(node.attrs?.tex))
+        node.content?.forEach(walk)
+      }
+      walk(parseMarkdown(markdown))
+      return texts
+    }
+    const once = serializeToMarkdown(parseMarkdown("| a |\n| --- |\n| $x\\|y$ and $\\\\|v\\\\|$ |"))
+
+    expect(cellTex(once)).toEqual(["x|y", "\\|v\\|"])
+    expect(serializeToMarkdown(parseMarkdown(once))).toBe(once)
+  })
+
   it("parses `\\(…\\)` and `\\[…\\]`, which is what an LLM answer pastes in", () => {
     expect(parseMarkdown("see \\(x^2\\)").content?.[0]?.content).toEqual([
       { type: "text", text: "see " },

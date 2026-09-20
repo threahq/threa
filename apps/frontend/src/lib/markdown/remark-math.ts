@@ -1,4 +1,4 @@
-import { splitMathTokens } from "@threahq/prosemirror"
+import { splitMathTokens, unescapeTableCellTex } from "@threahq/prosemirror"
 
 /**
  * Turn the math tokens `extractMath` left in the source into the
@@ -17,11 +17,11 @@ interface MdastNode {
 
 export function remarkThreaMath() {
   return (tree: MdastNode) => {
-    splitMathInChildren(tree)
+    splitMathInChildren(tree, false)
   }
 }
 
-function splitMathInChildren(node: MdastNode): void {
+function splitMathInChildren(node: MdastNode, inTableCell: boolean): void {
   if (!node.children) return
   const next: MdastNode[] = []
   let replaced = false
@@ -29,12 +29,17 @@ function splitMathInChildren(node: MdastNode): void {
     if (child.type === "text" && typeof child.value === "string") {
       const parts = splitMathTokens(child.value)
       if (parts) {
-        next.push(...parts.map((part) => ("tex" in part ? mathNode(part.tex, part.display) : textNode(part.text))))
+        next.push(
+          ...parts.map((part) => {
+            if (!("tex" in part)) return textNode(part.text)
+            return mathNode(inTableCell ? unescapeTableCellTex(part.tex) : part.tex, part.display)
+          })
+        )
         replaced = true
         continue
       }
     }
-    splitMathInChildren(child)
+    splitMathInChildren(child, inTableCell || child.type === "tableCell")
     next.push(child)
   }
   if (replaced) node.children = next

@@ -107,6 +107,15 @@ export function extractMath(markdown: string): string {
  * Split a parsed text run on math tokens, or null when it holds none. The `tex`
  * that comes back is exactly what `extractMath` took out of the source.
  */
+/**
+ * A table cell escapes every `|` so the pipe cannot end the cell, and that
+ * reaches into the TeX: the source is tokenized before the row is split. Undone
+ * here, or `a|b` draws as a norm and gains a backslash on every edit.
+ */
+export function unescapeTableCellTex(tex: string): string {
+  return tex.replace(/\\\|/g, "|")
+}
+
 export function splitMathTokens(text: string): MathPart[] | null {
   if (!text.includes(TOKEN_OPEN)) return null
   const parts: MathPart[] = []

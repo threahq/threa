@@ -136,6 +136,32 @@ describe("math node", () => {
     expect(editor.state.selection.$from.nodeBefore?.type.name).toBe("math")
   })
 
+  it("holds what is typed in the node while the field is still open, so a send does not drop it", () => {
+    editor = createEditorWith([{ type: "text", text: "so " }])
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    editor.commands.insertMath()
+    const pos = mathEditingState(editor.state)!.pos
+
+    editor.commands.setMathDraft(pos, { tex: "x^2 ", display: false })
+
+    expect(inline(editor)[1]).toEqual({ type: "math", attrs: { tex: "x^2", display: false } })
+    expect(mathEditingState(editor.state)).toEqual({ pos, caret: "end" })
+  })
+
+  it("leaves the caret where a tap put it when the field closes behind it", () => {
+    editor = createEditorWith([
+      { type: "text", text: "abc " },
+      { type: "math", attrs: { tex: "x^2", display: false } },
+    ])
+    editor.commands.openMathEditor(5)
+    editor.commands.setTextSelection(2)
+
+    editor.commands.commitMath(5, { tex: "x^3", display: false })
+
+    expect(editor.state.selection.from).toBe(2)
+    expect(inline(editor)[1]).toEqual({ type: "math", attrs: { tex: "x^3", display: false } })
+  })
+
   it("deletes the node when the TeX is left empty, so nothing invisible stays behind", () => {
     editor = createEditorWith([{ type: "text", text: "so " }])
     editor.commands.setTextSelection(editor.state.doc.content.size - 1)
@@ -205,9 +231,11 @@ describe("math node", () => {
       { type: "text", text: "b" },
     ])
 
+    editor.commands.openMathEditor(2)
     editor.commands.commitMath(2, { tex: "x^2", display: false }, "before")
     expect(editor.state.selection.$from.nodeAfter?.type.name).toBe("math")
 
+    editor.commands.openMathEditor(2)
     editor.commands.commitMath(2, { tex: "x^2", display: false }, "after")
     expect(editor.state.selection.$from.nodeBefore?.type.name).toBe("math")
   })

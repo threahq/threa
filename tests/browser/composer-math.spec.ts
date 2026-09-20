@@ -82,6 +82,18 @@ test.describe("Composer math", () => {
     await expect(row.locator("p").first()).not.toContainText("$")
   })
 
+  test("Send with the TeX field still open sends the equation", async ({ page }) => {
+    await page.keyboard.type("Euler: ")
+    await clickMathButton(page)
+    await page.keyboard.type("e^{i\\pi}+1=0")
+    await expect(texField(page)).toBeFocused()
+
+    await sendComposer(page)
+
+    const row = messageRows(page).filter({ hasText: "Euler:" }).first()
+    await expect(row.locator(".katex-html")).toBeVisible({ timeout: 10000 })
+  })
+
   test("tapping an equation opens its TeX again", async ({ page }) => {
     await clickMathButton(page)
     await page.keyboard.type("x^2")

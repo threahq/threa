@@ -1308,6 +1308,13 @@ html[data-input="mouse"]
     color 120ms;
 }
 
+@media (pointer: coarse) {
+  .math-display-toggle {
+    height: 2.25rem;
+    padding: 0 0.875rem;
+  }
+}
+
 .math-display-toggle:hover:not(:disabled) {
   background-color: hsl(var(--muted));
   color: hsl(var(--foreground));

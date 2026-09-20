@@ -30,14 +30,19 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
   const [draft, setDraft] = useState(attrs.tex)
   const [display, setDisplay] = useState(attrs.display)
   const field = useRef<HTMLTextAreaElement>(null)
-  // The last committed value, so the blur that follows a commit cannot commit
-  // the field a second time against a node that is already gone.
+  // The blur that follows a commit must not commit a second time against a
+  // node that is already gone.
   const committed = useRef(false)
+  // Read when the field opens, never followed: the node holds the trimmed draft
+  // while it is being typed, and following it would eat a trailing space and
+  // throw the caret to the end on every keystroke.
+  const opened = useRef(attrs)
+  opened.current = attrs
 
   useLayoutEffect(() => {
     if (!editing) return
-    setDraft(attrs.tex)
-    setDisplay(attrs.display)
+    setDraft(opened.current.tex)
+    setDisplay(opened.current.display)
     committed.current = false
     // Focusing is what makes the toolbar button an edit block rather than an
     // insertion: the caret is in the TeX, not in the message. It lands on the
@@ -55,7 +60,7 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
     claim()
     const frame = requestAnimationFrame(claim)
     return () => cancelAnimationFrame(frame)
-  }, [editing, caret, attrs.tex, attrs.display])
+  }, [editing, caret])
 
   /**
    * `refocus` is false for the blur that ends editing because the click that
@@ -74,11 +79,23 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
     [editor, getPos]
   )
 
+  const write = useCallback(
+    (tex: string, asDisplay: boolean) => {
+      setDraft(tex)
+      setDisplay(asDisplay)
+      const pos = getPos()
+      if (pos !== undefined) editor.commands.setMathDraft(pos, { tex, display: asDisplay })
+    },
+    [editor, getPos]
+  )
+
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // Nothing typed here is message input. Without this the composer's own
       // Enter would send the half-written equation.
       event.stopPropagation()
+      // Enter here is the IME confirming a candidate, not the end of the equation.
+      if (event.nativeEvent.isComposing) return
       const input = event.currentTarget
       const collapsed = input.selectionStart === input.selectionEnd
       const atStart = collapsed && input.selectionStart === 0
@@ -96,7 +113,7 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
       if (event.key === "Enter" && event.shiftKey) {
         // The textarea inserts the newline itself; an equation across lines is
         // a display one, which is what `$$…$$` renders as.
-        setDisplay(true)
+        write(draft, true)
         return
       }
       if (event.key === "Escape") {
@@ -123,7 +140,7 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
         commit(draft, display, "after", true)
       }
     },
-    [commit, draft, display]
+    [commit, write, draft, display]
   )
 
   const tex = editing ? draft : attrs.tex
@@ -169,14 +186,14 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
                 rows={lines.length}
                 style={display ? undefined : { width: `${columns}ch` }}
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => write(event.target.value, display)}
                 onKeyDown={onKeyDown}
                 onBlur={() => commit(draft, display, "after", false)}
               />
               {display ? (
                 <span className="math-card-preview" onMouseDown={(event) => event.preventDefault()}>
                   <span className="math-preview-drawn" dangerouslySetInnerHTML={{ __html: html }} />
-                  <MathDisplayToggle display disabled={multiline} onToggle={() => setDisplay(false)} />
+                  <MathDisplayToggle display disabled={multiline} onToggle={() => write(draft, false)} />
                 </span>
               ) : null}
             </span>
@@ -190,7 +207,7 @@ export function MathNodeView({ node, editor, getPos, decorations }: NodeViewProp
             onMouseDown={(event) => event.preventDefault()}
           >
             <span className="math-preview-drawn" dangerouslySetInnerHTML={{ __html: html }} />
-            <MathDisplayToggle display={false} disabled={false} onToggle={() => setDisplay(true)} />
+            <MathDisplayToggle display={false} onToggle={() => write(draft, true)} />
           </PopoverContent>
         </Popover>
       ) : (
@@ -212,7 +229,7 @@ function MathDisplayToggle({
   onToggle,
 }: {
   display: boolean
-  disabled: boolean
+  disabled?: boolean
   onToggle: () => void
 }) {
   return (

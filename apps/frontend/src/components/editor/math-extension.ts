@@ -40,6 +40,8 @@ declare module "@tiptap/core" {
       insertMath: (attrs?: { display?: boolean }) => ReturnType
       /** Open the TeX field of the math node at `pos`, caret at the given end. */
       openMathEditor: (pos: number, caret?: MathCaretSide) => ReturnType
+      /** Write the open field through to its node, so a send or a saved draft holds what is typed. */
+      setMathDraft: (pos: number, attrs: MathAttrs) => ReturnType
       /** Write the field back, leaving the caret beside the equation. Empty TeX deletes the node. */
       commitMath: (pos: number, attrs: MathAttrs, exit?: MathExitSide) => ReturnType
     }
@@ -137,6 +139,25 @@ export const MathExtension = Node.create({
           return true
         },
 
+      setMathDraft:
+        (pos, attrs) =>
+        ({ state, dispatch }) => {
+          const node = state.doc.nodeAt(pos)
+          if (!node || node.type !== this.type) return false
+          if (!dispatch) return true
+
+          const tex = attrs.tex.trim()
+          const display = attrs.display || tex.includes("\n")
+          if (tex === node.attrs.tex && display === node.attrs.display) return true
+          // Replacing a leaf maps the editing position as deleted, so the open
+          // field is carried across by hand.
+          const tr = state.tr.setNodeMarkup(pos, undefined, { tex, display })
+          dispatch(
+            tr.setSelection(NodeSelection.create(tr.doc, pos)).setMeta(MathEditingKey, MathEditingKey.getState(state))
+          )
+          return true
+        },
+
       commitMath:
         (pos, attrs, exit = "after") =>
         ({ state, dispatch }) => {
@@ -160,8 +181,12 @@ export const MathExtension = Node.create({
           // node it can no longer render — and after it when the field was
           // finished rather than stepped out of, because finishing an equation
           // is like finishing any other block.
-          const target = !tex || exit === "before" ? pos : pos + node.nodeSize
-          tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(target, tr.doc.content.size))))
+          // Only while the equation still holds the selection: a tap elsewhere
+          // has already put the caret where the user wants it.
+          if (state.selection instanceof NodeSelection && state.selection.from === pos) {
+            const target = !tex || exit === "before" ? pos : pos + node.nodeSize
+            tr.setSelection(TextSelection.near(tr.doc.resolve(Math.min(target, tr.doc.content.size))))
+          }
           dispatch(tr.scrollIntoView())
           return true
         },

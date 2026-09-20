@@ -14,7 +14,7 @@ import {
   serializeAttachmentMetadata,
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
-import { extractMath, splitMathTokens } from "./math"
+import { extractMath, splitMathTokens, unescapeTableCellTex } from "./math"
 import {
   buildAgentBlockHref,
   buildGiphyHref,
@@ -378,7 +378,8 @@ function isAtomNode(node: JSONContent): boolean {
     node.type === "emoji" ||
     node.type === "memoEmbed" ||
     node.type === "inAppLink" ||
-    node.type === "giphyEmbed"
+    node.type === "giphyEmbed" ||
+    node.type === "math"
   )
 }
 
@@ -1025,7 +1026,11 @@ function buildTableCell(type: "tableHeader" | "tableCell", text: string, options
   const segments = text.split(/<br\s*\/?>/i)
   const paragraphs: JSONContent[] = segments.map((segment) => {
     const restored = segment.replace(/&lt;br\s*\/?&gt;/gi, "<br>")
-    const inline = parseInlineMarkdown(restored, options)
+    const inline = parseInlineMarkdown(restored, options).map((node) =>
+      node.type === "math"
+        ? { ...node, attrs: { ...node.attrs, tex: unescapeTableCellTex(String(node.attrs?.tex ?? "")) } }
+        : node
+    )
     return inline.length > 0 ? { type: "paragraph", content: inline } : { type: "paragraph" }
   })
   return {
