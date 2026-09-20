@@ -152,3 +152,40 @@ test("supervisor routes a session-targeted invocation and drops an untargeted on
   expect(available).toEqual([{ botId: "bot_1", invocationId: "binv_1", runtimeSessionId: "sess_1" }])
   transport.disconnect()
 })
+
+test("supervisor carries the session-control command name and omits a malformed one", async () => {
+  global.fetch = mock(
+    async () => new Response(JSON.stringify({ wsUrl: "https://ws.example.test" }))
+  ) as unknown as typeof fetch
+  const socket = makeFakeSocket()
+  spyOn(socketIoClient, "io").mockReturnValue(socket as unknown as ReturnType<typeof socketIoClient.io>)
+  const available: unknown[] = []
+  const transport = new BotSupervisorTransport({
+    baseUrl: "https://app.example.test",
+    workspaceId: "ws_1",
+    apiKey: "threa_bk_test",
+    onReady: () => {},
+    onSessionRestored: () => {},
+    onInvocationAvailable: (payload) => available.push(payload),
+  })
+
+  await transport.connect()
+  socket.handlers["bot_invocation:available"]!({
+    botId: "bot_1",
+    invocationId: "binv_done",
+    targetRuntimeSessionId: "sess_1",
+    sessionControlCommand: "done",
+  })
+  socket.handlers["bot_invocation:available"]!({
+    botId: "bot_1",
+    invocationId: "binv_plain",
+    targetRuntimeSessionId: "sess_1",
+    sessionControlCommand: null,
+  })
+
+  expect(available).toEqual([
+    { botId: "bot_1", invocationId: "binv_done", runtimeSessionId: "sess_1", sessionControlCommand: "done" },
+    { botId: "bot_1", invocationId: "binv_plain", runtimeSessionId: "sess_1" },
+  ])
+  transport.disconnect()
+})

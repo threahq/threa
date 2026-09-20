@@ -128,6 +128,8 @@ export interface DoneRequest {
   rootStreamId: string
   /** The `/done` command's own claim, when Threa typed it; absent for a `done` typed at the terminal. */
   claimFile?: string
+  /** The same claim, already in hand: harnessd answering `/done` for a session that is suspended never wrote a file. */
+  claim?: CommandClaim
 }
 
 /**
@@ -141,7 +143,7 @@ export interface DoneRequest {
  * reported into it, and it closes completed or failed — no message is posted.
  */
 export async function doneAgent(request: DoneRequest, deps: DoneDeps): Promise<void> {
-  const claim = request.claimFile ? deps.readClaim(request.claimFile) : undefined
+  const claim = request.claimFile ? deps.readClaim(request.claimFile) : request.claim
   const reporter = claim ? deps.commandReporter(claim) : consoleCommandReporter("done")
   try {
     const found = deps.findAgent(request.ref)

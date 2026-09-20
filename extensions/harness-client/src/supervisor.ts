@@ -21,6 +21,12 @@ export interface BotInvocationAvailablePayload {
   botId: string
   invocationId: string
   runtimeSessionId: string
+  /**
+   * The session-control command's name, when the turn is one. A supervisor
+   * decides from this whether to answer the command itself before claiming —
+   * a claim it should not have taken cannot be released.
+   */
+  sessionControlCommand?: string
 }
 
 export interface BotSupervisorTransportOptions {
@@ -163,11 +169,16 @@ function parseRestoredPayload(payload: unknown): BotSessionRestoredPayload | und
 
 function parseInvocationAvailablePayload(payload: unknown): BotInvocationAvailablePayload | undefined {
   if (!isObject(payload)) return undefined
-  const { botId, invocationId, targetRuntimeSessionId } = payload
+  const { botId, invocationId, targetRuntimeSessionId, sessionControlCommand } = payload
   if ([botId, invocationId, targetRuntimeSessionId].some((value) => typeof value !== "string" || !value)) {
     return undefined
   }
-  return { botId, invocationId, runtimeSessionId: targetRuntimeSessionId } as BotInvocationAvailablePayload
+  return {
+    botId,
+    invocationId,
+    runtimeSessionId: targetRuntimeSessionId,
+    ...(typeof sessionControlCommand === "string" && sessionControlCommand ? { sessionControlCommand } : {}),
+  } as BotInvocationAvailablePayload
 }
 
 function summarize(error: unknown): string {

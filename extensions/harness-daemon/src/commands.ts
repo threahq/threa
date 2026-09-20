@@ -32,10 +32,11 @@ import {
   readInventoryReadonly,
   upsertAgent,
 } from "./inventory"
-import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { acquireProcessLock, RECONCILE_LOCK_WAIT_MS, resumeActiveLockPath } from "./lock"
 import { IDLE_SUSPEND_AFTER_MS, idleSuspendEnabled } from "./idle"
 import { createHeldPresence } from "./held-presence"
 import { defaultSuspendDeps, suspendAgent, wakeAgent, type SuspendDeps, type SuspendOutcome } from "./suspend"
+import { defaultSupervisedDoneDeps, supervisedDone } from "./supervised-done"
 import { inspectProfiles, DEFAULT_PROFILE } from "./profiles"
 import { commandExists, output } from "./shell"
 import { resolveRuntimeBinary, SPAWN_RUNTIMES } from "./runtimes"
@@ -478,8 +479,19 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           (row) => row.status === "suspended" && row.runtimeSessionId === payload.runtimeSessionId
         )
         if (!suspended) return
+        // Some commands do not need the session back. `/done` winds it down, so
+        // waking it only to kill it costs the operator a startup they never see
+        // the point of — harnessd answers it here and the session stays down.
+        if (payload.sessionControlCommand === "done") {
+          const outcome = await supervisedDone(suspended, payload.invocationId, defaultSupervisedDoneDeps())
+          if (outcome.status !== "unclaimed") {
+            if (outcome.status === "failed") console.error(`harnessd: /done for ${suspended.name}: ${outcome.reason}`)
+            return
+          }
+          console.warn(`harnessd: /done for ${suspended.name} not answered here (${outcome.reason}); resuming instead`)
+        }
         console.log(`harnessd: ${payload.invocationId} is waiting for suspended ${suspended.name}; resuming`)
-        const release = await acquireProcessLock(resumeActiveLockPath())
+        const release = await acquireProcessLock(resumeActiveLockPath(), { timeoutMs: RECONCILE_LOCK_WAIT_MS })
         let woken
         try {
           woken = wakeAgent(suspended, suspendDeps)

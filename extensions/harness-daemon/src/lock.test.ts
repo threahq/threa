@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { acquireProcessLock } from "./lock"
+import { acquireProcessLock, RECONCILE_LOCK_WAIT_MS } from "./lock"
 
 function lockPath(): string {
   return join(mkdtempSync(join(tmpdir(), "harnessd-lock-")), "resume-active.lock")
@@ -118,4 +118,12 @@ test("only one waiter at a time may remove a dead holder's lock", async () => {
 
   expect(readFileSync(path, "utf8")).toBe("111")
   expect(readFileSync(`${path}.steal`, "utf8")).toBe("222")
+})
+
+test("the reconcile chain's lock wait stays inside a watch pass", () => {
+  // Held presence is re-posted from that chain once a pass against a
+  // five-minute server gate. A waiter that outlives the gate takes the
+  // session-control commands off every suspended session without a word, so
+  // this bound is the whole reason the constant exists.
+  expect(RECONCILE_LOCK_WAIT_MS).toBeLessThanOrEqual(60_000)
 })
