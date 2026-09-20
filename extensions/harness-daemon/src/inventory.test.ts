@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { SessionPresenceSnapshot } from "@threahq/harness-client"
 import { defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
 import { findAgentOrUndefined, readInventory, readInventoryReadonly, upsertAgent } from "./inventory"
 import { latestAgentsByIdentity } from "./resume"
@@ -178,6 +179,28 @@ test("opening an inventory created before active_stream_id adds the column in pl
   expect(readInventoryReadonly()).toEqual([
     agent({ command: [], worktree: undefined, activeStreamId: "stream_thread" }),
   ])
+})
+
+const SNAPSHOT: SessionPresenceSnapshot = {
+  runtimeKind: "claude-code",
+  instanceId: "inst-1",
+  runtimeSessionId: "ccs-abc",
+  capabilities: { sessionControl: true, sessionControlCommands: ["model", "compact"] },
+  updatedAt: "2026-09-19T11:59:00.000Z",
+}
+
+test("the presence a suspend captured survives the row it was written on", () => {
+  // Held presence is read back on a later watch pass, in a process that may not
+  // be the one that suspended the session. A field the inventory drops leaves
+  // every suspended row skipped for want of a snapshot, which is the whole
+  // feature going quiet without an error.
+  upsertAgent(agent({ status: "suspended", suspendedAt: "2026-09-19T12:00:00.000Z", heldPresence: SNAPSHOT }))
+  const stored = agent({ status: "suspended", suspendedAt: "2026-09-19T12:00:00.000Z", heldPresence: SNAPSHOT })
+  expect(readInventory()).toEqual([stored])
+  expect(readInventoryReadonly()).toEqual([stored])
+
+  upsertAgent(agent({ status: "online" }))
+  expect(readInventory()).toEqual([agent({ status: "online" })])
 })
 
 test("a pending fresh start round-trips, and dropping it writes NULL rather than keeping the old value", () => {

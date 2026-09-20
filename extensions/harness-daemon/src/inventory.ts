@@ -5,6 +5,7 @@ import { dirname } from "node:path"
 import { canonicalOrRaw, defaultAgentIdentityResolver, type AgentIdentityResolver } from "./discovery"
 import { die } from "./errors"
 import type { AgentStatus, ManagedAgent, ProbeVerdict, RuntimeKind } from "./types"
+import type { SessionPresenceSnapshot } from "@threahq/harness-client"
 
 const DEFAULT_INVENTORY_PATH = `${homedir()}/.threa/harnessd/inventory.sqlite`
 
@@ -34,6 +35,7 @@ interface ManagedAgentRow {
   active_stream_id: string | null
   suspended_at: string | null
   suspend_hold_until: string | null
+  held_presence: string | null
 }
 
 export function inventoryPath(): string {
@@ -84,6 +86,7 @@ function openInventory(): Database {
     ["active_stream_id", "TEXT"],
     ["suspended_at", "TEXT"],
     ["suspend_hold_until", "TEXT"],
+    ["held_presence", "TEXT"],
   ]
   for (const [column, type] of added) {
     if (!columns.some((existing) => existing.name === column)) {
@@ -120,6 +123,7 @@ function rowToAgent(row: ManagedAgentRow): ManagedAgent {
     activeStreamId: row.active_stream_id ?? undefined,
     suspendedAt: row.suspended_at ?? undefined,
     suspendHoldUntil: row.suspend_hold_until ?? undefined,
+    heldPresence: row.held_presence ? (JSON.parse(row.held_presence) as SessionPresenceSnapshot) : undefined,
   }
 }
 
@@ -163,6 +167,7 @@ export function readInventoryReadonly(): ManagedAgent[] {
       "active_stream_id",
       "suspended_at",
       "suspend_hold_until",
+      "held_presence",
     ]
     const projection = optional.map((name) => (columns.has(name) ? name : `NULL AS ${name}`))
     const rows = db
@@ -185,8 +190,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         id, name, runtime, status, worktree, branch, tmux_session, tmux_window,
         tmux_window_id, tmux_pane_id, scratchpad_url, instance_id, runtime_session_id, command_json,
         created_at, updated_at, last_output, probe_failures, probe_backoff_until, probe_verdict,
-        tombstoned_at, clear_pending_at, active_stream_id, suspended_at, suspend_hold_until
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        tombstoned_at, clear_pending_at, active_stream_id, suspended_at, suspend_hold_until, held_presence
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         runtime = excluded.runtime,
@@ -210,7 +215,8 @@ export function upsertAgent(agent: ManagedAgent): void {
         clear_pending_at = excluded.clear_pending_at,
         active_stream_id = excluded.active_stream_id,
         suspended_at = excluded.suspended_at,
-        suspend_hold_until = excluded.suspend_hold_until
+        suspend_hold_until = excluded.suspend_hold_until,
+        held_presence = excluded.held_presence
     `
     ).run(
       agent.id,
@@ -237,7 +243,8 @@ export function upsertAgent(agent: ManagedAgent): void {
       agent.clearPendingAt ?? null,
       agent.activeStreamId ?? null,
       agent.suspendedAt ?? null,
-      agent.suspendHoldUntil ?? null
+      agent.suspendHoldUntil ?? null,
+      agent.heldPresence ? JSON.stringify(agent.heldPresence) : null
     )
   } finally {
     db.close()
