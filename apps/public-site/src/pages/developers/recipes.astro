@@ -355,121 +355,117 @@ async function loop() {
 
   <h2 id="sealed-agent">Connect an encrypted agent</h2>
   <p>
-    An end-to-end-encrypted scratchpad stores only ciphertext: the server never
-    sees the prompt, the reply, or a single trace step. Your agent holds the key,
-    so it can send the exact command, the full diff, and real output. Same
-    claim-and-reply loop as above, with a sealing layer on top. Three things to get
-    right: a per-machine identity key, the AAD that binds each ciphertext, and the
-    two-phase handshake that mints the stream key.
+    An end-to-end encrypted scratchpad stores ciphertext and nothing else. The
+    server never sees the prompt, the reply, or a single trace step, so your agent
+    can send the command it actually ran, the whole diff, and real output. The loop
+    is the one above with sealed bodies.
   </p>
-
-  <div class="note">
-    <strong>The format</strong>
-    Suite is RFC&nbsp;9180 <code>DHKEM(X25519, HKDF-SHA256)</code> + <code>HKDF-SHA256</code>
-    + <code>AES-256-GCM</code>. A stream owns one symmetric key (SSK) per
-    <em>generation</em>; the owner HPKE-wraps it to each recipient's public key.
-    Every ciphertext is AES-256-GCM under the SSK, with additional-authenticated-data
-    that pins it to its slot. Get these byte-exact or GCM verification fails:
-    <br />wrap: <code>streamId|keyGeneration|recipientKeyId</code>
-    &nbsp;·&nbsp; message &amp; step: <code>streamId|messageId|senderId</code>
-    <br />An envelope is <code>{"{"} v: 2, keyGeneration, iv, aad {"}"}</code> (iv/aad
-    base64); the ciphertext travels beside it.
-  </div>
-
+  <h3>The short path: the CLI</h3>
   <p>
-    A ~40-line helper covers the crypto. The X25519 KEM is pure-JS so it runs on any
-    runtime (some, like Bun, lack native X25519):
+    None of what follows is needed to work inside a sealed scratchpad. If your
+    agent has a shell, the CLI holds the key and does the crypto.
+    <code>threa e2e unlock</code> files your key on the machine once, and every
+    command that touches a sealed stream opens and seals bodies with it. Reading
+    one is the same command as reading any other stream.
   </p>
   <CodeBlock
-    lang="ts"
-    label="sealed.ts"
-    code={`import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core"
-import { DhkemX25519HkdfSha256 } from "@hpke/dhkem-x25519"
-
-const suite = new CipherSuite({
-  kem: new DhkemX25519HkdfSha256(),
-  kdf: new HkdfSha256(),
-  aead: new Aes256Gcm(),
-})
-const utf8 = (s: string) => new TextEncoder().encode(s)
-const b64 = (u: Uint8Array) => btoa(String.fromCharCode(...u))
-const unb64 = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
-const wrapAad = (stream: string, gen: number, keyId: string) => utf8(\u0060\${stream}|\${gen}|\${keyId}\u0060)
-const msgAad = (stream: string, id: string, sender: string) => utf8(\u0060\${stream}|\${id}|\${sender}\u0060)
-
-// Your identity key (BIK): one X25519 keypair per machine, persisted 0600.
-// NOT derived from the API key; a leaked key must not expose past scratchpads.
-export async function makeBik() {
-  const kp = await suite.kem.generateKeyPair()
-  return {
-    publicKeyId: \u0060bik_\${crypto.randomUUID()}\u0060,
-    publicKey: b64(new Uint8Array(await suite.kem.serializePublicKey(kp.publicKey))),
-    privateKey: kp.privateKey,
-  }
-}
-const importPub = async (pub: string) => suite.kem.deserializePublicKey(unb64(pub).buffer)
-
-// Owner (or you, at create) wraps an SSK to a recipient's public key.
-export async function wrapSSK(ssk: Uint8Array, pub: string, aad: Uint8Array) {
-  const s = await suite.seal({ recipientPublicKey: await importPub(pub) }, ssk, aad)
-  return { wrapEnc: b64(new Uint8Array(s.enc)), wrapCt: b64(new Uint8Array(s.ct)) }
-}
-type KeyWrap = { wrapEnc: string; wrapCt: string }
-export const unwrapSSK = async (wrap: KeyWrap, priv: CryptoKey, aad: Uint8Array) =>
-  new Uint8Array(await suite.open({ recipientKey: priv, enc: unb64(wrap.wrapEnc) }, unb64(wrap.wrapCt), aad))
-
-// Open / seal an SSK-encrypted message or step.
-async function aesKey(ssk: Uint8Array, use: "encrypt" | "decrypt") {
-  return crypto.subtle.importKey("raw", ssk, "AES-GCM", false, [use])
-}
-type Envelope = { iv: string; aad: string }
-export async function open(ssk: Uint8Array, env: Envelope, ct: string) {
-  const key = await aesKey(ssk, "decrypt")
-  const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: unb64(env.iv), additionalData: unb64(env.aad) },
-    key,
-    unb64(ct)
-  )
-  return new TextDecoder().decode(pt)
-}
-export async function seal(ssk: Uint8Array, stream: string, id: string, sender: string, gen: number, text: string) {
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const aad = msgAad(stream, id, sender)
-  const key = await aesKey(ssk, "encrypt")
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: aad }, key, utf8(text)))
-  return { ciphertext: b64(ct), envelope: { v: 2, keyGeneration: gen, iv: b64(iv), aad: b64(aad) } }
-}`}
+    lang="bash"
+    label="A sealed loop, without a line of code"
+    code={`threa e2e unlock                            # once per machine
+threa streams read stream_01H...            # ciphertext in, plaintext out
+threa messages send stream_01H... "on it"   # sealed here, then sent`}
   />
-
-  <h3>1 · Register your identity key</h3>
   <p>
-    Generate the BIK once, persist it, and send its public half on every presence
-    write. The server overwrites the stored key each time, so omitting it un-registers you.
+    <code>threa mcp serve</code> carries the same handling over MCP, so a host
+    that speaks MCP rather than a shell reads and posts into a sealed scratchpad
+    through the ordinary <code>read_stream</code> and <code>send_message</code>
+    tools. A bot key works the same way, using the key its runtime already holds
+    instead of an unlock. Both are on the
+    <a class="link" href="/developers/cli#e2e">CLI page</a>.
+  </p>
+
+  <h3>Writing your own runtime</h3>
+  <p>
+    Write one when you want the sealed invocation loop itself: claims over the
+    socket, trace steps as the work happens, decision cards.
+    <code>@threahq/bot-runtime-client</code> does the crypto. You load a keyring,
+    open the claim, and seal what you send back. Key wrapping, the AES-GCM
+    envelopes, and the additional data that binds each ciphertext to its slot all
+    live inside those calls, which is where you want them: a byte off in one of
+    those strings fails decryption on someone else's machine, and nothing local
+    tells you.
+  </p>
+
+  <h3>1 · Load a keyring</h3>
+  <p>
+    One X25519 keypair per machine is the usual setup. <code>E2eKeyring</code> mints
+    it the first time, keeps it in the OS keychain, and finds it again after a
+    restart. <code>BotKeyring</code> imports it for the runtime and hands you the
+    fields presence needs.
   </p>
   <CodeBlock
     lang="ts"
-    label="Presence with a key"
-    code={`const bik = await loadOrMakeBik() // makeBik(), then reuse across restarts
+    label="Keyring"
+    code={`import {
+  BotKeyring,
+  E2eKeyring,
+  e2eKeyAccount,
+  mintE2eKeyRecord,
+  resolveKeyStore,
+} from "@threahq/bot-runtime-client"
+import { homedir, hostname } from "node:os"
+import { join } from "node:path"
+
+const dir = join(homedir(), ".threa", "e2e-keys")
+const keys = new BotKeyring({
+  keyring: () =>
+    new E2eKeyring({
+      store: resolveKeyStore({ platform: process.platform, dir, hasExistingFileKey: false }),
+      account: e2eKeyAccount({
+        scope: "host",
+        hostname: hostname(),
+        instanceId: INSTANCE,
+        identitySeed: API_KEY,
+      }),
+      mint: mintE2eKeyRecord,
+    }),
+})
+
+await keys.ensure()
 await api("/bot-runtime/presence", {
   runtimeKind: "custom",
   instanceId: INSTANCE,
   status: "available",
   acceptingInvocations: true,
-  publicKey: bik.publicKey,
-  publicKeyId: bik.publicKeyId,
+  ...keys.presenceFields(),
 })`}
   />
+  <p>
+    Every presence write carries the keys, because the server reads what arrives as
+    your complete set. An empty array unregisters all of them, and leaving the field
+    out is the only way to keep what it already has. Up to 32.
+  </p>
+  <p>
+    <code>scope</code> decides how many keys you hold. <code>"host"</code> is one key
+    for the machine, shared by every agent on it. <code>"stream"</code> mints one per
+    scratchpad, so a leaked key costs one conversation instead of all of them, and
+    <code>ensureForStream</code> creates it when the invite arrives. For the store,
+    <code>requested: "file"</code> keeps keys in <code>dir</code> at mode 0600. Ask
+    for nothing on a box with no working keychain and
+    <code>resolveKeyStore</code> throws, rather than quietly writing your private
+    keys to disk.
+  </p>
 
   <h3>2 · Create an encrypted scratchpad</h3>
   <p>
-    Two-phase, because the wrap AAD binds to the stream id the server mints. Ask for
-    the owner's public key, create the session encrypted, then wrap a fresh
-    generation-0 SSK to the owner and to yourself:
+    Two calls, because the key wrap binds to the stream id the server mints. Ask for
+    the owner's public key, create the session encrypted, then mint a generation-0
+    stream key and store the wraps.
   </p>
   <CodeBlock
     lang="ts"
-    label="Two-phase create"
-    code={`// Owner's key. A 404 means they haven't set up encryption yet; tell the user.
+    label="Create and provision"
+    code={`// A 404 here means the owner has not set an encryption passphrase yet. Say so, and stop.
 const { data: owner } = await get("/bot-runtime/owner-e2e-key") // { keyId, publicKey }
 
 const { data: link } = await api("/bot-runtime/sessions", {
@@ -479,99 +475,194 @@ const { data: link } = await api("/bot-runtime/sessions", {
   displayName: "My sealed agent",
   e2e: { ownerKeyId: owner.keyId },
 })
-// link.e2eEnabled === true, link.rootStreamId is the stream that owns the key.
 
-const ssk = crypto.getRandomValues(new Uint8Array(32))
-const wraps = [
-  {
-    recipientKind: "user",
-    recipientKeyId: owner.keyId,
-    ...(await wrapSSK(ssk, owner.publicKey, wrapAad(link.rootStreamId, 0, owner.keyId))),
-  },
-  {
-    recipientKind: "bot",
-    recipientKeyId: bik.publicKeyId,
-    ...(await wrapSSK(ssk, bik.publicKey, wrapAad(link.rootStreamId, 0, bik.publicKeyId))),
-  },
-]
+const bik = await keys.identityForStream(link.rootStreamId)
+if (!bik) throw new Error("no identity key: sealed scratchpads are unavailable on this box")
+
+const { wraps } = await mintStreamKeyWraps({
+  streamId: link.rootStreamId,
+  keyGeneration: 0,
+  recipients: [
+    { recipientKind: "user", recipientKeyId: owner.keyId, publicKeyBase64: owner.publicKey },
+    { recipientKind: "bot", recipientKeyId: bik.publicKeyId, publicKeyBase64: bik.publicKeyBase64 },
+  ],
+})
 await api(\u0060/streams/\${link.rootStreamId}/e2e/key-wraps\u0060, { keyGeneration: 0, wraps })`}
   />
+  <p>
+    The stream key never leaves that call. Later turns recover it from the wraps in
+    the claim, so the only thing your runtime persists is its identity key. A 409 on
+    the second post means an earlier attempt landed, which is what a retry wants to
+    hear.
+  </p>
 
-  <h3>3 · Claim, then open with your key</h3>
+  <h3>3 · Open a sealed claim</h3>
   <p>
     Claim as usual. On an encrypted stream the response carries a
-    <code>sealedContext</code> instead of a plaintext prompt: the SSK wraps addressed
-    to your BIK, the sealed trigger, and a per-turn <code>callbackToken</code> that
-    authorizes your sealed writes.
+    <code>sealedContext</code> where the plaintext prompt would be.
+    <code>parseSealedTurnContext</code> checks the wire shape and
+    <code>openSealedTurnContext</code> unwraps the stream key with your identity
+    key, then decrypts the trigger and the messages before it.
   </p>
   <CodeBlock
     lang="ts"
-    label="Open a sealed claim"
+    label="Open the turn"
     code={`const { data: inv } = await api("/bot-invocations/claim", {
   runtimeKind: "custom",
   instanceId: INSTANCE,
   supportedCapabilities: ["active-scratchpad"],
   claimTtlSeconds: 120,
 })
-const sc = inv.sealedContext
-const stream = inv.rootStreamId
 
-// Recover the SSK for each generation the owner wrapped to you.
-const ssks = new Map<number, Uint8Array>()
-for (const w of sc.wraps)
-  ssks.set(w.keyGeneration, await unwrapSSK(w, bik.privateKey, wrapAad(stream, w.keyGeneration, bik.publicKeyId)))
+const sealed = parseSealedTurnContext(inv.sealedContext)
+if (!sealed) throw new Error("malformed sealedContext")
 
-const promptSSK = ssks.get(sc.prompt.envelope.keyGeneration)!
-const prompt = await open(promptSSK, sc.prompt.envelope, sc.prompt.ciphertext)
-// prompt is the real user message. Run your agent on it.`}
+// Wraps bind to the ROOT stream that owns the key, never the thread a message sits in.
+const identities = await keys.ensureForStream(inv.rootStreamId)
+const turn = await openSealedTurnContext({ sealed, identities, streamId: inv.rootStreamId })
+
+const answer = await runYourAgent(turn.promptMarkdown, turn.history)`}
   />
+  <p>
+    <code>turn.history</code> is the conversation so far, decrypted, oldest first.
+    <code>turn.sealing</code> holds the key generation, the sender id, and the
+    per-turn callback token your writes are authorized with. If opening throws, fail
+    the invocation with <code>scrubSealedError(error)</code>: an exception message
+    can quote decrypted content, so only the class name goes back to the server.
+  </p>
 
   <h3>4 · Seal every reply and step</h3>
   <p>
-    Seal under the reply generation's SSK, bound to a fresh id, and post to the sealed
-    endpoints with the callback token in the <code>X-Threa-Callback-Token</code> header.
-    Steps carry a <code>step_</code> id, the reply a <code>msg_</code> id.
+    <code>sealStep</code> and <code>sealReply</code> return the wire bodies for the
+    sealed endpoints, each bound to an id they mint. Send the callback token in the
+    <code>X-Threa-Callback-Token</code> header.
   </p>
   <CodeBlock
     lang="ts"
     label="Seal back"
-    code={`const gen = sc.reply.keyGeneration
-const sender = sc.reply.senderId
-const ssk = ssks.get(gen)!
-const sealed = (id: string, text: string) => seal(ssk, stream, id, sender, gen, text)
-const cb = { "X-Threa-Callback-Token": sc.callbackToken, "Content-Type": "application/json" }
+    code={`const headers = {
+  [THREA_CALLBACK_TOKEN_HEADER]: turn.sealing.callbackToken,
+  "Content-Type": "application/json",
+}
 const post = (path: string, body: unknown) =>
-  fetch(\u0060\${BASE}/api/v1/workspaces/\${WS}\${path}\u0060, { method: "POST", headers: cb, body: JSON.stringify(body) })
+  fetch(\u0060\${BASE}/api/v1/workspaces/\${WS}\${path}\u0060, { method: "POST", headers, body: JSON.stringify(body) })
 
-// A trace step: the full command, the real output. The server can't read it.
-const stepId = \u0060step_\${crypto.randomUUID()}\u0060
-await post(\u0060/bot-invocations/\${inv.id}/sealed-steps\u0060, {
-  stepId,
-  stepType: "tool_call",
-  ...(await sealed(stepId, \u0060$ rm -rf ./build\\n\${output}\u0060)),
-})
+// A trace step: the real command, the real output. Stored as ciphertext.
+await post(
+  \u0060/bot-invocations/\${inv.id}/sealed-steps\u0060,
+  await sealStep(turn.sealing, "tool_call", \u0060$ rm -rf ./build\\n\${output}\u0060)
+)
 
-// The final reply, then the turn is done.
-const msgId = \u0060msg_\${crypto.randomUUID()}\u0060
+// The reply ends the turn.
 await post(\u0060/bot-invocations/\${inv.id}/sealed-complete\u0060, {
-  reply: { messageId: msgId, ...(await sealed(msgId, replyMarkdown)) },
+  reply: await sealReply(turn.sealing, answer),
 })`}
   />
   <div class="note">
     <strong>Steps over the socket</strong>
     High-volume steps go over the Socket.IO <code>/bot</code> namespace as
     <code>bot:invocation:sealed-steps</code> (<code>{"{"} invocationId, callbackToken, steps: [frame] {"}"}</code>),
-    so a chatty turn never bills the edge worker. Mid-turn progress messages seal to
-    <code>/bot-invocations/:id/sealed-messages</code> the same way. The full request
-    schemas are in the <a href="/developers/reference">reference</a>; the Pi
+    so a chatty turn never bills the edge worker. The frames are the same
+    <code>sealStep</code> output. A mid-turn progress message seals with
+    <code>sealReply</code> and posts to
+    <code>/bot-invocations/:id/sealed-messages</code>. Request schemas are in the
+    <a href="/developers/reference">reference</a>, and Pi
     (<code>extensions/pi-remote/</code>) and Claude Code
-    (<code>extensions/claude-code-remote/</code>) harnesses are complete
-    implementations.
+    (<code>extensions/claude-code-remote/</code>) are complete implementations.
   </div>
+
+  <h3>5 · Ask a sealed decision</h3>
   <p>
-    Re-keying is the owner's: inviting or removing a recipient rolls the generation and
-    re-wraps the new SSK to the current set, so a removed agent keeps old history but
-    reads nothing new. Your key never leaves your machine, and nothing you send is ever
-    stored in the clear.
+    A decision card puts a question in the stream and blocks your turn until someone
+    picks an option. Option ids and tones stay in the clear, because the server
+    checks an answer against them. The title, the body and the labels travel inside
+    the ciphertext. <code>sealDecision</code> mints the <code>dreq_</code> id and
+    seals against the stream the card is posted to, which on a thread is not the
+    root the key hangs off.
   </p>
+  <CodeBlock
+    lang="ts"
+    label="A sealed card"
+    code={`// BOT_ID is your own bot id, from the bot plane's hello ack.
+const card = await sealDecision(
+  turn.sealing,
+  { streamId: cardStream, requesterBotId: BOT_ID },
+  {
+    title: "Run the migration now?",
+    bodyMarkdown: "17 rows backfilled locally, none in prod.",
+    optionLabels: { run: "Run it", hold: "Hold for review" },
+  }
+)
+
+await api(\u0060/streams/\${cardStream}/decisions\u0060, {
+  decisionId: card.decisionId,
+  options: [
+    { id: "run", tone: "primary" },
+    { id: "hold", tone: "neutral" },
+  ],
+  allowNote: true,
+  runtimeSessionId: SESSION,
+  invocationId: inv.id,
+  sealed: { ciphertext: card.ciphertext, envelope: card.envelope },
+})`}
+  />
+  <p>
+    The answer arrives on the <code>/bot</code> namespace as
+    <code>decision:resolved</code>, or from <code>GET /decisions/:id</code> if you
+    poll instead. <code>optionId</code> is in the clear.
+    <code>openSealedDecisionNote</code> opens the note the person typed, and returns
+    null when that note was sealed to another slot or under a generation this turn
+    no longer holds. Settle the decision anyway. A rotation between the question and
+    the answer leaves the answer readable and the note not, and losing the note
+    beats stranding the turn on it.
+  </p>
+  <CodeBlock
+    lang="ts"
+    label="Open the answer"
+    code={`socket.on("decision:resolved", async (d) => {
+  if (d.decisionId !== card.decisionId) return
+  const note =
+    d.noteCiphertext && d.noteEnvelope && d.decidedBy
+      ? await openSealedDecisionNote(turn.sealing, {
+          streamId: cardStream,
+          decisionId: card.decisionId,
+          decidedBy: d.decidedBy,
+          ciphertext: d.noteCiphertext,
+          envelope: d.noteEnvelope,
+        })
+      : null
+  resume(d.optionId, note) // "run" or "hold", and why
+})`}
+  />
+
+  <h3>6 · When the grant is taken back</h3>
+  <p>
+    The owner removing your bot from a sealed scratchpad deletes the wraps only your
+    keys could open, and rolls the stream key forward. You keep what you have
+    already read and read nothing sent after that. The socket says so with
+    <code>bot:e2e_revoke</code> (<code>{"{"} workspaceId, botId, streamId {"}"}</code>):
+    call <code>keys.dropStream(streamId)</code> and write presence again. Under the
+    host policy there is nothing to drop, since that key still opens your other
+    scratchpads and the roll is what closed this one.
+    <code>bot:e2e_grant</code> is the same event the other way, when someone invites
+    the bot into a scratchpad they made, and the hello ack's
+    <code>e2eGrantedStreamIds</code> catches you up on grants you missed offline.
+  </p>
+  <p>
+    Re-keying is the owner's, always. Inviting or removing a recipient rolls the
+    generation and re-wraps the new stream key to whoever is left. Your identity key
+    never leaves the machine.
+  </p>
+  <div class="note">
+    <strong>Porting it elsewhere</strong>
+    If your runtime is not JavaScript, the suite is RFC&nbsp;9180
+    <code>DHKEM(X25519, HKDF-SHA256)</code> with <code>HKDF-SHA256</code> and
+    <code>AES-256-GCM</code>. A stream owns one symmetric key per
+    <em>generation</em>, HPKE-wrapped to each recipient's public key, and every
+    ciphertext is AES-256-GCM under it with an envelope of
+    <code>{"{"} v: 2, keyGeneration, iv, aad {"}"}</code>. The exact additional-data
+    strings are short and byte-exact: read them off
+    <code>buildWrapAad</code>, <code>buildMessageAad</code> and
+    <code>buildDecisionAad</code>, which the package exports for that reason.
+  </div>
 </DocsLayout>
