@@ -180,9 +180,10 @@ export class BotRuntimeService {
 
   /**
    * A supervisor-held presence write carries no key material — the session it
-   * speaks for is not running — so it retains the BIK that session registered
-   * instead of clearing it. Without this the held instance loses the key its
-   * sealed-stream claim gate and wrap lookups match on, and every command
+   * speaks for is not running, and its keys are on that session's disk — so it
+   * states nothing about the keyring and the registered keys stand. Without
+   * this the held instance drops its `runtime_e2e_keys` holdings, which the
+   * sealed-stream claim gate and the wrap lookups match on, and every command
    * queued for it on an E2E stream becomes unclaimable while it is held.
    */
   async upsertPresenceFromBotKey(params: {
@@ -203,7 +204,8 @@ export class BotRuntimeService {
     retainBik?: boolean
     retainManifest?: boolean
   }): Promise<BotRuntimeInstance> {
-    const keys = resolveAdvertisedKeys(params)
+    const retainBik = params.retainBik ?? isSupervisorHeld(params.capabilities)
+    const keys = resolveAdvertisedKeys({ ...params, retainBik })
     return withTransaction(this.pool, async (client) => {
       const presence = await BotRuntimeInstanceRepository.upsertPresence(client, {
         id: botRuntimeInstanceId(),
@@ -220,7 +222,7 @@ export class BotRuntimeService {
         publicKey: params.publicKey,
         publicKeyId: params.publicKeyId,
         mergeCapabilities: params.mergeCapabilities,
-        retainBik: params.retainBik ?? isSupervisorHeld(params.capabilities),
+        retainBik,
         retainManifest: params.retainManifest,
       })
       if (keys) {
