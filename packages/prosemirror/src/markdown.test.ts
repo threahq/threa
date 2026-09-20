@@ -1535,6 +1535,21 @@ describe("@threahq/prosemirror markdown math", () => {
     ])
   })
 
+  it("parses the marks around an equation, and leaves the equation unmarked", () => {
+    expect(parseMarkdown("**Answer: $x=5$**").content).toEqual([
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "Answer: ", marks: [{ type: "bold" }] }, inline("x=5")],
+      },
+    ])
+  })
+
+  it("reads `\\[…\\]` as math when a link follows it on the line", () => {
+    const [paragraph] = parseMarkdown("\\[x\\] see [a](https://b.c)").content ?? []
+
+    expect(paragraph.content?.[0]).toEqual(block("x"))
+  })
+
   it("keeps a pipe in a table cell's TeX the same across round trips", () => {
     const cellTex = (markdown: string) => {
       const texts: string[] = []

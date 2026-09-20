@@ -1142,23 +1142,26 @@ function tokenizeBalancedLinkDestinations(
   return { text: tokenized, hrefByToken }
 }
 
+/**
+ * Math tokens stay opaque through the whole mark and link parse and are
+ * expanded once, here: splitting first would hand the two halves of
+ * `**Answer: $x$**` to separate parses, and expanding inside a mark would put
+ * that mark on a node whose schema allows none.
+ */
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
-  if (!text) return []
+  return parseInlineTokens(text, options).flatMap((node) => {
+    const parts = node.type === "text" && node.text ? splitMathTokens(node.text) : null
+    if (!parts) return [node]
+    return parts
+      .filter((part) => "tex" in part || part.text)
+      .map((part) =>
+        "tex" in part ? { type: "math", attrs: { tex: part.tex, display: part.display } } : { ...node, text: part.text }
+      )
+  })
+}
 
-  const mathParts = splitMathTokens(text)
-  if (mathParts) {
-    const parsed: JSONContent[] = []
-    for (const [index, part] of mathParts.entries()) {
-      if ("tex" in part) {
-        parsed.push({ type: "math", attrs: { tex: part.tex, display: part.display } })
-        continue
-      }
-      // Only the first part starts the line, so a `/word` after an equation is
-      // prose, not a command.
-      parsed.push(...parseInlineMarkdown(part.text, index === 0 ? options : { ...options, enableSlashCommands: false }))
-    }
-    return parsed
-  }
+function parseInlineTokens(text: string, options: ParseOptions = {}): JSONContent[] {
+  if (!text) return []
 
   const result: JSONContent[] = []
   const { getMentionType, getEmoji } = options
@@ -1270,7 +1273,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       // mention/channelLink node here would bury the href in a mark that
       // consumers of the node tree (collectLinkUrls, the resolver) don't treat
       // as the link it is. Pointer forms (`user:`/`channel:`) were handled above.
-      const innerContent = parseInlineMarkdown(linkText, {
+      const innerContent = parseInlineTokens(linkText, {
         ...options,
         enableMentions: false,
         enableChannels: false,
@@ -1284,7 +1287,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[11]) {
       // BoldItalic: ***text***
       const boldItalicText = match[12]
-      const innerContent = parseInlineMarkdown(boldItalicText, options)
+      const innerContent = parseInlineTokens(boldItalicText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
@@ -1294,7 +1297,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[13]) {
       // Bold: **text**
       const boldText = match[14]
-      const innerContent = parseInlineMarkdown(boldText, options)
+      const innerContent = parseInlineTokens(boldText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
@@ -1304,7 +1307,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[15]) {
       // Italic: *text*
       const italicText = match[16]
-      const innerContent = parseInlineMarkdown(italicText, options)
+      const innerContent = parseInlineTokens(italicText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
@@ -1314,7 +1317,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[17]) {
       // Strike: ~~text~~
       const strikeText = match[18]
-      const innerContent = parseInlineMarkdown(strikeText, options)
+      const innerContent = parseInlineTokens(strikeText, options)
       for (const node of innerContent) {
         result.push({
           ...node,

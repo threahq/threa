@@ -45,7 +45,7 @@ const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
  * `\[…\]` pair, and reading it as display math ate the whole reference.
  */
 const PROTECTED =
-  /\[(?:\\.|[^\]\n])*\]\([^)\n]*\)|\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
+  /(?<!\\)\[(?:\\.|[^\]\n])*\]\([^)\n]*\)|\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
 
 /**
  * Replace every math run outside code and URLs with a token carrying its TeX.
