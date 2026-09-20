@@ -360,7 +360,34 @@ async function loop() {
     can send the command it actually ran, the whole diff, and real output. The loop
     is the one above with sealed bodies.
   </p>
+  <h3>The short path: the CLI</h3>
   <p>
+    None of what follows is needed to work inside a sealed scratchpad. If your
+    agent has a shell, the CLI holds the key and does the crypto.
+    <code>threa e2e unlock</code> files your key on the machine once, and every
+    command that touches a sealed stream opens and seals bodies with it. Reading
+    one is the same command as reading any other stream.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="A sealed loop, without a line of code"
+    code={`threa e2e unlock                            # once per machine
+threa streams read stream_01H...            # ciphertext in, plaintext out
+threa messages send stream_01H... "on it"   # sealed here, then sent`}
+  />
+  <p>
+    <code>threa mcp serve</code> carries the same handling over MCP, so a host
+    that speaks MCP rather than a shell reads and posts into a sealed scratchpad
+    through the ordinary <code>read_stream</code> and <code>send_message</code>
+    tools. A bot key works the same way, using the key its runtime already holds
+    instead of an unlock. Both are on the
+    <a class="link" href="/developers/cli#e2e">CLI page</a>.
+  </p>
+
+  <h3>Writing your own runtime</h3>
+  <p>
+    Write one when you want the sealed invocation loop itself: claims over the
+    socket, trace steps as the work happens, decision cards.
     <code>@threahq/bot-runtime-client</code> does the crypto. You load a keyring,
     open the claim, and seal what you send back. Key wrapping, the AES-GCM
     envelopes, and the additional data that binds each ciphertext to its slot all
