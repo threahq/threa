@@ -8,6 +8,7 @@ import { SearchService, resolveUserAccessibleStreamIds, type SearchPermissions }
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import type { RerankCandidate, RerankContext } from "../../src/features/memos"
 import { userId, workspaceId, streamId } from "../../src/lib/id"
+import { StubRelevanceScorer } from "../../src/features/memos"
 
 const EMBEDDING_DIMS = 1536
 
@@ -141,6 +142,7 @@ describe("Message deep search retrieval", () => {
       reranker,
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
+      relevanceScorer: new StubRelevanceScorer(),
     })
 
     const { results } = await service.search({
@@ -183,6 +185,7 @@ describe("Message deep search retrieval", () => {
       reranker: { rerank },
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
+      relevanceScorer: new StubRelevanceScorer(),
     })
 
     const { results } = await service.search({
@@ -211,6 +214,7 @@ describe("Message deep search retrieval", () => {
       reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
+      relevanceScorer: new StubRelevanceScorer(),
     })
 
     // "deploy failed" is a literal substring of A's text — exactSearch (ILIKE)

@@ -20,6 +20,7 @@ import {
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { conversationId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { TitleSources } from "@threahq/types"
+import { StubRelevanceScorer } from "../../src/features/memos"
 
 const EMBEDDING_DIMS = 1536
 
@@ -44,6 +45,7 @@ function makeService(pool: Pool, vector: number[] = unit(0)) {
     reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
     memoSearch: { search: async () => [] },
     refiner: { refine: async () => null },
+    relevanceScorer: new StubRelevanceScorer(),
   })
 }
 
