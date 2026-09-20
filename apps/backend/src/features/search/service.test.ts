@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import type { EmbeddingServiceLike, RerankerLike } from "../memos"
+import type { EmbeddingServiceLike, RelevanceScorerLike, RerankerLike } from "../memos"
 import { SearchRepository, type SearchResult } from "./repository"
 import { SearchService, fuseRankedLists, type MemoSearchLike } from "./service"
-import { SEARCH_DEEP_CANDIDATE_POOL, SEARCH_RERANK_CANDIDATE_LIMIT } from "./config"
+import {
+  SEARCH_DEEP_CANDIDATE_POOL,
+  SEARCH_RELEVANCE_FLOOR,
+  SEARCH_RERANK_CANDIDATE_LIMIT,
+  SEARCH_SCORE_CANDIDATE_POOL,
+} from "./config"
 import type { QueryExpanderLike } from "./query-expansion"
 import type { SearchRefinerLike, SearchRefineInput } from "./refine"
 
@@ -12,12 +17,14 @@ const pool = {
 
 const inertExpander: QueryExpanderLike = { expand: async () => [] }
 const identityReranker: RerankerLike = { rerank: async (_q, candidates) => candidates.map((_, i) => i) }
+const unscoringScorer: RelevanceScorerLike = { score: async () => null }
 
 function makeService(
   overrides: {
     embeddingService?: EmbeddingServiceLike
     queryExpander?: QueryExpanderLike
     reranker?: RerankerLike
+    relevanceScorer?: RelevanceScorerLike
     memoSearch?: MemoSearchLike
     refiner?: SearchRefinerLike
   } = {}
@@ -27,6 +34,7 @@ function makeService(
     embeddingService: overrides.embeddingService ?? { embed: async () => [], embedBatch: async () => [] },
     queryExpander: overrides.queryExpander ?? inertExpander,
     reranker: overrides.reranker ?? identityReranker,
+    relevanceScorer: overrides.relevanceScorer ?? unscoringScorer,
     memoSearch: overrides.memoSearch ?? { search: async () => [] },
     refiner: overrides.refiner ?? { refine: async () => null },
   })
@@ -264,6 +272,92 @@ describe("SearchService deep mode", () => {
     expect(hybridSearch).toHaveBeenCalledTimes(1)
     expect(rerank).toHaveBeenCalledTimes(1)
     expect(searchResults.map((r) => r.id)).toEqual(["a", "b"])
+  })
+})
+
+describe("SearchService relevance scoring on an ordinary search", () => {
+  afterEach(() => {
+    pool.query.mockClear()
+    mock.restore()
+  })
+
+  const scoringService = (score: RelevanceScorerLike["score"]) =>
+    makeService({
+      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
+      relevanceScorer: { score },
+    })
+
+  const runSearch = (service: ReturnType<typeof makeService>, limit?: number) =>
+    service.search({
+      searchFlag: "on",
+      workspaceId: "ws_1",
+      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
+      query: "deploy rollback",
+      ...(limit === undefined ? {} : { limit }),
+    })
+
+  test("fetches the scoring pool rather than the caller's limit, and cuts back to it after scoring", async () => {
+    const candidates = Array.from({ length: SEARCH_SCORE_CANDIDATE_POOL }, (_, i) => fakeResult(`m${i}`))
+    const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue(candidates)
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+
+    const { results } = await runSearch(
+      scoringService(async (_q, given) => given.map((_, i) => 1 - i / given.length)),
+      5
+    )
+
+    expect(hybridSearch.mock.calls[0]?.[1]).toMatchObject({ limit: SEARCH_SCORE_CANDIDATE_POOL })
+    expect(results).toHaveLength(5)
+  })
+
+  test("orders by score, breaking ties on fusion order", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("a"), fakeResult("b"), fakeResult("c")])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+
+    const { results } = await runSearch(scoringService(async () => [0.5, 0.9, 0.5]))
+
+    expect(results.map((r) => r.id)).toEqual(["b", "a", "c"])
+  })
+
+  test("drops candidates below the relevance floor, down to none", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("a"), fakeResult("b"), fakeResult("c")])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+    const below = SEARCH_RELEVANCE_FLOOR - 0.01
+
+    const kept = await runSearch(scoringService(async () => [below, SEARCH_RELEVANCE_FLOOR, below]))
+    expect(kept.results.map((r) => r.id)).toEqual(["b"])
+
+    const none = await runSearch(scoringService(async () => [below, below, below]))
+    expect(none.results).toEqual([])
+  })
+
+  test("an unscored list keeps fusion order instead of collapsing (INV-11)", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("a"), fakeResult("b")])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+
+    const { results } = await runSearch(scoringService(async () => null))
+
+    expect(results.map((r) => r.id)).toEqual(["a", "b"])
+  })
+
+  test("legacy ranking neither widens the fetch nor scores", async () => {
+    const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
+    const score = mock(async () => null)
+    const service = makeService({
+      embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
+      relevanceScorer: { score },
+    })
+
+    await service.search({
+      searchFlag: "off",
+      workspaceId: "ws_1",
+      permissions: { accessibleStreamIds: ["stream_1"] },
+      query: "deploy rollback",
+      limit: 7,
+    })
+
+    expect(hybridSearch.mock.calls[0]?.[1]).toMatchObject({ limit: 7 })
+    expect(score).not.toHaveBeenCalled()
   })
 })
 

@@ -181,6 +181,7 @@ describe("Search result clusters", () => {
       embeddingService: { embed: async () => [], embedBatch: async (texts: string[]) => texts.map(() => []) },
       queryExpander: { expand: async () => [] },
       reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
+      relevanceScorer: { score: async () => null },
       memoSearch: { search: async () => memos },
       refiner: { refine: async () => null },
     })

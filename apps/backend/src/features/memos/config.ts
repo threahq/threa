@@ -176,6 +176,30 @@ export const memoRerankSchema = z.object({
 export type MemoRerankResult = z.infer<typeof memoRerankSchema>
 
 /**
+ * Per-candidate relevance, the decision-model counterpart of the reranker.
+ * Cheap enough to score a whole candidate pool on every search: measured over
+ * GAM's own (memo title -> source messages) labels, one call scoring 60
+ * candidates ran 572 ms p50 against 4.6 s for the luna permutation, for 92% of
+ * its nDCG@10.
+ */
+export const RELEVANCE_SCORER_MODEL_ID = "openrouter:typesafe/jev-1.13"
+/** Measured p95 for a 60-candidate call is ~720 ms; past this the search is better served unscored. */
+export const RELEVANCE_SCORER_TIMEOUT_MS = 3000
+
+/**
+ * The relevance ladder, lowest rung first. The answer lands between rungs when
+ * the model splits its belief, so the rescaled score is continuous in [0, 1]
+ * rather than one of four values. Deliberately free of English-only cues about
+ * the content itself (INV-54) — it describes the query/candidate relation.
+ */
+export const RELEVANCE_SCORE_LADDER = [
+  "unrelated to the query",
+  "same general topic, but does not address what the query asks",
+  "mentions the thing the query asks about in passing",
+  "directly contains what the query asks for",
+] as const
+
+/**
  * B7 search-mode bundles: correlated retrieval knobs behind one key.
  *
  * NOTE: gbrain ties these to a billing plan (free/pro/max) and adds a

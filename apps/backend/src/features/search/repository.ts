@@ -13,7 +13,7 @@ import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
 import { streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
-import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, type SearchRanking } from "./config"
+import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, SEARCH_HYBRID_LEG_LIMIT, type SearchRanking } from "./config"
 
 export interface GetAccessibleStreamsParams {
   workspaceId: string
@@ -412,8 +412,7 @@ export const SearchRepository = {
 
     const embeddingLiteral = `[${embedding.join(",")}]`
 
-    // Internal limit for each search type before RRF combination
-    const internalLimit = 50
+    const internalLimit = Math.max(SEARCH_HYBRID_LEG_LIMIT, limit)
 
     const result = await db.query<SearchResultRow>(composeSql`
       WITH keyword_query AS (
@@ -444,6 +443,7 @@ export const SearchRepository = {
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})
           AND (${filters.after === undefined} OR m.created_at >= ${filters.after ?? new Date(0)})
+        ORDER BY rank
         LIMIT ${internalLimit}
       ),
       semantic_ranked AS (
@@ -471,6 +471,7 @@ export const SearchRepository = {
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR m.created_at < ${filters.before ?? new Date()})
           AND (${filters.after === undefined} OR m.created_at >= ${filters.after ?? new Date(0)})
+        ORDER BY rank
         LIMIT ${internalLimit}
       ),
       rrf_combined AS (

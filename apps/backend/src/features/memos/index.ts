@@ -81,6 +81,11 @@ export type { RerankerLike, RerankCandidate, RerankContext, RerankerServiceConfi
 
 export { StubReranker } from "./reranker.stub"
 
+export { DecisionsRelevanceScorer } from "./relevance-scorer"
+export type { RelevanceScorerLike } from "./relevance-scorer"
+export { ResidencyRoutedRelevanceScorer } from "./residency-routed-relevance-scorer"
+export { StubRelevanceScorer } from "./relevance-scorer.stub"
+
 export { EmbeddingService } from "./embedding-service"
 export type { EmbeddingServiceLike, EmbeddingServiceConfig, EmbeddingContext } from "./embedding-service"
 
