@@ -1,4 +1,4 @@
-import { writeSessionWakeNote } from "@threahq/harness-client"
+import { readSessionPresence, writeSessionWakeNote, type SessionPresenceSnapshot } from "@threahq/harness-client"
 import { defaultClaudeDiskDeps, findLiveClaudeSessions, type ClaudeNativeSession } from "./claude-registry"
 import { resolveManagedAgentPane, type ManagedAgentPane } from "./discovery"
 import { claudeIdleVerdict, defaultIdleProbeDeps, suspendHeld, type IdleProbeDeps } from "./idle"
@@ -30,6 +30,8 @@ export interface SuspendDeps {
   sessions: (worktree: string) => ClaudeNativeSession[]
   probe: IdleProbeDeps
   respawn: (paneId: string, cwd: string, command: string) => void
+  /** The session's last published presence, read while it is still running. */
+  readPresence: (runtimeSessionId: string) => SessionPresenceSnapshot | undefined
   killWindow: (windowId: string) => void
   persist: (agent: ManagedAgent) => void
   writeWakeNote: (note: { runtimeSessionId: string; suspendedAt: string; wokeAt: string }) => void
@@ -43,6 +45,7 @@ export function defaultSuspendDeps(): SuspendDeps {
     sessions: (worktree) => findLiveClaudeSessions(worktree, disk),
     probe: defaultIdleProbeDeps(),
     respawn: respawnPane,
+    readPresence: readSessionPresence,
     killWindow: (windowId) => {
       output(["tmux", "kill-window", "-t", windowId], { allowFailure: true })
     },
@@ -84,11 +87,16 @@ export function suspendAgent(
   if (options.dryRun) return { status: "would suspend", detail: `idle ${Math.round(verdict.idleForMs / 60_000)}m` }
 
   const suspendedAt = new Date(deps.now()).toISOString()
-  deps.persist({ ...agent, status: "suspended", suspendedAt, updatedAt: suspendedAt })
+  // Copied while the session is still alive: the kill below makes it publish
+  // itself offline, and that write deletes the snapshot file it had been
+  // keeping. Absent is a real answer — the hold reports it rather than
+  // inventing capabilities (INV-11).
+  const heldPresence = agent.runtimeSessionId ? deps.readPresence(agent.runtimeSessionId) : undefined
+  deps.persist({ ...agent, status: "suspended", suspendedAt, heldPresence, updatedAt: suspendedAt })
   const recheck = readIdle(agent.worktree, deps, options.thresholdMs)
   if (!recheck.idle) {
     const rolledBackAt = new Date(deps.now()).toISOString()
-    deps.persist({ ...agent, status: "online", suspendedAt: undefined, updatedAt: rolledBackAt })
+    deps.persist({ ...agent, status: "online", suspendedAt: undefined, heldPresence: undefined, updatedAt: rolledBackAt })
     return { status: "skipped", detail: `took work up while winding down: ${recheck.reason}` }
   }
   deps.respawn(pane.pane.paneId, agent.worktree, suspendPlaceholderCommand(agent))
@@ -124,7 +132,13 @@ export function wakeAgent(agent: ManagedAgent, deps: SuspendDeps): ManagedAgent 
   if (agent.runtimeSessionId && agent.suspendedAt) {
     deps.writeWakeNote({ runtimeSessionId: agent.runtimeSessionId, suspendedAt: agent.suspendedAt, wokeAt })
   }
-  const woken: ManagedAgent = { ...agent, status: "online", suspendedAt: undefined, updatedAt: wokeAt }
+  const woken: ManagedAgent = {
+    ...agent,
+    status: "online",
+    suspendedAt: undefined,
+    heldPresence: undefined,
+    updatedAt: wokeAt,
+  }
   deps.persist(woken)
   if (agent.tmuxWindowId) deps.killWindow(agent.tmuxWindowId)
   return woken

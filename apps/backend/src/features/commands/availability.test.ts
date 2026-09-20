@@ -6,6 +6,7 @@ import {
   commandRequiresWritableAuthority,
   isClientActionAvailableInStream,
   resolveAdvertisedSessionControlCommandNames,
+  supervisorHeldPresenceExpired,
 } from "./availability"
 import { listClientActionCommandInfos } from "./catalog"
 
@@ -75,5 +76,26 @@ describe("client-action command availability", () => {
 
   it("is the only client action left in the catalog", () => {
     expect(listClientActionCommandInfos().map((info) => info.clientActionId)).toEqual([ASIDE_COMMAND])
+  })
+})
+
+describe("supervisor-held presence freshness", () => {
+  const held = (lastSeenAt: Date, capabilities: Record<string, unknown> = { supervisorHeld: true }) =>
+    ({ capabilities, lastSeenAt }) as BotRuntimeInstance
+  const now = new Date("2026-09-19T12:00:00.000Z").getTime()
+  const minutesAgo = (minutes: number) => new Date(now - minutes * 60_000)
+
+  it("expires held presence the supervisor stopped refreshing", () => {
+    expect(supervisorHeldPresenceExpired(held(minutesAgo(4)), now)).toBe(false)
+    expect(supervisorHeldPresenceExpired(held(minutesAgo(6)), now)).toBe(true)
+  })
+
+  it("never expires presence a session posted for itself", () => {
+    expect(supervisorHeldPresenceExpired(held(minutesAgo(600), {}), now)).toBe(false)
+    expect(supervisorHeldPresenceExpired(held(minutesAgo(600), { supervisorHeld: "yes" }), now)).toBe(false)
+  })
+
+  it("expires held presence with an unreadable timestamp", () => {
+    expect(supervisorHeldPresenceExpired(held(new Date("not a date")), now)).toBe(true)
   })
 })

@@ -578,8 +578,10 @@ export const BotRuntimeInstanceRepository = {
     // wrap recipients read; these are still written so a rollback to the
     // previous release finds the key where it used to live, and are dropped
     // once that window closes. The overwrite rule is the keyring's: a presence
-    // write states the whole key set, and only the server-internal writes that
-    // carry none (the invocation touch, the session-link path) pass `retainBik`.
+    // write states the whole key set, and only the writes that carry none pass
+    // `retainBik` — the invocation touch, the session-link path, and presence a
+    // supervisor holds for a suspended session, whose key is on the session's
+    // disk and comes back with it.
     const publicKey = params.publicKey ?? null
     const publicKeyId = params.publicKeyId ?? null
     const capabilitiesSet = params.mergeCapabilities

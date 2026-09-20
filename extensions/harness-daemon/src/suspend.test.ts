@@ -1,3 +1,4 @@
+import type { SessionPresenceSnapshot } from "@threahq/harness-client"
 import { describe, expect, test } from "bun:test"
 import type { ClaudeNativeSession } from "./claude-registry"
 import { IDLE_SUSPEND_AFTER_MS } from "./idle"
@@ -7,6 +8,14 @@ import type { ManagedAgent } from "./types"
 const NOW = Date.UTC(2026, 8, 9, 12, 0, 0)
 const IDLE_SINCE = NOW - IDLE_SUSPEND_AFTER_MS - 60_000
 const IDLE_DETAIL = `idle ${IDLE_SUSPEND_AFTER_MS / 60_000 + 1}m`
+
+const SNAPSHOT: SessionPresenceSnapshot = {
+  runtimeKind: "claude-code",
+  instanceId: "inst-1",
+  runtimeSessionId: "ccs-abc",
+  capabilities: { sessionControl: true },
+  updatedAt: "2026-09-09T11:59:00.000Z",
+}
 
 const agent = (overrides: Partial<ManagedAgent> = {}): ManagedAgent => ({
   id: "agt_1",
@@ -36,6 +45,7 @@ const session = (overrides: Partial<ClaudeNativeSession> = {}): ClaudeNativeSess
 interface Recorder {
   deps: SuspendDeps
   persisted: ManagedAgent[]
+  presenceReads: string[]
   respawned: Array<[string, string, string]>
   killed: string[]
   notes: Array<{ runtimeSessionId: string; suspendedAt: string; wokeAt: string }>
@@ -46,8 +56,10 @@ function recorder(overrides: Partial<SuspendDeps> = {}): Recorder {
   const respawned: Array<[string, string, string]> = []
   const killed: string[] = []
   const notes: Recorder["notes"] = []
+  const presenceReads: string[] = []
   return {
     persisted,
+    presenceReads,
     respawned,
     killed,
     notes,
@@ -67,6 +79,10 @@ function recorder(overrides: Partial<SuspendDeps> = {}): Recorder {
       sessions: () => [session()],
       probe: { children: () => [], cmdline: () => "", now: () => NOW },
       respawn: (paneId, cwd, command) => respawned.push([paneId, cwd, command]),
+      readPresence: (runtimeSessionId) => {
+        presenceReads.push(runtimeSessionId)
+        return SNAPSHOT
+      },
       killWindow: (windowId) => killed.push(windowId),
       persist: (row) => persisted.push(row),
       writeWakeNote: (note) => notes.push(note),
@@ -84,12 +100,14 @@ describe("suspendAgent", () => {
 
     expect({
       outcome,
-      persisted: it.persisted.map((row) => [row.status, row.suspendedAt]),
+      persisted: it.persisted.map((row) => [row.status, row.suspendedAt, row.heldPresence]),
+      presenceReads: it.presenceReads,
       respawned: it.respawned.map(([paneId, cwd]) => [paneId, cwd]),
       placeholderMentionsTheName: it.respawned[0]?.[2].includes("feature"),
     }).toEqual({
       outcome: { status: "suspended", detail: IDLE_DETAIL },
-      persisted: [["suspended", "2026-09-09T12:00:00.000Z"]],
+      persisted: [["suspended", "2026-09-09T12:00:00.000Z", SNAPSHOT]],
+      presenceReads: ["ccs-abc"],
       respawned: [["%9", "/repo/threa.feature"]],
       placeholderMentionsTheName: true,
     })
@@ -105,13 +123,13 @@ describe("suspendAgent", () => {
 
     expect({
       outcome,
-      persisted: it.persisted.map((row) => [row.status, row.suspendedAt]),
+      persisted: it.persisted.map((row) => [row.status, row.suspendedAt, row.heldPresence]),
       respawned: it.respawned,
     }).toEqual({
       outcome: { status: "skipped", detail: "took work up while winding down: runtime is busy" },
       persisted: [
-        ["suspended", "2026-09-09T12:00:00.000Z"],
-        ["online", undefined],
+        ["suspended", "2026-09-09T12:00:00.000Z", SNAPSHOT],
+        ["online", undefined, undefined],
       ],
       respawned: [],
     })
@@ -153,18 +171,22 @@ describe("suspendAgent", () => {
 describe("wakeAgent", () => {
   test("leaves a wake note, clears the suspension and kills the placeholder window", () => {
     const it = recorder()
-    const suspended = agent({ status: "suspended", suspendedAt: "2026-09-09T11:44:00.000Z" })
+    const suspended = agent({
+      status: "suspended",
+      suspendedAt: "2026-09-09T11:44:00.000Z",
+      heldPresence: SNAPSHOT,
+    })
 
     const woken = wakeAgent(suspended, it.deps)
 
     expect({
-      woken: [woken.status, woken.suspendedAt, woken.updatedAt],
-      persisted: it.persisted.map((row) => row.status),
+      woken: [woken.status, woken.suspendedAt, woken.updatedAt, woken.heldPresence],
+      persisted: it.persisted.map((row) => [row.status, row.heldPresence]),
       killed: it.killed,
       notes: it.notes,
     }).toEqual({
-      woken: ["online", undefined, "2026-09-09T12:00:00.000Z"],
-      persisted: ["online"],
+      woken: ["online", undefined, "2026-09-09T12:00:00.000Z", undefined],
+      persisted: [["online", undefined]],
       killed: ["@7"],
       notes: [
         {

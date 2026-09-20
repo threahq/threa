@@ -18,6 +18,7 @@ import { withClient, type Querier } from "../../db"
 import { checkStreamAccess, projectStreamForUser, StreamRepository, type Stream } from "../streams"
 import { BotRepository } from "../public-api"
 import {
+  isSupervisorHeld,
   BotRuntimeInstanceRepository,
   type BotRuntimeInstance,
   type BotRuntimeSessionLink,
@@ -36,6 +37,23 @@ import {
   SPAWN_MODEL_ARG,
   SPAWN_THINKING_ARG,
 } from "./catalog"
+
+/**
+ * How long held presence stands without a refresh. The supervisor re-posts it
+ * every watch pass (60s); five missed passes is a supervisor that stopped, and
+ * the commands it advertised would have nothing left to deliver them. Scoped to
+ * held presence on purpose: a session that speaks for itself posts presence on
+ * change, not on a timer, so the same check would hide a live agent that has
+ * been quiet for an hour.
+ */
+const SUPERVISOR_HELD_PRESENCE_TTL_MS = 5 * 60_000
+
+export function supervisorHeldPresenceExpired(presence: BotRuntimeInstance, nowMs = Date.now()): boolean {
+  if (!isSupervisorHeld(presence.capabilities)) return false
+  const lastSeenMs = presence.lastSeenAt.getTime()
+  if (!Number.isFinite(lastSeenMs)) return true
+  return nowMs - lastSeenMs > SUPERVISOR_HELD_PRESENCE_TTL_MS
+}
 
 const READ_ONLY_COMMAND_NAMES = new Set(["invite", "stop", "status"])
 
@@ -243,6 +261,7 @@ async function resolveRuntimeCommandTarget(
   // it advertises in `sessionControlCommands`.
   if (resolveRuntimeKindConfig(presence.runtimeKind).sessionLinking === "none") return null
   if (presence.status !== BotRuntimeStatuses.AVAILABLE && presence.status !== BotRuntimeStatuses.BUSY) return null
+  if (supervisorHeldPresenceExpired(presence)) return null
 
   const runtimeSessionId =
     typeof presence.capabilities.runtimeSessionId === "string" ? presence.capabilities.runtimeSessionId : null

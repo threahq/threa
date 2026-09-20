@@ -1,3 +1,4 @@
+import type { SessionPresenceSnapshot } from "@threahq/harness-client"
 import type { RuntimeKind } from "./runtimes"
 
 export type { RuntimeKind }
@@ -56,6 +57,17 @@ export interface ManagedAgent {
    * `status` is `suspended`; the wake path clears both together.
    */
   suspendedAt?: string
+  /**
+   * The session's own last presence, copied here while it was still running so
+   * harnessd can keep publishing it once it is not.
+   *
+   * Captured at suspend rather than read on each pass because the wind-down
+   * kills the session with SIGHUP, and the session answers that by publishing
+   * itself offline — which deletes the snapshot file it had been writing. The
+   * copy is taken before the kill, so the hold survives its own trigger. Set
+   * and cleared with `suspendedAt`.
+   */
+  heldPresence?: SessionPresenceSnapshot
   /**
    * ISO instant before which the idle sweep leaves this row alone, whatever the
    * runtime's own status says. An agent waiting on a timer it started itself
