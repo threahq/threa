@@ -28,7 +28,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { LinkEditor } from "./link-editor"
 import { indentSelection, dedentSelection, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
 import { toggleMultilineBlock } from "./multiline-blocks"
-import { insertMath } from "./insert-math"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings, formatKeyBinding } from "@/lib/keyboard-shortcuts"
@@ -240,7 +239,7 @@ export function EditorToolbar({
         keyboardAccessible={inline}
       />
       <ToolbarButton
-        onAction={() => insertMath(editor)}
+        onAction={() => editor.chain().focus().insertMath().run()}
         icon={Sigma}
         label="Math"
         roomy={isMobileInlineToolbar}

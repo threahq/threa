@@ -1522,3 +1522,89 @@ describe("@threahq/prosemirror agent block round-trip", () => {
     expect(parsed.content?.[0]?.type).toBe("blockquote")
   })
 })
+
+describe("@threahq/prosemirror markdown math", () => {
+  const inline = (tex: string): JSONContent => ({ type: "math", attrs: { tex, display: false } })
+  const block = (tex: string): JSONContent => ({ type: "math", attrs: { tex, display: true } })
+
+  it("parses inline math as a node, delimiters and all", () => {
+    expect(parseMarkdown("Euler: $e^{i\\pi}+1=0$ holds").content?.[0]?.content).toEqual([
+      { type: "text", text: "Euler: " },
+      inline("e^{i\\pi}+1=0"),
+      { type: "text", text: " holds" },
+    ])
+  })
+
+  it("parses the marks around an equation, and leaves the equation unmarked", () => {
+    expect(parseMarkdown("**Answer: $x=5$**").content).toEqual([
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "Answer: ", marks: [{ type: "bold" }] }, inline("x=5")],
+      },
+    ])
+  })
+
+  it("reads `\\[…\\]` as math when a link follows it on the line", () => {
+    const [paragraph] = parseMarkdown("\\[x\\] see [a](https://b.c)").content ?? []
+
+    expect(paragraph.content?.[0]).toEqual(block("x"))
+  })
+
+  it("keeps a pipe in a table cell's TeX the same across round trips", () => {
+    const cellTex = (markdown: string) => {
+      const texts: string[] = []
+      const walk = (node: JSONContent) => {
+        if (node.type === "math") texts.push(String(node.attrs?.tex))
+        node.content?.forEach(walk)
+      }
+      walk(parseMarkdown(markdown))
+      return texts
+    }
+    const once = serializeToMarkdown(parseMarkdown("| a |\n| --- |\n| $x\\|y$ and $\\\\|v\\\\|$ |"))
+
+    expect(cellTex(once)).toEqual(["x|y", "\\|v\\|"])
+    expect(serializeToMarkdown(parseMarkdown(once))).toBe(once)
+  })
+
+  it("parses `\\(…\\)` and `\\[…\\]`, which is what an LLM answer pastes in", () => {
+    expect(parseMarkdown("see \\(x^2\\)").content?.[0]?.content).toEqual([
+      { type: "text", text: "see " },
+      inline("x^2"),
+    ])
+    expect(parseMarkdown("\\[\\frac{9}{31}\\]").content?.[0]?.content).toEqual([block("\\frac{9}{31}")])
+  })
+
+  it("leaves prices alone", () => {
+    expect(parseMarkdown("costs $5 and $10").content?.[0]?.content).toEqual([
+      { type: "text", text: "costs $5 and $10" },
+    ])
+  })
+
+  it("does not read a TeX body as markdown", () => {
+    // `\{`, `\\` and `_` are all CommonMark syntax; reaching the parser eats them.
+    expect(parseMarkdown("$\\{a\\\\b_c\\}$").content?.[0]?.content).toEqual([inline("\\{a\\\\b_c\\}")])
+  })
+
+  it("round-trips a paragraph holding both kinds", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "where " }, inline("n > 0")] },
+        { type: "paragraph", content: [block("\\sum_{i=1}^{n} i")] },
+      ],
+    }
+    expect(parseMarkdown(serializeToMarkdown(doc))).toEqual(doc)
+  })
+
+  it("serializes an equation that would glue to its neighbour with the escaped delimiters", () => {
+    // `costs$5$` is not math to the reader on the other side, so the wire form
+    // switches rather than emitting something that reads back as prose.
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "costs" }, inline("x")] }],
+    }
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("costs\\(x\\)")
+    expect(parseMarkdown(markdown)).toEqual(doc)
+  })
+})

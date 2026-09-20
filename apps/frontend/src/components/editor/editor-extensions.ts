@@ -37,7 +37,7 @@ import { InAppLinkExtension } from "./in-app-link-extension"
 import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
-import { MathPreview } from "./math-preview-extension"
+import { MathExtension } from "./math-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 import { ComposerPillDragExtension } from "./composer-pill-drag-extension"
 
@@ -141,9 +141,9 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
 
     ComposerPillDragExtension,
 
-    // Draws a finished `$…$` / `\[…\]` as the equation it will send, except
-    // the one the caret is in. View-only, so the document stays the text typed.
-    MathPreview,
+    // An equation is a node, like a code block: KaTeX in the composer, `$…$` on
+    // the wire, and a tap opens its TeX rather than raw delimiters.
+    MathExtension,
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,

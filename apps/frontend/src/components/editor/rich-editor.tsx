@@ -13,6 +13,7 @@ import { applyExternalEditorContent } from "./apply-external-content"
 import { ComposerPillCopyButton } from "./composer-pill-copy-button"
 import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
+import { openSelectedMath } from "./math-extension"
 import { EditorToolbar } from "./editor-toolbar"
 import {
   serializeToMarkdown,
@@ -1000,6 +1001,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         if (event.key === "Enter" && !event.shiftKey && messageSendModeRef.current === "enter") {
           if (currentEditor && isSuggestionActive(currentEditor)) {
             return false // Let suggestion popup handle Enter
+          }
+          // A selected equation opens its TeX instead — the send path runs
+          // ahead of the keymaps, so it is the only place this can be caught.
+          if (currentEditor && openSelectedMath(currentEditor)) {
+            event.preventDefault()
+            return true
           }
           event.preventDefault()
           onSubmitRef.current()

@@ -39,9 +39,13 @@ const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/
 /**
  * Regions whose `$` and `\[` are not delimiters. Code is the obvious one; URLs
  * matter because remark-gfm autolinks bare ones, and `https://x/a$b` next to
- * `https://y/c$d` would otherwise read as one inline equation.
+ * `https://y/c$d` would otherwise read as one inline equation. A link is
+ * protected from its opening bracket, not just its destination: an escaped
+ * bracket in the label — `[report\[final\].pdf](attachment:att_1)` — is a
+ * `\[…\]` pair, and reading it as display math ate the whole reference.
  */
-const PROTECTED = /\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
+const PROTECTED =
+  /(?<!\\)\[(?:\\.|[^\]\n])*\]\([^)\n]*\)|\]\([^)\n]*\)|<[A-Za-z][A-Za-z0-9+.-]*:[^>\s]*>|(?:https?|mailto):\S+/g
 
 /**
  * Replace every math run outside code and URLs with a token carrying its TeX.
@@ -103,6 +107,15 @@ export function extractMath(markdown: string): string {
  * Split a parsed text run on math tokens, or null when it holds none. The `tex`
  * that comes back is exactly what `extractMath` took out of the source.
  */
+/**
+ * A table cell escapes every `|` so the pipe cannot end the cell, and that
+ * reaches into the TeX: the source is tokenized before the row is split. Undone
+ * here, or `a|b` draws as a norm and gains a backslash on every edit.
+ */
+export function unescapeTableCellTex(tex: string): string {
+  return tex.replace(/\\\|/g, "|")
+}
+
 export function splitMathTokens(text: string): MathPart[] | null {
   if (!text.includes(TOKEN_OPEN)) return null
   const parts: MathPart[] = []

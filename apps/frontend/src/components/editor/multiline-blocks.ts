@@ -2,6 +2,7 @@ import type { JSONContent, Editor } from "@tiptap/react"
 import { Fragment, Slice, type Node as ProseMirrorNode, type Schema } from "@tiptap/pm/model"
 import { NodeSelection, Selection, type Transaction, type EditorState } from "@tiptap/pm/state"
 import { parseMarkdown, type EmojiLookup, type MentionTypeLookup, type ParseMarkdownOptions } from "./editor-markdown"
+import { openSelectedMath } from "./math-extension"
 
 export interface BeforeInputEventLike {
   inputType: string
@@ -780,10 +781,17 @@ export function insertPastedText(
  * Shared by keyboard shortcuts and mobile beforeinput handling.
  */
 export function handleEnterTextBehavior(editor: Editor): boolean {
+  // A selected equation opens its TeX rather than being replaced by a newline.
+  if (openSelectedMath(editor)) return true
+
   const { $from } = editor.state.selection
 
+  // `textContent` skips atoms, so a fence typed after an equation or a mention
+  // would match and the trigger would delete the atom along with it.
+  const textOnly = $from.parent.content.size === $from.parent.textContent.length
+
   // Check for ``` code block trigger
-  if ($from.parent.isTextblock && !editor.isActive("codeBlock")) {
+  if ($from.parent.isTextblock && textOnly && !editor.isActive("codeBlock")) {
     const lineText = $from.parent.textContent
     const match = lineText.match(/^```(\w*)$/)
     if (match) {
@@ -800,6 +808,19 @@ export function handleEnterTextBehavior(editor: Editor): boolean {
         .setCodeBlock({ language })
         .run()
     }
+  }
+
+  // `$$` then Enter opens a display equation, the way ``` opens a code block.
+  if ($from.parent.isTextblock && textOnly && !editor.isActive("codeBlock") && $from.parent.textContent === "$$") {
+    return editor
+      .chain()
+      .focus()
+      .command(({ tr }) => {
+        tr.delete($from.start(), $from.end())
+        return true
+      })
+      .insertMath({ display: true })
+      .run()
   }
 
   // In lists: exit on empty item, otherwise split to create new item

@@ -103,3 +103,27 @@ describe("agentBlock validation", () => {
     expect(tryValidateContent(agentBlock({ authorId: "persona_1" }))).toBeNull()
   })
 })
+
+describe("math validation", () => {
+  it("keeps an equation's TeX and display flag through validation", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "where " },
+            { type: "math", attrs: { tex: "\\sum_{i=1}^{n} i", display: false } },
+          ],
+        },
+      ],
+    }
+    expect(validateContent(doc) as JSONContent).toEqual(doc)
+  })
+
+  it("rejects an equation with no TeX attrs at all", () => {
+    expect(
+      tryValidateContent({ type: "doc", content: [{ type: "paragraph", content: [{ type: "math" }] }] })
+    ).toBeNull()
+  })
+})

@@ -14,6 +14,7 @@ import {
   serializeAttachmentMetadata,
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
+import { extractMath, splitMathTokens, unescapeTableCellTex } from "./math"
 import {
   buildAgentBlockHref,
   buildGiphyHref,
@@ -377,7 +378,8 @@ function isAtomNode(node: JSONContent): boolean {
     node.type === "emoji" ||
     node.type === "memoEmbed" ||
     node.type === "inAppLink" ||
-    node.type === "giphyEmbed"
+    node.type === "giphyEmbed" ||
+    node.type === "math"
   )
 }
 
@@ -473,15 +475,39 @@ function resolveSerializedLinkHref(displayText: string, href: string): string {
   return href
 }
 
+/**
+ * A math node back to the delimiters `scanMathSpans` reads it from, so a sent
+ * message renders the equation the composer drew.
+ *
+ * `$…$` is the readable form but it is deliberately fussy on the wire: an
+ * opener glued to a word is part of that word, a closer followed by a digit is
+ * a price, and a body holding another `$` is rejected outright. The `\(…\)`
+ * form carries all three, so it is what a span in those positions serializes
+ * to rather than text that would come back as prose.
+ */
+function serializeMath(node: JSONContent, before: string, after: string): string {
+  const raw = node.attrs?.tex
+  const tex = typeof raw === "string" ? raw.trim() : ""
+  if (!tex) return ""
+  if (node.attrs?.display) return tex.includes("$$") ? `\\[${tex}\\]` : `$$${tex}$$`
+  const ambiguous = tex.includes("$") || /[\w$\\]$/.test(before) || /^[\d$]/.test(after)
+  return ambiguous ? `\\(${tex}\\)` : `$${tex}$`
+}
+
 function serializeInline(nodes: JSONContent[] | undefined): string {
   if (!nodes) return ""
+
+  const texts = nodes.map((node) => (node.type === "math" ? "" : getNodeText(node)))
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].type !== "math") continue
+    texts[i] = serializeMath(nodes[i], texts.slice(0, i).join(""), texts.slice(i + 1).join(""))
+  }
 
   // Group consecutive nodes with the same effective marks.
   const groups: Array<{ text: string; marks: JSONContentMark[] }> = []
 
   for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i]
-    const text = getNodeText(node)
+    const text = texts[i]
     if (!text) continue
 
     const marks = getEffectiveMarks(nodes, i)
@@ -601,7 +627,11 @@ export function parseMarkdown(
     return { type: "doc", content: [{ type: "paragraph" }] }
   }
 
-  const lines = normalizeMarkdownTables(markdown).split("\n")
+  // Math is lifted into opaque tokens before anything reads the source, for the
+  // same reason the renderer does it (`extractMath`): a TeX body is not
+  // markdown. It also collapses a `$$` block written across lines into one
+  // token, so the line-based loop below never has to know about fences.
+  const lines = extractMath(normalizeMarkdownTables(markdown)).split("\n")
   const content: JSONContent[] = []
   let i = 0
 
@@ -996,7 +1026,11 @@ function buildTableCell(type: "tableHeader" | "tableCell", text: string, options
   const segments = text.split(/<br\s*\/?>/i)
   const paragraphs: JSONContent[] = segments.map((segment) => {
     const restored = segment.replace(/&lt;br\s*\/?&gt;/gi, "<br>")
-    const inline = parseInlineMarkdown(restored, options)
+    const inline = parseInlineMarkdown(restored, options).map((node) =>
+      node.type === "math"
+        ? { ...node, attrs: { ...node.attrs, tex: unescapeTableCellTex(String(node.attrs?.tex ?? "")) } }
+        : node
+    )
     return inline.length > 0 ? { type: "paragraph", content: inline } : { type: "paragraph" }
   })
   return {
@@ -1108,7 +1142,25 @@ function tokenizeBalancedLinkDestinations(
   return { text: tokenized, hrefByToken }
 }
 
+/**
+ * Math tokens stay opaque through the whole mark and link parse and are
+ * expanded once, here: splitting first would hand the two halves of
+ * `**Answer: $x$**` to separate parses, and expanding inside a mark would put
+ * that mark on a node whose schema allows none.
+ */
 function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONContent[] {
+  return parseInlineTokens(text, options).flatMap((node) => {
+    const parts = node.type === "text" && node.text ? splitMathTokens(node.text) : null
+    if (!parts) return [node]
+    return parts
+      .filter((part) => "tex" in part || part.text)
+      .map((part) =>
+        "tex" in part ? { type: "math", attrs: { tex: part.tex, display: part.display } } : { ...node, text: part.text }
+      )
+  })
+}
+
+function parseInlineTokens(text: string, options: ParseOptions = {}): JSONContent[] {
   if (!text) return []
 
   const result: JSONContent[] = []
@@ -1221,7 +1273,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       // mention/channelLink node here would bury the href in a mark that
       // consumers of the node tree (collectLinkUrls, the resolver) don't treat
       // as the link it is. Pointer forms (`user:`/`channel:`) were handled above.
-      const innerContent = parseInlineMarkdown(linkText, {
+      const innerContent = parseInlineTokens(linkText, {
         ...options,
         enableMentions: false,
         enableChannels: false,
@@ -1235,7 +1287,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[11]) {
       // BoldItalic: ***text***
       const boldItalicText = match[12]
-      const innerContent = parseInlineMarkdown(boldItalicText, options)
+      const innerContent = parseInlineTokens(boldItalicText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
@@ -1245,7 +1297,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[13]) {
       // Bold: **text**
       const boldText = match[14]
-      const innerContent = parseInlineMarkdown(boldText, options)
+      const innerContent = parseInlineTokens(boldText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
@@ -1255,7 +1307,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[15]) {
       // Italic: *text*
       const italicText = match[16]
-      const innerContent = parseInlineMarkdown(italicText, options)
+      const innerContent = parseInlineTokens(italicText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
@@ -1265,7 +1317,7 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
     } else if (match[17]) {
       // Strike: ~~text~~
       const strikeText = match[18]
-      const innerContent = parseInlineMarkdown(strikeText, options)
+      const innerContent = parseInlineTokens(strikeText, options)
       for (const node of innerContent) {
         result.push({
           ...node,
