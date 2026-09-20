@@ -12,6 +12,7 @@ import {
   e2eUserKeyAccount,
   readLegacyBikFile,
   resolveKeyStore,
+  runKeychainCommand,
   type CommandRunner,
   type E2eKeyRecord,
 } from "./keyring"
@@ -249,6 +250,27 @@ describe("MacKeychainStore", () => {
     store.remove("user-abc")
 
     expect(store.read("user-abc")).toBeUndefined()
+  })
+})
+
+describe("runKeychainCommand", () => {
+  test("gives up on a command that never answers and says the keyring is likely locked", () => {
+    const startedAt = Date.now()
+    const result = runKeychainCommand("sleep", ["30"], undefined, 200)
+
+    expect(Date.now() - startedAt).toBeLessThan(5_000)
+    expect(result).toEqual({
+      status: -1,
+      stdout: "",
+      stderr: "sleep gave no answer within 200ms; the keyring is probably locked and waiting on a password prompt",
+      unavailable: true,
+    })
+  })
+
+  test("a store backed by a hung command throws instead of blocking", () => {
+    const store = new SecretServiceStore({ exec: () => runKeychainCommand("sleep", ["30"], undefined, 200) })
+
+    expect(() => store.read("bot-1")).toThrow(/Secret Service unavailable: sleep gave no answer within 200ms/)
   })
 })
 
