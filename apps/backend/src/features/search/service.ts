@@ -1,12 +1,6 @@
 import { Pool } from "pg"
 import { SearchRepository, type ConversationSearchResult, type SearchResult, type ResolvedFilters } from "./repository"
-import type {
-  EmbeddingServiceLike,
-  MemoExplorerResult,
-  MemoExplorerSearchParams,
-  RelevanceScorerLike,
-  RerankerLike,
-} from "../memos"
+import type { EmbeddingServiceLike, MemoExplorerResult, MemoExplorerSearchParams, RelevanceScorerLike } from "../memos"
 import { buildSearchClusters, type SearchCluster } from "./clusters"
 import { logger } from "../../lib/logger"
 import type { FeatureFlagValue, SearchRefinement, StreamType } from "@threahq/types"
@@ -18,11 +12,10 @@ import {
   searchRankingForFlag,
   type SearchRanking,
   SEARCH_DEEP_CANDIDATE_POOL,
-  SEARCH_RERANK_CANDIDATE_LIMIT,
-  SEARCH_RERANK_SNIPPET_CHARS,
   SEARCH_RELEVANCE_FLOOR,
   SEARCH_RRF_K,
   SEARCH_SCORE_CANDIDATE_POOL,
+  SEARCH_SCORE_SNIPPET_CHARS,
 } from "./config"
 import { E2eStreamsRepository } from "../e2e-streams"
 import type { QueryExpanderLike } from "./query-expansion"
@@ -122,7 +115,6 @@ export interface SearchServiceDependencies {
   pool: Pool
   embeddingService: EmbeddingServiceLike
   queryExpander: QueryExpanderLike
-  reranker: RerankerLike
   relevanceScorer: RelevanceScorerLike
   memoSearch: MemoSearchLike
   refiner: SearchRefinerLike
@@ -168,7 +160,6 @@ export class SearchService {
   private pool: Pool
   private embeddingService: EmbeddingServiceLike
   private queryExpander: QueryExpanderLike
-  private reranker: RerankerLike
   private relevanceScorer: RelevanceScorerLike
   private memoSearch: MemoSearchLike
   private refiner: SearchRefinerLike
@@ -177,7 +168,6 @@ export class SearchService {
     this.pool = deps.pool
     this.embeddingService = deps.embeddingService
     this.queryExpander = deps.queryExpander
-    this.reranker = deps.reranker
     this.relevanceScorer = deps.relevanceScorer
     this.memoSearch = deps.memoSearch
     this.refiner = deps.refiner
@@ -192,8 +182,8 @@ export class SearchService {
    *
    * When deep=true (and not exact/skipEmbedding, and the trimmed query is
    * non-empty), the query is rewritten into alternative phrasings, each
-   * phrasing runs the same hybrid search, the result lists are fused by
-   * reciprocal rank, and a fail-open LLM reranker reorders the top window.
+   * phrasing runs the same hybrid search, and the result lists are fused by
+   * reciprocal rank before scoring.
    *
    * The caller resolves access boundaries and passes them via `permissions`.
    * This keeps SearchService auth-agnostic — it works for session auth, API keys, and agents.
@@ -456,9 +446,8 @@ export class SearchService {
     })
     if (!scored) return candidates
 
-    return this.orderByRelevance(normalizedQuery, candidates, { workspaceId, userId }).then((ordered) =>
-      ordered.slice(0, limit)
-    )
+    const ordered = await this.orderByRelevance(normalizedQuery, candidates, { workspaceId, userId })
+    return ordered.slice(0, limit)
   }
 
   /**
@@ -476,7 +465,7 @@ export class SearchService {
 
     const scores = await this.relevanceScorer.score(
       query,
-      candidates.map((candidate) => ({ abstract: candidate.content.slice(0, SEARCH_RERANK_SNIPPET_CHARS) })),
+      candidates.map((candidate) => ({ abstract: candidate.content.slice(0, SEARCH_SCORE_SNIPPET_CHARS) })),
       context
     )
     if (!scores) return candidates
@@ -542,25 +531,14 @@ export class SearchService {
     )
 
     const fused = fuseRankedLists(lists, SEARCH_RRF_K)
-    const head = fused.slice(0, SEARCH_RERANK_CANDIDATE_LIMIT)
-    const tail = fused.slice(SEARCH_RERANK_CANDIDATE_LIMIT)
-
-    let ordered = head
-    if (head.length > 1) {
-      const order = await this.reranker.rerank(
-        normalizedQuery,
-        head.map((r) => ({ abstract: r.content.slice(0, SEARCH_RERANK_SNIPPET_CHARS) })),
-        { workspaceId }
-      )
-      ordered = order.map((i) => head[i])
-    }
-
     logger.debug(
       { workspaceId, variantCount: variants.length, candidateCount: fused.length },
       "Deep search fusion complete"
     )
 
-    return [...ordered, ...tail].slice(0, limit)
+    const scorePool = fused.slice(0, Math.max(limit, SEARCH_SCORE_CANDIDATE_POOL))
+    const ordered = await this.orderByRelevance(normalizedQuery, scorePool, { workspaceId, userId })
+    return ordered.slice(0, limit)
   }
 
   /**

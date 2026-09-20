@@ -48,11 +48,8 @@ export const SEARCH_EXPANSION_MAX_VARIANTS = 3
 /** Rows pulled per query variant before fusion; the fused list is trimmed to the caller's limit after rerank. */
 export const SEARCH_DEEP_CANDIDATE_POOL = 60
 
-/** Top-K window handed to the reranker; the un-reranked tail is appended (recall protection). */
-export const SEARCH_RERANK_CANDIDATE_LIMIT = 30
-
-/** Content chars per candidate shown to the reranker. */
-export const SEARCH_RERANK_SNIPPET_CHARS = 600
+/** Content chars per candidate shown to the relevance scorer. */
+export const SEARCH_SCORE_SNIPPET_CHARS = 600
 
 export const SEARCH_RRF_K = 60
 

@@ -32,14 +32,14 @@ function fakeExpander(variant: string) {
   return { expand: async () => [variant] }
 }
 
-/** Recording reranker that reverses the candidate order (proves rerank output is applied). */
-function makeReversingReranker() {
+/** Recording scorer that ranks the candidates in reverse (proves the scores drive the order). */
+function makeReversingScorer() {
   const calls: { query: string; candidates: RerankCandidate[]; context: RerankContext }[] = []
   return {
     calls,
-    rerank: async (query: string, candidates: RerankCandidate[], context: RerankContext) => {
+    score: async (query: string, candidates: RerankCandidate[], context: RerankContext) => {
       calls.push({ query, candidates, context })
-      return Array.from({ length: candidates.length }, (_, i) => candidates.length - 1 - i)
+      return candidates.map((_, i) => 1 - i / candidates.length)
     },
   }
 }
@@ -104,7 +104,7 @@ describe("Message deep search retrieval", () => {
 
   async function permissionsFor(wsId: string, uid: string): Promise<SearchPermissions> {
     const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, wsId, uid, {})
-    return { accessibleStreamIds }
+    return { accessibleStreamIds, userId: uid }
   }
 
   /** Seeds A (deploy), B (build pipeline, only reachable via the variant), and C (unrelated). */
@@ -130,19 +130,18 @@ describe("Message deep search retrieval", () => {
     return { a, b, c }
   }
 
-  test("deep: true fuses the variant's hits in, excludes the unrelated message, and applies the reranker's order", async () => {
+  test("deep: true fuses the variant's hits in, excludes the unrelated message, and applies the scorer's order", async () => {
     const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
     const { a, b, c } = await seedMessages(wsId, sid, uid)
 
-    const reranker = makeReversingReranker()
+    const scorer = makeReversingScorer()
     const service = new SearchService({
       pool,
       embeddingService: fakeEmbeddingService(unit(0)),
       queryExpander: fakeExpander("build pipeline exploded"),
-      reranker,
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
-      relevanceScorer: new StubRelevanceScorer(),
+      relevanceScorer: scorer,
     })
 
     const { results } = await service.search({
@@ -156,33 +155,28 @@ describe("Message deep search retrieval", () => {
     expect(results.map((r) => r.id).sort()).toEqual([a.id, b.id].sort())
     expect(results.map((r) => r.id)).not.toContain(c.id)
 
-    expect(reranker.calls).toHaveLength(1)
-    const { query, candidates, context } = reranker.calls[0]!
-    expect({ query, context }).toEqual({ query: "deploy failed", context: { workspaceId: wsId } })
+    expect(scorer.calls).toHaveLength(1)
+    const { query, candidates, context } = scorer.calls[0]!
+    expect({ query, context }).toEqual({ query: "deploy failed", context: { workspaceId: wsId, userId: uid } })
     const abstractByMessageId: Record<string, string> = { [a.id]: a.contentMarkdown, [b.id]: b.contentMarkdown }
     expect(candidates.map((cand) => cand.abstract).sort()).toEqual(Object.values(abstractByMessageId).sort())
 
-    // Final order matches the reranker's reversed permutation over the fused head.
+    // The scores descend with the candidate index, so the final order is the order scored.
     const contentToId = new Map(Object.entries(abstractByMessageId).map(([id, content]) => [content, id]))
-    const expectedOrder = [...candidates].reverse().map((cand) => contentToId.get(cand.abstract))
-    expect(results.map((r) => r.id)).toEqual(expectedOrder)
+    expect(results.map((r) => r.id)).toEqual(candidates.map((cand) => contentToId.get(cand.abstract)))
   })
 
-  test("deep: false only searches the literal query, never calls the expander or reranker", async () => {
+  test("deep: false only searches the literal query and never calls the expander", async () => {
     const { workspaceId: wsId, userId: uid, streamId: sid } = await seedWorkspaceWithStream()
     const { a, b } = await seedMessages(wsId, sid, uid)
 
     const expand = async () => {
       throw new Error("expander must not be called when deep is false")
     }
-    const rerank = async () => {
-      throw new Error("reranker must not be called when deep is false")
-    }
     const service = new SearchService({
       pool,
       embeddingService: fakeEmbeddingService(unit(0)),
       queryExpander: { expand },
-      reranker: { rerank },
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
       relevanceScorer: new StubRelevanceScorer(),
@@ -211,7 +205,6 @@ describe("Message deep search retrieval", () => {
       pool,
       embeddingService: fakeEmbeddingService(unit(0)),
       queryExpander: { expand },
-      reranker: { rerank: async (_q, candidates) => candidates.map((_, i) => i) },
       memoSearch: { search: async () => [] },
       refiner: { refine: async () => null },
       relevanceScorer: new StubRelevanceScorer(),

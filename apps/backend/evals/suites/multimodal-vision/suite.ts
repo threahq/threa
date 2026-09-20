@@ -290,7 +290,6 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       pool: ctx.pool,
       embeddingService,
       queryExpander: new SearchQueryExpander({ ai: ctx.ai }),
-      reranker: new Reranker({ ai: ctx.ai, subject: "chat messages", functionId: "search-rerank" }),
       relevanceScorer: new DecisionsRelevanceScorer({
         ai: ctx.ai,
         subject: "chat messages",

@@ -15,7 +15,7 @@ export interface QueryExpansionContext {
 }
 
 /**
- * Deep search's query-rewrite step. Fail-open like the reranker: any
+ * Deep search's query-rewrite step. Fail-open like the relevance scorer: any
  * failure (timeout, abort, model error, malformed output) returns `[]` so a
  * broken expander can only shrink deep mode to the original query, never
  * block search.

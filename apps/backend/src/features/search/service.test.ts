@@ -1,13 +1,8 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import type { EmbeddingServiceLike, RelevanceScorerLike, RerankerLike } from "../memos"
+import type { EmbeddingServiceLike, RelevanceScorerLike } from "../memos"
 import { SearchRepository, type SearchResult } from "./repository"
 import { SearchService, fuseRankedLists, type MemoSearchLike } from "./service"
-import {
-  SEARCH_DEEP_CANDIDATE_POOL,
-  SEARCH_RELEVANCE_FLOOR,
-  SEARCH_RERANK_CANDIDATE_LIMIT,
-  SEARCH_SCORE_CANDIDATE_POOL,
-} from "./config"
+import { SEARCH_DEEP_CANDIDATE_POOL, SEARCH_RELEVANCE_FLOOR, SEARCH_SCORE_CANDIDATE_POOL } from "./config"
 import type { QueryExpanderLike } from "./query-expansion"
 import type { SearchRefinerLike, SearchRefineInput } from "./refine"
 
@@ -16,14 +11,12 @@ const pool = {
 }
 
 const inertExpander: QueryExpanderLike = { expand: async () => [] }
-const identityReranker: RerankerLike = { rerank: async (_q, candidates) => candidates.map((_, i) => i) }
 const unscoringScorer: RelevanceScorerLike = { score: async () => null }
 
 function makeService(
   overrides: {
     embeddingService?: EmbeddingServiceLike
     queryExpander?: QueryExpanderLike
-    reranker?: RerankerLike
     relevanceScorer?: RelevanceScorerLike
     memoSearch?: MemoSearchLike
     refiner?: SearchRefinerLike
@@ -33,7 +26,6 @@ function makeService(
     pool: pool as never,
     embeddingService: overrides.embeddingService ?? { embed: async () => [], embedBatch: async () => [] },
     queryExpander: overrides.queryExpander ?? inertExpander,
-    reranker: overrides.reranker ?? identityReranker,
     relevanceScorer: overrides.relevanceScorer ?? unscoringScorer,
     memoSearch: overrides.memoSearch ?? { search: async () => [] },
     refiner: overrides.refiner ?? { refine: async () => null },
@@ -177,13 +169,15 @@ describe("SearchService deep mode", () => {
     ])
   })
 
-  test("hands the reranker at most SEARCH_RERANK_CANDIDATE_LIMIT candidates whose abstract is the message content", async () => {
-    const results = Array.from({ length: 40 }, (_, i) => fakeResult(`msg_${i}`, { content: `content ${i}` }))
+  test("scores the whole fused pool, not a head window, and shows the scorer the message content", async () => {
+    const results = Array.from({ length: SEARCH_SCORE_CANDIDATE_POOL }, (_, i) =>
+      fakeResult(`msg_${i}`, { content: `content ${i}` })
+    )
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue(results)
-    const rerank = mock(async (_q: string, candidates: { abstract: string }[]) => candidates.map((_, i) => i))
+    const score = mock<RelevanceScorerLike["score"]>(async (_q, candidates) => candidates.map(() => 1))
     const service = makeService({
       embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
-      reranker: { rerank },
+      relevanceScorer: { score },
     })
 
     await service.search({
@@ -194,25 +188,17 @@ describe("SearchService deep mode", () => {
       deep: true,
     })
 
-    expect(rerank).toHaveBeenCalledTimes(1)
-    const [, candidates] = rerank.mock.calls[0]!
-    expect(candidates).toHaveLength(SEARCH_RERANK_CANDIDATE_LIMIT)
-    expect((candidates as { abstract: string }[]).map((c) => c.abstract)).toEqual(
-      results.slice(0, SEARCH_RERANK_CANDIDATE_LIMIT).map((r) => r.content)
-    )
+    expect(score).toHaveBeenCalledTimes(1)
+    const candidates = score.mock.calls[0]![1]
+    expect(candidates.map((c) => c.abstract)).toEqual(results.map((r) => r.content))
   })
 
-  test("applies the reranker's returned order and keeps the un-reranked tail in fused order", async () => {
-    const total = SEARCH_RERANK_CANDIDATE_LIMIT + 5
-    const results = Array.from({ length: total }, (_, i) => fakeResult(`msg_${i}`))
+  test("orders the deep result by score and drops what falls below the floor", async () => {
+    const results = [fakeResult("a"), fakeResult("b"), fakeResult("c")]
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue(results)
-    // Reverse the head.
-    const rerank = mock(async (_q: string, candidates: unknown[]) =>
-      Array.from({ length: candidates.length }, (_, i) => candidates.length - 1 - i)
-    )
     const service = makeService({
       embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
-      reranker: { rerank },
+      relevanceScorer: { score: async () => [0.4, 0.9, SEARCH_RELEVANCE_FLOOR - 0.01] },
     })
 
     const { results: searchResults } = await service.search({
@@ -221,15 +207,9 @@ describe("SearchService deep mode", () => {
       permissions: { accessibleStreamIds: ["stream_1"] },
       query: "q",
       deep: true,
-      limit: total,
     })
 
-    const reversedHead = results
-      .slice(0, SEARCH_RERANK_CANDIDATE_LIMIT)
-      .reverse()
-      .map((r) => r.id)
-    const tail = results.slice(SEARCH_RERANK_CANDIDATE_LIMIT).map((r) => r.id)
-    expect(searchResults.map((r) => r.id)).toEqual([...reversedHead, ...tail])
+    expect(searchResults.map((r) => r.id)).toEqual(["b", "a"])
   })
 
   test("the embedding-batch fallback keeps the searcher's identity, so spend stays attributed", async () => {
@@ -276,15 +256,15 @@ describe("SearchService deep mode", () => {
     expect(expand).not.toHaveBeenCalled()
   })
 
-  test("expander returning [] still runs a single hybrid search and rerank", async () => {
+  test("expander returning [] still runs a single hybrid search and scores it", async () => {
     const results = [fakeResult("a"), fakeResult("b")]
     const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue(results)
     const expand = mock(async () => [])
-    const rerank = mock(async (_q: string, candidates: unknown[]) => candidates.map((_, i) => i))
+    const score = mock<RelevanceScorerLike["score"]>(async (_q, candidates) => candidates.map(() => 1))
     const service = makeService({
       embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
       queryExpander: { expand },
-      reranker: { rerank },
+      relevanceScorer: { score },
     })
 
     const { results: searchResults } = await service.search({
@@ -296,7 +276,7 @@ describe("SearchService deep mode", () => {
     })
 
     expect(hybridSearch).toHaveBeenCalledTimes(1)
-    expect(rerank).toHaveBeenCalledTimes(1)
+    expect(score).toHaveBeenCalledTimes(1)
     expect(searchResults.map((r) => r.id)).toEqual(["a", "b"])
   })
 })
@@ -397,11 +377,11 @@ describe("SearchService with the search flag off", () => {
     const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
     const conversationSearch = spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
     const expand = mock(async () => ["variant"])
-    const rerank = mock(async (_q: string, candidates: unknown[]) => candidates.map((_, i) => i))
+    const score = mock<RelevanceScorerLike["score"]>(async () => null)
     const service = makeService({
       embeddingService: { embed: async () => [0], embedBatch: async (texts: string[]) => texts.map(() => [0]) },
       queryExpander: { expand },
-      reranker: { rerank },
+      relevanceScorer: { score },
     })
 
     const { conversations } = await service.search({
@@ -418,7 +398,7 @@ describe("SearchService with the search flag off", () => {
       expect.objectContaining({ query: "original query", ranking: "legacy", limit: 20 })
     )
     expect(expand).not.toHaveBeenCalled()
-    expect(rerank).not.toHaveBeenCalled()
+    expect(score).not.toHaveBeenCalled()
     expect(conversationSearch).not.toHaveBeenCalled()
     expect(conversations).toEqual([])
   })

@@ -416,9 +416,6 @@ export async function startServer(): Promise<ServerInstance> {
     : new Reranker({ ai, subject: "knowledge memos", functionId: "memo-rerank" })
   const queryExpander = config.useStubAI ? new StubQueryExpander() : new SearchQueryExpander({ ai })
   const searchRefiner = config.useStubAI ? new StubSearchRefiner() : new SearchRefiner({ ai })
-  const messageReranker = config.useStubAI
-    ? new StubReranker()
-    : new Reranker({ ai, subject: "chat messages", functionId: "search-rerank" })
   const messageRelevanceScorer = config.useStubAI
     ? new StubRelevanceScorer()
     : new ResidencyRoutedRelevanceScorer({
@@ -431,7 +428,6 @@ export async function startServer(): Promise<ServerInstance> {
     pool,
     embeddingService,
     queryExpander,
-    reranker: messageReranker,
     relevanceScorer: messageRelevanceScorer,
     memoSearch: memoExplorerService,
     refiner: searchRefiner,
