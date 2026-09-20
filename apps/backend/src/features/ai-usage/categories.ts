@@ -38,6 +38,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "search-expand": { category: "other", stage: "enrichment" },
   "search-refine": { category: "other", stage: "enrichment" },
   "search-rerank": { category: "other", stage: "enrichment" },
+  "search-score": { category: "other", stage: "enrichment" },
   "memo-rerank": { category: "memory", stage: "enrichment" },
   "dynamic-naming-evaluate": { category: "other", stage: "enrichment" },
   "stream-naming": { category: "other", stage: "enrichment" },

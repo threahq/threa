@@ -1,5 +1,6 @@
 import { describe, test, expect, mock } from "bun:test"
-import { AISpendDeniedError, DecisionsAvailability } from "@threahq/agent-runtime"
+import { AISpendDeniedError, DecisionsAvailability, type AI } from "@threahq/agent-runtime"
+import { DecisionsRelevanceScorer } from "./relevance-scorer"
 import { ResidencyRoutedRelevanceScorer } from "./residency-routed-relevance-scorer"
 
 const SCORES = [1, 0.5, 0]
@@ -49,6 +50,23 @@ describe("ResidencyRoutedRelevanceScorer", () => {
     const next = createScorer({ pinned: false, availability })
     expect(await next.score()).toBeNull()
     expect(next.decisions).not.toHaveBeenCalled()
+  })
+
+  test("the real decision scorer, composed as production wires it, trips the breaker on a failure", async () => {
+    const availability = new DecisionsAvailability()
+    const ai = {
+      generateDecisions: mock(async () => {
+        throw new Error("decisions endpoint down")
+      }),
+    } as unknown as AI
+    const scorer = new ResidencyRoutedRelevanceScorer({
+      residency: { isPinned: mock(async () => false) },
+      decisions: new DecisionsRelevanceScorer({ ai, subject: "chat messages", functionId: "search-score" }),
+      availability,
+    })
+
+    expect(await scorer.score("q", [{ abstract: "a" }], { workspaceId: "wsp_test" })).toBeNull()
+    expect(availability.isAvailable).toBe(false)
   })
 
   test("a spend denial is rethrown, since an unscored retry would not spend less", async () => {

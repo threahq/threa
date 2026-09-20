@@ -1,11 +1,4 @@
-import type { AI } from "@threahq/agent-runtime"
-import {
-  AISpendDeniedError,
-  isAbortError,
-  rescaleScore,
-  scoreAnswer,
-  type DecisionQuestion,
-} from "@threahq/agent-runtime"
+import { isAbortError, rescaleScore, scoreAnswer, type AI, type DecisionQuestion } from "@threahq/agent-runtime"
 import { logger } from "../../lib/logger"
 import { RELEVANCE_SCORER_MODEL_ID, RELEVANCE_SCORER_TIMEOUT_MS, RELEVANCE_SCORE_LADDER } from "./config"
 import type { RerankCandidate, RerankContext } from "./reranker"
@@ -17,10 +10,9 @@ import type { RerankCandidate, RerankContext } from "./reranker"
  * them is good. A number per candidate is what a relevance floor, an honest
  * "nothing matched" and cluster-ranking-by-best-member are all written against.
  *
- * `null` means no judgment was made — a timeout, a denial, a provider error.
- * It is deliberately not an array of zeros: a caller that cuts on the scores
- * would empty the result list on every failure, which is exactly the silent
- * degradation INV-11 forbids.
+ * `null` means no judgment was made. It is deliberately not an array of zeros:
+ * a caller that cuts on the scores would empty the result list on every
+ * failure, which is exactly the silent degradation INV-11 forbids.
  */
 export interface RelevanceScorerLike {
   /** Relevance in [0, 1] aligned to the input order, or null when nothing was judged. */
@@ -93,19 +85,11 @@ export class DecisionsRelevanceScorer implements RelevanceScorerLike {
 
       return candidates.map((_, index) => rescaleScore(scoreAnswer(result, questionKey(index)), 1))
     } catch (error) {
-      if (isAbortError(error)) {
-        logger.debug({ workspaceId: context.workspaceId }, "Relevance scoring timed out; leaving candidates unscored")
-      } else if (error instanceof AISpendDeniedError) {
-        logger.warn(
-          { workspaceId: error.workspaceId, userId: error.userId, functionId: error.functionId, reason: error.reason },
-          "Relevance scoring denied by AI spend limit; leaving candidates unscored"
-        )
-      } else {
-        logger.warn(
-          { error, workspaceId: context.workspaceId },
-          "Relevance scoring failed; leaving candidates unscored"
-        )
-      }
+      // A timeout is this class's own degradation and stops here: the search is
+      // better served unscored than slow. Everything else belongs to the caller
+      // that routes and holds the breaker, so it propagates.
+      if (!isAbortError(error)) throw error
+      logger.debug({ workspaceId: context.workspaceId }, "Relevance scoring timed out; leaving candidates unscored")
       return null
     } finally {
       clearTimeout(timer)

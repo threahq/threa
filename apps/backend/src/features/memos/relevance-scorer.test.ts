@@ -56,20 +56,38 @@ describe("DecisionsRelevanceScorer", () => {
     expect(await scorer(ai).score("q", candidates, CONTEXT)).toEqual([0, 1, 0.5])
   })
 
-  test("returns null rather than zeros when the call fails, so a caller that cuts on scores keeps its list", async () => {
+  test("propagates a provider failure so the caller holding the breaker sees it", async () => {
     const ai = {
       generateDecisions: mock(async () => {
         throw new Error("decisions endpoint down")
       }),
     } as unknown as AI
-    expect(await scorer(ai).score("q", candidates, CONTEXT)).toBeNull()
+    await expect(scorer(ai).score("q", candidates, CONTEXT)).rejects.toThrow("decisions endpoint down")
   })
 
-  test("returns null when an answer comes back as the wrong question type", async () => {
+  test("propagates an answer that comes back as the wrong question type", async () => {
     const ai = {
       generateDecisions: mock(async () => ({ answers: { c0: { type: "noul" as const, noul: 1 } }, usage: {} })),
     } as unknown as AI
-    expect(await scorer(ai).score("q", [{ abstract: "only" }], CONTEXT)).toBeNull()
+    await expect(scorer(ai).score("q", [{ abstract: "only" }], CONTEXT)).rejects.toThrow()
+  })
+
+  test("returns null rather than zeros on a timeout, so a caller that cuts on scores keeps its list", async () => {
+    const ai = {
+      generateDecisions: mock(
+        (options: GenerateDecisionsOptions) =>
+          new Promise((_resolve, reject) => {
+            options.abortSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+          })
+      ),
+    } as unknown as AI
+    const timed = new DecisionsRelevanceScorer({
+      ai,
+      subject: "chat messages",
+      functionId: "search-score",
+      timeoutMs: 1,
+    })
+    expect(await timed.score("q", candidates, CONTEXT)).toBeNull()
   })
 
   test("scores an empty candidate list without calling the model", async () => {
