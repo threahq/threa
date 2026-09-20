@@ -2,6 +2,7 @@ import type { CommandClaim } from "@threahq/harness-client"
 import { CLAIM_TTL_SECONDS, claimCommandReporter, type CommandReporter } from "./command-reporter"
 import { listLocalTmuxPanes, type LocalTmuxPane } from "./discovery"
 import { defaultDoneDeps, doneAgent, type DoneRequest } from "./done"
+import { acquireProcessLock, RECONCILE_LOCK_WAIT_MS, resumeActiveLockPath } from "./lock"
 import { output } from "./shell"
 import { runtimeThreaTarget, type RuntimeTargetResolver } from "./spawners"
 import { suspendPlaceholderNotice } from "./suspend"
@@ -35,7 +36,10 @@ export interface SupervisedDoneDeps {
 }
 
 export function defaultSupervisedDoneDeps(): SupervisedDoneDeps {
-  const doneDeps = defaultDoneDeps()
+  const doneDeps = {
+    ...defaultDoneDeps(),
+    lock: () => acquireProcessLock(resumeActiveLockPath(), { timeoutMs: RECONCILE_LOCK_WAIT_MS }),
+  }
   return {
     target: runtimeThreaTarget,
     post: postThrea,

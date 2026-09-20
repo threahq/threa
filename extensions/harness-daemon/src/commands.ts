@@ -32,7 +32,7 @@ import {
   readInventoryReadonly,
   upsertAgent,
 } from "./inventory"
-import { acquireProcessLock, resumeActiveLockPath } from "./lock"
+import { acquireProcessLock, RECONCILE_LOCK_WAIT_MS, resumeActiveLockPath } from "./lock"
 import { IDLE_SUSPEND_AFTER_MS, idleSuspendEnabled } from "./idle"
 import { createHeldPresence } from "./held-presence"
 import { defaultSuspendDeps, suspendAgent, wakeAgent, type SuspendDeps, type SuspendOutcome } from "./suspend"
@@ -491,7 +491,7 @@ export async function watchUnarchived(options: ResumeOptions): Promise<void> {
           console.warn(`harnessd: /done for ${suspended.name} not answered here (${outcome.reason}); resuming instead`)
         }
         console.log(`harnessd: ${payload.invocationId} is waiting for suspended ${suspended.name}; resuming`)
-        const release = await acquireProcessLock(resumeActiveLockPath())
+        const release = await acquireProcessLock(resumeActiveLockPath(), { timeoutMs: RECONCILE_LOCK_WAIT_MS })
         let woken
         try {
           woken = wakeAgent(suspended, suspendDeps)

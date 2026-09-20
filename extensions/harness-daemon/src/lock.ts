@@ -7,6 +7,17 @@ export function resumeActiveLockPath(): string {
   return join(dirname(inventoryPath()), "resume-active.lock")
 }
 
+/**
+ * How long work running on harnessd's reconcile chain waits for that lock.
+ *
+ * The chain is single-file, so a waiter blocks every pass behind it — and held
+ * presence is one of them, re-posted each pass against a five-minute freshness
+ * gate. An unbounded wait there takes the commands off every other suspended
+ * session without saying a word. The ten-minute default is for a one-shot CLI
+ * that holds up nothing but itself.
+ */
+export const RECONCILE_LOCK_WAIT_MS = 30_000
+
 export interface LockOptions {
   pid?: number
   isAlive?: (pid: number) => boolean
