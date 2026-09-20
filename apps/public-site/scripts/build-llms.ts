@@ -130,6 +130,13 @@ const SITE_PAGES: Page[] = [
     title: "About Threa",
     blurb: "What the product is, who builds it, and why.",
   },
+  {
+    route: "/encryption",
+    html: "encryption/index.html",
+    md: "encryption.md",
+    title: "Sealed scratchpads",
+    blurb: "End-to-end encrypted scratchpads: what is sealed, how to turn it on, and what it costs.",
+  },
 ]
 
 const ALL_PAGES = [...PAGES, ...SITE_PAGES]
