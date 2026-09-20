@@ -54,7 +54,13 @@ export class DecisionsRelevanceScorer implements RelevanceScorerLike {
     if (candidates.length === 0) return []
 
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(new Error("relevance scoring timeout")), this.timeoutMs)
+    const timer = setTimeout(
+      // `fetch` rejects with the reason verbatim, and `isAbortError` matches on
+      // the name, so a plain Error here would be routed as a provider failure
+      // and trip the breaker. Same reason shape as `research-support.ts`.
+      () => controller.abort(new DOMException("relevance scoring timeout", "TimeoutError")),
+      this.timeoutMs
+    )
 
     try {
       const questions: Record<string, DecisionQuestion> = {}

@@ -74,10 +74,12 @@ describe("DecisionsRelevanceScorer", () => {
 
   test("returns null rather than zeros on a timeout, so a caller that cuts on scores keeps its list", async () => {
     const ai = {
+      // `fetch` rejects with the signal's reason verbatim; a test that invents
+      // its own AbortError would pass whatever reason the scorer aborts with.
       generateDecisions: mock(
         (options: GenerateDecisionsOptions) =>
           new Promise((_resolve, reject) => {
-            options.abortSignal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+            options.abortSignal?.addEventListener("abort", () => reject(options.abortSignal?.reason))
           })
       ),
     } as unknown as AI
