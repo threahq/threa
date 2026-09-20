@@ -401,6 +401,25 @@ interface ObservedClaim {
 /** The turn's source moved on between preparing a post and putting it on the wire. */
 class StaleInputError extends Error {}
 
+/**
+ * The descriptive half of a presence body, handed to {@link RemoteSessionOptions.onPresence}
+ * after it has been published. Status is included so a supervisor can tell a
+ * session that is running from one that shut down; the BIK is not, because it
+ * belongs to the running process alone.
+ */
+export interface RuntimePresenceReport {
+  runtimeKind: string
+  instanceId: string
+  runtimeSessionId: string
+  displayName: string
+  status: "available" | "busy" | "offline"
+  capabilities: Record<string, unknown>
+  manifest: Record<string, unknown>
+}
+
+/** A presence body on the wire: the report's fields plus the status text and BIK the server needs. */
+type PresenceBody = RuntimePresenceReport & Record<string, unknown>
+
 export interface RemoteSessionOptions {
   config: RemoteSessionConfig
   client: ThreaClient
@@ -416,6 +435,13 @@ export interface RemoteSessionOptions {
    * transport; an injected transport owns its callbacks.
    */
   onDelegationAvailable?: (payload?: DelegationAvailableNudge) => void
+  /**
+   * Called with every presence this session publishes, hello included, once the
+   * write has gone through. A supervising connector records it so presence can
+   * be held while the session's process is not running; a public connector has
+   * no use for it and leaves it unset.
+   */
+  onPresence?: (presence: RuntimePresenceReport) => void
   log?: (message: string) => void
   /** Override the archive→restore grace window (tests). */
   archiveGraceMs?: number
@@ -475,6 +501,7 @@ export class RemoteSession {
   private readonly runtime: RuntimeDescriptor
   private readonly transport: BotRuntimeTransport
   private readonly log: (message: string) => void
+  private readonly onPresence: ((presence: RuntimePresenceReport) => void) | undefined
   private readonly bik: BotKeyring
   /** The keyring as last advertised to the server, so a grant only writes presence when it added a key. */
   private advertisedKeyIds = ""
@@ -536,6 +563,7 @@ export class RemoteSession {
     this.delegate = options.delegate
     this.runtime = options.runtime
     this.log = options.log ?? (() => undefined)
+    this.onPresence = options.onPresence
     this.archive = new ArchiveGraceController(
       {
         isArchived: async (rootStreamId) => Boolean(await this.client.getStreamArchivedAt(rootStreamId)),
@@ -614,8 +642,10 @@ export class RemoteSession {
     let status: "available" | "busy" | "offline" = "available"
     if (this.stopped || this.archive.detached || !this.link) status = "offline"
     else if (this.reconnectHandoff || this.atCapacity) status = "busy"
-    Object.assign(this.hello, this.presenceBody(status))
+    const body = this.presenceBody(status)
+    Object.assign(this.hello, body)
     this.hello.supportedCapabilities = supportedCapabilitiesFor(this.sessionControlEnabled)
+    this.reportPresence(body)
   }
 
   /** The stream of the turn the runtime is executing right now, if any. */
@@ -3306,7 +3336,7 @@ export class RemoteSession {
     return this.enqueuePresence(async () => {
       if (lifecycle !== this.lifecycle || this.stopped || this.archive.detached) return
       const busy = this.reconnectHandoff || this.atCapacity
-      await this.transport.updatePresence(
+      await this.publishPresence(
         this.presenceBody(busy ? "busy" : "available", busy ? this.runtime.busyStatusText : undefined)
       )
     })
@@ -3316,8 +3346,31 @@ export class RemoteSession {
     const lifecycle = this.lifecycle
     return this.enqueuePresence(async () => {
       if (lifecycle !== this.lifecycle || !isCurrent()) return
-      await this.transport.updatePresence(this.presenceBody("offline"))
+      await this.publishPresence(this.presenceBody("offline"))
     })
+  }
+
+  private async publishPresence(body: PresenceBody): Promise<void> {
+    await this.transport.updatePresence(body)
+    this.reportPresence(body)
+  }
+
+  /** Never a reason to fail a presence write: the report is bookkeeping for a supervisor. */
+  private reportPresence(body: PresenceBody): void {
+    if (!this.onPresence) return
+    try {
+      this.onPresence({
+        runtimeKind: body.runtimeKind,
+        instanceId: body.instanceId,
+        runtimeSessionId: body.runtimeSessionId,
+        displayName: body.displayName,
+        status: body.status,
+        capabilities: body.capabilities,
+        manifest: body.manifest,
+      })
+    } catch (error) {
+      this.log(`presence report failed: ${this.summarize(error)}`)
+    }
   }
 
   private presenceBody(status: "available" | "busy" | "offline", statusText?: string) {
