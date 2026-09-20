@@ -232,6 +232,32 @@ describe("SearchService deep mode", () => {
     expect(searchResults.map((r) => r.id)).toEqual([...reversedHead, ...tail])
   })
 
+  test("the embedding-batch fallback keeps the searcher's identity, so spend stays attributed", async () => {
+    spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("a")])
+    spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
+    const score = mock(async () => null)
+    const service = makeService({
+      embeddingService: {
+        embed: async () => [0],
+        embedBatch: async () => {
+          throw new Error("embedding provider down")
+        },
+      },
+      queryExpander: { expand: async () => ["variant one"] },
+      relevanceScorer: { score },
+    })
+
+    await service.search({
+      searchFlag: "on",
+      workspaceId: "ws_1",
+      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
+      query: "original query",
+      deep: true,
+    })
+
+    expect(score.mock.calls[0]?.[2]).toEqual({ workspaceId: "ws_1", userId: "usr_1" })
+  })
+
   test("deep: true with exact: true goes straight to exactSearch and never calls the expander", async () => {
     const exactSearch = spyOn(SearchRepository, "exactSearch").mockResolvedValue([])
     const expand = mock(async () => [])

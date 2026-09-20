@@ -331,7 +331,16 @@ export class SearchService {
 
     const messageLeg =
       deep && queryEmbedding.length > 0
-        ? this.deepSearch({ normalizedQuery, queryEmbedding, phrases, streamIds, repoFilters, limit, workspaceId })
+        ? this.deepSearch({
+            normalizedQuery,
+            queryEmbedding,
+            phrases,
+            streamIds,
+            repoFilters,
+            limit,
+            workspaceId,
+            userId: permissions.userId,
+          })
         : this.singleQuerySearch({
             normalizedQuery,
             embedding: queryEmbedding,
@@ -487,8 +496,9 @@ export class SearchService {
     repoFilters: ResolvedFilters
     limit: number
     workspaceId: string
+    userId?: string
   }): Promise<SearchResult[]> {
-    const { normalizedQuery, queryEmbedding, phrases, streamIds, repoFilters, limit, workspaceId } = args
+    const { normalizedQuery, queryEmbedding, phrases, streamIds, repoFilters, limit, workspaceId, userId } = args
 
     const variants = await this.queryExpander.expand(normalizedQuery, { workspaceId })
     const queries = [normalizedQuery, ...variants]
@@ -511,6 +521,7 @@ export class SearchService {
         limit,
         ranking: "improved",
         workspaceId,
+        userId,
       })
     }
 
