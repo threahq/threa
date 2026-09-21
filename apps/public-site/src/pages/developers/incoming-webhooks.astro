@@ -120,7 +120,10 @@ import CodeBlock from "../../components/CodeBlock.astro"
       <code>_italic_</code>, <code>~strike~</code>, code spans and fences, and
       the angle-bracket control sequences, so
       <code>&lt;https://example.com|label&gt;</code> becomes a markdown link and
-      <code>&lt;!here&gt;</code> becomes <code>@here</code>.
+      <code>&lt;!here&gt;</code> becomes <code>@here</code>. Only
+      <code>http</code>, <code>https</code> and <code>mailto</code> targets
+      become links, here and in every field below. Any other target renders as
+      its label.
     </li>
     <li>
       <code>blocks</code>: <code>header</code>,
@@ -195,6 +198,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
     <li>300 requests per minute per IP, counted before the secret is checked.</li>
     <li>60 requests per minute per hook, counted after it is checked, so a caller who guesses a hook id cannot exhaust that hook's budget.</li>
     <li>256 KB request body.</li>
+    <li>50,000 characters per message, measured after a Slack payload is translated. A longer one is rejected with <code>400</code>.</li>
     <li>25 active webhooks per bot. Revoked ones do not count.</li>
   </ul>
 
@@ -204,6 +208,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
     that stream as that bot, so treat it like a password: keep it in a secret
     store, not in a repository or a shared document. There is no signing secret
     and no request signature to verify.
+  </p>
+  <p>
+    A message from a hook can mention people and use <code>@here</code> and
+    <code>@channel</code>, and those notify like any other message. It cannot
+    attach files or link an existing attachment.
   </p>
   <p>
     There is no way to rotate a secret in place. To rotate, create a second hook
