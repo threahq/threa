@@ -98,6 +98,14 @@ const PAGES: Page[] = [
       "The threa command-line tool and its MCP server: install from the repo, configure one workspace binding, the noun-verb command surface, and agent integration.",
   },
   {
+    route: "/developers/incoming-webhooks",
+    html: "developers/incoming-webhooks/index.html",
+    md: "developers/incoming-webhooks.md",
+    title: "Incoming webhooks",
+    blurb:
+      "Secret URLs that post into one channel or scratchpad as a bot: the native JSON endpoint, the Slack-compatible one and what it translates, limits, and sender setup.",
+  },
+  {
     route: "/developers/recipes",
     html: "developers/recipes/index.html",
     md: "developers/recipes.md",

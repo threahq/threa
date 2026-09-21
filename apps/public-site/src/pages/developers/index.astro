@@ -121,6 +121,12 @@ Verify the key with GET /api/v1/workspaces/{{workspaceId}}/me before anything el
     <li><strong>Pull memos</strong> with their source messages, so an external agent works from the same knowledge as Ariadne.</li>
     <li><strong>Run your own agent</strong> as a bot: heartbeat a runtime, claim invocations when it's mentioned, post replies. The Pi remote extension works this way.</li>
     <li><strong>Upload and read attachments</strong>, including the text Threa extracts from them.</li>
+    <li>
+      <strong>Receive alerts</strong> from tools you already run, over an
+      <a class="link" href="/developers/incoming-webhooks">incoming webhook</a>:
+      a secret URL that posts into one stream, with a Slack-compatible shape for
+      senders that only speak Slack.
+    </li>
   </ul>
   <p>
     Next: <a class="link" href="/developers/authentication">Authentication</a> for

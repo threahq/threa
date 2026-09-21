@@ -1,0 +1,221 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+---
+
+<DocsLayout
+  title="Incoming webhooks · Threa Developers"
+  description="Post into a Threa channel or scratchpad with a secret URL: a native JSON endpoint and a Slack-compatible one that accepts Slack payloads from tools like PostHog and Grafana."
+  current="incoming-webhooks"
+  sections={[
+    { id: "create", label: "Create a webhook" },
+    { id: "native", label: "The native URL" },
+    { id: "slack", label: "The Slack URL" },
+    { id: "translation", label: "What Slack fields become" },
+    { id: "senders", label: "Setting up senders" },
+    { id: "limits", label: "Limits" },
+    { id: "security", label: "Security" },
+  ]}
+>
+  <h1>Incoming webhooks.</h1>
+  <p class="lead">
+    An incoming webhook is a secret URL that posts a message into one channel or
+    scratchpad, as one of your bots. It needs no API key. The URL is the
+    credential. Each hook has two shapes, a native one that takes markdown and a
+    Slack-compatible one that takes a Slack payload, so a tool that can already
+    send to a Slack webhook can send to Threa unchanged.
+  </p>
+
+  <h2 id="create">Create a webhook</h2>
+  <p>
+    Open <strong>Settings → Bots</strong>, pick a bot, and use
+    <strong>New webhook</strong> in its Webhooks section. A webhook belongs to
+    that bot and targets one stream. Creating it adds the bot to that stream, and
+    every message the hook delivers is posted by the bot.
+  </p>
+  <p>
+    The target must be a channel or a scratchpad. Threads are refused, and so are
+    end-to-end encrypted streams. A webhook holds no key, so it cannot seal what
+    it posts.
+  </p>
+  <p>
+    Both URLs are shown once, at creation. Copy them then. You can rename a hook
+    or move it to another stream afterwards without the URL changing, and revoke
+    it from the same panel. A revoked hook rejects deliveries with
+    <code>404 NOT_FOUND</code> on the native URL and <code>404 no_service</code>
+    on <code>/slack</code>, and cannot be restored.
+  </p>
+
+  <h2 id="native">The native URL</h2>
+  <p>
+    <code>POST</code> a JSON object with a <code>content</code> string holding
+    <a class="link" href="/developers/markdown">Threa markdown</a>. A delivered
+    message answers <code>201</code> with <code>{`{"ok": true}`}</code>.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="Post a message"
+    code={`curl -X POST \\
+  https://app.threa.io/api/v1/workspaces/WORKSPACE_ID/hooks/hook_ID/SECRET \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "Deploy **v2.4.1** finished. [Run log](https://ci.example.com/42)"}'`}
+  />
+  <p>
+    Errors come back in the API's usual JSON error shape (see
+    <a class="link" href="/developers/operations">Operations</a>). An empty or
+    missing <code>content</code> is a <code>400</code>. An unknown hook, a wrong
+    secret, and a revoked hook are all <code>404 NOT_FOUND</code>, so a caller
+    holding a bad URL learns nothing about which part was wrong.
+  </p>
+
+  <h2 id="slack">The Slack URL</h2>
+  <p>
+    The same URL with <code>/slack</code> on the end accepts a Slack incoming
+    webhook payload and translates it to markdown. Paste it wherever a tool asks
+    for a Slack webhook URL.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="Post a Slack payload"
+    code={`curl -X POST \\
+  https://app.threa.io/api/v1/workspaces/WORKSPACE_ID/hooks/hook_ID/SECRET/slack \\
+  -H "Content-Type: application/json" \\
+  -d '{"text": "Deploy *v2.4.1* finished. <https://ci.example.com/42|Run log>"}'`}
+  />
+  <p>
+    It reads the payload three ways, because senders differ: a JSON body, a
+    form-encoded body with the JSON in a <code>payload</code> field, and a JSON
+    body sent with a wrong or missing <code>Content-Type</code>.
+  </p>
+  <p>
+    Responses follow Slack's convention rather than the API's, because Slack
+    senders show the response body verbatim in their delivery logs. Success is
+    <code>200</code> with a <code>text/plain</code> body of <code>ok</code>.
+    Failures are a plain-text reason:
+  </p>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Body</th><th>Meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>400</td><td><code>invalid_payload</code></td><td>Body is not a JSON object, or is unparseable or too large.</td></tr>
+      <tr><td>400</td><td><code>no_text</code></td><td>The payload parsed but held nothing renderable.</td></tr>
+      <tr><td>404</td><td><code>no_service</code></td><td>Unknown hook, wrong secret, revoked hook, or the bot can no longer post to the stream.</td></tr>
+      <tr><td>429</td><td><code>rate_limited</code></td><td>A limit below was hit. The response carries <code>Retry-After</code>.</td></tr>
+      <tr><td>500</td><td><code>server_error</code></td><td>Delivery failed on our side.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <code>no_service</code> covers every workspace-side refusal, so a caller who
+    only holds a URL does not learn why the workspace refused.
+  </p>
+
+  <h2 id="translation">What Slack fields become</h2>
+  <p>
+    Threa renders the fields below and skips everything else.
+  </p>
+  <ul>
+    <li>
+      <code>text</code> is read as mrkdwn: <code>*bold*</code>,
+      <code>_italic_</code>, <code>~strike~</code>, code spans and fences, and
+      the angle-bracket control sequences, so
+      <code>&lt;https://example.com|label&gt;</code> becomes a markdown link and
+      <code>&lt;!here&gt;</code> becomes <code>@here</code>. Only
+      <code>http</code>, <code>https</code> and <code>mailto</code> targets
+      become links, here and in every field below. Any other target renders as
+      its label.
+    </li>
+    <li>
+      <code>blocks</code>: <code>header</code>,
+      <code>section</code> (including <code>fields</code>),
+      <code>context</code>, <code>divider</code>, <code>image</code>,
+      <code>actions</code> (the elements carrying a URL, rendered as links), and
+      <code>rich_text</code> with its sections, lists, quotes and preformatted
+      blocks. Any other block type is skipped.
+    </li>
+    <li>
+      <code>attachments</code>: <code>pretext</code>, author
+      name and link, <code>title</code> with <code>title_link</code>,
+      <code>text</code>, <code>fields</code>, nested <code>blocks</code>,
+      <code>image_url</code> and <code>footer</code>. An attachment that renders
+      to nothing falls back to its <code>fallback</code> string.
+    </li>
+  </ul>
+  <p>
+    Rendered top-level <code>blocks</code> suppress top-level
+    <code>text</code>, which Slack treats as the notification fallback for them.
+    Attachments are appended after whichever of the two won, separated by a
+    blank line.
+  </p>
+  <p>
+    Fields that address a Slack workspace are ignored:
+    <code>username</code>, <code>icon_emoji</code>, <code>icon_url</code> and
+    <code>channel</code> change nothing. The message posts as the hook's bot, in
+    the hook's stream.
+  </p>
+
+  <h2 id="senders">Setting up senders</h2>
+  <p>
+    Anything that posts a Slack-shaped payload works. Three common ones:
+  </p>
+  <h3>PostHog</h3>
+  <p>
+    PostHog's own Slack destination connects through a Slack app and has no URL
+    field, so use its HTTP webhook destination instead. Set the URL to the
+    <code>/slack</code> URL, the method to <code>POST</code>, and the JSON body
+    to a Slack payload such as <code>{`{"text": "..."}`}</code> built from the
+    event fields you want in the message.
+  </p>
+  <h3>Grafana</h3>
+  <p>
+    Create a contact point of type Slack and paste the <code>/slack</code> URL
+    as its webhook URL, then point an alert notification policy at it. Grafana's
+    Slack payload uses <code>attachments</code> with title, text and fields.
+  </p>
+  <h3>GitHub</h3>
+  <p>
+    GitHub's own repository webhooks send GitHub's payload shape, not Slack's,
+    so pointing one at the <code>/slack</code> URL does not work. There is no
+    native GitHub endpoint yet. Until there is, post from a workflow step, with
+    the <code>/slack</code> URL if you want to reuse a Slack-shaped payload or
+    the native URL if you would rather write the markdown yourself. Keep the URL
+    in a repository secret.
+  </p>
+  <CodeBlock
+    lang="text"
+    label="GitHub Actions step"
+    code={`- name: Notify Threa
+  run: |
+    curl -X POST "$THREA_HOOK_URL" \\
+      -H "Content-Type: application/json" \\
+      -d "$(jq -n --arg content "\${GITHUB_WORKFLOW} finished on \${GITHUB_REF_NAME}" '{content: $content}')"
+  env:
+    THREA_HOOK_URL: \${{ secrets.THREA_HOOK_URL }}`}
+  />
+
+  <h2 id="limits">Limits</h2>
+  <ul>
+    <li>300 requests per minute per IP, counted before the secret is checked.</li>
+    <li>60 requests per minute per hook, counted after it is checked, so a caller who guesses a hook id cannot exhaust that hook's budget.</li>
+    <li>256 KB request body.</li>
+    <li>50,000 characters per message, measured after a Slack payload is translated. A longer one is rejected with <code>400</code>.</li>
+    <li>25 active webhooks per bot. Revoked ones do not count.</li>
+  </ul>
+
+  <h2 id="security">Security</h2>
+  <p>
+    The secret in the path is the credential. Anyone holding the URL can post to
+    that stream as that bot, so treat it like a password: keep it in a secret
+    store, not in a repository or a shared document. There is no signing secret
+    and no request signature to verify.
+  </p>
+  <p>
+    A message from a hook can mention people and use <code>@here</code> and
+    <code>@channel</code>, and those notify like any other message. It cannot
+    attach files or link an existing attachment.
+  </p>
+  <p>
+    There is no way to rotate a secret in place. To rotate, create a second hook
+    on the same bot and stream, move the sender across, then revoke the first.
+  </p>
+</DocsLayout>
