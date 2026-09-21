@@ -9,6 +9,13 @@ export function requestLogLevel(statusCode: number, err?: unknown): "error" | "w
   return "silent"
 }
 
+/** An incoming-webhook URL carries its credential in the path segment after the hook id. */
+const HOOK_SECRET_SEGMENT = /(\/hooks\/[^/?#]+\/)[^/?#]+/i
+
+export function redactHookSecret(url: string): string {
+  return url.replace(HOOK_SECRET_SEGMENT, "$1[redacted]")
+}
+
 /**
  * Default pino-http serializers dump every header, so a new secret header
  * leaks by omission; this allowlist means only these fields ever reach a log.
@@ -18,7 +25,7 @@ export const requestLogSerializers = {
     return {
       id: req.id,
       method: req.method,
-      url: req.url,
+      url: redactHookSecret(req.url),
       userAgent: req.headers["user-agent"],
       origin: req.headers["origin"],
     }

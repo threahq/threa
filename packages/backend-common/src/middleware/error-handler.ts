@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express"
 import { HttpError } from "../errors"
 import { logger } from "../logger"
 import type { AnalyticsReporter } from "../posthog/reporter"
+import { redactHookSecret } from "./request-log"
 
 /**
  * `/api/streams/stream_01H.../messages` becomes `/api/streams/:id/messages`.
@@ -13,7 +14,7 @@ import type { AnalyticsReporter } from "../posthog/reporter"
 const ROUTE_SEGMENT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 export function sanitizeRoutePath(path: string): string {
-  return path
+  return redactHookSecret(path)
     .split("/")
     .map((segment) => (segment === "" || ROUTE_SEGMENT.test(segment) ? segment : ":id"))
     .join("/")
@@ -41,7 +42,7 @@ export function createErrorHandler(deps: { analyticsReporter: AnalyticsReporter 
       properties: { path: sanitizeRoutePath(req.path), method: req.method, status_code: 500 },
     })
 
-    logger.error({ err, path: req.path, method: req.method }, "Unhandled error")
+    logger.error({ err, path: redactHookSecret(req.path), method: req.method }, "Unhandled error")
     res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" })
   }
 }

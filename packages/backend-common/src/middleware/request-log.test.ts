@@ -58,6 +58,43 @@ describe("requestLogSerializers.req", () => {
   })
 })
 
+describe("requestLogSerializers.req hook secret redaction", () => {
+  const cases: Array<[name: string, url: string, expected: string]> = [
+    [
+      "should replace the secret segment when given a native hook url",
+      "/api/v1/workspaces/ws_01W/hooks/hook_01H/s3cr3t-VALUE_x",
+      "/api/v1/workspaces/ws_01W/hooks/hook_01H/[redacted]",
+    ],
+    [
+      "should keep the translator suffix when given a slack hook url",
+      "/api/v1/workspaces/ws_01W/hooks/hook_01H/s3cr3t-VALUE_x/slack",
+      "/api/v1/workspaces/ws_01W/hooks/hook_01H/[redacted]/slack",
+    ],
+    [
+      "should redact before the query string when given a hook url with query params",
+      "/api/v1/workspaces/ws_01W/hooks/hook_01H/s3cr3t?retry=1",
+      "/api/v1/workspaces/ws_01W/hooks/hook_01H/[redacted]?retry=1",
+    ],
+    [
+      "should redact when given a mixed-case hook url, which express routes anyway",
+      "/API/v1/workspaces/ws_01W/HOOKS/hook_01H/s3cr3t",
+      "/API/v1/workspaces/ws_01W/HOOKS/hook_01H/[redacted]",
+    ],
+    [
+      "should leave the url alone when given a non-hook url",
+      "/api/v1/workspaces/ws_01W/streams/stream_01S/messages",
+      "/api/v1/workspaces/ws_01W/streams/stream_01S/messages",
+    ],
+  ]
+
+  for (const [name, url, expected] of cases) {
+    it(name, () => {
+      const result = requestLogSerializers.req({ id: "req-1", method: "POST", url, headers: {} })
+      expect(result.url).toBe(expected)
+    })
+  }
+})
+
 describe("requestLogSerializers.res", () => {
   it("should keep only statusCode when headers carry secrets", () => {
     const stdSerializedResponse = {

@@ -43,6 +43,7 @@ export {
   userApiKeyId,
   botApiKeyId,
   botChannelAccessId,
+  hookId,
   videoTranscodeJobId,
   savedMessageId,
   savedSuggestionId,

@@ -39,8 +39,8 @@ export { HttpError, isUniqueViolation } from "./errors"
 export { createErrorHandler, sanitizeRoutePath } from "./middleware/error-handler"
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
 export { createRateLimit, getClientIp } from "./middleware/rate-limit"
-export { requestLogSerializers, requestLogLevel } from "./middleware/request-log"
-export type { RateLimitOptions } from "./middleware/rate-limit"
+export { requestLogSerializers, requestLogLevel, redactHookSecret } from "./middleware/request-log"
+export type { RateLimitOptions, RateLimitRejection } from "./middleware/rate-limit"
 
 export { loadPostHogConfig } from "./posthog/config"
 export type { PostHogConfig, PostHogLogsLevel } from "./posthog/config"
@@ -97,6 +97,7 @@ export {
   userApiKeyId,
   botApiKeyId,
   botChannelAccessId,
+  hookId,
   videoTranscodeJobId,
   savedMessageId,
   savedSuggestionId,

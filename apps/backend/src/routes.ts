@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { Express, RequestHandler } from "express"
+import express, { type Express, type RequestHandler } from "express"
 import type { Server } from "socket.io"
 import { createAuthMiddleware } from "@threahq/backend-common"
 import { createWorkspaceUserMiddleware } from "./middleware/workspace"
@@ -132,6 +132,11 @@ import type { WorkspaceIntegrationService } from "./features/workspace-integrati
 import type { WorkosOrgService } from "@threahq/backend-common"
 import type { BotApiKeyService } from "./features/public-api"
 import {
+  createInboundWebhookHandlers,
+  createIncomingWebhookHandlers,
+  type IncomingWebhookService,
+} from "./features/incoming-webhooks"
+import {
   createAuditMiddleware,
   assertAuditCoverage,
   publicApiOperation,
@@ -205,6 +210,7 @@ interface Dependencies {
   enclaveClaimService: EnclaveClaimService
   enclaveClaimNudge: EnclaveClaimWaiter | null
   botApiKeyService: BotApiKeyService
+  incomingWebhookService: IncomingWebhookService
   botRuntimeService: BotRuntimeService
   botRuntimeWriteOps: BotRuntimeWriteOps
   storage: StorageProvider
@@ -279,6 +285,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     enclaveClaimService,
     enclaveClaimNudge,
     botApiKeyService,
+    incomingWebhookService,
     botRuntimeService,
     botRuntimeWriteOps,
     storage,
@@ -2005,6 +2012,64 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("bots.revoke_stream_access", "write"),
     requireBotManagement(),
     botHandlers.revokeStreamAccess
+  )
+  const incomingWebhookHandlers = createIncomingWebhookHandlers({ incomingWebhookService })
+  app.get(
+    "/api/workspaces/:workspaceId/bots/:botId/webhooks",
+    ...authed,
+    audit("bots.list_webhooks", "read"),
+    requireBotManagement(),
+    incomingWebhookHandlers.list
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/bots/:botId/webhooks",
+    ...authed,
+    audit("bots.create_webhook", "write"),
+    requireBotManagement(),
+    incomingWebhookHandlers.create
+  )
+  app.patch(
+    "/api/workspaces/:workspaceId/bots/:botId/webhooks/:hookId",
+    ...authed,
+    audit("bots.update_webhook", "write"),
+    requireBotManagement(),
+    incomingWebhookHandlers.update
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/bots/:botId/webhooks/:hookId/revoke",
+    ...authed,
+    audit("bots.revoke_webhook", "write"),
+    requireBotManagement(),
+    incomingWebhookHandlers.revoke
+  )
+  // Inbound delivery. The path secret IS the credential, so these sit outside the Bearer
+  // chain and handler order is load-bearing: the per-IP limiter caps secret guessing before
+  // any lookup, and the per-hook limiter sits AFTER authentication so a caller who knows a
+  // hook id but not its secret cannot exhaust that hook's bucket.
+  const inboundWebhookHandlers = createInboundWebhookHandlers({ incomingWebhookService })
+  const INBOUND_WEBHOOK_BODY_LIMIT = "256kb"
+  app.post(
+    "/api/v1/workspaces/:workspaceId/hooks/:hookId/:secret",
+    rateLimits.incomingWebhookIp,
+    express.json({ limit: INBOUND_WEBHOOK_BODY_LIMIT }),
+    audit("webhooks.receive", "write"),
+    inboundWebhookHandlers.authenticateNative,
+    rateLimits.incomingWebhookHook,
+    inboundWebhookHandlers.native,
+    inboundWebhookHandlers.nativeErrors
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/hooks/:hookId/:secret/slack",
+    rateLimits.incomingWebhookIp,
+    // `type: () => true` rather than `"*/*"`: a sender with no Content-Type at all matches no
+    // media type, and body-parser would hand the handler an undefined body.
+    express.urlencoded({ extended: false, limit: INBOUND_WEBHOOK_BODY_LIMIT }),
+    express.text({ type: () => true, limit: INBOUND_WEBHOOK_BODY_LIMIT }),
+    audit("webhooks.receive", "write"),
+    inboundWebhookHandlers.authenticateSlack,
+    rateLimits.incomingWebhookHook,
+    inboundWebhookHandlers.slack,
+    inboundWebhookHandlers.slackErrors
   )
   // Stream → bots reverse lookup (admin-only — only admins manage stream bot inventories)
   app.get(
