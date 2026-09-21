@@ -667,6 +667,47 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
+  /** RUNNING sessions across many streams; at most one per stream (partial unique index). */
+  async findRunningByStreams(db: Querier, streamIds: readonly string[]): Promise<AgentSession[]> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<SessionRow>(
+      sql`
+        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
+        FROM agent_sessions
+        WHERE stream_id = ANY(${streamIds as string[]})
+          AND status = ${SessionStatuses.RUNNING}
+      `
+    )
+    return result.rows.map(mapRowToSession)
+  },
+
+  /** Step and message counts per session, counted the way the live trace emitter counts them. */
+  async countStepsBySessions(
+    db: Querier,
+    sessionIds: readonly string[]
+  ): Promise<Map<string, { stepCount: number; messageCount: number }>> {
+    if (sessionIds.length === 0) return new Map()
+    const result = await db.query<{ session_id: string; step_count: string; message_count: string }>(
+      sql`
+        SELECT
+          session_id,
+          COUNT(*) AS step_count,
+          COUNT(*) FILTER (
+            WHERE step_type IN (${StepTypes.MESSAGE_SENT}, ${StepTypes.MESSAGE_EDITED})
+          ) AS message_count
+        FROM agent_session_steps
+        WHERE session_id = ANY(${sessionIds as string[]})
+        GROUP BY session_id
+      `
+    )
+    return new Map(
+      result.rows.map((row) => [
+        row.session_id,
+        { stepCount: Number(row.step_count), messageCount: Number(row.message_count) },
+      ])
+    )
+  },
+
   /**
    * All RUNNING sessions in a workspace, each resolved to its sidebar root
    * (`COALESCE(streams.root_stream_id, streams.id)`) — the row that lights up in
