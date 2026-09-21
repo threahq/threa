@@ -7,7 +7,7 @@
  */
 
 import type { ContentRange, JSONContent, JSONContentMark } from "@threahq/types"
-import { actorTypeFromMentionId, isResolvedChannelLinkId } from "@threahq/types"
+import { actorTypeFromMentionId, isResolvedChannelLinkId, MENTION_PATTERN, CHANNEL_PATTERN } from "@threahq/types"
 import {
   escapeMarkdownLinkText,
   parseAttachmentMetadata,
@@ -40,8 +40,8 @@ import {
  *   15-16: Italic      *text*          → groups: full, text (with negative lookahead/behind for **)
  *   17-18: Strike      ~~text~~        → groups: full, text
  *   19-20: Code        `text`          → groups: full, text
- *   21-22: Mention     @slug           → groups: full, slug (requires preceding whitespace or ^)
- *   23-24: Channel     #slug           → groups: full, slug (requires preceding whitespace or ^)
+ *   21-22: Mention     @slug           → groups: full, slug (a whole token, `MENTION_PATTERN`)
+ *   23-24: Channel     #slug           → groups: full, slug (a whole token, `CHANNEL_PATTERN`)
  *   25-26: Emoji       :shortcode:     → groups: full, shortcode
  *
  * Resolved mentions/channels also serialize to the pointer form
@@ -54,9 +54,13 @@ import {
  * Exported so both the shared package and the frontend editor can use the same
  * source of truth (use `new RegExp(INLINE_MARKDOWN_PATTERN, "g")`).
  */
-export const INLINE_MARKDOWN_PATTERN =
-  /(\[((?:\\.|[^\\\]])+)\]\(attachment:([^)\s"]+)(?:\s+"((?:\\"|\\\\|[^"])*)")?\))|(\[((?:\\.|[^\\\]])+)\]\(memo:([\w-]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(\*\*\*(.+?)\*\*\*)|(\*\*(.+?)\*\*)|(?<!\*)(\*([^*]+?)\*)(?!\*)|(\~\~(.+?)\~\~)|(`([^`]+)`)|((?<=\s|^)@([\w-]+))|((?<=\s|^)#([\w-]+))|(:([\w+-]+):)/
-    .source
+export const INLINE_MARKDOWN_PATTERN = [
+  /(\[((?:\\.|[^\\\]])+)\]\(attachment:([^)\s"]+)(?:\s+"((?:\\"|\\\\|[^"])*)")?\))|(\[((?:\\.|[^\\\]])+)\]\(memo:([\w-]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(\*\*\*(.+?)\*\*\*)|(\*\*(.+?)\*\*)|(?<!\*)(\*([^*]+?)\*)(?!\*)|(\~\~(.+?)\~\~)|(`([^`]+)`)/
+    .source,
+  `(${MENTION_PATTERN.source})`,
+  `(${CHANNEL_PATTERN.source})`,
+  /(:([\w+-]+):)/.source,
+].join("|")
 
 export function serializeToMarkdown(content: JSONContent): string {
   if (!content.content) return ""

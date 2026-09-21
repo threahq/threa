@@ -261,27 +261,10 @@ describe("mention-renderer", () => {
   })
 
   describe("edge cases", () => {
-    it("should handle consecutive mentions without space", () => {
-      // @alice@bob - the second @ is preceded by alphanumeric, so only @alice is extracted
-      const result = renderMentions("@alice@bob", noEmoji)
+    it("leaves a token glued to other text as plain text", () => {
+      const glued = ["@alice@bob", "@alice#general", "@threahq/bots", "#general/sub", "`@alice`", "@alice's"]
 
-      expect(result).toHaveLength(2)
-      render(<>{result}</>)
-
-      expect(screen.getByText(/@alice/)).toBeInTheDocument()
-      // @bob is NOT extracted because @ is preceded by 'e' (no word boundary)
-      expect(result[1]).toBe("@bob")
-    })
-
-    it("should handle mention followed by channel", () => {
-      // @alice#general - # preceded by 'e' so #general is NOT extracted
-      const result = renderMentions("@alice#general", noEmoji)
-
-      expect(result).toHaveLength(2)
-      render(<>{result}</>)
-
-      expect(screen.getByText(/@alice/)).toBeInTheDocument()
-      expect(result[1]).toBe("#general") // Not extracted, returned as plain text
+      expect(glued.map((text) => renderMentions(text, noEmoji))).toEqual(glued.map((text) => [text]))
     })
 
     it("should handle very long slugs", () => {
