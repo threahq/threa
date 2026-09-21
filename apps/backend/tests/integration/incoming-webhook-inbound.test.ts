@@ -189,29 +189,31 @@ describe("incoming webhook inbound delivery", () => {
   })
 
   test("should record a wrong-secret attempt in access_log without the secret anywhere in the row", async () => {
+    const audited = await createHook(hook.streamId, "Audit denied", hook.botId)
     const secret = `probe-${testRunId}-DEADBEEF`
-    const url = `${getBaseUrl()}/api/v1/workspaces/${workspaceId}/hooks/${hook.id}/${secret}/slack`
+    const url = `${getBaseUrl()}/api/v1/workspaces/${workspaceId}/hooks/${audited.id}/${secret}/slack`
     expect((await post(url, "{}", { "Content-Type": "application/json" })).status).toBe(404)
 
     const rows = await pollAccessLog(
       "workspace_id = $1 AND operation = 'webhooks.receive' AND outcome = 'denied' AND subjects @> $2::jsonb",
-      [workspaceId, JSON.stringify([{ type: "param", id: hook.id }])]
+      [workspaceId, JSON.stringify([{ type: "param", id: audited.id }])]
     )
     expect(rows.length).toBeGreaterThan(0)
-    expect(JSON.stringify(rows[0]?.row).toLowerCase()).not.toContain(secret.toLowerCase())
+    expect(JSON.stringify(rows).toLowerCase()).not.toContain(secret.toLowerCase())
   })
 
   test("should attribute a successful post to the bot with the hook as auth_ref in access_log", async () => {
+    const audited = await createHook(hook.streamId, "Audit success", hook.botId)
     expect(
-      (await post(hook.slackUrl, JSON.stringify({ text: "audited" }), { "Content-Type": "application/json" })).status
+      (await post(audited.slackUrl, JSON.stringify({ text: "audited" }), { "Content-Type": "application/json" })).status
     ).toBe(200)
 
     const rows = await pollAccessLog(
       "workspace_id = $1 AND operation = 'webhooks.receive' AND outcome = 'success' AND auth_ref = $2",
-      [workspaceId, hook.id]
+      [workspaceId, audited.id]
     )
     expect(rows.length).toBeGreaterThan(0)
-    expect(rows[0]?.row).toMatchObject({ actor_type: "bot", actor_id: hook.botId, auth_ref: hook.id })
+    expect(rows[0]?.row).toMatchObject({ actor_type: "bot", actor_id: audited.botId, auth_ref: audited.id })
   })
 
   test("should store the content verbatim when given a native body", async () => {
