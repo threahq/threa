@@ -407,4 +407,33 @@ describe("slackPayloadToMarkdown rich_text list layout", () => {
       markdown: "[label](https://ex.example.net/a%20%20b%09c)",
     })
   })
+
+  test("should cap the indent at Slack's maximum when a list claims a deeper one", () => {
+    expect(
+      slackPayloadToMarkdown({
+        blocks: [
+          {
+            type: "rich_text",
+            elements: [{ type: "rich_text_list", style: "bullet", indent: 50_000_000, elements: [section("deep")] }],
+          },
+        ],
+      })
+    ).toEqual({ markdown: `${" ".repeat(32)}- deep` })
+  })
+
+  test("should render the label alone when an attachment or rich_text link is not a web target", () => {
+    expect(
+      slackPayloadToMarkdown({
+        attachments: [{ title: "leak.pdf", title_link: "attachment:attach_01ABC" }],
+        blocks: [
+          {
+            type: "rich_text",
+            elements: [
+              { type: "rich_text_section", elements: [{ type: "link", text: "boss", url: "user:usr_01ABC" }] },
+            ],
+          },
+        ],
+      })
+    ).toEqual({ markdown: "boss\n\n**leak.pdf**" })
+  })
 })

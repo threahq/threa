@@ -98,13 +98,11 @@ function mrkdwn(value: unknown): string | null {
 
 function plain(value: unknown): string | null {
   const text = asString(value)
-  if (text === null) return null
-  const rendered = unescapeEntities(text).trim()
-  return rendered.length > 0 ? rendered : null
+  return text === null ? null : unescapeEntities(text).trim()
 }
 
 function link(label: string | null, target: string | null): string | null {
-  if (target === null) return label
+  if (target === null || !WEB_TARGET.test(target)) return label ?? target
   if (label === null) return target
   return `[${escapeLinkLabel(label)}](${escapeLinkTarget(target)})`
 }
@@ -155,15 +153,13 @@ function renderInlineElement(value: unknown): string | null {
 }
 
 function renderInlineElements(element: SlackObject): string | null {
-  const rendered = asArray(element.elements)
-    .map(renderInlineElement)
-    .filter((part): part is string => part !== null)
-    .join("")
-  return rendered.length > 0 ? rendered : null
+  return joinParts(asArray(element.elements).map(renderInlineElement), "")
 }
 
 // Wide enough to nest under both "- " and "1. " markers.
 const LIST_INDENT_WIDTH = 4
+// Slack's own ceiling. Unbounded, a one-line payload pads each item with gigabytes of spaces.
+const MAX_LIST_INDENT = 8
 
 function nonNegativeInt(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0
@@ -178,7 +174,7 @@ function renderRichTextElement(value: unknown): string | null {
       return renderInlineElements(element)
     case "rich_text_list": {
       const ordered = element.style === "ordered"
-      const pad = " ".repeat(LIST_INDENT_WIDTH * nonNegativeInt(element.indent))
+      const pad = " ".repeat(LIST_INDENT_WIDTH * Math.min(nonNegativeInt(element.indent), MAX_LIST_INDENT))
       const first = nonNegativeInt(element.offset) + 1
       const lines: string[] = []
       for (const item of asArray(element.elements)) {
