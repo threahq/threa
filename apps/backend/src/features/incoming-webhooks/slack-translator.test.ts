@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { slackPayloadToMarkdown, slackTextToMarkdown, type SlackPayloadResult } from "./slack-translator"
+import alertmanager from "./fixtures/alertmanager.json"
+import gitlab from "./fixtures/gitlab.json"
+import grafana from "./fixtures/grafana.json"
+import uptimeKuma from "./fixtures/uptime-kuma.json"
 
 describe("slackTextToMarkdown", () => {
   const cases: Array<[name: string, input: string, expected: string]> = [
@@ -130,4 +134,250 @@ describe("slackTextToMarkdown link targets", () => {
       )
     ).toBe("leak.pdf #ops user:usr_01ABC [mail](mailto:a@ex.example.net)")
   })
+})
+
+describe("slackPayloadToMarkdown attachments and blocks", () => {
+  test("should render title, body and footer when given a grafana alert", () => {
+    expect(slackPayloadToMarkdown(grafana)).toEqual({
+      markdown: [
+        "**[\\[FIRING:1\\] HighErrorRate prod api](https://grafana.example.net/alerting/list)**",
+        "**Firing**",
+        "",
+        "Value: B=0.34",
+        "Labels:",
+        " - alertname = HighErrorRate",
+        " - service = api",
+        "Annotations:",
+        " - summary = error rate above 5% for 10m",
+        "Source: https://grafana.example.net/alerting/grafana/ae1q/view",
+        "Silence: https://grafana.example.net/alerting/silence/new",
+        "Grafana v11.2.0",
+      ].join("\n"),
+    })
+  })
+
+  test("should render pretext, title, text and fields when given an alertmanager alert", () => {
+    expect(slackPayloadToMarkdown(alertmanager)).toEqual({
+      markdown: [
+        "**Alerts firing for** `node-exporter`",
+        "**[\\[FIRING:2\\] InstanceDown node-exporter](https://alertmanager.example.net/#/alerts?receiver=slack)**",
+        "Instance has been down for more than 5 minutes.",
+        "**severity:** critical",
+        "**runbook:** [InstanceDown](https://runbooks.example.net/instance-down)",
+        "Prometheus Alertmanager",
+      ].join("\n"),
+    })
+  })
+
+  test("should render the blocks inside the attachment when given an uptime kuma notification", () => {
+    expect(slackPayloadToMarkdown(uptimeKuma)).toEqual({
+      markdown: [
+        "Uptime Kuma Alert",
+        "",
+        "**Uptime Kuma Alert**",
+        "",
+        "**Message**",
+        "[api.example.net] [Down] connect ECONNREFUSED",
+        "**Time (UTC)**",
+        "2026-09-21 11:04:12",
+        "",
+        "[Visit Uptime Kuma](https://kuma.example.net)",
+      ].join("\n"),
+    })
+  })
+
+  test("should render pretext and body links when given a gitlab push notification", () => {
+    expect(slackPayloadToMarkdown(gitlab)).toEqual({
+      markdown: [
+        "[acme/api](https://gitlab.example.net/acme/api)",
+        "[2 commits](https://gitlab.example.net/acme/api/-/compare/a1b2c3d...e4f5g6h) pushed to [main](https://gitlab.example.net/acme/api/-/tree/main)",
+        "",
+        "[e4f5g6h](https://gitlab.example.net/acme/api/-/commit/e4f5g6h): cache the stream index - Ada Byron",
+      ].join("\n"),
+    })
+  })
+
+  test("should drop the notification text when given top-level blocks that render", () => {
+    expect(
+      slackPayloadToMarkdown({
+        text: "fallback for notifications",
+        blocks: [
+          { type: "header", text: { type: "plain_text", text: "Deploy &amp; release" } },
+          { type: "divider" },
+          { type: "section", text: { type: "mrkdwn", text: "*done* in <https://ci.example.net/9|run 9>" } },
+          {
+            type: "context",
+            elements: [
+              { type: "image", image_url: "https://ci.example.net/i.png", alt_text: "ci" },
+              { type: "mrkdwn", text: "_by_ ada" },
+            ],
+          },
+          { type: "image", image_url: "https://ci.example.net/graph.png", alt_text: "latency graph" },
+          {
+            type: "actions",
+            elements: [
+              { type: "button", text: { type: "plain_text", text: "Open" }, url: "https://ci.example.net/9" },
+              { type: "button", text: { type: "plain_text", text: "Retry" }, action_id: "retry" },
+            ],
+          },
+          { type: "unknown_block", text: { type: "mrkdwn", text: "ignored" } },
+        ],
+      })
+    ).toEqual({
+      markdown: [
+        "**Deploy & release**",
+        "",
+        "---",
+        "",
+        "**done** in [run 9](https://ci.example.net/9)",
+        "",
+        "*by* ada",
+        "",
+        "[latency graph](https://ci.example.net/graph.png)",
+        "",
+        "[Open](https://ci.example.net/9)",
+      ].join("\n"),
+    })
+  })
+
+  test("should keep the text when given top-level blocks that render nothing", () => {
+    expect(slackPayloadToMarkdown({ text: "still here", blocks: [{ type: "unknown_block" }, "nonsense"] })).toEqual({
+      markdown: "still here",
+    })
+  })
+
+  test("should link the author when given an attachment carrying author_name and author_link", () => {
+    expect(
+      slackPayloadToMarkdown({
+        attachments: [{ author_name: "Ada Byron", author_link: "https://gitlab.example.net/ada", text: "pushed" }],
+      })
+    ).toEqual({ markdown: "[Ada Byron](https://gitlab.example.net/ada)\npushed" })
+  })
+
+  test("should keep the author name when given author_name without a link", () => {
+    expect(slackPayloadToMarkdown({ attachments: [{ author_name: "Ada Byron" }] })).toEqual({ markdown: "Ada Byron" })
+  })
+
+  test("should percent-encode whitespace when given a link target carrying spaces", () => {
+    expect(
+      slackPayloadToMarkdown({ attachments: [{ title: "report", title_link: "https://x.example/a b(c)" }] })
+    ).toEqual({ markdown: "**[report](https://x.example/a%20b\\(c\\))**" })
+  })
+
+  test("should collapse newlines when given a link label spanning lines", () => {
+    expect(
+      slackPayloadToMarkdown({ attachments: [{ title: "line one\nline two", title_link: "https://x.example/a" }] })
+    ).toEqual({ markdown: "**[line one line two](https://x.example/a)**" })
+  })
+
+  test("should render the fallback when given an attachment carrying nothing else", () => {
+    expect(slackPayloadToMarkdown({ attachments: [{ color: "danger", ts: 1, fallback: "*only* fallback" }] })).toEqual({
+      markdown: "**only** fallback",
+    })
+  })
+
+  test("should render lists, code and quotes when given a rich_text block", () => {
+    expect(
+      slackPayloadToMarkdown({
+        blocks: [
+          {
+            type: "rich_text",
+            elements: [
+              {
+                type: "rich_text_section",
+                elements: [
+                  { type: "text", text: "hi", style: { bold: true } },
+                  { type: "text", text: " " },
+                  { type: "user", user_id: "U123" },
+                  { type: "text", text: " " },
+                  { type: "broadcast", range: "here" },
+                  { type: "text", text: " in " },
+                  { type: "channel", channel_id: "C456" },
+                  { type: "emoji", name: "wave" },
+                  { type: "link", url: "https://ex.example.net/a", text: "docs" },
+                ],
+              },
+              {
+                type: "rich_text_list",
+                style: "bullet",
+                elements: [
+                  { type: "rich_text_section", elements: [{ type: "text", text: "first" }] },
+                  { type: "rich_text_section", elements: [{ type: "text", text: "second", style: { italic: true } }] },
+                ],
+              },
+              {
+                type: "rich_text_list",
+                style: "ordered",
+                elements: [
+                  { type: "rich_text_section", elements: [{ type: "text", text: "one", style: { strike: true } }] },
+                  { type: "rich_text_section", elements: [{ type: "text", text: "two", style: { code: true } }] },
+                ],
+              },
+              {
+                type: "rich_text_preformatted",
+                elements: [{ type: "text", text: "bun test\nbun run lint" }],
+              },
+              {
+                type: "rich_text_quote",
+                elements: [{ type: "text", text: "quoted\nover two lines" }],
+              },
+            ],
+          },
+        ],
+      })
+    ).toEqual({
+      markdown: [
+        "**hi** @U123 @here in #C456:wave:[docs](https://ex.example.net/a)",
+        "- first",
+        "- *second*",
+        "1. ~~one~~",
+        "2. `two`",
+        "```",
+        "bun test",
+        "bun run lint",
+        "```",
+        "> quoted",
+        "> over two lines",
+      ].join("\n"),
+    })
+  })
+
+  const garbage: Array<[name: string, payload: unknown]> = [
+    ["should refuse without throwing when given non-array attachments", { attachments: { a: 1 } }],
+    [
+      "should refuse without throwing when given attachment entries that are not objects",
+      { attachments: [1, "x", null] },
+    ],
+    [
+      "should refuse without throwing when given wrongly typed attachment fields",
+      { attachments: [{ title: 7, text: [], fields: 3, footer: {} }] },
+    ],
+    [
+      "should refuse without throwing when given a field list of scalars",
+      { attachments: [{ fields: [1, null, { title: 2, value: 3 }] }] },
+    ],
+    ["should refuse without throwing when given blocks that are not objects", { blocks: [null, 5, ["x"]] }],
+    [
+      "should refuse without throwing when given a section with a scalar text object",
+      { blocks: [{ type: "section", text: 9, fields: "no" }] },
+    ],
+    [
+      "should refuse without throwing when given a rich_text block of garbage",
+      { blocks: [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: 4 }, 7] }] },
+    ],
+    [
+      "should refuse without throwing when given an actions block of non-buttons",
+      { blocks: [{ type: "actions", elements: [{ type: "button", url: 5 }, null] }] },
+    ],
+    [
+      "should refuse without throwing when given an image block with no url",
+      { blocks: [{ type: "image", alt_text: "a" }] },
+    ],
+  ]
+
+  for (const [name, payload] of garbage) {
+    test(name, () => {
+      expect(slackPayloadToMarkdown(payload)).toEqual({ error: "no_text" })
+    })
+  }
 })

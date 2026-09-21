@@ -12,6 +12,7 @@ import { Pool } from "pg"
 import { getTestDatabaseTarget } from "../test-database"
 import { TestClient, createBot, createChannel, createWorkspace, getBaseUrl, loginAs } from "../client"
 import { archiveStream } from "../client"
+import grafana from "../../src/features/incoming-webhooks/fixtures/grafana.json"
 
 interface MessageDbRow {
   id: string
@@ -213,6 +214,28 @@ describe("incoming webhook inbound delivery", () => {
     expect(result.status).toBe(400)
     expect(result.text).toBe("invalid_payload")
     expect(result.contentType).toContain("text/plain")
+  })
+
+  test("should store the flattened attachment when given a grafana payload with no top-level text", async () => {
+    const result = await post(hook.slackUrl, JSON.stringify(grafana), { "Content-Type": "application/json" })
+
+    expect([result.status, result.text]).toEqual([200, "ok"])
+    expect((await latestMessage(hook.streamId))?.content_markdown).toBe(
+      [
+        "**[\\[FIRING:1\\] HighErrorRate prod api](https://grafana.example.net/alerting/list)**",
+        "**Firing**",
+        "",
+        "Value: B=0.34",
+        "Labels:",
+        " - alertname = HighErrorRate",
+        " - service = api",
+        "Annotations:",
+        " - summary = error rate above 5% for 10m",
+        "Source: https://grafana.example.net/alerting/grafana/ae1q/view",
+        "Silence: https://grafana.example.net/alerting/silence/new",
+        "Grafana v11.2.0",
+      ].join("\n")
+    )
   })
 
   test("should answer 400 no_text when given a payload carrying no text", async () => {
