@@ -304,6 +304,11 @@ export const ACCESS_LOG_OPERATIONS = [
   "bots.grant_stream_access",
   "bots.revoke_stream_access",
   "bots.list_stream_bots",
+  "bots.list_webhooks",
+  "bots.create_webhook",
+  "bots.update_webhook",
+  "bots.revoke_webhook",
+  "webhooks.receive",
   // Sockets (step 3)
   "socket.subscribe",
   "socket.unsubscribe",

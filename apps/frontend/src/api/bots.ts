@@ -5,6 +5,8 @@ import type {
   BotProfile,
   BotTrait,
   CreateBotApiKeyResponse,
+  CreateIncomingWebhookResponse,
+  IncomingWebhook,
   WorkspacePermissionSlug,
 } from "@threahq/types"
 
@@ -31,6 +33,16 @@ export interface CreateBotKeyInput {
   name: string
   scopes: string[]
   expiresAt?: string | null
+}
+
+export interface CreateIncomingWebhookInput {
+  name: string
+  streamId: string
+}
+
+export interface UpdateIncomingWebhookInput {
+  name?: string
+  streamId?: string
 }
 
 export const botsApi = {
@@ -104,6 +116,36 @@ export const botsApi = {
 
   async revokeKey(workspaceId: string, botId: string, keyId: string): Promise<void> {
     await api.post(`/api/workspaces/${workspaceId}/bots/${botId}/keys/${keyId}/revoke`)
+  },
+
+  async listWebhooks(workspaceId: string, botId: string): Promise<IncomingWebhook[]> {
+    const res = await api.get<{ data: IncomingWebhook[] }>(`/api/workspaces/${workspaceId}/bots/${botId}/webhooks`)
+    return res.data
+  },
+
+  async createWebhook(
+    workspaceId: string,
+    botId: string,
+    data: CreateIncomingWebhookInput
+  ): Promise<CreateIncomingWebhookResponse> {
+    return api.post<CreateIncomingWebhookResponse>(`/api/workspaces/${workspaceId}/bots/${botId}/webhooks`, data)
+  },
+
+  async updateWebhook(
+    workspaceId: string,
+    botId: string,
+    hookId: string,
+    data: UpdateIncomingWebhookInput
+  ): Promise<IncomingWebhook> {
+    const res = await api.patch<{ webhook: IncomingWebhook }>(
+      `/api/workspaces/${workspaceId}/bots/${botId}/webhooks/${hookId}`,
+      data
+    )
+    return res.webhook
+  },
+
+  async revokeWebhook(workspaceId: string, botId: string, hookId: string): Promise<void> {
+    await api.post(`/api/workspaces/${workspaceId}/bots/${botId}/webhooks/${hookId}/revoke`)
   },
 
   async uploadAvatar(workspaceId: string, botId: string, file: File): Promise<Bot> {

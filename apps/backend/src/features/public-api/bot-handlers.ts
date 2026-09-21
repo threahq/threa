@@ -105,7 +105,7 @@ interface BotHandlerDeps {
 }
 
 /** Resolve the workspace-scoped user id from the request context. */
-function resolveWorkspaceUserActorId(req: Request): string | null {
+export function resolveWorkspaceUserActorId(req: Request): string | null {
   return req.user?.id ?? req.userApiKey?.userId ?? null
 }
 

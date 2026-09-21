@@ -24,6 +24,7 @@ import { ArrowLeft, Archive, ArchiveRestore, Upload, X } from "lucide-react"
 import { BotAvatar } from "./bot-avatar"
 import { BotKeysSection } from "./bot-keys-section"
 import { BotChannelsSection } from "./bot-channels-section"
+import { BotWebhooksSection } from "./bot-webhooks-section"
 import { BotTraitsPicker } from "./bot-traits-picker"
 
 interface BotDetailProps {
@@ -290,6 +291,13 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       <BotKeysSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
       <Separator />
       <BotChannelsSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
+      <Separator />
+      <BotWebhooksSection
+        key={`${workspaceId}:${botId}`}
+        workspaceId={workspaceId}
+        botId={botId}
+        isArchived={isArchived}
+      />
       <Separator />
 
       {bot.type === "personal" && (

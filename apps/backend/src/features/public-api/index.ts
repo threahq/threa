@@ -19,4 +19,4 @@ export {
 export { BotRepository, type Bot } from "./bot-repository"
 export { BotApiKeyRepository, type BotApiKeyRow } from "./bot-api-key-repository"
 export { BotApiKeyService, type ValidatedBotApiKey } from "./bot-api-key-service"
-export { createBotHandlers } from "./bot-handlers"
+export { createBotHandlers, resolveWorkspaceUserActorId } from "./bot-handlers"

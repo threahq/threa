@@ -43,6 +43,7 @@ import {
   type RealtimeMediaApi,
 } from "./features/calls"
 import { BotApiKeyService, createBotRuntimeWriteOps } from "./features/public-api"
+import { IncomingWebhookService } from "./features/incoming-webhooks"
 import {
   EnclaveRuntimesService,
   EnclaveClaimService,
@@ -840,6 +841,7 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   const botApiKeyService = new BotApiKeyService(pool)
+  const incomingWebhookService = new IncomingWebhookService({ pool, streamService, eventService })
 
   // Enclave runtime registry — register/heartbeat/revoke of enclave instance
   // keys (EIKs) plus the live-key read for SSK wrapping. Global (no
@@ -985,6 +987,7 @@ export async function startServer(): Promise<ServerInstance> {
     enclaveClaimService,
     enclaveClaimNudge,
     botApiKeyService,
+    incomingWebhookService,
     botRuntimeService,
     botRuntimeWriteOps,
     storage,

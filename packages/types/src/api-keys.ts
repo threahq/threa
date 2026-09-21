@@ -57,6 +57,11 @@ export function sentViaApiKey(keyId: string): string {
   return `${SENT_VIA_API_PREFIX}${keyId}`
 }
 
+/** Build the sentVia value for a message created through an incoming webhook */
+export function sentViaWebhook(hookId: string): string {
+  return `webhook:${hookId}`
+}
+
 /** Check if a sentVia value indicates it was sent via a user-scoped API key */
 export function isSentViaApi(sentVia: string | null): boolean {
   return sentVia != null && sentVia.startsWith(SENT_VIA_API_PREFIX)
@@ -105,4 +110,22 @@ export interface CreateBotApiKeyResponse {
   key: BotApiKey
   /** The full API key value. Only returned on creation — store it securely. */
   value: string
+}
+
+/** Wire format for an incoming webhook (the secret and its hash are never included) */
+export interface IncomingWebhook {
+  id: string
+  botId: string
+  streamId: string
+  name: string
+  createdAt: string
+  lastUsedAt: string | null
+  revokedAt: string | null
+}
+
+/** Response when creating an incoming webhook (includes the secret once) */
+export interface CreateIncomingWebhookResponse {
+  webhook: IncomingWebhook
+  /** The webhook secret. Only returned on creation — store it securely. */
+  secret: string
 }

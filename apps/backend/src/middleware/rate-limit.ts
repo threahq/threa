@@ -1,7 +1,8 @@
 import { createHash } from "crypto"
-import type { Request, RequestHandler } from "express"
-import { createRateLimit, getClientIp } from "@threahq/backend-common"
+import type { Request, RequestHandler, Response } from "express"
+import { createRateLimit, getClientIp, type RateLimitRejection } from "@threahq/backend-common"
 import { BOT_KEY_PREFIX } from "@threahq/types"
+import { isInboundWebhookUrl, isSlackWebhookUrl } from "../features/incoming-webhooks"
 
 export interface RateLimiterSet {
   globalBaseline: RequestHandler
@@ -17,6 +18,17 @@ export interface RateLimiterSet {
   publicApiWorkspace: RequestHandler
   publicApiKey: RequestHandler
   publicApiBotKey: RequestHandler
+  incomingWebhookIp: RequestHandler
+  incomingWebhookHook: RequestHandler
+}
+
+function respondToWebhookLimit(req: Request, res: Response, rejection: RateLimitRejection): void {
+  res.setHeader("Retry-After", String(rejection.retryAfterSeconds))
+  if (isSlackWebhookUrl(req.originalUrl)) {
+    res.status(429).type("text/plain").send("rate_limited")
+    return
+  }
+  res.status(429).json({ error: "Rate limit exceeded", limit: rejection.limit, windowMs: rejection.windowMs })
 }
 
 export interface RateLimiterConfig {
@@ -52,6 +64,9 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       windowMs: 60_000,
       max: config.globalMax,
       key: (req) => getClientIp(req, "unknown"),
+      // Inbound webhooks have their own per-IP ceiling. The baseline would answer first,
+      // in JSON, where a Slack sender expects text/plain `rate_limited`.
+      skip: (req) => isInboundWebhookUrl(req.originalUrl),
     }),
 
     auth: createRateLimit({
@@ -157,6 +172,24 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       max: 300,
       key: publicApiKeyScopeKey,
       skip: (req) => !isBotKey(req),
+    }),
+
+    // The per-IP ceiling runs before authentication and caps secret-guessing; the per-hook
+    // one caps a single noisy sender once the hook is known.
+    incomingWebhookIp: createRateLimit({
+      name: "incoming-webhook-ip",
+      windowMs: 60_000,
+      max: 300,
+      key: (req) => getClientIp(req, "unknown"),
+      respond: respondToWebhookLimit,
+    }),
+
+    incomingWebhookHook: createRateLimit({
+      name: "incoming-webhook-hook",
+      windowMs: 60_000,
+      max: 60,
+      key: (req) => req.params.hookId,
+      respond: respondToWebhookLimit,
     }),
   }
 }

@@ -151,3 +151,118 @@ describe("createRateLimiters public API key limiters", () => {
     expectLimitResult(publicApiBotKey, req, { nextCalled: true, statusCode: 200, limit: undefined })
   })
 })
+
+interface TextResponse extends MockResponse {
+  sentType: string | null
+}
+
+function createTextRes(): Response & TextResponse {
+  const res = createRes() as Response & TextResponse
+  res.sentType = null
+  Object.assign(res, {
+    type: (value: string) => {
+      res.sentType = value
+      return res
+    },
+    send: (payload: unknown) => {
+      res.body = payload
+      return res
+    },
+  })
+  return res
+}
+
+function exhaust(middleware: ReturnType<typeof createRateLimit>, req: Request, times: number): void {
+  for (let i = 0; i < times; i++) run(middleware, req, createTextRes())
+}
+
+describe("createRateLimiters inbound webhook limiters", () => {
+  const slackUrl = "/api/v1/workspaces/ws_1/hooks/hook_1/s3cr3t/slack"
+  const nativeUrl = "/api/v1/workspaces/ws_1/hooks/hook_1/s3cr3t"
+
+  test("should answer text/plain rate_limited with Retry-After when the slack route exceeds the per-hook limit", () => {
+    const { incomingWebhookHook } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const req = createReq({ originalUrl: slackUrl, params: { hookId: "hook_1" } } as Partial<Request>)
+    exhaust(incomingWebhookHook, req, 60)
+
+    const res = createTextRes()
+    const { nextCalled } = run(incomingWebhookHook, req, res)
+
+    expect({
+      nextCalled,
+      statusCode: res.statusCode,
+      body: res.body,
+      sentType: res.sentType,
+      retryAfter: res.headers.get("Retry-After"),
+    }).toEqual({ nextCalled: false, statusCode: 429, body: "rate_limited", sentType: "text/plain", retryAfter: "60" })
+  })
+
+  test("should answer the standard json shape when the native route exceeds the per-hook limit", () => {
+    const { incomingWebhookHook } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const req = createReq({ originalUrl: nativeUrl, params: { hookId: "hook_2" } } as Partial<Request>)
+    exhaust(incomingWebhookHook, req, 60)
+
+    const res = createTextRes()
+    const { nextCalled } = run(incomingWebhookHook, req, res)
+
+    expect({
+      nextCalled,
+      statusCode: res.statusCode,
+      body: res.body,
+      sentType: res.sentType,
+      retryAfter: res.headers.get("Retry-After"),
+    }).toEqual({
+      nextCalled: false,
+      statusCode: 429,
+      body: { error: "Rate limit exceeded", limit: 60, windowMs: 60_000 },
+      sentType: null,
+      retryAfter: "60",
+    })
+  })
+
+  test("should key the per-hook bucket on the hook id so two hooks from one ip do not share it", () => {
+    const { incomingWebhookHook } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    exhaust(
+      incomingWebhookHook,
+      createReq({ originalUrl: nativeUrl, params: { hookId: "hook_a" } } as Partial<Request>),
+      60
+    )
+
+    const res = createTextRes()
+    const other = createReq({ originalUrl: nativeUrl, params: { hookId: "hook_b" } } as Partial<Request>)
+
+    expect(run(incomingWebhookHook, other, res).nextCalled).toBe(true)
+  })
+
+  test("should leave inbound webhook requests to their own limiters when the global baseline is exhausted", () => {
+    const { globalBaseline } = createRateLimiters({ globalMax: 2, authMax: 30 })
+    exhaust(globalBaseline, createReq({ originalUrl: "/api/workspaces" } as Partial<Request>), 3)
+
+    const outcomes = [slackUrl, nativeUrl, "/api/workspaces"].map((originalUrl) => {
+      const res = createTextRes()
+      const { nextCalled } = run(globalBaseline, createReq({ originalUrl } as Partial<Request>), res)
+      return { originalUrl, nextCalled, statusCode: res.statusCode }
+    })
+
+    expect(outcomes).toEqual([
+      { originalUrl: slackUrl, nextCalled: true, statusCode: 200 },
+      { originalUrl: nativeUrl, nextCalled: true, statusCode: 200 },
+      { originalUrl: "/api/workspaces", nextCalled: false, statusCode: 429 },
+    ])
+  })
+
+  test("should cap secret guessing per ip before any hook is known when the ip limit is exceeded", () => {
+    const { incomingWebhookIp } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const req = createReq({ originalUrl: slackUrl, params: {} } as Partial<Request>)
+    exhaust(incomingWebhookIp, req, 300)
+
+    const res = createTextRes()
+    const { nextCalled } = run(incomingWebhookIp, req, res)
+
+    expect({ nextCalled, statusCode: res.statusCode, body: res.body }).toEqual({
+      nextCalled: false,
+      statusCode: 429,
+      body: "rate_limited",
+    })
+  })
+})

@@ -1276,6 +1276,9 @@ export {
   BOT_KEY_PREFIX,
   type BotApiKey,
   type CreateBotApiKeyResponse,
+  sentViaWebhook,
+  type IncomingWebhook,
+  type CreateIncomingWebhookResponse,
 } from "./api-keys"
 
 // Dated public-API versions (Threa-Version header)

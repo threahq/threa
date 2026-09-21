@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express"
+import { redactHookSecret } from "@threahq/backend-common"
 import { httpRequestsTotal, httpRequestDuration, httpActiveConnections } from "../lib/observability"
 
 interface MetricsMiddlewareOptions {
@@ -22,7 +23,9 @@ function getErrorType(statusCode: number): string {
  * - With query ?limit=10&offset=0 -> /api/workspaces/:workspaceId/streams?limit&offset
  */
 function getNormalizedPath(req: Request): string {
-  const basePath = req.route?.path || req.path
+  // `req.route` is absent when nothing matched, and an inbound webhook's raw path carries
+  // its secret.
+  const basePath = req.route?.path || redactHookSecret(req.path)
 
   const queryKeys = Object.keys(req.query).sort()
   if (queryKeys.length > 0) {

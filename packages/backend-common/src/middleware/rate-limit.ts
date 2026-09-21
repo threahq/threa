@@ -5,12 +5,20 @@ interface RateLimitBucket {
   resetAt: number
 }
 
+export interface RateLimitRejection {
+  limit: number
+  windowMs: number
+  retryAfterSeconds: number
+}
+
 export interface RateLimitOptions {
   name: string
   windowMs: number
   max: number
   key: (req: Request) => string
   skip?: (req: Request) => boolean
+  /** Writes the 429 for callers that cannot read the default JSON body (Slack wants text/plain). */
+  respond?: (req: Request, res: Response, rejection: RateLimitRejection) => void
 }
 
 function setRateLimitHeaders(res: Response, max: number, remaining: number, resetAt: number): void {
@@ -52,10 +60,19 @@ export function createRateLimit(options: RateLimitOptions): RequestHandler {
 
     if (bucket.count >= options.max) {
       setRateLimitHeaders(res, options.max, 0, bucket.resetAt)
-      res.status(429).json({
-        error: "Rate limit exceeded",
+      const rejection: RateLimitRejection = {
         limit: options.max,
         windowMs: options.windowMs,
+        retryAfterSeconds: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)),
+      }
+      if (options.respond) {
+        options.respond(req, res, rejection)
+        return
+      }
+      res.status(429).json({
+        error: "Rate limit exceeded",
+        limit: rejection.limit,
+        windowMs: rejection.windowMs,
       })
       return
     }

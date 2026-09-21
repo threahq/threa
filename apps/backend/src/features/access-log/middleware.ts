@@ -36,6 +36,9 @@ interface Identity {
 }
 
 function resolveIdentity(req: Request): Identity | null {
+  if (req.incomingWebhook) {
+    return { actorType: "bot", actorId: req.incomingWebhook.botId, authRef: req.incomingWebhook.id }
+  }
   if (req.botApiKey) {
     return { actorType: "bot", actorId: req.botApiKey.botId, authRef: req.botApiKey.id }
   }
@@ -107,7 +110,8 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
       // was denied. capSubjects shape-enforces them: an id-shaped param is a
       // ref, probed free text is redacted (no-content rule, design §5).
       const routeParamRefs = Object.entries(req.params)
-        .filter(([name]) => name !== "workspaceId")
+        // `secret` is the inbound-webhook credential itself; a denial row must never carry it.
+        .filter(([name]) => name !== "workspaceId" && name !== "secret")
         .map(([, value]) => ({ type: "param", id: value }))
       onResponseDone(res, (aborted) => {
         // Handler-declared no-op: a poll that found no work read nothing, and

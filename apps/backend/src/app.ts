@@ -11,6 +11,7 @@ import { bigIntReplacer, requestLogLevel, requestLogSerializers, sanitizeRoutePa
 import { createMetricsMiddleware } from "./middleware/metrics"
 import type { ApiVersionLog } from "./middleware/api-version"
 import { createCorsOriginChecker } from "./lib/cors"
+import { isInboundWebhookUrl } from "./features/incoming-webhooks"
 
 /** pino-http hands over the raw URL, and the query string is not part of the route. */
 function routeTemplate(url: string | undefined): string {
@@ -95,8 +96,13 @@ export function createApp(options: CreateAppOptions): Express {
     })
   )
   app.use(cookieParser())
-  app.use(express.json({ limit: "10mb" }))
-  app.use(express.urlencoded({ extended: true, limit: "10mb" }))
+  // Inbound webhook routes parse their own body: unauthenticated, so a far smaller limit, and
+  // the Slack route must answer a malformed body in text/plain rather than through this
+  // parser's JSON error.
+  const jsonParser = express.json({ limit: "10mb" })
+  const urlencodedParser = express.urlencoded({ extended: true, limit: "10mb" })
+  app.use((req, res, next) => (isInboundWebhookUrl(req.url) ? next() : jsonParser(req, res, next)))
+  app.use((req, res, next) => (isInboundWebhookUrl(req.url) ? next() : urlencodedParser(req, res, next)))
 
   app.get("/health", (_, res) => res.json({ status: "ok" }))
 
