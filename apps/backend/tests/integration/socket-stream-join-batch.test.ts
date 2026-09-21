@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test"
 import { io, Socket } from "socket.io-client"
 import {
   TestClient,
+  getBaseUrl,
   loginAs,
   createWorkspace,
   createChannel,
@@ -10,10 +11,6 @@ import {
   joinWorkspace,
   addStreamMember,
 } from "../client"
-
-function getBaseUrl(): string {
-  return process.env.TEST_BASE_URL || "http://localhost:3001"
-}
 
 function createSocket(client: TestClient): Socket {
   const cookies = (client as unknown as { cookies?: Map<string, string> }).cookies

@@ -285,7 +285,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     }
 
     const flushStreamJoins = async (wsId: string, joins: PendingStreamJoin[]): Promise<void> => {
-      let workspaceUser: Awaited<ReturnType<typeof UserRepository.findByWorkosUserIdInWorkspace>>
+      let workspaceUser: Awaited<ReturnType<typeof UserRepository.findByWorkosUserIdInWorkspace>> = null
       let accessible: Set<string>
       try {
         workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
@@ -299,7 +299,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           : new Set()
       } catch (error) {
         logger.error({ error, workosUserId, wsId, rooms: joins.length }, "Unexpected error during stream room join")
-        for (const join of joins) rejectStreamJoin(wsId, workosUserId, join, "error")
+        for (const join of joins) rejectStreamJoin(wsId, workspaceUser?.id ?? workosUserId, join, "error")
         return
       }
       // A subscribe recorded after disconnect's flushAll would never pair with an unsubscribe.
@@ -789,33 +789,37 @@ async function emitRunningSessionBootstraps(
   params: { pool: import("pg").Pool; wsId: string; streamIds: string[] }
 ): Promise<void> {
   const { pool, wsId, streamIds } = params
-  const sessions = await AgentSessionRepository.findRunningByStreams(pool, streamIds)
-
-  await Promise.all(
-    sessions.map(async (session) => {
-      // Null before the first step fires; the next live progress event populates the entry.
-      const currentStepType = session.currentStepType
-      if (!currentStepType) return
-
-      const [steps, persona] = await Promise.all([
-        AgentSessionRepository.findStepsBySession(pool, session.id),
-        PersonaRepository.findById(pool, session.personaId, wsId),
-      ])
-      const messageCount = steps.filter(
-        (step) => step.stepType === "message_sent" || step.stepType === "message_edited"
-      ).length
-
-      socket.emit("agent_session:progress", {
-        workspaceId: wsId,
-        streamId: session.streamId,
-        sessionId: session.id,
-        triggerMessageId: session.triggerMessageId,
-        personaName: persona?.name ?? "Agent",
-        stepCount: steps.length,
-        messageCount,
-        currentStepType,
-        threadStreamId: undefined,
-      })
-    })
+  // Null before the first step fires; the next live progress event populates the entry.
+  const sessions = (await AgentSessionRepository.findRunningByStreams(pool, streamIds)).filter(
+    (session) => session.currentStepType
   )
+  if (sessions.length === 0) return
+
+  const [counts, personas] = await Promise.all([
+    AgentSessionRepository.countStepsBySessions(
+      pool,
+      sessions.map((session) => session.id)
+    ),
+    PersonaRepository.findByIds(
+      pool,
+      sessions.map((session) => session.personaId),
+      wsId
+    ),
+  ])
+  const personaNames = new Map(personas.map((persona) => [persona.id, persona.name]))
+
+  for (const session of sessions) {
+    const count = counts.get(session.id)
+    socket.emit("agent_session:progress", {
+      workspaceId: wsId,
+      streamId: session.streamId,
+      sessionId: session.id,
+      triggerMessageId: session.triggerMessageId,
+      personaName: personaNames.get(session.personaId) ?? "Agent",
+      stepCount: count?.stepCount ?? 0,
+      messageCount: count?.messageCount ?? 0,
+      currentStepType: session.currentStepType,
+      threadStreamId: undefined,
+    })
+  }
 }
