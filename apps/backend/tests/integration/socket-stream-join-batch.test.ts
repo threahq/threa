@@ -90,7 +90,15 @@ describe("socket stream joins in one burst", () => {
         missing: denied,
       })
 
-      const delivered = new Promise<{ streamId: string }>((resolve) => socket.once("message:created", resolve))
+      // The anchor message's own event can still be in the outbox when the rooms are joined.
+      const delivered = new Promise<{ streamId: string }>((resolve) => {
+        const onCreated = (event: { streamId: string }) => {
+          if (event.streamId !== thread.id) return
+          socket.off("message:created", onCreated)
+          resolve(event)
+        }
+        socket.on("message:created", onCreated)
+      })
       await sendMessage(owner, ws.id, thread.id, "reply in thread")
       expect(await delivered).toMatchObject({ streamId: thread.id })
     } finally {
