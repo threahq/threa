@@ -391,3 +391,32 @@ export function collectAttachmentReferenceIds(content: JSONContent): string[] {
   walk(content)
   return ordered
 }
+
+/**
+ * Turns every `mention`/`channelLink` whose id is still a bare slug back into
+ * the literal `@slug`/`#slug` text it was parsed from. Run after resolution, so
+ * a token that names nothing is stored as prose, not as a reference to nobody.
+ */
+export function unresolvedTriggersToText(content: JSONContent): { contentJson: JSONContent; changed: boolean } {
+  let changed = false
+
+  const map = (node: JSONContent): JSONContent => {
+    const sigil = unresolvedTriggerSigil(node)
+    if (sigil) {
+      changed = true
+      return { type: "text", text: `${sigil}${node.attrs!.slug}`, ...(node.marks ? { marks: node.marks } : {}) }
+    }
+    return node.content ? { ...node, content: node.content.map(map) } : node
+  }
+
+  const next = map(content)
+  return { contentJson: changed ? next : content, changed }
+}
+
+function unresolvedTriggerSigil(node: JSONContent): "@" | "#" | null {
+  const id = node.attrs?.id
+  if (typeof id !== "string" || typeof node.attrs?.slug !== "string") return null
+  if (node.type === "mention" && !isResolvedMentionId(id)) return "@"
+  if (node.type === "channelLink" && !isResolvedChannelLinkId(id)) return "#"
+  return null
+}

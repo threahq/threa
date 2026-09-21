@@ -15,12 +15,7 @@ import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { openSelectedMath } from "./math-extension"
 import { EditorToolbar } from "./editor-toolbar"
-import {
-  serializeToMarkdown,
-  parseMarkdown,
-  isProseMirrorClipboardEvent,
-  type MentionTypeLookup,
-} from "./editor-markdown"
+import { serializeToMarkdown, parseMarkdown, isProseMirrorClipboardEvent } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
 import { handleBeforeInputLinkPaste, pasteLinkOverSelection } from "./paste-link-over-selection"
@@ -47,7 +42,7 @@ import {
   handleBeforeInputNewline,
   insertPastedText,
 } from "./multiline-blocks"
-import { useMentionables } from "@/hooks/use-mentionables"
+import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
@@ -408,6 +403,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
+  const { getMentionType, isKnownChannel } = useMarkdownTriggerLookups(mentionables)
   // Filtered for autocomplete dropdown only
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion(mentionStreamContext)
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
@@ -433,15 +429,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
-  // Current user's slug maps to "me" for special highlighting.
-  const getMentionType = useMemo<MentionTypeLookup>(() => {
-    const slugToType = new Map<string, "user" | "persona" | "bot" | "broadcast" | "me">()
-    for (const m of mentionables) {
-      slugToType.set(m.slug, m.isCurrentUser ? "me" : m.type)
-    }
-    return (slug: string) => slugToType.get(slug) ?? "user"
-  }, [mentionables])
-
   // Ref to avoid stale closure in TipTap paste handler
   const getMentionTypeRef = useRef(getMentionType)
   getMentionTypeRef.current = getMentionType
@@ -451,6 +438,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     () => ({
       enableMentions,
       enableChannels,
+      isKnownChannel,
       enableSlashCommands: enableCommands,
       // Pasted markdown only becomes a command node for a real command; a
       // stray `/User` from a filepath stays text.
@@ -458,7 +446,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       enableEmoji,
       emojiAsText: true,
     }),
-    [enableMentions, enableChannels, enableCommands, enableEmoji, isKnownSlashCommand]
+    [enableMentions, enableChannels, isKnownChannel, enableCommands, enableEmoji, isKnownSlashCommand]
   )
   // Same stale-closure guard as the refs above: the paste / beforeinput handlers
   // live in TipTap's `editorProps` (set once), but these options change when the

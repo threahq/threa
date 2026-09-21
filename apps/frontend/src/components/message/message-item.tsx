@@ -44,6 +44,8 @@ import { LabelStack } from "@/components/labels/label-stack"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useMentionType } from "@/lib/markdown/mention-context"
+import { useChannelUrl } from "@/lib/markdown/channel-link-context"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useOpenAside } from "@/hooks/use-open-aside"
@@ -369,7 +371,17 @@ export function MessageItem({
   // Board/conversation payloads carry only markdown (INV-58 wire format); parse
   // it back to the canonical contentJson the editor edits over. A no-op edit is
   // still detected because the form's baseline re-serializes this same doc.
-  const editInitialContentJson = useMemo(() => parseMarkdown(message.contentMarkdown), [message.contentMarkdown])
+  // Same roster the timeline chips from, so the editor opens on the chips the
+  // message showed and an unknown `@slug`/`#slug` stays text.
+  const getMentionType = useMentionType()
+  const getChannelUrl = useChannelUrl()
+  const editInitialContentJson = useMemo(
+    () =>
+      parseMarkdown(message.contentMarkdown, getMentionType, undefined, {
+        isKnownChannel: (slug) => getChannelUrl(slug) !== null,
+      }),
+    [message.contentMarkdown, getMentionType, getChannelUrl]
+  )
   const inlineEditing = isEditing && !editingSurfaceTouch
   const editForm = (
     <MessageEditForm

@@ -28,16 +28,11 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { ComposerPillDndProvider } from "./composer-pill-dnd"
 import { createEditorExtensions } from "./editor-extensions"
 import { EditorBehaviors, handleLinkToolbarAction, isSuggestionActive } from "./editor-behaviors"
-import {
-  serializeToMarkdown,
-  parseMarkdown,
-  isProseMirrorClipboardEvent,
-  type MentionTypeLookup,
-} from "./editor-markdown"
+import { serializeToMarkdown, parseMarkdown, isProseMirrorClipboardEvent } from "./editor-markdown"
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "./triggers"
-import { useMentionables } from "@/hooks/use-mentionables"
+import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { LinkEditor } from "./link-editor"
 import {
@@ -76,6 +71,7 @@ export function DocumentEditorModal({
   const [linkEditorOpen, setLinkEditorOpen] = useState(false)
 
   const { mentionables } = useMentionables()
+  const { getMentionType, isKnownChannel } = useMarkdownTriggerLookups(mentionables)
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion()
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
 
@@ -83,21 +79,13 @@ export function DocumentEditorModal({
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
-  const getMentionType = useMemo<MentionTypeLookup>(() => {
-    const slugToType = new Map<string, "user" | "persona" | "bot" | "broadcast" | "me">()
-    for (const m of mentionables) {
-      slugToType.set(m.slug, m.isCurrentUser ? "me" : m.type)
-    }
-    return (slug: string) => slugToType.get(slug) ?? "user"
-  }, [mentionables])
-
   const initContentRef = useRef(initialContent)
   const getMentionTypeRef = useRef(getMentionType)
   const toEmojiRef = useRef(toEmoji)
   initContentRef.current = initialContent
   getMentionTypeRef.current = getMentionType
   toEmojiRef.current = toEmoji
-  const markdownParseOptions = useMemo(() => ({ emojiAsText: true }), [])
+  const markdownParseOptions = useMemo(() => ({ emojiAsText: true, isKnownChannel }), [isKnownChannel])
 
   // Ref for handleSubmit without re-creating extensions
   const handleSubmitRef = useRef(() => {})

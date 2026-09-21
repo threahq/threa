@@ -8,6 +8,7 @@ import {
   collectUnresolvedChannelLinkSlugs,
   collectUnresolvedMentionSlugs,
   mapMentionAndChannelNodes,
+  unresolvedTriggersToText,
 } from "@threahq/prosemirror"
 import type { Querier } from "../../db"
 import { UserRepository } from "../workspaces"
@@ -150,9 +151,11 @@ export async function buildMentionResolutionMaps(
 
 /**
  * Ingestion entry point (INV-64): resolve unresolved mention/channel ids in
- * `contentJson` to authoritative actor/stream ids. Idempotent and cheap — a
- * no-op (`changed: false`) when nothing is unresolved, so it is safe to run on
- * every write including E2E placeholder content (which carries no mentions).
+ * `contentJson` to authoritative actor/stream ids. A slug that resolves to
+ * nothing becomes plain `@slug`/`#slug` text, so no node points at nobody.
+ * Idempotent and cheap — a no-op (`changed: false`) when nothing is
+ * unresolved, so it is safe to run on every write including E2E placeholder
+ * content (which carries no mentions).
  */
 export async function resolveMentionContent(
   querier: Querier,
@@ -170,7 +173,9 @@ export async function resolveMentionContent(
   }
 
   const maps = await buildMentionResolutionMaps(querier, workspaceId, { mentionSlugs, channelSlugs }, authorUserId)
-  return applyMentionResolution(contentJson, maps)
+  const resolved = applyMentionResolution(contentJson, maps)
+  const demoted = unresolvedTriggersToText(resolved.contentJson)
+  return { contentJson: demoted.contentJson, changed: resolved.changed || demoted.changed }
 }
 
 function hasUnnormalizedBroadcast(contentJson: JSONContent): boolean {

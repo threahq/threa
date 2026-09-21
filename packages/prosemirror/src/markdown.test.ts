@@ -1030,6 +1030,27 @@ describe("mention/channel whitespace boundary", () => {
   })
 })
 
+describe("mention/channel roster lookups", () => {
+  it("chips only slugs the lookups know, leaving the rest as the typed text", () => {
+    const parsed = parseMarkdown(
+      "@kris ping @nobody in #general not #nowhere",
+      (slug) => (slug === "kris" ? "user" : null),
+      undefined,
+      { isKnownChannel: (slug) => slug === "general" }
+    )
+
+    expect(parsed.content?.[0]?.content).toEqual([
+      { type: "mention", attrs: { id: "kris", slug: "kris", mentionType: "user" } },
+      { type: "text", text: " ping " },
+      { type: "text", text: "@nobody" },
+      { type: "text", text: " in " },
+      { type: "channelLink", attrs: { id: "general", slug: "general" } },
+      { type: "text", text: " not " },
+      { type: "text", text: "#nowhere" },
+    ])
+  })
+})
+
 describe("slash command boundary", () => {
   it("does not claim a leading filepath as a slash command (paste regression)", () => {
     const result = parseMarkdown("/User/kristofferremback/dev/personal")
