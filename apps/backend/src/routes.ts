@@ -2052,6 +2052,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     "/api/v1/workspaces/:workspaceId/hooks/:hookId/:secret",
     rateLimits.incomingWebhookIp,
     express.json({ limit: INBOUND_WEBHOOK_BODY_LIMIT }),
+    inboundWebhookHandlers.requireNativePath,
     audit("webhooks.receive", "write"),
     inboundWebhookHandlers.authenticateNative,
     rateLimits.incomingWebhookHook,
@@ -2063,8 +2064,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     rateLimits.incomingWebhookIp,
     // `type: () => true` rather than `"*/*"`: a sender with no Content-Type at all matches no
     // media type, and body-parser would hand the handler an undefined body.
-    express.urlencoded({ extended: false, limit: INBOUND_WEBHOOK_BODY_LIMIT }),
     express.text({ type: () => true, limit: INBOUND_WEBHOOK_BODY_LIMIT }),
+    inboundWebhookHandlers.requireSlackPath,
     audit("webhooks.receive", "write"),
     inboundWebhookHandlers.authenticateSlack,
     rateLimits.incomingWebhookHook,

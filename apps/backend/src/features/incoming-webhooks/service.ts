@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto"
 import type { Pool } from "pg"
-import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
+import { parseMarkdown } from "@threahq/prosemirror"
 import { HttpError } from "@threahq/backend-common"
 import { AuthorTypes, sentViaWebhook, StreamTypes } from "@threahq/types"
 import { withTransaction, type Querier } from "../../db"
@@ -13,6 +13,8 @@ import { checkStreamAccess } from "../streams"
 import { IncomingWebhookRepository, type IncomingWebhookRow } from "./repository"
 
 const SECRET_BYTE_LENGTH = 32
+/** The public API's message limit. */
+export const MAX_WEBHOOK_MARKDOWN_LENGTH = 50_000
 const MAX_ACTIVE_HOOKS_PER_BOT = 25
 const HOOK_TARGET_STREAM_TYPES: ReadonlySet<string> = new Set([StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD])
 
@@ -197,8 +199,9 @@ export class IncomingWebhookService {
     }
 
     const contentMarkdown = normalizeMessage(markdown)
+    // No attachment linking: a hook cannot upload, so an `attachment:` id in its markdown is
+    // never its own.
     const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
-    const attachmentIds = collectAttachmentReferenceIds(contentJson)
 
     const { message } = await this.eventService.createMessageForPrincipalReturningConversation(principal, {
       workspaceId: hook.workspaceId,
@@ -207,7 +210,6 @@ export class IncomingWebhookService {
       authorType: AuthorTypes.BOT,
       contentJson,
       contentMarkdown,
-      ...(attachmentIds.length > 0 && { attachmentIds }),
       sentVia: sentViaWebhook(hook.id),
     })
 

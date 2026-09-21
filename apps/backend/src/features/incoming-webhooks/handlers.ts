@@ -21,7 +21,7 @@ const updateWebhookSchema = z
     message: "name or streamId is required",
   })
 
-const revokeParamsSchema = z.object({
+const hookParamsSchema = z.object({
   hookId: z.string().min(1),
 })
 
@@ -81,7 +81,7 @@ export function createIncomingWebhookHandlers({
         throw new HttpError("Not authenticated", { status: 401, code: "UNAUTHENTICATED" })
       }
 
-      const { hookId } = validateRequest(revokeParamsSchema, req.params)
+      const { hookId } = validateRequest(hookParamsSchema, req.params)
       const data = validateRequest(updateWebhookSchema, req.body)
       const row = await incomingWebhookService.update({
         workspaceId: req.workspaceId!,
@@ -98,7 +98,7 @@ export function createIncomingWebhookHandlers({
 
     /** POST /api/workspaces/:workspaceId/bots/:botId/webhooks/:hookId/revoke */
     async revoke(req: Request, res: Response) {
-      const { hookId } = validateRequest(revokeParamsSchema, req.params)
+      const { hookId } = validateRequest(hookParamsSchema, req.params)
       await incomingWebhookService.revoke(req.workspaceId!, req.params.botId, hookId)
       res.status(204).send()
     },

@@ -188,7 +188,7 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       name: "incoming-webhook-hook",
       windowMs: 60_000,
       max: 60,
-      key: (req) => req.params.hookId || getClientIp(req, "unknown"),
+      key: (req) => req.params.hookId,
       respond: respondToWebhookLimit,
     }),
   }

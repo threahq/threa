@@ -151,6 +151,55 @@ describe("incoming webhook inbound delivery", () => {
     expect((await latestMessage(hook.streamId))?.content_markdown).toBe("typeless")
   })
 
+  test("should accept a bare JSON body when it is announced as a form, as curl -d does", async () => {
+    const result = await post(hook.slackUrl, JSON.stringify({ text: "a=b & c" }), {
+      "Content-Type": "application/x-www-form-urlencoded",
+    })
+
+    expect([result.status, result.text]).toEqual([200, "ok"])
+    expect((await latestMessage(hook.streamId))?.content_markdown).toBe("a=b & c")
+  })
+
+  test("should deliver without linking an attachment when the markdown references an attachment id", async () => {
+    const result = await post(
+      hook.nativeUrl,
+      JSON.stringify({ content: "see [leak.pdf](attachment:attach_01NOTREAL)" }),
+      {
+        "Content-Type": "application/json",
+      }
+    )
+
+    expect(result.status).toBe(201)
+  })
+
+  test("should answer 400 when the content is longer than a message may be", async () => {
+    const native = await post(hook.nativeUrl, JSON.stringify({ content: "x".repeat(50_001) }), {
+      "Content-Type": "application/json",
+    })
+    const slack = await post(hook.slackUrl, JSON.stringify({ text: "x".repeat(50_001) }), {
+      "Content-Type": "application/json",
+    })
+
+    expect([native.status, slack.status, slack.text]).toEqual([400, 400, "invalid_payload"])
+  })
+
+  test("should answer 404 without an access_log row when the path ids are not ids", async () => {
+    const forged = `forged-${testRunId}`
+    const url = `${getBaseUrl()}/api/v1/workspaces/${forged}/hooks/${hook.id}/${hook.secret}/slack`
+    expect((await post(url, "{}")).status).toBe(404)
+
+    const probed = await createHook(hook.streamId, "Shape probe", hook.botId)
+    const denied = `${getBaseUrl()}/api/v1/workspaces/${workspaceId}/hooks/${probed.id}/wrong-secret/slack`
+    expect((await post(denied, "{}")).status).toBe(404)
+    await pollAccessLog("workspace_id = $1 AND subjects @> $2::jsonb", [
+      workspaceId,
+      JSON.stringify([{ type: "param", id: probed.id }]),
+    ])
+
+    const { rows } = await pool.query("SELECT 1 FROM access_log WHERE workspace_id = $1", [forged])
+    expect(rows).toEqual([])
+  })
+
   test("should accept a JSON body when given the wrong content-type", async () => {
     const result = await post(hook.slackUrl, JSON.stringify({ text: "mislabelled" }), { "Content-Type": "text/plain" })
 

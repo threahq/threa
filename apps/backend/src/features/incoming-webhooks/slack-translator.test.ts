@@ -121,3 +121,13 @@ describe("slackPayloadToMarkdown", () => {
     })
   }
 })
+
+describe("slackTextToMarkdown link targets", () => {
+  test("should keep only the label when the target is not a web or mail address", () => {
+    expect(
+      slackTextToMarkdown(
+        "<attachment:att_01ABC|leak.pdf> <channel:stream_01ABC|#ops> <user:usr_01ABC> <mailto:a@ex.example.net|mail>"
+      )
+    ).toBe("leak.pdf #ops user:usr_01ABC [mail](mailto:a@ex.example.net)")
+  })
+})

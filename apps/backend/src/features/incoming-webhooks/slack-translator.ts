@@ -23,6 +23,8 @@ function unescapeEntities(text: string): string {
   return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
 }
 
+const WEB_TARGET = /^(?:https?:\/\/|mailto:)/i
+
 function escapeLinkLabel(label: string): string {
   return label.replace(/([\\[\]])/g, "\\$1")
 }
@@ -45,8 +47,9 @@ function translateControlSequence(inner: string): string {
   if (target.startsWith("#")) {
     return label ? `#${label}` : target
   }
-  if (target === "") {
-    return label ?? ""
+  // Any other scheme would reach the markdown parser as one of Threa's own pointer links.
+  if (!WEB_TARGET.test(target)) {
+    return label ?? target
   }
   return label ? `[${escapeLinkLabel(label)}](${escapeLinkTarget(target)})` : target
 }

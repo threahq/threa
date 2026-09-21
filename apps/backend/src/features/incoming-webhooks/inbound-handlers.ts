@@ -4,7 +4,7 @@ import { HttpError } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
 import { validateRequest } from "../../lib/validation"
 import type { IncomingWebhookRow } from "./repository"
-import type { IncomingWebhookService } from "./service"
+import { MAX_WEBHOOK_MARKDOWN_LENGTH, type IncomingWebhookService } from "./service"
 import { slackPayloadToMarkdown } from "./slack-translator"
 
 declare global {
@@ -17,6 +17,7 @@ declare global {
 }
 
 /** Case-insensitive because Express routing is: `/SLACK` reaches the Slack handler. */
+const HOOK_PATH_IDS = /^ws_[0-9a-z]{10,40}\/hook_[0-9a-z]{10,40}$/i
 const INBOUND_WEBHOOK_URL = /^\/api\/v1\/workspaces\/[^/?#]+\/hooks\/[^/?#]+\/[^/?#]+(\/slack)?\/?(?:[?#]|$)/i
 
 export function isInboundWebhookUrl(url: string): boolean {
@@ -39,31 +40,21 @@ class SlackReplyError extends Error {
 }
 
 const nativeBodySchema = z.object({
-  content: z.string().min(1, "content is required"),
+  content: z.string().min(1, "content is required").max(MAX_WEBHOOK_MARKDOWN_LENGTH),
 })
 
-/** Slack senders post a JSON object, a `payload=<json>` form, or JSON the text parser hands over as a string. */
+/**
+ * Slack senders post JSON or a `payload=<json>` form, and the Content-Type is no guide to which:
+ * `curl -d '{"text":"hi"}'` announces a form. The body arrives as raw text and is sniffed.
+ */
 function readSlackPayload(body: unknown): unknown {
-  if (typeof body === "string") {
-    if (body.trim() === "") throw new SlackReplyError(400, "invalid_payload")
-    try {
-      return JSON.parse(body)
-    } catch {
-      throw new SlackReplyError(400, "invalid_payload")
-    }
+  if (typeof body !== "string") throw new SlackReplyError(400, "invalid_payload")
+  const raw = body.trimStart().startsWith("{") ? body : new URLSearchParams(body).get("payload")
+  try {
+    return JSON.parse(raw ?? "")
+  } catch {
+    throw new SlackReplyError(400, "invalid_payload")
   }
-  if (typeof body === "object" && body !== null && !Array.isArray(body)) {
-    const form = (body as { payload?: unknown }).payload
-    if (typeof form === "string") {
-      try {
-        return JSON.parse(form)
-      } catch {
-        throw new SlackReplyError(400, "invalid_payload")
-      }
-    }
-    return body
-  }
-  throw new SlackReplyError(400, "invalid_payload")
 }
 
 // body-parser rejects an oversized or undecodable entity with a plain Error carrying a `type`,
@@ -73,7 +64,9 @@ function isBodyParserRejection(err: unknown): boolean {
   return typeof type === "string" && type.startsWith("entity.")
 }
 
-export interface InboundWebhookHandlers {
+interface InboundWebhookHandlers {
+  requireNativePath: RequestHandler
+  requireSlackPath: RequestHandler
   authenticateNative: RequestHandler
   authenticateSlack: RequestHandler
   native: (req: Request, res: Response) => Promise<void>
@@ -102,19 +95,25 @@ export function createInboundWebhookHandlers({
     }
   }
 
-  function authenticated(req: Request): IncomingWebhookRow {
-    const hook = req.incomingWebhook
-    if (!hook) throw new HttpError("Webhook not found", { status: 404, code: "NOT_FOUND" })
-    return hook
+  // Runs ahead of the audit layer, which records the path's workspace id on a denial: an
+  // unauthenticated caller must not choose what lands in that column.
+  function requireHookPath(onFailure: () => Error): RequestHandler {
+    return (req, _res, next) =>
+      next(HOOK_PATH_IDS.test(`${req.params.workspaceId}/${req.params.hookId}`) ? undefined : onFailure())
   }
 
+  const notFound = () => new HttpError("Webhook not found", { status: 404, code: "NOT_FOUND" })
+  const noService = () => new SlackReplyError(404, "no_service")
+
   return {
-    authenticateNative: authenticate(() => new HttpError("Webhook not found", { status: 404, code: "NOT_FOUND" })),
-    authenticateSlack: authenticate(() => new SlackReplyError(404, "no_service")),
+    requireNativePath: requireHookPath(notFound),
+    requireSlackPath: requireHookPath(noService),
+    authenticateNative: authenticate(notFound),
+    authenticateSlack: authenticate(noService),
 
     /** POST /api/v1/workspaces/:workspaceId/hooks/:hookId/:secret */
     async native(req: Request, res: Response) {
-      const hook = authenticated(req)
+      const hook = req.incomingWebhook!
 
       const { content } = validateRequest(nativeBodySchema, req.body)
       await incomingWebhookService.post(hook, content)
@@ -123,10 +122,11 @@ export function createInboundWebhookHandlers({
 
     /** POST /api/v1/workspaces/:workspaceId/hooks/:hookId/:secret/slack */
     async slack(req: Request, res: Response) {
-      const hook = authenticated(req)
+      const hook = req.incomingWebhook!
 
       const payload = slackPayloadToMarkdown(readSlackPayload(req.body))
       if ("error" in payload) throw new SlackReplyError(400, payload.error)
+      if (payload.markdown.length > MAX_WEBHOOK_MARKDOWN_LENGTH) throw new SlackReplyError(400, "invalid_payload")
 
       await incomingWebhookService.post(hook, payload.markdown)
       res.status(200).type("text/plain").send("ok")
