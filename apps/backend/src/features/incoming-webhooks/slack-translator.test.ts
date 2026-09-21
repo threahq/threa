@@ -381,3 +381,30 @@ describe("slackPayloadToMarkdown attachments and blocks", () => {
     })
   }
 })
+
+describe("slackPayloadToMarkdown rich_text list layout", () => {
+  const section = (text: string) => ({ type: "rich_text_section", elements: [{ type: "text", text }] })
+
+  test("should indent a nested list and continue numbering when given indent and offset", () => {
+    expect(
+      slackPayloadToMarkdown({
+        blocks: [
+          {
+            type: "rich_text",
+            elements: [
+              { type: "rich_text_list", style: "bullet", elements: [section("parent")] },
+              { type: "rich_text_list", style: "bullet", indent: 1, elements: [section("child")] },
+              { type: "rich_text_list", style: "ordered", offset: 2, elements: [section("three"), section("four")] },
+            ],
+          },
+        ],
+      })
+    ).toEqual({ markdown: ["- parent", "    - child", "3. three", "4. four"].join("\n") })
+  })
+
+  test("should encode every whitespace character when a link target holds a run of them", () => {
+    expect(slackPayloadToMarkdown({ text: "<https://ex.example.net/a  b\tc|label>" })).toEqual({
+      markdown: "[label](https://ex.example.net/a%20%20b%09c)",
+    })
+  })
+})

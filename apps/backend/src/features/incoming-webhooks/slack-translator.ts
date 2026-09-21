@@ -30,7 +30,7 @@ function escapeLinkLabel(label: string): string {
 }
 
 function escapeLinkTarget(target: string): string {
-  return target.replace(/([()])/g, "\\$1").replace(/\s+/g, "%20")
+  return target.replace(/([()])/g, "\\$1").replace(/\s/g, encodeURIComponent)
 }
 
 function translateControlSequence(inner: string): string {
@@ -162,6 +162,13 @@ function renderInlineElements(element: SlackObject): string | null {
   return rendered.length > 0 ? rendered : null
 }
 
+// Wide enough to nest under both "- " and "1. " markers.
+const LIST_INDENT_WIDTH = 4
+
+function nonNegativeInt(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : 0
+}
+
 function renderRichTextElement(value: unknown): string | null {
   const element = asRecord(value)
   if (element === null) return null
@@ -171,11 +178,13 @@ function renderRichTextElement(value: unknown): string | null {
       return renderInlineElements(element)
     case "rich_text_list": {
       const ordered = element.style === "ordered"
+      const pad = " ".repeat(LIST_INDENT_WIDTH * nonNegativeInt(element.indent))
+      const first = nonNegativeInt(element.offset) + 1
       const lines: string[] = []
       for (const item of asArray(element.elements)) {
         const section = asRecord(item)
         const rendered = section === null ? null : renderInlineElements(section)
-        if (rendered !== null) lines.push(`${ordered ? `${lines.length + 1}. ` : "- "}${rendered}`)
+        if (rendered !== null) lines.push(`${pad}${ordered ? `${first + lines.length}. ` : "- "}${rendered}`)
       }
       return joinParts(lines, "\n")
     }
