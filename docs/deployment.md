@@ -132,7 +132,7 @@ Both services share the same PostgreSQL instance but use different databases:
 
 ## Cloudflare (Workers + Pages)
 
-All Cloudflare surfaces auto-deploy on push to `main` via `.github/workflows/deploy-cloudflare.yml`. The workflow fires on `workflow_run` after CI passes.
+All Cloudflare surfaces auto-deploy on push to `main` via `.github/workflows/deploy-cloudflare.yml`. The workflow fires on `workflow_run` after CI passes. It deploys only when that CI run's commit is still the tip of `main`, so a late or rerun CI for an older commit never rolls a surface back.
 
 | Job                        | Resource                        | What it does                                                        |
 | -------------------------- | ------------------------------- | ------------------------------------------------------------------- |
