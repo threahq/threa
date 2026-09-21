@@ -16,10 +16,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A CI run for an older commit can finish (or be rerun) after a newer one has
+  # deployed. Deploying its sha would roll prod back, so only main's tip deploys.
+  check-tip:
+    name: Check main tip
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    outputs:
+      is-tip: ${{ steps.tip.outputs.is-tip }}
+    steps:
+      - name: Compare head_sha with main
+        id: tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          tip=$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)
+          if [ "$tip" = "$HEAD_SHA" ]; then
+            echo "is-tip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is-tip=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping deploy of $HEAD_SHA: main is at $tip"
+          fi
+
   deploy-frontend:
     name: Deploy Frontend
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    needs: check-tip
+    if: needs.check-tip.outputs.is-tip == 'true'
     concurrency:
       group: deploy-frontend
       cancel-in-progress: true
@@ -93,7 +117,8 @@ jobs:
   deploy-public-site:
     name: Deploy Public Site
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    needs: check-tip
+    if: needs.check-tip.outputs.is-tip == 'true'
     concurrency:
       group: deploy-public-site
       cancel-in-progress: true
@@ -131,7 +156,8 @@ jobs:
   deploy-workspace-router:
     name: Deploy Workspace Router
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    needs: check-tip
+    if: needs.check-tip.outputs.is-tip == 'true'
     concurrency:
       group: deploy-workspace-router
       cancel-in-progress: true
@@ -166,7 +192,8 @@ jobs:
   deploy-backoffice:
     name: Deploy Backoffice
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    needs: check-tip
+    if: needs.check-tip.outputs.is-tip == 'true'
     concurrency:
       group: deploy-backoffice
       cancel-in-progress: true
@@ -204,7 +231,8 @@ jobs:
   deploy-backoffice-router:
     name: Deploy Backoffice Router
     runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    needs: check-tip
+    if: needs.check-tip.outputs.is-tip == 'true'
     concurrency:
       group: deploy-backoffice-router
       cancel-in-progress: true
