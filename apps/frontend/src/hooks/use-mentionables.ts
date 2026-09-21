@@ -5,6 +5,7 @@ import {
   useWorkspacePersonas,
   useWorkspaceBots,
   useWorkspaceStreams,
+  useWorkspaceStreamsRaw,
 } from "@/stores/workspace-store"
 import { useParams } from "react-router-dom"
 import { useUser } from "@/auth"
@@ -12,6 +13,7 @@ import { rankMatches } from "@/lib/match-score"
 import { useStreamBootstrap } from "./use-streams"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { getPersonaAvatarUrl, StreamTypes, type StreamType } from "@threahq/types"
+import type { MentionTypeLookup } from "@threahq/prosemirror"
 
 /**
  * Stream context for filtering which broadcast mentions are available.
@@ -230,6 +232,34 @@ export function useMentionables(streamContext?: MentionStreamContext) {
     mentionables,
     isLoading: false,
   }
+}
+
+/**
+ * What parsed markdown may turn into chips: a mention only for a slug in
+ * `mentionables`, a channel only for a slug the viewer has cached. Anything
+ * else stays the text it was typed or pasted as.
+ */
+export function useMarkdownTriggerLookups(mentionables: Mentionable[]): {
+  getMentionType: MentionTypeLookup
+  isKnownChannel: (slug: string) => boolean
+} {
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+  const streams = useWorkspaceStreamsRaw(workspaceId)
+
+  const getMentionType = useMemo<MentionTypeLookup>(() => {
+    const slugToType = new Map<string, "user" | "persona" | "bot" | "broadcast" | "me">()
+    for (const m of mentionables) {
+      slugToType.set(m.slug, m.isCurrentUser ? "me" : m.type)
+    }
+    return (slug) => slugToType.get(slug) ?? null
+  }, [mentionables])
+
+  const isKnownChannel = useMemo(() => {
+    const slugs = new Set(streams.flatMap((stream) => (stream.slug ? [stream.slug] : [])))
+    return (slug: string) => slugs.has(slug)
+  }, [streams])
+
+  return { getMentionType, isKnownChannel }
 }
 
 /**

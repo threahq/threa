@@ -11,6 +11,7 @@ import {
   collectUnresolvedChannelLinkSlugs,
   collectUnresolvedMentionSlugs,
   mapMentionAndChannelNodes,
+  unresolvedTriggersToText,
 } from "./extractors"
 
 const quoteReply = (messageId: string): JSONContent => ({
@@ -820,5 +821,53 @@ describe("collectMemoEmbedIds", () => {
     }
 
     expect(collectMemoEmbedIds(doc)).toEqual([])
+  })
+})
+
+describe("unresolvedTriggersToText", () => {
+  it("turns nodes still carrying a slug id into text, keeping marks and resolved nodes", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            mention("usr_1", "kris", "user"),
+            { ...mention("nobody", "nobody", "user"), marks: [{ type: "bold" }] },
+            channelLink("stream_1", "general"),
+            channelLink("nowhere", "nowhere"),
+            mention("broadcast:here", "here", "broadcast"),
+          ],
+        },
+      ],
+    }
+
+    expect(unresolvedTriggersToText(doc)).toEqual({
+      changed: true,
+      contentJson: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              mention("usr_1", "kris", "user"),
+              { type: "text", text: "@nobody", marks: [{ type: "bold" }] },
+              channelLink("stream_1", "general"),
+              { type: "text", text: "#nowhere" },
+              mention("broadcast:here", "here", "broadcast"),
+            ],
+          },
+        ],
+      },
+    })
+  })
+
+  it("reports no change when every node is resolved", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [mention("usr_1", "kris", "user")] }],
+    }
+
+    expect(unresolvedTriggersToText(doc)).toEqual({ changed: false, contentJson: doc })
   })
 })

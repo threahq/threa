@@ -71,6 +71,7 @@ export {
   collectUnresolvedMentionSlugs,
   collectUnresolvedChannelLinkSlugs,
   mapMentionAndChannelNodes,
+  unresolvedTriggersToText,
   type GiphyEmbedRef,
 } from "./extractors"
 

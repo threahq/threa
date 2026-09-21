@@ -54,12 +54,16 @@ function TriggerChip({ type, text, value }: TriggerChipProps) {
   const isMentionOnlyBot = useIsMentionOnlyBot()
 
   if (type === "channel") {
-    // A bare `#slug` names a channel by definition (INV-64's lenient input), so
-    // it always reads as the sigil-prefixed form.
-    const chip = <InAppLinkChip prefix="#" label={text} />
     const url = getChannelUrl(text)
-    return url ? <StreamChipLink to={url}>{chip}</StreamChipLink> : chip
+    if (!url) return `#${text}`
+    return (
+      <StreamChipLink to={url}>
+        <InAppLinkChip prefix="#" label={text} />
+      </StreamChipLink>
+    )
   }
+
+  const mentionType = type === "mention" ? getMentionType(text) : null
 
   let style: string
   let prefix: string
@@ -74,11 +78,12 @@ function TriggerChip({ type, text, value }: TriggerChipProps) {
       prefix = "/"
       break
     default:
-      style = triggerStyles[getMentionType(text)]
+      // A slug outside the roster names nobody: it stays the text it was.
+      if (!mentionType) return `@${text}`
+      style = triggerStyles[mentionType]
       prefix = "@"
   }
 
-  const mentionType = type === "mention" ? getMentionType(text) : null
   const isClickable = onMentionClick && (mentionType === "user" || mentionType === "me")
 
   if (isClickable) {

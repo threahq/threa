@@ -4,7 +4,8 @@ import type { Mentionable } from "@/components/editor/triggers/types"
 export type MentionType = "user" | "persona" | "bot" | "broadcast" | "me"
 
 interface MentionContextValue {
-  getMentionType: (slug: string) => MentionType
+  /** Null for a slug outside the roster: it names nobody, so it isn't a chip. */
+  getMentionType: (slug: string) => MentionType | null
   /**
    * True for a personal bot the viewer doesn't own: the mention renders but
    * the backend won't dispatch an invocation for it (owner-only). Checked by
@@ -42,7 +43,7 @@ export function MentionProvider({ mentionables, onMentionClick, children }: Ment
     slugToType.set("channel", "broadcast")
 
     return {
-      getMentionType: (slug: string) => slugToType.get(slug) ?? "user",
+      getMentionType: (slug: string) => slugToType.get(slug) ?? null,
       isMentionOnlyBot: (slugOrId: string) => mentionOnly.has(slugOrId),
       onMentionClick,
     }
@@ -52,7 +53,7 @@ export function MentionProvider({ mentionables, onMentionClick, children }: Ment
 }
 
 /** Falls back to broadcast-only lookup when used outside a MentionProvider. */
-export function useMentionType(): (slug: string) => MentionType {
+export function useMentionType(): (slug: string) => MentionType | null {
   const context = useContext(MentionContext)
   if (!context) {
     return (slug: string) => {

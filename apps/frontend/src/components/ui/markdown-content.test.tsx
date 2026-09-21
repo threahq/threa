@@ -240,6 +240,15 @@ describe("MarkdownContent", () => {
       expect(chip).not.toHaveClass("decoration-dashed")
       expect(chip).not.toHaveAttribute("title")
     })
+
+    it("chips a bare slug only when it names someone in the roster", () => {
+      renderPointer("Ping @pierre and @nobody in #general and #nowhere")
+      expect(screen.getByText("@pierre")).toHaveClass("rounded")
+      expect(screen.getByRole("link", { name: "#general" })).toHaveAttribute("href", "/w/ws_1/s/stream_1")
+      expect(screen.queryByText("@nobody")).not.toBeInTheDocument()
+      expect(screen.queryByText("#nowhere")).not.toBeInTheDocument()
+      expect(screen.getByText(/@nobody in/)).toBeInTheDocument()
+    })
   })
 
   describe("code", () => {

@@ -81,15 +81,6 @@ describe("mention-renderer", () => {
       expect(chip.className).toContain("bg-[hsl(200")
     })
 
-    it("should render channel chip with correct styling", () => {
-      const result = renderMentions("#general", noEmoji)
-      render(<>{result}</>)
-
-      const chip = screen.getByText(/#general/)
-      expect(chip).toBeInTheDocument()
-      expect(chip.className).toContain("bg-muted")
-    })
-
     it("should render broadcast mentions with orange styling", () => {
       const result = renderMentions("@channel", noEmoji)
       render(<>{result}</>)
@@ -235,12 +226,18 @@ describe("mention-renderer", () => {
       expect(link).toHaveAttribute("href", "/w/workspace_123/s/stream_abc")
     })
 
-    it("should render unknown channel as inert span", () => {
+    it("should render known channel with chip styling", () => {
+      renderWithChannelLinks("#general")
+
+      expect(screen.getByText("#general").className).toContain("bg-muted")
+    })
+
+    it("should leave an unknown channel as plain text", () => {
       renderWithChannelLinks("Check #nonexistent")
 
-      const chip = screen.getByText(/#nonexistent/)
-      expect(chip.tagName).toBe("SPAN")
-      expect(chip).not.toHaveAttribute("href")
+      expect(screen.queryByText("#nonexistent")).not.toBeInTheDocument()
+      expect(screen.queryByRole("link")).not.toBeInTheDocument()
+      expect(screen.getByText("Check #nonexistent")).toBeInTheDocument()
     })
 
     it("should render multiple channel links", () => {

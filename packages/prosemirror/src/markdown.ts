@@ -526,8 +526,11 @@ function serializeInline(nodes: JSONContent[] | undefined): string {
   return groups.map((group) => wrapWithMarks(group.text, group.marks)).join("")
 }
 
-/** "me" is a special type for the current user's own mentions. */
-export type MentionTypeLookup = (slug: string) => "user" | "persona" | "bot" | "broadcast" | "me"
+/**
+ * "me" is a special type for the current user's own mentions. `null` means the
+ * slug names nobody the caller knows, so the `@slug` stays plain text.
+ */
+export type MentionTypeLookup = (slug: string) => "user" | "persona" | "bot" | "broadcast" | "me" | null
 
 /** Returns null if shortcode is not a valid emoji. */
 export type EmojiLookup = (shortcode: string) => string | null
@@ -552,6 +555,11 @@ export interface ParseMarkdownOptions {
    * accepted, matching the prior behavior for backend ingestion and tests.
    */
   isKnownCommand?: (name: string) => boolean
+  /**
+   * Only materialize a `channelLink` node for a slug that names a real channel.
+   * Absent → every `#slug` becomes a node, left for ingestion to resolve.
+   */
+  isKnownChannel?: (slug: string) => boolean
   /**
    * Keep resolved emoji shortcodes as editable text instead of atom nodes.
    * Useful for composer surfaces where mobile browsers struggle with deleting
@@ -1178,7 +1186,7 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
   // Default lookup for mention types (without context, can't determine "me")
   const lookupMentionType: MentionTypeLookup =
     getMentionType ??
-    ((slug): "user" | "persona" | "bot" | "broadcast" | "me" => {
+    ((slug): "user" | "persona" | "bot" | "broadcast" | "me" | null => {
       if (slug === "here" || slug === "channel") return "broadcast"
       return "user"
     })
@@ -1338,10 +1346,11 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
     } else if (match[21]) {
       // Mention: @slug
       const slug = match[22]
-      if (allowMentions) {
+      const mentionType = allowMentions ? lookupMentionType(slug) : null
+      if (mentionType) {
         result.push({
           type: "mention",
-          attrs: { id: slug, slug, mentionType: lookupMentionType(slug) },
+          attrs: { id: slug, slug, mentionType },
         })
       } else {
         result.push({ type: "text", text: match[0] })
@@ -1349,7 +1358,7 @@ function parseInlineTokens(text: string, options: ParseOptions = {}): JSONConten
     } else if (match[23]) {
       // Channel: #slug
       const slug = match[24]
-      if (allowChannels) {
+      if (allowChannels && (options.isKnownChannel?.(slug) ?? true)) {
         result.push({
           type: "channelLink",
           attrs: { id: slug, slug },
