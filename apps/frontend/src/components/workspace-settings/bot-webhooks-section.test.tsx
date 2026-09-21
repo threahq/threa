@@ -64,6 +64,20 @@ describe("BotWebhooksSection", () => {
     })
   })
 
+  it("offers a retry instead of the empty state when the list fails to load", async () => {
+    const list = vi.spyOn(botsApi, "listWebhooks").mockRejectedValueOnce(new Error("offline"))
+    const user = userEvent.setup()
+    renderSection()
+
+    await screen.findByText(/Couldn't load webhooks/)
+    expect(screen.queryByText(/No webhooks yet/)).toBeNull()
+
+    list.mockResolvedValue([makeWebhook()])
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+    await screen.findByText("alertmanager")
+    expect(screen.queryByText(/Couldn't load webhooks/)).toBeNull()
+  })
+
   it("creates a webhook, reveals both URLs once, copies one, lists it, then revokes it", async () => {
     let listed: IncomingWebhook[] = []
     vi.spyOn(botsApi, "listWebhooks").mockImplementation(async () => listed)

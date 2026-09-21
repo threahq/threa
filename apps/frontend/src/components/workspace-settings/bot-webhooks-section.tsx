@@ -145,7 +145,12 @@ export function BotWebhooksSection({ workspaceId, botId, isArchived }: BotWebhoo
   const { formatDate } = useFormattedDate()
   const wsBootstrap = useCachedWorkspaceBootstrap(workspaceId)
 
-  const { data: webhooks = [], isLoading } = useQuery({
+  const {
+    data: webhooks = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: webhooksQueryKey,
     queryFn: () => botsApi.listWebhooks(workspaceId, botId),
   })
@@ -345,7 +350,16 @@ export function BotWebhooksSection({ workspaceId, botId, isArchived }: BotWebhoo
         </div>
       )}
 
-      {!isLoading && activeWebhooks.length === 0 && !showForm && (
+      {isError && (
+        <p className="text-xs text-muted-foreground">
+          Couldn&apos;t load webhooks.{" "}
+          <button type="button" className="underline underline-offset-2" onClick={() => void refetch()}>
+            Retry
+          </button>
+        </p>
+      )}
+
+      {!isLoading && !isError && activeWebhooks.length === 0 && !showForm && (
         <div className="rounded-lg border border-dashed py-6 flex flex-col items-center gap-2">
           <Webhook className="h-4 w-4 text-muted-foreground/50" />
           <p className="text-xs text-muted-foreground">No webhooks yet. Create one to post into a stream.</p>

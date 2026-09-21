@@ -292,7 +292,12 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       <Separator />
       <BotChannelsSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
       <Separator />
-      <BotWebhooksSection workspaceId={workspaceId} botId={botId} isArchived={isArchived} />
+      <BotWebhooksSection
+        key={`${workspaceId}:${botId}`}
+        workspaceId={workspaceId}
+        botId={botId}
+        isArchived={isArchived}
+      />
       <Separator />
 
       {bot.type === "personal" && (

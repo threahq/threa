@@ -198,7 +198,7 @@ describe("incoming webhook inbound delivery", () => {
       [workspaceId, JSON.stringify([{ type: "param", id: hook.id }])]
     )
     expect(rows.length).toBeGreaterThan(0)
-    expect(JSON.stringify(rows[0]?.row)).not.toContain(secret)
+    expect(JSON.stringify(rows[0]?.row).toLowerCase()).not.toContain(secret.toLowerCase())
   })
 
   test("should attribute a successful post to the bot with the hook as auth_ref in access_log", async () => {
@@ -317,7 +317,10 @@ describe("incoming webhook inbound delivery", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: "late" }),
     })
-    expect(native.status).toBeGreaterThanOrEqual(400)
     expect(native.headers.get("content-type")).toContain("application/json")
+    expect([native.status, await native.json()]).toMatchObject([
+      403,
+      { code: "STREAM_READ_ONLY", details: { reason: "archived" } },
+    ])
   })
 })

@@ -234,6 +234,23 @@ describe("createRateLimiters inbound webhook limiters", () => {
     expect(run(incomingWebhookHook, other, res).nextCalled).toBe(true)
   })
 
+  test("should leave inbound webhook requests to their own limiters when the global baseline is exhausted", () => {
+    const { globalBaseline } = createRateLimiters({ globalMax: 2, authMax: 30 })
+    exhaust(globalBaseline, createReq({ originalUrl: "/api/workspaces" } as Partial<Request>), 3)
+
+    const outcomes = [slackUrl, nativeUrl, "/api/workspaces"].map((originalUrl) => {
+      const res = createTextRes()
+      const { nextCalled } = run(globalBaseline, createReq({ originalUrl } as Partial<Request>), res)
+      return { originalUrl, nextCalled, statusCode: res.statusCode }
+    })
+
+    expect(outcomes).toEqual([
+      { originalUrl: slackUrl, nextCalled: true, statusCode: 200 },
+      { originalUrl: nativeUrl, nextCalled: true, statusCode: 200 },
+      { originalUrl: "/api/workspaces", nextCalled: false, statusCode: 429 },
+    ])
+  })
+
   test("should cap secret guessing per ip before any hook is known when the ip limit is exceeded", () => {
     const { incomingWebhookIp } = createRateLimiters({ globalMax: 300, authMax: 30 })
     const req = createReq({ originalUrl: slackUrl, params: {} } as Partial<Request>)

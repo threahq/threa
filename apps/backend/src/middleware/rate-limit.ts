@@ -2,7 +2,7 @@ import { createHash } from "crypto"
 import type { Request, RequestHandler, Response } from "express"
 import { createRateLimit, getClientIp, type RateLimitRejection } from "@threahq/backend-common"
 import { BOT_KEY_PREFIX } from "@threahq/types"
-import { isSlackWebhookUrl } from "../features/incoming-webhooks"
+import { isInboundWebhookUrl, isSlackWebhookUrl } from "../features/incoming-webhooks"
 
 export interface RateLimiterSet {
   globalBaseline: RequestHandler
@@ -64,6 +64,9 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       windowMs: 60_000,
       max: config.globalMax,
       key: (req) => getClientIp(req, "unknown"),
+      // Inbound webhooks have their own per-IP ceiling. The baseline would answer first,
+      // in JSON, where a Slack sender expects text/plain `rate_limited`.
+      skip: (req) => isInboundWebhookUrl(req.originalUrl),
     }),
 
     auth: createRateLimit({
