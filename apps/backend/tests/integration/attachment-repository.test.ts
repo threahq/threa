@@ -73,7 +73,7 @@ describe("AttachmentRepository", () => {
           contentType: "screenshot",
           summary: "A phone\u0000 screenshot",
           fullText: "Battery\u0000 81%",
-          structuredData: { headers: ["Setting\u0000"], rows: [["Wi-Fi\u0000", "On"]] },
+          structuredData: { headers: ["Setting\u0000"], rows: [["Wi-Fi\u0000", "On"]], "Sheet\u00001": { total: 2 } },
         })
       })
 
@@ -84,7 +84,7 @@ describe("AttachmentRepository", () => {
       }).toEqual({
         summary: "A phone screenshot",
         fullText: "Battery 81%",
-        structuredData: { headers: ["Setting"], rows: [["Wi-Fi", "On"]] },
+        structuredData: { headers: ["Setting"], rows: [["Wi-Fi", "On"]], Sheet1: { total: 2 } },
       })
     })
   })

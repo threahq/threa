@@ -124,8 +124,15 @@ function stripNul(value: string): string {
   return value.replaceAll("\u0000", "")
 }
 
+// Object keys too: extracted tables can use cell text as property names.
 function toJsonWithoutNul(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) => (typeof v === "string" ? stripNul(v) : v))
+  return JSON.stringify(value, (_key, propertyValue: unknown) => {
+    if (typeof propertyValue === "string") return stripNul(propertyValue)
+    if (propertyValue === null || typeof propertyValue !== "object" || Array.isArray(propertyValue)) {
+      return propertyValue
+    }
+    return Object.fromEntries(Object.entries(propertyValue).map(([key, entry]) => [stripNul(key), entry]))
+  })
 }
 
 export const AttachmentExtractionRepository = {
