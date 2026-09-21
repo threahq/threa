@@ -667,6 +667,20 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
+  /** RUNNING sessions across many streams; at most one per stream (partial unique index). */
+  async findRunningByStreams(db: Querier, streamIds: readonly string[]): Promise<AgentSession[]> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<SessionRow>(
+      sql`
+        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
+        FROM agent_sessions
+        WHERE stream_id = ANY(${streamIds as string[]})
+          AND status = ${SessionStatuses.RUNNING}
+      `
+    )
+    return result.rows.map(mapRowToSession)
+  },
+
   /**
    * All RUNNING sessions in a workspace, each resolved to its sidebar root
    * (`COALESCE(streams.root_stream_id, streams.id)`) — the row that lights up in

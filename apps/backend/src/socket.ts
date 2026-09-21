@@ -7,7 +7,7 @@ import { socketHandshakeIp } from "./lib/socket-ip"
 import type { AccessLogService, AuditSubjectRef } from "./features/access-log"
 import { SubscribeCoalescer, unionSubjectChunks } from "./features/access-log"
 import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
-import type { StreamService } from "./features/streams"
+import { listAccessibleStreamIds, type StreamService } from "./features/streams"
 import type { PushService } from "./features/push"
 import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
@@ -73,6 +73,17 @@ interface JoinedRoomAudit {
   /** Subject refs recorded on subscribe; the unsubscribe row reuses them so the interval pairs. */
   subjects: AuditSubjectRef[]
 }
+
+type JoinCallback = (result: { ok: boolean; error?: string }) => void
+
+interface PendingStreamJoin {
+  room: string
+  streamId: string
+  roomPattern: string
+  callback?: JoinCallback
+}
+
+const STREAM_JOIN_BATCH_MS = 10
 
 interface SocketMetricsState {
   connectTime: bigint
@@ -251,7 +262,107 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       })
     }
 
-    socket.on("join", async (room: string, callback?: (result: { ok: boolean; error?: string }) => void) => {
+    const rejectStreamJoin = (
+      wsId: string,
+      actorUserId: string,
+      join: PendingStreamJoin,
+      outcome: "denied" | "error"
+    ): void => {
+      recordSubscribe({
+        workspaceId: wsId,
+        actorUserId,
+        subjects: [{ type: "stream", id: join.streamId }],
+        outcome,
+      })
+      socket.emit("error", { message: "Not authorized to join this stream" })
+      wsMessagesTotal.inc({
+        workspace_id: wsId,
+        direction: "sent",
+        event_type: "error",
+        room_pattern: join.roomPattern,
+      })
+      join.callback?.({ ok: false, error: "Not authorized to join this stream" })
+    }
+
+    const flushStreamJoins = async (wsId: string, joins: PendingStreamJoin[]): Promise<void> => {
+      let workspaceUser: Awaited<ReturnType<typeof UserRepository.findByWorkosUserIdInWorkspace>>
+      let accessible: Set<string>
+      try {
+        workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
+        accessible = workspaceUser
+          ? await listAccessibleStreamIds(
+              pool,
+              wsId,
+              workspaceUser.id,
+              joins.map((join) => join.streamId)
+            )
+          : new Set()
+      } catch (error) {
+        logger.error({ error, workosUserId, wsId, rooms: joins.length }, "Unexpected error during stream room join")
+        for (const join of joins) rejectStreamJoin(wsId, workosUserId, join, "error")
+        return
+      }
+      // A subscribe recorded after disconnect's flushAll would never pair with an unsubscribe.
+      if (socket.disconnected) return
+      if (!workspaceUser) {
+        for (const join of joins) rejectStreamJoin(wsId, workosUserId, join, "denied")
+        return
+      }
+      socket.data.userId ??= workspaceUser.id
+
+      const joinedStreamIds: string[] = []
+      for (const join of joins) {
+        if (!accessible.has(join.streamId)) {
+          rejectStreamJoin(wsId, workspaceUser.id, join, "denied")
+          continue
+        }
+        socket.join(join.room)
+        wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: join.roomPattern })
+        trackJoin(join.room, {
+          workspaceId: wsId,
+          roomPattern: join.roomPattern,
+          actorUserId: workspaceUser.id,
+          subjects: [{ type: "stream", id: join.streamId }],
+        })
+        join.callback?.({ ok: true })
+        joinedStreamIds.push(join.streamId)
+      }
+      logger.debug(
+        { workosUserId, wsId, joined: joinedStreamIds.length, requested: joins.length },
+        "Joined stream rooms"
+      )
+
+      // Fire-and-forget: a refresh mid-run would otherwise show the agent card
+      // at "0 steps" until the next live progress event; a failure only costs that.
+      if (joinedStreamIds.length > 0) {
+        void emitRunningSessionBootstraps(socket, { pool, wsId, streamIds: joinedStreamIds }).catch((err) => {
+          logger.warn({ err, wsId }, "Failed to bootstrap running session progress on stream join")
+        })
+      }
+    }
+
+    // A reconnect re-joins every sidebar stream at once (~200 rooms). Resolving
+    // each join on its own ran ~5 queries apiece and saturated the pool, so a
+    // socket's stream joins within one window share one user lookup and one
+    // access query.
+    const pendingStreamJoins = new Map<string, PendingStreamJoin[]>()
+    const enqueueStreamJoin = (wsId: string, join: PendingStreamJoin): void => {
+      const pending = pendingStreamJoins.get(wsId)
+      if (pending) {
+        pending.push(join)
+        return
+      }
+      pendingStreamJoins.set(wsId, [join])
+      setTimeout(() => {
+        const joins = pendingStreamJoins.get(wsId) ?? []
+        pendingStreamJoins.delete(wsId)
+        void flushStreamJoins(wsId, joins).catch((err) => {
+          logger.error({ err, wsId }, "Failed to flush stream room joins")
+        })
+      }, STREAM_JOIN_BATCH_MS)
+    }
+
+    socket.on("join", async (room: string, callback?: JoinCallback) => {
       // Room names must be id-shaped: their segments land in audit subjects,
       // the workspace_id column, and metrics labels. An attacker-controlled
       // free-text segment must never reach the content-free access log
@@ -345,68 +456,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const streamMatch = room.match(/^ws:([^:]+):stream:(.+)$/)
       if (streamMatch) {
         const [, wsId, streamId] = streamMatch
-        const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
-        if (!workspaceUser) {
-          recordSubscribe({
-            workspaceId: wsId,
-            actorUserId: workosUserId,
-            subjects: [{ type: "stream", id: streamId }],
-            outcome: "denied",
-          })
-          socket.emit("error", { message: "Not authorized to join this stream" })
-          wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
-          callback?.({ ok: false, error: "Not authorized to join this stream" })
-          return
-        }
-        socket.data.userId ??= workspaceUser.id
-        const streamSubjects: AuditSubjectRef[] = [{ type: "stream", id: streamId }]
-        try {
-          await streamService.validateStreamAccess(streamId, wsId, workspaceUser.id)
-        } catch (error) {
-          // An access denial (403/404) is `denied`; any other throw is an
-          // unexpected service failure — record it as `error`, not a false denial.
-          const accessDenied = isJoinAccessError(error)
-          if (!accessDenied) {
-            logger.error({ error, workosUserId, room, wsId, streamId }, "Unexpected error during stream room join")
-          }
-          recordSubscribe({
-            workspaceId: wsId,
-            actorUserId: workspaceUser.id,
-            subjects: streamSubjects,
-            outcome: accessDenied ? "denied" : "error",
-          })
-          socket.emit("error", { message: "Not authorized to join this stream" })
-          wsMessagesTotal.inc({ workspace_id: wsId, direction: "sent", event_type: "error", room_pattern: roomPattern })
-          callback?.({ ok: false, error: "Not authorized to join this stream" })
-          return
-        }
-        socket.join(room)
-
-        wsConnectionsActive.inc({ workspace_id: wsId, room_pattern: roomPattern })
-        trackJoin(room, {
-          workspaceId: wsId,
-          roomPattern,
-          actorUserId: workspaceUser.id,
-          subjects: streamSubjects,
-        })
-
-        logger.debug({ workosUserId, room }, "Joined stream room")
-        callback?.({ ok: true })
-
-        // Bootstrap running-session progress state for this socket. Without
-        // this, a refresh mid-research loses everything the timeline card
-        // tracked: stepCount drops to 0, currentStepType drops to null, and
-        // the card shows "0 steps" until the next live progress event fires.
-        //
-        // We emit `agent_session:progress` directly to the joining socket
-        // (not broadcast) with the current DB-derived state so the frontend's
-        // agent-activity store populates its entry immediately.
-        //
-        // Fire-and-forget: a failure here only affects the bootstrap UX, so
-        // we log and move on rather than blocking the join ack.
-        void emitRunningSessionBootstrap(socket, { pool, wsId, streamId }).catch((err) => {
-          logger.warn({ err, wsId, streamId }, "Failed to bootstrap running session progress on stream join")
-        })
+        enqueueStreamJoin(wsId, { room, streamId, roomPattern, callback })
         return
       }
 
@@ -727,57 +777,45 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
 }
 
 /**
- * Bootstrap a running-session progress snapshot to a freshly-joined socket.
+ * Emits `agent_session:progress` to a freshly-joined socket for every running
+ * session in the joined streams, with DB-derived counts, so the frontend's
+ * agent-activity store populates as if a live progress event had arrived.
  *
- * Called after a socket joins a stream room. Looks up any currently-running
- * agent session whose streamId matches the joined room (scratchpad/thread/DM)
- * and emits a synthetic `agent_session:progress` event directly to this
- * single socket with DB-derived counts. The frontend's agent-activity store
- * treats this just like a live progress event and populates its entry.
- *
- * Exactly one running session per stream is enforced by the partial unique
- * index on agent_sessions (stream_id) WHERE status='running', so a single
- * findRunningByStream lookup is sufficient.
- *
- * NOTE: channel-mention sessions live in a thread stream, not the channel
- * itself. Bootstrapping a channel room join would require a root-stream
- * lookup; not handled here in V1. The user sees the live updates once they
- * open the thread.
+ * Channel-mention sessions live in a thread stream, not the channel itself, so
+ * a channel join bootstraps nothing; the thread join does.
  */
-async function emitRunningSessionBootstrap(
+async function emitRunningSessionBootstraps(
   socket: Socket,
-  params: { pool: import("pg").Pool; wsId: string; streamId: string }
+  params: { pool: import("pg").Pool; wsId: string; streamIds: string[] }
 ): Promise<void> {
-  const { pool, wsId, streamId } = params
-  const session = await AgentSessionRepository.findRunningByStream(pool, streamId)
-  if (!session) return
+  const { pool, wsId, streamIds } = params
+  const sessions = await AgentSessionRepository.findRunningByStreams(pool, streamIds)
 
-  const [steps, persona] = await Promise.all([
-    AgentSessionRepository.findStepsBySession(pool, session.id),
-    PersonaRepository.findById(pool, session.personaId, wsId),
-  ])
+  await Promise.all(
+    sessions.map(async (session) => {
+      // Null before the first step fires; the next live progress event populates the entry.
+      const currentStepType = session.currentStepType
+      if (!currentStepType) return
 
-  const stepCount = steps.length
-  const messageCount = steps.filter(
-    (step) => step.stepType === "message_sent" || step.stepType === "message_edited"
-  ).length
+      const [steps, persona] = await Promise.all([
+        AgentSessionRepository.findStepsBySession(pool, session.id),
+        PersonaRepository.findById(pool, session.personaId, wsId),
+      ])
+      const messageCount = steps.filter(
+        (step) => step.stepType === "message_sent" || step.stepType === "message_edited"
+      ).length
 
-  // currentStepType is nullable on the session row (null before the first
-  // step fires). Skip the emit in that edge case — nothing meaningful to
-  // show yet, and the next live progress event will populate the entry.
-  if (!session.currentStepType) return
-
-  socket.emit("agent_session:progress", {
-    workspaceId: wsId,
-    streamId,
-    sessionId: session.id,
-    triggerMessageId: session.triggerMessageId,
-    personaName: persona?.name ?? "Agent",
-    stepCount,
-    messageCount,
-    currentStepType: session.currentStepType,
-    // threadStreamId is only meaningful for channel-mention sessions. Direct
-    // stream-room joins (scratchpad/thread/DM) don't need it.
-    threadStreamId: undefined,
-  })
+      socket.emit("agent_session:progress", {
+        workspaceId: wsId,
+        streamId: session.streamId,
+        sessionId: session.id,
+        triggerMessageId: session.triggerMessageId,
+        personaName: persona?.name ?? "Agent",
+        stepCount: steps.length,
+        messageCount,
+        currentStepType,
+        threadStreamId: undefined,
+      })
+    })
+  )
 }
