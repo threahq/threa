@@ -41,8 +41,9 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <p>
     Both URLs are shown once, at creation. Copy them then. You can rename a hook
     or move it to another stream afterwards without the URL changing, and revoke
-    it from the same panel. A revoked hook stops answering and cannot be
-    restored.
+    it from the same panel. A revoked hook rejects deliveries with
+    <code>404 NOT_FOUND</code> on the native URL and <code>404 no_service</code>
+    on <code>/slack</code>, and cannot be restored.
   </p>
 
   <h2 id="native">The native URL</h2>
@@ -184,7 +185,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   run: |
     curl -X POST "$THREA_HOOK_URL" \\
       -H "Content-Type: application/json" \\
-      -d "{\\"content\\": \\"\${GITHUB_WORKFLOW} finished on \${GITHUB_REF_NAME}\\"}"
+      -d "$(jq -n --arg content "\${GITHUB_WORKFLOW} finished on \${GITHUB_REF_NAME}" '{content: $content}')"
   env:
     THREA_HOOK_URL: \${{ secrets.THREA_HOOK_URL }}`}
   />
