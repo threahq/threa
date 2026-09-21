@@ -22,16 +22,24 @@ export const SLUG_MAX_LENGTH = 50
  */
 export const SLUG_PATTERN = /^[a-z](?:[a-z0-9_-]*[a-z0-9])?$/
 
+const SLUG_TOKEN = "[a-z](?:[a-z0-9_-]*[a-z0-9])?"
+
 /**
- * Pattern for extracting @mentions from text.
- * Matches @slug where slug follows the valid slug pattern.
- *
- * Key constraints:
- * - @ must NOT be preceded by alphanumeric (avoids email addresses)
- * - Slug must be valid (a-z, 0-9, hyphens, underscores, starts with letter)
- * - Slug must NOT be followed by chars that suggest user intended a longer slug
+ * A bare `@slug`/`#slug` counts only as a whole token: whitespace, `(` or the
+ * start of the text before it; whitespace, `)` or the end after it, optionally
+ * behind sentence punctuation. Anything else touching it (`@org/pkg`,
+ * `` `@x` ``, `a@b.io`, `#tag.md`) means the text names something longer.
+ * Lookarounds only, so the patterns splice into larger regexes without
+ * shifting their groups.
  */
-export const MENTION_PATTERN = /(?<![a-z0-9])@([a-z][a-z0-9_-]*[a-z0-9]|[a-z])(?![a-z0-9.-])/g
+export const TRIGGER_TOKEN_START = "(?<=^|[\\s(])"
+export const TRIGGER_TOKEN_END = "(?=$|[\\s)]|[.,!?;:]+(?:$|[\\s)]))"
+
+/** `@slug` as a whole token; group 1 is the slug. */
+export const MENTION_PATTERN = new RegExp(`${TRIGGER_TOKEN_START}@(${SLUG_TOKEN})${TRIGGER_TOKEN_END}`, "g")
+
+/** `#slug` as a whole token; group 1 is the slug. */
+export const CHANNEL_PATTERN = new RegExp(`${TRIGGER_TOKEN_START}#(${SLUG_TOKEN})${TRIGGER_TOKEN_END}`, "g")
 
 /**
  * Check if a string is a valid slug.

@@ -45,12 +45,15 @@ export interface ExtractedSteerDirective {
  * Group 1 is the character before the token, group 2 the token as authored, so
  * the message renderer can chip exactly what dispatches here.
  */
-export const STEER_DIRECTIVE_PATTERN = /(^|[^\p{L}\p{N}_/])(\/steer)(?=$|[^\p{L}\p{N}_/-])/iu
+export const STEER_DIRECTIVE_PATTERN = /(^|\s)(\/steer)(?=$|\s)/iu
 const STEER_DIRECTIVE_PATTERN_GLOBAL = new RegExp(STEER_DIRECTIVE_PATTERN.source, "giu")
 const INLINE_CONTENT_PLACEHOLDER = "\uFFFC"
 const INLINE_CONTENT_CONTAINERS = new Set(["paragraph", "heading", "codeBlock"])
 
 function steerDetectionText(node: JSONContent): string {
+  // Code is quoted text, never a dispatch: it stands in as one opaque
+  // character, so a `/steer` beside it isn't whitespace-bounded either.
+  if (node.type === "codeBlock" || node.marks?.some((mark) => mark.type === "code")) return INLINE_CONTENT_PLACEHOLDER
   if (node.type === "text") return node.text ?? ""
   if (node.type === "slashCommand") return `/${String(node.attrs?.name ?? "")}`
   if (node.type === "hardBreak") return "\n"

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { isValidSlug, isBroadcastSlug, SLUG_MAX_LENGTH } from "./slug"
+import { isValidSlug, isBroadcastSlug, SLUG_MAX_LENGTH, MENTION_PATTERN, CHANNEL_PATTERN } from "./slug"
 
 describe("slug validation", () => {
   describe("isValidSlug", () => {
@@ -71,5 +71,41 @@ describe("slug validation", () => {
     test("returns false for empty string", () => {
       expect(isBroadcastSlug("")).toBe(false)
     })
+  })
+})
+
+describe("trigger token patterns", () => {
+  const matches = (pattern: RegExp, text: string) =>
+    [...text.matchAll(new RegExp(pattern.source, pattern.flags))].map((m) => m[1])
+
+  test("an @slug matches only as a whole token", () => {
+    const cases: Array<[string, string[]]> = [
+      ["@kris", ["kris"]],
+      ["hi @kris and @pierre-boberg", ["kris", "pierre-boberg"]],
+      ["thanks @kris.", ["kris"]],
+      ["@kris, @pierre: look!", ["kris", "pierre"]],
+      ["(cc @kris)", ["kris"]],
+      ["@threahq/bots", []],
+      ["`@kris`", []],
+      ["mail kris@threa.io", []],
+      ["@kris.foo", []],
+      ["@kris's", []],
+      ["@kris-", []],
+      ["x@kris", []],
+      ["@Kris", []],
+    ]
+    expect(cases.map(([text]) => [text, matches(MENTION_PATTERN, text)])).toEqual(cases)
+  })
+
+  test("a #slug matches only as a whole token", () => {
+    const cases: Array<[string, string[]]> = [
+      ["see #general", ["general"]],
+      ["see #general.", ["general"]],
+      ["#general/sub", []],
+      ["notes#general", []],
+      ["`#general`", []],
+      ["#readme.md", []],
+    ]
+    expect(cases.map(([text]) => [text, matches(CHANNEL_PATTERN, text)])).toEqual(cases)
   })
 })

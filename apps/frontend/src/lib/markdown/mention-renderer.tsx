@@ -9,7 +9,7 @@ import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand, useCommandArgs, NO_ARGS, type CommandArgNames } from "./command-list-context"
 import { StreamChip } from "./stream-chip"
-import { MENTION_PATTERN, isValidSlug } from "@threahq/types"
+import { CHANNEL_PATTERN, MENTION_PATTERN, isValidSlug } from "@threahq/types"
 import { STEER_DIRECTIVE_PATTERN } from "@/lib/commands"
 import { COMMAND_TOKEN, scanCommandArgs } from "./command-args"
 
@@ -163,8 +163,6 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
 // 3 the separator, 4 the value.
 const COMMAND_PATTERN = new RegExp(`^(\\s*)${COMMAND_TOKEN}`)
 
-const CHANNEL_PATTERN = /(?<![a-z0-9])#([a-z][a-z0-9-]*[a-z0-9]|[a-z])(?![a-z0-9_.-])/g
-
 const EMOJI_PATTERN = /:([a-z0-9_+-]+):/g
 
 type ToEmoji = (shortcode: string) => string | null
@@ -246,6 +244,7 @@ export function renderMentions(
     }
   }
 
+  // Clone the global regexes so concurrent calls don't share lastIndex.
   const mentionPattern = new RegExp(MENTION_PATTERN.source, MENTION_PATTERN.flags)
   let match
   while ((match = mentionPattern.exec(processText)) !== null) {
@@ -254,7 +253,6 @@ export function renderMentions(
     }
   }
 
-  // Clone the global regex so concurrent calls don't share lastIndex.
   const channelPattern = new RegExp(CHANNEL_PATTERN.source, CHANNEL_PATTERN.flags)
   while ((match = channelPattern.exec(processText)) !== null) {
     if (isValidSlug(match[1])) {

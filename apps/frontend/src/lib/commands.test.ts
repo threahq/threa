@@ -152,7 +152,7 @@ describe("extractSteerDirective", () => {
       type: "doc",
       content: [
         { type: "paragraph", content: [{ type: "text", text: "I want option 2 /steer" }] },
-        { type: "paragraph", content: [{ type: "text", text: "Yes./steer and also pizza" }] },
+        { type: "paragraph", content: [{ type: "text", text: "Yes. /steer and also pizza" }] },
       ],
     }
 
@@ -275,8 +275,29 @@ describe("extractSteerDirective", () => {
       content: [
         {
           type: "paragraph",
-          content: [{ type: "text", text: "https://example.com/steer /steer-more foo/steer" }],
+          content: [
+            { type: "text", text: "https://example.com/steer /steer-more foo/steer Yes./steer (/steer) /steer." },
+          ],
         },
+      ],
+    }
+
+    expect(extractSteerDirective(doc)).toBeNull()
+  })
+
+  it("does not dispatch a steer quoted as code", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "type " },
+            { type: "text", text: "/steer", marks: [{ type: "code" }] },
+            { type: "text", text: " to redirect" },
+          ],
+        },
+        { type: "codeBlock", content: [{ type: "text", text: "/steer" }] },
       ],
     }
 

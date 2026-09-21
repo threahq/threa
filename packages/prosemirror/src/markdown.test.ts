@@ -1011,6 +1011,23 @@ describe("mention/channel whitespace boundary", () => {
     expect(content).toHaveLength(1)
     expect(content?.[0]?.type).toBe("mention")
   })
+  it("leaves a token with anything glued to either side as text", () => {
+    const glued = ["@threahq/bots", "@threahq/bots blah", "`@kris", "@kris.foo", "#general/sub", "x#general", "@kris's"]
+
+    expect(glued.map((text) => parseMarkdown(text).content?.[0]?.content)).toEqual(
+      glued.map((text) => [{ type: "text", text }])
+    )
+  })
+
+  it("keeps sentence punctuation and wrapping parens outside the token", () => {
+    expect(parseMarkdown("thanks @kris. (see #general)").content?.[0]?.content).toEqual([
+      { type: "text", text: "thanks " },
+      { type: "mention", attrs: { id: "kris", slug: "kris", mentionType: "user" } },
+      { type: "text", text: ". (see " },
+      { type: "channelLink", attrs: { id: "general", slug: "general" } },
+      { type: "text", text: ")" },
+    ])
+  })
 })
 
 describe("slash command boundary", () => {
