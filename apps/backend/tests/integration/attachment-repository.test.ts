@@ -50,6 +50,45 @@ describe("AttachmentRepository", () => {
     await pool.end()
   })
 
+  describe("AttachmentExtractionRepository.insert", () => {
+    test("stores model output that contains NUL characters, which Postgres text and jsonb reject", async () => {
+      const attId = attachmentId()
+
+      const extraction = await withTestTransaction(pool, async (client) => {
+        await AttachmentRepository.insert(client, {
+          id: attId,
+          workspaceId: testWorkspaceId,
+          streamId: testStreamId,
+          uploadedBy: testUserId,
+          filename: "screenshot.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: 2048,
+          storagePath: "/test/screenshot",
+        })
+
+        return AttachmentExtractionRepository.insert(client, {
+          id: extractionId(),
+          attachmentId: attId,
+          workspaceId: testWorkspaceId,
+          contentType: "screenshot",
+          summary: "A phone\u0000 screenshot",
+          fullText: "Battery\u0000 81%",
+          structuredData: { headers: ["Setting\u0000"], rows: [["Wi-Fi\u0000", "On"]] },
+        })
+      })
+
+      expect({
+        summary: extraction.summary,
+        fullText: extraction.fullText,
+        structuredData: extraction.structuredData,
+      }).toEqual({
+        summary: "A phone screenshot",
+        fullText: "Battery 81%",
+        structuredData: { headers: ["Setting"], rows: [["Wi-Fi", "On"]] },
+      })
+    })
+  })
+
   describe("searchWithExtractions", () => {
     test("returns empty array when streamIds is empty", async () => {
       const result = await withTestTransaction(pool, async (client) => {

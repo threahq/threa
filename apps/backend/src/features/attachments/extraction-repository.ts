@@ -118,8 +118,23 @@ const SELECT_FIELDS = `
   created_at, updated_at
 `
 
+// Extracted text comes from model output and parsed documents, which can carry
+// NUL; Postgres rejects it in both text and jsonb.
+function stripNul(value: string): string {
+  return value.replaceAll("\u0000", "")
+}
+
+function toJsonWithoutNul(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) => (typeof v === "string" ? stripNul(v) : v))
+}
+
 export const AttachmentExtractionRepository = {
-  async insert(client: Querier, params: InsertAttachmentExtractionParams): Promise<AttachmentExtraction> {
+  async insert(client: Querier, input: InsertAttachmentExtractionParams): Promise<AttachmentExtraction> {
+    const params = {
+      ...input,
+      summary: stripNul(input.summary),
+      fullText: input.fullText == null ? input.fullText : stripNul(input.fullText),
+    }
     const result = await client.query<AttachmentExtractionRow>(sql`
       INSERT INTO attachment_extractions (
         id, attachment_id, workspace_id,
@@ -134,12 +149,12 @@ export const AttachmentExtractionRepository = {
         ${params.summary},
         ${params.fullText ?? null},
         ${detectSearchConfig(extractionSearchText(params))},
-        ${params.structuredData ? JSON.stringify(params.structuredData) : null},
+        ${params.structuredData ? toJsonWithoutNul(params.structuredData) : null},
         ${params.sourceType ?? "image"},
-        ${params.pdfMetadata ? JSON.stringify(params.pdfMetadata) : null},
-        ${params.textMetadata ? JSON.stringify(params.textMetadata) : null},
-        ${params.wordMetadata ? JSON.stringify(params.wordMetadata) : null},
-        ${params.excelMetadata ? JSON.stringify(params.excelMetadata) : null}
+        ${params.pdfMetadata ? toJsonWithoutNul(params.pdfMetadata) : null},
+        ${params.textMetadata ? toJsonWithoutNul(params.textMetadata) : null},
+        ${params.wordMetadata ? toJsonWithoutNul(params.wordMetadata) : null},
+        ${params.excelMetadata ? toJsonWithoutNul(params.excelMetadata) : null}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
