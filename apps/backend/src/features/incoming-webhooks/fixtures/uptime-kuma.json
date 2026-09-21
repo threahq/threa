@@ -1,0 +1,32 @@
+{
+  "text": "Uptime Kuma Alert",
+  "channel": "#alerts",
+  "username": "Uptime Kuma",
+  "icon_emoji": ":robot_face:",
+  "attachments": [
+    {
+      "color": "#DC2626",
+      "blocks": [
+        { "type": "header", "text": { "type": "plain_text", "text": "Uptime Kuma Alert" } },
+        {
+          "type": "section",
+          "fields": [
+            { "type": "mrkdwn", "text": "*Message*\n[api.example.net] [Down] connect ECONNREFUSED" },
+            { "type": "mrkdwn", "text": "*Time (UTC)*\n2026-09-21 11:04:12" }
+          ]
+        },
+        {
+          "type": "actions",
+          "elements": [
+            {
+              "type": "button",
+              "text": { "type": "plain_text", "text": "Visit Uptime Kuma" },
+              "value": "Uptime-Kuma",
+              "url": "https://kuma.example.net"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

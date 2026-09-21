@@ -1,0 +1,16 @@
+{
+  "username": "Grafana",
+  "icon_emoji": ":grafana:",
+  "attachments": [
+    {
+      "color": "#D63232",
+      "title": "[FIRING:1] HighErrorRate prod api",
+      "title_link": "https://grafana.example.net/alerting/list",
+      "text": "**Firing**\n\nValue: B=0.34\nLabels:\n - alertname = HighErrorRate\n - service = api\nAnnotations:\n - summary = error rate above 5% for 10m\nSource: https://grafana.example.net/alerting/grafana/ae1q/view\nSilence: https://grafana.example.net/alerting/silence/new",
+      "fallback": "[FIRING:1] HighErrorRate prod api",
+      "footer": "Grafana v11.2.0",
+      "footer_icon": "https://grafana.example.net/static/img/fav32.png",
+      "ts": 1758412800
+    }
+  ]
+}

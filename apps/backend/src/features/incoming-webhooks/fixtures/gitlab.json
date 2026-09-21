@@ -1,0 +1,13 @@
+{
+  "username": "GitLab",
+  "icon_url": "https://gitlab.example.net/assets/gitlab_logo.png",
+  "attachments": [
+    {
+      "color": "#345",
+      "fallback": "acme/api: Ada Byron pushed to branch main",
+      "pretext": "<https://gitlab.example.net/acme/api|acme/api>",
+      "text": "<https://gitlab.example.net/acme/api/-/compare/a1b2c3d...e4f5g6h|2 commits> pushed to <https://gitlab.example.net/acme/api/-/tree/main|main>\n\n<https://gitlab.example.net/acme/api/-/commit/e4f5g6h|e4f5g6h>: cache the stream index - Ada Byron",
+      "mrkdwn_in": ["text", "pretext", "fallback"]
+    }
+  ]
+}

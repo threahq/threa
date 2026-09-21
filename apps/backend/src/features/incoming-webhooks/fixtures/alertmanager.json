@@ -1,0 +1,21 @@
+{
+  "channel": "#alerts",
+  "username": "alertmanager",
+  "icon_emoji": ":prometheus:",
+  "attachments": [
+    {
+      "color": "danger",
+      "fallback": "[FIRING:2] InstanceDown node-exporter",
+      "pretext": "*Alerts firing for* `node-exporter`",
+      "title": "[FIRING:2] InstanceDown node-exporter",
+      "title_link": "https://alertmanager.example.net/#/alerts?receiver=slack",
+      "text": "Instance has been down for more than 5 minutes.",
+      "fields": [
+        { "title": "severity", "value": "critical", "short": true },
+        { "title": "runbook", "value": "<https://runbooks.example.net/instance-down|InstanceDown>", "short": true }
+      ],
+      "footer": "Prometheus Alertmanager",
+      "mrkdwn_in": ["text", "fallback", "pretext"]
+    }
+  ]
+}
