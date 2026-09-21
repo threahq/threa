@@ -47,6 +47,10 @@ function joinAck(socket: Socket, room: string): Promise<{ ok: boolean; error?: s
 
 const testRunId = Math.random().toString(36).slice(2, 8)
 
+interface MessageCreated {
+  streamId: string
+}
+
 describe("socket stream joins in one burst", () => {
   test("each room gets its own access decision, including a non-member thread inside a member channel", async () => {
     const owner = new TestClient()
@@ -90,7 +94,15 @@ describe("socket stream joins in one burst", () => {
         missing: denied,
       })
 
-      const delivered = new Promise<{ streamId: string }>((resolve) => socket.once("message:created", resolve))
+      // The anchor message's own event can still be in the outbox when the rooms are joined.
+      const delivered = new Promise<MessageCreated>((resolve) => {
+        const onCreated = (event: MessageCreated) => {
+          if (event.streamId !== thread.id) return
+          socket.off("message:created", onCreated)
+          resolve(event)
+        }
+        socket.on("message:created", onCreated)
+      })
       await sendMessage(owner, ws.id, thread.id, "reply in thread")
       expect(await delivered).toMatchObject({ streamId: thread.id })
     } finally {
