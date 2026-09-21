@@ -95,6 +95,14 @@ const scopes = [
     scopes it needs, and add the bot to the streams it should see.
   </p>
   <p>
+    For a personal bot that runs a command, skip the settings pages.
+    <code>npx @threahq/bot connect</code> prints a URL and a code; approve it in a
+    browser where you're signed in, and the bot and its key are created and
+    written to <code>~/.threa/bot.json</code> on the machine that asked. The
+    <a class="link" href="/developers/recipes#local-agent">local agent recipe</a>
+    walks through it.
+  </p>
+  <p>
     Keep scopes as narrow as the job allows. You can edit them later, and a narrow
     key fails safe. The table below lists what each one unlocks.
   </p>
