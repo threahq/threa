@@ -170,9 +170,8 @@ body {
 /* ---------- SHARED PRIMITIVES ---------- */
 .wordmark {
   font-family: var(--font-display) !important;
-  font-weight: 300 !important;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em;
   font-style: normal !important;
 }
 .nav-row {
@@ -183,14 +182,15 @@ body {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 .brand svg {
-  width: 22px;
-  height: 22px;
+  width: 30px;
+  height: 30px;
 }
 .brand .wordmark {
-  font-size: 12px;
+  font-size: 23px;
+  line-height: 1;
 }
 .nav-links {
   display: flex;
@@ -208,10 +208,10 @@ body {
 }
 .h-display {
   font-family: var(--font-display);
-  font-weight: 300;
-  font-size: clamp(36px, 4.4vw, 54px);
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+  font-weight: 800;
+  font-size: clamp(42px, 5.2vw, 70px);
+  line-height: 0.98;
+  letter-spacing: -0.035em;
   margin: 0;
 }
 .lede {
@@ -568,7 +568,7 @@ body {
 }
 /* While the mention message is being typed (prefix, pill, or suffix
      on screen), hide the placeholder so it doesn't read as
-     "shit, uh 🤷Type a message" — toggled by the JS driver. */
+     "hang on,Type a message" — toggled by the JS driver. */
 .composer-editor.has-mention .composer-input::placeholder {
   opacity: 0;
 }
@@ -1082,9 +1082,9 @@ body {
 }
 
 /* Composer typing:
-       25-31% — "shit, uh 🤷" types out before the pill (JS-driven)
+       25-31% — "hang on," types out before the pill (JS-driven)
        33%    — mention pill snaps in as a unit (steps(1) instant jump)
-       34-37% — " ?" types after the pill (driven by JS so the caret can
+       34-40% — " can you check?" types after the pill (driven by JS so the caret can
                 follow the visible glyphs naturally)
        49%    — send fires → everything clears */
 .composer-typed {
@@ -1094,6 +1094,12 @@ body {
 .composer-mention-wrap {
   animation: pop-mention var(--cycle) steps(1) 1 forwards;
 }
+/* The demo's keyframes wait for the script to see it on screen. */
+.tl.is-waiting *,
+.tl.is-waiting *::before,
+.tl.is-waiting *::after {
+  animation-play-state: paused !important;
+}
 @keyframes pop-mention {
   0%,
   32.9% {
@@ -1101,7 +1107,7 @@ body {
   }
   33%,
   48.9% {
-    max-width: 100px;
+    max-width: 140px;
   }
   49%,
   100% {
@@ -1274,7 +1280,7 @@ body {
   display: grid;
   grid-template-columns: 0.95fr 1.1fr;
   gap: 64px;
-  align-items: start;
+  align-items: center;
   position: relative;
   overflow: hidden;
 }
@@ -1287,37 +1293,140 @@ body {
   gap: 18px;
   margin-top: 8px;
 }
-/* Tape Anchored thread — comes in from the left and terminates at
-     Ariadne's row. The persona row already uses background-color for
-     the highlight-flash, so the thread lives on ::after (a pseudo-
-     element whose only job is to draw the line + tick label). */
-.hero-right .tl-row.persona::after {
+/* The thread — Mar 12's message, the memo it became, May 7's answer, on
+   one gold rail. Every stop renders in the first frame; the rail draws once
+   (a paper-coloured cover retracting downward) and May 7 fills gold as the
+   rail reaches it. Rail segments live on each stop so the line ends exactly
+   at the last dot whatever the stops' heights. */
+.thread {
+  --gap: 30px;
+  --date: clamp(58px, 6.6vw, 98px);
+  --rail-x: 11px;
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 44px;
+  display: grid;
+  gap: var(--gap);
+  position: relative;
+}
+.stop {
+  --dot-y: calc(var(--date) * 0.4);
+  position: relative;
+}
+.stop.is-kept {
+  --dot-y: 26px;
+}
+.stop:not(:first-child)::before,
+.stop:not(:last-child)::after {
   content: "";
   position: absolute;
-  top: 50%;
-  right: 100%;
-  width: 800px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    hsl(var(--gold) / 0) 0%,
-    hsl(var(--gold) / 0.18) 50%,
-    hsl(var(--gold) / 0.6) 88%,
-    hsl(var(--gold)) 100%
-  );
-  transform: translateY(-0.5px);
-  pointer-events: none;
-  opacity: 0;
-  animation: thread-life var(--cycle) linear 1 forwards;
+  left: calc(var(--rail-x) - 44px - 1px);
+  width: 2px;
+  background: hsl(var(--gold));
 }
-@keyframes thread-life {
-  0%,
-  71% {
-    opacity: 0;
+.stop:not(:first-child)::before {
+  top: calc(-1 * var(--gap));
+  height: calc(var(--gap) + var(--dot-y));
+}
+.stop:not(:last-child)::after {
+  top: var(--dot-y);
+  bottom: 0;
+}
+.stop-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0 0 10px;
+  position: relative;
+}
+.stop-head::before,
+.stop.is-kept > .memory-card::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--rail-x) - 44px - 7px);
+  top: calc(var(--dot-y) - 7px);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: hsl(var(--paper));
+  box-shadow: inset 0 0 0 3px hsl(var(--gold));
+  z-index: 1;
+}
+.stop.is-kept > .memory-card::before {
+  background: hsl(var(--gold));
+}
+.stop-date {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: var(--date);
+  line-height: 0.8;
+  letter-spacing: -0.045em;
+  white-space: nowrap;
+}
+/* A faint fill, not an outline: Cabinet's variable outlines overlap, and
+   text-stroke draws every overlap as a seam. */
+.stop.is-then .stop-date {
+  color: hsl(var(--ink) / 0.13);
+}
+.stop.is-now .stop-date {
+  color: hsl(var(--gold));
+  animation: date-fill 0.6s ease-out 1.5s both;
+}
+@keyframes date-fill {
+  from {
+    color: hsl(var(--ink) / 0.13);
   }
-  73%,
-  100% {
-    opacity: 1;
+}
+.stop-where {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: hsl(var(--muted));
+}
+.thread .tl-row {
+  padding: 8px 10px 6px;
+}
+.stop.is-then .tl-text {
+  color: hsl(var(--ink-soft));
+}
+.stop.is-kept > .memory-card {
+  position: relative;
+}
+.stop.is-kept .dm-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.stop.is-kept .dm-body {
+  margin-bottom: 10px;
+}
+.thread::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--rail-x) * 2 + 2px);
+  background: hsl(var(--paper));
+  transform-origin: bottom;
+  animation: rail-draw 1.6s cubic-bezier(0.5, 0, 0.25, 1) 0.2s both;
+  z-index: 2;
+  pointer-events: none;
+}
+@keyframes rail-draw {
+  from {
+    transform: scaleY(1);
+  }
+  to {
+    transform: scaleY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread::after {
+    display: none;
+  }
+  .stop.is-now .stop-date {
+    animation: none;
   }
 }
 
@@ -1331,10 +1440,10 @@ body {
 }
 .memo-shell h2 {
   font-family: var(--font-display);
-  font-weight: 300;
-  font-size: clamp(28px, 3.4vw, 40px);
-  line-height: 1.1;
-  letter-spacing: -0.015em;
+  font-weight: 750;
+  font-size: clamp(32px, 3.9vw, 48px);
+  line-height: 1.02;
+  letter-spacing: -0.03em;
   margin: 0 0 14px;
   max-width: 720px;
 }
@@ -1911,6 +2020,41 @@ body {
 }
 
 /* ---------- BRING YOUR OWN AGENT SECTION ---------- */
+.byo-shell {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: center;
+}
+.byo-lede a {
+  color: hsl(var(--ink));
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold) / 0.5);
+  text-underline-offset: 4px;
+}
+.byo-lede a:hover {
+  text-decoration-color: hsl(var(--gold));
+}
+.tl-row.bot {
+  background-image: linear-gradient(90deg, hsl(var(--emerald) / 0.06) 0%, hsl(var(--emerald) / 0) 75%);
+  box-shadow: inset 3px 0 0 hsl(var(--emerald));
+}
+.tl-row.bot .tl-name {
+  color: hsl(var(--emerald));
+}
+.tl-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: hsl(var(--emerald) / 0.7);
+}
+.tl-avatar.av-bot {
+  background: hsl(var(--emerald) / 0.14);
+  color: hsl(var(--emerald));
+}
+.tl-avatar.av-bot svg {
+  width: 18px;
+  height: 18px;
+}
 .byo-shell .os-tenets {
   max-width: 980px;
 }
@@ -2178,9 +2322,11 @@ body {
   .hero-stage .actions {
     flex-wrap: wrap;
   }
-  /* Full-width demo on its own row reads as a real conversation again instead
-     of a squeezed column. */
-  .hero-right .tl {
+  .byo-shell {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+  .byo-demo .tl {
     height: clamp(480px, 72vh, 560px);
   }
 

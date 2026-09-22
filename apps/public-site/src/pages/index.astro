@@ -57,154 +57,50 @@ const schema = [
           </div>
         </div>
         <div class="hero-right" data-decorative>
-          <div class="tl">
-            <div class="tl-caption">
-              <span class="hash">#api-v3</span>
-              <span class="meta">Friday</span>
-            </div>
-
-            <!-- Top-anchored message list — messages stack downward and the
-                 composer (positioned absolutely below) overlays the bottom,
-                 so the latest message slides UNDER the composer. The
-                 inline pin-scroll script keeps the bottom in view as new
-                 rows expand. -->
-            <div class="tl-messages">
-
-            <!-- 1: Maya raises the question (static, already in the channel) -->
-            <div class="tl-row">
-              <div class="tl-avatar av-maya">MR</div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Maya Reyes</span>
-                  <span class="tl-time" data-time="maya">Friday 14:03</span>
-                </div>
-                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
-              </div>
-            </div>
-
-            <!-- 2: Jordan recalls vaguely — enters at 19% with a 2s gold flash -->
-            <div class="tl-row pop-jordan">
-              <div class="tl-avatar av-jordan">JL</div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Jordan Lee</span>
-                  <span class="tl-time" data-time="jordan">Friday 14:04</span>
-                </div>
-                <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
-              </div>
-            </div>
-
-            <!-- 3: Alex's message — sent from the composer below. Row
-                 enters at 49% at the same moment the composer clears. -->
-            <div class="tl-row pop-alex">
-              <div class="tl-avatar av-alex">AP</div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Alex Park</span>
-                  <span class="tl-time" data-time="alex">Friday 14:05</span>
-                </div>
-                <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
-              </div>
-            </div>
-
-            <!-- 4: Trace card — running ↔ completed in place
-                 (matches AgentSessionEvent.tsx structure exactly). -->
-            <div class="trace-card">
-              <div class="trace-icon-slot">
-                <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
-                <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
-              </div>
-              <div class="trace-main">
-                <div class="trace-row trace-row-running">
-                  <div class="trace-title">Ariadne is working…</div>
-                  <div class="trace-sub"><span class="num"><span class="trace-step-count"></span></span> of 5 steps</div>
-                </div>
-                <div class="trace-row trace-row-done">
-                  <div class="trace-title">Session complete</div>
-                  <div class="trace-sub">5 steps · 3.7s</div>
+          <ol class="thread" aria-label="A decision made on March 12, kept as a memo, and answered on May 7">
+            <li class="stop is-then">
+              <p class="stop-head"><time class="stop-date" datetime="2026-03-12">Mar 12</time><span class="stop-where">#api-v3</span></p>
+              <div class="tl-row">
+                <div class="tl-avatar av-jordan">JL</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">11:42</span></div>
+                  <div class="tl-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</div>
                 </div>
               </div>
-              <div class="trace-time" data-time-short="ariadne">14:05</div>
-            </div>
-
-            <!-- 5: Ariadne replies with quote card -->
-            <div class="tl-row persona pop-ariadne">
-              <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Ariadne</span>
-                  <span class="tl-time" data-time="ariadne">Friday 14:05</span>
-                </div>
-                <div class="tl-text">You held the refactor for Jordan's review of the token-rotation model. Their concern from Mar 12:</div>
-
-                <div class="quote-card">
-                  <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
-                  <div class="q-author">
-                    <div class="q-avatar av-jordan">JL</div>
-                    <div class="q-name">Jordan Lee</div>
-                    <div class="q-time">Mar 12 · 11:42</div>
-                  </div>
-                  <div class="q-body">"hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design"</div>
-                </div>
-
-                <div class="tl-text" style="margin-top:8px;">Original thread in <span class="ref-pill">#api-v3</span>.</div>
-
-                <div class="reactions">
-                  <span class="rxn rxn-1"><span class="em">👍</span><span class="num">3</span></span>
-                  <span class="rxn rxn-2"><span class="em">🙏</span><span class="num">2</span></span>
-                  <span class="rxn rxn-3"><span class="em">💡</span><span class="num">1</span></span>
+              <div class="tl-row">
+                <div class="tl-avatar av-maya">MR</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">11:44</span></div>
+                  <div class="tl-text">Fair. Let's hold v3 until you've walked us through it.</div>
                 </div>
               </div>
-            </div>
-
-            </div><!-- /.tl-messages -->
-
-            <!-- Composer — types @ariadne, fires send, then waits. Mirrors the
-                 real MessageComposer (apps/frontend/src/components/composer):
-                 hint on the left, icon action row + gold send on the right,
-                 keyboard shortcut hint sits OUTSIDE below. At phone width the
-                 row folds like the real one: + · mic · Aa · send clustered on
-                 the right (the "More" button only exists there). -->
-            <div class="composer" aria-label="Message composer">
-              <div class="composer-editor">
-                <span class="composer-typed" aria-hidden="true"></span>
-                <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@ariadne</span></span>
-                <input
-                  class="composer-input"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  readonly
-                  tabindex="-1"
-                  inputmode="none"
-                  placeholder="Type a message..."
-                  aria-label="Message"
-                  data-pre="shit, uh 🤷"
-                  data-trail=" ?"
-                />
+            </li>
+            <li class="stop is-kept">
+              <div class="memory-card decision-memo">
+                <div class="dm-kicker"><span class="dot"></span> Decision</div>
+                <div class="dm-title">Auth refactor held pending token-rotation review.</div>
+                <div class="dm-body">Migrating live sessions would force everyone to sign in again. Jordan walks through the rotation flow first.</div>
+                <div class="dm-source">Kept from 3 messages in <span class="ref-pill">#api-v3</span></div>
               </div>
-              <div class="composer-bar">
-                <span class="composer-hint">Select text to format</span>
-                <div class="composer-actions">
-                  <button type="button" class="cb cb-more" aria-label="More" data-tip="More"><svg><use href="#icon-plus"/></svg></button>
-                  <button type="button" class="cb cb-maximize" aria-label="Expand editor" data-tip="Expand editor"><svg><use href="#icon-maximize"/></svg></button>
-                  <button type="button" class="cb cb-aa" aria-label="Formatting" data-tip="Format text">Aa</button>
-                  <button type="button" class="cb cb-emoji" aria-label="Insert emoji" data-tip="Emoji"><span>😊</span></button>
-                  <button type="button" class="cb" aria-label="Insert mention" data-tip="Mention (@ariadne)"><svg><use href="#icon-at"/></svg></button>
-                  <button type="button" class="cb" aria-label="Insert command" data-tip="Slash command"><svg><use href="#icon-slash"/></svg></button>
-                  <button type="button" class="cb" aria-label="Attach files" data-tip="Attach files"><svg><use href="#icon-paperclip"/></svg></button>
-                  <button type="button" class="cb" aria-label="Dictate a message" data-tip="Dictate"><svg><use href="#icon-mic"/></svg></button>
-                  <button type="button" class="cb" aria-label="Drafts" data-tip="Drafts"><svg><use href="#icon-fileedit"/></svg></button>
-                  <button type="button" class="cb" aria-label="Scheduled" data-tip="Schedule"><svg><use href="#icon-calendarclock"/></svg></button>
-                  <div class="composer-send" aria-label="Send" data-tip="Send">
-                    <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </div>
+            </li>
+            <li class="stop is-now">
+              <p class="stop-head"><time class="stop-date" datetime="2026-05-07">May 7</time><span class="stop-where">#sprint-planning</span></p>
+              <div class="tl-row">
+                <div class="tl-avatar av-maya">MR</div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">09:12</span></div>
+                  <div class="tl-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. Why did we hold it?</div>
                 </div>
               </div>
-            </div>
-            <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
-
-          </div>
+              <div class="tl-row persona">
+                <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
+                <div class="tl-body">
+                  <div class="tl-head-line"><span class="tl-name">Ariadne</span><span class="tl-time">09:12</span></div>
+                  <div class="tl-text">You paused v3 on Mar 12 until Jordan reviewed the token-rotation model. That walkthrough hasn't happened yet.</div>
+                </div>
+              </div>
+            </li>
+          </ol>
         </div>
       </div>
     </div>
@@ -686,32 +582,185 @@ const schema = [
      ============================================================ -->
 <div class="frame" id="byo-agent">
   <div class="memo-shell byo-shell">
-    <h2>Bring the agent you already use.</h2>
-    <p class="lede">
-      Threa ships with Ariadne, and she's useful from day one. But you probably
-      already have an agent set up the way you like it, with your codebase and
-      your context. Connect that one as a Threa bot instead of starting over
-      with mine. It can even stay on your laptop behind NAT.
-    </p>
-    <p class="lede byo-lede">
-      Mention the bot in a channel and the runtime hands the request to your
-      local agent, then posts the reply under the bot's name. It can search
-      messages by text or meaning, read memos and attachments, and follow a
-      memo back to the conversation it came from. It can also take whole
-      tasks. You delegate, watch it work in the stream, and the finished thing
-      lands where the team can see it.
-    </p>
-    <p class="lede byo-lede">
-      Some of that work shouldn't be readable by anyone but you and your agent.
-      Put it in a <a href="/encryption">sealed scratchpad</a> and it is encrypted
-      on your devices before it ever reaches Threa.
-    </p>
+    <div class="byo-copy">
+      <h2>Bring the agent you already use.</h2>
+      <p class="lede">
+        Threa ships with Ariadne, and she's useful from day one. But you probably
+        already have an agent set up the way you like it, with your codebase and
+        your context. Connect that one as a Threa bot instead of starting over
+        with mine. It can even stay on your laptop behind NAT.
+      </p>
+      <p class="lede byo-lede">
+        Mention the bot in a channel and the runtime hands the request to your
+        local agent, then posts the reply under the bot's name. It can search
+        messages by text or meaning, read memos and attachments, and follow a
+        memo back to the conversation it came from. It can also take whole
+        tasks. You delegate, watch it work in the stream, and the finished thing
+        lands where the team can see it.
+      </p>
+      <p class="lede byo-lede">
+        Some of that work shouldn't be readable by anyone but you and your agent.
+        Put it in a <a href="/encryption">sealed scratchpad</a> and it is encrypted
+        on your devices before it ever reaches Threa.
+      </p>
 
-    <p class="byo-works">
-      Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
-      you write yourself, through the bot runtime, the CLI, or the MCP server.
-    </p>
-    <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
+      <p class="byo-works">
+        Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
+        you write yourself, through the bot runtime, the CLI, or the MCP server.
+      </p>
+      <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
+    </div>
+    <div class="byo-demo" data-decorative>
+      <div class="tl">
+        <div class="tl-caption">
+          <span class="hash">#api-v3</span>
+          <span class="meta">Friday</span>
+        </div>
+
+        <!-- Top-anchored message list — messages stack downward and the
+             composer (positioned absolutely below) overlays the bottom,
+             so the latest message slides UNDER the composer. The
+             inline pin-scroll script keeps the bottom in view as new
+             rows expand. -->
+        <div class="tl-messages">
+
+        <!-- 1: Maya raises the question (static, already in the channel) -->
+        <div class="tl-row">
+          <div class="tl-avatar av-maya">MR</div>
+          <div class="tl-body">
+            <div class="tl-head-line">
+              <span class="tl-name">Maya Reyes</span>
+              <span class="tl-time" data-time="maya">Friday 14:03</span>
+            </div>
+            <div class="tl-text">Before we ship v3: does token rotation still sign out sessions issued before the migration?</div>
+          </div>
+        </div>
+
+        <!-- 2: Jordan — enters at 19% with a 2s gold flash -->
+        <div class="tl-row pop-jordan">
+          <div class="tl-avatar av-jordan">JL</div>
+          <div class="tl-body">
+            <div class="tl-head-line">
+              <span class="tl-name">Jordan Lee</span>
+              <span class="tl-time" data-time="jordan">Friday 14:04</span>
+            </div>
+            <div class="tl-text">no idea, I'd have to dig through the rotation code again</div>
+          </div>
+        </div>
+
+        <!-- 3: Alex's message — sent from the composer below. Row
+             enters at 49% at the same moment the composer clears. -->
+        <div class="tl-row pop-alex">
+          <div class="tl-avatar av-alex">AP</div>
+          <div class="tl-body">
+            <div class="tl-head-line">
+              <span class="tl-name">Alex Park</span>
+              <span class="tl-time" data-time="alex">Friday 14:05</span>
+            </div>
+            <div class="tl-text">hang on, <span class="mention">@alex-agent</span> can you check?</div>
+          </div>
+        </div>
+
+        <!-- 4: Trace card — running ↔ completed in place
+             (matches AgentSessionEvent.tsx structure exactly). -->
+        <div class="trace-card">
+          <div class="trace-icon-slot">
+            <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
+            <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
+          </div>
+          <div class="trace-main">
+            <div class="trace-row trace-row-running">
+              <div class="trace-title">alex-agent is working…</div>
+              <div class="trace-sub"><span class="num"><span class="trace-step-count"></span></span> of 5 steps</div>
+            </div>
+            <div class="trace-row trace-row-done">
+              <div class="trace-title">Session complete</div>
+              <div class="trace-sub">5 steps · 38s</div>
+            </div>
+          </div>
+          <div class="trace-time" data-time-short="agent">14:05</div>
+        </div>
+
+        <!-- 5: Alex's local agent replies through its bot, quoting the memo's source -->
+        <div class="tl-row bot pop-ariadne">
+          <div class="tl-avatar av-bot"><svg><use href="#icon-bot"/></svg></div>
+          <div class="tl-body">
+            <div class="tl-head-line">
+              <span class="tl-name">alex-agent</span>
+              <span class="tl-badge">BOT</span>
+              <span class="tl-time" data-time="agent">Friday 14:05</span>
+            </div>
+            <div class="tl-text">Yes. Pre-migration sessions keep their old refresh token, so the first rotation signs them out. It's the risk Jordan raised when v3 was held:</div>
+
+            <div class="quote-card">
+              <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
+              <div class="q-author">
+                <div class="q-avatar av-jordan">JL</div>
+                <div class="q-name">Jordan Lee</div>
+                <div class="q-time">Mar 12 · 11:42</div>
+              </div>
+              <div class="q-body">"hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design"</div>
+            </div>
+
+            <div class="tl-text" style="margin-top:8px;">Draft fix is on the <span class="ref-pill">auth-rotation</span> branch.</div>
+
+            <div class="reactions">
+              <span class="rxn rxn-1"><span class="em">👍</span><span class="num">3</span></span>
+              <span class="rxn rxn-2"><span class="em">🙏</span><span class="num">2</span></span>
+              <span class="rxn rxn-3"><span class="em">💡</span><span class="num">1</span></span>
+            </div>
+          </div>
+        </div>
+
+        </div><!-- /.tl-messages -->
+
+        <!-- Composer — types the bot mention, fires send, then waits. Mirrors the
+             real MessageComposer (apps/frontend/src/components/composer):
+             hint on the left, icon action row + gold send on the right,
+             keyboard shortcut hint sits OUTSIDE below. At phone width the
+             row folds like the real one: + · mic · Aa · send clustered on
+             the right (the "More" button only exists there). -->
+        <div class="composer" aria-label="Message composer">
+          <div class="composer-editor">
+            <span class="composer-typed" aria-hidden="true"></span>
+            <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@alex-agent</span></span>
+            <input
+              class="composer-input"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              readonly
+              tabindex="-1"
+              inputmode="none"
+              placeholder="Type a message..."
+              aria-label="Message"
+              data-pre="hang on,"
+              data-trail=" can you check?"
+            />
+          </div>
+          <div class="composer-bar">
+            <span class="composer-hint">Select text to format</span>
+            <div class="composer-actions">
+              <button type="button" class="cb cb-more" aria-label="More" data-tip="More"><svg><use href="#icon-plus"/></svg></button>
+              <button type="button" class="cb cb-maximize" aria-label="Expand editor" data-tip="Expand editor"><svg><use href="#icon-maximize"/></svg></button>
+              <button type="button" class="cb cb-aa" aria-label="Formatting" data-tip="Format text">Aa</button>
+              <button type="button" class="cb cb-emoji" aria-label="Insert emoji" data-tip="Emoji"><span>😊</span></button>
+              <button type="button" class="cb" aria-label="Insert mention" data-tip="Mention"><svg><use href="#icon-at"/></svg></button>
+              <button type="button" class="cb" aria-label="Insert command" data-tip="Slash command"><svg><use href="#icon-slash"/></svg></button>
+              <button type="button" class="cb" aria-label="Attach files" data-tip="Attach files"><svg><use href="#icon-paperclip"/></svg></button>
+              <button type="button" class="cb" aria-label="Dictate a message" data-tip="Dictate"><svg><use href="#icon-mic"/></svg></button>
+              <button type="button" class="cb" aria-label="Drafts" data-tip="Drafts"><svg><use href="#icon-fileedit"/></svg></button>
+              <button type="button" class="cb" aria-label="Scheduled" data-tip="Schedule"><svg><use href="#icon-calendarclock"/></svg></button>
+              <div class="composer-send" aria-label="Send" data-tip="Send">
+                <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
+
+      </div>
+    </div>
   </div>
 </div>
 
@@ -807,8 +856,8 @@ const schema = [
 
 <footer class="footer">
   <div class="brand" style="gap:10px;">
-    <svg style="width:18px;height:18px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
-    <span class="wordmark" style="font-size:11px;">Threa</span>
+    <svg style="width:24px;height:24px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
+    <span class="wordmark" style="font-size:18px;">Threa</span>
     <span class="year">2026</span>
   </div>
   <div class="ln">
@@ -819,17 +868,19 @@ const schema = [
 </footer>
 
   <script is:inline>
-  /* Auto-scroll on each beat so newly-faded-in rows come into view. The
-     list is naturally scrollable; once the user interacts (wheel, touch,
-     keyboard) we surrender the scroll and never fight them. */
+  /* The agent-section chat demo. Its CSS keyframes and this script share one
+     22s clock that starts when the demo scrolls into view, not on page load,
+     so visitors see the conversation happen instead of its end state. */
   (function () {
-    const tlm = document.querySelector('.tl-messages')
-    if (!tlm) return
+    const tl = document.querySelector('.byo-demo .tl')
+    const tlm = tl?.querySelector('.tl-messages')
+    if (!tl || !tlm) return
+    tl.classList.add('is-waiting')
 
     /* ---- local time stamps ----
        Replace the hardcoded weekday/HH:mm with the user's actual local
        day and a now-anchored cadence: 4/2/0 minutes ago, with Alex and
-       Ariadne both at "now" (Ariadne's reply follows immediately on send).
+       the agent both at "now".
        Day name is computed per stamp so messages that cross midnight
        still read correctly. */
     const now = new Date()
@@ -841,7 +892,7 @@ const schema = [
       maya: ago(4),
       jordan: ago(2),
       alex: ago(0),
-      ariadne: now,
+      agent: now,
     }
     document.querySelectorAll('[data-time]').forEach(el => {
       const d = stamps[el.dataset.time] || now
@@ -854,10 +905,9 @@ const schema = [
     const cap = document.querySelector('.tl-caption .meta')
     if (cap) cap.textContent = dayOf(now)
 
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
-
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
     const cycle = 22_000
-    const start = performance.now()
+    let start = 0
 
     /* ---- composer typewriter ----
        Real <input>, driven by JS — value changes trigger the browser's
@@ -868,16 +918,16 @@ const schema = [
     const editor = document.querySelector('.composer-editor')
     const input = document.querySelector('.composer-input')
     const typed = document.querySelector('.composer-typed')
-    /* Array.from iterates code points, so the 🤷 surrogate pair can't be
+    /* Array.from iterates code points, so an emoji surrogate pair can't be
        split across animation frames. */
     const preChars = Array.from(input?.dataset.pre ?? '')
     const trailChars = Array.from(input?.dataset.trail ?? '')
-    /* 25-31% — "shit, uh 🤷" types out before the pill (the real input
+    /* 25-31% — "hang on," types out before the pill (the real input
                  keeps the caret riding at the end of the typed text)
        33% — mention pill snaps in
-       34-37% — " ?" types after the pill (~85ms/char)
+       34-40% — " can you check?" types after the pill (~90ms/char)
        49% — send fires, everything clears, pill collapses */
-    const preStartPct = 25, preEndPct = 31, mentionInPct = 33, typeStartPct = 34, typeEndPct = 37, clearPct = 49
+    const preStartPct = 25, preEndPct = 31, mentionInPct = 33, typeStartPct = 34, typeEndPct = 40, clearPct = 49
     let lastPre = -1
     let lastChars = -1
     let focused = false
@@ -908,8 +958,9 @@ const schema = [
         lastChars = chars
       }
       /* Focus once on first frame so the browser-drawn caret is visible
-         in the empty input from the start of the loop. */
-      if (!focused) {
+         in the empty input from the start of the loop. Never steal focus
+         from something the visitor is using. */
+      if (!focused && (!document.activeElement || document.activeElement === document.body)) {
         try { input.focus({ preventScroll: true }) } catch { input.focus() }
         focused = true
       }
@@ -919,7 +970,6 @@ const schema = [
       updateInput(t)
       if (t < cycle) requestAnimationFrame(tick)
     }
-    requestAnimationFrame(tick)
 
     /* ---- beat-based auto-scroll ----
        Each beat scrolls the bottom of the latest revealed row into view.
@@ -937,7 +987,20 @@ const schema = [
 
     /* Beat times (percent of cycle, +small lag so opacity has resolved). */
     const beats = [49.5, 51.5, 71.5, 85.5]
-    beats.forEach(p => setTimeout(scrollToBottom, p * cycle / 100))
+
+    const play = () => {
+      tl.classList.remove('is-waiting')
+      if (reducedMotion) return
+      start = performance.now()
+      requestAnimationFrame(tick)
+      beats.forEach(p => setTimeout(scrollToBottom, p * cycle / 100))
+    }
+    const io = new IntersectionObserver(entries => {
+      if (!entries.some(e => e.isIntersecting)) return
+      io.disconnect()
+      play()
+    }, { threshold: 0.35 })
+    io.observe(tl)
   })()
   </script>
 
