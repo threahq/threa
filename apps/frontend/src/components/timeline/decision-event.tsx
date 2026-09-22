@@ -1,6 +1,6 @@
 import { useRef, useState } from "react"
 import { toast } from "sonner"
-import { Check, CircleHelp, Loader2, X } from "lucide-react"
+import { Check, Loader2, X } from "lucide-react"
 import {
   DECISION_NOTE_MAX_CHARS,
   type DecisionOption,
@@ -15,6 +15,7 @@ import {
 } from "@threahq/types"
 import { decisionsApi } from "@/api"
 import { ApiError } from "@/api/client"
+import { ActorAvatar } from "@/components/actor-avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { MarkdownContent } from "@/components/ui/markdown-content"
@@ -54,9 +55,16 @@ function buttonVariantFor(tone: DecisionOption["tone"]): "default" | "outline" {
 }
 
 const OPEN_BUTTON_CLASS: Record<DecisionOption["tone"], string> = {
-  primary: "",
-  neutral: "",
-  destructive: "border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive",
+  primary: "shadow-[inset_0_1px_0_hsl(0_0%_100%/0.18),0_1px_2px_hsl(var(--foreground)/0.12)]",
+  neutral: "bg-card shadow-[0_1px_2px_hsl(var(--foreground)/0.05)]",
+  destructive:
+    "bg-card text-destructive shadow-[0_1px_2px_hsl(var(--foreground)/0.05)] hover:border-destructive/30 hover:bg-destructive/[0.06] hover:text-destructive",
+}
+
+const OUTCOME_ICON_CLASS: Record<DecisionOption["tone"], string> = {
+  primary: "text-primary",
+  neutral: "text-muted-foreground",
+  destructive: "text-destructive",
 }
 
 /** Stand-in for a sealed card's question when it can't be read (locked / decrypting / failed). */
@@ -198,119 +206,137 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   let shownOptions = open ? decision.options : decision.options.filter((option) => option.id === resolution?.optionId)
   if (unreadable) shownOptions = []
 
+  const showFooter = open ? shownOptions.length > 0 || (decision.allowNote && !unreadable) : true
+
   return (
     <div className="px-3 sm:px-6 py-1.5">
       <div
         className={cn(
-          "rounded-[10px] border px-3 py-2 transition-colors",
-          open ? "border-border bg-muted/40" : "border-border/60 bg-muted/20"
+          "overflow-hidden rounded-card border bg-card transition-[box-shadow,border-color] duration-200",
+          open
+            ? "border-border shadow-[0_1px_2px_hsl(var(--foreground)/0.05),0_8px_24px_-12px_hsl(var(--foreground)/0.14)]"
+            : "border-border/70"
         )}
       >
-        <div className="flex items-center gap-3">
-          <span
-            className={cn(
-              "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
-              open ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+        <div className="px-4 pb-3.5 pt-3">
+          <div className="flex items-center gap-2">
+            {decision.requesterBotId && (
+              <ActorAvatar
+                actorId={decision.requesterBotId}
+                actorType="bot"
+                workspaceId={workspaceId}
+                size="xs"
+                showStatus={false}
+              />
             )}
-          >
-            <CircleHelp className="h-4 w-4" aria-hidden="true" />
-          </span>
-          <div className="min-w-0 flex-1">
+            <p className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">
+              <span className="font-medium text-foreground/80">{requesterLabel}</span>{" "}
+              {open ? "needs a decision" : "asked for a decision"}
+            </p>
+            {open && (
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary ring-4 ring-primary/15"
+              />
+            )}
+          </div>
+
+          <div className="mt-2.5">
             {unreadable ? (
-              <p className="text-[13px] italic text-muted-foreground">{DECISION_DECRYPT_NOTICE_TEXT[unreadable]}</p>
+              <p className="text-[14px] italic text-muted-foreground">{DECISION_DECRYPT_NOTICE_TEXT[unreadable]}</p>
             ) : (
               <MarkdownContent
                 content={title}
-                className="text-[13px] font-medium leading-snug text-foreground/90 [&_code]:px-1 [&_code]:py-0 [&_code]:text-[12px]"
+                className={cn(
+                  "text-[15px] font-semibold leading-snug tracking-[-0.01em] [&_code]:px-1.5 [&_code]:py-px [&_code]:text-[13px] [&_code]:font-medium",
+                  open ? "text-foreground" : "text-foreground/80"
+                )}
               />
             )}
-            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-              <span className="font-medium text-foreground/70">{requesterLabel}</span>{" "}
-              {open ? "needs a decision" : "asked for a decision"}
-            </p>
           </div>
-        </div>
 
-        {bodyMarkdown && (
-          <div className="mt-2 pl-10">
-            <MarkdownContent
-              content={bodyMarkdown}
-              messageId={event.id}
-              className="text-[13px] leading-relaxed text-foreground/90"
-            />
-          </div>
-        )}
-
-        <div
-          className={cn(
-            "mt-2 flex pl-10",
-            open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-2 gap-y-1"
-          )}
-        >
-          {open && decision.allowNote && !unreadable && (
-            <Textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              maxLength={DECISION_NOTE_MAX_CHARS}
-              rows={1}
-              aria-label="Note (optional)"
-              placeholder="Add a note"
-              className="h-9 min-h-9 w-full resize-none bg-background py-2 text-[13px] sm:order-last sm:h-8 sm:min-h-8 sm:min-w-[12rem] sm:flex-1 sm:py-1.5"
-            />
-          )}
-          {/* One slot for the option buttons in both states, so the button the
-              viewer pressed is the element that relabels (focus retained). */}
-          {shownOptions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              {shownOptions.map((option) => {
-                const chosen = !open
-                return (
-                  <Button
-                    key={option.id}
-                    type="button"
-                    size="sm"
-                    variant={chosen ? "ghost" : buttonVariantFor(option.tone)}
-                    aria-busy={pendingOptionId === option.id}
-                    aria-disabled={chosen}
-                    aria-live="polite"
-                    onClick={() => handleResolve(option.id)}
-                    className={cn(
-                      "text-[13px]",
-                      chosen
-                        ? cn(
-                            "h-auto cursor-default gap-1 px-0 py-0.5 text-[12px] font-medium [&_svg]:size-3.5",
-                            chosenTone === "destructive"
-                              ? "text-destructive hover:bg-transparent hover:text-destructive"
-                              : "text-foreground/90 hover:bg-transparent hover:text-foreground/90"
-                          )
-                        : cn("h-9 sm:h-8", OPEN_BUTTON_CLASS[option.tone])
-                    )}
-                  >
-                    {pendingOptionId === option.id && <Loader2 className="animate-spin" aria-hidden="true" />}
-                    {chosen && !pendingOptionId && chosenTone === "destructive" && <X aria-hidden="true" />}
-                    {chosen && !pendingOptionId && chosenTone !== "destructive" && <Check aria-hidden="true" />}
-                    {labelFor(option)}
-                  </Button>
-                )
-              })}
+          {bodyMarkdown && (
+            <div className="mt-1.5">
+              <MarkdownContent
+                content={bodyMarkdown}
+                messageId={event.id}
+                className="text-[13px] leading-relaxed text-foreground/70 [&_[data-native-context]]:mb-0 [&_[data-native-context]]:rounded-lg [&_[data-native-context]]:border-border/70"
+              />
             </div>
           )}
-          {!open && shownOptions.length === 0 && terminalLine && (
-            <span aria-live="polite" className="text-[12px] font-medium text-muted-foreground">
-              {terminalLine}
-            </span>
-          )}
-          {!open && (deciderName || decidedAgo) && (
-            <span className="text-[12px] text-muted-foreground">
-              {[deciderName, decidedAgo].filter(Boolean).join(" · ")}
-            </span>
-          )}
         </div>
 
-        {!open && shownNote && (
-          <p className="mt-1.5 ml-10 whitespace-pre-wrap border-l-2 border-border pl-2.5 text-[13px] leading-relaxed text-foreground/80">
-            {shownNote}
-          </p>
+        {showFooter && (
+          <div className="border-t border-border/70 bg-muted/30 px-3 py-2.5 sm:px-4">
+            <div
+              className={cn(
+                "flex",
+                open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-3 gap-y-1"
+              )}
+            >
+              {open && decision.allowNote && !unreadable && (
+                <Textarea
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  maxLength={DECISION_NOTE_MAX_CHARS}
+                  rows={1}
+                  placeholder="Add a note"
+                  aria-label="Note (optional)"
+                  className="h-9 min-h-9 w-full resize-none rounded-button border-border/70 bg-card py-2 text-[13px] sm:h-8 sm:min-h-8 sm:flex-1 sm:py-1.5"
+                />
+              )}
+              {shownOptions.length > 0 && (
+                <div className={cn("flex items-center", open && "gap-2 sm:ml-auto")}>
+                  {shownOptions.map((option) => {
+                    const chosen = !open
+                    return (
+                      <Button
+                        key={option.id}
+                        type="button"
+                        size="sm"
+                        variant={chosen ? "ghost" : buttonVariantFor(option.tone)}
+                        aria-busy={pendingOptionId === option.id}
+                        aria-disabled={chosen}
+                        aria-live="polite"
+                        onClick={() => handleResolve(option.id)}
+                        className={cn(
+                          "text-[13px]",
+                          chosen
+                            ? "h-auto cursor-default gap-1.5 px-1 py-0.5 font-medium text-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
+                            : cn("h-9 flex-1 px-3.5 sm:h-8 sm:flex-none", OPEN_BUTTON_CLASS[option.tone])
+                        )}
+                      >
+                        {pendingOptionId === option.id && <Loader2 className="animate-spin" aria-hidden="true" />}
+                        {chosen && !pendingOptionId && chosenTone === "destructive" && (
+                          <X className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
+                        )}
+                        {chosen && !pendingOptionId && chosenTone !== "destructive" && (
+                          <Check className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
+                        )}
+                        {labelFor(option)}
+                      </Button>
+                    )
+                  })}
+                </div>
+              )}
+              {!open && shownOptions.length === 0 && terminalLine && (
+                <span aria-live="polite" className="px-1 text-[13px] font-medium text-muted-foreground">
+                  {terminalLine}
+                </span>
+              )}
+              {!open && (deciderName || decidedAgo) && (
+                <span className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                  {deciderName && <span>{deciderName}</span>}
+                  {decidedAgo && <span className="tabular-nums opacity-80">{decidedAgo}</span>}
+                </span>
+              )}
+            </div>
+            {!open && shownNote && (
+              <p className="mt-2 whitespace-pre-wrap border-l-2 border-border px-3 text-[13px] leading-relaxed text-foreground/75">
+                {shownNote}
+              </p>
+            )}
+          </div>
         )}
       </div>
 

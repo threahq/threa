@@ -24,6 +24,7 @@ beforeEach(() => {
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: (actorId: string | null) => (actorId === "usr_kris" ? "Kristoffer Remback" : "Someone"),
     getBot: (botId: string) => (botId === BOT.id ? BOT : undefined),
+    getActorAvatar: () => ({ fallback: "K", avatarUrl: null }),
   } as unknown as ReturnType<typeof hooksModule.useActors>)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_kris")
 })
