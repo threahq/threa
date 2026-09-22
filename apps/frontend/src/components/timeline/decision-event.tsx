@@ -59,11 +59,10 @@ const OPEN_BUTTON_CLASS: Record<DecisionOption["tone"], string> = {
   destructive: "border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive",
 }
 
-const CHOSEN_PILL_CLASS: Record<DecisionOption["tone"], string> = {
-  primary:
-    "bg-[hsl(142_76%_36%/0.14)] text-[hsl(142,76%,30%)] hover:bg-[hsl(142_76%_36%/0.14)] hover:text-[hsl(142,76%,30%)]",
-  neutral: "bg-muted text-foreground/80 hover:bg-muted hover:text-foreground/80",
-  destructive: "bg-destructive/10 text-destructive hover:bg-destructive/10 hover:text-destructive",
+const CHOSEN_CLASS: Record<DecisionOption["tone"], string> = {
+  primary: "text-foreground/90 hover:bg-transparent hover:text-foreground/90",
+  neutral: "text-foreground/90 hover:bg-transparent hover:text-foreground/90",
+  destructive: "text-destructive hover:bg-transparent hover:text-destructive",
 }
 
 /** Stand-in for a sealed card's question when it can't be read (locked / decrypting / failed). */
@@ -71,14 +70,6 @@ const DECISION_DECRYPT_NOTICE_TEXT: Record<"locked" | "pending" | "failed", stri
   locked: "Unlock this scratchpad to read this decision",
   pending: "Decrypting…",
   failed: "Couldn't decrypt this decision",
-}
-
-const RAIL_CLASS: Record<DecisionOption["tone"] | "open" | "closed", string> = {
-  open: "border-l-primary bg-primary/[0.06]",
-  primary: "border-l-[hsl(142,76%,36%)]",
-  neutral: "border-l-muted-foreground/30",
-  destructive: "border-l-destructive",
-  closed: "border-l-muted-foreground/30",
 }
 
 /**
@@ -207,10 +198,6 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   const deciderName = resolution?.decidedBy ? getActorName(resolution.decidedBy, "user") : null
   const decidedAgo = resolution?.decidedAt ? formatRelativeTime(new Date(resolution.decidedAt)) : null
 
-  let rail: keyof typeof RAIL_CLASS = "closed"
-  if (open) rail = "open"
-  else if (resolution) rail = chosenTone
-
   // Terminal with a resolution keeps ONLY the chosen option's Button mounted, in
   // the same slot with the same key, so the button the viewer just pressed keeps
   // focus and its relabeling is announced (the bot-access pattern).
@@ -220,22 +207,30 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   return (
     <div className="px-3 sm:px-6 py-1.5">
       <div
-        className={cn("rounded-r-[10px] border-l-[3px] py-2.5 pl-4 pr-3 transition-colors sm:pr-4", RAIL_CLASS[rail])}
+        className={cn(
+          "rounded-[10px] border px-3 py-2 transition-colors",
+          open ? "border-border bg-muted/40" : "border-border/60 bg-muted/20"
+        )}
       >
-        <div className="flex items-start gap-2">
-          <CircleHelp
-            className={cn("mt-[3px] h-4 w-4 shrink-0", open ? "text-primary" : "text-muted-foreground/70")}
-            aria-hidden="true"
-          />
+        <div className="flex items-center gap-3">
+          <span
+            className={cn(
+              "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors",
+              open ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
+            )}
+          >
+            <CircleHelp className="h-4 w-4" aria-hidden="true" />
+          </span>
           <div className="min-w-0 flex-1">
             {unreadable ? (
-              <p className="text-[14px] italic leading-snug text-muted-foreground">
-                {DECISION_DECRYPT_NOTICE_TEXT[unreadable]}
-              </p>
+              <p className="text-[13px] italic text-muted-foreground">{DECISION_DECRYPT_NOTICE_TEXT[unreadable]}</p>
             ) : (
-              <p className="text-[14px] font-semibold leading-snug text-foreground">{title}</p>
+              <MarkdownContent
+                content={title}
+                className="text-[13px] font-medium leading-snug text-foreground/90 [&_code]:px-1 [&_code]:py-0 [&_code]:text-[12px]"
+              />
             )}
-            <p className="mt-0.5 text-[12px] text-muted-foreground">
+            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
               <span className="font-medium text-foreground/70">{requesterLabel}</span>{" "}
               {open ? "needs a decision" : "asked for a decision"}
             </p>
@@ -243,7 +238,7 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
         </div>
 
         {bodyMarkdown && (
-          <div className="mt-2 pl-6">
+          <div className="mt-2 pl-10">
             <MarkdownContent
               content={bodyMarkdown}
               messageId={event.id}
@@ -252,26 +247,26 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
           </div>
         )}
 
-        <div className="mt-3 pl-6">
-          <div
-            className={cn(
-              "flex",
-              open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-2 gap-y-1"
-            )}
-          >
-            {open && decision.allowNote && !unreadable && (
-              <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                maxLength={DECISION_NOTE_MAX_CHARS}
-                rows={1}
-                aria-label="Note (optional)"
-                placeholder="Add a note for the bot"
-                className="h-9 min-h-9 w-full resize-none py-2 text-[13px] sm:order-last sm:min-w-[12rem] sm:flex-1"
-              />
-            )}
-            {/* One slot for the option buttons in both states, so the button the
-                viewer pressed is the element that relabels (focus retained). */}
+        <div
+          className={cn(
+            "mt-2 flex pl-10",
+            open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-2 gap-y-1"
+          )}
+        >
+          {open && decision.allowNote && !unreadable && (
+            <Textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={DECISION_NOTE_MAX_CHARS}
+              rows={1}
+              aria-label="Note (optional)"
+              placeholder="Add a note"
+              className="h-9 min-h-9 w-full resize-none bg-background py-2 text-[13px] sm:order-last sm:h-8 sm:min-h-8 sm:min-w-[12rem] sm:flex-1 sm:py-1.5"
+            />
+          )}
+          {/* One slot for the option buttons in both states, so the button the
+              viewer pressed is the element that relabels (focus retained). */}
+          {shownOptions.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               {shownOptions.map((option) => {
                 const chosen = !open
@@ -280,57 +275,47 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
                     key={option.id}
                     type="button"
                     size="sm"
-                    variant={chosen ? "outline" : buttonVariantFor(option.tone)}
+                    variant={chosen ? "ghost" : buttonVariantFor(option.tone)}
                     aria-busy={pendingOptionId === option.id}
                     aria-disabled={chosen}
                     aria-live="polite"
                     onClick={() => handleResolve(option.id)}
                     className={cn(
+                      "text-[13px]",
                       chosen
                         ? cn(
-                            "h-7 cursor-default rounded-full border-transparent px-2.5 text-[12px]",
-                            CHOSEN_PILL_CLASS[chosenTone]
+                            "h-auto cursor-default gap-1 px-0 py-0.5 text-[12px] font-medium [&_svg]:size-3.5",
+                            CHOSEN_CLASS[chosenTone]
                           )
-                        : OPEN_BUTTON_CLASS[option.tone]
+                        : cn("h-9 sm:h-8", OPEN_BUTTON_CLASS[option.tone])
                     )}
                   >
-                    {pendingOptionId === option.id && (
-                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden="true" />
-                    )}
-                    {chosen && !pendingOptionId && chosenTone === "destructive" && (
-                      <X className="mr-1 h-3 w-3" aria-hidden="true" />
-                    )}
-                    {chosen && !pendingOptionId && chosenTone !== "destructive" && (
-                      <Check className="mr-1 h-3 w-3" aria-hidden="true" />
-                    )}
+                    {pendingOptionId === option.id && <Loader2 className="animate-spin" aria-hidden="true" />}
+                    {chosen && !pendingOptionId && chosenTone === "destructive" && <X aria-hidden="true" />}
+                    {chosen && !pendingOptionId && chosenTone !== "destructive" && <Check aria-hidden="true" />}
                     {labelFor(option)}
                   </Button>
                 )
               })}
             </div>
-            {!open && shownOptions.length === 0 && terminalLine && (
-              <span
-                aria-live="polite"
-                className="inline-flex h-7 items-center rounded-full bg-muted px-2.5 text-[12px] text-muted-foreground"
-              >
-                {terminalLine}
-              </span>
-            )}
-            {!open && (deciderName || decidedAgo) && (
-              <span className="text-[12px] text-muted-foreground">
-                {deciderName}
-                {deciderName && decidedAgo ? ", " : ""}
-                {decidedAgo}
-              </span>
-            )}
-          </div>
-
-          {!open && shownNote && (
-            <p className="mt-2 whitespace-pre-wrap border-l-2 border-border pl-2.5 text-[13px] leading-relaxed text-foreground/80">
-              {shownNote}
-            </p>
+          )}
+          {!open && shownOptions.length === 0 && terminalLine && (
+            <span aria-live="polite" className="text-[12px] font-medium text-muted-foreground">
+              {terminalLine}
+            </span>
+          )}
+          {!open && (deciderName || decidedAgo) && (
+            <span className="text-[12px] text-muted-foreground">
+              {[deciderName, decidedAgo].filter(Boolean).join(" · ")}
+            </span>
           )}
         </div>
+
+        {!open && shownNote && (
+          <p className="mt-1.5 ml-10 whitespace-pre-wrap border-l-2 border-border pl-2.5 text-[13px] leading-relaxed text-foreground/80">
+            {shownNote}
+          </p>
+        )}
       </div>
 
       {!isThreadParent && (
