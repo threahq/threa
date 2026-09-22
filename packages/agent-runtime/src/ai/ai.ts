@@ -606,6 +606,12 @@ export function extractUsageWithCost(response: {
 
 const LUNA = "openrouter:openai/gpt-6-luna"
 
+function generationProviderOptions(model: string, effort?: ReasoningEffort): ModelMessage["providerOptions"] {
+  if (model === LUNA && !effort) return { openai: { store: false } }
+  if (effort) return { openrouter: { reasoning: { effort, exclude: true } } }
+  return undefined
+}
+
 function lunaUsage(response: {
   response?: { body?: unknown }
   usage?: unknown
@@ -930,11 +936,10 @@ export function createAI(config: AIConfig): AI {
 
     async generateObject<T extends z.ZodType>(options: GenerateObjectOptions<T>): Promise<ObjectResult<z.infer<T>>> {
       await admit(options.context, options.telemetry?.functionId ?? "generateObject")
-      const resolvedModel = getLanguageModel(options.model)
-      const model =
-        options.model === LUNA
-          ? providers.openrouter!.chat("openai/gpt-6-luna", { usage: { include: true } })
-          : resolvedModel
+      const lunaChat = options.model === LUNA && options.reasoningEffort !== undefined
+      const model = lunaChat
+        ? providers.openrouter!.chat("openai/gpt-6-luna", { usage: { include: true } })
+        : getLanguageModel(options.model)
       const repair = options.repair === false ? undefined : (options.repair ?? defaultRepair)
 
       maybeDisclose({
@@ -947,6 +952,7 @@ export function createAI(config: AIConfig): AI {
       // @ts-expect-error AI SDK generateObject has complex generics; we validate schema type at our interface level
       const response = await aiGenerateObject({
         model,
+        ...(options.model === LUNA && !lunaChat ? { include: { responseBody: true } } : {}),
         schema: options.schema,
         // Our Message type is compatible with AI SDK's ModelMessage at runtime
         messages: options.messages as ModelMessage[],
@@ -954,14 +960,12 @@ export function createAI(config: AIConfig): AI {
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
-        ...(options.reasoningEffort
-          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
-          : {}),
+        providerOptions: generationProviderOptions(options.model, options.reasoningEffort),
         experimental_repairText: repair,
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      const usage = extractUsageWithCost(response)
+      const usage = options.model === LUNA && !lunaChat ? lunaUsage(response) : extractUsageWithCost(response)
       logger.debug({ usage, model: options.model }, "AI generateObject completed with usage")
 
       await maybeRecordUsage({

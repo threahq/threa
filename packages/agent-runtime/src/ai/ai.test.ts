@@ -465,6 +465,35 @@ describe("GPT-6 Luna Responses", () => {
     }
   })
 
+  it("should use Responses for structured output and keep exact cost accounting", async () => {
+    let path = ""
+    let body: Record<string, unknown> | undefined
+    const recordUsage = mock(async () => {})
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: any, init: any) => {
+      path = String(input)
+      body = JSON.parse(init.body)
+      return reply([text('{"answer":"ok"}')])
+    }) as typeof fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" }, costRecorder: { recordUsage } })
+      const result = await ai.generateObject({
+        model: modelString,
+        messages: [{ role: "user", content: "answer" }],
+        schema: z.object({ answer: z.string() }),
+        context: { workspaceId: "ws_1" },
+      })
+      expect({ path, model: body?.model, store: body?.store, value: result.value }).toEqual({
+        path: "https://openrouter.ai/api/v1/responses",
+        model: "openai/gpt-6-luna",
+        store: false,
+        value: { answer: "ok" },
+      })
+      expect(recordUsage).toHaveBeenCalledTimes(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
   it("should send full two-step tool history without a server response pointer", async () => {
     const bodies: any[] = []
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_input: any, init: any) => {
