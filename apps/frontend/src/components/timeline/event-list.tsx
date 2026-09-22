@@ -16,6 +16,8 @@ import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
+import type { RunFold, RunFoldStore } from "./run-fold"
+import { RunFoldProvider } from "./run-fold-context"
 import { AsideAnchorEvent } from "./aside-anchor-event"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
@@ -114,6 +116,8 @@ export type TimelineItem =
        * provenance chip. Absent on non-message events and non-revival rows.
        */
       revival?: ConversationRevival
+      /** Same-author run fold, stamped by `foldAuthorRuns` on runs tall enough to fold. */
+      runFold?: RunFold
       asideAnchors?: StreamEvent[]
     }
   | { type: "command_group"; commandId: string; events: StreamEvent[]; asideAnchors?: StreamEvent[] }
@@ -873,6 +877,7 @@ function itemAnchorIds(item: TimelineItem): string[] {
 export interface TimelineItemRenderContext {
   workspaceId: string
   streamId: string
+  runFoldStore?: RunFoldStore
   highlightMessageId?: string | null
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
@@ -970,6 +975,13 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         revival={item.revival}
       />
     )
+    if (ctx.runFoldStore) {
+      eventNode = (
+        <RunFoldProvider store={ctx.runFoldStore} fold={item.runFold}>
+          {eventNode}
+        </RunFoldProvider>
+      )
+    }
     const overlayMessageId = (item.event.payload as { messageId?: string })?.messageId
     if (ctx.conversationOverlay && item.conversationRow && overlayMessageId) {
       eventNode = (
@@ -1079,6 +1091,13 @@ function eventsArrayEqual(a: StreamEvent[], b: StreamEvent[]): boolean {
  * objects keep identity when unchanged (structural sharing in
  * `useStreamEvents`), so identity of the contained events is the real signal.
  */
+function runFoldEqual(a: RunFold | undefined, b: RunFold | undefined): boolean {
+  if (!a || !b) return a === b
+  if (a.state === "folded")
+    return b.state === "folded" && a.key === b.key && a.hiddenCount === b.hiddenCount && a.unreadCount === b.unreadCount
+  return b.state === "open" && a.key === b.key && a.isLast === b.isLast
+}
+
 export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
   if (a === b) return true
   if (a.type !== b.type) return false
@@ -1097,7 +1116,8 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
         (a.conversationRow?.blockStart ?? false) === (other.conversationRow?.blockStart ?? false) &&
         (a.revival?.conversationId ?? null) === (other.revival?.conversationId ?? null) &&
         (a.revival?.topicSummary ?? null) === (other.revival?.topicSummary ?? null) &&
-        (a.revival?.previousActivityAt ?? null) === (other.revival?.previousActivityAt ?? null)
+        (a.revival?.previousActivityAt ?? null) === (other.revival?.previousActivityAt ?? null) &&
+        runFoldEqual(a.runFold, other.runFold)
       )
     }
     case "command_group": {
@@ -1156,7 +1176,8 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     p.hideSessionCards !== n.hideSessionCards ||
     p.subagentThreadRun !== n.subagentThreadRun ||
     p.isDividerDimmed !== n.isDividerDimmed ||
-    p.onStopSession !== n.onStopSession
+    p.onStopSession !== n.onStopSession ||
+    p.runFoldStore !== n.runFoldStore
   ) {
     return false
   }

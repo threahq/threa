@@ -60,6 +60,7 @@ import { MemoPreviewList } from "./memo-preview-list"
 import { GiphyPreviewList } from "./giphy-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
 import { CollapsibleBody, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
+import { useRunFoldBody } from "./run-fold-context"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
@@ -588,6 +589,7 @@ function MessageLayout({
   // anyway.
   const copyRef = useMessageMarkdownCopy(payload.contentMarkdown)
   const messageCollapse = useMessageCollapseSettings()
+  const runFold = useRunFoldBody(payload.messageId)
   const messageBody = children ?? (
     <LinkPreviewProvider>
       <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? []}>
@@ -598,6 +600,8 @@ function MessageLayout({
             collapseAtHeight={messageCollapse.collapseAtHeight}
             collapseToHeight={messageCollapse.collapseToHeight}
             defaultCollapsed={messageCollapse.enabled}
+            group={runFold.group}
+            onHeight={runFold.onHeight}
             trailing={
               <>
                 {attachmentRefs && attachmentRefs.length > 0 ? (

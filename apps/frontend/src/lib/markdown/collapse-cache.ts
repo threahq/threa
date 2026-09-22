@@ -47,8 +47,10 @@ const linkPreviewListeners = new Set<() => void>()
 let blockHydrated = false
 let linkPreviewHydrated = false
 let hydrationPromise: Promise<void> | null = null
+let blockVersion = 0
 
 function notify(set: Set<() => void>) {
+  if (set === blockListeners) blockVersion++
   for (const listener of set) listener()
 }
 
@@ -212,6 +214,19 @@ export function useBlockCollapseStore(key: string | null): boolean | undefined {
     subscribeBlock,
     () => (key ? blockCollapse.get(key) : undefined),
     () => undefined
+  )
+}
+
+export function getBlockCollapse(key: string): boolean | undefined {
+  return blockCollapse.get(key)
+}
+
+/** Changes whenever any block-collapse key does, for consumers reading many keys via `getBlockCollapse`. */
+export function useBlockCollapseVersion(): number {
+  return useSyncExternalStore(
+    subscribeBlock,
+    () => blockVersion,
+    () => 0
   )
 }
 
