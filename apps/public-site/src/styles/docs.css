@@ -224,7 +224,7 @@ a {
 
 .docs-main {
   min-width: 0;
-  padding: 0 clamp(20px, 4vw, 56px) 80px;
+  padding: clamp(32px, 5vw, 64px) clamp(20px, 4vw, 56px) 80px;
 }
 
 /* ---------- CREDENTIALS (nav toggle + popover) ---------- */
