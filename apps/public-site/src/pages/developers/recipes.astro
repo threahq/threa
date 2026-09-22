@@ -128,8 +128,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <CodeBlock
     lang="bash"
     label="Connect and run"
-    code={`npx @threahq/bot connect              # once per machine, approve in your browser
-npx @threahq/bot run -- my-agent      # message on stdin, reply from stdout`}
+    code={`# once per machine: approve in a browser
+npx @threahq/bot connect
+
+# message on stdin, reply from stdout
+npx @threahq/bot run -- my-agent`}
   />
   <p>
     <code>run</code> links a scratchpad for the directory you start it in and
