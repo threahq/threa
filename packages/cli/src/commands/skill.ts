@@ -1,12 +1,16 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { stringFlag, UsageError, type CommandSpec } from "../output"
 
 const SKILL_NAME = "threa-cli"
-// cli.ts runs from the repo checkout (no npm publish), so the skill source
-// resolves relative to this file: packages/cli/src/commands → repo root.
-const SKILL_SOURCE = resolve(import.meta.dir, "../../../..", ".agents/skills", SKILL_NAME, "SKILL.md")
+// From a checkout this file sits in packages/cli/src/commands and the skill in
+// the repo's .agents/skills; the published build copies it beside cli.js.
+const here = dirname(fileURLToPath(import.meta.url))
+const SKILL_SOURCE = import.meta.url.endsWith(".ts")
+  ? resolve(here, "../../../..", ".agents/skills", SKILL_NAME, "SKILL.md")
+  : join(here, "skills", SKILL_NAME, "SKILL.md")
 
 export const skillCommand: CommandSpec = {
   name: "skill",
@@ -31,7 +35,7 @@ export const skillCommand: CommandSpec = {
     }
     if (!existsSync(SKILL_SOURCE)) {
       throw new UsageError(
-        `Skill source not found at ${SKILL_SOURCE}. Run threa from a Threa repo checkout (the skill ships in .agents/skills/${SKILL_NAME}).`
+        `Skill source not found at ${SKILL_SOURCE}. Reinstall @threahq/cli.`
       )
     }
     if (sub === "print") {
@@ -46,7 +50,7 @@ export const skillCommand: CommandSpec = {
   render: (payload) => {
     const p = payload as { destination?: string; content?: string }
     if (typeof p.content === "string") return p.content
-    return `installed ${SKILL_NAME} → ${p.destination ?? "?"}\nRe-run after pulling a newer checkout to refresh it.`
+    return `installed ${SKILL_NAME} → ${p.destination ?? "?"}\nRe-run after updating the CLI to refresh it.`
   },
   noConfig: true,
 }

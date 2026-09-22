@@ -1,5 +1,5 @@
-import { Database } from "bun:sqlite"
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -8,6 +8,22 @@ interface StateShape {
 }
 
 const LOCK_WAIT_MS = 5_000
+
+interface LockDatabase {
+  exec(sql: string): void
+  close(): void
+}
+
+// Bun has no node:sqlite and node has no bun:sqlite; both lock the same file.
+function openLockDatabase(path: string): LockDatabase {
+  const require = createRequire(import.meta.url)
+  if (process.versions.bun) {
+    const { Database } = require("bun:sqlite")
+    return new Database(path, { create: true })
+  }
+  const { DatabaseSync } = require("node:sqlite")
+  return new DatabaseSync(path)
+}
 
 function defaultPath(): string {
   return process.env.THREA_STATE_FILE ?? join(homedir(), ".threa", "state.json")
@@ -101,11 +117,11 @@ export class TokenStore {
   private lock(): () => void {
     mkdirSync(dirname(this.path), { recursive: true })
     const lockPath = `${this.path}.lock.sqlite`
-    const db = new Database(lockPath, { create: true })
+    const db = openLockDatabase(lockPath)
     try {
       chmodSync(lockPath, 0o600)
-      db.run(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}`)
-      db.run("BEGIN IMMEDIATE")
+      db.exec(`PRAGMA busy_timeout = ${LOCK_WAIT_MS}`)
+      db.exec("BEGIN IMMEDIATE")
     } catch (error) {
       db.close()
       throw error
@@ -113,7 +129,7 @@ export class TokenStore {
 
     return () => {
       try {
-        db.run("COMMIT")
+        db.exec("COMMIT")
       } finally {
         db.close()
       }
