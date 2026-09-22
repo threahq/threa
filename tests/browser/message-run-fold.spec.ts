@@ -72,13 +72,44 @@ test("a tall same-author run opens folded to its head and toggles as one", async
     maxHiddenRowsPainted: 0,
   })
 
+  // The pressed control unmounts on each toggle; focus moves to what replaced it.
   await expand.click()
   await expect(timeline.getByText("Charlie point 5")).toBeVisible()
   await expect(timeline.getByRole("button", { name: "Collapse", exact: true })).toHaveCount(1)
+  await expect(page.locator("[data-message-id]:focus")).toContainText("Bravo point 1")
 
   await timeline.getByRole("button", { name: "Collapse", exact: true }).click()
-  await expect(timeline.getByRole("button", { name: "Show 2 more messages" })).toBeVisible()
+  await expect(timeline.getByRole("button", { name: "Show 2 more messages" })).toBeFocused()
   await expect(timeline.getByText("Charlie point 1")).toHaveCount(0)
+})
+
+test("reload restores to a row inside a run that now folds", async ({ page }) => {
+  // Sent while the channel is open, so the run arrives live and stays open.
+  const { workspaceId, streamId } = await seedTallRun(page)
+  for (const label of ["Delta", "Echo", "Foxtrot", "Golf"]) {
+    await send(page, workspaceId, streamId, PARAGRAPHS(label), { intent: "new", conversationId: conversationId() })
+  }
+  const timeline = page.getByTestId("stream-timeline")
+  await expect(timeline.getByText("Golf point 5")).toBeVisible()
+  // Wheel up until virtua mounts Bravo's row, then pin it to the top.
+  const scroller = page.locator("[data-suppress-pull-refresh]")
+  const box = (await scroller.boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + 24)
+  const bravo = timeline.locator("[data-message-id]").filter({ hasText: "Bravo point 1" }).first()
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, -600)
+      return bravo.count()
+    })
+    .toBeGreaterThan(0)
+  await bravo.evaluate((row) => row.scrollIntoView({ block: "start" }))
+  // Past the anchor-capture debounce.
+  await page.waitForTimeout(500)
+
+  // Read and present at open now, so by default the run would fold Bravo away.
+  await page.reload()
+  await expect(timeline.getByText("Bravo point 1")).toBeInViewport()
+  await expect(timeline.getByRole("button", { name: "Show 2 more messages" })).toHaveCount(0)
 })
 
 test.describe("on a phone", () => {

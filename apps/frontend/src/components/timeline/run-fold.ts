@@ -8,8 +8,15 @@ import type { TimelineItem } from "./event-list"
  * row carries the run's Collapse control and no member folds on its own.
  */
 export type RunFold =
-  | { state: "folded"; key: string; headMessageId: string; hiddenCount: number; unreadCount: number }
-  | { state: "open"; key: string; headMessageId: string; isLast: boolean }
+  | {
+      state: "folded"
+      key: string
+      headMessageId: string
+      lastMessageId: string
+      hiddenCount: number
+      unreadCount: number
+    }
+  | { state: "open"; key: string; headMessageId: string; lastMessageId: string; isLast: boolean }
 
 /**
  * Per-timeline memory the fold pass reads and writes. Heights outlive their row
@@ -23,10 +30,10 @@ export interface RunFoldStore {
   getVersion(): number
   reportHeight(messageId: string, heightPx: number): void
   heightOf(messageId: string): number | undefined
-  /** A viewer's explicit toggle: persisted, and it supersedes a deep-link reveal. */
-  setCollapsed(key: string, headMessageId: string, collapsed: boolean): void
-  /** Head of the run the viewer just folded; the list brings it back on screen once. */
-  collapsedHeadMessageId: string | null
+  /** A viewer's explicit toggle: persisted, and it supersedes the reveal that opened the run. */
+  setCollapsed(fold: RunFold, collapsed: boolean): void
+  /** The run the viewer just toggled; the list restores scroll and focus once. */
+  toggledRun: { headMessageId: string; collapsed: boolean } | null
   /**
    * Server time of the newest message known when the timeline first rendered,
    * from the rendered events or the stream's last-message preview, whichever is
@@ -36,7 +43,15 @@ export interface RunFoldStore {
   baselineAtMs: number | null
   decisions: Map<string, boolean>
   openedMessageIds: Set<string>
-  revealedKeys: Set<string>
+  /** Run key → the reveal target that opened it. */
+  revealedBy: Map<string, string>
+  /** `key\nmessageId` reveals the viewer has since overridden with a toggle. */
+  spentReveals: Set<string>
+  /**
+   * Run key → the last member when the run folded. Messages the author adds
+   * afterwards render below the fold instead of popping it open.
+   */
+  foldedThrough: Map<string, string>
 }
 
 export function createRunFoldStore(): RunFoldStore {
@@ -58,22 +73,27 @@ export function createRunFoldStore(): RunFoldStore {
       for (const listener of listeners) listener()
     },
     heightOf: (messageId) => heights.get(messageId),
-    setCollapsed(key, headMessageId, collapsed) {
-      store.revealedKeys.delete(key)
-      store.collapsedHeadMessageId = collapsed ? headMessageId : null
-      setBlockCollapse(key, headMessageId, "run", collapsed)
+    setCollapsed(fold, collapsed) {
+      const revealedBy = store.revealedBy.get(fold.key)
+      if (revealedBy !== undefined) store.spentReveals.add(`${fold.key}\n${revealedBy}`)
+      store.revealedBy.delete(fold.key)
+      if (collapsed) store.foldedThrough.set(fold.key, fold.lastMessageId)
+      store.toggledRun = { headMessageId: fold.headMessageId, collapsed }
+      setBlockCollapse(fold.key, fold.headMessageId, "run", collapsed)
     },
-    collapsedHeadMessageId: null,
+    toggledRun: null,
     baselineAtMs: null,
     decisions: new Map(),
     openedMessageIds: new Set(),
-    revealedKeys: new Set(),
+    revealedBy: new Map(),
+    spentReveals: new Set(),
+    foldedThrough: new Map(),
   }
   return store
 }
 
-export function composeRunFoldKey(headMessageId: string, lastMessageId: string): string {
-  return composeBlockCollapseKey(headMessageId, "run", lastMessageId)
+export function composeRunFoldKey(headMessageId: string): string {
+  return composeBlockCollapseKey(headMessageId, "run", "head")
 }
 
 export interface FoldAuthorRunsOptions {
@@ -148,7 +168,9 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     }
   }
 
-  if (store.baselineAtMs === null) {
+  // An empty first pass (still loading) with no preview to go by knows nothing
+  // yet; latching it would count every message as a live arrival.
+  if (store.baselineAtMs === null && (runs.length > 0 || options.latestKnownAt)) {
     let max = options.latestKnownAt ? Date.parse(options.latestKnownAt) : Number.NEGATIVE_INFINITY
     for (const run of runs) for (const member of run) max = Math.max(max, member.createdAtMs)
     store.baselineAtMs = max
@@ -166,7 +188,7 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     if (run.length < 2) continue
     const head = run[0]
     const last = run[run.length - 1]
-    const key = composeRunFoldKey(head.messageId, last.messageId)
+    const key = composeRunFoldKey(head.messageId)
 
     let knownHeight = 0
     let allMeasured = true
@@ -194,26 +216,39 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     if (!foldable) continue
 
     let collapsed = persisted ?? decision ?? false
-    if (collapsed && !store.revealedKeys.has(key) && run.some((member) => reveal.has(member.messageId))) {
-      store.revealedKeys.add(key)
+    let end = run.length - 1
+    if (collapsed) {
+      const through = run.findIndex((member) => member.messageId === store.foldedThrough.get(key))
+      if (through > 0) end = through
+      else store.foldedThrough.set(key, last.messageId)
+      if (!store.revealedBy.has(key)) {
+        const target = run
+          .slice(0, end + 1)
+          .find((member) => reveal.has(member.messageId) && !store.spentReveals.has(`${key}\n${member.messageId}`))
+        if (target) store.revealedBy.set(key, target.messageId)
+      }
     }
-    if (store.revealedKeys.has(key)) collapsed = false
+    if (store.revealedBy.has(key)) collapsed = false
 
     if (collapsed) {
+      const folded = run.slice(1, end + 1)
       annotations.set(head.index, {
         state: "folded",
         key,
         headMessageId: head.messageId,
-        hiddenCount: run.length - 1,
-        unreadCount: run.slice(1).filter(isUnread).length,
+        lastMessageId: run[end].messageId,
+        hiddenCount: folded.length,
+        unreadCount: folded.filter(isUnread).length,
       })
-      for (const member of run.slice(1)) hidden.add(member.index)
+      for (const member of folded) hidden.add(member.index)
     } else {
+      store.foldedThrough.delete(key)
       for (const member of run) {
         annotations.set(member.index, {
           state: "open",
           key,
           headMessageId: head.messageId,
+          lastMessageId: last.messageId,
           isLast: member === last,
         })
       }

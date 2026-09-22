@@ -44,13 +44,13 @@ export function useRunFoldBody(messageId: string): {
       return {
         collapsed: true,
         toggleLabel: `Show ${count} more message${count === 1 ? "" : "s"}${unread}`,
-        onToggle: () => store.setCollapsed(fold.key, fold.headMessageId, false),
+        onToggle: () => store.setCollapsed(fold, false),
       }
     }
     return {
       collapsed: false,
       toggleLabel: fold.isLast ? "Collapse" : null,
-      onToggle: () => store.setCollapsed(fold.key, fold.headMessageId, true),
+      onToggle: () => store.setCollapsed(fold, true),
     }
   }, [store, fold])
 

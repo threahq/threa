@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import type { StreamEvent } from "@threahq/types"
 import { __resetCollapseCacheForTests, getBlockCollapse } from "@/lib/markdown/collapse-cache"
-import { composeRunFoldKey, createRunFoldStore, foldAuthorRuns, type RunFoldStore } from "./run-fold"
+import { composeRunFoldKey, createRunFoldStore, foldAuthorRuns, type RunFold, type RunFoldStore } from "./run-fold"
 import type { TimelineItem } from "./event-list"
 
 const AUTHOR = "usr_author"
@@ -45,6 +45,14 @@ function describeRows(items: TimelineItem[]) {
     if (fold.state === "open") return `${id} open${fold.isLast ? " last" : ""}`
     return `${id} folded +${fold.hiddenCount}${fold.unreadCount ? ` (${fold.unreadCount} new)` : ""}`
   })
+}
+
+function foldOf(items: TimelineItem[], messageId: string): RunFold {
+  const item = items.find(
+    (i) => i.type === "event" && (i.event.payload as { messageId: string }).messageId === messageId
+  )
+  if (item?.type !== "event" || !item.runFold) throw new Error(`${messageId} carries no run fold`)
+  return item.runFold
 }
 
 const AT = 400
@@ -197,7 +205,7 @@ describe("foldAuthorRuns", () => {
   it("follows the viewer's persisted toggle over the default", () => {
     const store = createRunFoldStore()
     const items = run(1, 3)
-    const key = composeRunFoldKey("msg_1", "msg_3")
+    const key = composeRunFoldKey("msg_1")
 
     expect(describeRows(fold(store, items, { persisted: (k) => (k === key ? true : undefined) }))).toEqual([
       "msg_1 folded +2",
@@ -236,10 +244,60 @@ describe("foldAuthorRuns", () => {
     // The highlight clears; the run stays where the viewer was taken.
     expect(describeRows(fold(store, items))).toEqual(["msg_1 open", "msg_2 open", "msg_3 open last"])
 
-    const key = composeRunFoldKey("msg_1", "msg_3")
-    store.setCollapsed(key, "msg_1", true)
-    expect(getBlockCollapse(key)).toBe(true)
+    store.setCollapsed(foldOf(fold(store, items), "msg_3"), true)
+    expect(getBlockCollapse(composeRunFoldKey("msg_1"))).toBe(true)
     expect(describeRows(fold(store, items, { persisted: getBlockCollapse }))).toEqual(["msg_1 folded +2"])
+  })
+
+  it("keeps a run collapsed while the search match that opened it stays active", () => {
+    const store = createRunFoldStore()
+    const items = run(1, 3)
+    measure(store, 1, 3, 200)
+    const searching = { revealMessageIds: ["msg_2"], persisted: getBlockCollapse }
+    const open = fold(store, items, searching)
+    expect(describeRows(open)).toEqual(["msg_1 open", "msg_2 open", "msg_3 open last"])
+
+    store.setCollapsed(foldOf(open, "msg_3"), true)
+    expect(describeRows(fold(store, items, searching))).toEqual(["msg_1 folded +2"])
+    // Stepping to another match in the run opens it again.
+    expect(describeRows(fold(store, items, { ...searching, revealMessageIds: ["msg_3"] }))).toEqual([
+      "msg_1 open",
+      "msg_2 open",
+      "msg_3 open last",
+    ])
+  })
+
+  it("keeps a folded run folded when its author adds to it, with the new message below the fold", () => {
+    const store = createRunFoldStore()
+    measure(store, 1, 3, 200)
+    expect(describeRows(fold(store, run(1, 3)))).toEqual(["msg_1 folded +2"])
+
+    store.reportHeight("msg_4", 200)
+    expect(describeRows(fold(store, run(1, 4)))).toEqual(["msg_1 folded +2", "msg_4"])
+  })
+
+  it("keeps the viewer's collapse when the run grows", () => {
+    const store = createRunFoldStore()
+    const options = { defaultCollapsed: false, persisted: getBlockCollapse }
+    measure(store, 1, 3, 200)
+    const open = fold(store, run(1, 3), options)
+    store.setCollapsed(foldOf(open, "msg_3"), true)
+
+    store.reportHeight("msg_4", 200)
+    expect(describeRows(fold(store, run(1, 4), options))).toEqual(["msg_1 folded +2", "msg_4"])
+    // Unfolding and folding again takes in the whole run.
+    store.setCollapsed(foldOf(fold(store, run(1, 4), options), "msg_1"), false)
+    store.setCollapsed(foldOf(fold(store, run(1, 4), options), "msg_4"), true)
+    expect(describeRows(fold(store, run(1, 4), options))).toEqual(["msg_1 folded +3"])
+  })
+
+  it("does not take an empty first pass as the open-time baseline", () => {
+    const store = createRunFoldStore()
+    fold(store, [])
+    const items = run(1, 3)
+    measure(store, 1, 3, 200)
+
+    expect(describeRows(fold(store, items))).toEqual(["msg_1 folded +2"])
   })
 
   it("treats rows between messages as run boundaries", () => {

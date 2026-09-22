@@ -1421,6 +1421,12 @@ export function StreamContent({
   // row stays on screen while either is up.
   const foldRuns = useVirtualized && !batchMode && !activeConversationOverlay
   const revealMessageId = streamSearch.activeMessageId ?? highlightMessageId
+  // The landing may restore to a row inside a run that folds this time; that
+  // run opens so the anchor row is there to land on (INV-70).
+  const restoreAnchorId = useMemo(
+    () => (useVirtualized ? loadTimelineAnchor(streamId)?.targetId : undefined),
+    [streamId, useVirtualized]
+  )
 
   const visibleItems = useMemo(
     () =>
@@ -1435,7 +1441,7 @@ export function StreamContent({
               viewerId: currentWorkspaceUserId,
               latestKnownAt,
               persisted: getBlockCollapse,
-              revealMessageIds: [revealMessageId],
+              revealMessageIds: [revealMessageId, restoreAnchorId],
             })
           : filtered
         // Day dividers go on the post-filter list so a boundary lands above the
@@ -1460,6 +1466,7 @@ export function StreamContent({
       currentWorkspaceUserId,
       latestKnownAt,
       revealMessageId,
+      restoreAnchorId,
     ]
   )
 
@@ -3420,24 +3427,59 @@ function TimelineMessageList({
     didInitialJumpRef.current = true
   }, [highlightMessageId, visibleItems, listRef])
 
-  // Folding a run from its tail drops everything between the head and the
-  // Collapse button, which can leave the head above the viewport. Scrolling
-  // through virtua rather than the DOM: its resize compensation undoes a raw
-  // scrollIntoView once the head re-measures at its clamped height.
+  // A run toggle unmounts the button that was pressed, so focus moves to what
+  // replaced it: the head's "Show more" after a fold, the first revealed row
+  // after an unfold. Folding from the tail also drops everything between the
+  // head and the Collapse button, which can leave the head above the viewport.
+  // Scrolling through virtua rather than the DOM: its resize compensation
+  // undoes a raw scrollIntoView once the head re-measures at its clamped height.
   useLayoutEffect(() => {
-    const headId = runFoldStore.collapsedHeadMessageId
-    if (!headId) return
-    runFoldStore.collapsedHeadMessageId = null
-    const scroller = scrollerRef.current
-    const row = scroller?.querySelector(`[data-message-id="${CSS.escape(headId)}"]`)
-    if (scroller && row && row.getBoundingClientRect().top >= scroller.getBoundingClientRect().top) return
-    const idx = findMessageItemIndex(visibleItems, headId)
+    const toggled = runFoldStore.toggledRun
+    if (!toggled) return
+    runFoldStore.toggledRun = null
+    const idx = findMessageItemIndex(visibleItems, toggled.headMessageId)
     if (idx < 0) return
-    try {
-      listRef.current?.scrollToIndex(idx, { align: "start" })
-    } catch {
-      // Not-yet-measured list can throw; the head stays folded either way.
+    const scroller = scrollerRef.current
+    const rowOf = (messageId: string) =>
+      scroller?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
+    // Virtua keeps a freshly mounted row hidden until it has measured it, and a
+    // hidden element refuses focus, so retry for a few frames. A viewer who has
+    // moved focus elsewhere in the meantime keeps it.
+    const focusOnceShown = (find: () => HTMLElement | null | undefined, framesLeft = 5) => {
+      if (document.activeElement !== document.body && document.activeElement !== null) return
+      const target = find()
+      target?.focus({ preventScroll: true })
+      if (document.activeElement !== target && framesLeft > 0) {
+        requestAnimationFrame(() => focusOnceShown(find, framesLeft - 1))
+      }
     }
+
+    if (!toggled.collapsed) {
+      const next = visibleItems[idx + 1]
+      const firstRevealedId =
+        next?.type === "event" ? (next.event.payload as { messageId?: string })?.messageId : undefined
+      if (!firstRevealedId) return
+      focusOnceShown(() => {
+        const row = rowOf(firstRevealedId)
+        // Rows aren't in the tab order; this one takes focus only until it loses it.
+        if (row && !row.hasAttribute("tabindex")) {
+          row.tabIndex = -1
+          row.addEventListener("blur", () => row.removeAttribute("tabindex"), { once: true })
+        }
+        return row
+      })
+      return
+    }
+
+    const head = rowOf(toggled.headMessageId)
+    if (!scroller || !head || head.getBoundingClientRect().top < scroller.getBoundingClientRect().top) {
+      try {
+        listRef.current?.scrollToIndex(idx, { align: "start" })
+      } catch {
+        // Not-yet-measured list can throw; the head stays folded either way.
+      }
+    }
+    focusOnceShown(() => rowOf(toggled.headMessageId)?.querySelector<HTMLElement>("[data-run-fold-toggle]"))
   }, [visibleItems, runFoldStore, listRef, scrollerRef])
 
   // Reserve room at the top for the floating BatchSelectionBar / StreamSearchBar
