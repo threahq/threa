@@ -1,5 +1,7 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { Link } from "react-router-dom"
 import { Archive, ChevronRight, Pencil } from "lucide-react"
+import type { ReactNode } from "react"
 import type { ThreadSummary } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
@@ -21,9 +23,13 @@ export interface ThreadCardDraft {
 
 /** The card's header label. Zero replies is a real state: the thread stream
  *  exists — a `/spawn` session is attached to it — and nothing is posted yet. */
-function replyCountLabel(replyCount: number): string {
+function replyCountLabel(replyCount: number): ReactNode {
   if (replyCount === 0) return "No replies yet"
-  return replyCount === 1 ? "1 reply" : `${replyCount} replies`
+  return (
+    <>
+      <RollingNumber value={replyCount} /> {replyCount === 1 ? "reply" : "replies"}
+    </>
+  )
 }
 
 /** What the draft-only card shows under its header: the body text, else the file

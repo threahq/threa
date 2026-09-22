@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { cn } from "@/lib/utils"
 
 interface UnreadBadgeProps {
@@ -9,8 +10,6 @@ interface UnreadBadgeProps {
 export function UnreadBadge({ count, maxCount = 99, className }: UnreadBadgeProps) {
   if (count <= 0) return null
 
-  const displayCount = count > maxCount ? `${maxCount}+` : count.toString()
-
   return (
     <span
       className={cn(
@@ -18,7 +17,7 @@ export function UnreadBadge({ count, maxCount = 99, className }: UnreadBadgeProp
         className
       )}
     >
-      {displayCount}
+      <RollingNumber value={count} format={(n) => (n > maxCount ? `${maxCount}+` : String(n))} />
     </span>
   )
 }

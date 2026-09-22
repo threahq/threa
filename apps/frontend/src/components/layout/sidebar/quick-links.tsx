@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import {
   Bell,
   Bookmark,
@@ -71,7 +72,11 @@ const MORE_KEY = `${QUICK_LINKS_SECTION_ID}:more`
 const MORE_DEFAULT = "collapsed"
 
 function countSlot(count: number): ReactNode {
-  return count > 0 ? <span className="ml-auto text-xs text-muted-foreground">({count})</span> : null
+  return count > 0 ? (
+    <span className="ml-auto text-xs text-muted-foreground">
+      (<RollingNumber value={count} />)
+    </span>
+  ) : null
 }
 
 export function SidebarQuickLinks({
