@@ -59,12 +59,6 @@ const OPEN_BUTTON_CLASS: Record<DecisionOption["tone"], string> = {
   destructive: "border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive",
 }
 
-const CHOSEN_CLASS: Record<DecisionOption["tone"], string> = {
-  primary: "text-foreground/90 hover:bg-transparent hover:text-foreground/90",
-  neutral: "text-foreground/90 hover:bg-transparent hover:text-foreground/90",
-  destructive: "text-destructive hover:bg-transparent hover:text-destructive",
-}
-
 /** Stand-in for a sealed card's question when it can't be read (locked / decrypting / failed). */
 const DECISION_DECRYPT_NOTICE_TEXT: Record<"locked" | "pending" | "failed", string> = {
   locked: "Unlock this scratchpad to read this decision",
@@ -285,7 +279,9 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
                       chosen
                         ? cn(
                             "h-auto cursor-default gap-1 px-0 py-0.5 text-[12px] font-medium [&_svg]:size-3.5",
-                            CHOSEN_CLASS[chosenTone]
+                            chosenTone === "destructive"
+                              ? "text-destructive hover:bg-transparent hover:text-destructive"
+                              : "text-foreground/90 hover:bg-transparent hover:text-foreground/90"
                           )
                         : cn("h-9 sm:h-8", OPEN_BUTTON_CLASS[option.tone])
                     )}
