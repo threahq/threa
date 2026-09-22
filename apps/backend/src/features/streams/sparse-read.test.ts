@@ -31,11 +31,11 @@ describe("applySparseRead", () => {
     } as never)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
 
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
-    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new")
+    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new", { holdInInbox: true })
   })
 
   it("writes no read state when compaction leaves the watermark unchanged", async () => {
@@ -48,7 +48,7 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue(null)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
 
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
@@ -65,7 +65,7 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue(null)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
 
     const snapshot = await applySparseRead(db, {
       workspaceId: "ws_1",
@@ -98,7 +98,7 @@ describe("applySparseRead", () => {
     } as never)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
     const pruneAtOrBelow = spyOn(SparseReadRepository, "pruneAtOrBelow").mockResolvedValue(undefined)
 
     const snapshot = await applySparseRead(db, {
@@ -108,7 +108,7 @@ describe("applySparseRead", () => {
       messageIds: ["msg_1"],
     })
 
-    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new")
+    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new", { holdInInbox: true })
     expect(pruneAtOrBelow).toHaveBeenCalledWith(db, "stream_1", "usr_1", 20n)
     expect(snapshot.lastReadEventId).toBe("evt_new")
     expect(snapshot.lastReadSequence).toBe("20")
@@ -124,7 +124,7 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(0)
     spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue(["msg_3"])
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue(null)
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
 
     const snapshot = await applySparseRead(db, {
       workspaceId: "ws_1",

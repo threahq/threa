@@ -732,6 +732,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("streams.read_all", "write"),
     workspace.markAllAsRead
   )
+  app.post(
+    "/api/workspaces/:workspaceId/streams/inbox/clear",
+    ...authed,
+    audit("streams.inbox_clear", "write"),
+    workspace.clearInbox
+  )
   app.get(
     "/api/workspaces/:workspaceId/streams/slug-available",
     ...authed,

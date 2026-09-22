@@ -97,14 +97,14 @@ describe("read state — non-member unlock", () => {
 
       // The viewer has NO stream_members row — only their own read-state row,
       // advanced through the second event (sequence-resolved in SQL).
-      await ReadStateRepository.advance(pool, sid, viewer, events[1].id)
+      await ReadStateRepository.advance(pool, sid, viewer, events[1].id, { holdInInbox: false })
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [viewer], events[1].sequence)
       expect(readThrough).toEqual(new Set([viewer]))
 
       // A row below the target sequence does not qualify.
       const fresh = userId()
-      await ReadStateRepository.advance(pool, sid, fresh, events[0].id)
+      await ReadStateRepository.advance(pool, sid, fresh, events[0].id, { holdInInbox: false })
       const notYet = await usersReadThroughEffective(pool, wid, sid, [fresh], events[1].sequence)
       expect(notYet).toEqual(new Set())
     })

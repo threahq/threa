@@ -37,7 +37,7 @@ describe("ReadStateRepository.advance", () => {
         updated_at: new Date(),
       },
     ])
-    await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9")
+    await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: false })
 
     expect(query).toHaveBeenCalledTimes(1)
     const text = flat(sqlText(query.mock.calls[0]))
@@ -58,10 +58,10 @@ describe("ReadStateRepository.advance", () => {
     expect(text).toContain("RETURNING")
   })
 
-  test("binds streamId, userId, eventId in order", async () => {
+  test("binds streamId, userId, eventId, holdInInbox in order", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9")
-    expect(sqlValues(query.mock.calls[0])).toEqual(["stream_1", "usr_1", "evt_9"])
+    await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
+    expect(sqlValues(query.mock.calls[0])).toEqual(["stream_1", "usr_1", "evt_9", true])
   })
 
   test("returns the post-write row when the advance lands", async () => {
@@ -72,17 +72,53 @@ describe("ReadStateRepository.advance", () => {
       last_read_event_id: "evt_9",
       last_read_at: new Date("2026-01-01T00:00:00.000Z"),
       updated_at: new Date("2026-01-02T00:00:00.000Z"),
+      inbox_held: false,
+      prior_inbox_held: false,
     }
     const { db, query } = makeDb([row])
-    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9")
+    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: false })
     expect(query).toHaveBeenCalledTimes(1)
-    expect(result?.lastReadEventId).toBe("evt_9")
+    expect(result.state?.lastReadEventId).toBe("evt_9")
+    expect(result.becameHeld).toBe(false)
+  })
+
+  test("reports becameHeld when the advance crosses another user's message and flips the flag", async () => {
+    const row = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: "evt_9",
+      last_read_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-02T00:00:00.000Z"),
+      inbox_held: true,
+      prior_inbox_held: false,
+    }
+    const { db } = makeDb([row])
+    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
+    expect(result.becameHeld).toBe(true)
+  })
+
+  test("does not report becameHeld when the row was already held", async () => {
+    const row = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: "evt_9",
+      last_read_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-02T00:00:00.000Z"),
+      inbox_held: true,
+      prior_inbox_held: true,
+    }
+    const { db } = makeDb([row])
+    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
+    expect(result.becameHeld).toBe(false)
   })
 
   test("reads back the standing row when the monotonic guard rejects a stale advance", async () => {
     // RETURNING is empty when the DO UPDATE WHERE clause rejects (stale event);
     // the row as it stands — above the attempted advance — must come back so
-    // the caller's payload sources from the true post-write frontier.
+    // the caller's payload sources from the true post-write frontier. Nothing
+    // changed, so it can't have become held.
     const standing = {
       workspace_id: "ws_1",
       stream_id: "stream_1",
@@ -90,16 +126,18 @@ describe("ReadStateRepository.advance", () => {
       last_read_event_id: "evt_higher",
       last_read_at: new Date("2026-01-02T00:00:00.000Z"),
       updated_at: new Date("2026-01-02T00:00:00.000Z"),
+      inbox_held: false,
     }
     const query = mock()
     query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
     query.mockResolvedValueOnce({ rows: [standing], rowCount: 1 })
     const db = { query } as unknown as Querier
 
-    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_stale")
+    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_stale", { holdInInbox: true })
 
     expect(query).toHaveBeenCalledTimes(2)
-    expect(result?.lastReadEventId).toBe("evt_higher")
+    expect(result.state?.lastReadEventId).toBe("evt_higher")
+    expect(result.becameHeld).toBe(false)
   })
 })
 
@@ -125,7 +163,7 @@ describe("ReadStateRepository.set", () => {
 describe("ReadStateRepository.batchAdvance", () => {
   test("no-ops without querying on an empty map", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.batchAdvance(db, "usr_1", new Map())
+    await ReadStateRepository.batchAdvance(db, "usr_1", new Map(), { holdInInbox: true })
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -137,16 +175,18 @@ describe("ReadStateRepository.batchAdvance", () => {
       new Map([
         ["stream_1", "evt_a"],
         ["stream_2", "evt_b"],
-      ])
+      ]),
+      { holdInInbox: true }
     )
 
-    // Upsert, then the authoritative same-tx re-read of every attempted row.
+    // Upsert+becameHeld computation, then the authoritative same-tx re-read of
+    // every attempted row (getBatch).
     expect(query).toHaveBeenCalledTimes(2)
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("unnest($1::text[])")
     expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).toContain("> COALESCE")
-    expect(sqlValues(query.mock.calls[0])).toEqual([["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1"])
+    expect(sqlValues(query.mock.calls[0])).toEqual([["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1", true])
   })
 
   test("returns the standing row for EVERY attempted stream, including guard-rejected concurrent advances", async () => {
@@ -162,6 +202,7 @@ describe("ReadStateRepository.batchAdvance", () => {
       last_read_event_id: "evt_a",
       last_read_at: new Date("2026-01-01T00:00:00.000Z"),
       updated_at: new Date("2026-01-01T00:00:00.000Z"),
+      inbox_held: false,
     }
     const standingHigher = {
       workspace_id: "ws_1",
@@ -170,10 +211,11 @@ describe("ReadStateRepository.batchAdvance", () => {
       last_read_event_id: "evt_higher",
       last_read_at: new Date("2026-01-02T00:00:00.000Z"),
       updated_at: new Date("2026-01-02T00:00:00.000Z"),
+      inbox_held: false,
     }
     const query = mock()
-    query.mockResolvedValueOnce({ rows: [], rowCount: 1 }) // upsert (no RETURNING)
-    query.mockResolvedValueOnce({ rows: [advanced, standingHigher], rowCount: 2 }) // same-tx re-read
+    query.mockResolvedValueOnce({ rows: [], rowCount: 0 }) // upsert+becameHeld (nothing newly held)
+    query.mockResolvedValueOnce({ rows: [advanced, standingHigher], rowCount: 2 }) // getBatch re-read
     const db = { query } as unknown as Querier
 
     const result = await ReadStateRepository.batchAdvance(
@@ -182,7 +224,8 @@ describe("ReadStateRepository.batchAdvance", () => {
       new Map([
         ["stream_1", "evt_a"],
         ["stream_2", "evt_b"],
-      ])
+      ]),
+      { holdInInbox: false }
     )
 
     expect(query).toHaveBeenCalledTimes(2)
@@ -192,8 +235,64 @@ describe("ReadStateRepository.batchAdvance", () => {
     expect(reRead).toContain("FROM stream_read_state")
     expect(sqlValues(query.mock.calls[1])).toEqual(["usr_1", ["stream_1", "stream_2"]])
     // Both attempted streams come back — the rejected one at its higher standing frontier.
-    expect(result.map((r) => r.streamId).sort()).toEqual(["stream_1", "stream_2"])
-    expect(result.find((r) => r.streamId === "stream_2")?.lastReadEventId).toBe("evt_higher")
+    expect(result.states.map((r) => r.streamId).sort()).toEqual(["stream_1", "stream_2"])
+    expect(result.states.find((r) => r.streamId === "stream_2")?.lastReadEventId).toBe("evt_higher")
+    expect(result.becameHeldStreamIds).toEqual([])
+  })
+
+  test("reports becameHeldStreamIds from the upsert's own RETURNING, not a re-query", async () => {
+    const held = {
+      workspace_id: "ws_1",
+      stream_id: "stream_1",
+      user_id: "usr_1",
+      last_read_event_id: "evt_a",
+      last_read_at: new Date("2026-01-01T00:00:00.000Z"),
+      updated_at: new Date("2026-01-01T00:00:00.000Z"),
+      inbox_held: true,
+    }
+    const query = mock()
+    query.mockResolvedValueOnce({ rows: [{ stream_id: "stream_1" }], rowCount: 1 })
+    query.mockResolvedValueOnce({ rows: [held], rowCount: 1 })
+    const db = { query } as unknown as Querier
+
+    const result = await ReadStateRepository.batchAdvance(db, "usr_1", new Map([["stream_1", "evt_a"]]), {
+      holdInInbox: true,
+    })
+
+    expect(result.becameHeldStreamIds).toEqual(["stream_1"])
+  })
+})
+
+describe("ReadStateRepository.clearInboxHeld", () => {
+  test("no-ops without querying on an empty stream list", async () => {
+    const { db, query } = makeDb()
+    expect(await ReadStateRepository.clearInboxHeld(db, "ws_1", "usr_1", [])).toEqual([])
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  test("binds workspaceId, userId, streamIds in order, returning only the held ids", async () => {
+    // Workspace/user scoping and the inbox_held condition are proven against a
+    // real schema in tests/integration/inbox-held.test.ts; this level only
+    // guards parameter binding order.
+    const { db, query } = makeDb([{ stream_id: "stream_1" }])
+    const result = await ReadStateRepository.clearInboxHeld(db, "ws_1", "usr_1", ["stream_1", "stream_2"])
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", "usr_1", ["stream_1", "stream_2"]])
+    expect(result).toEqual(["stream_1"])
+  })
+})
+
+describe("ReadStateRepository.listInboxHeldStreamIds", () => {
+  test("binds workspaceId, userId in order", async () => {
+    // Scoping on workspace_id/user_id/inbox_held is proven against a real
+    // schema in tests/integration/inbox-held.test.ts.
+    const { db, query } = makeDb([{ stream_id: "stream_1" }])
+    const result = await ReadStateRepository.listInboxHeldStreamIds(db, "ws_1", "usr_1")
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", "usr_1"])
+    expect(result).toEqual(["stream_1"])
   })
 })
 
@@ -256,6 +355,7 @@ describe("ReadStateRepository readers", () => {
       last_read_event_id: "evt_9",
       last_read_at: new Date("2026-01-01T00:00:00.000Z"),
       updated_at: new Date("2026-01-02T00:00:00.000Z"),
+      inbox_held: true,
     }
     const withRow = makeDb([row])
     expect(await ReadStateRepository.get(withRow.db, "stream_1", "usr_1")).toEqual({
@@ -265,6 +365,7 @@ describe("ReadStateRepository readers", () => {
       lastReadEventId: "evt_9",
       lastReadAt: row.last_read_at,
       updatedAt: row.updated_at,
+      inboxHeld: true,
     })
 
     const empty = makeDb([])

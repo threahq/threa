@@ -52,6 +52,7 @@ export type OutboxEventType =
   | "stream:read_set"
   | "stream:read_all"
   | "stream:read_messages"
+  | "stream:inbox_updated"
   | "stream:notification_level_updated"
   | "stream:activity"
   | "attachment:uploaded"
@@ -813,6 +814,18 @@ export interface StreamsReadAllOutboxPayload extends WorkspaceScopedPayload {
   frontiers?: StreamReadFrontierSnapshot[]
 }
 
+/**
+ * Sidebar Inbox hold transition (author-scoped, mirrors `stream:read`). Fires
+ * only on an actual false→true or true→false flip — `held: true` when a read
+ * crossed someone else's message and pinned the stream; `held: false` from an
+ * explicit Clear.
+ */
+export interface StreamInboxUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  authorId: string
+  streamIds: string[]
+  held: boolean
+}
+
 // User preferences event payload (author-scoped - only visible to the user who updated)
 export interface UserPreferencesUpdatedOutboxPayload extends WorkspaceScopedPayload {
   authorId: string
@@ -1392,6 +1405,7 @@ export interface OutboxEventPayloadMap {
   "stream:read_set": StreamReadSetOutboxPayload
   "stream:read_all": StreamsReadAllOutboxPayload
   "stream:read_messages": StreamReadMessagesOutboxPayload
+  "stream:inbox_updated": StreamInboxUpdatedOutboxPayload
   "stream:notification_level_updated": StreamNotificationLevelUpdatedOutboxPayload
   "stream:activity": StreamActivityOutboxPayload
   "attachment:uploaded": AttachmentUploadedOutboxPayload
@@ -1569,6 +1583,7 @@ export type AuthorScopedEventType =
   | "stream:read_set"
   | "stream:read_all"
   | "stream:read_messages"
+  | "stream:inbox_updated"
   | "stream:notification_level_updated"
   | "user_preferences:updated"
   | "sidebar_config:updated"
@@ -1581,6 +1596,7 @@ const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
   "stream:read_set",
   "stream:read_all",
   "stream:read_messages",
+  "stream:inbox_updated",
   "stream:notification_level_updated",
   "link_preview:dismissed",
   "user_preferences:updated",
