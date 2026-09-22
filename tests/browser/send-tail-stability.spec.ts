@@ -7,8 +7,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  * the client id to the event id. That swap looks like a tail replace on shape
  * alone (same count, same first row, new last row), and re-requesting the last
  * index for it hands virtua a deferred scroll that lands after our pin a few px
- * above the true bottom — held there until the dead-band dock smooth-scrolls
- * back down. On a phone that reads as a bounce roughly a second after send.
+ * above the true bottom. On a phone that reads as a bounce roughly a second
+ * after send.
  *
  * The sampler reads the list's distance from the bottom every frame. Once the
  * sent row is mounted and pinned, the list must never sit off the bottom for
