@@ -75,13 +75,8 @@
 
   --pad-x: 56px;
 
-  /* total animation cycle for the chat widget */
-  --cycle: 22s;
-
-  /* Chat-demo send button. Tokens rather than literals because the armed/idle
-     swap lives in @keyframes (send-arm), which a [data-theme] selector cannot
-     reach — the vars resolve per-theme inside the keyframes instead. Idle is
-     the app's disabled-primary; armed is full primary. */
+  /* Chat-demo send button: idle is the app's disabled-primary, armed is full
+     primary. */
   --send-idle-bg: 38 50% 75%;
   --send-idle-fg: 42 55% 97%;
   --send-armed-bg: 38 62% 53%;
@@ -287,92 +282,10 @@ body {
     0 0 0 4px hsl(var(--gold) / 0.6);
 }
 
-/* ---------- OPEN TIMELINE ----------
-     Anchored to the real chat view in apps/frontend/src/components/timeline:
-     - Rows render at full opacity from frame 1; "new" is signalled by
-       a 2s background-color flash from gold/0.3 → transparent (= the
-       `animate-highlight-flash` keyframes in
-       apps/frontend/tailwind.config.js).
-     - Persona rows always carry the gold inset stripe + soft gradient
-       (= ACTOR_ROW_THEME.persona.rowAccent in
-       apps/frontend/src/components/timeline/message-event.tsx). The
-       highlight flash layers ON TOP of the gradient.
-     - Continuations, hover toolbar, swipe-to-quote: out of scope for the
-       marketing widget. */
-.tl {
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  /* No outline, no card — the conversation lives directly in the warm
-       paper of the hero. The panel still bounds the scroll region and
-       hosts the floating composer, but visually it dissolves into the
-       page. */
-  height: clamp(560px, 68vh, 640px);
-  overflow: hidden;
-  padding: 0 4px;
-}
-/* Editorial chapter line — keys to the page's mono-cap meta voice
-     instead of a Slack-style channel chrome. Channel name slightly
-     heavier; the "thread · friday" tail sits quiet next to it. */
-.tl-caption {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding: 0 8px 18px;
-  flex-shrink: 0;
-}
-.tl-caption .hash {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: hsl(var(--ink));
-}
-.tl-caption .meta {
-  font-size: 12.5px;
-  color: hsl(var(--muted));
-}
-/* Message list — top-anchored, like the real app. With a few messages
-     they sit at the TOP and grow downward (the un-arrived rows are
-     collapsed to zero height, so the region isn't scrollable yet). Once
-     the conversation overflows the frame, the pin-scroll script keeps the
-     LATEST message visible at the bottom and older rows scroll off the top
-     — so it fills from the top, then fills from the bottom once full. */
-.tl-messages {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  overflow-x: hidden;
-  scroll-behavior: smooth;
-  /* padding-bottom reserves space so the latest row (and its reaction
-       pills, which sit under the message body) clears the floating
-       composer when scrolled to bottom. Composer = bottom:28px + ~86px
-       tall ≈ 114px from the list bottom; this leaves a comfortable ~36px
-       gap above it so the last message reads as fully in view, not tucked
-       under the card. */
-  padding-bottom: 150px;
-  /* Hide the scrollbar — the marketing widget reads as a conversation
-       in the page, and a visible scrollbar breaks that illusion. */
-  scrollbar-width: none;
-  /* Soft dissolve at top and bottom — without a panel border, scrolled
-       messages would hard-clip at the invisible edges. The mask makes
-       them fade gently into the paper instead. The composer (opaque,
-       z-index 2) is unaffected. */
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 22px), transparent 100%);
-  mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 22px), transparent 100%);
-}
-.tl-messages::-webkit-scrollbar {
-  display: none;
-}
-/* Prevent flex from compressing message rows to fit. Their own
-     pop animations control whether they're visible (max-height + opacity
-     animate 0 → natural on each beat). */
-.tl-messages > .tl-row,
-.tl-messages > .trace-card {
-  flex-shrink: 0;
-}
-
+/* ---------- MESSAGE ROWS ----------
+     The app's message row (apps/frontend/src/components/timeline), shared by
+     the agent demo, the hero thread and the board section. Persona rows carry
+     ACTOR_ROW_THEME.persona's gold stripe and gradient. */
 .tl-row {
   display: grid;
   grid-template-columns: 32px 1fr;
@@ -385,19 +298,6 @@ body {
   position: relative;
   border-radius: 0;
   background-color: hsl(var(--gold) / 0); /* highlight target */
-}
-/* Rows that animate in start invisible AND collapsed (zero height), so
-     they reserve no space until their beat — the timeline only grows tall
-     enough to scroll once messages have actually arrived. Maya is static
-     (already in the channel at page load). */
-.tl-row.pop-jordan,
-.tl-row.pop-alex,
-.tl-row.pop-ariadne {
-  opacity: 0;
-  max-height: 0;
-  padding-top: 0;
-  padding-bottom: 0;
-  overflow: hidden;
 }
 .tl-row.persona {
   /* Persona accent — present from the moment the row exists. */
@@ -488,209 +388,105 @@ body {
 }
 
 /* ---------- COMPOSER ----------
-     Matches the real MessageComposer in
-     apps/frontend/src/components/composer/message-composer.tsx:
-     `rounded-[16px] border border-input bg-card`, p-3 gap-2, editor on top
-     and action bar at the bottom; send button is a 30×30 rounded-md with
-     an ArrowUp icon that becomes primary-coloured when content is present. */
+     Trimmed from apps/frontend/src/components/composer/message-composer.tsx:
+     rounded card, editor over an action row, a 30×30 rounded-md send button
+     that arms to primary while there is content. */
 .composer {
-  /* The only chrome in the panel — a quiet floating card. Opaque so
-       messages tuck under cleanly, soft border + soft drop shadow so it
-       reads as a card without competing with the editorial paper. The
-       left/right offsets match .tl's horizontal padding so the composer
-       aligns with the message list, not with the panel border. */
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 28px;
-  z-index: 2;
-  border: 1px solid hsl(28 14% 88%);
+  flex-shrink: 0;
+  margin: 0 12px 12px;
+  border: 1px solid hsl(var(--line));
   background: hsl(var(--paper));
   border-radius: 14px;
-  padding: 12px 14px 10px;
+  padding: 10px 12px 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  box-shadow:
-    0 1px 0 hsl(33 28% 97%) inset,
-    0 8px 24px -14px hsl(28 30% 22% / 0.18),
-    0 2px 6px -2px hsl(28 30% 22% / 0.06);
+  box-shadow: 0 6px 18px -12px hsl(28 30% 22% / 0.22);
 }
 .composer-editor {
   position: relative;
-  min-height: 26px;
-  padding: 2px 0 0;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
   font-size: 14px;
   line-height: 1.55;
   color: hsl(var(--ink));
-  display: flex;
-  align-items: center;
+  white-space: pre;
 }
-/* Mention pill snaps in as a unit — that's how the real composer's
-     `@ariadne` autocomplete commits (one Enter keystroke, pill appears
-     whole). */
-.composer-mention-wrap {
-  display: inline-flex;
-  overflow: hidden;
-  max-width: 0;
-  flex-shrink: 0;
-}
-.composer-mention-wrap .mention {
-  flex: 0 0 auto;
-}
-/* Real input — the browser draws and blinks the caret natively, so we
-     get a proper text cursor at the right position without any DOM
-     trickery. Pre-armed with focus on cycle start (via JS) so the caret
-     is visible from the first frame. */
-.composer-input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  color: hsl(var(--ink));
-  caret-color: hsl(var(--ink));
-  /* Demo-only: don't intercept clicks/keyboard so the marketing page
-       stays interactive. We focus it programmatically to keep the caret
-       blinking; users can still click through to anything underneath. */
-  pointer-events: none;
-  user-select: none;
-}
-.composer-input::placeholder {
-  color: hsl(var(--muted));
-  opacity: 1;
-}
-.composer-input::-webkit-input-placeholder {
+.composer-placeholder {
+  position: absolute;
+  left: 0;
   color: hsl(var(--muted));
 }
-/* While the mention message is being typed (prefix, pill, or suffix
-     on screen), hide the placeholder so it doesn't read as
-     "hang on,Type a message" — toggled by the JS driver. */
-.composer-editor.has-mention .composer-input::placeholder {
+.ad.is-drafting .composer-placeholder {
   opacity: 0;
 }
-/* Action bar: hint on the left, icon row + send on the right. Mirrors
-     `message-composer.tsx`: ghost h-7 (28×30) buttons with `gap-1`,
-     muted hint flex-1 on the left, send pinned right as the only solid. */
+/* The mention commits whole, like the app's autocomplete. */
+.composer-mention-wrap {
+  display: inline-flex;
+  max-width: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ad.has-mention .composer-mention-wrap {
+  max-width: 140px;
+}
+.composer-caret {
+  width: 1.5px;
+  height: 18px;
+  margin-left: 1px;
+  background: hsl(var(--ink));
+  opacity: 0;
+}
+.ad.is-drafting .composer-caret {
+  animation: caret-blink 1s steps(1) infinite;
+}
+@keyframes caret-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
 .composer-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-}
-.composer-hint {
-  font-size: 11px;
-  color: hsl(var(--muted));
-  user-select: none;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding-left: 4px;
 }
 .composer-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  margin-left: -4px;
 }
-/* Individual control button — ghost by default. Real product uses
-     h-7 w-7 (28×28) icon buttons with hover bg-accent. */
 .cb {
-  position: relative;
   width: 28px;
   height: 28px;
   border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  color: hsl(var(--ink-soft));
-  border: none;
-  padding: 0;
-  cursor: default;
-  flex-shrink: 0;
+  color: hsl(var(--muted));
 }
 .cb svg {
-  width: 17px;
-  height: 17px;
-  stroke-width: 2;
-}
-/* Maximize uses the smaller h-3.5 w-3.5 icon in the real component. */
-.cb-maximize svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 .cb-aa {
-  font-family: var(--font-body);
   font-weight: 700;
   font-size: 13px;
-  line-height: 1;
   letter-spacing: -0.015em;
-  color: hsl(var(--ink-soft));
 }
 .cb-emoji span {
   font-size: 14px;
   line-height: 1;
+  filter: grayscale(1);
+  opacity: 0.75;
 }
-/* "More" is the phone foot's menu; desktop has no such button. */
-.cb-more {
-  display: none;
-}
-
-/* Hover tooltips on composer controls. Absolutely positioned above the
-     button (no layout shift, INV-21), fading in on hover. Mirrors the
-     app's side="top" tooltips. */
-.cb[data-tip]::after,
-.composer-send[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  white-space: nowrap;
-  background: hsl(var(--ink));
-  color: hsl(var(--paper));
-  font-family: var(--font-body);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1;
-  padding: 6px 8px;
-  border-radius: 6px;
-  box-shadow: 0 4px 14px -6px hsl(var(--ink) / 0.4);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s ease-out;
-  z-index: 20;
-}
-.cb[data-tip]::before,
-.composer-send[data-tip]::before {
-  content: "";
-  position: absolute;
-  bottom: calc(100% + 3px);
-  left: 50%;
-  transform: translateX(-50%);
-  border: 4px solid transparent;
-  border-top-color: hsl(var(--ink));
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s ease-out;
-  z-index: 20;
-}
-.cb[data-tip]:hover::after,
-.cb[data-tip]:hover::before,
-.composer-send[data-tip]:hover::after,
-.composer-send[data-tip]:hover::before {
-  opacity: 1;
-}
-/* Send button mirrors the real `rounded-md` h-[30px] w-[30px] primary
-     ArrowUp button — disabled-looking until content arms it. Arms to
-     solid gold (matches the `Button` default-variant on `canSubmit`). */
 .composer-send {
-  position: relative;
   width: 30px;
   height: 30px;
   border-radius: 6px;
@@ -699,32 +495,14 @@ body {
   justify-content: center;
   background: hsl(var(--send-idle-bg));
   color: hsl(var(--send-idle-fg));
-  border: none;
-  margin-left: 4px;
-  flex-shrink: 0;
-  transition: none;
+}
+.ad.is-drafting .composer-send {
+  background: hsl(var(--send-armed-bg));
+  color: hsl(var(--send-armed-fg));
 }
 .composer-send svg {
   width: 16px;
   height: 16px;
-  stroke-width: 2;
-}
-/* Footer hint sits OUTSIDE the composer — `flex justify-end px-1 pt-1`
-     mirrors the real component (text-[10px] muted opacity-60). Plain
-     text, no kbd boxes. */
-.composer-hint-foot {
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 6px;
-  z-index: 2;
-  font-family: var(--font-body);
-  font-size: 10.5px;
-  letter-spacing: 0.01em;
-  color: hsl(var(--muted));
-  opacity: 0.6;
-  text-align: right;
-  user-select: none;
 }
 
 /* ---------- TRACE CARD (single card; running ↔ completed in place) ----------
@@ -737,25 +515,14 @@ body {
      - main: title (font-medium) + subtitle (text-[11px] muted) — the
        same card transitions in place when the session completes. */
 .trace-card {
-  /* Spans the full row width (avatar column to body right), matching
-       the real product's session-card layout — it's a "conversation
-       event", not a body-column reply. */
-  /* Collapsed until its beat (51%) — reserves no vertical space before
-       it enters, so it doesn't pad the scroll height early. */
-  margin: 0;
   display: grid;
   grid-template-columns: 24px 1fr auto;
   gap: 12px;
   align-items: center;
   background: hsl(28 8% 92%);
   border: 1px solid hsl(var(--line));
-  border-width: 0;
   border-radius: 10px;
-  padding: 0 14px;
-  opacity: 0;
-  max-height: 0;
-  overflow: hidden;
-  text-decoration: none;
+  padding: 9px 14px;
   color: inherit;
 }
 .trace-time {
@@ -830,36 +597,6 @@ body {
 }
 .trace-row-done {
   opacity: 0;
-}
-
-/* Step counter ticks during the running phase. Spacing is intentionally
-     irregular — agents don't pace themselves evenly: a couple of quick
-     lookups, a long pause for reasoning, then a quick wrap-up. */
-.trace-step-count::before {
-  content: "0";
-  animation: count-steps var(--cycle) linear 1 forwards;
-}
-@keyframes count-steps {
-  0%,
-  51.9% {
-    content: "0";
-  }
-  52% {
-    content: "1";
-  } /* +0.1 — quick pull */
-  53.5% {
-    content: "2";
-  } /* +1.5 — another fast lookup */
-  58% {
-    content: "3";
-  } /* +4.5 — pause to reason */
-  62.5% {
-    content: "4";
-  } /* +4.5 — second pass */
-  66%,
-  100% {
-    content: "5";
-  } /* +3.5 — wrap up */
 }
 
 /* ---------- QUOTE CARD (inside Ariadne's reply) ---------- */
@@ -940,7 +677,6 @@ body {
   border-radius: 999px;
   padding: 0 9px 0 7px;
   color: hsl(var(--muted));
-  opacity: 0;
 }
 .rxn .em {
   font-size: 13px;
@@ -951,296 +687,212 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- ANIMATION TIMELINE — cycle 22s, run-once ----------
-     Phases (% of cycle / wall-clock seconds @ 22s):
-        0    /  0.0s   Maya is already in the channel (static)
-       19    /  4.2s   Jordan row enters (highlight 2s)
-       30    /  6.6s   Composer starts typing @ariadne
-       36    /  7.9s   Composer typing complete
-       49    / 10.8s   Send fires → composer clears, Alex row enters
-       51    / 11.2s   Trace card appears (running)
-       68    / 15.0s   Trace card transitions in place to completed
-       71    / 15.6s   Ariadne row enters; thread arrives from the left
-       81/83/85       Reactions 1/2/3 pop in
-       100            Stage holds the final filled state (no restart)
-
-     Each row uses a `pop-*` opacity animation (linear, instant jump) and
-     a `flash-*` background-color animation (ease-out 2s window). The
-     two are independent so the highlight can outlast the pop. All
-     animations are `1 forwards` so the scene plays once and holds. */
-
-/* Maya is static (already in the channel). Jordan recalls vaguely a
-     few seconds later. Alex arrives after sending. Ariadne after the
-     trace completes. Each non-static row gets a brief highlight flash
-     when it enters. Rows occupy real height from page load so scroll
-     behaves naturally — no max-height tricks. */
-.pop-jordan {
-  animation:
-    pop-jordan var(--cycle) linear 1 forwards,
-    flash-jordan var(--cycle) ease-out 1 forwards;
+/* ---------- AGENT DEMO (bring-your-own-agent section) ----------
+     A stream window built from the app's parts. The inline script plays it
+     once by adding state classes on a timer: is-drafting / has-mention on the
+     composer, is-working / is-done for the session, is-in on each arrival. */
+.ad {
+  display: flex;
+  flex-direction: column;
+  height: 560px;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow:
+    0 30px 60px -40px hsl(28 30% 22% / 0.4),
+    0 2px 6px -3px hsl(28 30% 22% / 0.08);
 }
-.pop-alex {
-  animation:
-    pop-alex var(--cycle) linear 1 forwards,
-    flash-alex var(--cycle) ease-out 1 forwards;
+.ad-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid hsl(var(--line));
 }
-.pop-ariadne {
-  animation:
-    pop-ariadne var(--cycle) linear 1 forwards,
-    flash-ariadne var(--cycle) ease-out 1 forwards;
+.ad-channel {
+  font-size: 14px;
+  font-weight: 600;
+  color: hsl(var(--ink));
 }
-
-@keyframes pop-jordan {
-  0%,
-  18.9% {
-    opacity: 0;
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  19%,
-  100% {
-    opacity: 1;
-    max-height: 400px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
+/* AgentRunningChip: the header's "an agent is working here" signal. */
+.ad-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px solid hsl(var(--gold) / 0.3);
+  border-radius: 999px;
+  background: hsl(var(--gold) / 0.05);
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--ink));
+  opacity: 0;
+  transition: opacity 0.25s ease-out;
 }
-@keyframes pop-alex {
-  0%,
-  48.9% {
-    opacity: 0;
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  49%,
-  100% {
-    opacity: 1;
-    max-height: 400px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
+.ad-chip svg {
+  width: 12px;
+  height: 12px;
+  color: hsl(var(--gold));
+  animation: spin 1.4s linear infinite;
 }
-@keyframes pop-ariadne {
-  0%,
-  70.9% {
-    opacity: 0;
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-  71%,
-  100% {
-    opacity: 1;
-    max-height: 400px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
+.ad-chip-steps {
+  color: hsl(var(--muted));
+  font-variant-numeric: tabular-nums;
+}
+.ad.is-working .ad-chip {
+  opacity: 1;
 }
 
-/* highlight-flash background = real `animate-highlight-flash` 2s ease-out
-     from hsl(primary/0.3) to transparent. 2s ≈ 9% of the 22s cycle. */
-@keyframes flash-jordan {
-  0%,
-  18.9% {
-    background-color: hsl(var(--gold) / 0);
-  }
-  19% {
+/* Bottom-anchored: rows that don't fit leave through the top fade. */
+.ad-log {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding-bottom: 12px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 64px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 64px);
+}
+.ad-log > * {
+  flex-shrink: 0;
+}
+.ad-in {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.45s cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 0.3s ease-out 0.1s;
+}
+.ad-in > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.ad-in.is-in {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+/* The app's highlight-flash on a new message. */
+.ad-in.is-in .tl-row {
+  animation: ad-flash 2s ease-out;
+}
+@keyframes ad-flash {
+  from {
     background-color: hsl(var(--gold) / 0.3);
   }
-  28%,
-  100% {
-    background-color: hsl(var(--gold) / 0);
-  }
-}
-@keyframes flash-alex {
-  0%,
-  48.9% {
-    background-color: hsl(var(--gold) / 0);
-  }
-  49% {
-    background-color: hsl(var(--gold) / 0.3);
-  }
-  58%,
-  100% {
-    background-color: hsl(var(--gold) / 0);
-  }
-}
-@keyframes flash-ariadne {
-  0%,
-  70.9% {
-    background-color: hsl(var(--gold) / 0);
-  }
-  71% {
-    background-color: hsl(var(--gold) / 0.3);
-  }
-  80%,
-  100% {
-    background-color: hsl(var(--gold) / 0);
-  }
 }
 
-/* Composer typing:
-       25-31% — "hang on," types out before the pill (JS-driven)
-       33%    — mention pill snaps in as a unit (steps(1) instant jump)
-       34-40% — " can you check?" types after the pill (driven by JS so the caret can
-                follow the visible glyphs naturally)
-       49%    — send fires → everything clears */
-.composer-typed {
-  flex: 0 0 auto;
-  white-space: pre;
+.ad-trace {
+  margin: 12px;
 }
-.composer-mention-wrap {
-  animation: pop-mention var(--cycle) steps(1) 1 forwards;
+.ad-trace-main {
+  min-width: 0;
 }
-/* The demo's keyframes wait for the script to see it on screen. */
-.tl.is-waiting *,
-.tl.is-waiting *::before,
-.tl.is-waiting *::after {
-  animation-play-state: paused !important;
+.ad-trace-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  color: hsl(var(--ink));
 }
-@keyframes pop-mention {
-  0%,
-  32.9% {
-    max-width: 0;
+.ad-trace-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: hsl(var(--muted));
+  white-space: nowrap;
+}
+.ad-pulse {
+  position: relative;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(var(--gold));
+}
+.ad-pulse::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: hsl(var(--gold));
+  animation: ad-pulse 1.6s ease-out infinite;
+}
+@keyframes ad-pulse {
+  to {
+    transform: scale(2.6);
+    opacity: 0;
   }
-  33%,
-  48.9% {
-    max-width: 140px;
+}
+.ad-substep {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-style: italic;
+  color: hsl(var(--ink) / 0.9);
+}
+.ad-substep.tick {
+  animation: ad-fade 0.25s ease-out;
+}
+@keyframes ad-fade {
+  from {
+    opacity: 0.2;
   }
-  49%,
-  100% {
-    max-width: 0;
-  }
+}
+.ad-trace-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.ad.is-done .trace-icon-running {
+  opacity: 0;
+}
+.ad.is-done .trace-icon-done {
+  opacity: 1;
 }
 
-/* Send button arms (primary gold) while content is typed, then returns
-     to the idle ghost state after send. */
-.composer-send {
-  animation: send-arm var(--cycle) steps(1) 1 forwards;
+.ad-after {
+  margin-top: 8px;
 }
-@keyframes send-arm {
-  /* Idle/disabled = faded gold (the real product's disabled primary
-       button), arms to full gold while content is typed. */
-  0%,
-  24.9% {
-    background: hsl(var(--send-idle-bg));
-    color: hsl(var(--send-idle-fg));
-  }
-  25%,
-  48.9% {
-    background: hsl(var(--send-armed-bg));
-    color: hsl(var(--send-armed-fg));
-  }
-  49%,
-  100% {
-    background: hsl(var(--send-idle-bg));
-    color: hsl(var(--send-idle-fg));
-  }
+/* Reactions arrive one person at a time; a second person joining rolls the
+   count rather than redrawing the pill. Their row is laid out from the
+   reply's first frame so nothing shifts when the first one lands. */
+.ad .rxn {
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.15s ease-out,
+    transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
-
-/* Trace card: appears at 51% and holds. Pairs opacity with a collapse
-     animation so the card reserves no vertical space before it enters. */
-.trace-card {
-  animation: trace-life var(--cycle) linear 1 forwards;
+.ad .rxn.is-in {
+  opacity: 1;
+  transform: none;
 }
-@keyframes trace-life {
-  0%,
-  50.9% {
-    opacity: 0;
-    max-height: 0;
-    margin-top: 0;
-    margin-bottom: 0;
-    padding-top: 0;
-    padding-bottom: 0;
-    border-width: 0;
-  }
-  51%,
-  100% {
-    opacity: 1;
-    max-height: 120px;
-    margin-top: 10px;
-    margin-bottom: 4px;
-    padding-top: 10px;
-    padding-bottom: 10px;
-    border-width: 1px;
-  }
+.ad .rxn .num {
+  display: inline-flex;
+  flex-direction: column;
+  height: 14px;
+  line-height: 14px;
+  overflow: hidden;
+}
+.ad .rxn .num > span {
+  transform: translateY(calc(var(--n, 0) * -14px));
+  transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* In-place state swap at 68% (running → completed). */
-.trace-icon-running {
-  animation: trace-running var(--cycle) steps(1) 1 forwards;
-}
-.trace-icon-done {
-  animation: trace-done var(--cycle) steps(1) 1 forwards;
-}
-.trace-row-running {
-  animation: trace-running var(--cycle) steps(1) 1 forwards;
-}
-.trace-row-done {
-  animation: trace-done var(--cycle) steps(1) 1 forwards;
-}
-@keyframes trace-running {
-  0%,
-  68% {
-    opacity: 1;
-  }
-  68.1%,
-  100% {
-    opacity: 0;
-  }
-}
-@keyframes trace-done {
-  0%,
-  68% {
-    opacity: 0;
-  }
-  68.1%,
-  100% {
-    opacity: 1;
-  }
-}
-
-/* Reactions: no fade-up; instant pop, then hold. */
-.rxn-1 {
-  animation: rxn-1 var(--cycle) linear 1 forwards;
-}
-.rxn-2 {
-  animation: rxn-2 var(--cycle) linear 1 forwards;
-}
-.rxn-3 {
-  animation: rxn-3 var(--cycle) linear 1 forwards;
-}
-@keyframes rxn-1 {
-  0%,
-  80.9% {
-    opacity: 0;
-  }
-  81%,
-  100% {
-    opacity: 1;
-  }
-}
-@keyframes rxn-2 {
-  0%,
-  82.9% {
-    opacity: 0;
-  }
-  83%,
-  100% {
-    opacity: 1;
-  }
-}
-@keyframes rxn-3 {
-  0%,
-  84.9% {
-    opacity: 0;
-  }
-  85%,
-  100% {
-    opacity: 1;
-  }
+.ad.is-static *,
+.ad.is-static *::before,
+.ad.is-static *::after {
+  transition: none !important;
+  animation: none !important;
 }
 
 /* ---------- HERO (Tape Anchored) ---------- */
@@ -2326,9 +1978,6 @@ body {
     grid-template-columns: 1fr;
     gap: 48px;
   }
-  .byo-demo .tl {
-    height: clamp(480px, 72vh, 560px);
-  }
 
   .cta-shell {
     grid-template-columns: 1fr;
@@ -2352,38 +2001,6 @@ body {
   .nav-row .nav-login {
     padding: 8px 15px;
     font-size: 13px;
-  }
-
-  /* The chat demo's composer folds the way the real phone foot does
-     (`EditorActionBar` folded mode): + · mic · a larger Aa · send clustered
-     on the thumb's side, every other action behind +. The hint has no room. */
-  .composer-hint {
-    display: none;
-  }
-  .composer-actions {
-    flex: 1;
-    justify-content: flex-end;
-  }
-  .composer-actions .cb-more {
-    display: inline-flex;
-    order: -2;
-  }
-  .composer-actions .cb[aria-label="Dictate a message"] {
-    order: -1;
-  }
-  .composer-actions .cb-aa {
-    width: 36px;
-    height: 30px;
-    font-size: 15px;
-  }
-  .composer-actions .cb[aria-label="Expand editor"],
-  .composer-actions .cb[aria-label="Insert emoji"],
-  .composer-actions .cb[aria-label="Insert mention"],
-  .composer-actions .cb[aria-label="Insert command"],
-  .composer-actions .cb[aria-label="Attach files"],
-  .composer-actions .cb[aria-label="Drafts"],
-  .composer-actions .cb[aria-label="Scheduled"] {
-    display: none;
   }
 
   /* Waitlist form: input over a full-width button instead of side by side. */
@@ -2481,14 +2098,15 @@ body {
   color: hsl(20 30% 80%);
 }
 
-/* Floating composer: dark border, black-based shadows (an ink-derived shadow
-   would glow white on the inverted palette). */
+/* Black-based shadows: an ink-derived shadow would glow on the inverted palette. */
 [data-theme="dark"] .composer {
   border-color: hsl(26 10% 26%);
+  box-shadow: 0 6px 18px -12px hsl(0 0% 0% / 0.6);
+}
+[data-theme="dark"] .ad {
   box-shadow:
-    0 1px 0 hsl(26 12% 17%) inset,
-    0 8px 24px -14px hsl(0 0% 0% / 0.55),
-    0 2px 6px -2px hsl(0 0% 0% / 0.3);
+    0 30px 60px -36px hsl(0 0% 0% / 0.7),
+    0 2px 6px -3px hsl(0 0% 0% / 0.3);
 }
 [data-theme="dark"] .trace-card {
   background: hsl(26 10% 17%);
@@ -2628,30 +2246,17 @@ body {
   opacity: 0.4;
 }
 
-/* Static "Session complete" trace — reuses .trace-card but forces the DONE
-   state visible. The hero drives .trace-card (and its rows/icons) with running
-   `trace-life`/`trace-running`/`trace-done` animations that would otherwise keep
-   this collapsed until their beat, so `animation: none` hands control back to
-   these static values. */
+/* The board's finished session: the done state, with the app's py-3 air. */
 .trace-card.is-static {
-  opacity: 1;
-  max-height: none;
-  border-width: 1px;
-  padding: 9px 14px;
-  /* Air above and below, mirroring the app's `py-3` (12px) wrapper around
-     AgentSessionEvent — messages sit flush, an event breathes. */
   margin: 12px 0;
-  animation: none;
 }
 .trace-card.is-static .trace-row-running,
 .trace-card.is-static .trace-icon-running {
   opacity: 0;
-  animation: none;
 }
 .trace-card.is-static .trace-row-done,
 .trace-card.is-static .trace-icon-done {
   opacity: 1;
-  animation: none;
 }
 
 /* ---------- board card (mirrors the app board card at rest + PR #1349 hover) ---------- */
@@ -2889,10 +2494,4 @@ body {
   .board-badge .lbl {
     writing-mode: horizontal-tb;
   }
-}
-
-/* The hero's reaction pills start opacity:0 and animate in via the hero
-   script; the board section is static, so force them visible here. */
-.board-shell .rxn {
-  opacity: 1;
 }

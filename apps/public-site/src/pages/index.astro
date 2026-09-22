@@ -611,154 +611,146 @@ const schema = [
       <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
     </div>
     <div class="byo-demo" data-decorative>
-      <div class="tl">
-        <div class="tl-caption">
-          <span class="hash">#api-v3</span>
-          <span class="meta">Friday</span>
+      <div class="ad" aria-label="Alex asks their Claude Code bot in #api-v3 whether token rotation still signs out old sessions">
+        <div class="ad-head">
+          <span class="ad-channel">#api-v3</span>
+          <span class="ad-chip" aria-hidden="true">
+            <svg><use href="#spinner-icon"/></svg>
+            <span>Claude Code</span>
+            <span class="ad-chip-steps">· <span class="ad-steps">1 step</span></span>
+          </span>
         </div>
 
-        <!-- Top-anchored message list — messages stack downward and the
-             composer (positioned absolutely below) overlays the bottom,
-             so the latest message slides UNDER the composer. The
-             inline pin-scroll script keeps the bottom in view as new
-             rows expand. -->
-        <div class="tl-messages">
-
-        <!-- 1: Maya raises the question (static, already in the channel) -->
-        <div class="tl-row">
-          <div class="tl-avatar av-maya">MR</div>
-          <div class="tl-body">
-            <div class="tl-head-line">
-              <span class="tl-name">Maya Reyes</span>
-              <span class="tl-time" data-time="maya">Friday 14:03</span>
-            </div>
-            <div class="tl-text">Before we ship v3: does token rotation still sign out sessions issued before the migration?</div>
-          </div>
-        </div>
-
-        <!-- 2: Jordan — enters at 19% with a 2s gold flash -->
-        <div class="tl-row pop-jordan">
-          <div class="tl-avatar av-jordan">JL</div>
-          <div class="tl-body">
-            <div class="tl-head-line">
-              <span class="tl-name">Jordan Lee</span>
-              <span class="tl-time" data-time="jordan">Friday 14:04</span>
-            </div>
-            <div class="tl-text">no idea, I'd have to dig through the rotation code again</div>
-          </div>
-        </div>
-
-        <!-- 3: Alex's message — sent from the composer below. Row
-             enters at 49% at the same moment the composer clears. -->
-        <div class="tl-row pop-alex">
-          <div class="tl-avatar av-alex">AP</div>
-          <div class="tl-body">
-            <div class="tl-head-line">
-              <span class="tl-name">Alex Park</span>
-              <span class="tl-time" data-time="alex">Friday 14:05</span>
-            </div>
-            <div class="tl-text">hang on, <span class="mention">@alex-agent</span> can you check?</div>
-          </div>
-        </div>
-
-        <!-- 4: Trace card — running ↔ completed in place
-             (matches AgentSessionEvent.tsx structure exactly). -->
-        <div class="trace-card">
-          <div class="trace-icon-slot">
-            <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
-            <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
-          </div>
-          <div class="trace-main">
-            <div class="trace-row trace-row-running">
-              <div class="trace-title">alex-agent is working…</div>
-              <div class="trace-sub"><span class="num"><span class="trace-step-count"></span></span> of 5 steps</div>
-            </div>
-            <div class="trace-row trace-row-done">
-              <div class="trace-title">Session complete</div>
-              <div class="trace-sub">5 steps · 38s</div>
-            </div>
-          </div>
-          <div class="trace-time" data-time-short="agent">14:05</div>
-        </div>
-
-        <!-- 5: Alex's local agent replies through its bot, quoting the memo's source -->
-        <div class="tl-row bot pop-ariadne">
-          <div class="tl-avatar av-bot"><svg><use href="#icon-bot"/></svg></div>
-          <div class="tl-body">
-            <div class="tl-head-line">
-              <span class="tl-name">alex-agent</span>
-              <span class="tl-badge">BOT</span>
-              <span class="tl-time" data-time="agent">Friday 14:05</span>
-            </div>
-            <div class="tl-text">Yes. Pre-migration sessions keep their old refresh token, so the first rotation signs them out. It's the risk Jordan raised when v3 was held:</div>
-
-            <div class="quote-card">
-              <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
-              <div class="q-author">
-                <div class="q-avatar av-jordan">JL</div>
-                <div class="q-name">Jordan Lee</div>
-                <div class="q-time">Mar 12 · 11:42</div>
+        <!-- Bottom-anchored like a real stream: an arriving row grows in at the
+             foot and pushes older rows up under the top fade. -->
+        <div class="ad-log">
+          <div class="tl-row">
+            <div class="tl-avatar av-maya">MR</div>
+            <div class="tl-body">
+              <div class="tl-head-line">
+                <span class="tl-name">Maya Reyes</span>
+                <span class="tl-time" data-ago="14">14:00</span>
               </div>
-              <div class="q-body">"hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design"</div>
-            </div>
-
-            <div class="tl-text" style="margin-top:8px;">Draft fix is on the <span class="ref-pill">auth-rotation</span> branch.</div>
-
-            <div class="reactions">
-              <span class="rxn rxn-1"><span class="em">👍</span><span class="num">3</span></span>
-              <span class="rxn rxn-2"><span class="em">🙏</span><span class="num">2</span></span>
-              <span class="rxn rxn-3"><span class="em">💡</span><span class="num">1</span></span>
+              <div class="tl-text">v3 release branch is cut, aiming to ship Thursday.</div>
             </div>
           </div>
+
+          <div class="tl-row">
+            <div class="tl-avatar av-jordan">JL</div>
+            <div class="tl-body">
+              <div class="tl-head-line">
+                <span class="tl-name">Jordan Lee</span>
+                <span class="tl-time" data-ago="11">14:00</span>
+              </div>
+              <div class="tl-text">changelog draft is up, only the auth section left</div>
+            </div>
+          </div>
+
+          <div class="tl-row">
+            <div class="tl-avatar av-maya">MR</div>
+            <div class="tl-body">
+              <div class="tl-head-line">
+                <span class="tl-name">Maya Reyes</span>
+                <span class="tl-time" data-ago="6">14:01</span>
+              </div>
+              <div class="tl-text">Before we ship v3: does token rotation still sign out sessions issued before the migration?</div>
+            </div>
+          </div>
+
+          <div class="tl-row">
+            <div class="tl-avatar av-jordan">JL</div>
+            <div class="tl-body">
+              <div class="tl-head-line">
+                <span class="tl-name">Jordan Lee</span>
+                <span class="tl-time" data-ago="4">14:03</span>
+              </div>
+              <div class="tl-text">no idea, I'd have to dig through the rotation code again</div>
+            </div>
+          </div>
+
+          <div class="ad-in" data-beat="sent"><div>
+            <div class="tl-row">
+              <div class="tl-avatar av-alex">AP</div>
+              <div class="tl-body">
+                <div class="tl-head-line">
+                  <span class="tl-name">Alex Park</span>
+                  <span class="tl-time" data-ago="0">14:07</span>
+                </div>
+                <div class="tl-text"><span class="mention">@claude-code</span> can you check?</div>
+              </div>
+            </div>
+          </div></div>
+
+          <!-- Same card as the app's AgentSessionEvent: a live substep with a
+               pulse dot while running, swapped in place for the summary. -->
+          <div class="ad-in" data-beat="working"><div>
+            <div class="trace-card ad-trace">
+              <div class="trace-icon-slot">
+                <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
+                <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
+              </div>
+              <div class="ad-trace-main">
+                <div class="ad-trace-title">Claude Code is working…</div>
+                <div class="ad-trace-sub">
+                  <span class="ad-pulse" aria-hidden="true"></span>
+                  <span class="ad-substep">Searching messages for “token rotation”</span>
+                  <span class="ad-trace-count">· <span class="ad-steps">1 step</span></span>
+                </div>
+              </div>
+              <div class="trace-time" data-ago="0">14:07</div>
+            </div>
+          </div></div>
+
+          <div class="ad-in" data-beat="replied"><div>
+            <div class="tl-row bot">
+              <div class="tl-avatar av-bot"><svg><use href="#icon-bot"/></svg></div>
+              <div class="tl-body">
+                <div class="tl-head-line">
+                  <span class="tl-name">Claude Code</span>
+                  <span class="tl-badge">BOT</span>
+                  <span class="tl-time" data-ago="0">14:07</span>
+                </div>
+                <div class="tl-text">Yes. Sessions from before the migration keep their old refresh token, so the first rotation signs them out. Jordan flagged exactly this when v3 was held:</div>
+                <div class="quote-card">
+                  <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
+                  <div class="q-author">
+                    <div class="q-avatar av-jordan">JL</div>
+                    <div class="q-name">Jordan Lee</div>
+                    <div class="q-time">Mar 12, 11:42</div>
+                  </div>
+                  <div class="q-body">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first.</div>
+                </div>
+                <div class="tl-text ad-after">I pushed a fix that migrates them on first refresh to <span class="ref-pill">auth-rotation</span>.</div>
+                <div class="reactions">
+                  <span class="rxn" data-rxn="pray"><span class="em">🙏</span><span class="num"><span>1</span><span>2</span></span></span>
+                  <span class="rxn" data-rxn="eyes"><span class="em">👀</span><span class="num"><span>1</span></span></span>
+                </div>
+              </div>
+            </div>
+          </div></div>
         </div>
 
-        </div><!-- /.tl-messages -->
-
-        <!-- Composer — types the bot mention, fires send, then waits. Mirrors the
-             real MessageComposer (apps/frontend/src/components/composer):
-             hint on the left, icon action row + gold send on the right,
-             keyboard shortcut hint sits OUTSIDE below. At phone width the
-             row folds like the real one: + · mic · Aa · send clustered on
-             the right (the "More" button only exists there). -->
-        <div class="composer" aria-label="Message composer">
+        <!-- Composer, trimmed from the app's MessageComposer: typed text, the
+             mention pill committing whole, and the send button arming. -->
+        <div class="composer" aria-hidden="true">
           <div class="composer-editor">
-            <span class="composer-typed" aria-hidden="true"></span>
-            <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@alex-agent</span></span>
-            <input
-              class="composer-input"
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              readonly
-              tabindex="-1"
-              inputmode="none"
-              placeholder="Type a message..."
-              aria-label="Message"
-              data-pre="hang on,"
-              data-trail=" can you check?"
-            />
+            <span class="composer-placeholder">Message #api-v3</span>
+            <span class="composer-mention-wrap"><span class="mention">@claude-code</span></span>
+            <span class="composer-typed" data-trail=" can you check?"></span>
+            <span class="composer-caret"></span>
           </div>
           <div class="composer-bar">
-            <span class="composer-hint">Select text to format</span>
             <div class="composer-actions">
-              <button type="button" class="cb cb-more" aria-label="More" data-tip="More"><svg><use href="#icon-plus"/></svg></button>
-              <button type="button" class="cb cb-maximize" aria-label="Expand editor" data-tip="Expand editor"><svg><use href="#icon-maximize"/></svg></button>
-              <button type="button" class="cb cb-aa" aria-label="Formatting" data-tip="Format text">Aa</button>
-              <button type="button" class="cb cb-emoji" aria-label="Insert emoji" data-tip="Emoji"><span>😊</span></button>
-              <button type="button" class="cb" aria-label="Insert mention" data-tip="Mention"><svg><use href="#icon-at"/></svg></button>
-              <button type="button" class="cb" aria-label="Insert command" data-tip="Slash command"><svg><use href="#icon-slash"/></svg></button>
-              <button type="button" class="cb" aria-label="Attach files" data-tip="Attach files"><svg><use href="#icon-paperclip"/></svg></button>
-              <button type="button" class="cb" aria-label="Dictate a message" data-tip="Dictate"><svg><use href="#icon-mic"/></svg></button>
-              <button type="button" class="cb" aria-label="Drafts" data-tip="Drafts"><svg><use href="#icon-fileedit"/></svg></button>
-              <button type="button" class="cb" aria-label="Scheduled" data-tip="Schedule"><svg><use href="#icon-calendarclock"/></svg></button>
-              <div class="composer-send" aria-label="Send" data-tip="Send">
-                <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </div>
+              <span class="cb cb-aa">Aa</span>
+              <span class="cb cb-emoji"><span>😊</span></span>
+              <span class="cb"><svg><use href="#icon-at"/></svg></span>
+              <span class="cb"><svg><use href="#icon-paperclip"/></svg></span>
             </div>
+            <span class="composer-send">
+              <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
           </div>
         </div>
-        <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
-
       </div>
     </div>
   </div>
@@ -868,139 +860,81 @@ const schema = [
 </footer>
 
   <script is:inline>
-  /* The agent-section chat demo. Its CSS keyframes and this script share one
-     22s clock that starts when the demo scrolls into view, not on page load,
-     so visitors see the conversation happen instead of its end state. */
+  /* The agent-section demo. Plays once, from when it scrolls into view, so
+     visitors see the agent work instead of its end state. Reduced motion shows
+     the finished conversation. */
   (function () {
-    const tl = document.querySelector('.byo-demo .tl')
-    const tlm = tl?.querySelector('.tl-messages')
-    if (!tl || !tlm) return
-    tl.classList.add('is-waiting')
+    const ad = document.querySelector('.byo-demo .ad')
+    if (!ad) return
+    const $ = (s) => ad.querySelector(s)
 
-    /* ---- local time stamps ----
-       Replace the hardcoded weekday/HH:mm with the user's actual local
-       day and a now-anchored cadence: 4/2/0 minutes ago, with Alex and
-       the agent both at "now".
-       Day name is computed per stamp so messages that cross midnight
-       still read correctly. */
-    const now = new Date()
-    const dayOf = d => d.toLocaleDateString(undefined, { weekday: 'long' })
-    const pad = n => String(n).padStart(2, '0')
-    const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`
-    const ago = mins => new Date(now.getTime() - mins * 60_000)
-    const stamps = {
-      maya: ago(4),
-      jordan: ago(2),
-      alex: ago(0),
-      agent: now,
-    }
-    document.querySelectorAll('[data-time]').forEach(el => {
-      const d = stamps[el.dataset.time] || now
-      el.textContent = `${dayOf(d)} ${hhmm(d)}`
+    const now = Date.now()
+    const pad = (n) => String(n).padStart(2, '0')
+    ad.querySelectorAll('[data-ago]').forEach((el) => {
+      const d = new Date(now - Number(el.dataset.ago) * 60_000)
+      el.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`
     })
-    document.querySelectorAll('[data-time-short]').forEach(el => {
-      const d = stamps[el.dataset.timeShort] || now
-      el.textContent = hhmm(d)
-    })
-    const cap = document.querySelector('.tl-caption .meta')
-    if (cap) cap.textContent = dayOf(now)
 
-    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
-    const cycle = 22_000
-    let start = 0
-
-    /* ---- composer typewriter ----
-       Real <input>, driven by JS — value changes trigger the browser's
-       native caret which sits at the correct end-of-text position and
-       blinks the same way it does anywhere else in the OS. Faster than a
-       fake caret: ~100ms/char so it reads as confident, casual typing
-       rather than a slow demo loop. */
-    const editor = document.querySelector('.composer-editor')
-    const input = document.querySelector('.composer-input')
-    const typed = document.querySelector('.composer-typed')
-    /* Array.from iterates code points, so an emoji surrogate pair can't be
-       split across animation frames. */
-    const preChars = Array.from(input?.dataset.pre ?? '')
-    const trailChars = Array.from(input?.dataset.trail ?? '')
-    /* 25-31% — "hang on," types out before the pill (the real input
-                 keeps the caret riding at the end of the typed text)
-       33% — mention pill snaps in
-       34-40% — " can you check?" types after the pill (~90ms/char)
-       49% — send fires, everything clears, pill collapses */
-    const preStartPct = 25, preEndPct = 31, mentionInPct = 33, typeStartPct = 34, typeEndPct = 40, clearPct = 49
-    let lastPre = -1
-    let lastChars = -1
-    let focused = false
-    const updateInput = (t) => {
-      if (!input || !editor || !typed) return
-      const pct = (t / cycle) * 100
-      editor.classList.toggle('has-mention', pct >= preStartPct && pct < clearPct)
-      let pre
-      if (pct < preStartPct) pre = 0
-      else if (pct < preEndPct) {
-        const p = (pct - preStartPct) / (preEndPct - preStartPct)
-        pre = Math.floor(p * preChars.length)
-      } else if (pct < clearPct) pre = preChars.length
-      else pre = 0
-      let chars
-      if (pct < typeStartPct) chars = 0
-      else if (pct < typeEndPct) {
-        const p = (pct - typeStartPct) / (typeEndPct - typeStartPct)
-        chars = Math.floor(p * trailChars.length)
-      } else if (pct < clearPct) chars = trailChars.length
-      else chars = 0
-      if (pre !== lastPre) {
-        typed.textContent = preChars.slice(0, pre).join('')
-        lastPre = pre
-      }
-      if (chars !== lastChars) {
-        input.value = trailChars.slice(0, chars).join('')
-        lastChars = chars
-      }
-      /* Focus once on first frame so the browser-drawn caret is visible
-         in the empty input from the start of the loop. Never steal focus
-         from something the visitor is using. */
-      if (!focused && (!document.activeElement || document.activeElement === document.body)) {
-        try { input.focus({ preventScroll: true }) } catch { input.focus() }
-        focused = true
-      }
+    const beat = (name) => ad.querySelector(`[data-beat="${name}"]`).classList.add('is-in')
+    const steps = (n) => ad.querySelectorAll('.ad-steps').forEach((el) => { el.textContent = `${n} step${n === 1 ? '' : 's'}` })
+    const substep = (text) => {
+      const el = $('.ad-substep')
+      el.textContent = text
+      el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick')
     }
-    const tick = (now) => {
-      const t = now - start
-      updateInput(t)
-      if (t < cycle) requestAnimationFrame(tick)
+    const react = (name, count) => {
+      const el = ad.querySelector(`[data-rxn="${name}"]`)
+      el.classList.add('is-in')
+      el.style.setProperty('--n', String(count - 1))
+    }
+    const finish = () => {
+      ad.classList.remove('is-working')
+      ad.classList.add('is-done')
+      $('.ad-trace-title').textContent = 'Session complete'
+      $('.ad-trace-sub').textContent = '4 steps • 34s'
     }
 
-    /* ---- beat-based auto-scroll ----
-       Each beat scrolls the bottom of the latest revealed row into view.
-       If the user has manually scrolled, the auto-scroll backs off. */
-    let userScrolled = false
-    const surrender = () => { userScrolled = true }
-    tlm.addEventListener('wheel', surrender, { passive: true })
-    tlm.addEventListener('touchstart', surrender, { passive: true })
-    tlm.addEventListener('keydown', surrender)
-
-    const scrollToBottom = () => {
-      if (userScrolled) return
-      tlm.scrollTo({ top: tlm.scrollHeight - tlm.clientHeight, behavior: 'smooth' })
+    const typed = $('.composer-typed')
+    const trail = Array.from(typed.dataset.trail)
+    const typeTrail = (i = 0) => {
+      typed.textContent = trail.slice(0, i).join('')
+      if (i < trail.length) setTimeout(() => typeTrail(i + 1), 70 + Math.random() * 60)
     }
 
-    /* Beat times (percent of cycle, +small lag so opacity has resolved). */
-    const beats = [49.5, 51.5, 71.5, 85.5]
+    const script = [
+      [600, () => ad.classList.add('is-drafting')],
+      [1300, () => ad.classList.add('has-mention')],
+      [1700, () => typeTrail()],
+      [3500, () => {
+        ad.classList.remove('is-drafting', 'has-mention')
+        typed.textContent = ''
+        beat('sent')
+      }],
+      [4300, () => { ad.classList.add('is-working'); beat('working') }],
+      [5600, () => { steps(2); substep('Reading memo “Auth refactor held pending token-rotation review”') }],
+      [7200, () => { steps(3); substep('Reading src/auth/rotation.ts') }],
+      [9400, () => { steps(4); substep('Pushing a fix to auth-rotation') }],
+      [11200, () => { finish(); beat('replied') }],
+      [13200, () => react('pray', 1)],
+      [14300, () => react('eyes', 1)],
+      [15100, () => react('pray', 2)],
+    ]
 
-    const play = () => {
-      tl.classList.remove('is-waiting')
-      if (reducedMotion) return
-      start = performance.now()
-      requestAnimationFrame(tick)
-      beats.forEach(p => setTimeout(scrollToBottom, p * cycle / 100))
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      ad.classList.add('is-static')
+      ad.querySelectorAll('[data-beat]').forEach((el) => el.classList.add('is-in'))
+      finish()
+      react('pray', 2)
+      react('eyes', 1)
+      return
     }
-    const io = new IntersectionObserver(entries => {
-      if (!entries.some(e => e.isIntersecting)) return
+
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return
       io.disconnect()
-      play()
-    }, { threshold: 0.35 })
-    io.observe(tl)
+      script.forEach(([at, fn]) => setTimeout(fn, at))
+    }, { threshold: 0.4 })
+    io.observe(ad)
   })()
   </script>
 
