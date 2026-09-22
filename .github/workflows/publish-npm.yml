@@ -5,8 +5,8 @@
 # `id-token: write` lets npm mint the short-lived credential and attach
 # provenance. Run it from the Actions tab with the package name and the version
 # already committed in its package.json. Order for a new version set:
-# bot-runtime-client, remote-session, threa-bot (each depends on the previous
-# by caret range).
+# bot-runtime-client, remote-session, then threa-bot and hermes-remote (each
+# depends on the ones before it by caret range).
 name: Publish npm package
 
 on:
@@ -20,6 +20,7 @@ on:
           - bot-runtime-client
           - remote-session
           - threa-bot
+          - hermes-remote
       dry_run:
         description: Build and pack, but do not publish
         required: false
@@ -58,6 +59,7 @@ jobs:
           bun install --cwd extensions/bot-runtime-client
           bun install --cwd extensions/remote-session
           bun install --cwd extensions/threa-bot
+          bun install --cwd extensions/hermes-remote
 
       - name: Test
         run: |

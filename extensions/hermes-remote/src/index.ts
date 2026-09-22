@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { mkdirSync } from "node:fs"
 import { hostname } from "node:os"
 import { readConfigFile, wireLifecycle } from "@threahq/remote-session"
