@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro"
 import CodeBlock from "../../components/CodeBlock.astro"
+import Message from "../../components/Message.astro"
+import StreamPreview from "../../components/StreamPreview.astro"
 ---
 
 <DocsLayout
@@ -19,11 +21,9 @@ import CodeBlock from "../../components/CodeBlock.astro"
 >
   <h1>Incoming webhooks.</h1>
   <p class="lead">
-    An incoming webhook is a secret URL that posts a message into one channel or
-    scratchpad, as one of your bots. It needs no API key. The URL is the
-    credential. Each hook has two shapes, a native one that takes markdown and a
-    Slack-compatible one that takes a Slack payload, so a tool that can already
-    send to a Slack webhook can send to Threa unchanged.
+    A secret URL that posts into one channel or scratchpad as one of your bots.
+    No API key: the URL is the credential. Tools that already send to Slack
+    webhooks can send here unchanged.
   </p>
 
   <h2 id="create">Create a webhook</h2>
@@ -60,6 +60,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
   -H "Content-Type: application/json" \\
   -d '{"content": "Deploy **v2.4.1** finished. [Run log](https://ci.example.com/42)"}'`}
   />
+  <StreamPreview stream="deploys">
+    <Message author="deploy" time="16:40">
+      <div class="tl-text">Deploy <strong>v2.4.1</strong> finished. <span class="sp-link">Run log</span></div>
+    </Message>
+  </StreamPreview>
   <p>
     Errors come back in the API's usual JSON error shape (see
     <a class="link" href="/developers/operations">Operations</a>). An empty or

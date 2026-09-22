@@ -1,0 +1,19 @@
+---
+/*
+ * What a docs sample produces in Threa: a stream header over <Message> rows.
+ * Decorative, so the markdown mirrors skip it.
+ */
+interface Props {
+  stream: string
+  scratchpad?: boolean
+}
+const { stream, scratchpad = false } = Astro.props
+---
+
+<figure class="stream-preview" data-decorative aria-hidden="true">
+  <div class="sp-head">
+    {!scratchpad && <svg><use href="#icon-hash" /></svg>}
+    <span>{stream}</span>
+  </div>
+  <div class="sp-body"><slot /></div>
+</figure>

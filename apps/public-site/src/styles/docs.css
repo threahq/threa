@@ -428,20 +428,19 @@ a {
 }
 .docs-article h1 {
   font-family: var(--font-display);
-  font-weight: 300;
-  font-size: clamp(30px, 3.4vw, 40px);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  margin: 0 0 16px;
+  font-weight: 800;
+  font-size: clamp(36px, 4.4vw, 54px);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  margin: 0 0 18px;
 }
 .docs-article h2 {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 52px 0 14px;
-  padding-top: 16px;
-  border-top: 1px solid hsl(var(--line));
+  font-weight: 750;
+  font-size: clamp(24px, 2.4vw, 29px);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  margin: 76px 0 12px;
 }
 /* Anchored sections shouldn't land under the sticky nav. */
 .docs-article h2[id],
@@ -450,22 +449,27 @@ a {
 }
 .docs-article h3 {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 16px;
-  margin: 30px 0 10px;
+  font-weight: 750;
+  font-size: 18px;
+  color: hsl(var(--ink));
+  letter-spacing: -0.01em;
+  margin: 36px 0 8px;
 }
+/* Prose holds to a reading measure; code, tables and previews use the full
+   column. */
 .docs-article p,
 .docs-article li {
-  font-size: 15px;
-  line-height: 1.62;
+  font-size: 15.5px;
+  line-height: 1.65;
   color: hsl(var(--ink-soft));
+  max-width: 64ch;
 }
 .docs-article .lead {
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: 19px;
+  line-height: 1.5;
   color: hsl(var(--ink));
-  max-width: none;
-  margin: 0 0 28px;
+  max-width: 34em;
+  margin: 0 0 36px;
 }
 .docs-article ul,
 .docs-article ol {
@@ -481,10 +485,9 @@ a {
 }
 .docs-article code:not(.pg-pre code) {
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  background: hsl(var(--paper-warm));
-  border: 1px solid hsl(var(--line));
-  border-radius: 3px;
+  font-size: 0.84em;
+  background: hsl(var(--ink) / 0.055);
+  border-radius: 4px;
   padding: 1px 5px;
 }
 .docs-article strong {
@@ -494,26 +497,84 @@ a {
 
 /* ---------- CALLOUT ---------- */
 .note {
-  margin: 22px 0;
-  padding: 14px 16px;
+  margin: 26px 0;
+  padding: 14px 18px;
+  max-width: 64ch;
   background: hsl(var(--paper));
-  border: 1px solid hsl(var(--line));
   border-left: 3px solid hsl(var(--gold));
-  border-radius: 0 5px 5px 0;
-  font-size: 14px;
-  line-height: 1.55;
+  border-radius: 0 8px 8px 0;
+  font-size: 14.5px;
+  line-height: 1.6;
   color: hsl(var(--ink-soft));
 }
 .note strong {
   display: block;
-  margin-bottom: 3px;
-  font-size: 13.5px;
-  font-weight: 600;
+  margin-bottom: 2px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
   color: hsl(var(--ink));
-  font-family: var(--font-mono);
 }
 .note.warn {
   border-left-color: hsl(8 60% 52%);
+}
+
+/* ---------- FACT ROWS ---------- */
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 10px 28px;
+  margin: 18px 0 0;
+  font-size: 15px;
+}
+.facts dt {
+  color: hsl(var(--muted));
+}
+.facts dd {
+  margin: 0;
+  color: hsl(var(--ink));
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- STREAM PREVIEW ----------
+   What a sample produces in the app (components/StreamPreview.astro). Sits
+   directly under the code block that causes it. */
+.stream-preview {
+  margin: 0 0 36px;
+  padding: 0 0 10px;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 8px;
+}
+.pg-block + .stream-preview {
+  margin-top: -20px;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+.sp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--muted));
+}
+.sp-head svg {
+  width: 14px;
+  height: 14px;
+}
+.sp-link {
+  color: hsl(var(--gold-dim));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pg-block:has(+ .stream-preview) {
+  border-radius: 6px 6px 0 0;
+}
+.pg-block:has(+ .stream-preview) .pg-pre:last-child {
+  border-radius: 0;
 }
 
 /* ---------- CODE BLOCK + VARIABLE CHIPS ---------- */
@@ -851,8 +912,7 @@ a {
 }
 .keytype h3 {
   margin: 0 0 4px;
-  font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 17px;
 }
 .keytype .prefix {
   font-family: var(--font-mono);
@@ -908,12 +968,12 @@ a {
   height: 28px;
   display: grid;
   place-items: center;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--gold) / 0.5);
-  color: hsl(var(--gold-dim));
+  background: hsl(var(--gold));
+  color: hsl(var(--paper));
   border-radius: 999px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 14px;
 }
 .steps > li h3 {
   margin: 0 0 6px;
@@ -1339,15 +1399,16 @@ a {
     padding: 26px 22px 40px;
     background: hsl(var(--paper));
     border-right: 1px solid hsl(var(--line));
-    box-shadow: 0 0 60px -18px hsl(28 30% 22% / 0.5);
     transform: translateX(-100%);
     transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   }
   body.docs-nav-open {
     overflow: hidden;
   }
+  /* Shadow only while open: a closed drawer's blur bleeds past the left edge. */
   body.docs-nav-open .docs-side {
     transform: translateX(0);
+    box-shadow: 0 0 60px -18px hsl(28 30% 22% / 0.5);
   }
 
   .docs-side-backdrop {
@@ -1394,6 +1455,9 @@ a {
   }
   .keytype-grid {
     grid-template-columns: 1fr;
+  }
+  .steps > li {
+    padding-left: 30px;
   }
 
   /* Stack the footer: brand over links, both left-aligned. space-between +

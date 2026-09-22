@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro"
 import CodeBlock from "../../components/CodeBlock.astro"
+import Message from "../../components/Message.astro"
+import StreamPreview from "../../components/StreamPreview.astro"
 ---
 
 <DocsLayout
@@ -18,9 +20,8 @@ import CodeBlock from "../../components/CodeBlock.astro"
 >
   <h1>Worked examples.</h1>
   <p class="lead">
-    Each one is a real task. Set your credentials in the panel (top right) and the
-    runnable samples work as you read. The last wires a local agent into your
-    workspace, the way the Pi extension does.
+    Real tasks, start to finish. With Credentials set, the runnable samples work
+    as you read.
   </p>
 
   <h2 id="decisions">Find out what was decided, and why</h2>
@@ -81,6 +82,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
     "clientMessageId": "ci-deploy-2.4.1"
   }'`}
   />
+  <StreamPreview stream="deploys">
+    <Message author="deploy" time="16:40">
+      <div class="tl-text"><strong>Deploy:</strong> v2.4.1 shipped to production. 🚀</div>
+    </Message>
+  </StreamPreview>
 
   <h2 id="mirror-search">Mirror a search into your own tool</h2>
   <p>
@@ -134,6 +140,14 @@ npx @threahq/bot connect
 # message on stdin, reply from stdout
 npx @threahq/bot run -- my-agent`}
   />
+  <StreamPreview stream="my-project" scratchpad>
+    <Message author="maya" time="09:15">
+      <div class="tl-text">What changed in the billing module this week?</div>
+    </Message>
+    <Message author="my-agent" time="09:15">
+      <div class="tl-text">Two PRs: proration moved to the invoice service, and failed renewals now retry three times before emailing.</div>
+    </Message>
+  </StreamPreview>
   <p>
     <code>run</code> links a scratchpad for the directory you start it in and
     prints its URL. Every message there runs your command once; what it prints to
