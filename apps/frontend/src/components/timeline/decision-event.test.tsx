@@ -204,6 +204,7 @@ describe("DecisionEvent", () => {
     expect(document.activeElement).toBe(pressed)
     expect(pressed).toHaveAttribute("aria-disabled", "true")
     expect(pressed).toHaveAttribute("aria-live", "polite")
+    expect(pressed).toHaveAccessibleName("Chosen: Force-push")
     expect(screen.queryByRole("button", { name: "Abort" })).not.toBeInTheDocument()
   })
 

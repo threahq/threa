@@ -311,6 +311,8 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
                       {!open && !pendingOptionId && (
                         <OutcomeIcon className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
                       )}
+                      {!open && <span className="sr-only">Chosen:</span>}
+                      {!open && " "}
                       {labelFor(option)}
                     </Button>
                   ))}
