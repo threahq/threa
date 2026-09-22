@@ -1,5 +1,6 @@
 import { describe, it, expect, mock, spyOn } from "bun:test"
 import { z } from "zod"
+import { tool } from "ai"
 import {
   parseModelId,
   createAI,
@@ -350,6 +351,209 @@ describe("generation reasoning and usage", () => {
         context: { workspaceId: "ws_1" },
       })
       expect(recorded[0]?.latencyMs).toBeGreaterThanOrEqual(20)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
+describe("GPT-6 Luna Responses", () => {
+  const modelString = "openrouter:openai/gpt-6-luna"
+  const usage = {
+    input_tokens: 21,
+    output_tokens: 9,
+    total_tokens: 30,
+    input_tokens_details: { cached_tokens: 4 },
+    output_tokens_details: { reasoning_tokens: 3 },
+    cost: 0.000042,
+  }
+  function reply(output: unknown[], reportedUsage: Record<string, unknown> = usage) {
+    return new Response(
+      JSON.stringify({
+        id: "resp_test",
+        created_at: 1730000000,
+        model: "openai/gpt-6-luna",
+        status: "completed",
+        output,
+        usage: reportedUsage,
+      }),
+      { headers: { "content-type": "application/json" } }
+    )
+  }
+  const text = (value: string) => ({
+    type: "message",
+    id: "msg_test",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text: value, annotations: [] }],
+  })
+
+  it("should use Chat Completions for tool-free calls and preserve usage after admission and disclosure", async () => {
+    const requests: Array<{ path: string; body: any }> = []
+    const events: string[] = []
+    const recordUsage = mock(async (params: any) => {
+      events.push("record")
+      expect(params.usage).toEqual({
+        promptTokens: 21,
+        completionTokens: 9,
+        totalTokens: 30,
+        cachedPromptTokens: 4,
+        reasoningTokens: 3,
+        cost: 0.000042,
+      })
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: any, init: any) => {
+      requests.push({ path: String(input), body: JSON.parse(init.body) })
+      events.push("fetch")
+      return new Response(
+        JSON.stringify({
+          id: "gen_test",
+          choices: [{ index: 0, message: { role: "assistant", content: "hello" }, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: 21,
+            completion_tokens: 9,
+            total_tokens: 30,
+            cost: 0.000042,
+            prompt_tokens_details: { cached_tokens: 4 },
+            completion_tokens_details: { reasoning_tokens: 3 },
+          },
+        }),
+        { headers: { "content-type": "application/json" } }
+      )
+    }) as typeof fetch)
+    try {
+      const ai = createAI({
+        openrouter: { apiKey: "test-key" },
+        costRecorder: { recordUsage },
+        spendGate: {
+          admit: async () => {
+            events.push("admit")
+            return { allowed: true }
+          },
+        },
+        accessLogSink: {
+          record: () => {
+            events.push("disclose")
+          },
+        },
+      })
+      const result = await ai.generateText({
+        model: modelString,
+        messages: [{ role: "user", content: "hi" }],
+        context: { workspaceId: "ws_1" },
+      })
+      await ai.generateText({ model: "openrouter:openai/gpt-5-mini", messages: [{ role: "user", content: "hi" }] })
+      expect({ value: result.value, usage: result.usage, events, paths: requests.map((r) => r.path) }).toEqual({
+        value: "hello",
+        usage: {
+          promptTokens: 21,
+          completionTokens: 9,
+          totalTokens: 30,
+          cachedPromptTokens: 4,
+          reasoningTokens: 3,
+          cost: 0.000042,
+        },
+        events: ["admit", "disclose", "fetch", "record", "disclose", "fetch"],
+        paths: ["https://openrouter.ai/api/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"],
+      })
+      expect(requests.map((r) => ({ model: r.body.model, store: r.body.store, reasoning: r.body.reasoning }))).toEqual([
+        { model: "openai/gpt-6-luna", store: undefined, reasoning: undefined },
+        { model: "openai/gpt-5-mini", store: undefined, reasoning: undefined },
+      ])
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("should send full two-step tool history without a server response pointer", async () => {
+    const bodies: any[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_input: any, init: any) => {
+      bodies.push(JSON.parse(init.body))
+      return bodies.length === 1
+        ? reply([
+            {
+              type: "function_call",
+              id: "fc_1",
+              call_id: "call_1",
+              name: "lookup",
+              arguments: '{"query":"x"}',
+              status: "completed",
+            },
+          ])
+        : reply([text("found")])
+    }) as typeof fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" } })
+      const model = ai.getLanguageModel(modelString)
+      await expect(
+        ai.generateTextWithTools({ model, messages: [{ role: "user", content: "find x" }] })
+      ).rejects.toThrow("require modelString")
+      const tools = { lookup: tool({ inputSchema: z.object({ query: z.string() }), execute: async () => "result x" }) }
+      const first = await ai.generateTextWithTools({
+        model,
+        modelString,
+        messages: [{ role: "user", content: "find x" }],
+        tools,
+      })
+      const second = await ai.generateTextWithTools({
+        model,
+        modelString,
+        messages: [{ role: "user", content: "find x" }, ...first.response.messages],
+        tools,
+      })
+      expect({ calls: first.toolCalls, answer: second.text, bodies }).toEqual({
+        calls: [{ toolCallId: "call_1", toolName: "lookup", input: { query: "x" } }],
+        answer: "found",
+        bodies: [
+          expect.objectContaining({ store: false, tools: [expect.objectContaining({ name: "lookup" })] }),
+          expect.objectContaining({
+            store: false,
+            input: expect.arrayContaining([
+              expect.objectContaining({ type: "function_call", call_id: "call_1" }),
+              expect.objectContaining({ type: "function_call_output", call_id: "call_1" }),
+            ]),
+          }),
+        ],
+      })
+      expect({ first: first.usage, second: second.usage }).toEqual({
+        first: {
+          promptTokens: 21,
+          completionTokens: 9,
+          totalTokens: 30,
+          cachedPromptTokens: 4,
+          reasoningTokens: 3,
+          cost: 0.000042,
+        },
+        second: {
+          promptTokens: 21,
+          completionTokens: 9,
+          totalTokens: 30,
+          cachedPromptTokens: 4,
+          reasoningTokens: 3,
+          cost: 0.000042,
+        },
+      })
+      expect(bodies[1]).not.toHaveProperty("previous_response_id")
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("should fail a Responses tool call rather than record missing cost", async () => {
+    const recordUsage = mock(async () => {})
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_input: any, _init: any) =>
+      reply([text("ok")], { ...usage, cost: undefined })) as typeof fetch)
+    try {
+      const ai = createAI({ openrouter: { apiKey: "test-key" }, costRecorder: { recordUsage } })
+      await expect(
+        ai.generateTextWithTools({
+          model: ai.getLanguageModel(modelString),
+          modelString,
+          messages: [{ role: "user", content: "hi" }],
+          context: { workspaceId: "ws_1" },
+        })
+      ).rejects.toThrow("exact usage.cost")
+      expect(recordUsage).not.toHaveBeenCalled()
     } finally {
       fetchSpy.mockRestore()
     }
