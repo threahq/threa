@@ -83,6 +83,14 @@ export const SUBAGENT_MODEL_CATALOG: readonly SubagentModelCatalogEntry[] = [
     defaultEnabled: false,
   },
   {
+    id: "openrouter:openai/gpt-6-luna",
+    label: "GPT-6 Luna",
+    tier: "standard",
+    inputPricePerMTok: 0.1,
+    outputPricePerMTok: 0.5,
+    defaultEnabled: false,
+  },
+  {
     id: "openrouter:openai/gpt-5.6-luna",
     label: "GPT-5.6 Luna",
     tier: "standard",

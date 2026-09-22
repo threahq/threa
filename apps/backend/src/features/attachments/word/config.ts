@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { TEXT_SIZE_TIERS, INJECTION_STRATEGIES } from "@threahq/types"
 
-export const WORD_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const WORD_SUMMARY_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 export const WORD_SUMMARY_TEMPERATURE = 0.3
 

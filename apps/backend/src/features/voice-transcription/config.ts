@@ -94,7 +94,7 @@ export interface VoicePolishConfig {
 // deadline bounds the user-visible wait after mic stop; it sits at the eval cap
 // because measured long-take latency is heavy-tailed.
 export const voicePolishConfig: VoicePolishConfig = {
-  model: "openrouter:openai/gpt-5.6-luna",
+  model: "openrouter:openai/gpt-6-luna",
   liveTimeoutMs: 6500,
   finalTimeoutMs: 8000,
   maxTokens: 2048,

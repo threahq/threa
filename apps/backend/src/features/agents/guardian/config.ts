@@ -3,7 +3,7 @@
 import { z } from "zod"
 import { DELEGATION_BRIEF_MAX_CHARS } from "@threahq/types"
 
-export const TOOL_GUARDIAN_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const TOOL_GUARDIAN_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 /** Low temperature: this is a classification, not a composition. */
 export const TOOL_GUARDIAN_TEMPERATURE = 0.1

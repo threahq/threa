@@ -18,7 +18,7 @@ describe("SearchQueryExpander", () => {
     expect(variants).toEqual(["Deploy pipeline broke", "railway build failed"])
     expect(generateObject).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "openrouter:openai/gpt-5.6-luna",
+        model: "openrouter:openai/gpt-6-luna",
         telemetry: expect.objectContaining({ functionId: "search-expand" }),
       })
     )

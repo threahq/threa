@@ -16,7 +16,7 @@
  * resolved model, the enclave forwards the assignment's — so this only applies
  * where there is no calling turn to inherit from.
  */
-export const GENERAL_RESEARCH_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const GENERAL_RESEARCH_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 /** Slightly above the workspace planner's 0.1 — research benefits from a little exploration. */
 export const GENERAL_RESEARCH_TEMPERATURE = 0.3
