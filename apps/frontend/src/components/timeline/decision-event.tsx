@@ -206,7 +206,9 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   let shownOptions = open ? decision.options : decision.options.filter((option) => option.id === resolution?.optionId)
   if (unreadable) shownOptions = []
 
-  const showFooter = open ? shownOptions.length > 0 || (decision.allowNote && !unreadable) : true
+  const showFooter = open
+    ? shownOptions.length > 0 || (decision.allowNote && !unreadable)
+    : shownOptions.length > 0 || Boolean(terminalLine || deciderName || decidedAgo || shownNote)
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
