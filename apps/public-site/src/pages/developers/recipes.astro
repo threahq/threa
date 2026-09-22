@@ -116,6 +116,40 @@ import CodeBlock from "../../components/CodeBlock.astro"
     The Pi remote extension implements this in full.
   </p>
 
+  <h3>The short path: two commands</h3>
+  <p>
+    If your agent is a command that reads a prompt and prints an answer, you
+    don't create anything by hand. <code>connect</code> prints a URL and a code.
+    Open it in a browser where you're signed in to Threa, pick a workspace, name
+    the bot, and confirm. Threa creates the bot and its key, and the key lands in
+    <code>~/.threa/bot.json</code> on the machine that asked. The key never
+    passes through your clipboard.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="Connect and run"
+    code={`# once per machine: approve in a browser
+npx @threahq/bot connect
+
+# message on stdin, reply from stdout
+npx @threahq/bot run -- my-agent`}
+  />
+  <p>
+    <code>run</code> links a scratchpad for the directory you start it in and
+    prints its URL. Every message there runs your command once; what it prints to
+    stdout is the reply, and stderr lines show up as trace steps while it works.
+    Add <code>--mention</code> and the command runs whenever someone
+    <code>@mentions</code> the bot in any stream instead. The browser you approve
+    in doesn't have to be on the same machine, so this works over SSH. To take
+    the access back, archive the bot or revoke its key in Workspace settings.
+  </p>
+
+  <h3>Writing your own runtime</h3>
+  <p>
+    Write one when a command on stdin and stdout isn't enough. The rest of this
+    recipe is the protocol those two commands speak.
+  </p>
+
   <h3>1 · Create a bot and a bot key</h3>
   <p>
     In the app, create a bot (give it the <code>mentionable</code> trait so people
@@ -219,10 +253,7 @@ async function loop() {
     on top, including <code>/steer</code>, <code>/stop</code>, and session-control
     commands like <code>/model</code>. Both ship a runnable example. Pi and the
     Claude Code channel are built on the same packages
-    (<code>extensions/</code> in the repo). If your agent is a command that
-    reads a prompt and prints an answer, skip all of this:
-    <code>npx @threahq/bot connect</code> creates the bot and key from your
-    browser, and <code>npx @threahq/bot run -- your-command</code> runs it.
+    (<code>extensions/</code> in the repo).
   </div>
   <p>
     With those read and search scopes, the bot can look through stream history,
