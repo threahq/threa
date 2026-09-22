@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { linkPreviewsApi } from "@/api"
 import * as contextsModule from "@/contexts"
+import { __resetCollapseCacheForTests } from "@/lib/markdown/collapse-cache"
 import { LinkPreviewList } from "./link-preview-list"
 import type { LinkPreviewSummary } from "@threahq/types"
 
@@ -36,6 +38,7 @@ describe("LinkPreviewList", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    __resetCollapseCacheForTests()
     mockGetForMessage.mockReset()
     mockDismiss.mockReset()
     mockDismiss.mockResolvedValue(undefined)
@@ -82,5 +85,64 @@ describe("LinkPreviewList", () => {
     renderList([messagePreview])
 
     await waitFor(() => expect(screen.getByText("This message was deleted")).toBeInTheDocument())
+  })
+
+  const second: LinkPreviewSummary = {
+    ...preview,
+    id: "preview_2",
+    url: "https://example.org/other",
+    title: "Second title",
+    description: "Second description",
+  }
+
+  it("opens a lone preview as a full card", () => {
+    renderList([preview])
+
+    expect(screen.getByText("Preview description")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Collapse preview" })).toBeInTheDocument()
+  })
+
+  it("folds previews to one-line chips when a message has two or more", () => {
+    renderList([preview, second])
+
+    expect(screen.queryByText("Preview description")).not.toBeInTheDocument()
+    expect(screen.queryByText("Second description")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Preview title" })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("button", { name: "Second title" })).toHaveAttribute("aria-expanded", "false")
+  })
+
+  it("folds a lone preview when the preference says collapsed", () => {
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: { linkPreviewDefault: "collapsed" },
+    } as ReturnType<typeof contextsModule.usePreferences>)
+    renderList([preview])
+
+    expect(screen.queryByText("Preview description")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Preview title" })).toBeInTheDocument()
+  })
+
+  it("keeps an opened chip open across a remount", async () => {
+    const user = userEvent.setup()
+    const { unmount } = renderList([preview, second])
+
+    await user.click(screen.getByRole("button", { name: "Preview title" }))
+    expect(screen.getByText("Preview description")).toBeInTheDocument()
+    expect(screen.queryByText("Second description")).not.toBeInTheDocument()
+
+    unmount()
+    renderList([preview, second])
+
+    expect(screen.getByText("Preview description")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Second title" })).toHaveAttribute("aria-expanded", "false")
+  })
+
+  it("shows every chip without the three-preview cap", () => {
+    const many = [0, 1, 2, 3, 4].map((i) => ({ ...preview, id: `p_${i}`, title: `Title ${i}` }))
+    const { container } = renderList(many)
+
+    for (let i = 0; i < 5; i++) {
+      expect(within(container).getByRole("button", { name: `Title ${i}` })).toBeInTheDocument()
+    }
+    expect(screen.queryByText(/more preview/)).not.toBeInTheDocument()
   })
 })

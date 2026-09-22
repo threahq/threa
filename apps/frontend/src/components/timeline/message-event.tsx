@@ -591,44 +591,52 @@ function MessageLayout({
   const messageBody = children ?? (
     <LinkPreviewProvider>
       <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? []}>
-        <div ref={copyRef}>
-          <MarkdownBlockProvider messageId={payload.messageId}>
-            <CollapsibleBody
-              kind="message"
-              content={payload.contentMarkdown}
-              collapseAtHeight={messageCollapse.collapseAtHeight}
-              collapseToHeight={messageCollapse.collapseToHeight}
-              defaultCollapsed={messageCollapse.enabled}
-            >
+        <MarkdownBlockProvider messageId={payload.messageId}>
+          <CollapsibleBody
+            kind="message"
+            content={payload.contentMarkdown}
+            collapseAtHeight={messageCollapse.collapseAtHeight}
+            collapseToHeight={messageCollapse.collapseToHeight}
+            defaultCollapsed={messageCollapse.enabled}
+            trailing={
+              <>
+                {attachmentRefs && attachmentRefs.length > 0 ? (
+                  // E2E attachments: the server rows are opaque placeholders (no
+                  // thumbnails/metadata), so render from the decrypted refs — fetch the
+                  // ciphertext and decrypt on view — instead of the normal list.
+                  <E2eAttachmentList
+                    workspaceId={workspaceId}
+                    refs={attachmentRefs}
+                    attachments={payload.attachments}
+                  />
+                ) : (
+                  payload.attachments &&
+                  payload.attachments.length > 0 && (
+                    <AttachmentList
+                      attachments={payload.attachments}
+                      workspaceId={workspaceId}
+                      deferHydration={deferSecondaryHydration}
+                    />
+                  )
+                )}
+                {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
+                {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
+                <MessageLinkPreviews
+                  messageId={payload.messageId}
+                  workspaceId={workspaceId}
+                  previews={payload.linkPreviews}
+                  hydrateFromApi={!deferSecondaryHydration}
+                />
+                <MemoPreviewList contentMarkdown={payload.contentMarkdown} memoEmbeds={payload.memoEmbeds} />
+                <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
+              </>
+            }
+          >
+            <div ref={copyRef}>
               <MarkdownContent content={payload.contentMarkdown} className="text-sm leading-relaxed" />
-            </CollapsibleBody>
-          </MarkdownBlockProvider>
-        </div>
-        {attachmentRefs && attachmentRefs.length > 0 ? (
-          // E2E attachments: the server rows are opaque placeholders (no
-          // thumbnails/metadata), so render from the decrypted refs — fetch the
-          // ciphertext and decrypt on view — instead of the normal list.
-          <E2eAttachmentList workspaceId={workspaceId} refs={attachmentRefs} attachments={payload.attachments} />
-        ) : (
-          payload.attachments &&
-          payload.attachments.length > 0 && (
-            <AttachmentList
-              attachments={payload.attachments}
-              workspaceId={workspaceId}
-              deferHydration={deferSecondaryHydration}
-            />
-          )
-        )}
-        {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
-        {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
-        <MessageLinkPreviews
-          messageId={payload.messageId}
-          workspaceId={workspaceId}
-          previews={payload.linkPreviews}
-          hydrateFromApi={!deferSecondaryHydration}
-        />
-        <MemoPreviewList contentMarkdown={payload.contentMarkdown} memoEmbeds={payload.memoEmbeds} />
-        <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
+            </div>
+          </CollapsibleBody>
+        </MarkdownBlockProvider>
       </AttachmentProvider>
     </LinkPreviewProvider>
   )

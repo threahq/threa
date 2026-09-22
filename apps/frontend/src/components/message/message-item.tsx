@@ -662,32 +662,34 @@ export function MessageItem({
   )
 
   const richBody = (
-    <>
-      <MarkdownBlockProvider messageId={message.id}>
-        <CollapsibleBody
-          kind="message"
-          content={message.contentMarkdown}
-          collapseAtHeight={messageCollapse.collapseAtHeight}
-          collapseToHeight={messageCollapse.collapseToHeight}
-          defaultCollapsed={messageCollapse.enabled}
-        >
-          <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
-        </CollapsibleBody>
-      </MarkdownBlockProvider>
-      {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
-      {linkPreviews.length > 0 && (
-        <LinkPreviewList
-          messageId={message.id}
-          workspaceId={workspaceId}
-          previews={linkPreviews}
-          hydrateFromApi={false}
-        />
-      )}
-      {/* Giphy embeds are parsed from the markdown; memo cards take their
-          content from the message the same way the timeline does. */}
-      <MemoPreviewList contentMarkdown={message.contentMarkdown} memoEmbeds={message.memoEmbeds} />
-      <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
-    </>
+    <MarkdownBlockProvider messageId={message.id}>
+      <CollapsibleBody
+        kind="message"
+        content={message.contentMarkdown}
+        collapseAtHeight={messageCollapse.collapseAtHeight}
+        collapseToHeight={messageCollapse.collapseToHeight}
+        defaultCollapsed={messageCollapse.enabled}
+        trailing={
+          <>
+            {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
+            {linkPreviews.length > 0 && (
+              <LinkPreviewList
+                messageId={message.id}
+                workspaceId={workspaceId}
+                previews={linkPreviews}
+                hydrateFromApi={false}
+              />
+            )}
+            {/* Giphy embeds are parsed from the markdown; memo cards take their
+                content from the message the same way the timeline does. */}
+            <MemoPreviewList contentMarkdown={message.contentMarkdown} memoEmbeds={message.memoEmbeds} />
+            <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
+          </>
+        }
+      >
+        <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
+      </CollapsibleBody>
+    </MarkdownBlockProvider>
   )
   // The body renders real message content (mentions, attachments, link previews),
   // so it gets the same markdown context wrappers the timeline uses. Attachments

@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
   DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
-import { InsideCollapsibleBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
+import { InsideCollapsibleBlockProvider, MarkdownBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
 
 interface CollapsibleBodyProps {
   /** The block-collapse kind — its own `messageId`-scoped fold key + hash space. */
@@ -26,6 +26,13 @@ interface CollapsibleBodyProps {
   defaultCollapsed?: boolean
   /** The rendered body (a `MarkdownContent`) measured and clamped when folded. */
   children: ReactNode
+  /**
+   * Rendered under the body and folded with it (attachments, link previews), so
+   * a folded message hides them instead of leaving them below the fade. Kept out
+   * of the message's block scope: markdown inside a preview never gets fold
+   * chrome keyed to the host message.
+   */
+  trailing?: ReactNode
 }
 
 // The collapsed body fades out its own bottom edge via a mask (the content goes
@@ -54,6 +61,7 @@ export function CollapsibleBody({
   collapseToHeight,
   defaultCollapsed = true,
   children,
+  trailing,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const { lineCount, lineHeightPx, heightPx } = useMeasuredLineCount(bodyRef, [content])
@@ -88,6 +96,7 @@ export function CollapsibleBody({
           }
         >
           {children}
+          {trailing && <MarkdownBlockProvider messageId={null}>{trailing}</MarkdownBlockProvider>}
         </div>
       </InsideCollapsibleBlockProvider>
       {canToggle && (
@@ -105,9 +114,9 @@ export function CollapsibleBody({
           )}
         >
           {collapsed ? (
-            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          ) : (
             <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          ) : (
+            <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
           )}
           {collapsed ? "Show more" : "Collapse"}
         </button>
