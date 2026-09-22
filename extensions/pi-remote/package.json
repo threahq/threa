@@ -1,17 +1,36 @@
 {
-  "name": "@threahq/pi-remote-extension",
-  "private": true,
-  "type": "module",
+  "name": "@threahq/pi-remote",
+  "version": "0.1.0",
+  "description": "A Pi extension that links a local Pi session to a Threa scratchpad, so you can drive Pi from Threa.",
   "keywords": [
-    "pi-package"
+    "pi-package",
+    "threa",
+    "pi",
+    "agent"
   ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/pi-remote"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@threahq/bot-runtime-client": "file:../bot-runtime-client",
     "@threahq/harness-client": "file:../harness-client",
     "socket.io-client": "^4.8.1"
   },
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "pi": {
     "extensions": [

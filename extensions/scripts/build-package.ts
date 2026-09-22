@@ -38,7 +38,8 @@ function run(cmd: string, args: string[]): void {
   }
 }
 
-// A package without `main` is only its bins: no library bundle, no declarations.
+// A package without `main` is only its bins or Pi extensions: no library
+// bundle, no declarations.
 const library = pkg.main !== undefined
 
 // One ESM bundle of this package's own source; every dependency stays external
@@ -83,6 +84,24 @@ for (const [name, source] of Object.entries((pkg.bin ?? {}) as Record<string, st
   ])
   bins[name] = `./${out}`
 }
+// Pi loads each `pi.extensions` entry into its own node process, so the entry
+// ships as one bundle beside the package root.
+const piExtensions = ((pkg.pi?.extensions ?? []) as string[]).map((source) => {
+  const out = `${basename(source).replace(/\.ts$/, "")}.js`
+  run("bun", [
+    "build",
+    source,
+    "--outfile",
+    join(dist, out),
+    "--target",
+    "node",
+    "--format",
+    "esm",
+    "--packages",
+    "external",
+  ])
+  return `./${out}`
+})
 if (library) run(join(repoRoot, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.build.json"])
 
 // Source imports are extensionless (Bun and `moduleResolution: bundler` accept
@@ -127,13 +146,14 @@ const manifest = {
     ? { ".": { types: "./index.d.ts", import: "./index.js" }, "./package.json": "./package.json" }
     : { "./package.json": "./package.json" },
   bin: Object.keys(bins).length > 0 ? bins : undefined,
+  pi: pkg.pi ? { ...pkg.pi, extensions: piExtensions } : undefined,
   engines: pkg.engines,
   os: pkg.os,
   dependencies: publishedDeps(pkg.dependencies),
   peerDependencies: pkg.peerDependencies,
   publishConfig: { access: "public" },
 }
-const OPTIONAL = new Set(["dependencies", "peerDependencies", "bin", "os", ...(library ? [] : ["main", "types"])])
+const OPTIONAL = new Set(["dependencies", "peerDependencies", "bin", "pi", "os", ...(library ? [] : ["main", "types"])])
 for (const [key, value] of Object.entries(manifest)) {
   if (value !== undefined) continue
   if (!OPTIONAL.has(key)) throw new Error(`${pkg.name}: package.json is missing "${key}"`)

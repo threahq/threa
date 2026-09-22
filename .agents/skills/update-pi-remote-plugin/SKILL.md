@@ -11,11 +11,7 @@ The canonical Threa Pi remote adapter currently lives at:
 - tests: `extensions/pi-remote/src/threa-remote.test.ts`
 - package manifest: `extensions/pi-remote/package.json`
 
-The local install target for real use is typically a package directory:
-
-- `~/.pi/agent/extensions/threa-remote/`
-
-Do not edit the installed copy first. Update the repo copy, verify it, then copy the package directory/install dependencies/reload locally if requested.
+Users install the published package with `pi install npm:@threahq/pi-remote`. Do not edit an installed copy. Update the repo copy, verify it, then load the checkout into Pi if requested.
 
 ## Required context
 
@@ -72,10 +68,9 @@ If you changed backend API contracts, also run the relevant backend tests and/or
 Optional local smoke check when Pi is available:
 
 ```bash
-rm -f ~/.pi/agent/extensions/threa-remote.ts
-rm -rf ~/.pi/agent/extensions/threa-remote
-mkdir -p ~/.pi/agent/extensions/threa-remote
-cp -R extensions/pi-remote/. ~/.pi/agent/extensions/threa-remote/
-cd ~/.pi/agent/extensions/threa-remote && npm install
+(cd extensions/pi-remote && bun install)
+pi install "$PWD/extensions/pi-remote"
 # In Pi: /reload, then /remote-control status or /remote-control
 ```
+
+Remove any `npm:@threahq/pi-remote` install or old `~/.pi/agent/extensions/threa-remote` copy first so only one copy loads.
