@@ -84,6 +84,7 @@ import {
   annotateAuthorGroups,
   annotateConversationRows,
   annotateConversationRevivals,
+  splitAuthorRunsByConversation,
   injectGapItems,
   injectDayDividers,
   itemDayStartMs,
@@ -987,6 +988,7 @@ export function StreamContent({
         // so nothing reads as a revival there).
         if (supportsConversationOverlay) {
           items = annotateConversationRevivals(items, conversationIdByMessageId, conversationsById, settlingMessageIds)
+          items = splitAuthorRunsByConversation(items, conversationIdByMessageId, conversationsById, settlingMessageIds)
         }
         return injectGapItems(items, holes)
       }),
