@@ -966,7 +966,7 @@ body {
   position: relative;
 }
 .stop.is-kept {
-  --dot-y: 26px;
+  --dot-y: 50%;
 }
 .stop:not(:first-child)::before,
 .stop:not(:last-child)::after {
@@ -1006,6 +1006,8 @@ body {
   z-index: 1;
 }
 .stop.is-kept > .memory-card::before {
+  /* Positioned from the padding box, inside the card's 2px gold left border. */
+  left: calc(var(--rail-x) - 44px - 7px - 2px);
   background: hsl(var(--gold));
 }
 .stop-date {
