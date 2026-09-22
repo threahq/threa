@@ -2,6 +2,7 @@
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
+import Message from "../components/Message.astro"
 import { apiBase, loginUrl } from "../lib/config"
 
 // URLs derive from astro.config.mjs's site so the @id cross-reference always
@@ -57,154 +58,34 @@ const schema = [
           </div>
         </div>
         <div class="hero-right" data-decorative>
-          <div class="tl">
-            <div class="tl-caption">
-              <span class="hash">#api-v3</span>
-              <span class="meta">Friday</span>
-            </div>
-
-            <!-- Top-anchored message list — messages stack downward and the
-                 composer (positioned absolutely below) overlays the bottom,
-                 so the latest message slides UNDER the composer. The
-                 inline pin-scroll script keeps the bottom in view as new
-                 rows expand. -->
-            <div class="tl-messages">
-
-            <!-- 1: Maya raises the question (static, already in the channel) -->
-            <div class="tl-row">
-              <div class="tl-avatar av-maya">MR</div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Maya Reyes</span>
-                  <span class="tl-time" data-time="maya">Friday 14:03</span>
-                </div>
-                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+          <ol class="thread" aria-label="A decision made on March 12, kept as a memo, and answered on May 7">
+            <li class="stop is-then">
+              <p class="stop-head"><time class="stop-date" datetime="2026-03-12">Mar 12</time><span class="stop-where">#api-v3</span></p>
+              <Message author="jordan" time="11:42">
+                <div class="tl-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</div>
+              </Message>
+              <Message author="maya" time="11:44">
+                <div class="tl-text">Fair. Let's hold v3 until you've walked us through it.</div>
+              </Message>
+            </li>
+            <li class="stop is-kept">
+              <div class="memory-card decision-memo">
+                <div class="dm-kicker"><span class="dot"></span> Decision</div>
+                <div class="dm-title">Auth refactor held pending token-rotation review.</div>
+                <div class="dm-body">Migrating live sessions would force everyone to sign in again. Jordan walks through the rotation flow first.</div>
+                <div class="dm-source">Kept from 3 messages in <span class="ref-pill">#api-v3</span></div>
               </div>
-            </div>
-
-            <!-- 2: Jordan recalls vaguely — enters at 19% with a 2s gold flash -->
-            <div class="tl-row pop-jordan">
-              <div class="tl-avatar av-jordan">JL</div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Jordan Lee</span>
-                  <span class="tl-time" data-time="jordan">Friday 14:04</span>
-                </div>
-                <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
-              </div>
-            </div>
-
-            <!-- 3: Alex's message — sent from the composer below. Row
-                 enters at 49% at the same moment the composer clears. -->
-            <div class="tl-row pop-alex">
-              <div class="tl-avatar av-alex">AP</div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Alex Park</span>
-                  <span class="tl-time" data-time="alex">Friday 14:05</span>
-                </div>
-                <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
-              </div>
-            </div>
-
-            <!-- 4: Trace card — running ↔ completed in place
-                 (matches AgentSessionEvent.tsx structure exactly). -->
-            <div class="trace-card">
-              <div class="trace-icon-slot">
-                <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
-                <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
-              </div>
-              <div class="trace-main">
-                <div class="trace-row trace-row-running">
-                  <div class="trace-title">Ariadne is working…</div>
-                  <div class="trace-sub"><span class="num"><span class="trace-step-count"></span></span> of 5 steps</div>
-                </div>
-                <div class="trace-row trace-row-done">
-                  <div class="trace-title">Session complete</div>
-                  <div class="trace-sub">5 steps · 3.7s</div>
-                </div>
-              </div>
-              <div class="trace-time" data-time-short="ariadne">14:05</div>
-            </div>
-
-            <!-- 5: Ariadne replies with quote card -->
-            <div class="tl-row persona pop-ariadne">
-              <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
-              <div class="tl-body">
-                <div class="tl-head-line">
-                  <span class="tl-name">Ariadne</span>
-                  <span class="tl-time" data-time="ariadne">Friday 14:05</span>
-                </div>
-                <div class="tl-text">You held the refactor for Jordan's review of the token-rotation model. Their concern from Mar 12:</div>
-
-                <div class="quote-card">
-                  <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
-                  <div class="q-author">
-                    <div class="q-avatar av-jordan">JL</div>
-                    <div class="q-name">Jordan Lee</div>
-                    <div class="q-time">Mar 12 · 11:42</div>
-                  </div>
-                  <div class="q-body">"hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design"</div>
-                </div>
-
-                <div class="tl-text" style="margin-top:8px;">Original thread in <span class="ref-pill">#api-v3</span>.</div>
-
-                <div class="reactions">
-                  <span class="rxn rxn-1"><span class="em">👍</span><span class="num">3</span></span>
-                  <span class="rxn rxn-2"><span class="em">🙏</span><span class="num">2</span></span>
-                  <span class="rxn rxn-3"><span class="em">💡</span><span class="num">1</span></span>
-                </div>
-              </div>
-            </div>
-
-            </div><!-- /.tl-messages -->
-
-            <!-- Composer — types @ariadne, fires send, then waits. Mirrors the
-                 real MessageComposer (apps/frontend/src/components/composer):
-                 hint on the left, icon action row + gold send on the right,
-                 keyboard shortcut hint sits OUTSIDE below. At phone width the
-                 row folds like the real one: + · mic · Aa · send clustered on
-                 the right (the "More" button only exists there). -->
-            <div class="composer" aria-label="Message composer">
-              <div class="composer-editor">
-                <span class="composer-typed" aria-hidden="true"></span>
-                <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@ariadne</span></span>
-                <input
-                  class="composer-input"
-                  type="text"
-                  autocomplete="off"
-                  spellcheck="false"
-                  readonly
-                  tabindex="-1"
-                  inputmode="none"
-                  placeholder="Type a message..."
-                  aria-label="Message"
-                  data-pre="shit, uh 🤷"
-                  data-trail=" ?"
-                />
-              </div>
-              <div class="composer-bar">
-                <span class="composer-hint">Select text to format</span>
-                <div class="composer-actions">
-                  <button type="button" class="cb cb-more" aria-label="More" data-tip="More"><svg><use href="#icon-plus"/></svg></button>
-                  <button type="button" class="cb cb-maximize" aria-label="Expand editor" data-tip="Expand editor"><svg><use href="#icon-maximize"/></svg></button>
-                  <button type="button" class="cb cb-aa" aria-label="Formatting" data-tip="Format text">Aa</button>
-                  <button type="button" class="cb cb-emoji" aria-label="Insert emoji" data-tip="Emoji"><span>😊</span></button>
-                  <button type="button" class="cb" aria-label="Insert mention" data-tip="Mention (@ariadne)"><svg><use href="#icon-at"/></svg></button>
-                  <button type="button" class="cb" aria-label="Insert command" data-tip="Slash command"><svg><use href="#icon-slash"/></svg></button>
-                  <button type="button" class="cb" aria-label="Attach files" data-tip="Attach files"><svg><use href="#icon-paperclip"/></svg></button>
-                  <button type="button" class="cb" aria-label="Dictate a message" data-tip="Dictate"><svg><use href="#icon-mic"/></svg></button>
-                  <button type="button" class="cb" aria-label="Drafts" data-tip="Drafts"><svg><use href="#icon-fileedit"/></svg></button>
-                  <button type="button" class="cb" aria-label="Scheduled" data-tip="Schedule"><svg><use href="#icon-calendarclock"/></svg></button>
-                  <div class="composer-send" aria-label="Send" data-tip="Send">
-                    <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
-
-          </div>
+            </li>
+            <li class="stop is-now">
+              <p class="stop-head"><time class="stop-date" datetime="2026-05-07">May 7</time><span class="stop-where">#sprint-planning</span></p>
+              <Message author="maya" time="09:12">
+                <div class="tl-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. Why did we hold it?</div>
+              </Message>
+              <Message author="ariadne" time="09:12">
+                <div class="tl-text">You paused v3 on Mar 12 until Jordan reviewed the token-rotation model. That walkthrough hasn't happened yet.</div>
+              </Message>
+            </li>
+          </ol>
         </div>
       </div>
     </div>
@@ -240,9 +121,7 @@ const schema = [
      floating composer) vs the board (real conversation cards). Same
      messages both sides. Reuses the timeline-demo vocabulary (.tl-row,
      .tl-avatar, .mention, .reactions, .trace-card, .recall-memo-card,
-     composer parts) so it tracks the hero. Card rest + hover mirror the
-     app (PR #1349): static bordered card, border warms on hover (no
-     lift), per-message hover wash + inset action pill, mouse-gated.
+     composer parts) so it tracks the hero.
      ============================================================ -->
 <div class="frame warm" id="board">
   <div class="memo-shell board-shell">
@@ -258,43 +137,23 @@ const schema = [
       <div class="board-col is-stream">
         <div class="board-lens"><span class="k">Stream</span><span class="m">#product, as it happened</span></div>
 
-        <div class="tl-row board-hoverable">
-          <div class="tl-avatar av-maya">MR</div>
-          <div class="tl-body">
-            <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
-            <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
-          </div>
-          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-        </div>
+        <Message author="maya" time="14:03">
+          <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+        </Message>
 
-        <div class="tl-row board-hoverable">
-          <div class="tl-avatar av-sam">SP</div>
-          <div class="tl-body">
-            <div class="tl-head-line"><span class="tl-name">Sam Patel</span><span class="tl-time">14:04</span></div>
-            <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
-            <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
-          </div>
-          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-        </div>
+        <Message author="sam" time="14:04">
+          <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
+          <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
+        </Message>
 
-        <div class="tl-row board-hoverable">
-          <div class="tl-avatar av-jordan">JL</div>
-          <div class="tl-body">
-            <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">14:05</span></div>
-            <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
-            <div class="board-prov"><svg><use href="#icon-layers"/></svg><span>continues <span class="topic">Auth refactor: pause or push?</span></span><span class="sep">·</span><span>2m</span></div>
-          </div>
-          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-        </div>
+        <Message author="jordan" time="14:05">
+          <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
+          <div class="board-prov"><svg><use href="#icon-layers"/></svg><span>continues <span class="topic">Auth refactor: pause or push?</span></span><span class="sep">·</span><span>2m</span></div>
+        </Message>
 
-        <div class="tl-row board-hoverable">
-          <div class="tl-avatar av-alex">AP</div>
-          <div class="tl-body">
-            <div class="tl-head-line"><span class="tl-name">Alex Park</span><span class="tl-time">14:05</span></div>
-            <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
-          </div>
-          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-        </div>
+        <Message author="alex" time="14:05">
+          <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
+        </Message>
 
         <div class="trace-card is-static">
           <div class="trace-icon-slot">
@@ -308,14 +167,9 @@ const schema = [
           <div class="trace-time">14:05</div>
         </div>
 
-        <div class="tl-row persona board-hoverable">
-          <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
-          <div class="tl-body">
-            <div class="tl-head-line"><span class="tl-name">Ariadne</span><span class="tl-time">14:05</span></div>
-            <div class="tl-text">You paused it for Jordan's review of the token-rotation model. The concern was migrating live sessions without a forced re-auth.</div>
-          </div>
-          <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-        </div>
+        <Message author="ariadne" time="14:05">
+          <div class="tl-text">You paused it for Jordan's review of the token-rotation model. The concern was migrating live sessions without a forced re-auth.</div>
+        </Message>
 
       </div>
 
@@ -336,30 +190,15 @@ const schema = [
             </div>
             <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash"/></svg></span><span class="lstream">product</span><span class="sep">·</span><span>now</span></div>
             <div class="board-card-body">
-              <div class="tl-row board-hoverable">
-                <div class="tl-avatar av-maya">MR</div>
-                <div class="tl-body">
-                  <div class="tl-head-line"><span class="tl-name">Maya Reyes</span><span class="tl-time">14:03</span></div>
-                  <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
-                </div>
-                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-              </div>
-              <div class="tl-row board-hoverable">
-                <div class="tl-avatar av-jordan">JL</div>
-                <div class="tl-body">
-                  <div class="tl-head-line"><span class="tl-name">Jordan Lee</span><span class="tl-time">14:05</span></div>
-                  <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
-                </div>
-                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-              </div>
-              <div class="tl-row board-hoverable">
-                <div class="tl-avatar av-alex">AP</div>
-                <div class="tl-body">
-                  <div class="tl-head-line"><span class="tl-name">Alex Park</span><span class="tl-time">14:05</span></div>
-                  <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
-                </div>
-                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-              </div>
+              <Message author="maya" time="14:03">
+                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+              </Message>
+              <Message author="jordan" time="14:05">
+                <div class="tl-text">pretty sure there were open concerns but I can't find the thread lol</div>
+              </Message>
+              <Message author="alex" time="14:05">
+                <div class="tl-text">shit, uh 🤷 <span class="mention">@ariadne</span> ?</div>
+              </Message>
               <div class="trace-card is-static">
                 <div class="trace-icon-slot">
                   <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
@@ -371,22 +210,17 @@ const schema = [
                 </div>
                 <div class="trace-time">14:05</div>
               </div>
-              <div class="tl-row persona board-hoverable">
-                <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
-                <div class="tl-body">
-                  <div class="tl-head-line"><span class="tl-name">Ariadne</span><span class="tl-time">14:05</span></div>
-                  <div class="tl-text">You paused it for Jordan's review of the token-rotation model.</div>
-                  <div class="recall-memo-card">
-                    <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
-                    <div class="rmc-body">
-                      <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
-                      <div class="rmc-title">Auth refactor held pending token-rotation review</div>
-                    </div>
-                    <div class="rmc-meta">Mar 12</div>
+              <Message author="ariadne" time="14:05">
+                <div class="tl-text">You paused it for Jordan's review of the token-rotation model.</div>
+                <div class="recall-memo-card">
+                  <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
+                  <div class="rmc-body">
+                    <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
+                    <div class="rmc-title">Auth refactor held pending token-rotation review</div>
                   </div>
+                  <div class="rmc-meta">Mar 12</div>
                 </div>
-                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-              </div>
+              </Message>
             </div>
           </div>
 
@@ -400,15 +234,10 @@ const schema = [
             </div>
             <div class="board-locator"><span class="board-tile"><svg><use href="#icon-hash"/></svg></span><span class="lstream">product</span><span class="sep">·</span><span>now</span></div>
             <div class="board-card-body">
-              <div class="tl-row board-hoverable">
-                <div class="tl-avatar av-sam">SP</div>
-                <div class="tl-body">
-                  <div class="tl-head-line"><span class="tl-name">Sam Patel</span><span class="tl-time">14:04</span></div>
-                  <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
-                  <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
-                </div>
-                <div class="board-actions"><span class="ab"><svg><use href="#icon-smile"/></svg></span><span class="ab"><svg><use href="#icon-morehoriz"/></svg></span></div>
-              </div>
+              <Message author="sam" time="14:04">
+                <div class="tl-text">empty states for the board are on staging now. the board one especially came out nice</div>
+                <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
+              </Message>
             </div>
           </div>
         </div>
@@ -445,65 +274,25 @@ const schema = [
         </p>
 
         <div class="capture-list" data-decorative aria-label="Five-message slice; the three middle messages carry the decision.">
-          <!-- 1: unrelated chatter -->
-          <div class="capture-row is-noise">
-            <div class="c-avatar av-sam">SP</div>
-            <div class="c-body">
-              <div class="c-head">
-                <span class="c-name">Sam Patel</span>
-                <span class="c-time">Mar 12 · 11:38</span>
-              </div>
-              <div class="c-text">lunch order, pasta or pizza. last call</div>
-            </div>
-          </div>
+          <Message author="sam" time="11:38" class="is-noise">
+            <div class="tl-text">lunch order, pasta or pizza. last call</div>
+          </Message>
 
-          <!-- 2: selected — Jordan asks to pause -->
-          <div class="capture-row is-selected">
-            <div class="c-avatar av-jordan">JL</div>
-            <div class="c-body">
-              <div class="c-head">
-                <span class="c-name">Jordan Lee</span>
-                <span class="c-time">Mar 12 · 11:42</span>
-              </div>
-              <div class="c-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design</div>
-            </div>
-          </div>
+          <Message author="jordan" time="11:42">
+            <div class="tl-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this until I've reviewed the design</div>
+          </Message>
 
-          <!-- 3: selected — Maya agrees -->
-          <div class="capture-row is-selected">
-            <div class="c-avatar av-maya">MR</div>
-            <div class="c-body">
-              <div class="c-head">
-                <span class="c-name">Maya Reyes</span>
-                <span class="c-time">Mar 12 · 11:44</span>
-              </div>
-              <div class="c-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
-            </div>
-          </div>
+          <Message author="maya" time="11:44">
+            <div class="tl-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
+          </Message>
 
-          <!-- 4: selected — Jordan names the next step -->
-          <div class="capture-row is-selected">
-            <div class="c-avatar av-jordan">JL</div>
-            <div class="c-body">
-              <div class="c-head">
-                <span class="c-name">Jordan Lee</span>
-                <span class="c-time">Mar 12 · 11:46</span>
-              </div>
-              <div class="c-text">a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</div>
-            </div>
-          </div>
+          <Message author="jordan" time="11:46">
+            <div class="tl-text">a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</div>
+          </Message>
 
-          <!-- 5: unrelated chatter -->
-          <div class="capture-row is-noise">
-            <div class="c-avatar av-sam">SP</div>
-            <div class="c-body">
-              <div class="c-head">
-                <span class="c-name">Sam Patel</span>
-                <span class="c-time">Mar 12 · 11:47</span>
-              </div>
-              <div class="c-text">pizza it is, ordering now</div>
-            </div>
-          </div>
+          <Message author="sam" time="11:47" class="is-noise">
+            <div class="tl-text">pizza it is, ordering now</div>
+          </Message>
 
         </div>
 
@@ -555,49 +344,35 @@ const schema = [
           </div>
 
           <div class="recall-list">
-            <div class="recall-row">
-              <div class="r-avatar av-maya">MR</div>
-              <div class="r-body">
-                <div class="r-head">
-                  <span class="r-name">Maya Reyes</span>
-                  <span class="r-time">May 7 · 09:12</span>
-                </div>
-                <div class="r-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. What was the hold on again?</div>
+            <Message author="maya" time="09:12">
+              <div class="tl-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. What was the hold on again?</div>
+            </Message>
+
+            <Message author="ariadne" time="09:12">
+              <div class="tl-text">
+                You paused v3 in March pending Jordan's review of the rotation flow.
+                Wei flagged a related mobile-session concern in April that didn't make
+                the original hold. Worth folding in before the walkthrough.
               </div>
-            </div>
 
-            <div class="recall-row persona">
-              <div class="r-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
-              <div class="r-body">
-                <div class="r-head">
-                  <span class="r-name">Ariadne</span>
-                  <span class="r-time">May 7 · 09:12</span>
+              <div class="recall-memo-card">
+                <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
+                <div class="rmc-body">
+                  <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#api-v3</span></div>
+                  <div class="rmc-title">Auth refactor held pending token-rotation review</div>
                 </div>
-                <div class="r-text">
-                  You paused v3 in March pending Jordan's review of the rotation flow.
-                  Wei flagged a related mobile-session concern in April that didn't make
-                  the original hold. Worth folding in before the walkthrough.
-                </div>
-
-                <div class="recall-memo-card">
-                  <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
-                  <div class="rmc-body">
-                    <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#api-v3</span></div>
-                    <div class="rmc-title">Auth refactor held pending token-rotation review</div>
-                  </div>
-                  <div class="rmc-meta">Mar 12</div>
-                </div>
-
-                <div class="recall-memo-card">
-                  <div class="rmc-icon"><svg><use href="#icon-bookopen"/></svg></div>
-                  <div class="rmc-body">
-                    <div class="rmc-kicker"><span class="k-type">context</span><span class="k-tag">#mobile-platform</span></div>
-                    <div class="rmc-title">Session migration needs device-bound refresh handling</div>
-                  </div>
-                  <div class="rmc-meta">Apr 02</div>
-                </div>
+                <div class="rmc-meta">Mar 12</div>
               </div>
-            </div>
+
+              <div class="recall-memo-card">
+                <div class="rmc-icon"><svg><use href="#icon-bookopen"/></svg></div>
+                <div class="rmc-body">
+                  <div class="rmc-kicker"><span class="k-type">context</span><span class="k-tag">#mobile-platform</span></div>
+                  <div class="rmc-title">Session migration needs device-bound refresh handling</div>
+                </div>
+                <div class="rmc-meta">Apr 02</div>
+              </div>
+            </Message>
           </div>
         </div>
       </div>
@@ -686,32 +461,134 @@ const schema = [
      ============================================================ -->
 <div class="frame" id="byo-agent">
   <div class="memo-shell byo-shell">
-    <h2>Bring the agent you already use.</h2>
-    <p class="lede">
-      Threa ships with Ariadne, and she's useful from day one. But you probably
-      already have an agent set up the way you like it, with your codebase and
-      your context. Connect that one as a Threa bot instead of starting over
-      with mine. It can even stay on your laptop behind NAT.
-    </p>
-    <p class="lede byo-lede">
-      Mention the bot in a channel and the runtime hands the request to your
-      local agent, then posts the reply under the bot's name. It can search
-      messages by text or meaning, read memos and attachments, and follow a
-      memo back to the conversation it came from. It can also take whole
-      tasks. You delegate, watch it work in the stream, and the finished thing
-      lands where the team can see it.
-    </p>
-    <p class="lede byo-lede">
-      Some of that work shouldn't be readable by anyone but you and your agent.
-      Put it in a <a href="/encryption">sealed scratchpad</a> and it is encrypted
-      on your devices before it ever reaches Threa.
-    </p>
+    <div class="byo-copy">
+      <h2>Bring the agent you already use.</h2>
+      <p class="lede">
+        Threa ships with Ariadne, and she's useful from day one. But you probably
+        already have an agent set up the way you like it, with your codebase and
+        your context. Connect that one as a Threa bot instead of starting over
+        with mine. It can even stay on your laptop behind NAT.
+      </p>
+      <p class="lede byo-lede">
+        Mention the bot in a channel and the runtime hands the request to your
+        local agent, then posts the reply under the bot's name. It can search
+        messages by text or meaning, read memos and attachments, and follow a
+        memo back to the conversation it came from. It can also take whole
+        tasks. You delegate, watch it work in the stream, and the finished thing
+        lands where the team can see it.
+      </p>
+      <p class="lede byo-lede">
+        Some of that work shouldn't be readable by anyone but you and your agent.
+        Put it in a <a href="/encryption">sealed scratchpad</a> and it is encrypted
+        on your devices before it ever reaches Threa.
+      </p>
 
-    <p class="byo-works">
-      Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
-      you write yourself, through the bot runtime, the CLI, or the MCP server.
-    </p>
-    <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
+      <p class="byo-works">
+        Works today with Claude Code, Codex, Cursor, OpenCode, Gemini CLI, or a bot
+        you write yourself, through the bot runtime, the CLI, or the MCP server.
+      </p>
+      <a class="os-cta" href="/developers/recipes#local-agent">Connect a local agent</a>
+    </div>
+    <div class="byo-demo" data-decorative>
+      <div class="ad" aria-label="Alex asks their Claude Code bot in #api-v3 whether token rotation still signs out old sessions">
+        <div class="ad-head">
+          <span class="ad-channel">#api-v3</span>
+          <span class="ad-chip" aria-hidden="true">
+            <svg><use href="#spinner-icon"/></svg>
+            <span>Claude Code</span>
+            <span class="ad-chip-steps">· <span class="ad-steps">1 step</span></span>
+          </span>
+        </div>
+
+        <!-- Bottom-anchored like a real stream: an arriving row grows in at the
+             foot and pushes older rows up under the top fade. -->
+        <div class="ad-log">
+          <Message author="maya" time="14:00" ago={14}>
+            <div class="tl-text">v3 release branch is cut, aiming to ship Thursday.</div>
+          </Message>
+
+          <Message author="jordan" time="14:00" ago={11}>
+            <div class="tl-text">changelog draft is up, only the auth section left</div>
+          </Message>
+
+          <Message author="maya" time="14:01" ago={6}>
+            <div class="tl-text">Before we ship v3: does token rotation still sign out sessions issued before the migration?</div>
+          </Message>
+
+          <Message author="jordan" time="14:03" ago={4}>
+            <div class="tl-text">no idea, I'd have to dig through the rotation code again</div>
+          </Message>
+
+          <div class="ad-in" data-beat="sent"><div>
+            <Message author="alex" time="14:07" ago={0}>
+              <div class="tl-text"><span class="mention">@claude-code</span> can you check?</div>
+            </Message>
+          </div></div>
+
+          <!-- Same card as the app's AgentSessionEvent: a live substep with a
+               pulse dot while running, swapped in place for the summary. -->
+          <div class="ad-in" data-beat="working"><div>
+            <div class="trace-card ad-trace">
+              <div class="trace-icon-slot">
+                <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
+                <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
+              </div>
+              <div class="ad-trace-main">
+                <div class="ad-trace-title">Claude Code is working…</div>
+                <div class="ad-trace-sub">
+                  <span class="ad-pulse" aria-hidden="true"></span>
+                  <span class="ad-substep">Searching messages for “token rotation”</span>
+                  <span class="ad-trace-count">· <span class="ad-steps">1 step</span></span>
+                </div>
+              </div>
+              <div class="trace-time" data-ago="0">14:07</div>
+            </div>
+          </div></div>
+
+          <div class="ad-in" data-beat="replied"><div>
+            <Message author="claude-code" time="14:07" ago={0}>
+              <div class="tl-text">Yes. Sessions from before the migration keep their old refresh token, so the first rotation signs them out. Jordan flagged exactly this when v3 was held:</div>
+              <div class="quote-card">
+                <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
+                <div class="q-author">
+                  <div class="q-avatar av-jordan">JL</div>
+                  <div class="q-name">Jordan Lee</div>
+                  <div class="q-time">Mar 12, 11:42</div>
+                </div>
+                <div class="q-body">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first.</div>
+              </div>
+              <div class="tl-text ad-after">I pushed a fix that migrates them on first refresh to <span class="ref-pill">auth-rotation</span>.</div>
+              <div class="reactions">
+                <span class="rxn" data-rxn="pray"><span class="em">🙏</span><span class="num"><span>1</span><span>2</span></span></span>
+                <span class="rxn" data-rxn="eyes"><span class="em">👀</span><span class="num"><span>1</span></span></span>
+              </div>
+            </Message>
+          </div></div>
+        </div>
+
+        <!-- Composer, trimmed from the app's MessageComposer: typed text, the
+             mention pill committing whole, and the send button arming. -->
+        <div class="composer" aria-hidden="true">
+          <div class="composer-editor">
+            <span class="composer-placeholder">Message #api-v3</span>
+            <span class="composer-mention-wrap"><span class="mention">@claude-code</span></span>
+            <span class="composer-typed" data-trail=" can you check?"></span>
+            <span class="composer-caret"></span>
+          </div>
+          <div class="composer-bar">
+            <div class="composer-actions">
+              <span class="cb cb-aa">Aa</span>
+              <span class="cb cb-emoji"><span>😊</span></span>
+              <span class="cb"><svg><use href="#icon-at"/></svg></span>
+              <span class="cb"><svg><use href="#icon-paperclip"/></svg></span>
+            </div>
+            <span class="composer-send">
+              <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -807,8 +684,8 @@ const schema = [
 
 <footer class="footer">
   <div class="brand" style="gap:10px;">
-    <svg style="width:18px;height:18px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
-    <span class="wordmark" style="font-size:11px;">Threa</span>
+    <svg style="width:24px;height:24px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
+    <span class="wordmark" style="font-size:18px;">Threa</span>
     <span class="year">2026</span>
   </div>
   <div class="ln">
@@ -819,125 +696,83 @@ const schema = [
 </footer>
 
   <script is:inline>
-  /* Auto-scroll on each beat so newly-faded-in rows come into view. The
-     list is naturally scrollable; once the user interacts (wheel, touch,
-     keyboard) we surrender the scroll and never fight them. */
+  /* The agent-section demo. Plays once, from when it scrolls into view, so
+     visitors see the agent work instead of its end state. Reduced motion shows
+     the finished conversation. */
   (function () {
-    const tlm = document.querySelector('.tl-messages')
-    if (!tlm) return
+    const ad = document.querySelector('.byo-demo .ad')
+    if (!ad) return
+    const $ = (s) => ad.querySelector(s)
 
-    /* ---- local time stamps ----
-       Replace the hardcoded weekday/HH:mm with the user's actual local
-       day and a now-anchored cadence: 4/2/0 minutes ago, with Alex and
-       Ariadne both at "now" (Ariadne's reply follows immediately on send).
-       Day name is computed per stamp so messages that cross midnight
-       still read correctly. */
-    const now = new Date()
-    const dayOf = d => d.toLocaleDateString(undefined, { weekday: 'long' })
-    const pad = n => String(n).padStart(2, '0')
-    const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`
-    const ago = mins => new Date(now.getTime() - mins * 60_000)
-    const stamps = {
-      maya: ago(4),
-      jordan: ago(2),
-      alex: ago(0),
-      ariadne: now,
-    }
-    document.querySelectorAll('[data-time]').forEach(el => {
-      const d = stamps[el.dataset.time] || now
-      el.textContent = `${dayOf(d)} ${hhmm(d)}`
+    const now = Date.now()
+    const pad = (n) => String(n).padStart(2, '0')
+    ad.querySelectorAll('[data-ago]').forEach((el) => {
+      const d = new Date(now - Number(el.dataset.ago) * 60_000)
+      el.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}`
     })
-    document.querySelectorAll('[data-time-short]').forEach(el => {
-      const d = stamps[el.dataset.timeShort] || now
-      el.textContent = hhmm(d)
-    })
-    const cap = document.querySelector('.tl-caption .meta')
-    if (cap) cap.textContent = dayOf(now)
 
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
-
-    const cycle = 22_000
-    const start = performance.now()
-
-    /* ---- composer typewriter ----
-       Real <input>, driven by JS — value changes trigger the browser's
-       native caret which sits at the correct end-of-text position and
-       blinks the same way it does anywhere else in the OS. Faster than a
-       fake caret: ~100ms/char so it reads as confident, casual typing
-       rather than a slow demo loop. */
-    const editor = document.querySelector('.composer-editor')
-    const input = document.querySelector('.composer-input')
-    const typed = document.querySelector('.composer-typed')
-    /* Array.from iterates code points, so the 🤷 surrogate pair can't be
-       split across animation frames. */
-    const preChars = Array.from(input?.dataset.pre ?? '')
-    const trailChars = Array.from(input?.dataset.trail ?? '')
-    /* 25-31% — "shit, uh 🤷" types out before the pill (the real input
-                 keeps the caret riding at the end of the typed text)
-       33% — mention pill snaps in
-       34-37% — " ?" types after the pill (~85ms/char)
-       49% — send fires, everything clears, pill collapses */
-    const preStartPct = 25, preEndPct = 31, mentionInPct = 33, typeStartPct = 34, typeEndPct = 37, clearPct = 49
-    let lastPre = -1
-    let lastChars = -1
-    let focused = false
-    const updateInput = (t) => {
-      if (!input || !editor || !typed) return
-      const pct = (t / cycle) * 100
-      editor.classList.toggle('has-mention', pct >= preStartPct && pct < clearPct)
-      let pre
-      if (pct < preStartPct) pre = 0
-      else if (pct < preEndPct) {
-        const p = (pct - preStartPct) / (preEndPct - preStartPct)
-        pre = Math.floor(p * preChars.length)
-      } else if (pct < clearPct) pre = preChars.length
-      else pre = 0
-      let chars
-      if (pct < typeStartPct) chars = 0
-      else if (pct < typeEndPct) {
-        const p = (pct - typeStartPct) / (typeEndPct - typeStartPct)
-        chars = Math.floor(p * trailChars.length)
-      } else if (pct < clearPct) chars = trailChars.length
-      else chars = 0
-      if (pre !== lastPre) {
-        typed.textContent = preChars.slice(0, pre).join('')
-        lastPre = pre
-      }
-      if (chars !== lastChars) {
-        input.value = trailChars.slice(0, chars).join('')
-        lastChars = chars
-      }
-      /* Focus once on first frame so the browser-drawn caret is visible
-         in the empty input from the start of the loop. */
-      if (!focused) {
-        try { input.focus({ preventScroll: true }) } catch { input.focus() }
-        focused = true
-      }
+    const beat = (name) => ad.querySelector(`[data-beat="${name}"]`).classList.add('is-in')
+    const steps = (n) => ad.querySelectorAll('.ad-steps').forEach((el) => { el.textContent = `${n} step${n === 1 ? '' : 's'}` })
+    const substep = (text) => {
+      const el = $('.ad-substep')
+      el.textContent = text
+      el.classList.remove('tick'); void el.offsetWidth; el.classList.add('tick')
     }
-    const tick = (now) => {
-      const t = now - start
-      updateInput(t)
-      if (t < cycle) requestAnimationFrame(tick)
+    const react = (name, count) => {
+      const el = ad.querySelector(`[data-rxn="${name}"]`)
+      el.classList.add('is-in')
+      el.style.setProperty('--n', String(count - 1))
     }
-    requestAnimationFrame(tick)
-
-    /* ---- beat-based auto-scroll ----
-       Each beat scrolls the bottom of the latest revealed row into view.
-       If the user has manually scrolled, the auto-scroll backs off. */
-    let userScrolled = false
-    const surrender = () => { userScrolled = true }
-    tlm.addEventListener('wheel', surrender, { passive: true })
-    tlm.addEventListener('touchstart', surrender, { passive: true })
-    tlm.addEventListener('keydown', surrender)
-
-    const scrollToBottom = () => {
-      if (userScrolled) return
-      tlm.scrollTo({ top: tlm.scrollHeight - tlm.clientHeight, behavior: 'smooth' })
+    const finish = () => {
+      ad.classList.remove('is-working')
+      ad.classList.add('is-done')
+      $('.ad-trace-title').textContent = 'Session complete'
+      $('.ad-trace-sub').textContent = '4 steps • 34s'
     }
 
-    /* Beat times (percent of cycle, +small lag so opacity has resolved). */
-    const beats = [49.5, 51.5, 71.5, 85.5]
-    beats.forEach(p => setTimeout(scrollToBottom, p * cycle / 100))
+    const typed = $('.composer-typed')
+    const trail = Array.from(typed.dataset.trail)
+    let typing = 0
+    const typeTrail = (i = 0) => {
+      typed.textContent = trail.slice(0, i).join('')
+      if (i < trail.length) typing = setTimeout(() => typeTrail(i + 1), 70 + Math.random() * 60)
+    }
+
+    const script = [
+      [600, () => ad.classList.add('is-drafting')],
+      [1300, () => ad.classList.add('has-mention')],
+      [1700, () => typeTrail()],
+      [3500, () => {
+        clearTimeout(typing)
+        ad.classList.remove('is-drafting', 'has-mention')
+        typed.textContent = ''
+        beat('sent')
+      }],
+      [4300, () => { ad.classList.add('is-working'); beat('working') }],
+      [5600, () => { steps(2); substep('Reading memo “Auth refactor held pending token-rotation review”') }],
+      [7200, () => { steps(3); substep('Reading src/auth/rotation.ts') }],
+      [9400, () => { steps(4); substep('Pushing a fix to auth-rotation') }],
+      [11200, () => { finish(); beat('replied') }],
+      [13200, () => react('pray', 1)],
+      [14300, () => react('eyes', 1)],
+      [15100, () => react('pray', 2)],
+    ]
+
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      ad.classList.add('is-static')
+      ad.querySelectorAll('[data-beat]').forEach((el) => el.classList.add('is-in'))
+      finish()
+      react('pray', 2)
+      react('eyes', 1)
+      return
+    }
+
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return
+      io.disconnect()
+      script.forEach(([at, fn]) => setTimeout(fn, at))
+    }, { threshold: 0.4 })
+    io.observe(ad)
   })()
   </script>
 

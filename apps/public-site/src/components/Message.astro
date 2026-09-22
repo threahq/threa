@@ -1,0 +1,40 @@
+---
+/*
+ * The one message row every chat illustration on the site renders, after the
+ * app's timeline row. Decorative only: no hover state, no actions.
+ */
+const AUTHORS = {
+  maya: { name: "Maya Reyes", initials: "MR", kind: "user" },
+  jordan: { name: "Jordan Lee", initials: "JL", kind: "user" },
+  alex: { name: "Alex Park", initials: "AP", kind: "user" },
+  sam: { name: "Sam Patel", initials: "SP", kind: "user" },
+  ariadne: { name: "Ariadne", icon: "ariadne-icon", kind: "persona" },
+  "claude-code": { name: "Claude Code", icon: "icon-bot", kind: "bot" },
+} as const
+
+interface Props {
+  author: keyof typeof AUTHORS
+  time: string
+  /** Minutes before page load; the agent demo rewrites the time from it. */
+  ago?: number
+  class?: string
+}
+
+const { author, time, ago, class: className } = Astro.props
+const a = AUTHORS[author]
+const avatarClass = a.kind === "bot" ? "av-bot" : `av-${author}`
+---
+
+<div class:list={["tl-row", a.kind !== "user" && a.kind, className]}>
+  <div class:list={["tl-avatar", avatarClass]}>
+    {"icon" in a ? <svg><use href={`#${a.icon}`} /></svg> : a.initials}
+  </div>
+  <div class="tl-body">
+    <div class="tl-head-line">
+      <span class="tl-name">{a.name}</span>
+      {a.kind === "bot" && <span class="tl-badge">BOT</span>}
+      <span class="tl-time" data-ago={ago}>{time}</span>
+    </div>
+    <slot />
+  </div>
+</div>

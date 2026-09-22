@@ -71,12 +71,12 @@ a {
   min-width: 0;
 }
 .docs-nav .brand svg {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   color: hsl(var(--gold));
 }
 .docs-nav .brand .wordmark {
-  font-size: 12px;
+  font-size: 20px;
 }
 .docs-nav .brand .tag {
   font-size: 13px;
