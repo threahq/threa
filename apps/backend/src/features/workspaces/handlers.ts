@@ -61,6 +61,10 @@ const checkSlugAvailableSchema = z.object({
   slug: z.string().min(1, "slug query parameter is required"),
 })
 
+const clearInboxSchema = z.object({
+  streamIds: z.array(z.string().min(1)).min(1).max(500),
+})
+
 export { createWorkspaceSchema }
 
 interface Dependencies {
@@ -187,6 +191,7 @@ export function createWorkspaceHandlers({
         configuredToolCategories,
         runningSessions,
         archivedStreams,
+        inboxHeldStreamIds,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -212,6 +217,7 @@ export function createWorkspaceHandlers({
         // slim rows so archival survives reloads (drafts filters, saved/activity
         // name resolution).
         streamService.listArchivedStreams(workspaceId, userId),
+        streamService.listInboxHeldStreamIds(workspaceId, userId),
       ])
 
       if (!workspace) {
@@ -357,6 +363,7 @@ export function createWorkspaceHandlers({
         streamMemberships,
         streamReadState,
         readMessageIds,
+        inboxHeldStreamIds,
         personas,
         bots: bots.map(serializeBot),
         emojis: getEmojiList(),
@@ -397,6 +404,16 @@ export function createWorkspaceHandlers({
       await activityService?.markAllAsRead(userId, workspaceId)
 
       res.json({ updatedStreamIds, frontiers })
+    },
+
+    async clearInbox(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamIds } = validateRequest(clearInboxSchema, req.body)
+
+      const { clearedStreamIds, frontiers } = await streamService.clearInbox(workspaceId, userId, streamIds)
+
+      res.json({ clearedStreamIds, frontiers })
     },
 
     async completeUserSetup(req: Request, res: Response) {

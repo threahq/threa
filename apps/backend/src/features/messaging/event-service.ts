@@ -948,7 +948,17 @@ export class EventService {
     // Read state is user-anchored: the born-read lands whether or not the author
     // holds a membership row (membership ≠ access ≠ read state).
     if (params.authorType === "user") {
-      await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId)
+      const { becameHeld } = await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, {
+        holdInInbox: true,
+      })
+      if (becameHeld) {
+        await OutboxRepository.insert(client, "stream:inbox_updated", {
+          workspaceId: params.workspaceId,
+          authorId: params.authorId,
+          streamIds: [params.streamId],
+          held: true,
+        })
+      }
     }
 
     if (params.authorType === "persona") {

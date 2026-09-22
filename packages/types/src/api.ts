@@ -1867,6 +1867,12 @@ export interface WorkspaceBootstrap {
    * "no data". Optional: payloads cached before this field shipped lack it.
    */
   streamReadState?: Record<string, StreamReadFrontier>
+  /**
+   * Streams currently held in the viewer's sidebar Inbox — read but not yet
+   * explicitly cleared. Optional: payloads cached before this field shipped
+   * lack it (absent reads as none held).
+   */
+  inboxHeldStreamIds?: string[]
   dmPeers: Array<{ userId: string; streamId: string }>
   personas: Persona[]
   bots: Bot[]
@@ -2238,6 +2244,17 @@ export interface MarkAllAsReadResponse {
    * counter behavior and reconcile on the next bootstrap).
    */
   frontiers?: StreamReadFrontierSnapshot[]
+}
+
+/** Response for clearing streams from the sidebar Inbox (`POST .../streams/inbox/clear`). */
+export interface ClearInboxResponse {
+  /** Streams that were actually held and got cleared (a no-op stream is omitted). */
+  clearedStreamIds: string[]
+  /**
+   * The canonical post-write read frontier for every stream this call also
+   * caught up to latest, same shape as {@link MarkAllAsReadResponse.frontiers}.
+   */
+  frontiers: StreamReadFrontierSnapshot[]
 }
 
 export interface DispatchCommandInput {

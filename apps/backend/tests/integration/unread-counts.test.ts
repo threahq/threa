@@ -459,7 +459,7 @@ describe("Unread Counts", () => {
       ])
 
       await withTransaction(pool, async (client) => {
-        await ReadStateRepository.batchAdvance(client, testUserId, updates)
+        await ReadStateRepository.batchAdvance(client, testUserId, updates, { holdInInbox: false })
       })
 
       // Verify all frontiers advanced
