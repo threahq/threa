@@ -113,6 +113,9 @@ export interface RenderableMessage {
    * Resolved per row against the board post's `settlingMessageIds`; a tombstone
    * never carries it (deleted trumps settling). */
   settling?: boolean
+  /** On a server row: the optimistic row's id it replaced. Keeps the row's
+   *  identity across the swap so its arrival animation doesn't replay. */
+  clientMessageId?: string
 }
 
 interface MessageItemProps {

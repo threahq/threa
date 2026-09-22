@@ -98,6 +98,7 @@ import {
   findEventItemIndex,
   findTimelineTargetIndex,
   getTimelineItemKey,
+  getTimelineItemArrivalKey,
   filterVisibleItems,
   collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
@@ -1559,6 +1560,14 @@ export function StreamContent({
   const virtuosoScrollerRef = virtualScrollerRef
 
   // --- Plain scroll for threads (they load all events) ---
+  // Content box for the plain (thread) scroller — its height tracks scrollHeight,
+  // so observing it (not the fixed h-full scroller) catches embed/image growth.
+  const plainContentRef = useRef<HTMLDivElement>(null)
+  const [plainContentEl, setPlainContentEl] = useState<HTMLDivElement | null>(null)
+  const registerPlainContent = useCallback((node: HTMLDivElement | null) => {
+    plainContentRef.current = node
+    setPlainContentEl(node)
+  }, [])
   const {
     scrollContainerRef: plainScrollRef,
     handleScroll: plainHandleScroll,
@@ -1573,6 +1582,7 @@ export function StreamContent({
     isFetchingOlder,
     isFetchingNewer,
     resetKey: streamId,
+    content: plainContentEl,
     // Only treat the user as "at the bottom" when they are essentially flush.
     // A small scroll-up to reference older messages while typing should not be
     // snapped back when the composer grows.
@@ -1581,9 +1591,6 @@ export function StreamContent({
 
   // Unified API regardless of scroll mode
   const scrollContainerRef = useVirtualized ? virtuosoScrollerRef : plainScrollRef
-  // Content box for the plain (thread) scroller — its height tracks scrollHeight,
-  // so observing it (not the fixed h-full scroller) catches embed/image growth.
-  const plainContentRef = useRef<HTMLDivElement>(null)
   const isScrolledFarFromBottom = useVirtualized ? virtualIsScrolledFar : plainIsScrolledFar
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
@@ -2825,7 +2832,7 @@ export function StreamContent({
                         onScroll={plainHandleScroll}
                         {...batchPointerHandlers}
                       >
-                        <div ref={plainContentRef}>
+                        <div ref={registerPlainContent}>
                           {/* The plain scroller has no settle mask: hold the anchor until the
                               replies' first read lands so both paint in one frame. */}
                           {isResolved && !isLoading && isThread && anchorEvent && parentStreamId && (
@@ -2857,6 +2864,7 @@ export function StreamContent({
                             viewerIsMember={isMember}
                             batch={batchState}
                             conversationOverlay={activeConversationOverlay}
+                            animateArrivals={!isJumpMode}
                           />
                           {isFetchingNewer && (
                             <div className="flex justify-center py-2">
@@ -3425,6 +3433,7 @@ function TimelineMessageList({
   // hand back rows still marked deferred after the ref flips.
   const scrollerItems = visibleItems.map((item, index) => ({
     key: getTimelineItemKey(item),
+    arrivalKey: getTimelineItemArrivalKey(item),
     node: (
       <TimelineItemContent
         item={item}
@@ -3449,6 +3458,7 @@ function TimelineMessageList({
       contentRef={contentRef}
       shift={shift}
       isInitialSettling={isInitialSettling}
+      animateArrivals={!isJumpMode}
       onScroll={handleScroll}
       startMargin={{ heightPx: startMargin }}
       hasRenderedContent={hasRenderedContent}

@@ -512,6 +512,9 @@ export function BoardCard({
   // hook self-gates on rail coverage, so a complete rail fetches nothing). Never
   // blocks the first render: the local replies show immediately.
   const incompleteLocally = source === "projection" || railReplies.length < totalReplies
+  // A source swap (projection → rail) can append rows the reader never saw
+  // arrive, so it reseeds the pop-in instead of animating them.
+  const arrivalResetKey = `${conversation.id}:${source}`
   // The card is a first-class reading surface (live message bodies, viewport
   // auto-read below), so while any part of it is on screen its streams count
   // as visible for push suppression — otherwise a push banners the exact
@@ -1231,6 +1234,7 @@ export function BoardCard({
                   renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                   onRedirectSession={openReplyComposer}
                   ledgerEventExpansion={ledgerEventExpansion}
+                  arrivalResetKey={arrivalResetKey}
                 />
               ) : (
                 <>
@@ -1246,6 +1250,7 @@ export function BoardCard({
                     renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
                     ledgerEventExpansion={ledgerEventExpansion}
+                    arrivalResetKey={arrivalResetKey}
                   />
                   {openingMessage && renderMessage(openingMessage, false)}
                   {/* The opening renders outside the row builder here, so its inline
@@ -1264,6 +1269,7 @@ export function BoardCard({
                     renderAfterMessage={archivedReason ? undefined : inlineComposer.renderAfterMessage}
                     onRedirectSession={openReplyComposer}
                     ledgerEventExpansion={ledgerEventExpansion}
+                    arrivalResetKey={arrivalResetKey}
                   />
                 </>
               )}
