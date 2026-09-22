@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react"
+import { useLayoutEffect, useRef, type ReactNode } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
@@ -76,6 +76,41 @@ export function CollapsibleBody({
       (threshold !== undefined && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined))
     : undefined
 
+  const trailingRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const trailingRoot = trailingRef.current
+    if (collapsedMaxHeight === undefined || !body || !trailingRoot) return
+    let hidden: Element[] = []
+    const release = () => {
+      for (const el of hidden) el.removeAttribute("inert")
+      hidden = []
+    }
+    // Controls clipped below the clamp stay out of the tab order; anything
+    // straddling the edge is partly visible and keeps its focusable parts.
+    const markClipped = () => {
+      release()
+      const clampBottom = body.getBoundingClientRect().top + collapsedMaxHeight
+      const visit = (el: Element) => {
+        const rect = el.getBoundingClientRect()
+        if (rect.top >= clampBottom) {
+          el.setAttribute("inert", "")
+          hidden.push(el)
+        } else if (rect.bottom > clampBottom) {
+          for (const child of el.children) visit(child)
+        }
+      }
+      visit(trailingRoot)
+    }
+    markClipped()
+    const observer = new ResizeObserver(markClipped)
+    observer.observe(trailingRoot)
+    return () => {
+      observer.disconnect()
+      release()
+    }
+  }, [collapsedMaxHeight, heightPx])
+
   return (
     <div>
       <InsideCollapsibleBlockProvider active={canToggle}>
@@ -96,7 +131,11 @@ export function CollapsibleBody({
           }
         >
           {children}
-          {trailing && <MarkdownBlockProvider messageId={null}>{trailing}</MarkdownBlockProvider>}
+          {trailing && (
+            <div ref={trailingRef}>
+              <MarkdownBlockProvider messageId={null}>{trailing}</MarkdownBlockProvider>
+            </div>
+          )}
         </div>
       </InsideCollapsibleBlockProvider>
       {canToggle && (

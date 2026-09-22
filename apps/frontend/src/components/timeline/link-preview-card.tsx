@@ -286,12 +286,13 @@ function CollapsedPreviewChip({
         isHighlighted && "ring-2 ring-primary border-primary"
       )}
     >
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={onExpand}
         aria-expanded={false}
         title={label}
-        className="flex min-w-0 items-center gap-1.5 py-1 pl-1.5 pr-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        className="h-auto min-w-0 justify-start gap-1.5 rounded-md py-1 pl-1.5 pr-2 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
       >
         <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
         {icon}
@@ -307,7 +308,7 @@ function CollapsedPreviewChip({
           />
         )}
         <span className="max-w-64 truncate">{label}</span>
-      </button>
+      </Button>
       {onDismiss && (
         <div className="reveal-actions pr-1">
           <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">

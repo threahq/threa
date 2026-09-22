@@ -136,6 +136,47 @@ describe("LinkPreviewList", () => {
     expect(screen.getByRole("button", { name: "Second title" })).toHaveAttribute("aria-expanded", "false")
   })
 
+  it("keeps a lone web preview open next to an in-app card", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLink").mockResolvedValue({
+      kind: "message",
+      accessTier: "full",
+      deleted: true,
+    })
+    const messagePreview: LinkPreviewSummary = {
+      ...preview,
+      id: "p_msg",
+      contentType: "message_link",
+      url: "https://app.threa.io/w/ws_123/s/stream_1?m=msg_9",
+    }
+    renderList([messagePreview, preview])
+
+    expect(screen.getByText("Preview description")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText("This message was deleted")).toBeInTheDocument())
+  })
+
+  it("caps in-app cards but not the folded web chips beside them", async () => {
+    vi.spyOn(linkPreviewsApi, "resolveInAppLink").mockResolvedValue({
+      kind: "message",
+      accessTier: "full",
+      deleted: true,
+    })
+    const cards = [0, 1, 2, 3].map(
+      (i): LinkPreviewSummary => ({
+        ...preview,
+        id: `p_msg_${i}`,
+        contentType: "message_link",
+        url: `https://app.threa.io/w/ws_123/s/stream_1?m=msg_${i}`,
+      })
+    )
+    const chips = [0, 1].map((i) => ({ ...preview, id: `p_web_${i}`, title: `Web ${i}` }))
+    renderList([...cards, ...chips])
+
+    await waitFor(() => expect(screen.getAllByText("This message was deleted")).toHaveLength(3))
+    expect(screen.getByRole("button", { name: "Web 0" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Web 1" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Show 1 more preview" })).toBeInTheDocument()
+  })
+
   it("shows every chip without the three-preview cap", () => {
     const many = [0, 1, 2, 3, 4].map((i) => ({ ...preview, id: `p_${i}`, title: `Title ${i}` }))
     const { container } = renderList(many)

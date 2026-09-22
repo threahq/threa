@@ -55,4 +55,41 @@ describe("CollapsibleBody trailing content", () => {
     expect(clamp.style.maxHeight).toBe("")
     expect(screen.getByRole("button", { name: "Collapse" })).toHaveAttribute("aria-expanded", "true")
   })
+
+  it("keeps trailing controls clipped by the fold out of the tab order until expanded", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      const top = Number(this.getAttribute("data-top") ?? 0)
+      const height = Number(this.getAttribute("data-height") ?? 400)
+      return { top, bottom: top + height, left: 0, right: 0, width: 0, height, x: 0, y: top } as DOMRect
+    })
+    const user = userEvent.setup()
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody
+          kind="message"
+          content="long body"
+          collapseAtHeight={420}
+          collapseToHeight={240}
+          trailing={
+            <div data-top="200" data-height="200">
+              <button data-top="200" data-height="30">
+                Visible
+              </button>
+              <button data-top="300" data-height="30">
+                Clipped
+              </button>
+            </div>
+          }
+        >
+          <span>body</span>
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    expect(screen.getByText("Visible")).not.toHaveAttribute("inert")
+    expect(screen.getByText("Clipped")).toHaveAttribute("inert")
+
+    await user.click(screen.getByRole("button", { name: "Show more" }))
+    expect(screen.getByText("Clipped")).not.toHaveAttribute("inert")
+  })
 })

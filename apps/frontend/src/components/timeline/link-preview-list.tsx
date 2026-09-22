@@ -11,7 +11,7 @@ import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
 import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threahq/types"
 
 const DEFAULT_VISIBLE_COUNT = 3
-/** From this many previews on, cards start folded to one-line chips. */
+/** From this many web previews on, web cards start folded to one-line chips. */
 const FOLD_BY_DEFAULT_AT_COUNT = 2
 
 interface LinkPreviewListProps {
@@ -97,12 +97,20 @@ export function LinkPreviewList({
 
   if (visiblePreviews.length === 0) return null
 
+  const webPreviewCount = visiblePreviews.filter((p) => !isInAppLinkContentType(p.contentType)).length
   const defaultCollapsed =
-    preferences?.linkPreviewDefault === "collapsed" || visiblePreviews.length >= FOLD_BY_DEFAULT_AT_COUNT
-  // Folded chips share lines, so the cap only applies while cards open by default.
-  const visibleCount = defaultCollapsed ? visiblePreviews.length : DEFAULT_VISIBLE_COUNT
-  const displayedPreviews = isExpanded ? visiblePreviews : visiblePreviews.slice(0, visibleCount)
-  const hiddenCount = visiblePreviews.length - visibleCount
+    preferences?.linkPreviewDefault === "collapsed" || webPreviewCount >= FOLD_BY_DEFAULT_AT_COUNT
+  // Folded web chips share lines, so the cap only counts previews that render as cards.
+  let cardCount = 0
+  const displayedPreviews = isExpanded
+    ? visiblePreviews
+    : visiblePreviews.filter((p) => {
+        const rendersAsCard = isInAppLinkContentType(p.contentType) || !defaultCollapsed
+        if (!rendersAsCard) return true
+        cardCount++
+        return cardCount <= DEFAULT_VISIBLE_COUNT
+      })
+  const hiddenCount = visiblePreviews.length - displayedPreviews.length
 
   return (
     <div className={cn("flex flex-wrap items-start gap-2 mt-2", className)}>
@@ -138,7 +146,7 @@ export function LinkPreviewList({
         )
       })}
 
-      {hiddenCount > 0 && !isExpanded && (
+      {hiddenCount > 0 && (
         <Button
           variant="ghost"
           size="sm"
