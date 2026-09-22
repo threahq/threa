@@ -283,9 +283,10 @@ body {
 }
 
 /* ---------- MESSAGE ROWS ----------
-     The app's message row (apps/frontend/src/components/timeline), shared by
-     the agent demo, the hero thread and the board section. Persona rows carry
-     ACTOR_ROW_THEME.persona's gold stripe and gradient. */
+     The app's message row (apps/frontend/src/components/timeline), rendered by
+     components/Message.astro for every chat illustration on the page. Static:
+     no hover, no actions. Persona rows carry ACTOR_ROW_THEME.persona's gold
+     stripe and gradient. */
 .tl-row {
   display: grid;
   grid-template-columns: 32px 1fr;
@@ -1037,12 +1038,6 @@ body {
   font-size: 12.5px;
   color: hsl(var(--muted));
 }
-.thread .tl-row {
-  padding: 8px 10px 6px;
-}
-.stop.is-then .tl-text {
-  color: hsl(var(--ink-soft));
-}
 .stop.is-kept > .memory-card {
   position: relative;
 }
@@ -1221,72 +1216,13 @@ body {
   box-shadow: 0 6px 20px -10px hsl(var(--ink) / 0.18);
 }
 
-/* Part 1 — Capture: 5 messages, three of them lifted via opacity/weight. */
+/* Part 1 — Capture: 5 messages, the two not worth keeping dimmed. */
 .capture-list {
   position: relative;
   padding: 6px 0;
 }
-
-.capture-row {
-  display: grid;
-  grid-template-columns: 24px 1fr;
-  gap: 10px;
-  padding: 6px 0 6px 4px;
-  align-items: start;
-  transition: opacity 0.3s ease-out;
-}
-.capture-row.is-noise {
+.capture-list .tl-row.is-noise {
   opacity: 0.42;
-}
-.capture-row .c-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  display: grid;
-  place-items: center;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-.capture-row .c-avatar.av-maya {
-  background: hsl(20 35% 84%);
-  color: hsl(20 40% 28%);
-}
-.capture-row .c-avatar.av-jordan {
-  background: hsl(200 35% 84%);
-  color: hsl(200 40% 28%);
-}
-.capture-row .c-avatar.av-sam {
-  background: hsl(28 30% 86%);
-  color: hsl(28 30% 26%);
-}
-.capture-row .c-body {
-  min-width: 0;
-}
-.capture-row .c-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 1px;
-}
-.capture-row .c-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: hsl(var(--ink));
-}
-.capture-row .c-time {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: hsl(var(--muted));
-}
-.capture-row .c-text {
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: hsl(var(--ink-soft));
-}
-.capture-row.is-selected .c-text {
-  color: hsl(var(--ink));
 }
 
 /* Part 2 — Hold: a decision memo with structured fields */
@@ -1369,58 +1305,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.recall-row {
-  display: grid;
-  grid-template-columns: 24px 1fr;
-  gap: 10px;
-  align-items: start;
-}
-.recall-row .r-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 5px;
-  display: grid;
-  place-items: center;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 600;
-}
-.recall-row .r-avatar.av-maya {
-  background: hsl(20 35% 84%);
-  color: hsl(20 40% 28%);
-}
-.recall-row .r-avatar.av-ariadne {
-  background: hsl(var(--gold) / 0.18);
-  color: hsl(var(--gold));
-}
-.recall-row .r-avatar.av-ariadne svg {
-  width: 16px;
-  height: 16px;
-}
-.recall-row .r-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-.recall-row .r-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: hsl(var(--ink));
-}
-.recall-row.persona .r-name {
-  color: hsl(var(--gold));
-}
-.recall-row .r-time {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: hsl(var(--muted));
-}
-.recall-row .r-text {
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: hsl(var(--ink-soft));
 }
 /* Memo embed card — mirrors the app's in-message memo embed
      (apps/frontend/src/lib/markdown/memo-embed-block.tsx +
@@ -2083,21 +1967,21 @@ body {
    light-surface values that need explicit dark counterparts. */
 
 /* Chat-demo avatar pastels: same hues, inverted value. */
-[data-theme="dark"] .tl-avatar.av-alex,
-[data-theme="dark"] .capture-row .c-avatar.av-sam {
+[data-theme="dark"] .tl-avatar.av-alex {
   background: hsl(28 18% 26%);
   color: hsl(28 28% 80%);
 }
-[data-theme="dark"] .tl-avatar.av-jordan,
-[data-theme="dark"] .capture-row .c-avatar.av-jordan {
+[data-theme="dark"] .tl-avatar.av-jordan {
   background: hsl(200 20% 27%);
   color: hsl(200 30% 80%);
 }
-[data-theme="dark"] .tl-avatar.av-maya,
-[data-theme="dark"] .capture-row .c-avatar.av-maya,
-[data-theme="dark"] .recall-row .r-avatar.av-maya {
+[data-theme="dark"] .tl-avatar.av-maya {
   background: hsl(20 22% 27%);
   color: hsl(20 30% 80%);
+}
+[data-theme="dark"] .tl-avatar.av-sam {
+  background: hsl(150 18% 24%);
+  color: hsl(150 28% 80%);
 }
 
 /* Black-based shadows: an ink-derived shadow would glow on the inverted palette. */
@@ -2130,9 +2014,6 @@ body {
    feed into its topics. Reuses the timeline-demo message vocabulary
    (.tl-row / .tl-avatar / .mention / .reactions / .trace-card /
    .recall-memo-card / composer parts) so it can't drift from the hero.
-   Card rest + hover mirror the app (PR #1349): a static bordered card
-   whose border warms on hover (no lift), plus a per-message hover wash
-   and an inset action pill — both gated to a real mouse pointer.
    ============================================================ */
 
 .board-compare {
@@ -2261,7 +2142,7 @@ body {
   opacity: 1;
 }
 
-/* ---------- board card (mirrors the app board card at rest + PR #1349 hover) ---------- */
+/* ---------- board card (mirrors the app board card at rest) ---------- */
 .board-list {
   display: flex;
   flex-direction: column;
@@ -2371,12 +2252,8 @@ body {
   margin-top: 10px;
 }
 
-/* The message-row metrics (32px avatar, gap-3, pt-3/pb-0.5, square) now live on
-   the base `.tl-row`/`.tl-avatar` so the hero demo and the board section match.
-   Only the board card's full-bleed breakout is board-specific:
-   Card rows break out to the card edge so the wash (and the persona accent
-   stripe) bleed full-width like the app, then re-pad content to align with the
-   header. Breakout equals the card padding exactly. */
+/* Card rows break out to the card edge so the persona accent stripe bleeds
+   full-width like the app, then re-pad content to align with the header. */
 .board-card-body .tl-row {
   margin-left: calc(-1 * var(--bc-pad));
   margin-right: calc(-1 * var(--bc-pad));
@@ -2384,69 +2261,6 @@ body {
   padding-right: var(--bc-pad);
 }
 
-/* ---------- per-message hover (PR #1349): wash + inset action pill ---------- */
-.board-actions {
-  position: absolute;
-  right: 8px;
-  top: 6px;
-  display: flex;
-  gap: 3px;
-  opacity: 0;
-  transition: opacity 140ms ease-out;
-}
-.board-actions .ab {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  border: 1px solid hsl(var(--line));
-  background: hsl(var(--paper));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--ink-soft));
-  box-shadow: 0 1px 2px hsl(28 30% 20% / 0.07);
-}
-.board-actions .ab svg {
-  width: 15px;
-  height: 15px;
-}
-[data-theme="dark"] .board-actions .ab {
-  background: hsl(26 10% 18%);
-  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.4);
-}
-/* Reserve room so the pill never overlays text when it fades in (INV-21) —
-   mirrors the app's pr-16. */
-.board-hoverable .tl-body {
-  padding-right: 56px;
-}
-
-/* Card border-warm + row wash + pill reveal — all gated to a real mouse
-   pointer (matches PR #1349's data-input model: no sticky hover on touch). */
-@media (hover: hover) and (pointer: fine) {
-  .board-card {
-    transition: border-color 200ms ease-out;
-  }
-  .board-card:hover {
-    border-color: hsl(var(--gold) / 0.5);
-  }
-  [data-theme="dark"] .board-card:hover {
-    border-color: hsl(var(--gold) / 0.55);
-  }
-  .board-hoverable {
-    transition: background-color 160ms ease-out;
-  }
-  .board-hoverable:hover {
-    background-color: hsl(38 14% 92%);
-  }
-  [data-theme="dark"] .board-hoverable:hover {
-    background-color: hsl(26 9% 19%);
-  }
-  .board-hoverable:hover .board-actions {
-    opacity: 1;
-  }
-}
-
-/* Avatar colour for Sam (the hero palette only defines maya/jordan/alex/ariadne). */
 .tl-avatar.av-sam {
   background: hsl(150 26% 82%);
   color: hsl(150 38% 24%);
