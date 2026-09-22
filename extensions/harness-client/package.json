@@ -1,9 +1,27 @@
 {
   "name": "@threahq/harness-client",
   "version": "0.1.0",
-  "private": true,
+  "description": "Helpers shared by the Threa harness daemon and the tmux-driven runtimes it supervises: harness link records, harnessd kick/reconnect, allowlisted tmux keys, and the supervisor socket. The public bot protocol lives in @threahq/bot-runtime-client.",
+  "keywords": [
+    "threa",
+    "harness",
+    "tmux",
+    "agent"
+  ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/harness-client"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
   "type": "module",
-  "description": "Internal helpers for the Threa harness daemon and the tmux-driven runtimes it supervises: harness link records, harnessd kick/reconnect, allowlisted tmux keys, and the supervisor socket. Not published; the public protocol lives in @threahq/bot-runtime-client.",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
@@ -11,7 +29,9 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
     "@threahq/bot-runtime-client": "file:../bot-runtime-client"
