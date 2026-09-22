@@ -695,7 +695,11 @@ body {
 .ad {
   display: flex;
   flex-direction: column;
-  height: 560px;
+  /* Fixed so arriving messages push old ones off the top instead of growing
+     the page. In em off a px size so it tracks text-only zoom the way the
+     px-sized messages inside it do. */
+  font-size: 16px;
+  height: 35em;
   background: hsl(var(--paper));
   border: 1px solid hsl(var(--line));
   border-radius: 16px;

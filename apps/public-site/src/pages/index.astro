@@ -732,9 +732,10 @@ const schema = [
 
     const typed = $('.composer-typed')
     const trail = Array.from(typed.dataset.trail)
+    let typing = 0
     const typeTrail = (i = 0) => {
       typed.textContent = trail.slice(0, i).join('')
-      if (i < trail.length) setTimeout(() => typeTrail(i + 1), 70 + Math.random() * 60)
+      if (i < trail.length) typing = setTimeout(() => typeTrail(i + 1), 70 + Math.random() * 60)
     }
 
     const script = [
@@ -742,6 +743,7 @@ const schema = [
       [1300, () => ad.classList.add('has-mention')],
       [1700, () => typeTrail()],
       [3500, () => {
+        clearTimeout(typing)
         ad.classList.remove('is-drafting', 'has-mention')
         typed.textContent = ''
         beat('sent')
