@@ -317,6 +317,15 @@ describe("MarkdownContent", () => {
       const blockquotes = document.querySelectorAll("blockquote")
       expect(blockquotes.length).toBe(2)
     })
+
+    it("keeps each quoted line on its own line", () => {
+      render(<MarkdownContent content={"> bla\n> *bla*\n> bla"} />)
+      const paragraph = document.querySelector("blockquote p")
+      expect({ breaks: paragraph?.querySelectorAll("br").length, text: paragraph?.textContent }).toEqual({
+        breaks: 2,
+        text: "bla\nbla\nbla",
+      })
+    })
   })
 
   describe("tables (GFM)", () => {

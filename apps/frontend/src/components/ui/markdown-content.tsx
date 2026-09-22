@@ -7,6 +7,7 @@ import { extractMath, normalizeMarkdownTables, parseMentionPointerHref } from "@
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { remarkThreaMath } from "@/lib/markdown/remark-math"
+import { remarkQuoteBreaks } from "@/lib/markdown/remark-quote-breaks"
 import { KATEX_OPTIONS } from "@/lib/markdown/katex-options"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
 import { AttachmentProvider } from "@/lib/markdown/attachment-context"
@@ -15,7 +16,7 @@ import type { Mentionable } from "@/components/editor/triggers/types"
 
 export { AttachmentProvider }
 
-const remarkPlugins = [remarkGfm, remarkThreaMath]
+const remarkPlugins = [remarkGfm, remarkQuoteBreaks, remarkThreaMath]
 const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, KATEX_OPTIONS]]
 
 interface MarkdownContentProps {
