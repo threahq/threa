@@ -56,9 +56,9 @@ function buttonVariantFor(tone: DecisionOption["tone"]): "default" | "outline" {
 
 const OPEN_BUTTON_CLASS: Record<DecisionOption["tone"], string> = {
   primary: "shadow-[inset_0_1px_0_hsl(0_0%_100%/0.18),0_1px_2px_hsl(var(--foreground)/0.12)]",
-  neutral: "bg-card shadow-[0_1px_2px_hsl(var(--foreground)/0.05)]",
+  neutral: "bg-card shadow-sm",
   destructive:
-    "bg-card text-destructive shadow-[0_1px_2px_hsl(var(--foreground)/0.05)] hover:border-destructive/30 hover:bg-destructive/[0.06] hover:text-destructive",
+    "bg-card text-destructive shadow-sm hover:border-destructive/30 hover:bg-destructive/[0.06] hover:text-destructive",
 }
 
 const OUTCOME_ICON_CLASS: Record<DecisionOption["tone"], string> = {
@@ -206,9 +206,10 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   let shownOptions = open ? decision.options : decision.options.filter((option) => option.id === resolution?.optionId)
   if (unreadable) shownOptions = []
 
+  const OutcomeIcon = chosenTone === "destructive" ? X : Check
   const showFooter = open
     ? shownOptions.length > 0 || (decision.allowNote && !unreadable)
-    : shownOptions.length > 0 || Boolean(terminalLine || deciderName || decidedAgo || shownNote)
+    : Boolean(terminalLine || deciderName || decidedAgo || shownNote)
 
   return (
     <div className="px-3 sm:px-6 py-1.5">
@@ -289,36 +290,30 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
               )}
               {shownOptions.length > 0 && (
                 <div className={cn("flex items-center", open && "gap-2 sm:ml-auto")}>
-                  {shownOptions.map((option) => {
-                    const chosen = !open
-                    return (
-                      <Button
-                        key={option.id}
-                        type="button"
-                        size="sm"
-                        variant={chosen ? "ghost" : buttonVariantFor(option.tone)}
-                        aria-busy={pendingOptionId === option.id}
-                        aria-disabled={chosen}
-                        aria-live="polite"
-                        onClick={() => handleResolve(option.id)}
-                        className={cn(
-                          "text-[13px]",
-                          chosen
-                            ? "h-auto cursor-default gap-1.5 px-1 py-0.5 font-medium text-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
-                            : cn("h-9 flex-1 px-3.5 sm:h-8 sm:flex-none", OPEN_BUTTON_CLASS[option.tone])
-                        )}
-                      >
-                        {pendingOptionId === option.id && <Loader2 className="animate-spin" aria-hidden="true" />}
-                        {chosen && !pendingOptionId && chosenTone === "destructive" && (
-                          <X className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
-                        )}
-                        {chosen && !pendingOptionId && chosenTone !== "destructive" && (
-                          <Check className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
-                        )}
-                        {labelFor(option)}
-                      </Button>
-                    )
-                  })}
+                  {shownOptions.map((option) => (
+                    <Button
+                      key={option.id}
+                      type="button"
+                      size="sm"
+                      variant={open ? buttonVariantFor(option.tone) : "ghost"}
+                      aria-busy={pendingOptionId === option.id}
+                      aria-disabled={!open}
+                      aria-live="polite"
+                      onClick={() => handleResolve(option.id)}
+                      className={cn(
+                        "text-[13px]",
+                        open
+                          ? cn("h-9 flex-1 px-3.5 sm:h-8 sm:flex-none", OPEN_BUTTON_CLASS[option.tone])
+                          : "h-auto cursor-default gap-1.5 px-1 py-0.5 text-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
+                      )}
+                    >
+                      {pendingOptionId === option.id && <Loader2 className="animate-spin" aria-hidden="true" />}
+                      {!open && !pendingOptionId && (
+                        <OutcomeIcon className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
+                      )}
+                      {labelFor(option)}
+                    </Button>
+                  ))}
                 </div>
               )}
               {!open && shownOptions.length === 0 && terminalLine && (
