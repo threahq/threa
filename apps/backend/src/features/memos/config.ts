@@ -20,8 +20,8 @@ import { formatDate } from "../../lib/temporal"
 // handlers import (source of truth is @threahq/types — INV-33).
 export { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS }
 
-export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
-export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const MEMO_CLASSIFIER_MODEL_ID = "openrouter:openai/gpt-6-luna"
+export const MEMO_MEMORIZER_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 export const MEMO_TEMPERATURES = {
   classification: 0.1,
@@ -162,7 +162,7 @@ export const MEMO_BOOST_DEFAULT = 1.0
  * ranking (INV-16); rerank is a best-effort enhancer only — fixed
  * timeout, fail-open on every failure reason, never a dependency.
  */
-export const MEMO_RERANKER_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const MEMO_RERANKER_MODEL_ID = "openrouter:openai/gpt-6-luna"
 export const MEMO_RERANKER_TEMPERATURE = 0
 export const MEMO_RERANKER_TIMEOUT_MS = 4000
 /** Top-K window handed to the reranker; the un-reranked tail is appended (recall protection). */

@@ -219,7 +219,7 @@ describe("PersonaConfigService.getConfig", () => {
     expect(config!.overridePatch).toEqual({ model: "openrouter:anthropic/claude-haiku-4.5" })
     expect(config!.overrideUpdatedAt).toBe("2026-07-01T00:00:00.000Z")
     expect(config!.resolved.model).toBe("openrouter:anthropic/claude-haiku-4.5")
-    expect(config!.defaults!.model).toBe("openrouter:openai/gpt-5.6-luna")
+    expect(config!.defaults!.model).toBe("openrouter:openai/gpt-6-luna")
   })
 
   it("returns the caller's own draft (validated, no status) alongside the resolved config", async () => {

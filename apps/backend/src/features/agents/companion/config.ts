@@ -10,7 +10,7 @@ if (ariadneTemperature == null) {
 }
 export const COMPANION_TEMPERATURE = ariadneTemperature
 
-export const COMPANION_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const COMPANION_SUMMARY_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 // Lower temperature for deterministic summary updates
 export const COMPANION_SUMMARY_TEMPERATURE = 0.1
@@ -19,7 +19,7 @@ export const COMPANION_SUMMARY_TEMPERATURE = 0.1
 // the persona did and concluded in a session, stored on the session row and
 // replayed into later turns as "Previous sessions". Same small model the memo
 // classifier/memorizer runs (`MEMO_CLASSIFIER_MODEL_ID`).
-export const EPISODE_SUMMARY_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const EPISODE_SUMMARY_MODEL_ID = "openrouter:openai/gpt-6-luna"
 export const EPISODE_SUMMARY_TEMPERATURE = 0.1
 export const EPISODE_SUMMARY_MAX_TOKENS = 256
 

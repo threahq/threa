@@ -207,8 +207,8 @@ export function loadConfig(): Config {
       tavilyApiKey: process.env.TAVILY_API_KEY || "",
       elevenLabsApiKey: process.env.ELEVENLABS_API_KEY || "",
       deepgramApiKey: process.env.DEEPGRAM_API_KEY || "",
-      namingModel: process.env.AI_NAMING_MODEL || "openrouter:openai/gpt-5.6-luna",
-      extractionModel: process.env.AI_EXTRACTION_MODEL || "openrouter:openai/gpt-5.6-luna",
+      namingModel: process.env.AI_NAMING_MODEL || "openrouter:openai/gpt-6-luna",
+      extractionModel: process.env.AI_EXTRACTION_MODEL || "openrouter:openai/gpt-6-luna",
     },
     s3: {
       bucket: process.env.S3_BUCKET || "threa-uploads",

@@ -7,7 +7,7 @@
 import { z } from "zod"
 import { formatDate } from "../../lib/temporal"
 
-export const SUGGESTION_EXTRACTOR_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const SUGGESTION_EXTRACTOR_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 export const SUGGESTION_EXTRACTOR_TEMPERATURE = 0.1
 

@@ -4,7 +4,7 @@ import { z } from "zod"
 import type { ConversationStatus } from "@threahq/types"
 import { CONVERSATION_STATUSES } from "@threahq/types"
 
-export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-6-luna"
 
 /** Low temperature for classification consistency. */
 export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2

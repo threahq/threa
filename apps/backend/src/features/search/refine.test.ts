@@ -34,7 +34,7 @@ describe("SearchRefiner", () => {
     expect(result).toEqual({ keep: [2, 0], note: "Kept the decisions." })
     expect(generateObject).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "openrouter:openai/gpt-5.6-luna",
+        model: "openrouter:openai/gpt-6-luna",
         telemetry: expect.objectContaining({ functionId: "search-refine" }),
         context: { workspaceId: "ws_1", userId: "usr_1", origin: "system" },
       })

@@ -1,6 +1,6 @@
 # AI Model Reference
 
-**Last updated:** 2026-07-30
+**Last updated:** 2026-09-22
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
@@ -18,6 +18,7 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
 | `openai/gpt-5.4-nano`           | $0.20 | $1.25  | $0.02      | free        | 400K    |
 | `openai/gpt-5.4-mini`           | $0.75 | $4.50  | $0.075     | free        | 400K    |
 | `openai/gpt-5.6-luna`           | $0.20 | $1.20  | $0.02      | **$0.25**   | 1.05M   |
+| `openai/gpt-6-luna`             | $0.10 | $0.50  | $0.01      | **$0.125**  | 1.05M   |
 | `openai/gpt-5.6-terra`          | $2.50 | $15.00 | $0.25      | $3.125      | 1.05M   |
 | `openai/gpt-5.6-sol`            | $5.00 | $30.00 | $0.50      | $6.25       | 1.05M   |
 | `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       | 200K    |
@@ -36,7 +37,7 @@ Anthropic, Google and OpenAI only. That is a deliberate constraint on the infere
 **Cache columns are not a footnote — they change which model is cheapest.**
 
 - **Free writes (OpenAI family).** Caching is automatic and costs nothing to attempt, so a stable ≥1024-token prefix is pure upside. A cache miss bills the normal input rate.
-- **Paid writes (Anthropic, Google, and `gpt-5.6-luna`).** A miss on a cacheable-size prompt bills the **write** rate, not the input rate. Luna bills $0.25 on a miss or $0.02 on a hit; its $0.20 headline input rate applies below the cache floor. Prompts above 272K tokens use the long-context rate ($0.40 input, $1.80 output, $0.04 cache read, $0.50 cache write).
+- **Paid writes (Anthropic, Google, and Luna).** A miss on a cacheable-size prompt bills the **write** rate, not the input rate. GPT-6 Luna bills $0.125 on a miss or $0.01 on a hit; its $0.10 headline input rate applies below the cache floor. Prompts above 272K tokens use the long-context rate ($0.20 input, $0.75 output, $0.02 cache read, $0.25 cache write).
 - **Anthropic and Google need an explicit breakpoint** (`applyCacheBreakpoints`, `packages/agent-runtime/src/ai/ai.ts`); the OpenAI family needs only prefix stability.
 - **A prefix only caches if it is genuinely a prefix.** Interpolating a date, a language rule, or a message list _above_ the static block truncates the cacheable span to whatever precedes the first variable — commonly a few dozen tokens, under the 1024-token floor, so nothing caches at all.
 
@@ -115,7 +116,7 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 
 **When to use:** nothing new. Prefer `claude-sonnet-5` — cheaper and it won the eval.
 
-The general researcher (`general_research`) pinned 4.6 until 2026-08-31. It now inherits the calling turn's model: on a backend persona turn that is the resolved turn model, escalation included; an enclave turn always forwards the persona's base model, since enclave turns never escalate. `gpt-5.6-luna` is the fallback where there is no calling turn, and an eval's `general:researcher` override outranks both. No code path selects 4.6 by default any more.
+The general researcher (`general_research`) pinned 4.6 until 2026-08-31. It now inherits the calling turn's model: on a backend persona turn that is the resolved turn model, escalation included; an enclave turn always forwards the persona's base model, since enclave turns never escalate. `gpt-6-luna` is the fallback where there is no calling turn, and an eval's `general:researcher` override outranks both. No code path selects 4.6 by default any more.
 
 Research cost now follows the turn: a persona pinned to Opus 5 researches at Opus prices, where the same research used to bill at Sonnet 4.6's.
 
@@ -133,7 +134,7 @@ Research cost now follows the turn: a persona pinned to Opus 5 researches at Opu
 
 This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On the strength of that number five components were pinned to haiku "for cost" (companion summary, workspace-agent plan/eval, turn digest, supersede validator, the Empty Agent shell). All five now use Luna. Left in the registry so a persona deliberately pinned to it keeps resolving.
 
-**Use instead:** `gpt-5.6-luna`.
+**Use instead:** `gpt-6-luna`.
 
 ---
 
@@ -163,6 +164,18 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 ---
 
+### openrouter:openai/gpt-6-luna
+
+**Name:** GPT-6 Luna
+
+**Description:** Fast tier of the GPT-6 series. 1.05M context, image and file input, tool calling and structured output. Available through OpenRouter's OpenAI and Amazon Bedrock providers. Regional routing has not yet been verified for Threa.
+
+**Typical cost:** ~$0.125 / ~$0.50 per 1M on a cache miss, ~$0.01 per 1M on a cache hit. Below the 1024-token cache floor, input costs $0.10 per 1M. Long-context pricing begins at 272K tokens ($0.20/$0.75).
+
+**When to use:** Production defaults formerly pinned to GPT-5.6 Luna, including Ariadne, classification, extraction, summarization, most attachment processing and the no-turn general-research fallback. Image captioning remains on GPT-5.6 Luna after GPT-6 missed OCR text in the image-caption suite. Existing explicit GPT-5.6 Luna selections remain valid. This is a product trial, not a Threa eval result; compare production behavior and task suites before claiming quality parity.
+
+---
+
 ### openrouter:openai/gpt-5.6-luna
 
 **Name:** GPT-5.6 Luna
@@ -173,13 +186,10 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **When to use:**
 
-- Default Ariadne companion persona model (since 2026-08-27)
-- Default LLM-as-judge model for the eval suites (`EVAL_JUDGE_MODEL`)
-- Classification, extraction, ranking, naming, transcript polish, and summarization
-- Image captioning and OCR (`image-caption`), and PDF layout extraction (`pdf`), since 2026-09-07
-- Attachment summarization (`pdf`, `word`, `excel`, `text`), since 2026-09-07
-- Memo memorization and tool-call guarding
-- Fallback model for the general researcher (since 2026-08-31; was pinned `claude-sonnet-4.6`). Callers with a turn of their own pass their own model instead, so this fires only where no calling turn exists — chosen as the cheapest current-generation model that still holds up on agentic tool use, not on a research-specific eval.
+- Former default Ariadne companion persona model (2026-08-27 to 2026-09-22); retained for explicit selections
+- Default LLM-as-judge model for the eval suites (`EVAL_JUDGE_MODEL`), kept stable for comparisons
+- Prior default for classification, extraction, ranking, naming, transcript polish, summarization, image captioning, OCR, attachment processing, memo memorization and tool-call guarding
+- Prior no-turn fallback for the general researcher (2026-08-31 to 2026-09-22). Callers with a turn of their own pass their own model instead.
 
 **On the Ariadne default — read this before citing it as an eval win.** It is
 Kristoffer's product call, taken on Luna's cost and his own use of it, and the
@@ -314,12 +324,12 @@ These models are deliberately absent from `models.yaml`. That registry is what t
 
 **Measured against `gpt-5.6-luna` through the production extractors (`bun run eval boundary-extraction`, `bun run eval memo-classifier`), 18 Sep 2026:**
 
-|                    | boundary Jev | boundary luna | memo Jev  | memo luna |
-| ------------------ | ------------ | ------------- | --------- | --------- |
-| cases passed       | 37/41        | 41/41         | 11/11     | 11/11     |
-| decisions correct  | 40/41        | 41/41         | 11/11     | 11/11     |
-| wall clock         | 45.2s        | 1.8m          | 5.0s      | 30.3s     |
-| suite cost         | $0.0080      | $0.012        | $0.00073  | $0.0052   |
+|                   | boundary Jev | boundary luna | memo Jev | memo luna |
+| ----------------- | ------------ | ------------- | -------- | --------- |
+| cases passed      | 37/41        | 41/41         | 11/11    | 11/11     |
+| decisions correct | 40/41        | 41/41         | 11/11    | 11/11     |
+| wall clock        | 45.2s        | 1.8m          | 5.0s     | 30.3s     |
+| suite cost        | $0.0080      | $0.012        | $0.00073 | $0.0052   |
 
 The boundary figure for Jev includes 19 `gpt-5.6-luna` calls to name new conversations, which is why its cost lead there is 1.5x rather than the memo suite's 7x. Of its four failing cases, three decide correctly and miss a `minConfidence` floor authored against luna's flat self-report; one is a real miss. Read the rest as parity, not a quality win: both suites were tuned against luna, so they are saturated and can only show Jev not-worse. All six Swedish boundary cases and the whole memo suite pass, so it is not English-only.
 

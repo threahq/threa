@@ -40,7 +40,7 @@ export function hybridWeightsForQuery(
   return HYBRID_WEIGHTS_BY_INTENT[intent]
 }
 
-export const SEARCH_EXPANSION_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const SEARCH_EXPANSION_MODEL_ID = "openrouter:openai/gpt-6-luna"
 export const SEARCH_EXPANSION_TEMPERATURE = 0
 export const SEARCH_EXPANSION_TIMEOUT_MS = 4000
 export const SEARCH_EXPANSION_MAX_VARIANTS = 3
@@ -96,7 +96,7 @@ Return up to ${SEARCH_EXPANSION_MAX_VARIANTS} alternative phrasings of the query
 
 Never answer the query. Never add facts, entities, or assumptions not implied by the query itself. Return only the variants array.`
 
-export const SEARCH_REFINE_MODEL_ID = "openrouter:openai/gpt-5.6-luna"
+export const SEARCH_REFINE_MODEL_ID = "openrouter:openai/gpt-6-luna"
 export const SEARCH_REFINE_TEMPERATURE = 0
 /** Longer than expansion: the prompt carries every row of the list, and the answer is a ranked subset of it. */
 export const SEARCH_REFINE_TIMEOUT_MS = 8000
