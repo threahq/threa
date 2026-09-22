@@ -15,6 +15,7 @@
     "test": "bun test src/"
   },
   "dependencies": {
+    "@ai-sdk/openai": "4.0.10",
     "@langchain/core": "^1.1.5",
     "@openrouter/ai-sdk-provider": "^3",
     "@threahq/types": "workspace:*",

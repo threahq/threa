@@ -19,6 +19,7 @@ import type { AISpendDenialReason } from "@threahq/types"
 import type { Embedding, LanguageModel, EmbeddingModel, ModelMessage, Tool } from "ai"
 import type { z } from "zod"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
+import { createOpenAI } from "@ai-sdk/openai"
 import { stripMarkdownFences } from "./text-utils"
 import { requestDecisions, type DecisionQuestion, type DecisionsResult } from "./decisions"
 import { logger } from "../logger"
@@ -603,9 +604,59 @@ export function extractUsageWithCost(response: {
   }
 }
 
+const LUNA = "openrouter:openai/gpt-6-luna"
+
+function generationProviderOptions(model: string, effort?: ReasoningEffort): ModelMessage["providerOptions"] {
+  if (model === LUNA && !effort) return { openai: { store: false } }
+  if (effort) return { openrouter: { reasoning: { effort, exclude: true } } }
+  return undefined
+}
+
+function lunaUsage(response: {
+  response?: { body?: unknown }
+  usage?: unknown
+  providerMetadata?: unknown
+}): UsageWithCost {
+  const usage = (
+    response.response?.body as
+      | {
+          usage?: {
+            cost?: unknown
+            input_tokens?: number
+            output_tokens?: number
+            total_tokens?: number
+            input_tokens_details?: { cached_tokens?: number }
+            output_tokens_details?: { reasoning_tokens?: number }
+          }
+        }
+      | undefined
+  )?.usage
+  if (typeof usage?.cost !== "number" || !Number.isFinite(usage.cost)) {
+    throw new Error("OpenRouter Responses did not return exact usage.cost for GPT-6 Luna")
+  }
+  if (
+    typeof usage.input_tokens !== "number" ||
+    typeof usage.output_tokens !== "number" ||
+    typeof usage.total_tokens !== "number"
+  ) {
+    throw new Error("OpenRouter Responses did not return exact token usage for GPT-6 Luna")
+  }
+  return {
+    promptTokens: usage.input_tokens,
+    completionTokens: usage.output_tokens,
+    totalTokens: usage.total_tokens,
+    cachedPromptTokens: usage.input_tokens_details?.cached_tokens,
+    reasoningTokens: usage.output_tokens_details?.reasoning_tokens,
+    cost: usage.cost,
+  }
+}
+
 export function createAI(config: AIConfig): AI {
   const providers = {
     openrouter: config.openrouter ? createOpenRouter({ apiKey: config.openrouter.apiKey }) : null,
+    luna: config.openrouter
+      ? createOpenAI({ apiKey: config.openrouter.apiKey, baseURL: "https://openrouter.ai/api/v1" })
+      : null,
   }
 
   const defaultRepair = config.defaults?.repair ?? stripMarkdownFences
@@ -619,6 +670,7 @@ export function createAI(config: AIConfig): AI {
           throw new Error("OpenRouter not configured. Set OPENROUTER_API_KEY or provide openrouter.apiKey in config.")
         }
         logger.debug({ provider, modelId }, "Creating language model instance")
+        if (modelString === LUNA) return providers.luna!.responses(modelId)
         // Enable usage tracking to get cost from OpenRouter response
         return providers.openrouter.chat(modelId, { usage: { include: true } })
       default:
@@ -752,7 +804,13 @@ export function createAI(config: AIConfig): AI {
 
     async generateText(options) {
       await admit(options.context, options.telemetry?.functionId ?? "generateText")
-      const model = getLanguageModel(options.model)
+      // Tool-free calls use Chat Completions, preserving configured temperature
+      // and reasoning effort; Luna's tool calls use Responses below.
+      const resolvedModel = getLanguageModel(options.model)
+      const model =
+        options.model === LUNA
+          ? providers.openrouter!.chat("openai/gpt-6-luna", { usage: { include: true } })
+          : resolvedModel
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateText",
@@ -797,6 +855,14 @@ export function createAI(config: AIConfig): AI {
     },
 
     async generateTextWithTools(options: GenerateTextWithToolsOptions): Promise<GenerateTextWithToolsResult> {
+      if (
+        typeof options.model !== "string" &&
+        options.model.provider === "openai.responses" &&
+        options.model.modelId === "openai/gpt-6-luna" &&
+        options.modelString !== LUNA
+      ) {
+        throw new Error("GPT-6 Luna tool calls require modelString for stateless Responses and exact cost")
+      }
       await admit(options.context, options.telemetry?.functionId ?? "generateTextWithTools")
       // Disclose fires even without `modelString`: the egress happened, so a
       // provider/model `unknown` row beats silence. Cost recording below stays
@@ -822,12 +888,14 @@ export function createAI(config: AIConfig): AI {
       const startedAt = Date.now()
       const response = await aiGenerateText({
         model: options.model,
+        ...(options.modelString === LUNA ? { include: { responseBody: true } } : {}),
         system,
         messages,
         allowSystemInMessages: true,
         tools: options.tools,
+        providerOptions: options.modelString === LUNA ? { openai: { store: false } } : undefined,
         maxOutputTokens: options.maxTokens,
-        temperature: options.temperature,
+        ...(options.modelString === LUNA ? {} : { temperature: options.temperature }),
         abortSignal: options.abortSignal,
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
@@ -838,7 +906,7 @@ export function createAI(config: AIConfig): AI {
       // alongside `context` (agent loops do this via AgentRuntime).
       let usage: UsageWithCost | undefined
       if (options.modelString) {
-        usage = extractUsageWithCost(response)
+        usage = options.modelString === LUNA ? lunaUsage(response) : extractUsageWithCost(response)
         logger.debug(
           { usage, model: options.modelString, functionId: options.telemetry?.functionId },
           "AI generateTextWithTools completed with usage"
@@ -868,7 +936,10 @@ export function createAI(config: AIConfig): AI {
 
     async generateObject<T extends z.ZodType>(options: GenerateObjectOptions<T>): Promise<ObjectResult<z.infer<T>>> {
       await admit(options.context, options.telemetry?.functionId ?? "generateObject")
-      const model = getLanguageModel(options.model)
+      const lunaChat = options.model === LUNA && options.reasoningEffort !== undefined
+      const model = lunaChat
+        ? providers.openrouter!.chat("openai/gpt-6-luna", { usage: { include: true } })
+        : getLanguageModel(options.model)
       const repair = options.repair === false ? undefined : (options.repair ?? defaultRepair)
 
       maybeDisclose({
@@ -881,6 +952,7 @@ export function createAI(config: AIConfig): AI {
       // @ts-expect-error AI SDK generateObject has complex generics; we validate schema type at our interface level
       const response = await aiGenerateObject({
         model,
+        ...(options.model === LUNA && !lunaChat ? { include: { responseBody: true } } : {}),
         schema: options.schema,
         // Our Message type is compatible with AI SDK's ModelMessage at runtime
         messages: options.messages as ModelMessage[],
@@ -888,14 +960,12 @@ export function createAI(config: AIConfig): AI {
         maxOutputTokens: options.maxTokens,
         temperature: options.temperature,
         abortSignal: options.abortSignal,
-        ...(options.reasoningEffort
-          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
-          : {}),
+        providerOptions: generationProviderOptions(options.model, options.reasoningEffort),
         experimental_repairText: repair,
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      const usage = extractUsageWithCost(response)
+      const usage = options.model === LUNA && !lunaChat ? lunaUsage(response) : extractUsageWithCost(response)
       logger.debug({ usage, model: options.model }, "AI generateObject completed with usage")
 
       await maybeRecordUsage({
