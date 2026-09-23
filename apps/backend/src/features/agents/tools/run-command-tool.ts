@@ -23,6 +23,8 @@ import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { RunCommandToolDeps, WorkspaceToolDeps } from "./tool-deps"
 
 const MAX_ATTACHMENTS_PER_CALL = 10
+/** Copies are buffered in backend memory on the way into the box. */
+const MAX_ATTACHMENT_BYTES_PER_CALL = 50 * 1024 * 1024
 const TRACE_SECTION_MAX_CHARS = 8000
 
 const RunCommandSchema = z.object({
@@ -106,12 +108,25 @@ You have a \`run_command\` tool: a shell in a Debian box that belongs to this co
 
     execute: async (input, { signal }): Promise<AgentToolResult> => {
       try {
-        const files: SandboxFile[] = []
+        const attachments = []
         for (const attachmentId of input.attachmentIds ?? []) {
           const attachment = await attachmentService.getAccessible(attachmentId, { workspaceId, accessibleStreamIds })
           if (!attachment || attachment.e2eOnly) {
             return { output: JSON.stringify({ error: "Attachment not found or not accessible", attachmentId }) }
           }
+          attachments.push(attachment)
+        }
+        const totalBytes = attachments.reduce((sum, a) => sum + a.sizeBytes, 0)
+        if (totalBytes > MAX_ATTACHMENT_BYTES_PER_CALL) {
+          return {
+            output: JSON.stringify({
+              error: `Attachments total ${totalBytes} bytes; one call can copy at most ${MAX_ATTACHMENT_BYTES_PER_CALL}. Copy fewer per call; earlier copies stay in the sandbox.`,
+            }),
+          }
+        }
+
+        const files: SandboxFile[] = []
+        for (const attachment of attachments) {
           files.push({
             path: `/work/attachments/${attachment.id}/${safeFilename(attachment.filename)}`,
             data: new Uint8Array(await storage.getObject(attachment.storagePath)),
@@ -160,8 +175,11 @@ You have a \`run_command\` tool: a shell in a Debian box that belongs to this co
           error?: string
         }
         const status = parsed.error ?? (parsed.timedOut ? "timed out" : `exit ${parsed.exitCode}`)
-        const headline = [`$ ${input.command}`, status, parsed.sandboxReplaced].filter(Boolean).join(" · ")
+        const [firstLine, ...moreLines] = input.command.split("\n")
+        const commandLine = moreLines.length > 0 ? `${firstLine} …` : firstLine
+        const headline = [`$ ${commandLine}`, status, parsed.sandboxReplaced].filter(Boolean).join(" · ")
         const sections = [
+          moreLines.length > 0 && { label: PiToolTraceSectionLabels.ARGUMENTS, body: clip(input.command), lang: null },
           parsed.stdout && { label: PiToolTraceSectionLabels.OUTPUT, body: clip(parsed.stdout), lang: null },
           parsed.stderr && { label: PiToolTraceSectionLabels.ERROR_OUTPUT, body: clip(parsed.stderr), lang: null },
         ].filter(Boolean)

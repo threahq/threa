@@ -10,6 +10,7 @@ const attachment = {
   id: "attach_1",
   filename: "../../etc/Q3 report?.csv",
   storagePath: "uploads/q3.csv",
+  sizeBytes: 8,
   e2eOnly: false,
 }
 
@@ -64,6 +65,30 @@ describe("run_command attachments", () => {
     expect({ error: JSON.parse(result.output).error, runs: sent.length }).toEqual({
       error: "Attachment not found or not accessible",
       runs: 0,
+    })
+  })
+
+  test("refuses attachments over the per-call size limit before reading any", async () => {
+    const { tool, sent } = setup(async () => ({ ...attachment, sizeBytes: 30 * 1024 * 1024 }) as never)
+
+    const result = await tool.config.execute({ command: "ls", attachmentIds: ["attach_1", "attach_2"] }, toolOpts)
+
+    expect({ error: JSON.parse(result.output).error.startsWith("Attachments total"), runs: sent.length }).toEqual({
+      error: true,
+      runs: 0,
+    })
+  })
+
+  test("a multi-line command shows its first line in the headline and the whole script in a section", async () => {
+    const { tool } = setup(async () => null)
+    const input = { command: "python3 - <<'PY'\nprint(1)\nPY" }
+    const result = await tool.config.execute(input, toolOpts)
+
+    const trace = JSON.parse(tool.config.trace.formatContent(input, result))
+
+    expect({ headline: trace.headline, sections: trace.sections.map((s: { label: string }) => s.label) }).toEqual({
+      headline: "$ python3 - <<'PY' … · exit 0",
+      sections: ["Arguments"],
     })
   })
 })
