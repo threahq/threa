@@ -52,6 +52,13 @@ export interface ResolveSectionsInput {
    * falls back to its `createdAt`.
    */
   joinedAtByStreamId: ReadonlyMap<string, string>
+  /**
+   * Nest threads under their root stream's row (chats mode). Off in board mode,
+   * where threads keep their flat bucket placement.
+   */
+  threadTree: boolean
+  /** Type of every stream the viewer can see, visible in the sidebar or not; places a thread in its root's type section. */
+  streamTypeById: ReadonlyMap<string, StreamType>
 }
 
 export interface ResolvedSection {
@@ -101,6 +108,11 @@ export function findSourceLabelId(streamId: string, resolved: ResolvedSection[])
  * reappears in its home section.
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
+  const resolved = resolveFlat(config, input)
+  return input.threadTree ? nestThreads(resolved) : resolved
+}
+
+function resolveFlat(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
   const claimed = new Set<string>()
   // Streams pinned to any custom section, gathered before resolving so they can
   // be withheld from every other section wherever those sit in the order.
@@ -133,8 +145,13 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
   const remainder = resolved.find(({ section }) => section.spec.kind === "smart" && section.spec.bucket === "other")
   if (!remainder) return resolved
 
+  const quiet = quietThreadIds(input)
   const overflow = [...input.processedStreams, ...input.virtualDmStreams].filter(
-    (stream) => !claimed.has(stream.id) && !input.unreadStreamIds.has(stream.id) && overflowBuckets.has(stream.section)
+    (stream) =>
+      !claimed.has(stream.id) &&
+      !input.unreadStreamIds.has(stream.id) &&
+      !quiet.has(stream.id) &&
+      overflowBuckets.has(stream.section)
   )
   if (overflow.length === 0) return resolved
 
@@ -161,8 +178,10 @@ function resolveItems(
   // fold both into the exclusion. Topmost label wins via the running `claimed`.
   if (spec.kind === "label") return resolveLabelSection(spec.labelId, input, union(claimed, customClaimed, unread))
   // Smart/type buckets never show a stream filed into a custom section, carrying a
-  // pinned label, or currently unread — fold all three into the exclusion.
-  const exclude = union(claimed, customClaimed, labeledClaimed, unread)
+  // pinned label, or currently unread — fold all three into the exclusion. In the
+  // thread tree they also skip threads quiet for a week: a thread lists only while
+  // it's live, and an old one is a click away inside its root stream.
+  const exclude = union(claimed, customClaimed, labeledClaimed, unread, quietThreadIds(input))
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
   // Quick links draw no streams — the block renders its own link list, so the
@@ -265,19 +284,26 @@ function resolveSmartBucket(
 
 function resolveTypeSection(
   streamType: TypeSectionStream,
-  { processedStreams, virtualDmStreams, joinedAtByStreamId }: ResolveSectionsInput,
+  { processedStreams, virtualDmStreams, joinedAtByStreamId, threadTree, streamTypeById }: ResolveSectionsInput,
   exclude: ReadonlySet<string>
 ): StreamItemData[] {
   const streams = processedStreams.filter((stream) => !exclude.has(stream.id))
+  // In the tree a thread lives in its root's type section; `nestThreads` then
+  // moves it under the root's row wherever that row landed.
+  const threads = threadTree
+    ? streams.filter(
+        (stream) => stream.type === StreamTypes.THREAD && threadHomeType(stream, streamTypeById) === streamType
+      )
+    : []
 
   if (streamType === "scratchpad") {
     const items = streams.filter((stream) => stream.type === StreamTypes.SCRATCHPAD)
-    return sortStreamsStatic(items, joinedAtByStreamId)
+    return [...sortStreamsStatic(items, joinedAtByStreamId), ...sortStreamsStatic(threads, joinedAtByStreamId)]
   }
 
   if (streamType === "channel") {
     const items = streams.filter((stream) => stream.type === StreamTypes.CHANNEL)
-    return sortStreamsStatic(items, joinedAtByStreamId)
+    return [...sortStreamsStatic(items, joinedAtByStreamId), ...sortStreamsStatic(threads, joinedAtByStreamId)]
   }
 
   // DMs: real DMs static, then system streams static, then synthetic DM drafts
@@ -288,6 +314,73 @@ function resolveTypeSection(
   return [
     ...sortStreamsStatic(realDms, joinedAtByStreamId),
     ...sortStreamsStatic(systemStreams, joinedAtByStreamId),
+    ...sortStreamsStatic(threads, joinedAtByStreamId),
     ...drafts,
   ]
+}
+
+/** The type section a thread falls back to when its root has no row: its root's. */
+function threadHomeType(
+  thread: StreamItemData,
+  streamTypeById: ReadonlyMap<string, StreamType>
+): TypeSectionStream | null {
+  const rootType = thread.rootStreamId ? streamTypeById.get(thread.rootStreamId) : undefined
+  if (rootType === StreamTypes.CHANNEL) return "channel"
+  if (rootType === StreamTypes.SCRATCHPAD) return "scratchpad"
+  if (rootType === StreamTypes.DM || rootType === StreamTypes.SYSTEM) return "dm"
+  return null
+}
+
+function quietThreadIds({ threadTree, processedStreams }: ResolveSectionsInput): ReadonlySet<string> {
+  if (!threadTree) return EMPTY_SET
+  const ids = new Set<string>()
+  for (const stream of processedStreams) {
+    if (stream.type === StreamTypes.THREAD && stream.section === "other") ids.add(stream.id)
+  }
+  return ids
+}
+
+/**
+ * Move each thread under its root stream's row. A thread in an automatic
+ * (smart/type) section follows its root to whichever section the root landed in;
+ * one the viewer filed (custom/label) stays there and nests only when its root
+ * shares the section. A thread whose root has no row (root in the Inbox, or not
+ * listed) stays a top-level row. Inbox rows never nest. Children follow their
+ * root in static order and carry `treeParentId`.
+ */
+function nestThreads(resolved: ResolvedSection[]): ResolvedSection[] {
+  const rootSection = new Map<string, number>()
+  resolved.forEach(({ section, items }, index) => {
+    if (section.spec.kind === "unread") return
+    for (const item of items) if (item.type !== StreamTypes.THREAD) rootSection.set(item.id, index)
+  })
+
+  const children = new Map<string, StreamItemData[]>()
+  const moved = new Set<string>()
+  resolved.forEach(({ section, items }, index) => {
+    if (section.spec.kind === "unread") return
+    const automatic = section.spec.kind === "smart" || section.spec.kind === "type"
+    for (const item of items) {
+      if (item.type !== StreamTypes.THREAD || !item.rootStreamId) continue
+      const target = rootSection.get(item.rootStreamId)
+      if (target === undefined || (target !== index && !automatic)) continue
+      const kids = children.get(item.rootStreamId) ?? []
+      kids.push(item)
+      children.set(item.rootStreamId, kids)
+      moved.add(item.id)
+    }
+  })
+  if (moved.size === 0) return resolved
+
+  return resolved.map((entry) => {
+    if (entry.section.spec.kind === "unread") return entry
+    const items: StreamItemData[] = []
+    for (const item of entry.items) {
+      if (moved.has(item.id)) continue
+      items.push(item)
+      const kids = children.get(item.id)
+      if (kids) for (const kid of kids) items.push({ ...kid, treeParentId: item.id })
+    }
+    return { ...entry, items }
+  })
 }

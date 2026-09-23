@@ -19,6 +19,7 @@ interface ItemOverrides {
   slug?: string | null
   /** Minutes since epoch for the last message — controls activity ordering. */
   activity?: number
+  rootStreamId?: string
 }
 
 function makeItem(overrides: ItemOverrides): StreamItemData {
@@ -33,7 +34,7 @@ function makeItem(overrides: ItemOverrides): StreamItemData {
     description: null,
     visibility: Visibilities.PRIVATE,
     parentStreamId: null,
-    rootStreamId: null,
+    rootStreamId: overrides.rootStreamId ?? null,
     companionMode: "off",
     companionPersonaId: null,
     createdBy: "user_1",
@@ -58,6 +59,8 @@ function makeInput(
     inboxOrder: "newest",
     inboxArrivedAt: {},
     joinedAtByStreamId: new Map(),
+    threadTree: false,
+    streamTypeById: new Map(),
     ...over,
   }
 }
@@ -712,5 +715,131 @@ describe("findSourceLabelId", () => {
     const resolved = resolveSections(config, makeInput({ processedStreams }))
 
     expect(findSourceLabelId("s_plain", resolved)).toBeNull()
+  })
+})
+
+describe("resolveSections thread tree", () => {
+  const thread = (id: string, rootStreamId: string, section: SectionKey = "recent", activity = 5) =>
+    makeItem({ id, type: StreamTypes.THREAD, rootStreamId, section, activity })
+
+  function tree(over: Parameters<typeof makeInput>[0], preset = SMART_SIDEBAR_CONFIG) {
+    return resolveSections(preset, makeInput({ threadTree: true, ...over }))
+      .filter((resolved) => resolved.section.spec.kind !== "quicklinks")
+      .map((resolved) => ({
+        id: resolved.section.id,
+        items: resolved.items.map((item) => (item.treeParentId ? `${item.treeParentId}>${item.id}` : item.id)),
+      }))
+  }
+
+  it("should nest a thread under its root's row when the root sits in another section", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_1", "c_1", "recent"),
+    ]
+
+    expect(tree({ processedStreams })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1", "c_1>t_1"] },
+    ])
+  })
+
+  it("should keep a thread as its own row when its root is in the Inbox", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "unread", spec: { kind: "unread" as const } },
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "recent", slug: "general" }),
+      thread("t_1", "c_1", "recent"),
+    ]
+
+    expect(
+      tree(
+        { processedStreams, unreadStreamIds: new Set(["c_1"]), getUnreadCount: unreadFrom(new Set(["c_1"])) },
+        config
+      )
+    ).toEqual([
+      { id: "unread", items: ["c_1"] },
+      { id: "recent", items: ["t_1"] },
+    ])
+  })
+
+  it("should drop quiet threads from home sections but keep their root", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_old", "c_1", "other"),
+    ]
+
+    expect(tree({ processedStreams })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1"] },
+    ])
+  })
+
+  it("should place a thread in its root's type section, nested when the root is listed", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      makeItem({ id: "sp_1", type: StreamTypes.SCRATCHPAD, section: "other" }),
+      thread("t_ch", "c_1"),
+      thread("t_sp", "sp_1"),
+      thread("t_dm", "dm_hidden"),
+    ]
+    const streamTypeById = new Map<string, StreamItemData["type"]>([
+      ["c_1", StreamTypes.CHANNEL],
+      ["sp_1", StreamTypes.SCRATCHPAD],
+      ["dm_hidden", StreamTypes.DM],
+    ])
+
+    expect(tree({ processedStreams, streamTypeById }, ALL_SIDEBAR_CONFIG)).toEqual([
+      { id: "scratchpads", items: ["sp_1", "sp_1>t_sp"] },
+      { id: "channels", items: ["c_1", "c_1>t_ch"] },
+      { id: "dms", items: ["t_dm"] },
+    ])
+  })
+
+  it("should keep a custom-filed thread in its section and nest it only under a root filed alongside", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        {
+          id: customSectionId("sec_1"),
+          spec: { kind: "custom" as const, sectionId: "sec_1", name: "Filed", streamIds: ["t_1", "c_2", "t_2"] },
+        },
+        { id: "other", spec: { kind: "smart" as const, bucket: "other" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "a" }),
+      makeItem({ id: "c_2", type: StreamTypes.CHANNEL, section: "other", slug: "b" }),
+      thread("t_1", "c_1"),
+      thread("t_2", "c_2"),
+    ]
+
+    expect(tree({ processedStreams }, config)).toEqual([
+      { id: customSectionId("sec_1"), items: ["t_1", "c_2", "c_2>t_2"] },
+      { id: "other", items: ["c_1"] },
+    ])
+  })
+
+  it("should leave threads flat when the tree is off", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_1", "c_1", "recent"),
+    ]
+
+    expect(shape({ processedStreams })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: ["t_1"] },
+      { id: "other", items: ["c_1"] },
+    ])
   })
 })

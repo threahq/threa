@@ -78,6 +78,44 @@ describe("sectionVisibleItems", () => {
     })
     expect(visible.map((i) => i.id)).toEqual(["a", "b", "c"])
   })
+
+  describe("thread tree groups", () => {
+    const kid = (id: string, parent: string) => ({ id, treeParentId: parent }) as unknown as StreamItemData
+    const tree = [makeItem("root"), kid("t_quiet", "root"), kid("t_live", "root"), makeItem("solo")]
+
+    it("should show only active threads and bring their quiet root along as context when filtered to unread", () => {
+      const result = sectionVisibleItems(tree, {
+        tiered: false,
+        filter: "unread",
+        moreOpen: false,
+        isActive: (id) => id === "t_live",
+      })
+      expect({
+        ids: result.visible.map((i) => i.id),
+        hiddenCount: result.hiddenCount,
+        context: [...result.contextIds],
+      }).toEqual({ ids: ["root", "t_live"], hiddenCount: 2, context: ["root"] })
+    })
+
+    it("should keep a root's whole group together when the root is within the tier limit", () => {
+      const result = sectionVisibleItems(tree, { tiered: true, filter: "all", moreOpen: false, isActive: () => false })
+      expect(result.visible.map((i) => i.id)).toEqual(["root", "t_quiet", "t_live", "solo"])
+    })
+
+    it("should surface an active thread past the tier limit with its root as context", () => {
+      const filler = Array.from({ length: 10 }, (_, i) => makeItem(`f${i}`))
+      const result = sectionVisibleItems([...filler, ...tree], {
+        tiered: true,
+        filter: "all",
+        moreOpen: false,
+        isActive: (id) => id === "t_live",
+      })
+      expect({ ids: result.visible.slice(10).map((i) => i.id), context: [...result.contextIds] }).toEqual({
+        ids: ["root", "t_live"],
+        context: ["root"],
+      })
+    })
+  })
 })
 
 describe("SectionHeader open navigation", () => {

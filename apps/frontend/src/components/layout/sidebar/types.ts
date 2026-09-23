@@ -31,4 +31,10 @@ export interface StreamItemData extends StreamWithPreview {
    * `nameDecrypting`.
    */
   hasLoadedDraft?: boolean
+  /**
+   * Set by `resolveSections` when this thread row nests under its root stream's
+   * row: the root's id. Rows carrying it always directly follow their root (or a
+   * sibling) in a section's items.
+   */
+  treeParentId?: string
 }

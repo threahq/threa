@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import { UnreadBadge } from "@/components/unread-badge"
 import { isDraftId } from "@/hooks"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
@@ -506,7 +507,11 @@ export function StreamSection({
   const mentionAggregate = sumMentions(items, getMentionCount)
 
   const isMoreOpen = moreState === "open"
-  const { visible: visibleItems, hiddenCount } = sectionVisibleItems(items, {
+  const {
+    visible: visibleItems,
+    hiddenCount,
+    contextIds,
+  } = sectionVisibleItems(items, {
     tiered: false,
     filter: sectionFilter ?? "all",
     moreOpen: isMoreOpen,
@@ -558,7 +563,7 @@ export function StreamSection({
       />
 
       {!isCollapsed && visibleItems.length > 0 && (
-        <div className="mt-1 flex flex-col gap-0.5">{visibleItems.map(renderRow)}</div>
+        <div className="mt-1 flex flex-col gap-0.5">{renderTreeRows(visibleItems, contextIds, renderRow)}</div>
       )}
 
       {!isCollapsed && hasMore && onToggleMore && (
@@ -609,18 +614,122 @@ interface SectionVisibleItemsOptions {
 export function sectionVisibleItems(
   items: StreamItemData[],
   { tiered, filter, moreOpen, isActive }: SectionVisibleItemsOptions
-): { visible: StreamItemData[]; hiddenCount: number } {
-  if (moreOpen) return { visible: items, hiddenCount: 0 }
+): SectionVisibleItems {
+  if (moreOpen) return { visible: items, hiddenCount: 0, contextIds: EMPTY_IDS }
+  if (filter !== "unread" && !tiered) return { visible: items, hiddenCount: 0, contextIds: EMPTY_IDS }
 
-  if (filter === "unread") {
-    const visible = items.filter((item) => isActive(item.id))
-    return { visible, hiddenCount: items.length - visible.length }
+  // A root and its nested threads (`treeParentId`) show or hide together, except
+  // that an active thread always shows: when its root would otherwise hide, the
+  // root comes along as a muted context row so the thread keeps its place.
+  const visible: StreamItemData[] = []
+  const contextIds = new Set<string>()
+  for (let headIndex = 0, end = 1; headIndex < items.length; headIndex = end, end = headIndex + 1) {
+    const head = items[headIndex]
+    while (end < items.length && items[end].treeParentId === head.id) end++
+    const kids = items.slice(headIndex + 1, end)
+
+    const headActive = isActive(head.id)
+    const wholeGroup = filter !== "unread" && (headIndex < TIER_VISIBLE_LIMIT || headActive)
+    if (wholeGroup) {
+      visible.push(head, ...kids)
+      continue
+    }
+    const activeKids = kids.filter((kid) => isActive(kid.id))
+    if (!headActive && activeKids.length === 0) continue
+    if (!headActive) contextIds.add(head.id)
+    visible.push(head, ...activeKids)
   }
+  return { visible, hiddenCount: items.length - visible.length, contextIds }
+}
 
-  if (!tiered) return { visible: items, hiddenCount: 0 }
+interface SectionVisibleItems {
+  visible: StreamItemData[]
+  hiddenCount: number
+  /** Roots shown only because a nested thread under them is active; rendered muted. */
+  contextIds: ReadonlySet<string>
+}
 
-  const visible = items.filter((item, index) => index < TIER_VISIBLE_LIMIT || isActive(item.id))
-  return { visible, hiddenCount: items.length - visible.length }
+const EMPTY_IDS: ReadonlySet<string> = new Set()
+
+interface TreeRole {
+  child: boolean
+  /** Last nested thread under its root among the visible rows. */
+  last: boolean
+  hasKids: boolean
+  context: boolean
+}
+
+/** Render a section's visible rows, wrapping the ones that take part in a thread tree. */
+function renderTreeRows(
+  visible: StreamItemData[],
+  contextIds: ReadonlySet<string>,
+  renderRow: (stream: StreamItemData) => ReactNode
+): ReactNode[] {
+  return visible.map((stream, index) => {
+    const next = visible[index + 1]
+    const child = !!stream.treeParentId
+    const hasKids = next?.treeParentId === stream.id
+    const context = contextIds.has(stream.id)
+    if (!child && !hasKids && !context) return renderRow(stream)
+    const role = { child, last: next?.treeParentId !== stream.treeParentId, hasKids, context }
+    return (
+      <TreeRow key={stream.id} role={role}>
+        {renderRow(stream)}
+      </TreeRow>
+    )
+  })
+}
+
+// Tile centre and bottom within a row, per row height: dense pointer rows carry a
+// 20px tile in 32px, touch rows a 32px tile in 48px. The 2px overshoot bridges the
+// `gap-0.5` between rows so the lines read as continuous.
+const TREE_GEOMETRY = {
+  dense: { x: 18, centerY: 16, tileBottom: 26, indent: 30 },
+  touch: { x: 24, centerY: 24, tileBottom: 40, indent: 36 },
+}
+const ROW_GAP = 2
+const LINE_GAP_BEFORE_TILE = 4
+
+function TreeRow({ role, children }: { role: TreeRole; children: ReactNode }) {
+  const geometry = TREE_GEOMETRY[useInputMode() === "touch" ? "touch" : "dense"]
+  const lineClass = "pointer-events-none absolute border-muted-foreground/30"
+  return (
+    <div
+      className="relative"
+      style={role.child ? { paddingLeft: geometry.indent } : undefined}
+      data-tree-role={role.child ? "child" : "root"}
+    >
+      {role.child && (
+        <span
+          aria-hidden
+          className={cn(lineClass, "border-l border-b rounded-bl-[7px]")}
+          style={{
+            left: geometry.x,
+            top: -ROW_GAP,
+            height: geometry.centerY + ROW_GAP,
+            width: geometry.indent + 8 - geometry.x - LINE_GAP_BEFORE_TILE,
+          }}
+        />
+      )}
+      {role.child && !role.last && (
+        <span
+          aria-hidden
+          className={cn(lineClass, "border-l")}
+          style={{ left: geometry.x, top: geometry.centerY, bottom: -ROW_GAP }}
+        />
+      )}
+      {role.hasKids && (
+        <span
+          aria-hidden
+          className={cn(lineClass, "border-l")}
+          style={{ left: geometry.x, top: geometry.tileBottom, bottom: -ROW_GAP }}
+        />
+      )}
+      <div className={cn(role.context && "opacity-60 transition-opacity hover:opacity-100 focus-within:opacity-100")}>
+        {children}
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -671,7 +780,11 @@ export function TieredStreamSection({
   const mentionAggregate = sumMentions(items, getMentionCount)
 
   const isMoreOpen = moreState === "open"
-  const { visible: visibleItems, hiddenCount } = sectionVisibleItems(items, {
+  const {
+    visible: visibleItems,
+    hiddenCount,
+    contextIds,
+  } = sectionVisibleItems(items, {
     tiered: true,
     filter: sectionFilter ?? "all",
     moreOpen: isMoreOpen,
@@ -718,7 +831,7 @@ export function TieredStreamSection({
       />
 
       {!isCollapsed && visibleItems.length > 0 && (
-        <div className="mt-1 flex flex-col gap-0.5">{visibleItems.map(renderItem)}</div>
+        <div className="mt-1 flex flex-col gap-0.5">{renderTreeRows(visibleItems, contextIds, renderItem)}</div>
       )}
 
       {!isCollapsed && hasMore && <MoreDivider isOpen={isMoreOpen} hiddenCount={hiddenCount} onToggle={onToggleMore} />}

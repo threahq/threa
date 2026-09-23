@@ -178,6 +178,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   )
 
   const hiddenStreamIds = useMemo(() => collectHiddenStreamIds(idbStreams), [idbStreams])
+  const streamTypeById = useMemo(() => new Map(idbStreams.map((stream) => [stream.id, stream.type])), [idbStreams])
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
   // draft, surfaced as a per-row hint. `loadedDraftStreamIdSignature` (from the
@@ -340,6 +341,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         inboxOrder,
         inboxArrivedAt,
         joinedAtByStreamId,
+        threadTree: !isBoardPage,
+        streamTypeById,
       }),
     [
       sidebarConfig,
@@ -351,6 +354,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       inboxOrder,
       inboxArrivedAt,
       joinedAtByStreamId,
+      isBoardPage,
+      streamTypeById,
     ]
   )
 

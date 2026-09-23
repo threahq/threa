@@ -187,6 +187,8 @@ interface StreamItemAvatarProps {
    * the call dot wins over the agent-working dot at this one contested slot.
    */
   callActive?: boolean
+  /** 20px tile for the dense pointer-device rows; the default 32px tile keeps touch targets tall. */
+  dense?: boolean
 }
 
 /**
@@ -257,7 +259,9 @@ export function StreamItemAvatar({
   decoration,
   agentActive,
   callActive,
+  dense = false,
 }: StreamItemAvatarProps) {
+  const tileSize = dense ? "w-5 h-5 rounded-md [&>svg]:h-3 [&>svg]:w-3" : "w-8 h-8 rounded-lg"
   // The one contested top-right slot: a live call wins over an agent-working
   // signal, which in turn wins over the static companion decoration (INV-21:
   // all three occupy the same absolute footprint, so swaps shift nothing).
@@ -268,7 +272,7 @@ export function StreamItemAvatar({
   // Thread-of-DM: thread icon as main content, avatar as small badge overlay
   if (badge && avatarUrl) {
     return (
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 relative bg-muted">
+      <div className={cn(tileSize, "flex items-center justify-center flex-shrink-0 relative bg-muted")}>
         <MessageSquareText className="h-3.5 w-3.5 text-muted-foreground" />
         <Avatar className="absolute -top-1 -left-1 h-3.5 w-3.5 rounded-full border border-border">
           <AvatarImage src={avatarUrl} alt={avatarAlt ?? "User avatar"} />
@@ -284,9 +288,9 @@ export function StreamItemAvatar({
   let content = icon
   if (avatarUrl) {
     content = (
-      <Avatar className="h-8 w-8 rounded-lg">
+      <Avatar className={dense ? "h-5 w-5 rounded-md" : "h-8 w-8 rounded-lg"}>
         <AvatarImage src={avatarUrl} alt={avatarAlt ?? "User avatar"} />
-        <AvatarFallback className="rounded-lg">{icon}</AvatarFallback>
+        <AvatarFallback className={dense ? "rounded-md" : "rounded-lg"}>{icon}</AvatarFallback>
       </Avatar>
     )
   } else if (badge) {
@@ -296,7 +300,8 @@ export function StreamItemAvatar({
   return (
     <div
       className={cn(
-        "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 relative",
+        tileSize,
+        "flex items-center justify-center flex-shrink-0 relative",
         badge ? "bg-muted" : className
       )}
     >
@@ -462,10 +467,14 @@ export function StreamItem({
 
   const dmPeerAvatar = stream.dmPeerUserId ? getActorAvatar(stream.dmPeerUserId, "user") : null
 
-  const threadRootContext = stream.type === StreamTypes.THREAD ? getThreadRootContext(stream, allStreams) : null
+  // A nested thread sits right under its root's row, so neither the "· #root"
+  // hint nor the root-type badge adds anything there.
+  const isTreeChild = !!stream.treeParentId
+  const threadRootContext =
+    stream.type === StreamTypes.THREAD && !isTreeChild ? getThreadRootContext(stream, allStreams) : null
 
   const threadBadge = (() => {
-    if (!threadRootStream?.type) return null
+    if (isTreeChild || !threadRootStream?.type) return null
     const config = BADGE_CONFIG[threadRootStream.type]
     return config ?? null
   })()
@@ -605,7 +614,10 @@ export function StreamItem({
   // the active input; the long-press gesture follows touch capability above.
   const isTouchInput = useInputMode() === "touch"
 
-  const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
+  // Pointer devices get 32px single-line rows; the hover card carries the preview.
+  // Touch keeps tall rows, and board mode keeps its tile-anchored toggle layout.
+  const dense = compact && !isTouchInput && !boardMode
+  const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
   // the first nine. It takes over the "…" menu's slot below.
   const quickJump = useQuickJumpSlot(stream.id)
@@ -674,7 +686,7 @@ export function StreamItem({
         getActorName={getActorName}
         toEmoji={toEmoji}
         compact={compact}
-        showPreviewOnHover={showPreviewOnHover}
+        showPreviewOnHover={showPreviewOnHover && !dense}
         isTouch={isTouchInput}
         e2eEnabled={stream.e2eEnabled}
       />
@@ -709,11 +721,18 @@ export function StreamItem({
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            <div className={cn("flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2", isHeld && "opacity-60")}>
+            <div
+              className={cn(
+                "flex items-center flex-1 min-w-0 px-2",
+                dense ? "gap-2 py-1.5" : "gap-2.5 py-2",
+                isHeld && "opacity-60"
+              )}
+            >
               <StreamItemAvatar
+                dense={dense}
                 icon={avatar.icon}
                 className={avatar.className}
-                avatarUrl={dmPeerAvatar?.avatarUrl}
+                avatarUrl={isTreeChild ? undefined : dmPeerAvatar?.avatarUrl}
                 avatarAlt={name}
                 badge={threadBadge}
                 agentActive={agentActive}

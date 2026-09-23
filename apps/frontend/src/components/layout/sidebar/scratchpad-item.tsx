@@ -278,7 +278,9 @@ export function ScratchpadItem({
   // the active input; the long-press gesture follows touch capability above.
   const isTouchInput = useInputMode() === "touch"
 
-  const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
+  // Dense pointer rows: see StreamItem.
+  const dense = compact && !isTouchInput && !boardMode
+  const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
   // the first nine. It takes over the "…" menu's slot below.
   const quickJump = useQuickJumpSlot(streamWithPreview.id)
@@ -330,7 +332,7 @@ export function ScratchpadItem({
         getActorName={getActorName}
         toEmoji={toEmoji}
         compact={compact}
-        showPreviewOnHover={showPreviewOnHover}
+        showPreviewOnHover={showPreviewOnHover && !dense}
         isTouch={isTouchInput}
         e2eEnabled={streamWithPreview.e2eEnabled}
       />
@@ -365,8 +367,15 @@ export function ScratchpadItem({
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            <div className={cn("flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2", isHeld && "opacity-60")}>
+            <div
+              className={cn(
+                "flex items-center flex-1 min-w-0 px-2",
+                dense ? "gap-2 py-1.5" : "gap-2.5 py-2",
+                isHeld && "opacity-60"
+              )}
+            >
               <StreamItemAvatar
+                dense={dense}
                 icon={<FileEdit className="h-3.5 w-3.5" />}
                 className="bg-primary/10 text-primary"
                 decoration={decoration}
