@@ -1,6 +1,6 @@
 import { useRef, useState } from "react"
 import { toast } from "sonner"
-import { Check, CircleHelp, Loader2, X } from "lucide-react"
+import { Check, Loader2, X } from "lucide-react"
 import {
   DECISION_NOTE_MAX_CHARS,
   type DecisionOption,
@@ -15,6 +15,7 @@ import {
 } from "@threahq/types"
 import { decisionsApi } from "@/api"
 import { ApiError } from "@/api/client"
+import { ActorAvatar } from "@/components/actor-avatar"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { MarkdownContent } from "@/components/ui/markdown-content"
@@ -54,16 +55,16 @@ function buttonVariantFor(tone: DecisionOption["tone"]): "default" | "outline" {
 }
 
 const OPEN_BUTTON_CLASS: Record<DecisionOption["tone"], string> = {
-  primary: "",
-  neutral: "",
-  destructive: "border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive",
+  primary: "shadow-[inset_0_1px_0_hsl(0_0%_100%/0.18),0_1px_2px_hsl(var(--foreground)/0.12)]",
+  neutral: "bg-card shadow-sm",
+  destructive:
+    "bg-card text-destructive shadow-sm hover:border-destructive/30 hover:bg-destructive/[0.06] hover:text-destructive",
 }
 
-const CHOSEN_PILL_CLASS: Record<DecisionOption["tone"], string> = {
-  primary:
-    "bg-[hsl(142_76%_36%/0.14)] text-[hsl(142,76%,30%)] hover:bg-[hsl(142_76%_36%/0.14)] hover:text-[hsl(142,76%,30%)]",
-  neutral: "bg-muted text-foreground/80 hover:bg-muted hover:text-foreground/80",
-  destructive: "bg-destructive/10 text-destructive hover:bg-destructive/10 hover:text-destructive",
+const OUTCOME_ICON_CLASS: Record<DecisionOption["tone"], string> = {
+  primary: "text-primary",
+  neutral: "text-muted-foreground",
+  destructive: "text-destructive",
 }
 
 /** Stand-in for a sealed card's question when it can't be read (locked / decrypting / failed). */
@@ -71,14 +72,6 @@ const DECISION_DECRYPT_NOTICE_TEXT: Record<"locked" | "pending" | "failed", stri
   locked: "Unlock this scratchpad to read this decision",
   pending: "Decrypting…",
   failed: "Couldn't decrypt this decision",
-}
-
-const RAIL_CLASS: Record<DecisionOption["tone"] | "open" | "closed", string> = {
-  open: "border-l-primary bg-primary/[0.06]",
-  primary: "border-l-[hsl(142,76%,36%)]",
-  neutral: "border-l-muted-foreground/30",
-  destructive: "border-l-destructive",
-  closed: "border-l-muted-foreground/30",
 }
 
 /**
@@ -207,130 +200,143 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   const deciderName = resolution?.decidedBy ? getActorName(resolution.decidedBy, "user") : null
   const decidedAgo = resolution?.decidedAt ? formatRelativeTime(new Date(resolution.decidedAt)) : null
 
-  let rail: keyof typeof RAIL_CLASS = "closed"
-  if (open) rail = "open"
-  else if (resolution) rail = chosenTone
-
   // Terminal with a resolution keeps ONLY the chosen option's Button mounted, in
   // the same slot with the same key, so the button the viewer just pressed keeps
   // focus and its relabeling is announced (the bot-access pattern).
   let shownOptions = open ? decision.options : decision.options.filter((option) => option.id === resolution?.optionId)
   if (unreadable) shownOptions = []
 
+  const OutcomeIcon = chosenTone === "destructive" ? X : Check
+  const showFooter = open
+    ? shownOptions.length > 0 || (decision.allowNote && !unreadable)
+    : Boolean(terminalLine || deciderName || decidedAgo || shownNote)
+
   return (
     <div className="px-3 sm:px-6 py-1.5">
       <div
-        className={cn("rounded-r-[10px] border-l-[3px] py-2.5 pl-4 pr-3 transition-colors sm:pr-4", RAIL_CLASS[rail])}
-      >
-        <div className="flex items-start gap-2">
-          <CircleHelp
-            className={cn("mt-[3px] h-4 w-4 shrink-0", open ? "text-primary" : "text-muted-foreground/70")}
-            aria-hidden="true"
-          />
-          <div className="min-w-0 flex-1">
-            {unreadable ? (
-              <p className="text-[14px] italic leading-snug text-muted-foreground">
-                {DECISION_DECRYPT_NOTICE_TEXT[unreadable]}
-              </p>
-            ) : (
-              <p className="text-[14px] font-semibold leading-snug text-foreground">{title}</p>
-            )}
-            <p className="mt-0.5 text-[12px] text-muted-foreground">
-              <span className="font-medium text-foreground/70">{requesterLabel}</span>{" "}
-              {open ? "needs a decision" : "asked for a decision"}
-            </p>
-          </div>
-        </div>
-
-        {bodyMarkdown && (
-          <div className="mt-2 pl-6">
-            <MarkdownContent
-              content={bodyMarkdown}
-              messageId={event.id}
-              className="text-[13px] leading-relaxed text-foreground/90"
-            />
-          </div>
+        className={cn(
+          "overflow-hidden rounded-card border bg-card transition-[box-shadow,border-color] duration-200",
+          open
+            ? "border-border shadow-[0_1px_2px_hsl(var(--foreground)/0.05),0_8px_24px_-12px_hsl(var(--foreground)/0.14)]"
+            : "border-border/70"
         )}
-
-        <div className="mt-3 pl-6">
-          <div
-            className={cn(
-              "flex",
-              open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-2 gap-y-1"
-            )}
-          >
-            {open && decision.allowNote && !unreadable && (
-              <Textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                maxLength={DECISION_NOTE_MAX_CHARS}
-                rows={1}
-                aria-label="Note (optional)"
-                placeholder="Add a note for the bot"
-                className="h-9 min-h-9 w-full resize-none py-2 text-[13px] sm:order-last sm:min-w-[12rem] sm:flex-1"
+      >
+        <div className="px-4 pb-3.5 pt-3">
+          <div className="flex items-center gap-2">
+            {decision.requesterBotId && (
+              <ActorAvatar
+                actorId={decision.requesterBotId}
+                actorType="bot"
+                workspaceId={workspaceId}
+                size="xs"
+                showStatus={false}
               />
             )}
-            {/* One slot for the option buttons in both states, so the button the
-                viewer pressed is the element that relabels (focus retained). */}
-            <div className="flex flex-wrap items-center gap-2">
-              {shownOptions.map((option) => {
-                const chosen = !open
-                return (
-                  <Button
-                    key={option.id}
-                    type="button"
-                    size="sm"
-                    variant={chosen ? "outline" : buttonVariantFor(option.tone)}
-                    aria-busy={pendingOptionId === option.id}
-                    aria-disabled={chosen}
-                    aria-live="polite"
-                    onClick={() => handleResolve(option.id)}
-                    className={cn(
-                      chosen
-                        ? cn(
-                            "h-7 cursor-default rounded-full border-transparent px-2.5 text-[12px]",
-                            CHOSEN_PILL_CLASS[chosenTone]
-                          )
-                        : OPEN_BUTTON_CLASS[option.tone]
-                    )}
-                  >
-                    {pendingOptionId === option.id && (
-                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" aria-hidden="true" />
-                    )}
-                    {chosen && !pendingOptionId && chosenTone === "destructive" && (
-                      <X className="mr-1 h-3 w-3" aria-hidden="true" />
-                    )}
-                    {chosen && !pendingOptionId && chosenTone !== "destructive" && (
-                      <Check className="mr-1 h-3 w-3" aria-hidden="true" />
-                    )}
-                    {labelFor(option)}
-                  </Button>
-                )
-              })}
-            </div>
-            {!open && shownOptions.length === 0 && terminalLine && (
+            <p className="min-w-0 flex-1 truncate text-[12px] text-muted-foreground">
+              <span className="font-medium text-foreground/80">{requesterLabel}</span>{" "}
+              {open ? "needs a decision" : "asked for a decision"}
+            </p>
+            {open && (
               <span
-                aria-live="polite"
-                className="inline-flex h-7 items-center rounded-full bg-muted px-2.5 text-[12px] text-muted-foreground"
-              >
-                {terminalLine}
-              </span>
-            )}
-            {!open && (deciderName || decidedAgo) && (
-              <span className="text-[12px] text-muted-foreground">
-                {deciderName}
-                {deciderName && decidedAgo ? ", " : ""}
-                {decidedAgo}
-              </span>
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary ring-4 ring-primary/15"
+              />
             )}
           </div>
 
-          {!open && shownNote && (
-            <p className="mt-2 whitespace-pre-wrap border-l-2 border-border pl-2.5 text-[13px] leading-relaxed text-foreground/80">
-              {shownNote}
-            </p>
+          <div className="mt-2.5">
+            {unreadable ? (
+              <p className="text-[14px] italic text-muted-foreground">{DECISION_DECRYPT_NOTICE_TEXT[unreadable]}</p>
+            ) : (
+              <MarkdownContent
+                content={title}
+                className={cn(
+                  "text-[15px] font-semibold leading-snug tracking-[-0.01em] [&_code]:px-1.5 [&_code]:py-px [&_code]:text-[13px] [&_code]:font-medium",
+                  open ? "text-foreground" : "text-foreground/80"
+                )}
+              />
+            )}
+          </div>
+
+          {bodyMarkdown && (
+            <div className="mt-1.5">
+              <MarkdownContent
+                content={bodyMarkdown}
+                messageId={event.id}
+                className="text-[13px] leading-relaxed text-foreground/70 [&_[data-native-context]]:mb-0 [&_[data-native-context]]:rounded-lg [&_[data-native-context]]:border-border/70"
+              />
+            </div>
           )}
         </div>
+
+        {showFooter && (
+          <div className="border-t border-border/70 bg-muted/30 px-3 py-2.5 sm:px-4">
+            <div
+              className={cn(
+                "flex",
+                open ? "flex-col gap-2 sm:flex-row sm:items-center" : "flex-wrap items-center gap-x-3 gap-y-1"
+              )}
+            >
+              {open && decision.allowNote && !unreadable && (
+                <Textarea
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  maxLength={DECISION_NOTE_MAX_CHARS}
+                  rows={1}
+                  placeholder="Add a note"
+                  aria-label="Note (optional)"
+                  className="h-9 min-h-9 w-full resize-none rounded-button border-border/70 bg-card py-2 text-[13px] sm:h-8 sm:min-h-8 sm:flex-1 sm:py-1.5"
+                />
+              )}
+              {shownOptions.length > 0 && (
+                <div className={cn("flex items-center", open && "gap-2 sm:ml-auto")}>
+                  {shownOptions.map((option) => (
+                    <Button
+                      key={option.id}
+                      type="button"
+                      size="sm"
+                      variant={open ? buttonVariantFor(option.tone) : "ghost"}
+                      aria-busy={pendingOptionId === option.id}
+                      aria-disabled={!open}
+                      aria-live="polite"
+                      onClick={() => handleResolve(option.id)}
+                      className={cn(
+                        "text-[13px]",
+                        open
+                          ? cn("h-9 flex-1 px-3.5 sm:h-8 sm:flex-none", OPEN_BUTTON_CLASS[option.tone])
+                          : "h-auto cursor-default gap-1.5 px-1 py-0.5 text-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
+                      )}
+                    >
+                      {pendingOptionId === option.id && <Loader2 className="animate-spin" aria-hidden="true" />}
+                      {!open && !pendingOptionId && (
+                        <OutcomeIcon className={OUTCOME_ICON_CLASS[chosenTone]} aria-hidden="true" />
+                      )}
+                      {!open && <span className="sr-only">Chosen:</span>}
+                      {!open && " "}
+                      {labelFor(option)}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {!open && shownOptions.length === 0 && terminalLine && (
+                <span aria-live="polite" className="px-1 text-[13px] font-medium text-muted-foreground">
+                  {terminalLine}
+                </span>
+              )}
+              {!open && (deciderName || decidedAgo) && (
+                <span className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground">
+                  {deciderName && <span>{deciderName}</span>}
+                  {decidedAgo && <span className="tabular-nums opacity-80">{decidedAgo}</span>}
+                </span>
+              )}
+            </div>
+            {!open && shownNote && (
+              <p className="mt-2 whitespace-pre-wrap border-l-2 border-border px-3 text-[13px] leading-relaxed text-foreground/75">
+                {shownNote}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {!isThreadParent && (

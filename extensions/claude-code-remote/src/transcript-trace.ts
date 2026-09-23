@@ -29,9 +29,8 @@ import { basename, join } from "node:path"
 
 // Wire format shared with pi-remote and parsed by the frontend trace dialog
 // (`apps/frontend/src/components/trace/trace-step.tsx`; canonical constants in
-// `packages/types`). Duplicated here for the same reason pi-remote duplicates
-// it: this package installs standalone (install-local vendoring), so it cannot
-// depend on @threahq/types.
+// `packages/types`). Duplicated here because @threahq/types is private and this
+// package is published.
 const TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SECTION_LABELS = {
   ARGUMENTS: "Arguments",

@@ -9,8 +9,11 @@ output as the reply, a failure as a failed invocation, a cancellation as no resp
 ## Running it
 
 ```sh
-bun run start
+npm install -g @threahq/hermes-remote
+threa-hermes
 ```
+
+From a checkout of the Threa repo, `bun run start` in this directory runs the same connector from source.
 
 Environment:
 
@@ -138,8 +141,8 @@ there is nothing to drop: the same key still opens your other scratchpads, and t
    ```yaml
    mcp_servers:
      threa:
-       command: "bun"
-       args: ["/path/to/threa/packages/cli/src/cli.ts", "mcp", "serve"]
+       command: "npx"
+       args: ["-y", "@threahq/cli", "mcp", "serve"]
        env:
          THREA_CONFIG: "/home/you/.threa/hermes-remote/threa-cli.json"
    ```
@@ -155,11 +158,17 @@ there is nothing to drop: the same key still opens your other scratchpads, and t
    HERMES_API_KEY=...
    ```
 
-3. Install the systemd user service:
+3. Install the package and its systemd user service:
 
    ```sh
-   bun run install-service --start
+   npm install -g @threahq/hermes-remote
+   threa-hermes-install --start
    ```
+
+   The unit runs the installed package with the node that installed it, so `npm update -g @threahq/hermes-remote`
+   and a `systemctl --user restart threa-hermes-remote` upgrade it. The installer refuses to run from `npx`, whose cache
+   npm clears under a running unit. From a checkout, `bun run install-service --start` writes a unit that runs the
+   checkout with bun instead.
 
    It writes `~/.config/systemd/user/threa-hermes-remote.service` (refusing to overwrite an existing one without
    `--force`), creates `~/.threa/hermes-remote/log/`, installs the `threa` skill into `~/.hermes/skills/threa/SKILL.md`
@@ -203,7 +212,7 @@ names the persona, the memories, the gateway route and the Threa bot behind it.
 
 ```sh
 hermes profile create muse            # required first: the connector refuses a profile Hermes does not know
-bun run install-service --profile muse --start
+threa-hermes-install --profile muse --start
 ```
 
 The named install shares nothing with the default one: unit `threa-hermes-muse.service`, env file

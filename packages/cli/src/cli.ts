@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+import { text } from "node:stream/consumers"
 import { parseArgs } from "node:util"
 import { skillCommand } from "./commands/skill"
 import { ThreaApiClient } from "./api-client"
@@ -167,7 +167,7 @@ async function executeLeaf(
     })
     await assertPrincipal(client, config)
     const resolver = new RefResolver({ client })
-    const readStdin = deps.readStdin ?? (() => Bun.stdin.text())
+    const readStdin = deps.readStdin ?? (() => text(process.stdin))
     const tokenStore = deps.tokenStore ?? new TokenStore()
     const sealed = (choice: KeyStoreChoice) => sealedStreams({ client, config, choice })
     const payload = await leaf.run({ client, resolver, config, tokenStore, readStdin, sealed }, positionals, values)

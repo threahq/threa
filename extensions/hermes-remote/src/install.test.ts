@@ -15,7 +15,8 @@ function installOptions(homeDir: string, profile?: string) {
   return {
     install: hermesInstall({ homeDir, ...(profile === undefined ? {} : { profile }) }),
     packageDir: PACKAGE_DIR,
-    bunPath: "/home/u/.bun/bin/bun",
+    entryPath: join(PACKAGE_DIR, "src", "index.ts"),
+    runtimePath: "/home/u/.bun/bin/bun",
     dryRun: true,
   }
 }
@@ -26,8 +27,9 @@ describe("renderSystemdUnit", () => {
   test("renders the connector unit with absolute paths and appended logs", () => {
     expect(
       renderSystemdUnit({
-        bunPath: "/home/u/.bun/bin/bun",
+        runtimePath: "/home/u/.bun/bin/bun",
         entryPath: "/srv/threa/extensions/hermes-remote/src/index.ts",
+        packageDir: "/srv/threa/extensions/hermes-remote",
         logDir: "/home/u/.threa/hermes-remote/log",
         envFile: "/home/u/.config/threa/hermes-remote.env",
       })
@@ -58,8 +60,9 @@ describe("renderSystemdUnit", () => {
 
   test("a profile names the unit's identity, after the env file so it cannot be repointed", () => {
     const lines = renderSystemdUnit({
-      bunPath: "/home/u/.bun/bin/bun",
+      runtimePath: "/home/u/.bun/bin/bun",
       entryPath: "/srv/threa/extensions/hermes-remote/src/index.ts",
+      packageDir: "/srv/threa/extensions/hermes-remote",
       logDir: "/home/u/.threa/hermes-muse/log",
       envFile: "/home/u/.config/threa/hermes-muse.env",
       profile: "muse",
@@ -83,8 +86,9 @@ describe("renderSystemdUnit paths", () => {
   test("a path systemd would split or unescape is refused", () => {
     expect(() =>
       renderSystemdUnit({
-        bunPath: "/home/u/.bun/bin/bun",
+        runtimePath: "/home/u/.bun/bin/bun",
         entryPath: "/home/my user/threa/extensions/hermes-remote/src/index.ts",
+        packageDir: "/home/my user/threa/extensions/hermes-remote",
         logDir: "/home/my user/.threa/hermes-remote/log",
         envFile: "/home/my user/.config/threa/hermes-remote.env",
       })

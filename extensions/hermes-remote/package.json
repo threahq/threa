@@ -1,9 +1,27 @@
 {
   "name": "@threahq/hermes-remote",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "A Hermes connector that bridges a local Hermes gateway to a Threa scratchpad: each Threa turn becomes one Hermes run, with its tool events traced back as steps.",
+  "keywords": [
+    "threa",
+    "hermes",
+    "agent",
+    "connector"
+  ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/hermes-remote"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "threa-hermes": "./src/index.ts",
     "threa-hermes-install": "./src/install.ts"
@@ -12,7 +30,9 @@
     "start": "bun run ./src/index.ts",
     "install-service": "bun run ./src/install.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
     "@threahq/remote-session": "file:../remote-session"

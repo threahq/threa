@@ -26,23 +26,20 @@ import CodeBlock from "../../components/CodeBlock.astro"
 
   <h2 id="install">Install</h2>
   <p>
-    The CLI lives in the open-source repo at
-    <a class="link" href="https://github.com/threahq/threa">github.com/threahq/threa</a>
-    under <code>packages/cli</code>. It runs on
-    <a class="link" href="https://bun.sh">Bun</a> and is not yet published to a
-    package registry, so you install it from a checkout:
+    The CLI is published to npm as <code>@threahq/cli</code> and needs
+    Node.js 22.13 or newer. Install it globally to put <code>threa</code> on
+    your PATH:
   </p>
   <CodeBlock
     lang="bash"
-    label="Install from a checkout"
-    code={`git clone https://github.com/threahq/threa.git
-cd threa && bun install
-cd packages/cli && bun link   # puts a global \`threa\` on your PATH`}
+    label="Install"
+    code={`npm install -g @threahq/cli`}
   />
   <p>
-    Without <code>bun link</code> you can run it in place with
-    <code>bun packages/cli/src/cli.ts</code>. After pulling a newer checkout
-    the linked binary picks up the changes automatically.
+    Or run it without installing with <code>npx -y @threahq/cli</code>. The
+    source is in the open-source repo at
+    <a class="link" href="https://github.com/threahq/threa">github.com/threahq/threa</a>
+    under <code>packages/cli</code>.
   </p>
 
   <h2 id="configure">Configure</h2>
@@ -205,7 +202,7 @@ threa e2e lock                           # forget this machine's copy`}
     code={`claude mcp add threa \\
   --env THREA_API_KEY=threa_uk_... \\
   --env THREA_WORKSPACE_ID={{workspaceId}} \\
-  -- bun /path/to/threa/packages/cli/src/cli.ts mcp serve`}
+  -- threa mcp serve`}
   />
   <p>
     Sealed streams work over MCP the same as in the shell: <code>read_stream</code>

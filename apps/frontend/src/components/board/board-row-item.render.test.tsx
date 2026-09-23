@@ -175,6 +175,7 @@ beforeEach(() => {
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: () => "Ariadne",
     getBot: () => ({ id: "bot_1", name: "Kris's Runner" }),
+    getActorAvatar: () => ({ fallback: "K", avatarUrl: null }),
   } as unknown as ReturnType<typeof hooksModule.useActors>)
   vi.spyOn(hooksModule, "useTouchCapable").mockReturnValue(false)
   vi.spyOn(hooksModule, "useInputMode").mockReturnValue("mouse")

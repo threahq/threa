@@ -1,4 +1,5 @@
-import { existsSync, statSync } from "node:fs"
+import { createWriteStream, existsSync, statSync } from "node:fs"
+import { pipeline } from "node:stream/promises"
 import { basename, extname, join } from "node:path"
 import { getAttachment, getAttachmentDownloadUrl, search } from "../ops"
 import { arrayFlag, boolFlag, intFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
@@ -96,9 +97,9 @@ const downloadVerb: VerbSpec = {
     if (!url) throw new Error(`no download URL returned for ${id}`)
     const target = resolveDownloadTarget(positionals[1] ?? ".", meta.data?.filename ?? id)
     const response = await fetch(url)
-    if (!response.ok) throw new Error(`download failed: HTTP ${response.status}`)
-    const bytes = await Bun.write(target, response)
-    return { downloaded: true, id, path: target, sizeBytes: bytes }
+    if (!response.ok || !response.body) throw new Error(`download failed: HTTP ${response.status}`)
+    await pipeline(response.body, createWriteStream(target))
+    return { downloaded: true, id, path: target, sizeBytes: statSync(target).size }
   },
   render: (payload) => {
     const p = payload as { id?: string; path?: string; sizeBytes?: number }

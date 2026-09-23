@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -7,8 +6,10 @@ import { fileURLToPath } from "node:url"
 import { hermesInstall, type HermesInstall } from "./config"
 
 export interface SystemdUnitInput {
-  bunPath: string
+  /** The runtime the unit execs: bun from a checkout, node from an npm install. */
+  runtimePath: string
   entryPath: string
+  packageDir: string
   logDir: string
   envFile: string
   /** The Hermes profile this unit serves; unset is the default one. */
@@ -17,14 +18,13 @@ export interface SystemdUnitInput {
 
 /** The unit text, modelled on the harnessd user unit: absolute paths, restart always, appended logs. */
 export function renderSystemdUnit(input: SystemdUnitInput): string {
-  for (const path of [input.bunPath, input.entryPath, input.logDir, input.envFile]) {
+  for (const path of [input.runtimePath, input.entryPath, input.packageDir, input.logDir, input.envFile]) {
     if (/[\s\\\0]/.test(path)) {
       throw new Error(
         `Cannot write a systemd unit for ${JSON.stringify(path)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
       )
     }
   }
-  const workingDir = dirname(dirname(input.entryPath))
   return [
     "[Unit]",
     `Description=Threa Hermes connector${input.profile ? ` (${input.profile})` : ""}`,
@@ -33,13 +33,13 @@ export function renderSystemdUnit(input: SystemdUnitInput): string {
     "",
     "[Service]",
     "Type=simple",
-    `Environment=PATH=${dirname(input.bunPath)}:/usr/local/bin:/usr/bin:/bin`,
+    `Environment=PATH=${dirname(input.runtimePath)}:/usr/local/bin:/usr/bin:/bin`,
     `EnvironmentFile=-${input.envFile}`,
     // After the env file on purpose: the profile is what this unit IS, and an
     // env file shared between agents must not be able to repoint it.
     ...(input.profile ? [`Environment=THREA_HERMES_PROFILE=${input.profile}`] : []),
-    `WorkingDirectory=${workingDir}`,
-    `ExecStart=${input.bunPath} ${input.entryPath}`,
+    `WorkingDirectory=${input.packageDir}`,
+    `ExecStart=${input.runtimePath} ${input.entryPath}`,
     "Restart=always",
     "RestartSec=10",
     `StandardOutput=append:${join(input.logDir, "connector.log")}`,
@@ -54,7 +54,8 @@ export function renderSystemdUnit(input: SystemdUnitInput): string {
 export interface InstallOptions {
   install: HermesInstall
   packageDir: string
-  bunPath: string
+  entryPath: string
+  runtimePath: string
   force?: boolean
   start?: boolean
   dryRun?: boolean
@@ -120,10 +121,11 @@ function installFiles(options: InstallOptions, unit: string): InstallFile[] {
 }
 
 export function planInstall(options: InstallOptions): InstallPlan {
-  const { install, bunPath } = options
+  const { install } = options
   const unit = renderSystemdUnit({
-    bunPath,
-    entryPath: join(options.packageDir, "src", "index.ts"),
+    runtimePath: options.runtimePath,
+    entryPath: options.entryPath,
+    packageDir: options.packageDir,
     logDir: install.logDir,
     envFile: install.envFile,
     ...(install.profile === undefined ? {} : { profile: install.profile }),
@@ -239,7 +241,18 @@ function main(): void {
   const args = parseArgs(process.argv.slice(2))
   if (process.platform !== "linux") {
     process.stderr.write(
-      `threa-hermes-install only installs a systemd user unit, so it needs Linux (this is ${process.platform}). Run the connector with \`bun run start\` instead.\n`
+      `threa-hermes-install only installs a systemd user unit, so it needs Linux (this is ${process.platform}). Run the connector with \`threa-hermes\` instead.\n`
+    )
+    process.exit(1)
+  }
+  // From a checkout this file is src/install.ts beside src/index.ts; the npm
+  // package bundles both to its root as .js.
+  const here = dirname(fileURLToPath(import.meta.url))
+  const fromSource = import.meta.url.endsWith(".ts")
+  const entryPath = join(here, fromSource ? "index.ts" : "index.js")
+  if (entryPath.includes("/_npx/")) {
+    process.stderr.write(
+      "threa-hermes-install is running from npx's cache, which npm clears, and the unit would point into it. Install the package first: npm install -g @threahq/hermes-remote\n"
     )
     process.exit(1)
   }
@@ -249,8 +262,9 @@ function main(): void {
   })
   runInstall({
     install,
-    packageDir: dirname(dirname(fileURLToPath(import.meta.url))),
-    bunPath: process.execPath,
+    packageDir: fromSource ? dirname(here) : here,
+    entryPath,
+    runtimePath: process.execPath,
     force: args.force,
     start: args.start,
     dryRun: args.dryRun,

@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 import { hostname } from "node:os"
 import { ThreaClient, readConfigFile, wireLifecycle } from "@threahq/remote-session"
 import { channelActivation, readParentCommand } from "./channel-detect"

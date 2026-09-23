@@ -38,24 +38,35 @@ function run(cmd: string, args: string[]): void {
   }
 }
 
+// A package without `main` is only its bins or Pi extensions: no library
+// bundle, no declarations.
+const library = pkg.main !== undefined
+
 // One ESM bundle of this package's own source; every dependency stays external
 // so the consumer's package manager resolves it (and dedupes it).
-run("bun", [
-  "build",
-  "src/index.ts",
-  "--outdir",
-  dist,
-  "--target",
-  "node",
-  "--format",
-  "esm",
-  "--packages",
-  "external",
-  "--sourcemap=linked",
-])
+if (library) {
+  run("bun", [
+    "build",
+    "src/index.ts",
+    "--outdir",
+    dist,
+    "--target",
+    "node",
+    "--format",
+    "esm",
+    "--packages",
+    "external",
+    "--sourcemap=linked",
+  ])
+}
 // Each `bin` gets its own bundle with a node shebang; the manifest points at it.
 const bins: Record<string, string> = {}
 for (const [name, source] of Object.entries((pkg.bin ?? {}) as Record<string, string>)) {
+  // A `#!/usr/bin/env bun` line makes Bun build for its own runtime, and the
+  // bundle then dies under node.
+  if (readFileSync(join(pkgDir, source), "utf8").startsWith("#!")) {
+    throw new Error(`${pkg.name}: bin ${source} starts with a shebang; the build adds the node one`)
+  }
   const out = `${basename(source).replace(/\.ts$/, "")}.js`
   run("bun", [
     "build",
@@ -73,7 +84,25 @@ for (const [name, source] of Object.entries((pkg.bin ?? {}) as Record<string, st
   ])
   bins[name] = `./${out}`
 }
-run(join(repoRoot, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.build.json"])
+// Pi loads each `pi.extensions` entry into its own node process, so the entry
+// ships as one bundle beside the package root.
+const piExtensions = ((pkg.pi?.extensions ?? []) as string[]).map((source) => {
+  const out = `${basename(source).replace(/\.ts$/, "")}.js`
+  run("bun", [
+    "build",
+    source,
+    "--outfile",
+    join(dist, out),
+    "--target",
+    "node",
+    "--format",
+    "esm",
+    "--packages",
+    "external",
+  ])
+  return `./${out}`
+})
+if (library) run(join(repoRoot, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.build.json"])
 
 // Source imports are extensionless (Bun and `moduleResolution: bundler` accept
 // that); the emitted declarations must carry `.js` so `node16`/`nodenext`
@@ -111,16 +140,20 @@ const manifest = {
   keywords: pkg.keywords,
   type: "module",
   sideEffects: false,
-  main: "./index.js",
-  types: "./index.d.ts",
-  exports: { ".": { types: "./index.d.ts", import: "./index.js" }, "./package.json": "./package.json" },
+  main: library ? "./index.js" : undefined,
+  types: library ? "./index.d.ts" : undefined,
+  exports: library
+    ? { ".": { types: "./index.d.ts", import: "./index.js" }, "./package.json": "./package.json" }
+    : { "./package.json": "./package.json" },
   bin: Object.keys(bins).length > 0 ? bins : undefined,
+  pi: pkg.pi ? { ...pkg.pi, extensions: piExtensions } : undefined,
   engines: pkg.engines,
+  os: pkg.os,
   dependencies: publishedDeps(pkg.dependencies),
   peerDependencies: pkg.peerDependencies,
   publishConfig: { access: "public" },
 }
-const OPTIONAL = new Set(["dependencies", "peerDependencies", "bin"])
+const OPTIONAL = new Set(["dependencies", "peerDependencies", "bin", "pi", "os", ...(library ? [] : ["main", "types"])])
 for (const [key, value] of Object.entries(manifest)) {
   if (value !== undefined) continue
   if (!OPTIONAL.has(key)) throw new Error(`${pkg.name}: package.json is missing "${key}"`)
@@ -129,7 +162,10 @@ for (const [key, value] of Object.entries(manifest)) {
 writeFileSync(join(dist, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
 cpSync(join(pkgDir, "README.md"), join(dist, "README.md"))
 cpSync(join(repoRoot, "LICENSE"), join(dist, "LICENSE"))
-// The README links to examples/; ship them so the links hold in node_modules.
-if (existsSync(join(pkgDir, "examples"))) cpSync(join(pkgDir, "examples"), join(dist, "examples"), { recursive: true })
+// examples/ keeps README links working in node_modules; hermes/ is the persona
+// and skill the Hermes installer copies out of the package.
+for (const dir of ["examples", "hermes"]) {
+  if (existsSync(join(pkgDir, dir))) cpSync(join(pkgDir, dir), join(dist, dir), { recursive: true })
+}
 
 console.log(`built ${pkg.name}@${pkg.version} → ${basename(pkgDir)}/dist`)

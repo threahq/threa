@@ -2,7 +2,7 @@
 name: threa-cli
 description: >-
   Use the Threa workspace client well, either as the `threa` command-line tool
-  (on PATH or run in-repo with `bun packages/cli/src/cli.ts`) or as the Threa MCP
+  (on PATH via `npm install -g @threahq/cli`, or run in-repo with `bun packages/cli/src/cli.ts`) or as the Threa MCP
   tools (a `threa` stdio server, tools like whoami / search / send_message /
   get_delegation / claim_delegation / release_delegation). Use when working inside or against a Threa workspace:
   answering "what did we decide / how do we do X" from workspace memory, posting
@@ -18,7 +18,7 @@ description: >-
 
 `threa` is a command-line client for one Threa workspace. The same core is served over MCP with `threa mcp serve`. One key, one workspace, bound at startup. No command and no tool takes a workspace id.
 
-Prefer the CLI when you have a shell. Check for it first: `threa whoami` if it is on PATH, otherwise `bun /abs/path/to/threa/packages/cli/src/cli.ts whoami` from a checkout. If you are an MCP client with the tools loaded instead, use the tool named in each section (the tool names are given alongside the commands).
+Prefer the CLI when you have a shell. Check for it first: `threa whoami` if it is on PATH, otherwise `npx -y @threahq/cli whoami`, or `bun /abs/path/to/threa/packages/cli/src/cli.ts whoami` from a checkout. If you are an MCP client with the tools loaded instead, use the tool named in each section (the tool names are given alongside the commands).
 
 ## The CLI contract
 

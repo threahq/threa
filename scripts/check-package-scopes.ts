@@ -1,13 +1,14 @@
 #!/usr/bin/env bun
 /**
  * Lint: every package.json is either unpublishable (`"private": true`) or one of
- * the extensions `publish-npm.yml` ships, under `@threahq` — the only npm scope
+ * the packages `publish-npm.yml` ships, under `@threahq` — the only npm scope
  * we own.
  *
  * The drift this catches already happened once: the extensions moved to
  * `@threahq` when they went out and the other 23 packages kept `@threa`, an
  * account we cannot write to, while staying publishable.
  */
+import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
@@ -27,7 +28,14 @@ async function findPublishable(): Promise<Set<string>> {
   const workflow = await readFile(resolve(REPO_ROOT, ".github/workflows/publish-npm.yml"), "utf-8")
   const choices = workflow.match(/^\s*options:\n((?:\s*- \S+\n)+)/m)
   if (!choices) throw new Error("publish-npm.yml no longer lists its packages as workflow_dispatch choices")
-  return new Set([...choices[1].matchAll(/- (\S+)/g)].map(([, dir]) => `extensions/${dir}/package.json`))
+  // Same resolution as the workflow: extensions/<name>, else packages/<name>.
+  return new Set(
+    [...choices[1].matchAll(/- (\S+)/g)].map(([, dir]) =>
+      existsSync(resolve(REPO_ROOT, "extensions", dir))
+        ? `extensions/${dir}/package.json`
+        : `packages/${dir}/package.json`
+    )
+  )
 }
 
 async function main(): Promise<void> {

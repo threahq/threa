@@ -11,6 +11,9 @@
  * the target are read at call time so the value is never stale-captured.
  */
 
+import { spawnSync } from "node:child_process"
+import { setTimeout as sleep } from "node:timers/promises"
+
 function paneTarget(): string | undefined {
   const explicit = process.env.THREA_TMUX_TARGET?.trim()
   if (explicit) return explicit
@@ -40,11 +43,12 @@ export interface LocalCommandResult {
 export type LocalCommandRunner = (command: string[]) => LocalCommandResult
 
 function runLocalCommand(command: string[]): LocalCommandResult {
-  const result = Bun.spawnSync(command, { stdout: "pipe", stderr: "pipe" })
+  const [file, ...args] = command
+  const result = spawnSync(file!, args, { encoding: "utf8" })
   return {
-    exitCode: result.exitCode,
-    stdout: result.stdout.toString(),
-    stderr: result.stderr.toString(),
+    exitCode: result.status ?? 1,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? (result.error ? result.error.message : ""),
   }
 }
 
@@ -149,7 +153,7 @@ export async function submitLine(
   const run = opts.run ?? runLocalCommand
   if (!sendKeys(["C-u"], run)) return false
   if (!sendKeys(["-l", text], run)) return false
-  if (settleMs > 0) await Bun.sleep(settleMs)
+  if (settleMs > 0) await sleep(settleMs)
   return sendKeys(["Enter"], run)
 }
 
@@ -191,7 +195,7 @@ export async function submitModelChange(
   // fail a later, valid switch.
   const notFound = new RegExp(`Model '${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' not found`)
   for (let i = 0; i < MODEL_CONFIRM_POLLS; i++) {
-    if (pollMs > 0) await Bun.sleep(pollMs)
+    if (pollMs > 0) await sleep(pollMs)
     const captured = run(["tmux", "capture-pane", "-p", "-t", target])
     if (captured.exitCode !== 0) break
     if (notFound.test(captured.stdout)) return { ok: false, confirmed: false, unknownAlias: true }
@@ -216,23 +220,16 @@ export async function steerText(text: string, opts: { settleMs?: number } = {}):
   const settleMs = opts.settleMs ?? 150
   if (!sendKeys(["C-u"])) return false
   if (!pasteText(target, text)) return false
-  if (settleMs > 0) await Bun.sleep(settleMs)
+  if (settleMs > 0) await sleep(settleMs)
   return sendKeys(["Enter"])
 }
 
 function pasteText(target: string, text: string): boolean {
   try {
-    const load = Bun.spawnSync(["tmux", "load-buffer", "-b", "threa-steer", "-"], {
-      stdin: new TextEncoder().encode(text),
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    if (load.exitCode !== 0) return false
-    const paste = Bun.spawnSync(["tmux", "paste-buffer", "-d", "-p", "-b", "threa-steer", "-t", target], {
-      stdout: "pipe",
-      stderr: "pipe",
-    })
-    return paste.exitCode === 0
+    const load = spawnSync("tmux", ["load-buffer", "-b", "threa-steer", "-"], { input: text })
+    if (load.status !== 0) return false
+    const paste = spawnSync("tmux", ["paste-buffer", "-d", "-p", "-b", "threa-steer", "-t", target])
+    return paste.status === 0
   } catch {
     return false
   }

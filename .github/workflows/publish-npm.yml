@@ -1,25 +1,32 @@
-# Publish one extension package to npm from its built dist/.
+# Publish one package to npm from its built dist/. A choice names a directory
+# under extensions/, or under packages/ when extensions/ has none.
 #
 # Auth is npm trusted publishing (OIDC): no token in secrets. Each package on
 # npmjs.com lists this repository + this workflow file as a trusted publisher;
 # `id-token: write` lets npm mint the short-lived credential and attach
 # provenance. Run it from the Actions tab with the package name and the version
 # already committed in its package.json. Order for a new version set:
-# bot-runtime-client, remote-session, threa-bot (each depends on the previous
-# by caret range).
+# bot-runtime-client, then remote-session and harness-client, then threa-bot,
+# hermes-remote, claude-code-remote and pi-remote (each depends on the ones
+# before it by caret range). cli bundles what it uses and can go any time.
 name: Publish npm package
 
 on:
   workflow_dispatch:
     inputs:
       package:
-        description: Extension package to publish
+        description: Package to publish
         required: true
         type: choice
         options:
           - bot-runtime-client
           - remote-session
+          - harness-client
           - threa-bot
+          - hermes-remote
+          - claude-code-remote
+          - pi-remote
+          - cli
       dry_run:
         description: Build and pack, but do not publish
         required: false
@@ -52,28 +59,40 @@ jobs:
       - name: Update npm
         run: npm install -g npm@latest && npm --version
 
+      - name: Resolve package directory
+        run: |
+          if [ -d "extensions/${{ inputs.package }}" ]; then dir="extensions/${{ inputs.package }}"; else dir="packages/${{ inputs.package }}"; fi
+          echo "PKG_DIR=$dir" >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: |
           bun install
           bun install --cwd extensions/bot-runtime-client
           bun install --cwd extensions/remote-session
+          bun install --cwd extensions/harness-client
           bun install --cwd extensions/threa-bot
+          bun install --cwd extensions/hermes-remote
+          bun install --cwd extensions/claude-code-remote
+          bun install --cwd extensions/pi-remote
 
       - name: Test
         run: |
-          bun run --cwd extensions/${{ inputs.package }} typecheck
-          bun run --cwd extensions/${{ inputs.package }} test
+          # pi-remote has no typecheck yet (#1153).
+          if [ "$(node -p "require('./$PKG_DIR/package.json').scripts.typecheck ?? ''")" != "" ]; then
+            bun run --cwd $PKG_DIR typecheck
+          fi
+          bun run --cwd $PKG_DIR test
 
       - name: Build and pack
         run: |
-          bun run --cwd extensions/${{ inputs.package }} pack
-          tar -tzf extensions/${{ inputs.package }}/*.tgz
+          bun run --cwd $PKG_DIR pack
+          tar -tzf $PKG_DIR/*.tgz
 
       - name: Refuse to republish an existing version
         if: ${{ !inputs.dry_run }}
         run: |
-          name=$(node -p "require('./extensions/${{ inputs.package }}/dist/package.json').name")
-          version=$(node -p "require('./extensions/${{ inputs.package }}/dist/package.json').version")
+          name=$(node -p "require('./$PKG_DIR/dist/package.json').name")
+          version=$(node -p "require('./$PKG_DIR/dist/package.json').version")
           if npm view "$name@$version" version >/dev/null 2>&1; then
             echo "$name@$version is already on npm; bump the version first" >&2
             exit 1
@@ -85,7 +104,7 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           node -e '
-            const deps = require("./extensions/${{ inputs.package }}/dist/package.json").dependencies ?? {}
+            const deps = require(`./${process.env.PKG_DIR}/dist/package.json`).dependencies ?? {}
             const { execFileSync } = require("node:child_process")
             for (const [name, range] of Object.entries(deps)) {
               if (!name.startsWith("@threahq/")) continue
@@ -102,4 +121,4 @@ jobs:
 
       - name: Publish
         if: ${{ !inputs.dry_run }}
-        run: npm publish extensions/${{ inputs.package }}/dist --access public --provenance
+        run: npm publish $PKG_DIR/dist --access public --provenance
