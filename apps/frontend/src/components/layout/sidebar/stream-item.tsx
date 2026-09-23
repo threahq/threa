@@ -245,7 +245,7 @@ export function CallActivityDot() {
  * The preview-line takeover shown while an agent works: spinner + `{label}` in
  * the agent accent, replacing the last-message preview for the run's duration.
  * Same text size/height as {@link StreamItemPreview} so the swap shifts nothing
- * (INV-21). The spinning Loader2 is the app's one "working" glyph — the session
+ * (INV-21). Title-only rows skip it: the avatar's working dot carries the signal. The spinning Loader2 is the app's one "working" glyph — the session
  * card, header chip, and follow pill all use it.
  */
 export function AgentActivityPreviewLine({ label }: { label: string }) {
@@ -374,7 +374,8 @@ export function StreamItemPreview({
   isTouch,
   e2eEnabled,
 }: StreamItemPreviewProps) {
-  if (!preview?.content) return null
+  // A full row always keeps its second line so every row, and the agent-working takeover, is one height.
+  if (!preview?.content) return compact ? null : <div aria-hidden className="h-4" />
 
   const hoverPreview = compact && showPreviewOnHover && !isTouch
 
@@ -697,7 +698,7 @@ export function StreamItem({
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(boardScopeId)} />
-  } else if (agentActive) {
+  } else if (agentActive && !compact) {
     previewNode = (
       <AgentActivityPreviewLine label={agentActivityLabel(agentSessions[0]?.personaName, agentSessions.length)} />
     )

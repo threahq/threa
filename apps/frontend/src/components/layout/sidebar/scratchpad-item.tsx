@@ -333,7 +333,7 @@ export function ScratchpadItem({
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(streamWithPreview.id)} />
-  } else if (agentActive) {
+  } else if (agentActive && !compact) {
     previewNode = (
       <AgentActivityPreviewLine label={agentActivityLabel(agentSessions[0]?.personaName, agentSessions.length)} />
     )

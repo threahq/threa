@@ -2,7 +2,7 @@ import { act, type ReactNode } from "react"
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { fireEvent, render, screen, spyOnExport } from "@/test"
-import { StreamTypes, Visibilities } from "@threahq/types"
+import { StreamTypes, Visibilities, type ActiveAgentSession } from "@threahq/types"
 import { Hash } from "lucide-react"
 import { StreamItem, StreamItemAvatar } from "./stream-item"
 import type { StreamItemData } from "./types"
@@ -14,6 +14,7 @@ import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
+import * as agentActivityModule from "@/stores/agent-activity-store"
 
 const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
@@ -360,6 +361,51 @@ describe("StreamItem", () => {
     expect(screen.getByText("No messages yet")).toBeInTheDocument()
     expect(screen.queryByText("Ariadne")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument()
+  })
+
+  it("should keep a title-only row to one line while an agent works, signalling through the avatar dot", () => {
+    touchState.inputMode = "mouse"
+    vi.spyOn(agentActivityModule, "useAgentActivityForStream").mockReturnValue([
+      { personaName: "Ada" } as unknown as ActiveAgentSession,
+    ])
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+        compact
+      />
+    )
+
+    expect(screen.queryByText("Ada is working…")).not.toBeInTheDocument()
+    expect(screen.getByLabelText("Agent working")).toBeInTheDocument()
+  })
+
+  it("should swap a full row's preview line for the working line while an agent works", () => {
+    touchState.inputMode = "mouse"
+    vi.spyOn(agentActivityModule, "useAgentActivityForStream").mockReturnValue([
+      { personaName: "Ada" } as unknown as ActiveAgentSession,
+    ])
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    expect(screen.getByText("Ada is working…")).toBeInTheDocument()
+    expect(screen.queryByText(/Latest update from the stream/)).not.toBeInTheDocument()
   })
 
   it("shows an unsent-draft hint on a stream with a loaded draft", () => {
