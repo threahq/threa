@@ -10,6 +10,8 @@ import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
+import { DateTimeField } from "@/components/forms/date-time-field"
+import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 
 interface ReminderPopoverContentProps {
   workspaceId: string
@@ -40,11 +42,9 @@ export function ReminderPopoverContent({
   const deleteMutation = useDeleteSaved(workspaceId)
   const [customOpen, setCustomOpen] = useState(false)
   const [durationOpen, setDurationOpen] = useState(false)
-  const [customDateTime, setCustomDateTime] = useState("")
-  // Grey out past times in the native picker. Computed once per open so the
-  // boundary doesn't jitter as the minute rolls over mid-interaction; the
-  // server-side clamp catches the seconds-granularity edge case anyway.
-  const minDateTime = useMemo(() => (customOpen ? toDateTimeLocal(new Date()) : ""), [customOpen])
+  const [customDate, setCustomDate] = useState("")
+  const [customTime, setCustomTime] = useState("")
+  const minDate = useMemo(() => (customOpen ? toDateInputValue(new Date()) : ""), [customOpen])
 
   const openCustom = () => {
     if (customOpen) {
@@ -55,7 +55,8 @@ export function ReminderPopoverContent({
     // Seed with the existing reminder when present, otherwise now + 15 minutes
     // — matches the mobile sheet so both entry points feel identical.
     const baseline = saved?.remindAt ? new Date(saved.remindAt) : new Date(Date.now() + 15 * 60_000)
-    setCustomDateTime(toDateTimeLocal(baseline))
+    setCustomDate(toDateInputValue(baseline))
+    setCustomTime(toTimeInputValue(baseline))
     setCustomOpen(true)
   }
 
@@ -96,15 +97,15 @@ export function ReminderPopoverContent({
   }
 
   const handleCustom = () => {
-    if (!customDateTime) return
-    const parsed = new Date(customDateTime)
-    if (isNaN(parsed.getTime())) {
+    const parsed = parseLocalDateTime(customDate, customTime)
+    if (!parsed) {
       toast.error("Invalid date")
       return
     }
     setReminder(parsed)
     setCustomOpen(false)
-    setCustomDateTime("")
+    setCustomDate("")
+    setCustomTime("")
   }
 
   const status = saved?.status ?? null
@@ -153,23 +154,26 @@ export function ReminderPopoverContent({
           Pick a time…
         </PopoverMenuButton>
         {customOpen && (
-          <div className="flex items-center gap-1.5 px-2 py-1">
-            <input
-              type="datetime-local"
-              autoFocus={menu}
-              value={customDateTime}
-              min={minDateTime}
-              onChange={(e) => setCustomDateTime(e.target.value)}
-              className="flex-1 text-xs rounded border bg-background px-1.5 py-1"
+          <div className="space-y-2 px-2 py-2">
+            <DateTimeField
+              date={customDate}
+              time={customTime}
+              onDateChange={setCustomDate}
+              onTimeChange={setCustomTime}
+              minDate={minDate}
+              autoFocusDate={menu}
+              density="compact"
+              gridClassName="grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-2 [&_input]:min-w-0 [&_input]:px-1.5"
             />
-            <Button
-              size="sm"
-              className="h-7 text-xs"
-              onClick={handleCustom}
-              disabled={!customDateTime || saveMutation.isPending || updateMutation.isPending}
-            >
-              Set
-            </Button>
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={handleCustom}
+                disabled={!customDate || !customTime || saveMutation.isPending || updateMutation.isPending}
+              >
+                Set reminder
+              </Button>
+            </div>
           </div>
         )}
         {saved?.remindAt && (
@@ -212,12 +216,6 @@ export function ReminderPopoverContent({
       )}
     </div>
   )
-}
-
-/** Format a Date as `YYYY-MM-DDTHH:mm` in local time — the shape `<input type="datetime-local">` expects. */
-function toDateTimeLocal(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 interface PopoverMenuButtonProps {
