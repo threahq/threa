@@ -13,9 +13,9 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  *   animation clock frozen at the frame's time. A read outside a frame lets
  *   Chrome advance that clock, so it would measure growth nobody painted.
  * - detached: the rows the reader is looking at don't move at all.
- * - cold load and the viewer's own send: nothing animates.
- * - the viewer's own send leaves the composer in the frame its row appears,
- *   keeping whatever was typed while it was in flight.
+ * - cold load: nothing animates.
+ * - the viewer's own send grows in like any arrival, and leaves the composer in
+ *   the frame its row appears, keeping whatever was typed while it was in flight.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -188,9 +188,8 @@ test("opening a stream animates nothing", async ({ page }) => {
   expect(await sawAnimation(page)).toBe(false)
 })
 
-test("your own send lands at full height with nothing animating", async ({ page }) => {
+test("your own send grows in and pushes the list up without leaving the bottom", async ({ page }) => {
   await openSeededChannel(page)
-  await page.addInitScript(watchForAnimation)
   await page.reload()
   await waitForSettledTail(page)
 
@@ -198,11 +197,16 @@ test("your own send lands at full height with nothing animating", async ({ page 
   const editor = page.locator("[contenteditable='true']").first()
   await editor.click()
   await editor.pressSequentially(text)
+  await page.evaluate(sampleArrival, { anchorText: "seed msg-040", arrivalText: text })
   await page.getByRole("button", { name: "Send", exact: true }).first().click()
   await expect(page.getByRole("main").getByText(text).first()).toBeVisible({ timeout: 10000 })
-  await page.waitForTimeout(1500)
+  await page.waitForTimeout(1000)
+  const frames = await page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames)
 
-  expect(await sawAnimation(page)).toBe(false)
+  expect(frames.length, "the send never grew").toBeGreaterThan(2)
+  const offBottom = frames.filter((f) => f.distance > AT_BOTTOM_PX)
+  const backwards = frames.filter((f, i) => i > 0 && f.anchorTop > frames[i - 1].anchorTop + 0.5)
+  expect({ offBottom, backwards }).toEqual({ offBottom: [], backwards: [] })
 })
 
 test("your own send leaves the composer in the frame its row appears", async ({ page }) => {

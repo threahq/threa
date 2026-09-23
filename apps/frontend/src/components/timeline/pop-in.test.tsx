@@ -64,10 +64,11 @@ describe("useArrivals", () => {
     expect(result.current).toEqual(["s"])
   })
 
-  it("should not report the viewer's own send when its optimistic row appears", () => {
+  it("should report the viewer's own send once, across its optimistic row's swap", () => {
     const { result, rerender } = mountArrivals({ ids: ["a"] })
-    rerender({ ids: ["a", "temp_1", "b"] })
-    expect(result.current).toEqual(["b"])
+    rerender({ ids: ["a", "temp_1"] })
+    rerender({ ids: ["a", "temp_1"] })
+    expect(result.current).toEqual(["temp_1"])
   })
 
   it("should forget an arrival once its effect has run out", () => {
