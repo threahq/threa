@@ -1,5 +1,11 @@
 import { describe, test, expect, mock } from "bun:test"
-import { AISpendDeniedError, DecisionsAvailability, type AI, type WebPage } from "@threahq/agent-runtime"
+import {
+  AISpendDeniedError,
+  DecisionsAvailability,
+  DecisionsRequestError,
+  type AI,
+  type WebPage,
+} from "@threahq/agent-runtime"
 import { WebSearchJudge } from "./web-search-judge"
 
 const CONTEXT = { workspaceId: "wsp_test", userId: "usr_test" }
@@ -71,6 +77,12 @@ describe("WebSearchJudge", () => {
     const { judge, availability } = createJudge({ throws: new Error("endpoint down") })
     expect(await judge.judge("q", PAGES, CONTEXT)).toBeNull()
     expect(availability.isAvailable).toBe(false)
+  })
+
+  test("results the endpoint refuses are left unjudged without tripping the breaker", async () => {
+    const { judge, availability } = createJudge({ throws: new DecisionsRequestError(403, "<html>blocked</html>") })
+    expect(await judge.judge("q", PAGES, CONTEXT)).toBeNull()
+    expect(availability.isAvailable).toBe(true)
   })
 
   test("a timeout leaves the results unjudged without tripping the breaker", async () => {

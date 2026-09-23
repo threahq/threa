@@ -329,7 +329,7 @@ describe("web-search-tool judged and opened", () => {
     })
   })
 
-  it("keeps the engine's text for a page that cannot be opened, and marks a stale one contradicted", async () => {
+  it("keeps the engine's text for a page that cannot be opened, and leaves out a stale one's", async () => {
     const tool = createWebSearchTool({
       engines: [engine([listed(1), both])],
       judge: async () => ({ offTopic: false, ambiguous: false, stale: [false, true] }),
@@ -345,11 +345,11 @@ describe("web-search-tool judged and opened", () => {
       parsed.results.map((r: { content: string; age: string }) => [r.content, r.age.includes("contradicts")])
     ).toEqual([
       ["snippet 1", false],
-      ["Staff Engineer at Telness Tech", true],
+      ["", true],
     ])
   })
 
-  it("marks stale copies contradicted when nothing opens pages", async () => {
+  it("leaves out stale copies' text when nothing opens pages", async () => {
     const tool = createWebSearchTool({
       engines: [engine([both, stored])],
       judge: async () => ({ offTopic: false, ambiguous: false, stale: [true, false] }),
@@ -357,9 +357,15 @@ describe("web-search-tool judged and opened", () => {
 
     const parsed = await run(tool)
 
-    expect(parsed.results.map((r: { url: string; age: string }) => [r.url, r.age.includes("contradicts")])).toEqual([
-      [both.url, true],
-      [stored.url, false],
+    expect(
+      parsed.results.map((r: { url: string; content: string; age: string }) => [
+        r.url,
+        r.content,
+        r.age.includes("contradicts"),
+      ])
+    ).toEqual([
+      [both.url, "", true],
+      [stored.url, "Guide text", false],
     ])
   })
 

@@ -61,8 +61,10 @@ const OPENED_CHARS = 3000
 
 const OFF_TOPIC_NOTE =
   "None of these results are about what was searched for. Do not answer from them: say the search found nothing on it, or search again with different words."
+// Live, the model answered from a contradicted stored copy that carried this
+// marker beside it, so the text is withheld rather than flagged.
 const CONTRADICTED_AGE =
-  ". A current title in these results contradicts this text and the page could not be opened: do not answer from this text where they disagree"
+  ". A current title in these results contradicts the stored text and the page could not be opened, so the text is left out"
 const AMBIGUOUS_NOTE =
   "These results are several different things that share a name. Do not pick one: name them briefly and ask which one was meant."
 
@@ -146,7 +148,7 @@ ${recencyGroundingBullet}
         results: pages.map((page) => ({
           title: page.title,
           url: page.url,
-          content: page.content,
+          content: page.contradicted ? "" : page.content,
           age: describeWebPageAge(page, searchedAt) + (page.contradicted ? CONTRADICTED_AGE : ""),
         })),
       }
@@ -219,8 +221,8 @@ type JudgedPage = WebPage & { contradicted: boolean }
 /**
  * Opens, all at once, every stored copy the judge found contradicted by a
  * current listing and the top listings that are only a title and a line. A
- * page that cannot be opened keeps the text the engine gave, and a stale one
- * is marked contradicted.
+ * page that cannot be opened keeps the text the engine gave, unless it is
+ * stale: that one is marked contradicted.
  */
 async function openPages(
   openPage: WebPageOpener,

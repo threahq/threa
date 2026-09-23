@@ -1,5 +1,6 @@
 import {
   AISpendDeniedError,
+  DecisionsRequestError,
   isAbortError,
   noulAnswer,
   type AI,
@@ -120,7 +121,9 @@ export class WebSearchJudge {
         )
         return null
       }
-      this.availability.recordFailure()
+      // Search results are free to carry text an upstream filter refuses; that
+      // refusal must not hold every other decisions caller off the endpoint.
+      if (!(error instanceof DecisionsRequestError && error.refusedContent)) this.availability.recordFailure()
       logger.warn({ error, workspaceId: context.workspaceId }, "Web search judge failed; results unjudged")
       return null
     } finally {
