@@ -17,6 +17,7 @@ import {
   captureBindingForAction,
   formatActionBinding,
   quickJumpSlotFromEvent,
+  CLEAR_INBOX_STREAM_ACTION_ID,
 } from "./keyboard-shortcuts"
 
 describe("toggleSidebar shortcut", () => {
@@ -334,5 +335,39 @@ describe("sidebarQuickJump shortcut", () => {
   it("labels the binding as a range only for quick jump", () => {
     expect(formatActionBinding(QUICK_JUMP_ACTION_ID, "mod+1")).toBe(`${formatKeyBinding("mod+1")}–9`)
     expect(formatActionBinding("toggleSidebar", "mod+b")).toBe(formatKeyBinding("mod+b"))
+  })
+})
+
+describe("clearInboxStream shortcut", () => {
+  it("is registered once as a view-category action defaulting to a bare 'e'", () => {
+    const action = getShortcutAction(CLEAR_INBOX_STREAM_ACTION_ID)
+    expect(action).toMatchObject({ defaultKey: "e", category: "view" })
+    expect(action?.global).toBeFalsy()
+    expect(SHORTCUT_ACTIONS.filter((a) => a.id === CLEAR_INBOX_STREAM_ACTION_ID)).toHaveLength(1)
+  })
+
+  it("is unsafe for the shared global-shortcut gate, since a bare letter would hijack typing", () => {
+    // `isSafeShortcutBinding` rejects any non-mod/alt binding that isn't a function
+    // key, so `useKeyboardShortcuts()` never fires this action — it's wired up via
+    // a bespoke, narrowly scoped listener in `Sidebar` instead (see that binding's
+    // usage for why: it only listens outside editable targets).
+    expect(isSafeShortcutBinding("e")).toBe(false)
+  })
+
+  it("still resolves an effective binding despite failing the safe-binding gate", () => {
+    expect(getEffectiveKeyBinding(CLEAR_INBOX_STREAM_ACTION_ID)).toBe("e")
+    expect(getEffectiveKeyBinding(CLEAR_INBOX_STREAM_ACTION_ID, { [CLEAR_INBOX_STREAM_ACTION_ID]: "alt+e" })).toBe(
+      "alt+e"
+    )
+  })
+
+  it("matches a bare 'e' keydown with no modifiers", () => {
+    const binding = getEffectiveKeyBinding(CLEAR_INBOX_STREAM_ACTION_ID) ?? "e"
+    expect(matchesKeyBinding(new KeyboardEvent("keydown", { key: "e" }), binding)).toBe(true)
+    expect(matchesKeyBinding(new KeyboardEvent("keydown", { key: "e", metaKey: true }), binding)).toBe(false)
+  })
+
+  it("does not collide with any other default binding", () => {
+    expect(detectConflicts()).toEqual(new Map())
   })
 })

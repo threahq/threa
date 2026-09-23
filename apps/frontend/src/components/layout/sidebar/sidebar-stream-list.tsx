@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
+import { CheckCheck, Inbox, ListX } from "lucide-react"
 import { MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import { useSidebar, type CollapseState } from "@/contexts"
 import { useBoardSelection } from "@/hooks/use-board-selection"
@@ -11,6 +12,7 @@ import {
   BOARD_UNREAD_ON,
 } from "@/components/board/board-filter-params"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelChip } from "@/components/labels/label-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
@@ -52,12 +54,10 @@ interface AddWiring {
   addMenuActions?: SidebarActionItem[]
 }
 
-/** Unread section header: a gold thread dot + the label, matching the section
- *  header's uppercase styling. Gold (not a colored emoji) keeps the palette
- *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (no unread streams) both
- *  the dot and label drop to a muted tone so the caught-up header recedes
- *  instead of advertising itself — the gold dot is reserved for "there's unread
- *  here". */
+/** Inbox section header: the Inbox icon + label, matching the section header's
+ *  uppercase styling. Top-level per INV-18. When `quiet` (no rows held or
+ *  unread) both the icon and label drop to a muted tone so the caught-up
+ *  header recedes instead of advertising itself. */
 function UnreadSectionTitle({ label, quiet = false }: { label: string; quiet?: boolean }) {
   return (
     <span
@@ -66,12 +66,69 @@ function UnreadSectionTitle({ label, quiet = false }: { label: string; quiet?: b
         quiet ? "text-muted-foreground/50" : "text-muted-foreground"
       )}
     >
-      <span
-        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", quiet ? "bg-muted-foreground/40" : "bg-primary")}
-        aria-hidden
-      />
+      <Inbox className={cn("h-3.5 w-3.5 shrink-0", quiet ? "text-muted-foreground/40" : "text-primary")} aria-hidden />
       {label}
     </span>
+  )
+}
+
+/** Inbox header actions: clear-read (held rows only) and clear-all. Unlike the
+ *  row-level Clear button, these are always visible when shown — a static
+ *  status control alongside "All caught up", not a hover reveal. */
+function InboxHeaderActions({
+  heldCount,
+  totalCount,
+  onClearRead,
+  onClearAll,
+}: {
+  heldCount: number
+  totalCount: number
+  onClearRead: () => void
+  onClearAll: () => void
+}) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {heldCount > 0 && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onClearRead()
+              }}
+              aria-label={`Clear ${heldCount} read`}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">
+            Clear {heldCount} read
+          </TooltipContent>
+        </Tooltip>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onClearAll()
+            }}
+            aria-label={`Clear all ${totalCount}`}
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ListX className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          Clear all {totalCount}, marks them read
+        </TooltipContent>
+      </Tooltip>
+    </div>
   )
 }
 
@@ -126,6 +183,10 @@ interface SidebarStreamListProps {
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. Every
    *  row's board branch is gated on it, so chats mode is untouched. */
   boardMode?: SidebarBoardMode | null
+  /** Clear one or more streams from the Inbox (row clear, header clear-read/clear-all). */
+  onClearInbox: (streamIds: string[]) => void
+  /** Track which Inbox row is pointer-hovered, for the `E` clear shortcut. `null` when none. */
+  onInboxRowHoverChange?: (streamId: string | null) => void
 }
 
 export function SidebarStreamList({
@@ -149,6 +210,8 @@ export function SidebarStreamList({
   onStreamMovedFromLabel,
   homeHintFor,
   boardMode,
+  onClearInbox,
+  onInboxRowHoverChange,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
   // action drawer's section picker. Keyed on the active input (not capability)
@@ -235,6 +298,12 @@ export function SidebarStreamList({
     if (section.spec.kind === "label" && !label) return null
     const isUnread = section.spec.kind === "unread"
     const isEmptyUnread = isUnread && items.length === 0
+    // Board mode keeps the plain unread predicate (see Sidebar) — Inbox
+    // row/header behavior (dimming, row clear, header clear buttons) is
+    // structurally off there, not just visually.
+    const isInboxSection = isUnread && !boardMode
+    const inboxStreamIds = isInboxSection ? items.map((item) => item.id) : []
+    const inboxHeldStreamIds = isInboxSection ? items.filter((item) => getUnreadCount(item.id) === 0).map((item) => item.id) : []
     // Unread's header is a gold dot + label (a colored emoji would break the
     // gold-on-paper palette); label sections use their tinted chip. An empty
     // Unread section mutes the dot + label so the caught-up header recedes.
@@ -323,9 +392,19 @@ export function SidebarStreamList({
     // nothing to collapse, so the header reads as pure status, not a
     // toggle. The header is always present, so showing/hiding the accessory
     // never reflows the list (INV-21).
-    const unreadAccessory: ReactNode = isEmptyUnread ? (
-      <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
-    ) : undefined
+    let unreadAccessory: ReactNode = undefined
+    if (isEmptyUnread) {
+      unreadAccessory = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+    } else if (isInboxSection) {
+      unreadAccessory = (
+        <InboxHeaderActions
+          heldCount={inboxHeldStreamIds.length}
+          totalCount={inboxStreamIds.length}
+          onClearRead={() => onClearInbox(inboxHeldStreamIds)}
+          onClearAll={() => onClearInbox(inboxStreamIds)}
+        />
+      )
+    }
 
     const sectionEl = presentation.tiered ? (
       <TieredStreamSection
@@ -384,6 +463,9 @@ export function SidebarStreamList({
         streamDragEnabled={streamDragEnabled}
         homeHintFor={isUnread ? homeHintFor : undefined}
         boardMode={boardMode}
+        isInboxSection={isInboxSection}
+        onClearInboxRow={isInboxSection ? (streamId: string) => onClearInbox([streamId]) : undefined}
+        onInboxRowHoverChange={isInboxSection ? onInboxRowHoverChange : undefined}
       />
     )
 

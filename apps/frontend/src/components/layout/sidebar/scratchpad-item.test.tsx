@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom"
-import { fireEvent, render, screen, waitFor } from "@/test"
+import { fireEvent, render, screen, waitFor, within } from "@/test"
 import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threahq/types"
 import { ScratchpadItem } from "./scratchpad-item"
 import { SidebarLabelsProvider } from "./sidebar-labels"
@@ -537,5 +537,94 @@ describe("ScratchpadItem", () => {
     expect(screen.queryByText("Add to filter")).not.toBeInTheDocument()
     expect(screen.queryByText("Open timeline")).not.toBeInTheDocument()
     expect(screen.getByText("Settings")).toBeInTheDocument()
+  })
+
+  it("adds a Clear action ahead of Settings when the row is in the Inbox", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    const menu = screen.getByLabelText("Stream actions")
+    const labels = within(menu)
+      .getAllByRole("button")
+      .map((button) => button.textContent)
+    expect(labels[0]).toBe("Clear")
+    expect(labels).toContain("Settings")
+  })
+
+  it("does not offer a Clear action outside the Inbox", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.queryByText("Clear")).not.toBeInTheDocument()
+  })
+
+  it("calls onClearFromInbox when the Clear action is selected", () => {
+    const onClearFromInbox = vi.fn()
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        isInboxRow
+        onClearFromInbox={onClearFromInbox}
+      />
+    )
+
+    fireEvent.click(screen.getByText("Clear"))
+
+    expect(onClearFromInbox).toHaveBeenCalledTimes(1)
+  })
+
+  it("dims a held Inbox scratchpad row and shows the row Clear button", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    const avatarRow = screen.getByText("Notes").parentElement!.parentElement!.parentElement!
+    expect(avatarRow).toHaveClass("opacity-60")
+    expect(screen.getByRole("button", { name: "Clear from Inbox" })).toBeInTheDocument()
+  })
+
+  it("does not dim an Inbox scratchpad row that still has unread messages", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={3}
+        mentionCount={0}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    const avatarRow = screen.getByText("Notes").parentElement!.parentElement!.parentElement!
+    expect(avatarRow).not.toHaveClass("opacity-60")
   })
 })

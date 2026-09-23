@@ -151,6 +151,13 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     defaultKey: "mod+s",
     category: "editing",
   },
+  {
+    id: "clearInboxStream",
+    label: "Clear from Inbox",
+    description: "Clear the hovered Inbox row, or the open stream if it's in the Inbox",
+    defaultKey: "e",
+    category: "view",
+  },
 ]
 
 export function getShortcutAction(id: string): ShortcutAction | undefined {
@@ -398,6 +405,10 @@ export function keyEventToBinding(event: KeyboardEvent): string | null {
  * (capture, matching, display) branches on this id.
  */
 export const QUICK_JUMP_ACTION_ID = "sidebarQuickJump"
+
+/** Bare "e" fails `isSafeShortcutBinding`, so this fires only via a bespoke
+ *  listener in `Sidebar`, not `useKeyboardShortcuts`. Listed here for display only. */
+export const CLEAR_INBOX_STREAM_ACTION_ID = "clearInboxStream"
 
 /** Sidebar rows the quick jump can reach. */
 export const QUICK_JUMP_SLOT_COUNT = 9

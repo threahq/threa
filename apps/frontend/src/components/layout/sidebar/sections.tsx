@@ -290,6 +290,12 @@ interface RenderRowOptions {
   streamDragEnabled: boolean
   homeHintFor?: (streamId: string) => string | null
   boardMode?: SidebarBoardMode | null
+  /** True in the Inbox section (chats mode only — board mode never sets this). */
+  isInboxSection?: boolean
+  /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
+  onClearInboxRow?: (streamId: string) => void
+  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  onInboxRowHoverChange?: (streamId: string | null) => void
 }
 
 /**
@@ -311,6 +317,13 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       showPreviewOnHover={opts.showPreviewOnHover}
       homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
       boardMode={opts.boardMode}
+      isInboxRow={opts.isInboxSection}
+      onClearFromInbox={opts.isInboxSection && opts.onClearInboxRow ? () => opts.onClearInboxRow!(stream.id) : undefined}
+      onInboxHoverChange={
+        opts.isInboxSection && opts.onInboxRowHoverChange
+          ? (hovering: boolean) => opts.onInboxRowHoverChange!(hovering ? stream.id : null)
+          : undefined
+      }
     />
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
@@ -399,6 +412,12 @@ interface StreamSectionProps {
   homeHintFor?: (streamId: string) => string | null
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. */
   boardMode?: SidebarBoardMode | null
+  /** True when this is the Inbox section (chats mode only — never set in board mode). */
+  isInboxSection?: boolean
+  /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
+  onClearInboxRow?: (streamId: string) => void
+  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  onInboxRowHoverChange?: (streamId: string | null) => void
 }
 
 /** Simple binary collapsible section used for Important / Recent. */
@@ -430,6 +449,9 @@ export function StreamSection({
   streamDragEnabled = false,
   homeHintFor,
   boardMode,
+  isInboxSection,
+  onClearInboxRow,
+  onInboxRowHoverChange,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -447,6 +469,9 @@ export function StreamSection({
       streamDragEnabled,
       homeHintFor,
       boardMode,
+      isInboxSection,
+      onClearInboxRow,
+      onInboxRowHoverChange,
     })
 
   return (

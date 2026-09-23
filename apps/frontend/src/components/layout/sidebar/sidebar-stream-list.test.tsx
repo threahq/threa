@@ -92,6 +92,7 @@ function renderList(streams: StreamItemData[], search: string) {
         onStreamMovedFromLabel={vi.fn()}
         homeHintFor={() => null}
         boardMode={makeBoardMode()}
+        onClearInbox={vi.fn()}
       />
     </MemoryRouter>
   )
@@ -185,6 +186,7 @@ describe("SidebarStreamList — quick-jump numbering", () => {
           onStreamMovedFromLabel={vi.fn()}
           homeHintFor={() => null}
           boardMode={null}
+          onClearInbox={vi.fn()}
         />
       </MemoryRouter>
     )
@@ -231,5 +233,126 @@ describe("SidebarStreamList — quick-jump numbering", () => {
     renderSections([customSection("sec_1", first), customSection("sec_2", second)])
 
     expect(numberedStreamIds()).toEqual([...first.map((s) => s.id), "stream_b0", "stream_b1"])
+  })
+})
+
+describe("SidebarStreamList — Inbox section", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    stubSidebarContexts()
+  })
+
+  function unreadSection(streams: StreamItemData[]): ResolvedSection {
+    return {
+      section: { id: "unread", spec: { kind: "unread" as const } },
+      items: streams,
+    } as unknown as ResolvedSection
+  }
+
+  function renderInbox(
+    streams: StreamItemData[],
+    over: { unread?: (streamId: string) => number; onClearInbox?: (streamIds: string[]) => void } = {}
+  ) {
+    const onClearInbox = over.onClearInbox ?? vi.fn()
+    render(
+      <MemoryRouter initialEntries={["/w/workspace_1"]}>
+        <SidebarStreamList
+          workspaceId="workspace_1"
+          hasError={false}
+          hasUserStreams
+          processedStreams={streams}
+          resolvedSections={[unreadSection(streams)]}
+          labelsById={new Map()}
+          getUnreadCount={over.unread ?? (() => 0)}
+          getMentionCount={() => 0}
+          getSectionState={() => "open"}
+          toggleSectionState={vi.fn()}
+          onCreateScratchpad={vi.fn()}
+          onCreateChannel={vi.fn()}
+          onFileStreamToSection={vi.fn()}
+          onAssignStreamLabel={vi.fn()}
+          onStreamMovedFromLabel={vi.fn()}
+          homeHintFor={() => null}
+          boardMode={null}
+          onClearInbox={onClearInbox}
+        />
+      </MemoryRouter>
+    )
+    return onClearInbox
+  }
+
+  it("labels the section Inbox with the Inbox icon, muted when empty", () => {
+    renderInbox([])
+    const header = screen.getByText("Inbox")
+    expect(header).toBeInTheDocument()
+    expect(header).toHaveClass("text-muted-foreground/50")
+    expect(screen.getByText("All caught up")).toBeInTheDocument()
+  })
+
+  it("shows the Inbox label at full contrast once it holds rows", () => {
+    renderInbox([makeStream("stream_a")], { unread: () => 1 })
+    expect(screen.getByText("Inbox")).not.toHaveClass("text-muted-foreground/50")
+  })
+
+  it("shows Clear all but not Clear read when no row is held", () => {
+    renderInbox([makeStream("stream_a")], { unread: () => 1 })
+    expect(screen.getByRole("button", { name: "Clear all 1" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Clear \d+ read/ })).not.toBeInTheDocument()
+  })
+
+  it("shows Clear read alongside Clear all when a row is held", () => {
+    const streams = [makeStream("stream_a"), makeStream("stream_b")]
+    renderInbox(streams, { unread: (id) => (id === "stream_a" ? 0 : 3) })
+    expect(screen.getByRole("button", { name: "Clear 1 read" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear all 2" })).toBeInTheDocument()
+  })
+
+  it("clears only held rows when Clear read is clicked", () => {
+    const streams = [makeStream("stream_a"), makeStream("stream_b")]
+    const onClearInbox = renderInbox(streams, { unread: (id) => (id === "stream_a" ? 0 : 3) })
+    fireEvent.click(screen.getByRole("button", { name: "Clear 1 read" }))
+    expect(onClearInbox).toHaveBeenCalledWith(["stream_a"])
+  })
+
+  it("clears every row when Clear all is clicked", () => {
+    const streams = [makeStream("stream_a"), makeStream("stream_b")]
+    const onClearInbox = renderInbox(streams, { unread: (id) => (id === "stream_a" ? 0 : 3) })
+    fireEvent.click(screen.getByRole("button", { name: "Clear all 2" }))
+    expect(onClearInbox).toHaveBeenCalledWith(["stream_a", "stream_b"])
+  })
+
+  it("stays behaviorally untouched in board mode aside from the Inbox label rename", () => {
+    const streams = [makeStream("stream_a")]
+    render(
+      <MemoryRouter initialEntries={["/w/workspace_1/board"]}>
+        <SidebarStreamList
+          workspaceId="workspace_1"
+          hasError={false}
+          hasUserStreams
+          processedStreams={streams}
+          resolvedSections={[unreadSection(streams)]}
+          labelsById={new Map()}
+          getUnreadCount={() => 0}
+          getMentionCount={() => 0}
+          getSectionState={() => "open"}
+          toggleSectionState={vi.fn()}
+          onCreateScratchpad={vi.fn()}
+          onCreateChannel={vi.fn()}
+          onFileStreamToSection={vi.fn()}
+          onAssignStreamLabel={vi.fn()}
+          onStreamMovedFromLabel={vi.fn()}
+          homeHintFor={() => null}
+          boardMode={makeBoardMode()}
+          onClearInbox={vi.fn()}
+        />
+      </MemoryRouter>
+    )
+
+    // Label rename is the only visible change; a held (unreadCount 0) row in
+    // board mode gets none of the Inbox-only chrome.
+    expect(screen.getByText("Inbox")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Clear all \d+/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Clear \d+ read/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Clear from Inbox" })).not.toBeInTheDocument()
   })
 })

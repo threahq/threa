@@ -17,6 +17,7 @@ import {
   Tag,
 } from "lucide-react"
 import { Link } from "react-router-dom"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
@@ -104,6 +105,38 @@ export function BoardTileToggle({
       {excluded && <Ban className="h-2.5 w-2.5" />}
       {!included && !excluded && <Plus className="h-2.5 w-2.5" />}
     </button>
+  )
+}
+
+/**
+ * Row-level Inbox clear control: own reveal slot left of the "…" menu so hover
+ * never shifts the row (INV-21). Hint hardcodes "E" — bare-key actions can't be
+ * rebound via settings capture, so it's accurate for every viewer.
+ */
+export function InboxRowClearButton({ onClear }: { onClear: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onClear()
+          }}
+          aria-label="Clear from Inbox"
+          className="reveal-actions-hover-only absolute right-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
+        >
+          <Check className="h-3.5 w-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">Clear</span>
+          <span className="text-muted-foreground">E</span>
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -364,6 +397,12 @@ interface StreamItemProps {
   /** Board-mode descriptor when on `/board` (flag on); `null`/absent in chats
    *  mode, where every board branch below is skipped and the row is unchanged. */
   boardMode?: SidebarBoardMode | null
+  /** True in the Inbox section (chats mode only — board mode never sets this). */
+  isInboxRow?: boolean
+  /** Clear this stream from the Inbox. Set only alongside `isInboxRow`. */
+  onClearFromInbox?: () => void
+  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  onInboxHoverChange?: (hovering: boolean) => void
 }
 
 export function StreamItem({
@@ -377,6 +416,9 @@ export function StreamItem({
   showPreviewOnHover = false,
   homeHint,
   boardMode,
+  isInboxRow,
+  onClearFromInbox,
+  onInboxHoverChange,
 }: StreamItemProps) {
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
@@ -388,6 +430,8 @@ export function StreamItem({
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)
   const hasUnread = unreadCount > 0
+  // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
+  const isHeld = !!isInboxRow && !hasUnread
   const preview = stream.lastMessagePreview
   const isVirtualDraft = isDraftId(stream.id)
   const agentSessions = useAgentActivityForStream(workspaceId, stream.id)
@@ -507,9 +551,25 @@ export function StreamItem({
             onSelect: () => setSectionPickerOpen(true),
           },
         ]
-    if (boardActions.length === 0) return base
-    return [...boardActions, ...base.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a))]
-  }, [isVirtualDraft, openStreamSettings, openExplorer, openOutcomes, stream.id, workspaceId, boardActions])
+    // Inbox and board mode are mutually exclusive (isInboxRow is forced false
+    // whenever boardMode is set), so this never collides with boardActions.
+    const withClear =
+      isInboxRow && onClearFromInbox
+        ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox } satisfies SidebarActionItem, ...base]
+        : base
+    if (boardActions.length === 0) return withClear
+    return [...boardActions, ...withClear.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a))]
+  }, [
+    isVirtualDraft,
+    openStreamSettings,
+    openExplorer,
+    openOutcomes,
+    stream.id,
+    workspaceId,
+    boardActions,
+    isInboxRow,
+    onClearFromInbox,
+  ])
 
   let drawerPreview: SidebarActionPreview | null = null
   if (preview?.content) {
@@ -551,6 +611,9 @@ export function StreamItem({
         showPreviewOnHover={showPreviewOnHover}
         homeHint={homeHint}
         boardMode={boardMode}
+        isInboxRow={isInboxRow}
+        onClearFromInbox={onClearFromInbox}
+        onInboxHoverChange={onInboxHoverChange}
       />
     )
   }
@@ -609,7 +672,11 @@ export function StreamItem({
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
-        <div className="group reveal-host relative">
+        <div
+          className="group reveal-host relative"
+          onPointerEnter={isInboxRow ? () => onInboxHoverChange?.(true) : undefined}
+          onPointerLeave={isInboxRow ? () => onInboxHoverChange?.(false) : undefined}
+        >
           <Link
             ref={itemRef}
             to={rowTo}
@@ -630,7 +697,9 @@ export function StreamItem({
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
+            <div
+              className={cn("flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2", isHeld && "opacity-60")}
+            >
               <StreamItemAvatar
                 icon={avatar.icon}
                 className={avatar.className}
@@ -647,10 +716,9 @@ export function StreamItem({
                   showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
                 )}
               >
-                {/* The right reserve exists only for the hover "…" menu, which never
-                    appears under touch input (long-press opens the drawer instead) —
-                    so a phone spends it on the name. */}
-                <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
+                {/* Right reserve for the "…" menu (+ Inbox Clear button when applicable); touch
+                    skips it — long-press opens the drawer instead, so a phone spends it on the name. */}
+                <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
                   <span
                     className={cn(
                       "truncate text-sm",
@@ -701,6 +769,7 @@ export function StreamItem({
           ) : (
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
           )}
+          {isInboxRow && onClearFromInbox && !isTouchInput && <InboxRowClearButton onClear={onClearFromInbox} />}
         </div>
       </SidebarActionContextMenu>
       {labelPickerOpen && (

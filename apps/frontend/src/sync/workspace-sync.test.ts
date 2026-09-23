@@ -4549,6 +4549,54 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
     expect(merged.unreadCounts).toEqual({ stream_drifted: 4, stream_busy: 3 })
     expect(merged.messageCounts).toEqual({ stream_drifted: 10, stream_busy: 12 })
   })
+
+  it("mergeReconnectWorkspaceBootstrap keeps a locally-cleared hold from being reinstated by a stale snapshot", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({
+        unreadCounts: { stream_held: 0 },
+        inboxHeldStreamIds: ["stream_held"],
+      }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(),
+      localStreams: [],
+      localMemberships: [],
+      localReadStates: [],
+      localUnreadState: {
+        id: "ws_1",
+        workspaceId: "ws_1",
+        // stream_held was cleared locally after the server snapshot was taken;
+        // the touched-set must win so the stale snapshot can't reinstate it.
+        unreadCounts: { stream_held: 0 },
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        inboxHeldStreamIds: [],
+        mutedStreamIds: [],
+        counterTouchedAt: { stream_held: fetchStartedAt + 500 },
+        _cachedAt: fetchStartedAt + 500,
+      },
+      fetchStartedAt,
+    })
+
+    expect(merged.inboxHeldStreamIds).toEqual([])
+  })
+
+  it("mergeReconnectWorkspaceBootstrap drops a terminal stream's held membership", () => {
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({ inboxHeldStreamIds: ["stream_gone"] }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(["stream_gone"]),
+      localStreams: [],
+      localMemberships: [],
+      localReadStates: [],
+    })
+
+    expect(merged.inboxHeldStreamIds).toEqual([])
+  })
 })
 
 describe("agent-activity sidebar socket handlers", () => {
