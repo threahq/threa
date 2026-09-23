@@ -378,6 +378,60 @@ describe("AgentRuntime message counting", () => {
   })
 })
 
+describe("AgentRuntime final iteration", () => {
+  it("offers only the terminal tool on the last iteration so a research-heavy turn still answers", async () => {
+    const lookupTool = defineAgentTool({
+      name: "lookup",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => ({ output: "{}" }),
+      trace: { stepType: AgentStepTypes.WORKSPACE_SEARCH, formatContent: () => "{}" },
+    })
+    const calls: Array<{ tools: string[]; lastMessage: unknown }> = []
+    const generateTextWithTools = async ({ tools, messages }: { tools: Record<string, unknown>; messages: any[] }) => {
+      calls.push({ tools: Object.keys(tools), lastMessage: messages.at(-1)?.content })
+      const toolName = "lookup" in tools ? "lookup" : AgentToolNames.SEND_MESSAGE
+      return {
+        text: "",
+        toolCalls: [
+          {
+            toolCallId: `tc_${calls.length}`,
+            toolName,
+            input: toolName === "lookup" ? {} : { content: "Best I have" },
+          },
+        ],
+        response: { messages: [{ role: "assistant" as const, content: "step" } as any] },
+      }
+    }
+    const commits: string[] = []
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "research this" }],
+      tools: [lookupTool],
+      maxIterations: 3,
+      sendMessage: async ({ content }) => {
+        commits.push(content)
+        return { messageId: "msg_1", operation: "created" }
+      },
+    })
+
+    const result = await runtime.run()
+
+    expect(calls.map((call) => call.tools)).toEqual([
+      ["lookup", AgentToolNames.SEND_MESSAGE],
+      ["lookup", AgentToolNames.SEND_MESSAGE],
+      [AgentToolNames.SEND_MESSAGE],
+    ])
+    expect(calls[2]?.lastMessage).toContain("No more tool calls are available")
+    expect(commits).toEqual(["Best I have"])
+    expect(result.messagesSent).toBe(1)
+  })
+})
+
 describe("AgentRuntime initial context", () => {
   const replyOnce = () => ({
     text: "",
