@@ -3114,6 +3114,21 @@ describe("SyncEngine first-connect sweep", () => {
     engine.destroy()
   })
 
+  it("hands the workspace snapshot it published to a claimant, and none once settled", async () => {
+    const deps = makeSyncDeps()
+    const engine = new SyncEngine(deps)
+    const claim = engine.claimWorkspaceBootstrap()
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    expect({
+      claimed: (await claim) === deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1")),
+      fetches: deps.workspaceService.bootstrap.mock.calls.length,
+      after: engine.claimWorkspaceBootstrap(),
+    }).toEqual({ claimed: true, fetches: 1, after: null })
+    engine.destroy()
+  })
+
   it("rejects a claim with the stream's own fetch error", async () => {
     const deps = makeSyncDeps()
     const forbidden = new ApiError(403, "FORBIDDEN", "Forbidden")
@@ -3138,12 +3153,13 @@ describe("SyncEngine first-connect sweep", () => {
     const engine = new SyncEngine(deps)
     const connecting = engine.onConnect(asSocket(new MockSocket()))
     const claim = engine.claimStreamBootstrap("stream_2")
+    const workspaceClaim = engine.claimWorkspaceBootstrap()
     expect(claim).not.toBeNull()
 
     await connecting
 
-    await expect(claim).resolves.toBeNull()
-    expect(engine.claimStreamBootstrap("stream_2")).toBeNull()
+    await expect(Promise.all([claim, workspaceClaim])).resolves.toEqual([null, null])
+    expect([engine.claimStreamBootstrap("stream_2"), engine.claimWorkspaceBootstrap()]).toEqual([null, null])
     errorSpy.mockRestore()
     engine.destroy()
   })
@@ -3218,10 +3234,11 @@ describe("SyncEngine first-connect sweep", () => {
     const engine = new SyncEngine(deps)
     const connecting = engine.onConnect(asSocket(new MockSocket()))
     const claim = engine.claimStreamBootstrap("stream_2")
+    const workspaceClaim = engine.claimWorkspaceBootstrap()
 
     engine.destroy()
     await connecting
 
-    await expect(claim).resolves.toBeNull()
+    await expect(Promise.all([claim, workspaceClaim])).resolves.toEqual([null, null])
   })
 })
