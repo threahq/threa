@@ -346,6 +346,34 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(false)
   })
 
+  it("re-pins when virtua's stale-offset compensation overwrites a pin before its scroll event", () => {
+    // A row above the viewport shrinks in the frame we pin. Virtua compensates
+    // from the offset of its last scroll event, restoring the pre-pin position
+    // minus the shrink, and both writes coalesce into one scroll event: a
+    // height-stable, gesture-less drop that is not the user.
+    const harness = renderScrollHook(
+      opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef: { current: 0 } })
+    )
+    const metrics = { scrollHeight: 2303, clientHeight: 452, scrollTop: 1851 }
+    const el = makeScrollerDiv(metrics)
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    metrics.scrollHeight = 2362
+    act(() => harness.current.scrollToBottom())
+    el.scrollTop = 1827
+    act(() => harness.current.handleScroll())
+    expect({ following: harness.current.isFollowingTailRef.current, scrollTop: el.scrollTop }).toEqual({
+      following: true,
+      scrollTop: 2362,
+    })
+    // The same drop once the pin's scroll event has been observed is a
+    // scrollbar drag and still disarms.
+    act(() => harness.current.handleScroll())
+    el.scrollTop = 1827
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
   it("handleScroll shows Jump-to-latest when the user scrolls far from the bottom and hides it near it", () => {
     const userInteractedAtRef = { current: 0 }
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
