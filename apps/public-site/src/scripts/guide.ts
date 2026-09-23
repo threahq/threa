@@ -13,7 +13,7 @@ function trackProgress(): void {
   const nav = document.querySelector<HTMLElement>(".docs-nav")
   if (!steps.length || !status || !nav) return
 
-  let reached = 0
+  let reached = 1
   let frame = 0
   const track = () => {
     if (frame) return
@@ -40,8 +40,6 @@ function trackProgress(): void {
   }
   addEventListener("scroll", track, { passive: true })
   new ResizeObserver(track).observe(document.body)
-  // Flush styles so the first segment animates from empty on load.
-  guide.getBoundingClientRect()
   track()
 }
 

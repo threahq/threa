@@ -34,7 +34,11 @@ const steps = [
         Step 1 of 4: {steps[0].title}
       </p>
       <div class="guide-meter">
-        {steps.map((s) => <a class="gm-seg" href={`#step-${s.id}`} data-seg tabindex="-1"></a>)}
+        {
+          steps.map((s, i) => (
+            <a class="gm-seg" href={`#step-${s.id}`} data-seg tabindex="-1" style={i === 0 ? "--fill: 1" : undefined} />
+          ))
+        }
       </div>
     </div>
 
