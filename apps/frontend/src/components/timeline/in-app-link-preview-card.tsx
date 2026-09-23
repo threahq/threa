@@ -23,7 +23,7 @@ import { classifyDraftLink } from "@/lib/in-app-links"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { DELEGATION_STATUS_LABEL, delegationStatusPillClass } from "@/lib/delegation-display"
-import { AccentGlow } from "./link-preview-primitives"
+import { AccentGlow, PREVIEW_CARD_WIDTH } from "./link-preview-primitives"
 import { linkPreviewsApi } from "@/api"
 import type {
   InAppLinkPreviewData,
@@ -700,7 +700,12 @@ function InternalLink({ path, children }: { path: string | null; children: React
 
 function CardShell({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (
-    <div className="group/preview reveal-host relative max-w-md overflow-hidden rounded-lg border bg-card transition-all hover:border-primary/50 hover:shadow-sm">
+    <div
+      className={cn(
+        "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all hover:border-primary/50 hover:shadow-sm",
+        PREVIEW_CARD_WIDTH
+      )}
+    >
       <div className={cn("flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5", CARD_HEADER_H)}>{header}</div>
       {children}
     </div>
@@ -715,7 +720,7 @@ function CardShell({ header, children }: { header: ReactNode; children: ReactNod
  */
 function CardSkeleton({ variant }: { variant: CardVariant }) {
   return (
-    <div className="max-w-md animate-pulse overflow-hidden rounded-lg border bg-card">
+    <div className={cn("animate-pulse overflow-hidden rounded-lg border bg-card", PREVIEW_CARD_WIDTH)}>
       <div className={cn("flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5", CARD_HEADER_H)}>
         <div className="h-3 w-20 rounded bg-muted" />
       </div>
@@ -758,7 +763,9 @@ function MinimalCard({
   onDismiss?: () => void
 }) {
   return (
-    <div className="group/preview reveal-host relative max-w-md overflow-hidden rounded-lg border bg-card">
+    <div
+      className={cn("group/preview reveal-host relative overflow-hidden rounded-lg border bg-card", PREVIEW_CARD_WIDTH)}
+    >
       <div
         className={cn("flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5 text-muted-foreground", CARD_HEADER_H)}
       >

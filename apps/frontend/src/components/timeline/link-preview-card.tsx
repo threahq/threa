@@ -28,7 +28,16 @@ import { linkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-
 import { isVideoPreview, videoPlaybackSrc } from "@/components/gallery/video-embed"
 import { LinkPreviewBody } from "./link-preview-body"
 import { useReportPreviewVisible } from "@/hooks/use-report-preview-visible"
-import { AccentGlow, colorWithAlpha, Field, FieldGrid, LabelChip, MonoTag, StatePill } from "./link-preview-primitives"
+import {
+  AccentGlow,
+  colorWithAlpha,
+  Field,
+  FieldGrid,
+  LabelChip,
+  MonoTag,
+  PREVIEW_CARD_WIDTH,
+  StatePill,
+} from "./link-preview-primitives"
 import type {
   GitHubFilePreviewData,
   GitHubPrPreviewData,
@@ -163,14 +172,16 @@ export function LinkPreviewCard({
 
   if (isCollapsedProp) {
     return (
-      <CollapsedPreviewChip
-        icon={headerIcon}
-        faviconUrl={headerFavicon}
-        label={preview.title || headerLabel}
-        isHighlighted={isHighlighted}
-        onExpand={handleToggleCollapse}
-        onDismiss={onDismiss ? handleDismiss : undefined}
-      />
+      <div className={previewCardClassName(isHighlighted)}>
+        <PreviewCardHeader
+          collapsed
+          icon={headerIcon}
+          label={preview.title || headerLabel}
+          faviconUrl={headerFavicon}
+          onToggleCollapse={handleToggleCollapse}
+          onDismiss={onDismiss ? handleDismiss : undefined}
+        />
+      </div>
     )
   }
 
@@ -180,14 +191,7 @@ export function LinkPreviewCard({
     // gets "save/copy image" on touch instead of the app drawer — the tap opens
     // the gallery, and the gallery gates download/copy off for external images.
     return (
-      <div
-        data-native-context="true"
-        className={cn(
-          "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
-          "hover:border-primary/50 hover:shadow-sm",
-          isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
-        )}
-      >
+      <div data-native-context="true" className={previewCardClassName(isHighlighted)}>
         <PreviewCardHeader
           icon={<ContentTypeIcon contentType="image" />}
           label={preview.siteName ?? domain}
@@ -202,14 +206,7 @@ export function LinkPreviewCard({
 
   if (preview.contentType === "video" && videoPreview) {
     return (
-      <div
-        data-native-context="true"
-        className={cn(
-          "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
-          "hover:border-primary/50 hover:shadow-sm",
-          isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
-        )}
-      >
+      <div data-native-context="true" className={previewCardClassName(isHighlighted)}>
         <PreviewCardHeader
           icon={<ContentTypeIcon contentType="video" />}
           label={preview.siteName ?? domain}
@@ -226,15 +223,7 @@ export function LinkPreviewCard({
   // timer so long-pressing anywhere on the card gets the browser's native link
   // menu (via the inner <a>) instead of the message drawer.
   return (
-    <div
-      ref={visibilityRef}
-      data-native-context="true"
-      className={cn(
-        "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
-        "hover:border-primary/50 hover:shadow-sm",
-        isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
-      )}
-    >
+    <div ref={visibilityRef} data-native-context="true" className={previewCardClassName(isHighlighted)}>
       <PreviewCardHeader
         icon={headerIcon}
         label={headerLabel}
@@ -259,90 +248,69 @@ export function LinkPreviewCard({
   )
 }
 
-/**
- * A folded preview: one line with the provider icon and title, sized to its
- * content so several folded previews share a line. Tapping it opens the card.
- */
-function CollapsedPreviewChip({
-  icon,
-  faviconUrl,
-  label,
-  isHighlighted,
-  onExpand,
-  onDismiss,
-}: {
-  icon: ReactNode
-  faviconUrl: string | null
-  label: string
-  isHighlighted?: boolean
-  onExpand: (e: React.MouseEvent) => void
-  onDismiss?: (e: React.MouseEvent) => void
-}) {
-  return (
-    <div
-      className={cn(
-        "group/preview reveal-host inline-flex max-w-full items-center rounded-md border bg-card transition-colors",
-        "hover:border-primary/50",
-        isHighlighted && "ring-2 ring-primary border-primary"
-      )}
-    >
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onExpand}
-        aria-expanded={false}
-        title={label}
-        className="h-auto min-w-0 justify-start gap-1.5 rounded-md py-1 pl-1.5 pr-2 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
-      >
-        <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-        {icon}
-        {faviconUrl && <PreviewFavicon src={faviconUrl} />}
-        <span className="max-w-64 truncate">{label}</span>
-      </Button>
-      {onDismiss && (
-        <div className="reveal-actions pr-1">
-          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">
-            <X className="h-3 w-3" />
-          </Button>
-        </div>
-      )}
-    </div>
+function previewCardClassName(isHighlighted?: boolean): string {
+  return cn(
+    "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all",
+    PREVIEW_CARD_WIDTH,
+    "hover:border-primary/50 hover:shadow-sm",
+    isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
   )
 }
 
 /**
  * Card chrome header shared by every preview family: collapse toggle, provider
  * icon, optional favicon, source label, and dismiss. `faviconUrl` is null when
- * the provider already carries its own icon (GitHub/Linear).
+ * the provider already carries its own icon (GitHub/Linear). A folded card is
+ * this row alone, so folding keeps the card's width and header height; the
+ * whole row then expands it.
  */
 function PreviewCardHeader({
   icon,
   label,
   faviconUrl,
+  collapsed = false,
   onToggleCollapse,
   onDismiss,
 }: {
   icon: ReactNode
   label: string
   faviconUrl: string | null
+  collapsed?: boolean
   onToggleCollapse: (e: React.MouseEvent) => void
   onDismiss?: (e: React.MouseEvent) => void
 }) {
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
-      <button
-        type="button"
-        onClick={onToggleCollapse}
-        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        aria-label="Collapse preview"
-        aria-expanded
-      >
-        <ChevronDown className="h-3 w-3" />
-      </button>
-      {icon}
-      {faviconUrl && <PreviewFavicon src={faviconUrl} />}
-      <span className="text-xs text-muted-foreground truncate">{label}</span>
-      <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
+    <div className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-muted/30", !collapsed && "border-b")}>
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-expanded={false}
+          title={label}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {icon}
+          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+          <span className="truncate">{label}</span>
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Collapse preview"
+            aria-expanded
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {icon}
+          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+          <span className="text-xs text-muted-foreground truncate">{label}</span>
+          <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
+        </>
+      )}
       <div className="reveal-actions flex gap-1">
         {onDismiss && (
           <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">

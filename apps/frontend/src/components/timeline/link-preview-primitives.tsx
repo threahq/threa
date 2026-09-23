@@ -9,6 +9,12 @@ import { cn } from "@/lib/utils"
  * providers so no card type invents a parallel look (INV-35, INV-37).
  */
 
+/**
+ * One width for every preview card, open or folded, web or in-app, so folding a
+ * card never changes its footprint and stacked cards line up.
+ */
+export const PREVIEW_CARD_WIDTH = "w-80 max-w-full"
+
 /** Converts a `#rrggbb` (or bare `rrggbb`) hex to `rgba(...)`, falling back to a neutral slate. */
 export function colorWithAlpha(hex: string, alpha: number): string {
   const clean = hex.replace(/^#/, "")
