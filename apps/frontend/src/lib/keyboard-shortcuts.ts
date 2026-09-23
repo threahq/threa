@@ -27,6 +27,22 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     global: true,
   },
   {
+    id: "sidebarNextStream",
+    label: "Next Stream",
+    description: "Open the stream below the current one in the sidebar",
+    defaultKey: "alt+shift+arrowdown",
+    category: "navigation",
+    global: true,
+  },
+  {
+    id: "sidebarPreviousStream",
+    label: "Previous Stream",
+    description: "Open the stream above the current one in the sidebar",
+    defaultKey: "alt+shift+arrowup",
+    category: "navigation",
+    global: true,
+  },
+  {
     id: "historyBack",
     label: "Back",
     description: "Go back in stream history",
@@ -303,6 +319,12 @@ export function formatKeyBinding(binding: string): string {
   switch (parsed.key.toLowerCase()) {
     case "escape":
       formatted.push(mac ? "⎋" : "Esc")
+      break
+    case "arrowup":
+      formatted.push("↑")
+      break
+    case "arrowdown":
+      formatted.push("↓")
       break
     case ",":
       formatted.push(",")

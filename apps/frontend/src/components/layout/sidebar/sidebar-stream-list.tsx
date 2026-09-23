@@ -23,6 +23,7 @@ import { sectionPresentation, type SidebarSectionSpec, type SidebarSectionFilter
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
+import { SidebarStreamStepShortcuts } from "./stream-step"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
@@ -538,6 +539,7 @@ export function SidebarStreamList({
   return (
     <SidebarLabelsProvider workspaceId={workspaceId}>
       <SidebarQuickJumpProvider workspaceId={workspaceId} order={quickJump.ids}>
+        <SidebarStreamStepShortcuts workspaceId={workspaceId} order={quickJump.order} activeStreamId={activeStreamId} />
         {/* A provided slot renders at its section's position below; when the user's
             layout has NO quicklinks section it renders first instead of vanishing.
             Chats mode never hits this (its slot is built only when the section
