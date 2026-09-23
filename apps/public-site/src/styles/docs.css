@@ -94,6 +94,7 @@ a {
 .docs-nav-links a {
   color: hsl(var(--muted));
   text-decoration: none;
+  white-space: nowrap;
   transition: color 0.15s;
 }
 .docs-nav-links a:hover {
@@ -122,6 +123,15 @@ a {
   overflow-y: auto;
   padding: 32px 20px 48px 0;
   border-right: 1px solid hsl(var(--line));
+  /* The gutter is reserved so opening a section never shifts the list, and
+     the thumb only shows while the pointer or focus is in the sidebar. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.docs-side:hover,
+.docs-side:focus-within {
+  scrollbar-color: hsl(var(--muted) / 0.45) transparent;
 }
 .docs-main {
   grid-area: 1 / 2;
@@ -1379,6 +1389,7 @@ body.docs-resizing .api-op {
   margin: 0;
   padding: 14px 16px;
   overflow-x: auto;
+  scrollbar-width: thin;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
@@ -1591,24 +1602,13 @@ body.docs-resizing .api-op {
 /* parameter / scope tables */
 /* Cells hold unbreakable code strings, so a table wider than its column would
    push the page past the viewport. The wrapper clips that to a horizontal
-   scroll; the scrollbar is thin and overlay-style so it isn't always visible. */
+   scroll with a thin scrollbar. */
 .docs-table-wrap {
   max-width: 100%;
   margin: 18px 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--line)) transparent;
-}
-.docs-table-wrap::-webkit-scrollbar {
-  height: 6px;
-}
-.docs-table-wrap::-webkit-scrollbar-thumb {
-  background: hsl(var(--line));
-  border-radius: 3px;
-}
-.docs-table-wrap::-webkit-scrollbar-track {
-  background: transparent;
 }
 .docs-table {
   width: 100%;
@@ -2080,9 +2080,18 @@ body.docs-resizing .api-op {
 /* ---------- SEARCH ---------- */
 .ds-inline {
   position: relative;
-  flex: 0 1 320px;
-  min-width: 200px;
-  margin: 0 auto;
+}
+/* Three tracks: the field sits at the page's centre while the side groups
+   fit beside it, and slides toward the brand once the right group needs the
+   room. */
+@media (min-width: 1301px) {
+  .docs-nav {
+    display: grid;
+    grid-template-columns: 1fr minmax(0, 560px) 1fr;
+  }
+  .docs-nav-right {
+    justify-self: end;
+  }
 }
 .ds-glass {
   flex: none;
@@ -2146,9 +2155,8 @@ body.docs-resizing .api-op {
   display: none;
   position: absolute;
   top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(560px, calc(100vw - 32px));
+  left: 0;
+  right: 0;
   max-height: min(64vh, 540px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -2340,7 +2348,9 @@ body.docs-resizing .api-op {
   display: none;
 }
 
-@media (max-width: 1120px) {
+/* Below this the field would be too narrow for results, so search opens as
+   a dialog from the icon button. */
+@media (max-width: 1300px) {
   .ds-inline {
     display: none;
   }

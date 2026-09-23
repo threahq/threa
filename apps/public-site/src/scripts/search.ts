@@ -323,7 +323,14 @@ function boot(): void {
     const slash = e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTyping(document.activeElement)
     if (!cmdK && !slash) return
     e.preventDefault()
-    openDialog()
+    // Wide screens search in the header field itself; the dialog is for when
+    // that field is hidden.
+    if (inline.checkVisibility()) {
+      inlineInput.focus()
+      inlineInput.select()
+    } else {
+      openDialog()
+    }
   })
 }
 
