@@ -437,6 +437,14 @@ Second paragraph`
       })
     })
 
+    it("labels an alt-less linked image with its source", () => {
+      render(<MarkdownContent content="[![](https://img.example/badge.svg)](https://ci.example/runs)" />)
+      expect(screen.getByRole("link", { name: "https://img.example/badge.svg" })).toHaveAttribute(
+        "href",
+        "https://ci.example/runs"
+      )
+    })
+
     it("should escape HTML in inline content", () => {
       render(<MarkdownContent content="<div>test</div>" />)
       expect(document.querySelector("div.markdown-content div > div")).not.toBeInTheDocument()
@@ -529,6 +537,15 @@ Second paragraph`
     ])("neutralizes %s", (_label, payload) => {
       const { container } = render(<MarkdownContent content={`<kbd>html</kbd> on\n\n${payload}`} allowHtml />)
       expect(exposure(container)).toEqual(safe)
+    })
+
+    it.each([
+      ["math inside an HTML block as its TeX", "<p>Inline $x^2$ here</p>", "Inline $x^2$ here"],
+      ["a <pre> with no <code>", "<pre>( o.o )\n > ^ <</pre>", "( o.o )\n > ^ <"],
+      ["markup inside <pre><code>", "<pre><code>a <b>b</b> c</code></pre>", "a b c"],
+    ])("keeps the text of %s", (_label, content, text) => {
+      const { container } = render(<MarkdownContent content={content} allowHtml />)
+      expect(container.textContent).toContain(text)
     })
   })
 

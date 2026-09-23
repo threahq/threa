@@ -387,13 +387,6 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   )
 }
 
-/** A fence's text, flattened: remark may hand back a string, or an array of strings. */
-function codeText(children: ReactNode): string {
-  return Children.toArray(children)
-    .map((child) => (typeof child === "string" || typeof child === "number" ? String(child) : ""))
-    .join("")
-}
-
 export const markdownComponents: Components = {
   // Headers - scaled for message context, process @mentions, #channels, and :emoji:
   h1: ({ children }) => (
@@ -474,7 +467,9 @@ export const markdownComponents: Components = {
     // \S+ so info words with symbols (c#, c++) reach the registry intact;
     // className is space-joined, so the capture stops at the next class.
     const language = /language-(\S+)/.exec(className)?.[1] ?? "text"
-    return <CodeBlock language={language}>{codeText(inner?.props?.children)}</CodeBlock>
+    // The whole <pre>, not just its <code>: embedded HTML can put markup inside
+    // the code, or leave the <code> out.
+    return <CodeBlock language={language}>{extractTextFromChildren(children)}</CodeBlock>
   },
 
   strong: ({ children }) => (

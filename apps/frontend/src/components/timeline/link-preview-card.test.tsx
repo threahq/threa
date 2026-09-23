@@ -142,7 +142,6 @@ describe("LinkPreviewCard", () => {
       "<!-- badges -->",
       '<p align="center">',
       '  <a href="https://www.npmjs.com/package/@json-render/core"><img alt="npm version: @json-render/core" src="https://img.shields.io/npm/v/core.svg" height="28"></a>',
-      '  <a href="https://example.com/empty"><img src="https://img.shields.io/nothing.svg"></a>',
       "</p>",
       "",
       "<details><summary>Install</summary>",
@@ -167,7 +166,7 @@ describe("LinkPreviewCard", () => {
           renderMode: "markdown",
           markdownContent,
           startLine: 1,
-          endLine: 15,
+          endLine: 14,
           truncated: true,
           lines: [],
         },
@@ -184,13 +183,11 @@ describe("LinkPreviewCard", () => {
     expect({
       rawTags: /<\/?(p|a|img|details)\b|<!--/.test(readme.textContent ?? ""),
       badge: screen.getByRole("link", { name: "npm version: @json-render/core" }).getAttribute("href"),
-      emptyBadgeLink: readme.querySelector('a[href="https://example.com/empty"]'),
       nestedLinks: readme.querySelectorAll(":scope a a").length,
       summary: readme.querySelector("details summary")?.textContent,
     }).toEqual({
       rawTags: false,
       badge: "https://www.npmjs.com/package/@json-render/core",
-      emptyBadgeLink: null,
       nestedLinks: 0,
       summary: "Install",
     })
