@@ -174,7 +174,7 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
       else store.foldedThrough.set(key, last.messageId)
       if (!store.revealedBy.has(key)) {
         const target = run
-          .slice(0, end + 1)
+          .slice(1, end + 1)
           .find((member) => reveal.has(member.messageId) && !store.spentReveals.has(`${key}\n${member.messageId}`))
         if (target) store.revealedBy.set(key, target.messageId)
       }

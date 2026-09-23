@@ -163,6 +163,15 @@ describe("foldAuthorRuns", () => {
     expect(describeRows(fold(store, items))).toEqual(["msg_1 folded +2"])
   })
 
+  it("keeps a collapsed run folded for a target on its head, which the fold never hides", () => {
+    const store = createRunFoldStore()
+    const items = run(1, 3)
+    measure(store, 1, 3, 200)
+    collapse(store, items, "msg_3")
+
+    expect(describeRows(fold(store, items, { revealMessageIds: ["msg_1"] }))).toEqual(["msg_1 folded +2"])
+  })
+
   it("keeps a run collapsed while the search match that opened it stays active", () => {
     const store = createRunFoldStore()
     const items = run(1, 3)
