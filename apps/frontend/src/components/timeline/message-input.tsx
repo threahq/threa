@@ -1,4 +1,5 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
+import { flushSync } from "react-dom"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import {
@@ -245,6 +246,26 @@ export function materializePendingAttachmentReferences(
     type: materializedContent.type ?? "doc",
     content: [...(materializedContent.content ?? []), fallbackParagraph],
   }
+}
+
+/** Resolves in the microtask after a row for `messageId` enters the document —
+ *  before paint — or after `timeoutMs`, since a virtualized list scrolled away
+ *  from its tail never renders the row. */
+function whenMessageRendered(messageId: string, timeoutMs = 400): Promise<void> {
+  const selector = `[data-message-id="${CSS.escape(messageId)}"]`
+  if (document.querySelector(selector)) return Promise.resolve()
+  return new Promise((resolve) => {
+    const observer = new MutationObserver(() => {
+      if (document.querySelector(selector)) done()
+    })
+    const timer = setTimeout(done, timeoutMs)
+    function done() {
+      observer.disconnect()
+      clearTimeout(timer)
+      resolve()
+    }
+    observer.observe(document.body, { childList: true, subtree: true })
+  })
 }
 
 // Memoized so trace/presence-driven re-renders of `StreamContent` (which fire
@@ -851,16 +872,7 @@ function MessageInputComponent({
       const attachments = extractUploadedAttachments(messageContent)
       const attachmentIds = attachments.map((attachment) => attachment.id)
 
-      const contentJson = liveContent
-
       try {
-        // Clear the editor immediately so the composer does not briefly show the
-        // just-sent content alongside the optimistic timeline event.
-        // We keep the durable draft until send succeeds, so failures can still
-        // restore the UI without losing content.
-        composer.setContent(EMPTY_DOC)
-        setExpanded(false)
-
         const result = await sendMessage({
           contentJson: messageContent,
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
@@ -874,19 +886,23 @@ function MessageInputComponent({
         })
 
         disarm()
-        composer.setContent(EMPTY_DOC)
+        // The composer empties in the frame the sent row appears, so the text,
+        // attachment bar and its padding never vanish ahead of the message.
+        if (result.optimisticMessageId) await whenMessageRendered(result.optimisticMessageId)
+        flushSync(() => {
+          composer.setContent(EMPTY_DOC)
+          composer.clearAttachments()
+          setExpanded(false)
+        })
         composer.resolveDraft()
-        composer.clearAttachments()
         if (result.navigateTo) {
           navigate(result.navigateTo, { replace: result.replace ?? false })
         }
       } catch (error) {
         // Route changes abort a stale promotion wait. The old scope still owns
-        // its durable draft; restoring here would inject it into the next stream.
+        // its durable draft. Real stream message failures are handled in the
+        // timeline with retry, so this is a failed draft promotion.
         if (!(error instanceof Error && error.name === "AbortError")) {
-          // This only happens for draft promotion failure (stream creation failed)
-          // Real stream message failures are handled in the timeline with retry
-          composer.setContent(contentJson)
           setError("Failed to create stream. Please try again.")
         }
       } finally {

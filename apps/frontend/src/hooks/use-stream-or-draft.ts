@@ -174,7 +174,11 @@ export interface UseStreamOrDraftReturn {
   renameError: Error | null
   archive: () => Promise<void>
   unarchive?: () => Promise<void>
-  sendMessage: (input: SendMessageInput) => Promise<{ navigateTo?: string; replace?: boolean }>
+  /** `optimisticMessageId` is set when the send renders as an optimistic row in
+   *  this stream's timeline; a draft promotion navigates instead. */
+  sendMessage: (
+    input: SendMessageInput
+  ) => Promise<{ navigateTo?: string; replace?: boolean; optimisticMessageId?: string }>
   /** The viewer's workspace user id the send path stamps on optimistic rows;
    *  null until the users liveQuery delivers — `sendMessage` throws before then,
    *  so callers (and tests) that fire sends programmatically gate on this. */
@@ -604,7 +608,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
   }, [streamId, workspaceId, streamService, queryClient, bootstrap?.stream, idbStream])
 
   const sendMessage = useCallback(
-    async (input: SendMessageInput): Promise<{ navigateTo?: string }> => {
+    async (input: SendMessageInput): Promise<{ optimisticMessageId: string }> => {
       if (!currentUserId) {
         throw new Error("Cannot send message: user identity not resolved yet")
       }
@@ -722,7 +726,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       notifyQueue()
 
-      return {}
+      return { optimisticMessageId: clientId }
     },
     [streamId, workspaceId, markPending, notifyQueue, currentUserId, baseStream]
   )
