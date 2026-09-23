@@ -1,7 +1,7 @@
 import { type StreamType, StreamTypes, type InboxOrder } from "@threahq/types"
 import type { SidebarConfig, SidebarSection, SidebarSectionSpec } from "./sidebar-config"
 import type { SectionKey, StreamItemData } from "./types"
-import { sortStreams, sortStreamsStatic } from "./utils"
+import { isUnreadStream, sortStreams, sortStreamsStatic } from "./utils"
 
 type TypeSectionStream = Extract<StreamType, "scratchpad" | "channel" | "dm">
 
@@ -54,6 +54,8 @@ export interface ResolveSectionsInput {
   joinedAtByStreamId: ReadonlyMap<string, string>
   /** Type of every stream the viewer can see, visible in the sidebar or not; places a thread in its root's type section. */
   streamTypeById: ReadonlyMap<string, StreamType>
+  /** The open stream; a thread keeps its row while open so reading it doesn't pull the row from under the viewer. */
+  activeStreamId?: string
 }
 
 export interface ResolvedSection {
@@ -140,12 +142,12 @@ function resolveFlat(config: SidebarConfig, input: ResolveSectionsInput): Resolv
   const remainder = resolved.find(({ section }) => section.spec.kind === "smart" && section.spec.bucket === "other")
   if (!remainder) return resolved
 
-  const quiet = quietThreadIds(input)
+  const idle = idleThreadIds(input)
   const overflow = [...input.processedStreams, ...input.virtualDmStreams].filter(
     (stream) =>
       !claimed.has(stream.id) &&
       !input.unreadStreamIds.has(stream.id) &&
-      !quiet.has(stream.id) &&
+      !idle.has(stream.id) &&
       overflowBuckets.has(stream.section)
   )
   if (overflow.length === 0) return resolved
@@ -173,10 +175,10 @@ function resolveItems(
   // fold both into the exclusion. Topmost label wins via the running `claimed`.
   if (spec.kind === "label") return resolveLabelSection(spec.labelId, input, union(claimed, customClaimed, unread))
   // Smart/type buckets never show a stream filed into a custom section, carrying a
-  // pinned label, or currently unread — fold all three into the exclusion. In the
-  // thread tree they also skip threads quiet for a week: a thread lists only while
-  // it's live, and an old one is a click away inside its root stream.
-  const exclude = union(claimed, customClaimed, labeledClaimed, unread, quietThreadIds(input))
+  // pinned label, or currently unread — fold all three into the exclusion. They
+  // also skip read threads: an automatic section lists a thread only while it's
+  // unread (or open), since the rest are a click away inside their root stream.
+  const exclude = union(claimed, customClaimed, labeledClaimed, unread, idleThreadIds(input))
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
   // Quick links draw no streams — the block renders its own link list, so the
@@ -324,10 +326,15 @@ function threadHomeType(
   return null
 }
 
-function quietThreadIds({ processedStreams }: ResolveSectionsInput): ReadonlySet<string> {
+function idleThreadIds({
+  processedStreams,
+  getUnreadCount,
+  activeStreamId,
+}: ResolveSectionsInput): ReadonlySet<string> {
   const ids = new Set<string>()
   for (const stream of processedStreams) {
-    if (stream.type === StreamTypes.THREAD && stream.section === "other") ids.add(stream.id)
+    if (stream.type !== StreamTypes.THREAD || stream.id === activeStreamId) continue
+    if (!isUnreadStream(stream, getUnreadCount(stream.id))) ids.add(stream.id)
   }
   return ids
 }
