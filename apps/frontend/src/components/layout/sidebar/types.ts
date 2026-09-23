@@ -37,4 +37,10 @@ export interface StreamItemData extends StreamWithPreview {
    * sibling) in a section's items.
    */
   treeParentId?: string
+  /**
+   * Set by `resolveSections` on a read thread an automatic section still lists
+   * only because the viewer hasn't cleared it (`heldThreadIds`). The row dims
+   * and offers Clear.
+   */
+  held?: boolean
 }

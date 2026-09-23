@@ -22,6 +22,7 @@ import { resetDraftContextCache } from "@/hooks/use-board-draft-context"
 import { resetShareHandoffStoreCache } from "@/stores/composer-handoff-store"
 import { resetComposeOverlayStoreCache } from "@/stores/compose-overlay-store"
 import { resetBoardFlashStoreCache } from "@/stores/board-flash-store"
+import { resetSidebarHeldThreadsStore } from "@/stores/sidebar-held-threads-store"
 import { resetAsideStoreCache } from "@/stores/aside-store"
 import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
 import { resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
@@ -130,6 +131,7 @@ function flushModuleStoreCaches(): void {
   resetE2eSessionStoreCache()
   resetComposeOverlayStoreCache()
   resetBoardFlashStoreCache()
+  resetSidebarHeldThreadsStore()
   resetAsideStoreCache()
   resetBoardUnreadLatches()
   resetConversationMessageSnapshots()
@@ -345,7 +347,10 @@ export function AccountScopeProvider({ children, landAt }: AccountScopeProviderP
         }
         const { activeUserId } = (await res.json()) as { activeUserId: string }
         adoptAccount(activeUserId, opts?.identity ?? null, opts?.landing ?? "account-home")
-        channelRef.current?.postMessage({ type: "switched", activeWorkosUserId: activeUserId } satisfies SwitchedMessage)
+        channelRef.current?.postMessage({
+          type: "switched",
+          activeWorkosUserId: activeUserId,
+        } satisfies SwitchedMessage)
       } catch (err) {
         // The account never moved, but its work is already retired: the queue
         // and outbox processors returned and their rows sit pending with

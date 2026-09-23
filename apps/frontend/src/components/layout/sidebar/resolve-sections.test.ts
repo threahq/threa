@@ -726,7 +726,9 @@ describe("resolveSections thread tree", () => {
       .filter((resolved) => resolved.section.spec.kind !== "quicklinks")
       .map((resolved) => ({
         id: resolved.section.id,
-        items: resolved.items.map((item) => (item.treeParentId ? `${item.treeParentId}>${item.id}` : item.id)),
+        items: resolved.items.map(
+          (item) => `${item.treeParentId ? `${item.treeParentId}>` : ""}${item.id}${item.held ? " (held)" : ""}`
+        ),
       }))
   }
 
@@ -764,7 +766,7 @@ describe("resolveSections thread tree", () => {
           processedStreams,
           unreadStreamIds: new Set(["c_1"]),
           getUnreadCount: unreadFrom(new Set(["c_1"])),
-          openStreamIds: new Set(["t_1"]),
+          keptThreadIds: new Set(["t_1"]),
         },
         config
       )
@@ -808,10 +810,33 @@ describe("resolveSections thread tree", () => {
       thread("t_read", "c_1", "recent"),
     ]
 
-    expect(tree({ processedStreams, openStreamIds: new Set(["t_open"]) })).toEqual([
+    expect(tree({ processedStreams, keptThreadIds: new Set(["t_open"]) })).toEqual([
       { id: "important", items: [] },
       { id: "recent", items: [] },
       { id: "other", items: ["c_1", "c_1>t_open"] },
+    ])
+  })
+
+  it("should keep a held thread after it's read, flagged held unless unread or kept", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_held", "c_1", "recent"),
+      thread("t_held_unread", "c_1", "recent"),
+      thread("t_held_agent", "c_1", "recent"),
+      thread("t_read", "c_1", "recent"),
+    ]
+
+    expect(
+      tree({
+        processedStreams,
+        getUnreadCount: unreadFrom(new Set(["t_held_unread"])),
+        heldThreadIds: new Set(["t_held", "t_held_unread", "t_held_agent"]),
+        keptThreadIds: new Set(["t_held_agent"]),
+      })
+    ).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1", "c_1>t_held (held)", "c_1>t_held_agent", "c_1>t_held_unread"] },
     ])
   })
 

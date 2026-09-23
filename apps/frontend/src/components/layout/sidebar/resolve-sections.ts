@@ -54,8 +54,16 @@ export interface ResolveSectionsInput {
   joinedAtByStreamId: ReadonlyMap<string, string>
   /** Type of every stream the viewer can see, visible in the sidebar or not; places a thread in its root's type section. */
   streamTypeById: ReadonlyMap<string, StreamType>
-  /** Streams open in the main view or the side panel; a thread keeps its row while open so reading it doesn't pull the row from under the viewer. */
-  openStreamIds?: ReadonlySet<string>
+  /**
+   * Threads that keep their row while read: open in the main view or side panel,
+   * or with an agent working in them.
+   */
+  keptThreadIds?: ReadonlySet<string>
+  /**
+   * Threads shown earlier this page load; a read one keeps its row, marked
+   * `held`, until the viewer clears it, so reading never pulls a row away.
+   */
+  heldThreadIds?: ReadonlySet<string>
 }
 
 export interface ResolvedSection {
@@ -105,7 +113,7 @@ export function findSourceLabelId(streamId: string, resolved: ResolvedSection[])
  * reappears in its home section.
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
-  const resolved = resolveFlat(config, input)
+  const resolved = markHeldThreads(resolveFlat(config, input), input)
   return nestThreads(resolved)
 }
 
@@ -177,7 +185,7 @@ function resolveItems(
   // Smart/type buckets never show a stream filed into a custom section, carrying a
   // pinned label, or currently unread — fold all three into the exclusion. They
   // also skip read threads: an automatic section lists a thread only while it's
-  // unread (or open), since the rest are a click away inside their root stream.
+  // unread, kept or held, since the rest are a click away inside their root stream.
   const exclude = union(claimed, customClaimed, labeledClaimed, unread, idleThreadIds(input))
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
@@ -326,13 +334,35 @@ function threadHomeType(
   return null
 }
 
-function idleThreadIds({ processedStreams, getUnreadCount, openStreamIds }: ResolveSectionsInput): ReadonlySet<string> {
+/** Read threads nothing keeps: not open, no agent working, not held. */
+function idleThreadIds(input: ResolveSectionsInput): ReadonlySet<string> {
   const ids = new Set<string>()
-  for (const stream of processedStreams) {
-    if (stream.type !== StreamTypes.THREAD || openStreamIds?.has(stream.id)) continue
-    if (!isUnreadStream(stream, getUnreadCount(stream.id))) ids.add(stream.id)
+  for (const stream of input.processedStreams) {
+    if (isReadUnkeptThread(stream, input) && !input.heldThreadIds?.has(stream.id)) ids.add(stream.id)
   }
   return ids
+}
+
+function isReadUnkeptThread(stream: StreamItemData, input: ResolveSectionsInput): boolean {
+  return (
+    stream.type === StreamTypes.THREAD &&
+    !input.keptThreadIds?.has(stream.id) &&
+    !isUnreadStream(stream, input.getUnreadCount(stream.id))
+  )
+}
+
+/** Flag the rows smart/type sections list only because they're held. */
+function markHeldThreads(resolved: ResolvedSection[], input: ResolveSectionsInput): ResolvedSection[] {
+  const heldThreadIds = input.heldThreadIds
+  if (!heldThreadIds?.size) return resolved
+  return resolved.map((entry) => {
+    const kind = entry.section.spec.kind
+    if (kind !== "smart" && kind !== "type") return entry
+    const items = entry.items.map((item) =>
+      heldThreadIds.has(item.id) && isReadUnkeptThread(item, input) ? { ...item, held: true } : item
+    )
+    return { ...entry, items }
+  })
 }
 
 /**

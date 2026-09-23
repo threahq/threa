@@ -2,6 +2,7 @@ import { act, type ReactNode } from "react"
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { fireEvent, render, screen, spyOnExport } from "@/test"
+import { renderHook } from "@testing-library/react"
 import { StreamTypes, Visibilities, type ActiveAgentSession } from "@threahq/types"
 import { Hash } from "lucide-react"
 import { StreamItem, StreamItemAvatar } from "./stream-item"
@@ -15,6 +16,11 @@ import * as relativeTimeModule from "@/components/relative-time"
 import * as drawerModule from "@/components/ui/drawer"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
 import * as agentActivityModule from "@/stores/agent-activity-store"
+import {
+  holdSidebarThreads,
+  resetSidebarHeldThreadsStore,
+  useHeldSidebarThreads,
+} from "@/stores/sidebar-held-threads-store"
 
 const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
@@ -147,6 +153,7 @@ describe("StreamItem", () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    resetSidebarHeldThreadsStore()
   })
 
   it("opens the mobile action drawer with the latest preview on long press", async () => {
@@ -656,6 +663,33 @@ describe("StreamItem", () => {
 
     expect(onClearFromInbox).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId("location-pathname").textContent).toBe("/")
+  })
+
+  it("should dim a held thread and release it from the sidebar on Clear", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream({ held: true })
+    const avatarRow = () => screen.getByText(/general/).parentElement!.parentElement!.parentElement!
+    const { result } = renderHook(() => useHeldSidebarThreads("workspace_1"))
+    act(() => holdSidebarThreads("workspace_1", [stream.id]))
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+    expect(avatarRow()).toHaveClass("opacity-60")
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear from sidebar" }))
+
+    expect({ held: result.current.has(stream.id), path: screen.getByTestId("location-pathname").textContent }).toEqual({
+      held: false,
+      path: "/",
+    })
   })
 
   it("offers a Clear action in the mobile action drawer for an Inbox row", async () => {

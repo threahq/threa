@@ -66,6 +66,27 @@ const byAnchor: SessionIndex = {
 
 const INDEXES = [byStream, byAnchor] as const
 
+// workspaceId -> the stream ids with a running session; rebuilt only when a
+// stream gains its first session or loses its last, so progress ticks never
+// reach the one workspace-wide subscriber.
+const activeStreamIdSnapshots = new Map<string, ReadonlySet<string>>()
+const activeStreamIdListeners = new Set<() => void>()
+const EMPTY_IDS: ReadonlySet<string> = new Set()
+
+function invalidateActiveStreamIds(workspaceId: string): void {
+  activeStreamIdSnapshots.delete(workspaceId)
+  for (const listener of activeStreamIdListeners) listener()
+}
+
+function readActiveStreamIds(workspaceId: string): ReadonlySet<string> {
+  const cached = activeStreamIdSnapshots.get(workspaceId)
+  if (cached) return cached
+  const sessions = workspaces.get(workspaceId)
+  const ids = sessions?.size ? new Set([...sessions.values()].map((session) => session.streamId)) : EMPTY_IDS
+  activeStreamIdSnapshots.set(workspaceId, ids)
+  return ids
+}
+
 /** The timeline rows a session hangs under: its parent anchor and its trigger. */
 function anchorKeysOf(session: ActiveAgentSession): string[] {
   const ids: string[] = []
@@ -167,6 +188,7 @@ function recompute(index: SessionIndex, workspaceId: string, id: string): void {
     if (prev && sameList(prev, sessions, index.equal)) return
     index.snapshots.set(key, sessions)
   }
+  if (index === byStream && (prev === undefined || sessions.length === 0)) invalidateActiveStreamIds(workspaceId)
   for (const listener of index.listeners.get(key) ?? []) listener()
 }
 
@@ -424,6 +446,17 @@ export function useAgentActivityForStream(
   return useIndex(byStream, workspaceId, streamId)
 }
 
+function subscribeActiveStreamIds(onChange: () => void): () => void {
+  activeStreamIdListeners.add(onChange)
+  return () => activeStreamIdListeners.delete(onChange)
+}
+
+/** The workspace's streams with an agent session running right now. */
+export function useAgentActiveStreamIds(workspaceId: string): ReadonlySet<string> {
+  const getSnapshot = useCallback(() => readActiveStreamIds(workspaceId), [workspaceId])
+  return useSyncExternalStore(subscribeActiveStreamIds, getSnapshot)
+}
+
 /** Non-reactive read of an anchor row's running sessions (most recent first). */
 export function getAgentActivityForAnchor(workspaceId: string, anchorId: string): readonly ActiveAgentSession[] {
   return readIndex(byAnchor, workspaceId, anchorId)
@@ -528,4 +561,6 @@ export function resetAgentActivityStore(): void {
     index.snapshots.clear()
   }
   sessionListeners.clear()
+  activeStreamIdSnapshots.clear()
+  activeStreamIdListeners.clear()
 }
