@@ -185,8 +185,14 @@ interface SidebarStreamListProps {
   boardMode?: SidebarBoardMode | null
   /** Clear one or more streams from the Inbox (row clear, header clear-read/clear-all). */
   onClearInbox: (streamIds: string[]) => void
-  /** Track which Inbox row is pointer-hovered, for the `E` clear shortcut. */
+  /** Track which Inbox row is pointer-hovered, for the clear-inbox shortcut. */
   onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  /**
+   * Formatted effective binding for the clear-inbox shortcut (e.g. "E"), shown
+   * as the row Clear button's tooltip hint. `undefined` when the viewer
+   * disabled or unbound it — the hint is omitted rather than shown stale.
+   */
+  clearInboxKeyHint?: string
 }
 
 export function SidebarStreamList({
@@ -212,6 +218,7 @@ export function SidebarStreamList({
   boardMode,
   onClearInbox,
   onInboxRowHoverChange,
+  clearInboxKeyHint,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
   // action drawer's section picker. Keyed on the active input (not capability)
@@ -466,6 +473,7 @@ export function SidebarStreamList({
         isInboxSection={isInboxSection}
         onClearInboxRow={isInboxSection ? (streamId: string) => onClearInbox([streamId]) : undefined}
         onInboxRowHoverChange={isInboxSection ? onInboxRowHoverChange : undefined}
+        clearInboxKeyHint={isInboxSection ? clearInboxKeyHint : undefined}
       />
     )
 

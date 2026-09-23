@@ -64,10 +64,12 @@ export const ReadStateRepository = {
    * left as-is (never cleared here — only `clearInboxHeld` clears it).
    *
    * `held` (the return flag) is `accepted && hold` — this call's own hold
-   * rule, never a diff against a "prior" snapshot, which is provably stale
-   * under concurrency (a clear can commit between the snapshot read and this
-   * row's lock, silently swallowing the re-hold). Re-emitting `held: true` on
-   * an already-held row is harmless.
+   * rule. Re-emitting `held: true` on an already-held row is harmless.
+   *
+   * A hold-enabled advance first locks the row ({@link ensureForUpdate}), so
+   * the hold rule reads the watermark as committed by any concurrent clear or
+   * read instead of a stale statement snapshot. The lock lasts only as long as
+   * the caller's transaction: pass a transaction client, never the pool.
    */
   async advance(
     db: Querier,
@@ -76,6 +78,7 @@ export const ReadStateRepository = {
     eventId: string,
     opts: { holdInInbox: boolean }
   ): Promise<{ state: StreamReadState | null; held: boolean }> {
+    if (opts.holdInInbox) await ReadStateRepository.ensureForUpdate(db, streamId, userId)
     const result = await db.query<StreamReadStateRow & { hold: boolean }>(
       `
       WITH prior AS (
@@ -86,9 +89,11 @@ export const ReadStateRepository = {
       should_hold AS (
         SELECT $4::boolean AND EXISTS (
           SELECT 1 FROM stream_events e
+          LEFT JOIN messages m ON m.id = e.payload->>'messageId'
           WHERE e.stream_id = $1
             AND e.event_type = 'message_created'
             AND e.actor_id IS DISTINCT FROM $2
+            AND m.deleted_at IS NULL
             AND e.sequence > COALESCE(
               (SELECT cur_ev.sequence FROM stream_events cur_ev
                  WHERE cur_ev.id = (SELECT last_read_event_id FROM prior)),
@@ -209,6 +214,31 @@ export const ReadStateRepository = {
     // no gaps.
     const states = await ReadStateRepository.getBatch(db, userId, streamIds)
     return { states }
+  },
+
+  /**
+   * Batch {@link ensureForUpdate} for one user: seeds missing rows with a NULL
+   * watermark and locks every row in stream-id order, so concurrent batch
+   * lockers can't deadlock each other and a concurrent hold-enabled
+   * {@link advance} waits until the caller commits.
+   */
+  async ensureBatchForUpdate(db: Querier, userId: string, streamIds: string[]): Promise<void> {
+    if (streamIds.length === 0) return
+    await db.query(sql`
+      INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
+      SELECT s.workspace_id, s.id, ${userId}, NULL, NULL, NOW()
+      FROM streams s
+      WHERE s.id = ANY(${streamIds})
+      ORDER BY s.id
+      ON CONFLICT (stream_id, user_id) DO NOTHING
+    `)
+    await db.query(sql`
+      SELECT stream_id
+      FROM stream_read_state
+      WHERE user_id = ${userId} AND stream_id = ANY(${streamIds})
+      ORDER BY stream_id
+      FOR UPDATE
+    `)
   },
 
   /**

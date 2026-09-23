@@ -1962,6 +1962,18 @@ describe("StreamService.markAsRead", () => {
     // fetched for participation only and returns null here — never upserted.
     mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 })
     mockFindByStreamAndMember.mockResolvedValue(null)
+    mockReadStateAdvance.mockResolvedValueOnce({
+      state: {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        userId: "usr_1",
+        lastReadEventId: "evt_9",
+        lastReadAt: null,
+        updatedAt: new Date(),
+        inboxHeld: true,
+      },
+      held: true,
+    })
 
     const result = await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
@@ -1970,7 +1982,7 @@ describe("StreamService.markAsRead", () => {
       readState: { lastReadEventId: "evt_9", lastReadSequence: "42", lastReadAt: null },
       lastReadOrdinal: 7,
       readMessageIds: [],
-      inboxHeld: null,
+      inboxHeld: true,
     })
     expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
@@ -1983,7 +1995,7 @@ describe("StreamService.markAsRead", () => {
       lastReadSequence: "42",
       lastReadOrdinal: 7,
       readMessageIds: [],
-      inboxHeld: false,
+      inboxHeld: true,
     })
   })
 })
@@ -2092,7 +2104,7 @@ describe("StreamService.markAllAsRead", () => {
   const mockStreamList = spyOn(StreamRepository, "list")
   const mockLatestEventIds = spyOn(StreamEventRepository, "getLatestEventIdByStreamBatch")
   const mockReadStateGetBatch = spyOn(ReadStateRepository, "getBatch")
-  const mockCountMessages = spyOn(StreamEventRepository, "countMessagesByStreamBatch")
+  const mockCountMessages = spyOn(StreamEventRepository, "countMessagesThroughBatch")
   const mockGetSequences = spyOn(StreamEventRepository, "getSequencesByEventIds")
   const READ_ALL_AT = new Date("2024-01-01T00:00:00Z")
 
@@ -2142,8 +2154,7 @@ describe("StreamService.markAllAsRead", () => {
         ["evt_b", "50"],
       ])
     )
-    // Read-all pins each frontier to the stream's latest event, so the absolute
-    // position per stream is its total message count.
+    // The ordinal is counted through each stored frontier's sequence.
     mockCountMessages.mockResolvedValue(
       new Map([
         ["stream_1", 12],
@@ -2171,7 +2182,13 @@ describe("StreamService.markAllAsRead", () => {
       },
     ])
     expect(mockDeleteAllForStreams).toHaveBeenCalledWith({}, "usr_1", ["stream_1", "stream_2"])
-    expect(mockCountMessages).toHaveBeenCalledWith({}, ["stream_1", "stream_2"])
+    expect(mockCountMessages).toHaveBeenCalledWith(
+      {},
+      new Map([
+        ["stream_1", "100"],
+        ["stream_2", "50"],
+      ])
+    )
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_all", {
       workspaceId: "ws_1",
       authorId: "usr_1",

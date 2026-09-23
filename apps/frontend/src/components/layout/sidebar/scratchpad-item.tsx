@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
+import { useCallback, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import {
   Archive,
   Ban,
@@ -55,6 +55,7 @@ import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { StreamLabelDots } from "./sidebar-labels"
 import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
+import { useInboxRowHover } from "./use-inbox-row-hover"
 import { truncateContent } from "./utils"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
@@ -75,8 +76,11 @@ interface ScratchpadItemProps {
   isInboxRow?: boolean
   /** Clear this stream from the Inbox. Set only alongside `isInboxRow`. */
   onClearFromInbox?: () => void
-  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
   onInboxHoverChange?: (hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxRow`. */
+  clearInboxKeyHint?: string
 }
 
 export function ScratchpadItem({
@@ -92,6 +96,7 @@ export function ScratchpadItem({
   isInboxRow,
   onClearFromInbox,
   onInboxHoverChange,
+  clearInboxKeyHint,
 }: ScratchpadItemProps) {
   const navigate = useNavigate()
   const archiveStream = useArchiveStream(workspaceId)
@@ -105,26 +110,8 @@ export function ScratchpadItem({
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
-  // A row that unmounts while hovered (row removed, list reordered, section
-  // collapsed) never fires a pointerleave — without this, the sidebar's
-  // hovered-row ref would keep pointing at a gone row and the `E` clear
-  // shortcut would silently target nothing (or the wrong row, once guarded).
-  const isInboxHoveredRef = useRef(false)
-  const onInboxHoverChangeRef = useRef(onInboxHoverChange)
-  onInboxHoverChangeRef.current = onInboxHoverChange
-  useEffect(() => {
-    return () => {
-      if (isInboxHoveredRef.current) onInboxHoverChangeRef.current?.(false)
-    }
-  }, [])
-  const handleInboxHoverEnter = () => {
-    isInboxHoveredRef.current = true
-    onInboxHoverChange?.(true)
-  }
-  const handleInboxHoverLeave = () => {
-    isInboxHoveredRef.current = false
-    onInboxHoverChange?.(false)
-  }
+  const { handlePointerEnter: handleInboxHoverEnter, handlePointerLeave: handleInboxHoverLeave } =
+    useInboxRowHover(onInboxHoverChange)
   const hasUnread = unreadCount > 0
   // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
   const isHeld = !!isInboxRow && !hasUnread
@@ -436,7 +423,9 @@ export function ScratchpadItem({
           ) : (
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
           )}
-          {isInboxRow && onClearFromInbox && !isTouchInput && <InboxRowClearButton onClear={onClearFromInbox} />}
+          {isInboxRow && onClearFromInbox && !isTouchInput && (
+            <InboxRowClearButton onClear={onClearFromInbox} keyHint={clearInboxKeyHint} />
+          )}
         </div>
       </SidebarActionContextMenu>
       {labelPickerOpen && (
