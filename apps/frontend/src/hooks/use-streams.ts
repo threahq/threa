@@ -378,6 +378,30 @@ export function useAddStreamMember(workspaceId: string, streamId: string) {
   })
 }
 
+/** Joins a public channel as the viewer; the sidebar reads memberships from IDB, so the row lands there. */
+export function useJoinStream(workspaceId: string) {
+  const streamService = useStreamService()
+  const queryClient = useQueryClient()
+  const syncEngine = useOptionalSyncEngine()
+
+  return useMutation({
+    mutationFn: (streamId: string) => streamService.join(workspaceId, streamId),
+    onSuccess: async (membership) => {
+      void syncEngine?.subscribeStream(membership.streamId)
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        if (!old || old.streamMemberships.some((m) => m.streamId === membership.streamId)) return old
+        return { ...old, streamMemberships: [...old.streamMemberships, membership] }
+      })
+      await db.streamMemberships.put({
+        ...membership,
+        id: `${workspaceId}:${membership.streamId}`,
+        workspaceId,
+        _cachedAt: Date.now(),
+      })
+    },
+  })
+}
+
 export function useRemoveStreamMember(workspaceId: string, streamId: string) {
   const streamService = useStreamService()
   const queryClient = useQueryClient()

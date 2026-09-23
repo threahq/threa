@@ -1,4 +1,13 @@
-import { ArrowLeft, ArrowRight, Command, FileText, History, Search as SearchIcon, Terminal } from "lucide-react"
+import {
+  ArrowLeft,
+  ArrowRight,
+  Command,
+  Compass,
+  FileText,
+  History,
+  Search as SearchIcon,
+  Terminal,
+} from "lucide-react"
 import { Link } from "react-router-dom"
 import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
 import { useSearchPanel } from "@/components/search/search-panel-context"
@@ -82,6 +91,13 @@ export function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps
       icon: Terminal,
       description: !isTouch && commandBinding ? formatKeyBinding(commandBinding) : null,
       onSelect: openSwitcherIn("command"),
+    },
+    {
+      id: "browse-streams",
+      label: "Browse streams",
+      icon: Compass,
+      href: `/w/${workspaceId}/streams`,
+      onSelect: collapseOnMobile,
     },
   ]
 

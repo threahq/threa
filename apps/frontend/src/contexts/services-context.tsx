@@ -50,6 +50,7 @@ export interface StreamService {
   setNotificationLevel: typeof streamsApi.setNotificationLevel
   addMember: typeof streamsApi.addMember
   removeMember: typeof streamsApi.removeMember
+  join: typeof streamsApi.join
 }
 
 export interface MessageService {
