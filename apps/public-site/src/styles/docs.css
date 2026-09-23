@@ -104,21 +104,102 @@ a {
 }
 
 /* ---------- SHELL ---------- */
+/* Every docs page puts the sidebar at the same x: under the top bar's brand,
+   centring only once the screen is wider than 1560px. Its width is the
+   reader's (scripts/docs-side.ts), capped so the article always keeps room. */
 .docs-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  gap: 0;
-  max-width: 1240px;
-  margin: 0 auto;
+  grid-template-columns: min(var(--docs-side-w, 272px), 40vw) minmax(0, 1fr);
+  padding-left: max(clamp(20px, 4vw, 48px), calc((100% - 1560px) / 2));
 }
 .docs-side {
+  grid-area: 1 / 1;
   position: sticky;
   top: 49px;
   align-self: start;
   height: calc(100vh - 49px);
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 32px 20px 48px 0;
   border-right: 1px solid hsl(var(--line));
+}
+.docs-main {
+  grid-area: 1 / 2;
+}
+
+/* Sits over the sidebar's border; the line lights up when grabbed. */
+.docs-side-resize {
+  grid-area: 1 / 1;
+  justify-self: end;
+  align-self: start;
+  position: sticky;
+  top: 49px;
+  z-index: 5;
+  width: 11px;
+  height: calc(100vh - 49px);
+  margin-right: -6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.docs-side-resize::after {
+  content: "";
+  position: absolute;
+  inset: 0 4px 0 5px;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+.docs-side-resize:focus-visible {
+  outline: none;
+}
+.docs-side-resize:focus-visible::after,
+.docs-resizing .docs-side-resize::after {
+  background: hsl(var(--gold));
+}
+@media (hover: hover) {
+  .docs-side-resize:hover::after {
+    background: hsl(var(--gold) / 0.7);
+    transition-delay: 0.12s;
+  }
+}
+body.docs-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* The reference is ~18k nodes and a full reflow costs ~100ms, so a drag only
+   lays out the operations on screen. `auto` keeps each skipped operation at its
+   last real height, so nothing above the viewport moves until release. */
+.api-op {
+  contain-intrinsic-size: auto 600px;
+}
+body.docs-resizing .api-op {
+  content-visibility: auto;
+}
+
+/* Entries never wrap or scroll sideways; a clipped one ends in an ellipsis
+   and shows in full on hover (.docs-side-tip). */
+.docs-side-group h4,
+.docs-side-group a,
+.dss-group-head > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dss-group-head > span {
+  min-width: 0;
+}
+.docs-side-tip {
+  position: fixed;
+  z-index: 60;
+  white-space: nowrap;
+  pointer-events: none;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  box-shadow: 0 6px 18px -8px hsl(28 30% 22% / 0.35);
+}
+.docs-side-tip[hidden] {
+  display: none;
 }
 .docs-side-group {
   margin-bottom: 26px;
@@ -2158,6 +2239,19 @@ a {
 @media (max-width: 880px) {
   .docs-shell {
     grid-template-columns: 1fr;
+    padding-left: 0;
+  }
+  .docs-main {
+    grid-area: 1 / 1;
+  }
+  .docs-side-resize {
+    display: none;
+  }
+  /* The drawer has no hover to reveal a clipped entry, so entries wrap. */
+  .docs-side-group h4,
+  .docs-side-group a,
+  .dss-group-head > span {
+    white-space: normal;
   }
 
   /* Reveal the hamburger; the horizontal top links collapse into the drawer
@@ -2339,13 +2433,9 @@ a {
 }
 
 @media (min-width: 1200px) {
-  /* The shell spans the viewport: the sidebar lines up with the top bar's
-     brand (or centres on very wide screens) and the article runs to the right
-     edge, so the pane takes whatever width the screen has. */
+  /* The article runs to the right edge, so the pane takes whatever width the
+     screen has. */
   body.docs-split .docs-shell {
-    max-width: none;
-    padding-left: max(clamp(20px, 4vw, 48px), calc((100% - 1560px) / 2));
-    padding-right: 0;
     overflow-x: clip;
   }
   /* The pane would read through the translucent bar as a grey band. */
@@ -2354,7 +2444,6 @@ a {
   }
   body.docs-split .docs-main {
     padding-top: 0;
-    padding-left: 44px;
     padding-right: 0;
   }
 

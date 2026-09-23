@@ -4,6 +4,7 @@ import "../styles/docs.css"
 import BaseHead from "../components/BaseHead.astro"
 import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
+import { SIDE_WIDTH } from "../lib/docs-side-width"
 
 interface Props {
   title?: string
@@ -97,6 +98,13 @@ const schema: Record<string, unknown>[] = [
   <head>
     <BaseHead title={title} description={description} ogType="article" schema={schema} />
     {markdownHref && <link rel="alternate" type="text/markdown" href={markdownHref} title="Markdown version of this page" />}
+    <script is:inline define:vars={{ side: SIDE_WIDTH }}>
+      /* Before first paint, so a stored sidebar width never jumps in. */
+      try {
+        const w = Number(localStorage.getItem(side.storageKey))
+        if (w >= side.min && w <= side.max) document.documentElement.style.setProperty("--docs-side-w", `${w}px`)
+      } catch {}
+    </script>
   </head>
   <body class:list={["docs", split && "docs-split"]}>
     <SvgDefs />
@@ -304,6 +312,17 @@ const schema: Record<string, unknown>[] = [
           <a href="/">↩ threa.io</a>
         </div>
       </aside>
+      <div
+        class="docs-side-resize"
+        id="docs-side-resize"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-controls="docs-side"
+        aria-label="Resize navigation"
+        aria-valuemin={SIDE_WIDTH.min}
+        aria-valuemax={SIDE_WIDTH.max}
+      ></div>
 
       <main class="docs-main">
         <article class:list={["docs-article", split && "is-split"]}>
@@ -327,6 +346,7 @@ const schema: Record<string, unknown>[] = [
     <script>
       import "../scripts/playground.ts"
       import "../scripts/search.ts"
+      import "../scripts/docs-side.ts"
     </script>
   </body>
 </html>
