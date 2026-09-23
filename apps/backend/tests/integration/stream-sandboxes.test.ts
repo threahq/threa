@@ -281,6 +281,7 @@ describe("run_command", () => {
     const off = target()
     const on = target()
     const onWithoutWeb = { workspaceId: on.workspaceId, streamId: streamId() }
+    await workspaceSettings.updateSettings(off.workspaceId, { sandboxInternet: false })
     await workspaceSettings.updateSettings(on.workspaceId, { sandboxInternet: true })
     const runner = new FakeRunner()
 
