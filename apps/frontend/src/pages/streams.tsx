@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Archive, ArrowDownUp, Check, Compass, Flame, Lock, Search } from "lucide-react"
+import { Archive, ArrowDownUp, Check, Compass, Flame, Lock, Search, X } from "lucide-react"
 import { toast } from "sonner"
 import {
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
@@ -22,6 +22,7 @@ import { useStreamService } from "@/contexts"
 import { actorTypeFromId, useActors, useJoinStream } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useStreamWarmup } from "@/hooks/use-stream-warmup"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import {
@@ -36,6 +37,7 @@ import { STREAM_ICONS, getStreamTypeLabel, resolveDmDisplayName, streamLabel } f
 import { cn } from "@/lib/utils"
 import {
   DIRECTORY_MEMBERSHIPS,
+  DIRECTORY_ROOT_PARAM,
   DIRECTORY_SORTS,
   DIRECTORY_TABS,
   buildDirectoryRows,
@@ -77,8 +79,8 @@ function parseParam<T extends string>(value: string | null, allowed: readonly T[
 
 /**
  * Route is `/w/:workspaceId/streams/:tab?`; bare `/streams` is the All tab.
- * `?archived=1`, `?sort=` and `?show=` ride in the query, so every view
- * survives refresh and shared links (INV-59).
+ * `?archived=1`, `?sort=`, `?show=` and the Threads tab's `?in=` ride in the
+ * query, so every view survives refresh and shared links (INV-59).
  */
 export function StreamsPage() {
   const { workspaceId, tab: tabParam } = useParams<{ workspaceId: string; tab?: string }>()
@@ -98,6 +100,7 @@ export function StreamsPage() {
       archived={searchParams.get("archived") === "1"}
       sort={parseParam(searchParams.get("sort"), DIRECTORY_SORTS, "activity")}
       membership={parseParam(searchParams.get("show"), DIRECTORY_MEMBERSHIPS, "any")}
+      rootStreamId={tab === "threads" ? searchParams.get(DIRECTORY_ROOT_PARAM) : null}
     />
   )
 }
@@ -109,6 +112,7 @@ function StreamsPageInner({
   archived,
   sort,
   membership,
+  rootStreamId,
 }: {
   workspaceId: string
   tab: DirectoryTab
@@ -116,6 +120,7 @@ function StreamsPageInner({
   archived: boolean
   sort: DirectorySort
   membership: DirectoryMembership
+  rootStreamId: string | null
 }) {
   const [query, setQuery] = useState("")
   const streamService = useStreamService()
@@ -156,10 +161,11 @@ function StreamsPageInner({
         query,
         membership,
         sort,
+        rootStreamId,
         memberCountOf: (id) => statsById.get(id)?.memberCount ?? 0,
         nameOf: (stream) => resolveDmDisplayName(stream.id, users, dmPeers) ?? streamLabel(stream, "sidebar"),
       }),
-    [streams, memberStreamIds, tab, archived, query, membership, sort, statsById, users, dmPeers]
+    [streams, memberStreamIds, tab, archived, query, membership, sort, rootStreamId, statsById, users, dmPeers]
   )
 
   const mostActive = useMemo(
@@ -174,8 +180,9 @@ function StreamsPageInner({
     failed: archived && archivedQuery.isError,
     loading: archived && archivedQuery.isPending,
     empty: rows.length === 0,
-    searching: query.trim() !== "" || membership !== "any",
+    searching: query.trim() !== "" || membership !== "any" || rootStreamId !== null,
   })
+  const rootName = useStreamName(workspaceId, rootStreamId ?? "", "sidebar")
 
   const pathFor = (next: DirectoryTab) =>
     next === "all" ? `/w/${workspaceId}/streams` : `/w/${workspaceId}/streams/${next}`
@@ -198,7 +205,11 @@ function StreamsPageInner({
         icon={Compass}
         title="Streams"
         value={tab}
-        tabs={DIRECTORY_TABS.map((value) => ({ value, label: TAB_LABELS[value], href: hrefWith({}, pathFor(value)) }))}
+        tabs={DIRECTORY_TABS.map((value) => ({
+          value,
+          label: TAB_LABELS[value],
+          href: hrefWith(value === "threads" ? {} : { [DIRECTORY_ROOT_PARAM]: null }, pathFor(value)),
+        }))}
         actions={
           <Link
             to={hrefWith({ archived: archived ? null : "1" })}
@@ -229,6 +240,20 @@ function StreamsPageInner({
               className="h-9 pl-8"
             />
           </div>
+          {rootStreamId && (
+            <Link
+              to={hrefWith({ [DIRECTORY_ROOT_PARAM]: null })}
+              replace
+              aria-label={`Remove filter: ${rootName ?? "Unknown stream"}`}
+              className={cn(
+                buttonVariants({ variant: "secondary", size: "sm" }),
+                "h-9 min-w-0 max-w-[40%] shrink gap-1 px-2.5 text-xs"
+              )}
+            >
+              <span className="truncate">{rootName ?? "Unknown stream"}</span>
+              <X className="h-3.5 w-3.5 shrink-0" />
+            </Link>
+          )}
           {(["joined", "not-joined"] as const).map((value) => (
             <Link
               key={value}

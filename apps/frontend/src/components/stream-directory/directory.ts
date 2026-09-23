@@ -12,6 +12,14 @@ const TAB_TYPES: Record<Exclude<DirectoryTab, "all">, StreamType> = {
   threads: StreamTypes.THREAD,
 }
 
+/** Query param narrowing the explorer to the streams rooted in one stream. */
+export const DIRECTORY_ROOT_PARAM = "in"
+
+/** The explorer's Threads tab, narrowed to one stream's threads. */
+export function streamThreadsHref(workspaceId: string, streamId: string): string {
+  return `/w/${workspaceId}/streams/threads?${DIRECTORY_ROOT_PARAM}=${encodeURIComponent(streamId)}`
+}
+
 export const DIRECTORY_SORTS = ["activity", "name", "members"] as const
 export type DirectorySort = (typeof DIRECTORY_SORTS)[number]
 
@@ -42,7 +50,8 @@ export interface DirectoryRow<S extends DirectoryStream> {
  * The explorer's rows for one tab: every listable stream of the tab's type,
  * in the chosen order (newest activity by default). Asides and anything rooted in one never list, same as
  * the sidebar. Threads carry no member rows (INV-62), so they are never joinable. A thread under an
- * archived stream is sealed with it and never lists as active.
+ * archived stream is sealed with it and never lists as active. `rootStreamId` narrows to the streams rooted
+ * in that stream (its threads, at any depth).
  */
 export function buildDirectoryRows<S extends DirectoryStream>({
   streams,
@@ -54,6 +63,7 @@ export function buildDirectoryRows<S extends DirectoryStream>({
   membership = "any",
   sort = "activity",
   memberCountOf = () => 0,
+  rootStreamId = null,
 }: {
   streams: readonly S[]
   memberStreamIds: ReadonlySet<string>
@@ -64,6 +74,7 @@ export function buildDirectoryRows<S extends DirectoryStream>({
   membership?: DirectoryMembership
   sort?: DirectorySort
   memberCountOf?: (streamId: string) => number
+  rootStreamId?: string | null
 }): DirectoryRow<S>[] {
   const hidden = hiddenStreamIds(streams)
   const sealed = archived ? null : collectSealedStreamIds(streams)
@@ -75,6 +86,7 @@ export function buildDirectoryRows<S extends DirectoryStream>({
     if (hidden.has(stream.id) || isUtilityStream(stream)) continue
     if (stream.type === StreamTypes.SYSTEM) continue
     if (type && stream.type !== type) continue
+    if (rootStreamId && stream.rootStreamId !== rootStreamId) continue
     if (Boolean(stream.archivedAt) !== archived || sealed?.has(stream.id)) continue
     const name = nameOf(stream)
     if (needle && !name.toLowerCase().includes(needle)) continue

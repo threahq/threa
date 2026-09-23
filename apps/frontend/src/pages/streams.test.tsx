@@ -55,18 +55,29 @@ const STREAMS = [
   channel("stream_random", "random", "2026-09-20T09:00:00.000Z"),
 ]
 
+function thread(id: string, name: string, rootStreamId: string, lastAt: string): StreamWithPreview {
+  return channel(id, "", lastAt, {
+    type: "thread",
+    slug: null,
+    displayName: name,
+    parentStreamId: rootStreamId,
+    rootStreamId,
+    lastMessagePreview: null,
+  } as Partial<StreamWithPreview>)
+}
+
 const STATS = [
   stats("stream_general", 2, [1, 0, 0]),
   stats("stream_design", 9, [0, 4, 3]),
   stats("stream_random", 5, [0, 0, 0]),
 ]
 
-function setup(path: string) {
+function setup(path: string, streams: StreamWithPreview[] = STREAMS) {
   vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
     warmStreams: vi.fn(),
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(
-    STREAMS as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
+    streams as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
   )
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreamIndex").mockReturnValue(
     new Map() as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreamIndex>
@@ -153,5 +164,21 @@ describe("StreamsPage", () => {
     await screen.findAllByLabelText("9 members")
     expect(listedNames()).toEqual(["#design", "#random"])
     expect(screen.getByRole("link", { name: "Not joined" })).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("should list only one stream's threads when the Threads tab is narrowed to it", async () => {
+    setup(`/w/${WS}/streams/threads?in=stream_general`, [
+      ...STREAMS,
+      thread("stream_t1", "Launch plan", "stream_general", "2026-09-23T08:00:00.000Z"),
+      thread("stream_t2", "Palette", "stream_design", "2026-09-23T07:00:00.000Z"),
+    ])
+
+    const clear = await screen.findByRole("link", { name: "Remove filter: #general" })
+    expect({
+      clearHref: clear.getAttribute("href"),
+      rows: within(screen.getAllByRole("list").at(-1)!)
+        .getAllByRole("listitem")
+        .map((item) => within(item).getByText(/Launch plan|Palette/).textContent),
+    }).toEqual({ clearHref: `/w/${WS}/streams/threads`, rows: ["Launch plan"] })
   })
 })

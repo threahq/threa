@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
-import { Check, CheckCheck, ExternalLink, SmilePlus } from "lucide-react"
-import { ENCRYPTED_MESSAGE_PREVIEW_LABEL, type StreamWithPreview } from "@threahq/types"
+import { Check, CheckCheck, ExternalLink, MessagesSquare, SmilePlus } from "lucide-react"
+import { ENCRYPTED_MESSAGE_PREVIEW_LABEL, StreamTypes, type StreamWithPreview } from "@threahq/types"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -23,6 +23,7 @@ import { resolveFrontierSequence } from "@/lib/read-frontier"
 import { isSameAuthorRun } from "@/lib/message-grouping"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { streamLabel } from "@/lib/streams"
+import { streamThreadsHref } from "@/components/stream-directory/directory"
 import { cn } from "@/lib/utils"
 
 const OPEN_DELAY_MS = 450
@@ -210,16 +211,14 @@ function HoverCardBody({
             <Check />
           </CardAction>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button asChild variant="ghost" size="icon" className="h-7 w-7 [&_svg]:h-3.5 [&_svg]:w-3.5">
-              <Link to={streamHref} onClick={onNavigate} aria-label="Open">
-                <ExternalLink />
-              </Link>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Open</TooltipContent>
-        </Tooltip>
+        {stream.type !== StreamTypes.THREAD && (
+          <CardLink label="Threads" to={streamThreadsHref(workspaceId, stream.id)} onNavigate={onNavigate}>
+            <MessagesSquare />
+          </CardLink>
+        )}
+        <CardLink label="Open" to={streamHref} onNavigate={onNavigate}>
+          <ExternalLink />
+        </CardLink>
       </div>
 
       <div
@@ -300,6 +299,31 @@ function CardAction({ label, onClick, children }: { label: string; onClick: () =
           onClick={onClick}
         >
           {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function CardLink({
+  label,
+  to,
+  onNavigate,
+  children,
+}: {
+  label: string
+  to: string
+  onNavigate: () => void
+  children: ReactNode
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button asChild variant="ghost" size="icon" className="h-7 w-7 [&_svg]:h-3.5 [&_svg]:w-3.5">
+          <Link to={to} onClick={onNavigate} aria-label={label}>
+            {children}
+          </Link>
         </Button>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>

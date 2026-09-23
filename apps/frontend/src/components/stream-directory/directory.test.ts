@@ -73,6 +73,21 @@ describe("buildDirectoryRows", () => {
     expect(build(streams, { query: "JOIN" })).toEqual([{ id: "stream_joined", joinable: false }])
   })
 
+  it("should narrow to the threads rooted in a stream when a root is set", () => {
+    const streams = [
+      stream("stream_joined"),
+      stream("stream_thread", { type: "thread", parentStreamId: "stream_joined", rootStreamId: "stream_joined" }),
+      stream("stream_nested", { type: "thread", parentStreamId: "stream_thread", rootStreamId: "stream_joined" }),
+      stream("stream_elsewhere", { type: "thread", parentStreamId: "stream_open", rootStreamId: "stream_open" }),
+      stream("stream_open"),
+    ]
+    expect(
+      build(streams, { tab: "threads", rootStreamId: "stream_joined" })
+        .map((r) => r.id)
+        .sort()
+    ).toEqual(["stream_nested", "stream_thread"])
+  })
+
   it("should narrow to joined or unjoined streams when a membership filter is set", () => {
     const streams = [stream("stream_joined"), stream("stream_open")]
     expect(build(streams, { membership: "joined" })).toEqual([{ id: "stream_joined", joinable: false }])

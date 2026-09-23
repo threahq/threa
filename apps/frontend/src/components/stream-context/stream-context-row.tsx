@@ -25,6 +25,9 @@ import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { giphyGalleryId } from "@/components/gallery/giphy-gallery-id"
 import { galleryDocType } from "./stream-gallery-items"
+import { useLiveThread } from "./use-live-thread"
+import { AgentActivityDot } from "@/components/layout/sidebar/stream-item"
+import { UnreadBadge } from "@/components/unread-badge"
 import type { ContextItem, LinkContextItem, MediaContextItem } from "@/lib/stream-context/types"
 
 interface StreamContextRowProps {
@@ -135,10 +138,13 @@ export function StreamContextRow({
   const navigate = useNavigate()
   const { formatRelative } = useFormattedDate()
   const time = formatRelative(new Date(item.createdAt), undefined, { terse: true })
+  const liveThread = useLiveThread(workspaceId, item.category === "thread" ? item.threadId : null)
 
   let leading: React.ReactNode
   let primaryText: string
   let secondaryText: string | null = null
+  let secondaryTime: string | null = null
+  let unreadCount = 0
   let badge: React.ReactNode = null
   let primaryAction: React.ReactNode
   let jumpTarget: string | null = item.sourceMessageId
@@ -351,14 +357,20 @@ export function StreamContextRow({
     }
     case "thread": {
       leading = (
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+        <div className="relative flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <MessagesSquare className="size-4" />
+          {liveThread?.agentActive && <AgentActivityDot />}
         </div>
       )
-      primaryText = item.snippet
-      secondaryText = `${item.replyCount} repl${item.replyCount === 1 ? "y" : "ies"}${
-        item.lastReplyPreview ? ` · ${item.lastReplyPreview}` : ""
-      }`
+      primaryText = liveThread?.name ?? item.snippet
+      const replyCount = liveThread?.replyCount ?? item.replyCount
+      const replies = `${replyCount} repl${replyCount === 1 ? "y" : "ies"}`
+      const latest = liveThread?.latest?.line ?? item.lastReplyPreview
+      secondaryText = latest ? `${replies} · ${latest}` : replies
+      if (liveThread?.latest) {
+        secondaryTime = formatRelative(new Date(liveThread.latest.createdAt), undefined, { terse: true })
+      }
+      unreadCount = liveThread?.unreadCount ?? 0
       jumpTarget = null // primary already opens the thread
       primaryAction = (
         <button
@@ -395,6 +407,7 @@ export function StreamContextRow({
               <span className="truncate text-sm font-medium leading-snug">
                 <HighlightedText text={primaryText} terms={searchTerms} />
               </span>
+              <UnreadBadge count={unreadCount} className="h-4 min-w-4 shrink-0 px-1 text-[10px]" />
               {item.category === "link" && opensExternally && (
                 // Persistent (not hover-gated) so a link row reads as "opens
                 // externally" at a glance, distinct from the rows that jump to
@@ -404,8 +417,11 @@ export function StreamContextRow({
               )}
             </div>
             {secondaryText && (
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                <HighlightedText text={secondaryText} terms={searchTerms} />
+              <p className="mt-0.5 flex gap-1.5 text-xs text-muted-foreground">
+                <span className="min-w-0 truncate">
+                  <HighlightedText text={secondaryText} terms={searchTerms} />
+                </span>
+                {secondaryTime && <span className="shrink-0 tabular-nums">{secondaryTime}</span>}
               </p>
             )}
           </div>
