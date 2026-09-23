@@ -40,6 +40,7 @@ function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: str
     "defaultCompanionPersonaId",
     "billingTimezone",
     "subagentModels",
+    "sandboxInternet",
   ] as const
   for (const key of simpleKeys) {
     if (updates[key] !== undefined) {

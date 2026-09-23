@@ -75,6 +75,17 @@ describe("updateWorkspaceSettingsSchema billingTimezone", () => {
   })
 })
 
+describe("updateWorkspaceSettingsSchema sandboxInternet", () => {
+  it("accepts a boolean and nothing else", () => {
+    expect({
+      on: updateWorkspaceSettingsSchema.safeParse({ sandboxInternet: true }).success,
+      off: updateWorkspaceSettingsSchema.safeParse({ sandboxInternet: false }).success,
+      string: updateWorkspaceSettingsSchema.safeParse({ sandboxInternet: "true" }).success,
+      absent: updateWorkspaceSettingsSchema.parse({}).sandboxInternet,
+    }).toEqual({ on: true, off: true, string: false, absent: undefined })
+  })
+})
+
 describe("WorkspaceSettingsRepository.insertOverrideIfAbsent", () => {
   it("seeds without overwriting, so an admin's stored choice always wins", async () => {
     let captured = ""

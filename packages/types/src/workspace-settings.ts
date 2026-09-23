@@ -192,6 +192,13 @@ export interface WorkspaceSettings {
    * and an admin adds the rest deliberately.
    */
   subagentModels: string[]
+  /**
+   * Whether an assistant's command sandbox can reach the internet. Off by
+   * default: a sandbox holds whatever attachments the assistant copied into it,
+   * so network access is an admin's call. Changing it replaces running
+   * sandboxes on their next command.
+   */
+  sandboxInternet: boolean
   createdAt: string
   updatedAt: string
 }
@@ -206,6 +213,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   defaultCompanionPersonaId: null,
   billingTimezone: "UTC",
   subagentModels: DEFAULT_SUBAGENT_MODELS,
+  sandboxInternet: false,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -218,6 +226,7 @@ export interface UpdateWorkspaceSettingsInput {
   defaultCompanionPersonaId?: string | null
   billingTimezone?: string
   subagentModels?: string[]
+  sandboxInternet?: boolean
 }
 
 /** Valid top-level settings keys that can be overridden. */
