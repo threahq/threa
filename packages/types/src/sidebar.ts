@@ -66,10 +66,21 @@ export type SidebarSectionSpec =
    */
   | { kind: "quicklinks" }
 
+/** Per-section stream filter: "all" (default) shows every row, "unread" hides caught-up ones. */
+export const SIDEBAR_SECTION_FILTERS = ["all", "unread"] as const
+export type SidebarSectionFilter = (typeof SIDEBAR_SECTION_FILTERS)[number]
+
 export interface SidebarSection {
   /** Stable key — also the collapse-state persistence key on the frontend. */
   id: string
   spec: SidebarSectionSpec
+  /**
+   * Per-section stream filter. Absent means "all" — the default and the
+   * canonical persisted form; `normalizeSidebarConfig` drops an explicit
+   * "all" back to absent. Not applicable to the Inbox (`kind: "unread"`) or
+   * quick links, which carry no filter and never persist one.
+   */
+  filter?: SidebarSectionFilter
 }
 
 export const SIDEBAR_BASE_PRESETS = ["smart", "all"] as const
@@ -238,6 +249,16 @@ function sanitizeCustomStreamIds(streamIds: unknown, claimed: Set<string>): stri
   return kept
 }
 
+/**
+ * Resolve a stored section's filter to its canonical form: only `"unread"`
+ * survives (an unknown value or the default `"all"` normalizes to absent),
+ * and the Inbox / quick links never carry one regardless of what was stored.
+ */
+function normalizeSectionFilter(spec: SidebarSectionSpec, rawFilter: unknown): SidebarSectionFilter | undefined {
+  if (spec.kind === "unread" || spec.kind === "quicklinks") return undefined
+  return rawFilter === "unread" ? "unread" : undefined
+}
+
 /** Resolve a stored link's visibility, migrating the pre-v2 boolean and coercing invalid `active`. */
 function normalizeQuickLinkVisibility(link: StoredQuickLink, key: SidebarQuickLinkKey): SidebarQuickLinkVisibility {
   const stored = link.visibility
@@ -316,6 +337,15 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
         }
       : section
   )
+
+  // Section filter: keep a valid "unread", drop anything else (including the
+  // default "all") to the canonical absent form, and drop it outright on
+  // Inbox/quick-links sections, which have no filter concept.
+  sections = sections.map((section) => {
+    const filter = normalizeSectionFilter(section.spec, section.filter)
+    if (filter === section.filter) return section
+    return filter === undefined ? { id: section.id, spec: section.spec } : { ...section, filter }
+  })
 
   // v1 → v2: existing users had quick links rendered above their sections, not
   // as a section. Prepend the block so it stays visible after the upgrade. Only

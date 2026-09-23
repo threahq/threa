@@ -2,11 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import * as prosemirror from "@threahq/prosemirror"
 import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threahq/types"
 import { hiddenStreamIds as collectHiddenStreamIds } from "@/lib/streams"
+import type { StreamItemData } from "./types"
 import {
   buildVirtualDmDrafts,
   calculateUrgency,
   categorizeStream,
   isSidebarStreamVisible,
+  sortStreamsStatic,
   truncateContent,
 } from "./utils"
 
@@ -302,6 +304,64 @@ describe("buildVirtualDmDrafts", () => {
 
   it("returns [] when there is no current user", () => {
     expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false, currentUserId: null })).toEqual([])
+  })
+})
+
+describe("sortStreamsStatic", () => {
+  function makeItem(overrides: Partial<StreamItemData> & { id: string }): StreamItemData {
+    return {
+      ...makeStream({ createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" }),
+      urgency: "quiet",
+      section: "other",
+      ...overrides,
+    }
+  }
+
+  it("orders non-channel streams by joinedAt descending", () => {
+    const a = makeItem({ id: "a" })
+    const b = makeItem({ id: "b" })
+    const joinedAtByStreamId = new Map([
+      ["a", "2026-01-01T00:00:00Z"],
+      ["b", "2026-02-01T00:00:00Z"],
+    ])
+
+    expect(sortStreamsStatic([a, b], joinedAtByStreamId).map((s) => s.id)).toEqual(["b", "a"])
+  })
+
+  it("falls back to createdAt when a stream has no membership row", () => {
+    const older = makeItem({ id: "older", createdAt: "2026-01-01T00:00:00Z" })
+    const newer = makeItem({ id: "newer", createdAt: "2026-03-01T00:00:00Z" })
+
+    expect(sortStreamsStatic([older, newer], new Map()).map((s) => s.id)).toEqual(["newer", "older"])
+  })
+
+  it("orders channels alphabetically by display name, ignoring joinedAt", () => {
+    const beta = makeItem({ id: "ch_beta", type: StreamTypes.CHANNEL, slug: "beta" })
+    const alpha = makeItem({ id: "ch_alpha", type: StreamTypes.CHANNEL, slug: "alpha" })
+    // joinedAt says beta joined first — irrelevant for channels, which are alphabetical.
+    const joinedAtByStreamId = new Map([
+      ["ch_beta", "2026-01-01T00:00:00Z"],
+      ["ch_alpha", "2026-02-01T00:00:00Z"],
+    ])
+
+    expect(sortStreamsStatic([beta, alpha], joinedAtByStreamId).map((s) => s.id)).toEqual(["ch_alpha", "ch_beta"])
+  })
+
+  it("places non-channels before channels", () => {
+    const channel = makeItem({ id: "ch_1", type: StreamTypes.CHANNEL, slug: "general" })
+    const dm = makeItem({ id: "dm_1", type: StreamTypes.DM })
+
+    expect(sortStreamsStatic([channel, dm], new Map()).map((s) => s.id)).toEqual(["dm_1", "ch_1"])
+  })
+
+  it("does not mutate the input array", () => {
+    const a = makeItem({ id: "a", createdAt: "2026-01-01T00:00:00Z" })
+    const b = makeItem({ id: "b", createdAt: "2026-02-01T00:00:00Z" })
+    const input = [a, b]
+
+    sortStreamsStatic(input, new Map())
+
+    expect(input.map((s) => s.id)).toEqual(["a", "b"])
   })
 })
 

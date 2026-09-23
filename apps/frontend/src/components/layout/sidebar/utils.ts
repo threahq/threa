@@ -225,18 +225,30 @@ export function sortStreams(
         if (a.urgency !== "ai" && b.urgency === "ai") return 1
         return getUnreadCount(b.id) - getUnreadCount(a.id)
       })
-
-    case "alphabetic_active_first":
-      // Unreads first (sorted alphabetically), then reads (sorted alphabetically)
-      return streams.sort((a, b) => {
-        const aUnread = getUnreadCount(a.id) > 0
-        const bUnread = getUnreadCount(b.id) > 0
-        if (aUnread && !bUnread) return -1
-        if (!aUnread && bUnread) return 1
-        return getStreamSortName(a).localeCompare(getStreamSortName(b))
-      })
-
-    default:
-      return streams
   }
+}
+
+/**
+ * Static section order, independent of unread/activity state: non-channel
+ * streams first, newest-joined first (falling back to `createdAt` for a
+ * stream with no membership row — a virtual DM draft, or a channel-turned
+ * type the viewer was never separately added to); then channels, alphabetical.
+ * Never mutates the input array.
+ */
+export function sortStreamsStatic(
+  streams: StreamItemData[],
+  joinedAtByStreamId: ReadonlyMap<string, string>
+): StreamItemData[] {
+  const channels = streams.filter((stream) => stream.type === StreamTypes.CHANNEL)
+  const others = streams.filter((stream) => stream.type !== StreamTypes.CHANNEL)
+
+  others.sort((a, b) => {
+    const joinedA = joinedAtByStreamId.get(a.id) ?? a.createdAt
+    const joinedB = joinedAtByStreamId.get(b.id) ?? b.createdAt
+    const diff = new Date(joinedB).getTime() - new Date(joinedA).getTime()
+    return diff !== 0 ? diff : a.id.localeCompare(b.id)
+  })
+  channels.sort((a, b) => getStreamSortName(a).localeCompare(getStreamSortName(b)))
+
+  return [...others, ...channels]
 }
