@@ -30,7 +30,7 @@ import {
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
-import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
+import { useCoordinatedLoading, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -102,6 +102,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const openLayoutEditor = useCallback(() => setIsEditorOpen(true), [])
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
+  const { panelId } = usePanel()
+  const openStreamIds = useMemo(
+    () => new Set([activeStreamId, panelId].filter((id): id is string => !!id)),
+    [activeStreamId, panelId]
+  )
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
   const syncEngine = useSyncEngine()
@@ -339,7 +344,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         inboxArrivedAt,
         joinedAtByStreamId,
         streamTypeById,
-        activeStreamId,
+        openStreamIds,
       }),
     [
       sidebarConfig,
@@ -352,7 +357,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       inboxArrivedAt,
       joinedAtByStreamId,
       streamTypeById,
-      activeStreamId,
+      openStreamIds,
     ]
   )
 

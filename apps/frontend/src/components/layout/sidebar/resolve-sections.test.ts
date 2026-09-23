@@ -764,7 +764,7 @@ describe("resolveSections thread tree", () => {
           processedStreams,
           unreadStreamIds: new Set(["c_1"]),
           getUnreadCount: unreadFrom(new Set(["c_1"])),
-          activeStreamId: "t_1",
+          openStreamIds: new Set(["t_1"]),
         },
         config
       )
@@ -808,7 +808,7 @@ describe("resolveSections thread tree", () => {
       thread("t_read", "c_1", "recent"),
     ]
 
-    expect(tree({ processedStreams, activeStreamId: "t_open" })).toEqual([
+    expect(tree({ processedStreams, openStreamIds: new Set(["t_open"]) })).toEqual([
       { id: "important", items: [] },
       { id: "recent", items: [] },
       { id: "other", items: ["c_1", "c_1>t_open"] },

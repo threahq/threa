@@ -54,8 +54,8 @@ export interface ResolveSectionsInput {
   joinedAtByStreamId: ReadonlyMap<string, string>
   /** Type of every stream the viewer can see, visible in the sidebar or not; places a thread in its root's type section. */
   streamTypeById: ReadonlyMap<string, StreamType>
-  /** The open stream; a thread keeps its row while open so reading it doesn't pull the row from under the viewer. */
-  activeStreamId?: string
+  /** Streams open in the main view or the side panel; a thread keeps its row while open so reading it doesn't pull the row from under the viewer. */
+  openStreamIds?: ReadonlySet<string>
 }
 
 export interface ResolvedSection {
@@ -326,14 +326,10 @@ function threadHomeType(
   return null
 }
 
-function idleThreadIds({
-  processedStreams,
-  getUnreadCount,
-  activeStreamId,
-}: ResolveSectionsInput): ReadonlySet<string> {
+function idleThreadIds({ processedStreams, getUnreadCount, openStreamIds }: ResolveSectionsInput): ReadonlySet<string> {
   const ids = new Set<string>()
   for (const stream of processedStreams) {
-    if (stream.type !== StreamTypes.THREAD || stream.id === activeStreamId) continue
+    if (stream.type !== StreamTypes.THREAD || openStreamIds?.has(stream.id)) continue
     if (!isUnreadStream(stream, getUnreadCount(stream.id))) ids.add(stream.id)
   }
   return ids
