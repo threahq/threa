@@ -16,8 +16,8 @@ const USER_ENV = "PATH=/work/.local/bin:/usr/local/bin:/usr/bin:/bin HOME=/work 
 
 // Runs as root once per box. The image keeps python and node under root's
 // home, so their installs are bind-mounted out rather than opening /root.
-// Commands run as `sandbox`, which cannot change nftables or regain root
-// (no_new_privs is set), so the egress rule holds against the command.
+// Commands run as `sandbox` under no_new_privs, so they cannot change nftables
+// or regain root through a setuid binary, and the egress rule holds.
 // Only the user's traffic is dropped: Railway's exec agent runs as root and
 // needs the network, and dropping all egress breaks exec.
 function setupScript(internet: boolean): string {
@@ -52,7 +52,7 @@ function asSandboxUser(timeoutSec: number): string {
     `deadline=$(( $(date +%s) + ${timeoutSec} ))`,
     `( while :; do if [ -e "$stop" ] || [ $(date +%s) -ge $deadline ]; then ${KILL_USER}; fi; sleep 0.2; done ) >/dev/null 2>&1 &`,
     "watchdog=$!",
-    `runuser -u sandbox -- env -i ${USER_ENV} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}"`,
+    `runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}"`,
     "status=$?",
     'kill $watchdog; rm -f "$stop"',
     "exit $status",
@@ -111,10 +111,12 @@ export class RailwaySandboxRunner implements SandboxRunner {
     return sandbox.id
   }
 
-  /** Railway counts only commands as use, so this does not push back the idle timer. */
+  /** Runs a no-op command, because Railway counts only commands as use. */
   async alive(sandboxId: string): Promise<boolean> {
     try {
-      return (await this.connect(sandboxId)).status === "RUNNING"
+      const sandbox = await this.connect(sandboxId)
+      if (sandbox.status !== "RUNNING") return false
+      return (await sandbox.exec("true", { timeoutSec: 30 })).exitCode === 0
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return false
       throw error
@@ -159,6 +161,7 @@ export class RailwaySandboxRunner implements SandboxRunner {
         .exec(`touch "${STOP_DIR}/$${EXEC_ID_ENV}"`, { timeoutSec: 30, env: { [EXEC_ID_ENV]: execId } })
         .catch((error) => logger.warn({ error }, "sandbox stop failed"))
     options.signal?.addEventListener("abort", onAbort, { once: true })
+    if (options.signal?.aborted) onAbort()
     try {
       const result = await handle
       if (options.signal?.aborted) throw options.signal.reason ?? new Error("aborted")
