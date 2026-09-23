@@ -176,16 +176,18 @@ export function CollapsibleBody({
           // When collapsed, lift the toggle up into the faded bottom band (the
           // clamp's half-line teaser + the mask fade read as empty space) so it
           // sits centered in that spacer rather than pinned below it. Expanded,
-          // there is no fade — keep normal spacing under the full body.
+          // there is no fade — keep normal spacing under the full body. The
+          // padding is the hit area (a 32px-tall target for mouse and thumb);
+          // the negative margins cancel it so the label sits where it did.
           className={cn(
-            "flex cursor-pointer items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground",
-            collapsed ? "-mt-2" : "mt-1"
+            "-mx-2 flex cursor-pointer items-center gap-1 rounded-md px-2 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
+            collapsed ? "-mt-4" : "-mt-1"
           )}
         >
           {expanded ? (
-            <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <ChevronUp className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           ) : (
-            <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           )}
           {toggleLabel}
         </button>
