@@ -229,7 +229,6 @@ export function MessageItem({
     enabled: touchCapable && !isEditing,
     deferToNativeLinks: true,
   })
-  const hasReactions = Object.keys(message.reactions).length > 0
   const interactiveName = (message.authorType === "user" || message.authorType === "bot") && Boolean(message.authorId)
   // Per-actor colorization, shared with the timeline: the author-name color + inline
   // badge, plus the full-bleed `rowAccent` (tint + inset left stripe) on the row.
@@ -708,14 +707,12 @@ export function MessageItem({
           richBody
         )}
       </LinkPreviewProvider>
-      {hasReactions && (
-        <MessageReactions
-          reactions={message.reactions}
-          workspaceId={workspaceId}
-          messageId={message.id}
-          currentUserId={currentUserId}
-        />
-      )}
+      <MessageReactions
+        reactions={message.reactions}
+        workspaceId={workspaceId}
+        messageId={message.id}
+        currentUserId={currentUserId}
+      />
     </>
   )
 

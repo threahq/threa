@@ -2,7 +2,9 @@ import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef,
 import { cn } from "@/lib/utils"
 
 /** Height growth, which outlasts the content fade; matches `.pop-in-grow` in index.css. */
-const GROW_MS = 450
+export const GROW_MS = 450
+/** Matches `.pop-out` in index.css. */
+export const SHRINK_MS = 300
 /** More new tail rows than this in one commit is a window load or a catch-up,
  *  not something arriving while the reader watches. */
 const MAX_ARRIVALS_PER_COMMIT = 3
@@ -54,9 +56,18 @@ export function useArrivals(
   return tracker.arrivedAt
 }
 
+function startArrival(arrivedAt: number | undefined) {
+  const elapsed = arrivedAt === undefined ? GROW_MS : performance.now() - arrivedAt
+  return { arrivedAt, elapsed, growing: elapsed < GROW_MS }
+}
+
 interface PopInProps {
   /** From {@link useArrivals}; undefined for a row that was already there. */
   arrivedAt: number | undefined
+  /** `x` grows the width instead, for an item joining a row. */
+  axis?: "x" | "y"
+  /** Plays the arrival backwards; the caller unmounts it after {@link SHRINK_MS}. */
+  leaving?: boolean
   className?: string
   children: ReactNode
 }
@@ -73,20 +84,31 @@ interface PopInProps {
  * The inner element is always rendered so the row's DOM shape never changes when
  * the arrival ends — a shape change would remount the row's content.
  */
-export function PopIn({ arrivedAt, className, children }: PopInProps) {
-  const [elapsed] = useState(() => (arrivedAt === undefined ? GROW_MS : performance.now() - arrivedAt))
-  const [growing, setGrowing] = useState(elapsed < GROW_MS)
+export function PopIn({ arrivedAt, axis = "y", leaving = false, className, children }: PopInProps) {
+  const [arrival, setArrival] = useState(() => startArrival(arrivedAt))
+  // A new arrival on a mounted instance (a reaction re-added mid-shrink) restarts the growth.
+  if (arrivedAt !== undefined && arrivedAt !== arrival.arrivedAt) setArrival(startArrival(arrivedAt))
+  const { elapsed, growing } = arrival
 
   useEffect(() => {
-    if (!growing) return
-    const timer = window.setTimeout(() => setGrowing(false), GROW_MS - elapsed)
+    if (!arrival.growing) return
+    const timer = window.setTimeout(() => setArrival({ ...arrival, growing: false }), GROW_MS - arrival.elapsed)
     return () => window.clearTimeout(timer)
-  }, [growing, elapsed])
+  }, [arrival])
 
   const style = growing ? ({ "--pop-in-elapsed": `${Math.round(elapsed)}ms` } as CSSProperties) : undefined
+  let motion: string | undefined
+  let fx: string | undefined
+  if (leaving) {
+    motion = axis === "x" ? "pop-out-x" : "pop-out"
+    fx = "pop-out-fx"
+  } else if (growing) {
+    motion = axis === "x" ? "pop-in-grow-x" : "pop-in-grow"
+    fx = "pop-in-fx"
+  }
   return (
-    <div className={cn(className, growing && "pop-in-grow")} style={style}>
-      <div className={growing ? "pop-in-fx" : undefined}>{children}</div>
+    <div className={cn(className, axis === "x" && "pop-in-x", motion)} style={leaving ? undefined : style}>
+      <div className={fx}>{children}</div>
     </div>
   )
 }

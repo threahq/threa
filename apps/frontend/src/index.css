@@ -665,6 +665,22 @@ html[data-input="mouse"] .message-hover-wash:hover {
   animation: pop-in-fade 300ms ease-out backwards;
   animation-delay: calc(100ms - var(--pop-in-elapsed, 0ms));
 }
+/* The width twin, for an item joining a row. The outer box stays a flex item
+   around a flex box either way, so the item's shape doesn't change when the
+   growth ends. */
+.pop-in-x,
+.pop-in-x > * {
+  display: flex;
+}
+.pop-in-x.pop-in-grow-x {
+  display: grid;
+  animation: pop-in-grow-x 450ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(0ms - var(--pop-in-elapsed, 0ms));
+}
+.pop-in-grow-x > * {
+  min-width: 0;
+  overflow: hidden;
+}
 @keyframes pop-in-grow {
   from {
     grid-template-rows: 0fr;
@@ -673,15 +689,63 @@ html[data-input="mouse"] .message-hover-wash:hover {
     grid-template-rows: 1fr;
   }
 }
+@keyframes pop-in-grow-x {
+  from {
+    grid-template-columns: 0fr;
+  }
+  to {
+    grid-template-columns: 1fr;
+  }
+}
 @keyframes pop-in-fade {
   from {
     opacity: 0;
   }
 }
+/* Leaving: the arrival backwards, quicker, and no longer clickable. */
+.pop-out,
+.pop-in-x.pop-out-x {
+  display: grid;
+  animation: pop-out 300ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+.pop-in-x.pop-out-x {
+  animation-name: pop-out-x;
+}
+.pop-out > *,
+.pop-out-x > * {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.pop-out-fx {
+  animation: pop-in-fade 200ms ease-in reverse both;
+  pointer-events: none;
+}
+@keyframes pop-out {
+  from {
+    grid-template-rows: 1fr;
+  }
+  to {
+    grid-template-rows: 0fr;
+  }
+}
+@keyframes pop-out-x {
+  from {
+    grid-template-columns: 1fr;
+  }
+  to {
+    grid-template-columns: 0fr;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .pop-in-grow,
+  .pop-in-x.pop-in-grow-x,
   .pop-in-fx {
     animation: none;
+  }
+  .pop-out,
+  .pop-in-x.pop-out-x {
+    display: none;
   }
 }
 

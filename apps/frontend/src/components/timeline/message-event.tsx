@@ -108,6 +108,7 @@ import { useMessageConversationId } from "./conversation-overlay/message-convers
 import type { ConversationRevival } from "./conversation-overlay/model"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
+const NO_REACTIONS: Record<string, string[]> = {}
 
 interface MessagePayload {
   messageId: string
@@ -1465,14 +1466,12 @@ function SentMessageEvent({
     footerContent = (
       <>
         {revival && <ConversationProvenanceChip revival={revival} workspaceId={workspaceId} />}
-        {payload.reactions && Object.keys(payload.reactions).length > 0 && (
-          <MessageReactions
-            reactions={payload.reactions}
-            workspaceId={workspaceId}
-            messageId={payload.messageId}
-            currentUserId={currentUserId}
-          />
-        )}
+        <MessageReactions
+          reactions={payload.reactions ?? NO_REACTIONS}
+          workspaceId={workspaceId}
+          messageId={payload.messageId}
+          currentUserId={currentUserId}
+        />
         {/* Grouped continuations have no header row, so their labels trail the
             footer; standalone rows render them in the header beside the time
             (see statusIndicator). Renders nothing until the message is labeled. */}
