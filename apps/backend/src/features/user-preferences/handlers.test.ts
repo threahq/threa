@@ -79,6 +79,39 @@ describe("updatePreferencesSchema unreadOpenPosition", () => {
   })
 })
 
+describe("updatePreferencesSchema inboxClearMode", () => {
+  it("accepts all three modes", () => {
+    expect(updatePreferencesSchema.parse({ inboxClearMode: "interaction" }).inboxClearMode).toBe("interaction")
+    expect(updatePreferencesSchema.parse({ inboxClearMode: "manual" }).inboxClearMode).toBe("manual")
+    expect(updatePreferencesSchema.parse({ inboxClearMode: "read" }).inboxClearMode).toBe("read")
+  })
+
+  it("rejects an unknown mode", () => {
+    expect(updatePreferencesSchema.safeParse({ inboxClearMode: "auto" }).success).toBe(false)
+  })
+
+  it("treats the field as optional and defaults to interaction", () => {
+    expect(updatePreferencesSchema.parse({}).inboxClearMode).toBeUndefined()
+    expect(DEFAULT_USER_PREFERENCES.inboxClearMode).toBe("interaction")
+  })
+})
+
+describe("updatePreferencesSchema inboxOrder", () => {
+  it("accepts both orders", () => {
+    expect(updatePreferencesSchema.parse({ inboxOrder: "arrival" }).inboxOrder).toBe("arrival")
+    expect(updatePreferencesSchema.parse({ inboxOrder: "newest" }).inboxOrder).toBe("newest")
+  })
+
+  it("rejects an unknown order", () => {
+    expect(updatePreferencesSchema.safeParse({ inboxOrder: "oldest" }).success).toBe(false)
+  })
+
+  it("treats the field as optional and defaults to arrival", () => {
+    expect(updatePreferencesSchema.parse({}).inboxOrder).toBeUndefined()
+    expect(DEFAULT_USER_PREFERENCES.inboxOrder).toBe("arrival")
+  })
+})
+
 describe("updatePreferencesSchema analyticsConsent", () => {
   it("should accept analyticsConsent when the value is a known consent option", () => {
     expect(updatePreferencesSchema.parse({ analyticsConsent: "granted" }).analyticsConsent).toBe("granted")

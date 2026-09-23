@@ -283,6 +283,26 @@ describe("ReadStateRepository.listInboxHeldStreamIds", () => {
   })
 })
 
+describe("ReadStateRepository.listInboxArrivals", () => {
+  test("no-ops without querying on an empty stream list", async () => {
+    const { db, query } = makeDb()
+    expect(await ReadStateRepository.listInboxArrivals(db, "ws_1", "usr_1", [])).toEqual({})
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  test("maps stream_id -> arrived_at rows into a record", async () => {
+    // The floor-vs-message-crossing logic is proven against a real schema in
+    // tests/integration/inbox-held.test.ts; this level only guards the row
+    // shape mapping.
+    const arrivedAt = new Date("2026-01-03T00:00:00.000Z")
+    const { db, query } = makeDb([{ stream_id: "stream_1", arrived_at: arrivedAt }])
+    const result = await ReadStateRepository.listInboxArrivals(db, "ws_1", "usr_1", ["stream_1", "stream_2"])
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ stream_1: arrivedAt })
+  })
+})
+
 describe("ReadStateRepository.setForUsers", () => {
   test("no-ops without querying on an empty user list", async () => {
     const { db, query } = makeDb()
@@ -343,6 +363,7 @@ describe("ReadStateRepository readers", () => {
       last_read_at: new Date("2026-01-01T00:00:00.000Z"),
       updated_at: new Date("2026-01-02T00:00:00.000Z"),
       inbox_held: true,
+      inbox_floor_event_id: "evt_3",
     }
     const withRow = makeDb([row])
     expect(await ReadStateRepository.get(withRow.db, "stream_1", "usr_1")).toEqual({
@@ -353,6 +374,7 @@ describe("ReadStateRepository readers", () => {
       lastReadAt: row.last_read_at,
       updatedAt: row.updated_at,
       inboxHeld: true,
+      inboxFloorEventId: "evt_3",
     })
 
     const empty = makeDb([])

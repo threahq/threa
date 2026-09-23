@@ -2681,6 +2681,7 @@ const BOOTSTRAP_NON_ROW_FIELDS = [
   "messageCounts",
   "readMessageIds",
   "inboxHeldStreamIds",
+  "inboxArrivedAt",
   "mutedStreamIds",
   "boardViews",
   "invitations",

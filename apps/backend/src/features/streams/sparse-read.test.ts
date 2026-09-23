@@ -4,6 +4,7 @@ import { ReadStateRepository } from "./read-state-repository"
 import { StreamEventRepository } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { UserPreferencesRepository } from "../user-preferences"
 
 const db = {} as never
 
@@ -13,6 +14,8 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "pruneAtOrBelow").mockResolvedValue(undefined as never)
     spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    // Default inboxClearMode ("interaction") — a compacting advance holds.
+    spyOn(UserPreferencesRepository, "findOverride").mockResolvedValue(null)
   })
 
   afterEach(() => mock.restore())

@@ -1873,6 +1873,13 @@ export interface WorkspaceBootstrap {
    * lack it (absent reads as none held).
    */
   inboxHeldStreamIds?: string[]
+  /**
+   * ISO timestamp of the first other-author message that put each stream into
+   * the Inbox (arrival order for `inboxOrder: "arrival"`) — held streams and
+   * unheld streams with an unread other-author message. Optional: payloads
+   * cached before this field shipped lack it.
+   */
+  inboxArrivedAt?: Record<string, string>
   dmPeers: Array<{ userId: string; streamId: string }>
   personas: Persona[]
   bots: Bot[]

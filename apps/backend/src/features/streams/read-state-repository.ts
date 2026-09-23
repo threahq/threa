@@ -9,6 +9,7 @@ interface StreamReadStateRow {
   last_read_at: Date | null
   updated_at: Date
   inbox_held: boolean
+  inbox_floor_event_id: string | null
 }
 
 export interface StreamReadState {
@@ -19,6 +20,8 @@ export interface StreamReadState {
   lastReadAt: Date | null
   updatedAt: Date
   inboxHeld: boolean
+  /** The read frontier just before the current hold began; null when unheld or held from the start. */
+  inboxFloorEventId: string | null
 }
 
 function mapRowToReadState(row: StreamReadStateRow): StreamReadState {
@@ -30,10 +33,12 @@ function mapRowToReadState(row: StreamReadStateRow): StreamReadState {
     lastReadAt: row.last_read_at,
     updatedAt: row.updated_at,
     inboxHeld: row.inbox_held,
+    inboxFloorEventId: row.inbox_floor_event_id,
   }
 }
 
-const SELECT_FIELDS = "workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at, inbox_held"
+const SELECT_FIELDS =
+  "workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at, inbox_held, inbox_floor_event_id"
 
 /**
  * The per-user read watermark — the sole read truth (membership ≠ access ≠ read
@@ -70,6 +75,12 @@ export const ReadStateRepository = {
    * the hold rule reads the watermark as committed by any concurrent clear or
    * read instead of a stale statement snapshot. The lock lasts only as long as
    * the caller's transaction: pass a transaction client, never the pool.
+   *
+   * `inbox_floor_event_id` tracks the read frontier just before the current
+   * hold began (for bootstrap arrival lookups): already held → keep it;
+   * newly held by this call → the pre-update `last_read_event_id`; otherwise
+   * → NULL. Read from `stream_read_state.*` (the locked pre-update row), not
+   * `EXCLUDED`.
    */
   async advance(
     db: Querier,
@@ -111,7 +122,12 @@ export const ReadStateRepository = {
         SET last_read_event_id = EXCLUDED.last_read_event_id,
             last_read_at = EXCLUDED.last_read_at,
             updated_at = EXCLUDED.updated_at,
-            inbox_held = CASE WHEN (SELECT hold FROM should_hold) THEN true ELSE stream_read_state.inbox_held END
+            inbox_held = CASE WHEN (SELECT hold FROM should_hold) THEN true ELSE stream_read_state.inbox_held END,
+            inbox_floor_event_id = CASE
+              WHEN stream_read_state.inbox_held THEN stream_read_state.inbox_floor_event_id
+              WHEN (SELECT hold FROM should_hold) THEN stream_read_state.last_read_event_id
+              ELSE NULL
+            END
         WHERE COALESCE(
             (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = EXCLUDED.last_read_event_id),
             0
@@ -171,9 +187,9 @@ export const ReadStateRepository = {
    * frontier per attempted valid stream, no gaps, no duplicates, empty map
    * safe.
    *
-   * Never touches `inbox_held` (no caller of this batch path ever holds —
-   * mark-all and clear both catch a stream up without pinning it in the
-   * Inbox); a fresh row keeps the column's `false` default.
+   * Never touches `inbox_held` or `inbox_floor_event_id` (no caller of this
+   * batch path ever holds — mark-all and clear both catch a stream up
+   * without pinning it in the Inbox); a fresh row keeps their defaults.
    */
   async batchAdvance(
     db: Querier,
@@ -250,7 +266,7 @@ export const ReadStateRepository = {
     if (streamIds.length === 0) return []
     const result = await db.query<{ stream_id: string }>(sql`
       UPDATE stream_read_state
-      SET inbox_held = false, updated_at = NOW()
+      SET inbox_held = false, inbox_floor_event_id = NULL, updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND user_id = ${userId} AND stream_id = ANY(${streamIds}) AND inbox_held
       RETURNING stream_id
     `)
@@ -265,6 +281,66 @@ export const ReadStateRepository = {
       WHERE workspace_id = ${workspaceId} AND user_id = ${userId} AND inbox_held
     `)
     return result.rows.map((r) => r.stream_id)
+  },
+
+  /**
+   * Inbox "arrived at" timestamps for bootstrap: for each candidate stream,
+   * the `created_at` of the first other-author `message_created` event above
+   * this user's effective floor sequence — the read frontier the current
+   * Inbox membership is measured from. Held streams measure from
+   * `inbox_floor_event_id` (the frontier just before the hold began, frozen
+   * so later reads-without-clearing don't shift it); unheld streams measure
+   * from `last_read_event_id`. Either resolves to sequence 0 when null (never
+   * read / held from the start). A stream absent from the result has no
+   * arrival — fully read and unheld.
+   *
+   * One set-based lateral join (INV-56) over the `(stream_id, sequence)`
+   * index; the lateral naturally drops streams with no qualifying message, so
+   * the "held or has an unread other-author message" scoping falls out of
+   * the join rather than a separate filter.
+   */
+  async listInboxArrivals(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    streamIds: string[]
+  ): Promise<Record<string, Date>> {
+    if (streamIds.length === 0) return {}
+    const result = await db.query<{ stream_id: string; arrived_at: Date }>(sql`
+      WITH candidates AS (
+        SELECT unnest(${streamIds}::text[]) AS stream_id
+      ),
+      state AS (
+        SELECT c.stream_id, rs.inbox_held, rs.inbox_floor_event_id, rs.last_read_event_id
+        FROM candidates c
+        LEFT JOIN stream_read_state rs
+          ON rs.stream_id = c.stream_id AND rs.user_id = ${userId} AND rs.workspace_id = ${workspaceId}
+      ),
+      floor_seq AS (
+        SELECT s.stream_id,
+          COALESCE(
+            (SELECT e.sequence FROM stream_events e
+               WHERE e.id = CASE WHEN s.inbox_held THEN s.inbox_floor_event_id ELSE s.last_read_event_id END),
+            0
+          ) AS floor_sequence
+        FROM state s
+      )
+      SELECT fs.stream_id, arrival.created_at AS arrived_at
+      FROM floor_seq fs
+      JOIN LATERAL (
+        SELECT e.created_at
+        FROM stream_events e
+        WHERE e.stream_id = fs.stream_id
+          AND e.event_type = 'message_created'
+          AND e.actor_id IS DISTINCT FROM ${userId}
+          AND e.sequence > fs.floor_sequence
+        ORDER BY e.sequence ASC
+        LIMIT 1
+      ) arrival ON true
+    `)
+    const arrivals: Record<string, Date> = {}
+    for (const row of result.rows) arrivals[row.stream_id] = row.arrived_at
+    return arrivals
   },
 
   /** Batch unconditional set for many users on one stream (channel-creation born-read). */

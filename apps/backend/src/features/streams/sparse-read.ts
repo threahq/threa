@@ -3,6 +3,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "./event-repository"
 import { ReadStateRepository } from "./read-state-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
+import { resolveInboxClearMode } from "./inbox-clear-mode"
 
 /**
  * The absolute post-write read-state for one stream — the shape both the socket
@@ -105,8 +106,9 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     // store (locked by the seed above). A compaction target is always a real
     // event, so the watermark is non-null here.
     if (watermarkEventId) {
+      const inboxClearMode = await resolveInboxClearMode(db, memberId)
       const { held } = await ReadStateRepository.advance(db, streamId, memberId, watermarkEventId, {
-        holdInInbox: true,
+        holdInInbox: inboxClearMode !== "read",
       })
       if (held) {
         await OutboxRepository.insert(db, "stream:inbox_updated", {

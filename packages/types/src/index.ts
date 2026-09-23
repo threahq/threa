@@ -967,6 +967,13 @@ export {
   UNREAD_OPEN_POSITION_OPTIONS,
   type UnreadOpenPosition,
   UnreadOpenPositions,
+  // Inbox clear mode + sort order
+  INBOX_CLEAR_MODE_OPTIONS,
+  type InboxClearMode,
+  InboxClearModes,
+  INBOX_ORDER_OPTIONS,
+  type InboxOrder,
+  InboxOrders,
   // Analytics consent
   ANALYTICS_CONSENT_OPTIONS,
   type AnalyticsConsent,

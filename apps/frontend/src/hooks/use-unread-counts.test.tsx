@@ -118,6 +118,8 @@ function makeBootstrap(): WorkspaceBootstrap {
       linkPreviewDefault: "open",
       labelRemoveOnMove: "ask",
       unreadOpenPosition: "latest",
+      inboxClearMode: "interaction",
+      inboxOrder: "arrival",
       pushActions: ["mark_read", "remind"],
       pushReminderMinutes: 5,
       pushQuickReaction: "👍",
