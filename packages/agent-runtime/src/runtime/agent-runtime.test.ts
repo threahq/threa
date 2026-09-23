@@ -1412,3 +1412,51 @@ describe("AgentRuntime spend denial", () => {
     expect(modelCalls).toBe(1)
   })
 })
+
+describe("AgentRuntime opening calls", () => {
+  it("runs them before the first step, traces them, and hands their output to the model as a user message", async () => {
+    const pageTool = defineAgentTool({
+      name: "read_url",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({ url: z.string() }),
+      execute: async ({ url }) => ({ output: `page at ${url}`, sources: [{ title: "Page", url }] }),
+      trace: { stepType: AgentStepTypes.VISIT_PAGE, formatContent: ({ url }) => url },
+    })
+    const firstCall: any[] = []
+    const generateTextWithTools = async ({ messages }: { messages: any[] }) => {
+      if (firstCall.length === 0) firstCall.push(...messages)
+      return { text: "Done.", toolCalls: [], response: { messages: [{ role: "assistant", content: "Done." } as any] } }
+    }
+    const events: string[] = []
+    const commits: Array<{ content: string; sources: SourceItem[] }> = []
+
+    await new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "what does https://a.example say" }],
+      tools: [pageTool],
+      openingCalls: [{ toolName: "read_url", input: { url: "https://a.example" } }],
+      observers: [{ handle: async (event) => void events.push(event.type) }],
+      sendMessage: async (input) => {
+        commits.push(input)
+        return { messageId: "msg_1", operation: "created" }
+      },
+    }).run()
+
+    expect({
+      roles: firstCall.map((m) => m.role),
+      opened: firstCall[1].content.startsWith("[read_url ran before your first step]"),
+      carriesPage: firstCall[1].content.includes("page at https://a.example"),
+      firstEvents: events.slice(0, 3),
+      sources: commits[0]?.sources.map((s) => s.url),
+    }).toEqual({
+      roles: ["user", "user"],
+      opened: true,
+      carriesPage: true,
+      firstEvents: ["session:start", "tool:start", "tool:complete"],
+      sources: ["https://a.example"],
+    })
+  })
+})

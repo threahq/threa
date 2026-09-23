@@ -132,6 +132,7 @@ export interface TurnRequest {
    * stream) rather than to how the turn is delivered.
    */
   toolGuardian?: ToolGuardian
+  openingCalls?: AgentRuntimeConfig["openingCalls"]
 }
 
 export type TurnResult = AgentRuntimeResult
@@ -303,6 +304,7 @@ function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: T
     toolSignalProvider: sink.toolSignalProvider,
     runAbortSignal: sink.runAbortSignal,
     toolGuardian: request.toolGuardian,
+    openingCalls: request.openingCalls,
   })
   return runtime.run()
 }
