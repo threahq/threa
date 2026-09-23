@@ -292,7 +292,9 @@ export const ReadStateRepository = {
    * so later reads-without-clearing don't shift it); unheld streams measure
    * from `last_read_event_id`. Either resolves to sequence 0 when null (never
    * read / held from the start). A stream absent from the result has no
-   * arrival — fully read and unheld.
+   * arrival — fully read and unheld. A deleted message never qualifies (same
+   * `messages.deleted_at` join as `advance`'s hold rule), so deleting the
+   * only unread message clears the arrival too.
    *
    * One set-based lateral join (INV-56) over the `(stream_id, sequence)`
    * index; the lateral naturally drops streams with no qualifying message, so
@@ -330,10 +332,12 @@ export const ReadStateRepository = {
       JOIN LATERAL (
         SELECT e.created_at
         FROM stream_events e
+        LEFT JOIN messages m ON m.id = e.payload->>'messageId'
         WHERE e.stream_id = fs.stream_id
           AND e.event_type = 'message_created'
           AND e.actor_id IS DISTINCT FROM ${userId}
           AND e.sequence > fs.floor_sequence
+          AND m.deleted_at IS NULL
         ORDER BY e.sequence ASC
         LIMIT 1
       ) arrival ON true
