@@ -111,6 +111,7 @@ describe("mutating tools declare their own effects", () => {
       settings: stub,
       github: stub,
       linear: stub,
+      sandbox: stub,
       supportsVision: true,
     }).map((t) => [t.name, t])
   )
