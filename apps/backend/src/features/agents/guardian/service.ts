@@ -1,11 +1,24 @@
 import type { ModelMessage } from "ai"
-import type { AI, ToolGuardian, ToolGuardianRequest, ToolGuardianVerdict } from "@threahq/agent-runtime"
-import type { CostContext } from "@threahq/agent-runtime"
+import {
+  AISpendDeniedError,
+  noulAnswer,
+  type AI,
+  type CostContext,
+  type DecisionsAvailability,
+  type ToolGuardian,
+  type ToolGuardianRequest,
+  type ToolGuardianVerdict,
+} from "@threahq/agent-runtime"
+import type { AIResidencyPolicy } from "../../ai-usage"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import { logger } from "../../../lib/logger"
 import {
   TOOL_GUARDIAN_ARGUMENT_CHARS,
+  TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR,
+  TOOL_GUARDIAN_DECISIONS_MODEL_ID,
+  TOOL_GUARDIAN_DECISIONS_QUESTION,
+  TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS,
   TOOL_GUARDIAN_HISTORY_MESSAGES,
   TOOL_GUARDIAN_MESSAGE_CHARS,
   TOOL_GUARDIAN_PROMPT,
@@ -17,6 +30,8 @@ import {
 export interface ToolGuardianServiceDeps {
   ai: AI
   configResolver: ConfigResolver
+  residency: AIResidencyPolicy
+  availability: DecisionsAvailability
 }
 
 /** Bound to one turn: what the review is for, and where its cost belongs. */
@@ -135,7 +150,8 @@ export function renderGuardianConversation(messages: ModelMessage[]): string {
  *
  * Errors are NOT swallowed here — the runtime converts a throw into a denial,
  * so failing closed is one behaviour in one place rather than a `catch` per
- * failure mode that can quietly grow an allow-path.
+ * failure mode that can quietly grow an allow-path. The one catch, in the
+ * decision-model fast path, only ever hands the call on to the inference review.
  */
 export class ToolGuardianService implements ToolGuardian {
   constructor(
@@ -160,6 +176,10 @@ export class ToolGuardianService implements ToolGuardian {
         allowed: false,
         reason: "This turn has no user who could authorize the action, so it was not taken.",
       }
+    }
+
+    if (await this.decisionsAllow(request, principal)) {
+      return { allowed: true, reason: "The decision model found the user's request for this action." }
     }
 
     const config = await this.deps.configResolver.resolve(COMPONENT_PATHS.TOOL_GUARDIAN)
@@ -204,10 +224,80 @@ export class ToolGuardianService implements ToolGuardian {
         sessionId: this.turn.sessionId,
         allowed: value.allowed,
         confidence: value.confidence,
+        path: "inference",
       },
       "Tool guardian verdict"
     )
 
     return { allowed: value.allowed, reason: value.reason }
   }
+
+  /**
+   * True only on a confident yes from the decision model. A pinned workspace, a
+   * decision-model outage, a timeout and any failure all return false, which
+   * hands the call to the inference review: this path can skip a review, never
+   * decide a denial or allow on its own failure.
+   */
+  private async decisionsAllow(request: ToolGuardianRequest, principal: string): Promise<boolean> {
+    const { workspaceId, sessionId } = this.turn
+    if ((await this.deps.residency.isPinned(workspaceId)) || !this.deps.availability.isAvailable) return false
+
+    try {
+      const belief = await requestAuthorizationBelief(this.deps.ai, {
+        modelId: TOOL_GUARDIAN_DECISIONS_MODEL_ID,
+        request,
+        principal,
+        turn: this.turn,
+      })
+      const allowed = belief >= TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR
+      if (allowed) {
+        logger.info(
+          { toolName: request.toolName, sessionId, allowed, belief, path: "decisions" },
+          "Tool guardian verdict"
+        )
+      }
+      return allowed
+    } catch (error) {
+      if (error instanceof AISpendDeniedError) throw error
+      this.deps.availability.recordFailure(error)
+      logger.warn(
+        { error, toolName: request.toolName, sessionId },
+        "Decision-model guardian review failed, falling back to the inference review"
+      )
+      return false
+    }
+  }
+}
+
+/** The decision model's belief, in [0, 1], that the bound user asked for this call. */
+async function requestAuthorizationBelief(
+  ai: AI,
+  params: { modelId: string; request: ToolGuardianRequest; principal: string; turn: ToolGuardianTurn }
+): Promise<number> {
+  const { modelId, request, principal, turn } = params
+  const result = await ai.generateDecisions({
+    model: modelId,
+    state: {
+      tool: {
+        name: request.toolName,
+        description: request.toolDescription,
+        arguments: renderGuardianArguments(request.input),
+      },
+      authorizingUser: principal,
+      conversation: renderGuardianConversation(request.messages),
+    },
+    questions: { authorized: { type: "noul", instructions: TOOL_GUARDIAN_DECISIONS_QUESTION } },
+    abortSignal: AbortSignal.timeout(TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS),
+    telemetry: {
+      functionId: "tool-guardian-decisions",
+      metadata: {
+        toolName: request.toolName,
+        streamId: turn.streamId,
+        personaId: turn.personaId,
+        sessionId: turn.sessionId,
+      },
+    },
+    context: turn.costContext ?? { workspaceId: turn.workspaceId, origin: "system" },
+  })
+  return noulAnswer(result, "authorized")
 }

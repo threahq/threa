@@ -68,7 +68,8 @@ import { DecisionsRelevanceScorer, EmbeddingService, MemoExplorerService, Rerank
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
 import { MessageRepository } from "../../../src/features/messaging"
-import { createModelRegistry } from "@threahq/agent-runtime"
+import { createModelRegistry, DecisionsAvailability } from "@threahq/agent-runtime"
+import { WorkspaceAIResidencyPolicy } from "../../../src/features/ai-usage"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import { EventService } from "../../../src/features/messaging"
 import type { Server } from "socket.io"
@@ -501,6 +502,8 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     )
     const personaAgent = new PersonaAgent({
       configResolver: ctx.configResolver,
+      aiResidency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
+      decisionsAvailability: new DecisionsAvailability(),
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

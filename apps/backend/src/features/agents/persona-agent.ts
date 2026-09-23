@@ -34,7 +34,8 @@ import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
 import type { MemoExplorerService } from "../memos"
 import type { StorageProvider } from "../../lib/storage/s3-client"
-import type { ModelRegistry } from "@threahq/agent-runtime"
+import type { DecisionsAvailability, ModelRegistry } from "@threahq/agent-runtime"
+import type { AIResidencyPolicy } from "../ai-usage"
 import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
@@ -106,6 +107,9 @@ export interface PersonaAgentDeps {
   userPreferencesService: UserPreferencesService
   /** Resolves per-component AI config (model, temperature, prompt) — used by the tool guardian. */
   configResolver: ConfigResolver
+  /** Picks the tool guardian's path: pinned workspaces never reach the decision model. */
+  aiResidency: AIResidencyPolicy
+  decisionsAvailability: DecisionsAvailability
   workspaceAgent: WorkspaceAgent
   generalResearcher: GeneralResearcher
   searchService: SearchService
@@ -1512,7 +1516,12 @@ export class PersonaAgent {
           // AgentRuntime refuses to start if a guarded tool arrives without
           // one, which is the check that actually holds.
           toolGuardian: new ToolGuardianService(
-            { ai, configResolver: this.deps.configResolver },
+            {
+              ai,
+              configResolver: this.deps.configResolver,
+              residency: this.deps.aiResidency,
+              availability: this.deps.decisionsAvailability,
+            },
             {
               workspaceId,
               streamId: session.streamId,

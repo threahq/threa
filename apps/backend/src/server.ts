@@ -1115,6 +1115,8 @@ export async function startServer(): Promise<ServerInstance> {
 
   const personaAgent = new PersonaAgent({
     configResolver,
+    aiResidency,
+    decisionsAvailability,
     pool,
     ai,
     traceEmitter,

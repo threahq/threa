@@ -154,6 +154,17 @@ function parseJson(raw: string): unknown {
  */
 export const DECISIONS_TIMEOUT_MS = 20_000
 
+/** A non-2xx from the decisions endpoint; the status says whether the endpoint or the request is at fault. */
+export class DecisionsRequestError extends Error {
+  constructor(
+    readonly status: number,
+    body: string
+  ) {
+    super(`Decisions request failed (${status}): ${body.slice(0, 500)}`)
+    this.name = "DecisionsRequestError"
+  }
+}
+
 /** Dispatches one decisions request. Throws on a non-2xx, a timeout, or an unreadable body. */
 export async function requestDecisions(params: {
   apiKey: string
@@ -173,7 +184,7 @@ export async function requestDecisions(params: {
 
   const raw = await response.text()
   if (!response.ok) {
-    throw new Error(`Decisions request failed (${response.status}): ${raw.slice(0, 500)}`)
+    throw new DecisionsRequestError(response.status, raw)
   }
 
   const parsed = decisionsResponseSchema.safeParse(parseJson(raw))
