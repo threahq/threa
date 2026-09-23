@@ -23,8 +23,8 @@ const MAX_EMPTY_FINAL_DECISION_ATTEMPTS = 3
 
 const FINAL_ITERATION_PROMPT =
   `[Last step]\n\n` +
-  `No more tool calls are available this turn. Give your final response now from what you already have, ` +
-  `and say plainly what you could not find or check.`
+  `No more lookups are available this turn. End the turn now with the tool that ends it, answering from what ` +
+  `you already have, and say plainly what you could not find or check.`
 
 // Shared by all three mid-turn reconsideration prompts so the guidance can't
 // drift between the text-draft, pending-send, and keep-response paths.
