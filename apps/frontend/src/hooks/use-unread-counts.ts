@@ -209,9 +209,9 @@ export function useUnreadCounts(workspaceId: string) {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
   const workspaceService = useWorkspaceService()
-  const preferencesCtx = usePreferencesOptional()
-  const inboxClearModeRef = useRef(preferencesCtx?.preferences?.inboxClearMode ?? "interaction")
-  inboxClearModeRef.current = preferencesCtx?.preferences?.inboxClearMode ?? "interaction"
+  const inboxClearMode = usePreferencesOptional()?.preferences?.inboxClearMode ?? "interaction"
+  const inboxClearModeRef = useRef(inboxClearMode)
+  inboxClearModeRef.current = inboxClearMode
 
   // Read from IDB via useLiveQuery — reactive and offline-capable.
   // Use refs so callback identity stays stable; the sidebar memos that
@@ -232,7 +232,9 @@ export function useUnreadCounts(workspaceId: string) {
   mutedStreamIdsRef.current = unreadState?.mutedStreamIds ? new Set(unreadState.mutedStreamIds) : EMPTY_READ_SET
 
   const inboxHeldStreamIdsRef = useRef<ReadonlySet<string>>(EMPTY_READ_SET)
-  inboxHeldStreamIdsRef.current = unreadState?.inboxHeldStreamIds ? new Set(unreadState.inboxHeldStreamIds) : EMPTY_READ_SET
+  inboxHeldStreamIdsRef.current = unreadState?.inboxHeldStreamIds
+    ? new Set(unreadState.inboxHeldStreamIds)
+    : EMPTY_READ_SET
 
   const isInboxHeld = useCallback((streamId: string): boolean => inboxHeldStreamIdsRef.current.has(streamId), [])
 
@@ -436,7 +438,14 @@ export function useUnreadCounts(workspaceId: string) {
       return { updatedStreamIds, frontiers, startedAt }
     },
     onSuccess: async ({ updatedStreamIds, frontiers, startedAt }) => {
-      await applyReadAdvance(queryClient, workspaceId, updatedStreamIds, frontiers, startedAt, markAllReadActivityFilter)
+      await applyReadAdvance(
+        queryClient,
+        workspaceId,
+        updatedStreamIds,
+        frontiers,
+        startedAt,
+        markAllReadActivityFilter
+      )
     },
   })
 
