@@ -111,9 +111,10 @@ export function createWebSearchEngines(keys: WebSearchEngineKeys): WebSearchEngi
 }
 
 // LinkedIn answers one profile at se.linkedin.com for Google and www.linkedin.com
-// for Exa, so a leading www. or two-letter label is dropped before comparing.
+// for Exa, so a leading www. or two-letter label is dropped before comparing. The
+// two-letter label only goes when a path follows: ai.google.dev is not google.dev.
 function sameAddress(url: string): string {
-  return url.replace(/^https?:\/\/((www|[a-z]{2})\.(?=[^/]+\.[^/]+))?/, "").replace(/[/?#]+$/, "")
+  return url.replace(/^https?:\/\/(www\.|[a-z]{2}\.(?=[^/]+\.[^/]+\/[^?#]))?/, "").replace(/[/?#]+$/, "")
 }
 
 /**
@@ -128,17 +129,18 @@ export function combineWebPages(all: WebPage[]): WebPage[] {
       pages.push(page)
     }
   }
-  for (const [index, page] of pages.entries()) {
-    if (page.seen !== "stored") continue
-    const listedAt = pages.findIndex(
-      (other) => other.seen === "listed" && sameAddress(other.url) === sameAddress(page.url)
-    )
-    if (listedAt < 0) continue
-    pages[index] = { ...page, title: pages[listedAt]!.title, seen: "both" }
-    pages.splice(listedAt, 1)
-  }
+  const listed = new Map(pages.filter((page) => page.seen === "listed").map((page) => [sameAddress(page.url), page]))
+  const merged = new Set<string>()
+  const combined = pages.map((page): WebPage => {
+    const twin = page.seen === "stored" ? listed.get(sameAddress(page.url)) : undefined
+    if (!twin) return page
+    merged.add(sameAddress(page.url))
+    return { ...page, title: twin.title, seen: "both" }
+  })
   const rank: Record<WebPageSeen, number> = { listed: 0, both: 1, stored: 2 }
-  return pages.sort((a, b) => rank[a.seen] - rank[b.seen])
+  return combined
+    .filter((page) => !(page.seen === "listed" && merged.has(sameAddress(page.url))))
+    .sort((a, b) => rank[a.seen] - rank[b.seen])
 }
 
 /** How old a result's text may be, stated so the model can't read past it. */

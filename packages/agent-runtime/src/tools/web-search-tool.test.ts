@@ -222,6 +222,37 @@ describe("web-search-tool", () => {
     ])
   })
 
+  it("merges a listing into its stored copy whichever engine answers first, and keeps sibling hosts apart", async () => {
+    globalThis.fetch = mock((url: string) => {
+      const body = url.includes("exa.ai")
+        ? {
+            results: [
+              { url: "https://www.linkedin.com/in/someone", title: "Old role", text: "Staff Engineer" },
+              { url: "https://google.dev", title: "Google for Developers", text: "Dev home" },
+            ],
+          }
+        : {
+            organic: [
+              { link: "https://ai.google.dev", title: "Gemini API", snippet: "Gemini" },
+              { link: "https://se.linkedin.com/in/someone", title: "New role", snippet: "Founding Engineer" },
+            ],
+          }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response)
+    }) as unknown as typeof fetch
+
+    const tool = createWebSearchTool({
+      engines: [createSerperEngine("serper-key"), createExaEngine("exa-key")],
+      currentTime: "2026-09-23T10:00:00.000Z",
+    })
+    const parsed = JSON.parse((await tool.config.execute({ query: "who" }, toolOpts)).output)
+
+    expect(parsed.results.map((result: { title: string; url: string }) => [result.title, result.url])).toEqual([
+      ["Gemini API", "https://ai.google.dev"],
+      ["New role", "https://www.linkedin.com/in/someone"],
+      ["Google for Developers", "https://google.dev"],
+    ])
+  })
+
   it("answers from the engines that worked when one fails", async () => {
     globalThis.fetch = mock((url: string) =>
       url.includes("exa.ai")
