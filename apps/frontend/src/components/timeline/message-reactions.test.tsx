@@ -184,6 +184,17 @@ describe("MessageReactions motion", () => {
     expect(container.innerHTML).toBe("")
   })
 
+  it("should drop the collapsed row when its timer fires a fraction early", () => {
+    // Browsers truncate a fractional delay to whole milliseconds.
+    const setTimeout = window.setTimeout
+    vi.spyOn(window, "setTimeout").mockImplementation(((fn: () => void, delay = 0) =>
+      setTimeout(fn, Math.max(0, delay - 0.5))) as typeof window.setTimeout)
+    const { container, update } = mount({ ":tada:": ["user_a"] })
+    update({})
+    act(() => vi.advanceTimersByTime(300))
+    expect(container.innerHTML).toBe("")
+  })
+
   it("should grow a pill back in when it is re-added mid-shrink", () => {
     const { container, update } = mount({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
     update({ ":tada:": ["user_a"] })

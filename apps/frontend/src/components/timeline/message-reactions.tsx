@@ -108,17 +108,19 @@ function useReactionMotion(visible: readonly Reaction[]) {
     for (const [shortcode, t] of motion.pillAt) if (at - t >= GROW_MS) motion.pillAt.delete(shortcode)
   })
 
-  // Leaving pills stay rendered until their shrink ends, then one re-render drops them.
+  // Leaving pills stay rendered until the last shrink ends, then one re-render
+  // drops them all. A later leave moves `leavingUntil` and re-arms the timer, so
+  // everything still leaving when it fires is done; re-checking the clock instead
+  // strands them, since browsers truncate the delay and fire a fraction early.
   const leavingUntil = Math.max(motion.rowLeftAt ?? -Infinity, ...motion.pillLeftAt.values()) + SHRINK_MS
   useEffect(() => {
     if (!Number.isFinite(leavingUntil)) return
     const timer = window.setTimeout(() => {
-      const at = performance.now()
-      if (motion.rowLeftAt !== undefined && at - motion.rowLeftAt >= SHRINK_MS) {
+      if (motion.rowLeftAt !== undefined) {
         motion.rowLeftAt = undefined
         motion.shown = []
       }
-      for (const [shortcode, t] of motion.pillLeftAt) if (at - t >= SHRINK_MS) motion.pillLeftAt.delete(shortcode)
+      motion.pillLeftAt.clear()
       expire()
     }, leavingUntil - performance.now())
     return () => window.clearTimeout(timer)
