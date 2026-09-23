@@ -181,7 +181,18 @@ test.describe("Inbox sidebar section", () => {
 
     // "E" with nothing hovered falls back to the open stream, since it's the
     // one held in the Inbox (`resolveClearInboxTargetStreamId`).
+    // Opening the stream can focus the composer late, where "e" is typed
+    // text, not a shortcut. Blur until focus stays off editable targets.
     await page.mouse.move(0, 0)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const settled = document.activeElement === document.body
+          if (!settled) (document.activeElement as HTMLElement | null)?.blur()
+          return settled
+        })
+      )
+      .toBe(true)
     await page.keyboard.press("e")
 
     await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
