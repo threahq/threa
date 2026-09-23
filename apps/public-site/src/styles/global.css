@@ -1945,6 +1945,14 @@ body {
 .nav-row .nav-links {
   margin-left: auto;
 }
+/* Underline, not weight: marking the current page must not move its
+   neighbours. */
+.nav-links a[aria-current="page"] {
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold));
+  text-decoration-thickness: 2px;
+  text-underline-offset: 7px;
+}
 .nav-row .nav-login {
   margin-left: 22px;
 }
