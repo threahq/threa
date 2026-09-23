@@ -42,8 +42,8 @@ export function untrustedMediaNote(toolName: string): string {
 
 /**
  * Runs `screen` over the output of every tool that reads the open web, where
- * anyone can write text aimed at the model. Workspace and integration tools read
- * content the workspace's own members wrote and are left as they are.
+ * anyone can write text aimed at the model. Tools outside the `web` category
+ * read the workspace's own content and are left as they are.
  */
 export function screenWebToolOutput(tools: AgentTool[], screen: ToolOutputScreen): AgentTool[] {
   return tools.map((tool) => {
