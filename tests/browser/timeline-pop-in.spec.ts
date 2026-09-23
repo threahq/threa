@@ -99,7 +99,9 @@ async function openSeededChannel(page: Page) {
 }
 
 async function waitForSettledTail(page: Page) {
-  await expect(page.getByRole("main").getByText("seed msg-040")).toBeVisible({ timeout: 30000 })
+  await expect(page.locator("main [data-suppress-pull-refresh]").getByText("seed msg-040")).toBeVisible({
+    timeout: 30000,
+  })
   await page.waitForTimeout(2000)
 }
 
