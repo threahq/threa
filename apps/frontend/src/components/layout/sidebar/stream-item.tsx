@@ -563,7 +563,10 @@ export function StreamItem({
     // whenever boardMode is set), so this never collides with boardActions.
     const withClear =
       isInboxRow && onClearFromInbox
-        ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox } satisfies SidebarActionItem, ...base]
+        ? [
+            { id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox } satisfies SidebarActionItem,
+            ...base,
+          ]
         : base
     if (boardActions.length === 0) return withClear
     return [...boardActions, ...withClear.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a))]
@@ -706,9 +709,7 @@ export function StreamItem({
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            <div
-              className={cn("flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2", isHeld && "opacity-60")}
-            >
+            <div className={cn("flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2", isHeld && "opacity-60")}>
               <StreamItemAvatar
                 icon={avatar.icon}
                 className={avatar.className}
