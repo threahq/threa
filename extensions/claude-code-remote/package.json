@@ -1,16 +1,37 @@
 {
   "name": "@threahq/claude-code-remote",
   "version": "0.1.0",
-  "private": true,
-  "type": "module",
   "description": "A Claude Code channel that bridges a running Claude Code session to a Threa scratchpad, so you can drive Claude Code remotely from Threa the same way you drive Pi.",
+  "keywords": [
+    "threa",
+    "claude-code",
+    "channel",
+    "mcp",
+    "agent"
+  ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/claude-code-remote"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "threa-channel": "./src/index.ts"
   },
   "scripts": {
     "start": "bun run ./src/index.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun ../scripts/build-package.ts",
+    "pack": "bun run build && cd dist && npm pack --pack-destination .."
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

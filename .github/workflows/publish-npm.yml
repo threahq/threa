@@ -5,8 +5,9 @@
 # `id-token: write` lets npm mint the short-lived credential and attach
 # provenance. Run it from the Actions tab with the package name and the version
 # already committed in its package.json. Order for a new version set:
-# bot-runtime-client, then remote-session and harness-client, then threa-bot and
-# hermes-remote (each depends on the ones before it by caret range).
+# bot-runtime-client, then remote-session and harness-client, then threa-bot,
+# hermes-remote, claude-code-remote and pi-remote (each depends on the ones
+# before it by caret range).
 name: Publish npm package
 
 on:
@@ -22,6 +23,8 @@ on:
           - harness-client
           - threa-bot
           - hermes-remote
+          - claude-code-remote
+          - pi-remote
       dry_run:
         description: Build and pack, but do not publish
         required: false
@@ -62,10 +65,15 @@ jobs:
           bun install --cwd extensions/harness-client
           bun install --cwd extensions/threa-bot
           bun install --cwd extensions/hermes-remote
+          bun install --cwd extensions/claude-code-remote
+          bun install --cwd extensions/pi-remote
 
       - name: Test
         run: |
-          bun run --cwd extensions/${{ inputs.package }} typecheck
+          # pi-remote has no typecheck yet (#1153).
+          if [ "$(node -p "require('./extensions/${{ inputs.package }}/package.json').scripts.typecheck ?? ''")" != "" ]; then
+            bun run --cwd extensions/${{ inputs.package }} typecheck
+          fi
           bun run --cwd extensions/${{ inputs.package }} test
 
       - name: Build and pack

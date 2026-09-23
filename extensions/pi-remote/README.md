@@ -38,36 +38,18 @@ fetched as ciphertext and decrypted locally. Deleting the BIK file orphans the
 owner's key wraps; the owner must re-invite the bot after it registers a fresh
 key.
 
-## Install locally
-
-From the monorepo root:
+## Install
 
 ```bash
-bun run extensions/pi-remote/install-local.ts
+pi install npm:@threahq/pi-remote
 ```
 
-Then run `/reload` in Pi. Pass a different target dir as the first argument if needed.
+Then run `/reload` in Pi, or start a new session, and `/remote-control configure` to paste the setup JSON. `pi update --extensions` picks up new releases.
+
+Coming from the old install script? Remove its copy first so only one copy loads: `rm -rf ~/.pi/agent/extensions/threa-remote`.
+
+Working on the extension itself? Run `bun install` in `extensions/pi-remote`, then `pi install /ABSOLUTE/PATH/TO/threa/extensions/pi-remote`. Pi loads `src/threa-remote.ts` straight from the checkout.
 
 For harness-managed sessions, `/kick` in the linked scratchpad asks harnessd to send Enter to the session's recorded tmux pane, useful when Pi is waiting on a blocking prompt. `/reconnect [--force]` is offered only to a live, linked Pi running in tmux; it acknowledges first, then asks harnessd to replace the pane process and resume the same Pi session. `--force` may bypass only local Pi activity; an owned pending Threa invocation always fails closed and must be cleared with `/stop` first. The command cannot recover a disconnected runtime. Direct `harnessd reconnect` for Pi has no activity signal, so `--force` is currently inert there; this intentionally does not add IPC, status reporting, or another supervisor.
 
 `/key <name>` sends one key to the exact live linked Pi pane. Allowed names are `escape`, `enter`, `up`, `down`, `left`, `right`, `tab`, `backspace`, `ctrl-c`, `ctrl-d`, and `ctrl-u`. Names are case-sensitive; text, aliases, sequences, and repeats are rejected.
-
-The script rebuilds `~/.pi/agent/extensions/threa-remote` from scratch each time, so re-running it is the supported way to update.
-
-### Why a script and not `cp -R` + `bun install`
-
-The extension depends on sibling packages via `file:../…` links that resolve inside the
-monorepo only; `@threahq/harness-client` is private (never on npm), so a standalone copy
-cannot install it.
-The script vendors the siblings' source into `src/vendor/`,
-repoints the imports, and drops the dependencies. Their only runtime dependency,
-`socket.io-client`, stays a direct dependency because the `/bot` WebSocket transport
-requires it. Pi discovers the extension through `package.json`:
-
-```json
-{
-  "pi": {
-    "extensions": ["./src/threa-remote.ts"]
-  }
-}
-```

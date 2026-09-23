@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@threahq/pi-remote-extension",
+      "name": "@threahq/pi-remote",
       "dependencies": {
         "@threahq/harness-client": "file:../harness-client",
         "@threahq/bot-runtime-client": "file:../bot-runtime-client",

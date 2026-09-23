@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process"
+import { setTimeout as sleep } from "node:timers/promises"
 import { promisify } from "node:util"
 import {
   closeSync,
@@ -5180,7 +5181,7 @@ async function runContributorTerminalWrite(owner: ContributorTerminalWrite): Pro
     batchAttempt++
   ) {
     if (!ownsCurrentWrite()) return false
-    if (batchAttempt > 0) await Bun.sleep(CONTRIBUTOR_FAIL_RETRY_DELAYS_MS[batchAttempt - 1]!)
+    if (batchAttempt > 0) await sleep(CONTRIBUTOR_FAIL_RETRY_DELAYS_MS[batchAttempt - 1]!)
     if (!ownsCurrentWrite()) return false
     owner.failAttempts++
     try {
