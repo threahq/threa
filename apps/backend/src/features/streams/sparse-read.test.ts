@@ -31,7 +31,7 @@ describe("applySparseRead", () => {
     } as never)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
 
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
@@ -48,7 +48,7 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue(null)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
 
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
@@ -65,7 +65,7 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue(null)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
 
     const snapshot = await applySparseRead(db, {
       workspaceId: "ws_1",
@@ -98,7 +98,7 @@ describe("applySparseRead", () => {
     } as never)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
     const pruneAtOrBelow = spyOn(SparseReadRepository, "pruneAtOrBelow").mockResolvedValue(undefined)
 
     const snapshot = await applySparseRead(db, {
@@ -124,7 +124,7 @@ describe("applySparseRead", () => {
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(0)
     spyOn(SparseReadRepository, "listOverlayIds").mockResolvedValue(["msg_3"])
-    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false })
+    const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
 
     const snapshot = await applySparseRead(db, {
       workspaceId: "ws_1",

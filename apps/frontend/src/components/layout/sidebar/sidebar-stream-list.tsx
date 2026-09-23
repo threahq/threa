@@ -185,8 +185,8 @@ interface SidebarStreamListProps {
   boardMode?: SidebarBoardMode | null
   /** Clear one or more streams from the Inbox (row clear, header clear-read/clear-all). */
   onClearInbox: (streamIds: string[]) => void
-  /** Track which Inbox row is pointer-hovered, for the `E` clear shortcut. `null` when none. */
-  onInboxRowHoverChange?: (streamId: string | null) => void
+  /** Track which Inbox row is pointer-hovered, for the `E` clear shortcut. */
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
 }
 
 export function SidebarStreamList({

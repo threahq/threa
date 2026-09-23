@@ -26,7 +26,7 @@ export function resolveClearInboxTargetStreamId(params: {
   isInInbox: (streamId: string) => boolean
 }): string | null {
   const { hoveredStreamId, activeStreamId, isInInbox } = params
-  if (hoveredStreamId) return hoveredStreamId
+  if (hoveredStreamId && isInInbox(hoveredStreamId)) return hoveredStreamId
   if (activeStreamId && isInInbox(activeStreamId)) return activeStreamId
   return null
 }

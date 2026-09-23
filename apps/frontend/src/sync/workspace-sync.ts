@@ -217,6 +217,9 @@ interface StreamReadPayload {
    *  Absent = not carried (rollout) → leave the client set unchanged; `[]` =
    *  overlay now empty. */
   readMessageIds?: string[]
+  /** Post-write inbox_held, server-authoritative. Absent (older backend) →
+   *  leave held membership unchanged. */
+  inboxHeld?: boolean
 }
 
 // The absolute post-write read-state snapshot for one stream from a
@@ -1119,7 +1122,13 @@ export function registerWorkspaceSocketHandlers(
     const hadActivity = (current?.activityCounts[payload.streamId] ?? 0) > 0
 
     commitCounter((state) =>
-      applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal, payload.readMessageIds)
+      applyStreamReadOrdinal(
+        state,
+        payload.streamId,
+        payload.lastReadOrdinal,
+        payload.readMessageIds,
+        payload.inboxHeld
+      )
     )
 
     // Read frontier (sole source): the payload carries the server's post-write

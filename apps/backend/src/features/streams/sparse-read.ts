@@ -105,10 +105,10 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     // store (locked by the seed above). A compaction target is always a real
     // event, so the watermark is non-null here.
     if (watermarkEventId) {
-      const { becameHeld } = await ReadStateRepository.advance(db, streamId, memberId, watermarkEventId, {
+      const { held } = await ReadStateRepository.advance(db, streamId, memberId, watermarkEventId, {
         holdInInbox: true,
       })
-      if (becameHeld) {
+      if (held) {
         await OutboxRepository.insert(db, "stream:inbox_updated", {
           workspaceId,
           authorId: memberId,

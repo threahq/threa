@@ -76,12 +76,11 @@ const mockListOverlayIds = spyOn(SparseReadRepository, "listOverlayIds").mockRes
 // the fake `{}` client so unit tests never touch a real DB.
 const mockReadStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({
   state: null,
-  becameHeld: false,
+  held: false,
 })
 const mockReadStateSet = spyOn(ReadStateRepository, "set").mockResolvedValue(null)
 const mockReadStateBatchAdvance = spyOn(ReadStateRepository, "batchAdvance").mockResolvedValue({
   states: [],
-  becameHeldStreamIds: [],
 })
 const mockReadStateSetForUsers = spyOn(ReadStateRepository, "setForUsers").mockResolvedValue(undefined)
 const mockSlugExists = spyOn(StreamRepository, "slugExistsInWorkspace")
@@ -1866,6 +1865,7 @@ describe("StreamService.markAsRead", () => {
       lastReadSequence: "42",
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: false,
     })
     // The advance is the sole watermark write — monotonic (reads never regress it).
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
@@ -1889,7 +1889,7 @@ describe("StreamService.markAsRead", () => {
         userId: "usr_1",
         lastReadEventId: "evt_higher",
       },
-      becameHeld: false,
+      held: false,
     } as never)
 
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
@@ -1902,6 +1902,7 @@ describe("StreamService.markAsRead", () => {
       lastReadSequence: "90",
       lastReadOrdinal: 12,
       readMessageIds: [],
+      inboxHeld: false,
     })
     expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 90n)
   })
@@ -1915,7 +1916,7 @@ describe("StreamService.markAsRead", () => {
         userId: "usr_1",
         lastReadEventId: "evt_9",
       },
-      becameHeld: false,
+      held: false,
     } as never)
 
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
@@ -1930,6 +1931,7 @@ describe("StreamService.markAsRead", () => {
       lastReadSequence: "42",
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: false,
     })
     expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
   })
@@ -1950,6 +1952,7 @@ describe("StreamService.markAsRead", () => {
       readState: null,
       lastReadOrdinal: null,
       readMessageIds: null,
+      inboxHeld: null,
     })
   })
 
@@ -1967,6 +1970,7 @@ describe("StreamService.markAsRead", () => {
       readState: { lastReadEventId: "evt_9", lastReadSequence: "42", lastReadAt: null },
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: null,
     })
     expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
@@ -1979,6 +1983,7 @@ describe("StreamService.markAsRead", () => {
       lastReadSequence: "42",
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: false,
     })
   })
 })
@@ -2101,7 +2106,7 @@ describe("StreamService.markAllAsRead", () => {
     mockGetSequences.mockReset()
     mockGetSequences.mockResolvedValue(new Map())
     mockReadStateBatchAdvance.mockReset()
-    mockReadStateBatchAdvance.mockResolvedValue({ states: [], becameHeldStreamIds: [] })
+    mockReadStateBatchAdvance.mockResolvedValue({ states: [] })
     mockInsertOutbox.mockReset()
     mockInsertOutbox.mockResolvedValue({} as never)
   })
@@ -2130,7 +2135,6 @@ describe("StreamService.markAllAsRead", () => {
         { streamId: "stream_1", lastReadEventId: "evt_a", lastReadAt: READ_ALL_AT },
         { streamId: "stream_2", lastReadEventId: "evt_b", lastReadAt: READ_ALL_AT },
       ],
-      becameHeldStreamIds: [],
     } as never)
     mockGetSequences.mockResolvedValue(
       new Map([
@@ -2184,8 +2188,7 @@ describe("StreamService.markAllAsRead", () => {
       new Map([
         ["stream_1", "evt_a"],
         ["stream_2", "evt_b"],
-      ]),
-      { holdInInbox: true }
+      ])
     )
   })
 
@@ -2208,7 +2211,6 @@ describe("StreamService.markAllAsRead", () => {
     ] as never)
     mockReadStateBatchAdvance.mockResolvedValue({
       states: [{ streamId: "stream_2", lastReadEventId: "evt_b", lastReadAt: READ_ALL_AT }],
-      becameHeldStreamIds: [],
     } as never)
     mockGetSequences.mockResolvedValue(new Map([["evt_b", "50"]]))
     mockCountMessages.mockResolvedValue(new Map([["stream_2", 3]]))
@@ -2225,9 +2227,7 @@ describe("StreamService.markAllAsRead", () => {
         lastReadAt: READ_ALL_AT.toISOString(),
       },
     ])
-    expect(mockReadStateBatchAdvance).toHaveBeenCalledWith({}, "usr_1", new Map([["stream_2", "evt_b"]]), {
-      holdInInbox: true,
-    })
+    expect(mockReadStateBatchAdvance).toHaveBeenCalledWith({}, "usr_1", new Map([["stream_2", "evt_b"]]))
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
       "stream:read_all",
@@ -2247,7 +2247,6 @@ describe("StreamService.markAllAsRead", () => {
     mockReadStateGetBatch.mockResolvedValue([{ streamId: "stream_1", lastReadEventId: null }] as never)
     mockReadStateBatchAdvance.mockResolvedValue({
       states: [{ streamId: "stream_1", lastReadEventId: "evt_higher", lastReadAt: READ_ALL_AT }],
-      becameHeldStreamIds: [],
     } as never)
     mockGetSequences.mockResolvedValue(new Map([["evt_higher", "900"]]))
     mockCountMessages.mockResolvedValue(new Map([["stream_1", 12]]))

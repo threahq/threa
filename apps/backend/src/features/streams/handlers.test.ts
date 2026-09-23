@@ -607,6 +607,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
         readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
         lastReadOrdinal: 7,
         readMessageIds: [],
+        inboxHeld: null,
       })
     )
     const markStreamActivityAsRead = mock(() => Promise.resolve())
@@ -625,6 +626,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: null,
     })
     expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", { eventId: "evt_1" })
   })
@@ -710,6 +712,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
         readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
         lastReadOrdinal: 7,
         readMessageIds: [],
+        inboxHeld: false,
       })
     )
     const markStreamActivityAsRead = mock(() => Promise.resolve())
@@ -726,6 +729,7 @@ describe("createStreamHandlers.markAsRead — access without membership", () => 
       readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: false,
     })
     expect(markAsRead).toHaveBeenCalledWith("ws_1", "stream_thread", "usr_viewer", { eventId: "evt_1" })
   })

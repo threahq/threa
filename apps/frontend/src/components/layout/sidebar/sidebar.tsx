@@ -668,8 +668,15 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             quickLinksSlot={quickLinksSlot}
             boardMode={boardMode}
             onClearInbox={clearInbox}
-            onInboxRowHoverChange={(streamId) => {
-              hoveredInboxStreamIdRef.current = streamId
+            onInboxRowHoverChange={(streamId, hovering) => {
+              if (hovering) {
+                hoveredInboxStreamIdRef.current = streamId
+              } else if (hoveredInboxStreamIdRef.current === streamId) {
+                // Only clear when this row still owns the ref — a later row's
+                // enter must not be clobbered by a stale unmount/leave from a
+                // row that has since scrolled away or been removed.
+                hoveredInboxStreamIdRef.current = null
+              }
             }}
           />
         }

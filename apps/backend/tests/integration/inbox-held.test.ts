@@ -86,11 +86,11 @@ describe("inbox hold", () => {
       await sendMessages(wid, sid, author, 1)
       const [evt] = await StreamEventRepository.list(pool, sid)
 
-      const { becameHeld, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
+      const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
         holdInInbox: true,
       })
 
-      expect(becameHeld).toBe(true)
+      expect(held).toBe(true)
       expect(state?.inboxHeld).toBe(true)
     })
 
@@ -102,11 +102,11 @@ describe("inbox hold", () => {
       await sendMessages(wid, sid, reader, 1)
       const [evt] = await StreamEventRepository.list(pool, sid)
 
-      const { becameHeld, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
+      const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
         holdInInbox: true,
       })
 
-      expect(becameHeld).toBe(false)
+      expect(held).toBe(false)
       expect(state?.inboxHeld).toBe(false)
     })
 
@@ -119,15 +119,18 @@ describe("inbox hold", () => {
       await sendMessages(wid, sid, author, 1)
       const [evt] = await StreamEventRepository.list(pool, sid)
 
-      const { becameHeld, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
+      const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
         holdInInbox: false,
       })
 
-      expect(becameHeld).toBe(false)
+      expect(held).toBe(false)
       expect(state?.inboxHeld).toBe(false)
     })
 
-    test("reports becameHeld false on a later advance that finds the stream already held", async () => {
+    test("held is true again on a later advance that independently crosses another user's message, even though the row was already held", async () => {
+      // `held` is this call's own crossing rule, never a diff against the
+      // row's prior `inbox_held` — it re-reports true on every qualifying
+      // advance, not just the first one that flips the row.
       const wid = workspaceId()
       const sid = streamId()
       const author = userId()
@@ -137,42 +140,78 @@ describe("inbox hold", () => {
       const [evt1, evt2] = await StreamEventRepository.list(pool, sid)
 
       const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
-      expect(first.becameHeld).toBe(true)
+      expect(first.held).toBe(true)
 
       const second = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
-      expect(second.becameHeld).toBe(false)
+      expect(second.held).toBe(true)
+      expect(second.state?.inboxHeld).toBe(true)
+    })
+
+    test("held is false on a self-authored advance even when the row is already held, and the existing hold is not cleared", async () => {
+      // A call whose own crossing rule doesn't hold never clears an existing
+      // hold — only `clearInboxHeld` unpins it.
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      await StreamMemberRepository.insert(pool, sid, reader)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
+      expect(first.held).toBe(true)
+
+      // The reader's own message doesn't cross anyone else's — this call's
+      // hold rule is false — but the row's existing hold must survive.
+      await sendMessages(wid, sid, reader, 1)
+      const [, evt2] = await StreamEventRepository.list(pool, sid)
+
+      const second = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
+      expect(second.held).toBe(false)
       expect(second.state?.inboxHeld).toBe(true)
     })
   })
 
   describe("ReadStateRepository.batchAdvance", () => {
-    test("reports becameHeldStreamIds only for rows that crossed another user's message", async () => {
+    test("never touches inbox_held — a held stream stays held and an unheld stream stays unheld", async () => {
       const wid = workspaceId()
       const author = userId()
       const reader = userId()
-      const streamOther = streamId()
-      const streamSelf = streamId()
-      await seedChannel(wid, streamOther, author)
-      await seedChannel(wid, streamSelf, reader)
-      await sendMessages(wid, streamOther, author, 1)
-      await sendMessages(wid, streamSelf, reader, 1)
-      const [evtOther] = await StreamEventRepository.list(pool, streamOther)
-      const [evtSelf] = await StreamEventRepository.list(pool, streamSelf)
+      const heldStream = streamId()
+      const unheldStream = streamId()
+      await seedChannel(wid, heldStream, author)
+      await seedChannel(wid, unheldStream, author)
+      await sendMessages(wid, heldStream, author, 1)
+      await sendMessages(wid, unheldStream, author, 2)
+      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
+      const unheldEvents = await StreamEventRepository.list(pool, unheldStream)
 
-      const { states, becameHeldStreamIds } = await ReadStateRepository.batchAdvance(
+      await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, unheldStream, reader, unheldEvents[0].id, { holdInInbox: false })
+
+      const { states } = await ReadStateRepository.batchAdvance(
         pool,
         reader,
-        new Map([
-          [streamOther, evtOther.id],
-          [streamSelf, evtSelf.id],
-        ]),
-        { holdInInbox: true }
+        new Map([[unheldStream, unheldEvents[1].id]])
       )
 
-      expect(becameHeldStreamIds).toEqual([streamOther])
-      const byStream = new Map(states.map((s) => [s.streamId, s]))
-      expect(byStream.get(streamOther)?.inboxHeld).toBe(true)
-      expect(byStream.get(streamSelf)?.inboxHeld).toBe(false)
+      expect(states).toEqual([expect.objectContaining({ streamId: unheldStream, inboxHeld: false })])
+      // Untouched by the batch call — still held from the earlier advance.
+      expect((await ReadStateRepository.get(pool, heldStream, reader))?.inboxHeld).toBe(true)
+    })
+
+    test("never holds a brand-new row even when the advance crosses another user's message", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+
+      const { states } = await ReadStateRepository.batchAdvance(pool, reader, new Map([[sid, evt.id]]))
+
+      expect(states).toEqual([expect.objectContaining({ streamId: sid, inboxHeld: false })])
     })
   })
 
@@ -438,8 +477,8 @@ describe("inbox hold", () => {
     })
   })
 
-  describe("markAllAsRead emits stream:inbox_updated when a stream becomes held", () => {
-    test("holding on mark-all: crossing another user's message sets inbox_held and emits the event", async () => {
+  describe("markAllAsRead never holds", () => {
+    test("catches a stream up to latest without setting inbox_held and without emitting stream:inbox_updated", async () => {
       const wid = workspaceId()
       const author = userId()
       const reader = userId()
@@ -451,15 +490,35 @@ describe("inbox hold", () => {
       const result = await streamService.markAllAsRead(wid, reader)
 
       expect(result.updatedStreamIds).toEqual([sid])
-      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(true)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([
-        {
-          workspaceId: wid,
-          authorId: reader,
-          streamIds: [sid],
-          held: true,
-        },
-      ])
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+    })
+
+    test("never re-holds a stream the user already cleared from the Inbox", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      await StreamMemberRepository.insert(pool, sid, reader)
+      await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+
+      // Hold, then clear — the row starts this call unheld with a real
+      // history of having been held once.
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
+      await ReadStateRepository.clearInboxHeld(pool, wid, reader, [sid])
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+
+      // A fresh message from someone else, then mark-all: batchAdvance must
+      // not flip the cleared row back to held.
+      await sendMessages(wid, sid, author, 1)
+
+      const result = await streamService.markAllAsRead(wid, reader)
+
+      expect(result.updatedStreamIds).toEqual([sid])
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated")).toEqual([])
     })
   })
 

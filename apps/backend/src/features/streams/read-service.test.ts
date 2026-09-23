@@ -29,6 +29,7 @@ describe("StreamReadService.markAsRead", () => {
       readState: { lastReadEventId: "evt_1", lastReadSequence: "42", lastReadAt: null },
       lastReadOrdinal: 7,
       readMessageIds: [],
+      inboxHeld: false,
     }
     const markAsReadInTransaction = mock(() => Promise.resolve(markResult))
     const markStreamActivityAsReadInTransaction = mock(() => Promise.resolve())

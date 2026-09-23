@@ -150,6 +150,48 @@ test.describe("Inbox sidebar section", () => {
     await expect(sectionByHeading(page, "Inbox").getByText("All caught up")).toBeVisible({ timeout: 10000 })
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
 
+    // The clear is server-authoritative (`stream_read_state.inbox_held`), not
+    // just an optimistic local unhold — a fresh bootstrap load must agree.
+    await page.reload()
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
+    await otherContext.close()
+  })
+
+  test("the E key clears the open stream from the Inbox, and it stays cleared after a reload", async ({
+    page,
+    browser,
+  }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-ekey")
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await expect(inboxRow).toBeVisible({ timeout: 10000 })
+
+    // Open it: auto-read holds it in the Inbox (dimmed) instead of dropping it.
+    await inboxRow.locator("a").click()
+    await expect(page).toHaveURL(new RegExp(`/s/${streamId}`))
+    await expect
+      .poll(() => serverUnreadCount(page, workspaceId, streamId), {
+        timeout: 15000,
+        message: "auto-read should clear the server unread count",
+      })
+      .toBe(0)
+    await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
+
+    // "E" with nothing hovered falls back to the open stream, since it's the
+    // one held in the Inbox (`resolveClearInboxTargetStreamId`).
+    await page.mouse.move(0, 0)
+    await page.keyboard.press("e")
+
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
+    // Same server-authoritative guarantee as the click-to-clear path above.
+    await page.reload()
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
     await otherContext.close()
   })
 

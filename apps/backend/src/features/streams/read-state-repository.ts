@@ -61,11 +61,13 @@ export const ReadStateRepository = {
    * least one `message_created` event authored by someone other than this user
    * — i.e. the read caught up on someone else's message, so the stream stays
    * pinned in the Inbox until explicitly cleared. Otherwise `inbox_held` is
-   * left as-is (never cleared here — only `clearInboxHeld` clears it). The
-   * `prior`/`should_hold` CTEs read the pre-statement snapshot (Postgres never
-   * lets a sibling or primary-query table read see a data-modifying CTE's own
-   * effect within the same statement), so `becameHeld` is computed race-safely
-   * in one round trip.
+   * left as-is (never cleared here — only `clearInboxHeld` clears it).
+   *
+   * `held` (the return flag) is `accepted && hold` — this call's own hold
+   * rule, never a diff against a "prior" snapshot, which is provably stale
+   * under concurrency (a clear can commit between the snapshot read and this
+   * row's lock, silently swallowing the re-hold). Re-emitting `held: true` on
+   * an already-held row is harmless.
    */
   async advance(
     db: Querier,
@@ -73,11 +75,11 @@ export const ReadStateRepository = {
     userId: string,
     eventId: string,
     opts: { holdInInbox: boolean }
-  ): Promise<{ state: StreamReadState | null; becameHeld: boolean }> {
-    const result = await db.query<StreamReadStateRow & { prior_inbox_held: boolean }>(
+  ): Promise<{ state: StreamReadState | null; held: boolean }> {
+    const result = await db.query<StreamReadStateRow & { hold: boolean }>(
       `
       WITH prior AS (
-        SELECT last_read_event_id, inbox_held
+        SELECT last_read_event_id
         FROM stream_read_state
         WHERE stream_id = $1 AND user_id = $2
       ),
@@ -97,8 +99,7 @@ export const ReadStateRepository = {
       ),
       upserted AS (
         INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at, inbox_held)
-        SELECT s.workspace_id, $1, $2, $3, NOW(), NOW(),
-          CASE WHEN (SELECT hold FROM should_hold) THEN true ELSE COALESCE((SELECT inbox_held FROM prior), false) END
+        SELECT s.workspace_id, $1, $2, $3, NOW(), NOW(), COALESCE((SELECT hold FROM should_hold), false)
         FROM streams s
         WHERE s.id = $1
         ON CONFLICT (stream_id, user_id) DO UPDATE
@@ -115,19 +116,19 @@ export const ReadStateRepository = {
           )
         RETURNING ${SELECT_FIELDS}
       )
-      SELECT upserted.*, COALESCE((SELECT inbox_held FROM prior), false) AS prior_inbox_held
+      SELECT upserted.*, COALESCE((SELECT hold FROM should_hold), false) AS hold
       FROM upserted
       `,
       [streamId, userId, eventId, opts.holdInInbox]
     )
     // The monotonic guard rejected a stale advance — RETURNING is empty, so
-    // read back the row as it stands (same tx). Nothing changed, so it can't
-    // have become held.
+    // read back the row as it stands (same tx). This call didn't write, so it
+    // can't have held anything.
     if (!result.rows[0]) {
-      return { state: await ReadStateRepository.get(db, streamId, userId), becameHeld: false }
+      return { state: await ReadStateRepository.get(db, streamId, userId), held: false }
     }
     const row = result.rows[0]
-    return { state: mapRowToReadState(row), becameHeld: !row.prior_inbox_held && row.inbox_held }
+    return { state: mapRowToReadState(row), held: row.hold }
   },
 
   /**
@@ -154,92 +155,60 @@ export const ReadStateRepository = {
   },
 
   /**
-   * Batch monotonic advance for one user across many streams (mark-all). Same
-   * per-row sequence rule as {@link advance}; streams whose new event doesn't
-   * out-sequence the current watermark are left untouched. `states` is the
-   * authoritative post-write row for EVERY attempted stream — including rows
-   * where the monotonic guard rejected the attempted lower/equal frontier (a
-   * concurrent read already advanced past it), which a bare RETURNING would
-   * omit. The re-read rides the caller's transaction, so the snapshot is taken
-   * at the same point as the upsert: one frontier per attempted valid stream,
-   * no gaps, no duplicates, empty map safe.
+   * Batch monotonic advance for one user across many streams (mark-all,
+   * clear-inbox catch-up). Same per-row sequence rule as {@link advance};
+   * streams whose new event doesn't out-sequence the current watermark are
+   * left untouched. `states` is the authoritative post-write row for EVERY
+   * attempted stream — including rows where the monotonic guard rejected the
+   * attempted lower/equal frontier (a concurrent read already advanced past
+   * it), which a bare RETURNING would omit. The re-read rides the caller's
+   * transaction, so the snapshot is taken at the same point as the upsert: one
+   * frontier per attempted valid stream, no gaps, no duplicates, empty map
+   * safe.
    *
-   * `opts.holdInInbox` applies the same per-row hold rule as {@link advance}.
-   * `becameHeldStreamIds` lists only the streams whose `inbox_held` flipped
-   * false→true on THIS call, sourced from the upsert's own RETURNING (never a
-   * re-query, which the pre-statement snapshot would answer stale).
+   * Never touches `inbox_held` (no caller of this batch path ever holds —
+   * mark-all and clear both catch a stream up without pinning it in the
+   * Inbox); a fresh row keeps the column's `false` default.
    */
   async batchAdvance(
     db: Querier,
     userId: string,
-    updates: Map<string, string>,
-    opts: { holdInInbox: boolean }
-  ): Promise<{ states: StreamReadState[]; becameHeldStreamIds: string[] }> {
-    if (updates.size === 0) return { states: [], becameHeldStreamIds: [] }
+    updates: Map<string, string>
+  ): Promise<{ states: StreamReadState[] }> {
+    if (updates.size === 0) return { states: [] }
 
     const streamIds = Array.from(updates.keys())
     const eventIds = Array.from(updates.values())
 
-    const becameHeld = await db.query<{ stream_id: string }>(
+    await db.query(
       `
       WITH input AS (
         SELECT unnest($1::text[]) AS stream_id, unnest($2::text[]) AS event_id
-      ),
-      prior AS (
-        SELECT rs.stream_id, rs.last_read_event_id, rs.inbox_held
-        FROM stream_read_state rs
-        JOIN input i ON i.stream_id = rs.stream_id
-        WHERE rs.user_id = $3
-      ),
-      should_hold AS (
-        SELECT i.stream_id,
-          $4::boolean AND EXISTS (
-            SELECT 1 FROM stream_events e
-            WHERE e.stream_id = i.stream_id
-              AND e.event_type = 'message_created'
-              AND e.actor_id IS DISTINCT FROM $3
-              AND e.sequence > COALESCE(
-                (SELECT cur_ev.sequence FROM stream_events cur_ev
-                   WHERE cur_ev.id = (SELECT p.last_read_event_id FROM prior p WHERE p.stream_id = i.stream_id)),
-                0
-              )
-              AND e.sequence <= (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = i.event_id)
-          ) AS hold
-        FROM input i
-      ),
-      upserted AS (
-        INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at, inbox_held)
-        SELECT s.workspace_id, i.stream_id, $3, i.event_id, NOW(), NOW(),
-          CASE WHEN (SELECT sh.hold FROM should_hold sh WHERE sh.stream_id = i.stream_id) THEN true
-               ELSE COALESCE((SELECT p.inbox_held FROM prior p WHERE p.stream_id = i.stream_id), false) END
-        FROM input i
-        JOIN streams s ON s.id = i.stream_id
-        ON CONFLICT (stream_id, user_id) DO UPDATE
-        SET last_read_event_id = EXCLUDED.last_read_event_id,
-            last_read_at = EXCLUDED.last_read_at,
-            updated_at = EXCLUDED.updated_at,
-            inbox_held = CASE WHEN EXCLUDED.inbox_held THEN true ELSE stream_read_state.inbox_held END
-        WHERE COALESCE(
-            (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = EXCLUDED.last_read_event_id),
-            0
-          ) > COALESCE(
-            (SELECT cur_ev.sequence FROM stream_events cur_ev WHERE cur_ev.id = stream_read_state.last_read_event_id),
-            0
-          )
-        RETURNING stream_id, inbox_held
       )
-      SELECT u.stream_id
-      FROM upserted u
-      LEFT JOIN prior p ON p.stream_id = u.stream_id
-      WHERE u.inbox_held AND COALESCE(p.inbox_held, false) = false
+      INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
+      SELECT s.workspace_id, i.stream_id, $3, i.event_id, NOW(), NOW()
+      FROM input i
+      JOIN streams s ON s.id = i.stream_id
+      ON CONFLICT (stream_id, user_id) DO UPDATE
+      SET last_read_event_id = EXCLUDED.last_read_event_id,
+          last_read_at = EXCLUDED.last_read_at,
+          updated_at = EXCLUDED.updated_at
+      WHERE COALESCE(
+          (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = EXCLUDED.last_read_event_id),
+          0
+        ) > COALESCE(
+          (SELECT cur_ev.sequence FROM stream_events cur_ev WHERE cur_ev.id = stream_read_state.last_read_event_id),
+          0
+        )
       `,
-      [streamIds, eventIds, userId, opts.holdInInbox]
+      [streamIds, eventIds, userId]
     )
     // Authoritative same-tx re-read of every attempted (stream, user) row: the
-    // upsert only reports the rows its guard accepted, but a rejected row still
-    // stands at its (higher) effective frontier and must ride the snapshot.
+    // upsert has no RETURNING (rejected rows never appear in one), so this is
+    // the only source for the full attempted set — one frontier per stream,
+    // no gaps.
     const states = await ReadStateRepository.getBatch(db, userId, streamIds)
-    return { states, becameHeldStreamIds: becameHeld.rows.map((r) => r.stream_id) }
+    return { states }
   },
 
   /**
