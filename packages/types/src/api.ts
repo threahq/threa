@@ -2233,6 +2233,12 @@ export interface MarkAsReadResponse {
   lastReadOrdinal?: number | null
   /** The post-write sparse read overlay (message ids above the watermark). Null on the no-op path. */
   readMessageIds?: string[] | null
+  /**
+   * Post-write `inbox_held`, server-authoritative. Null on the no-op path, or
+   * from a server predating the field — absence means "don't touch Inbox
+   * membership", never "unheld".
+   */
+  inboxHeld?: boolean | null
 }
 
 export interface MarkAllAsReadResponse {

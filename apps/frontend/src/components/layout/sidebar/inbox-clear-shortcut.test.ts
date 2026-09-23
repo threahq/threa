@@ -81,9 +81,9 @@ describe("isClearInboxShortcutEvent", () => {
 })
 
 describe("resolveClearInboxTargetStreamId", () => {
-  const isInInbox = (streamId: string) => streamId === "stream_inbox"
+  const isInInbox = (streamId: string) => streamId === "stream_inbox" || streamId === "stream_hover"
 
-  it("prefers the hovered row", () => {
+  it("prefers the hovered row when it's still in the Inbox", () => {
     expect(
       resolveClearInboxTargetStreamId({ hoveredStreamId: "stream_hover", activeStreamId: "stream_inbox", isInInbox })
     ).toBe("stream_hover")
@@ -103,5 +103,27 @@ describe("resolveClearInboxTargetStreamId", () => {
 
   it("returns null with no hover and no open stream", () => {
     expect(resolveClearInboxTargetStreamId({ hoveredStreamId: null, activeStreamId: null, isInInbox })).toBeNull()
+  })
+
+  it("ignores a stale hover target that's no longer in the Inbox, falling back to the open stream", () => {
+    const isInInboxOnlyActive = (streamId: string) => streamId === "stream_inbox"
+    expect(
+      resolveClearInboxTargetStreamId({
+        hoveredStreamId: "stream_stale_hover",
+        activeStreamId: "stream_inbox",
+        isInInbox: isInInboxOnlyActive,
+      })
+    ).toBe("stream_inbox")
+  })
+
+  it("ignores a stale hover target when the open stream also isn't in the Inbox", () => {
+    const isInInboxNeither = (_streamId: string) => false
+    expect(
+      resolveClearInboxTargetStreamId({
+        hoveredStreamId: "stream_stale_hover",
+        activeStreamId: "stream_other",
+        isInInbox: isInInboxNeither,
+      })
+    ).toBeNull()
   })
 })

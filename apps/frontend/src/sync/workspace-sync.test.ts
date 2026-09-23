@@ -4149,6 +4149,54 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
+  it("sets held membership from stream:read's post-write inboxHeld, server-authoritative", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:read", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_6",
+      lastReadSequence: "8",
+      lastReadOrdinal: 5,
+      inboxHeld: true,
+    })
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.inboxHeldStreamIds).toEqual(["stream_1"])
+    })
+
+    cleanup()
+  })
+
+  it("leaves held membership untouched when stream:read omits inboxHeld", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    await db.unreadState.update("ws_1", { inboxHeldStreamIds: ["stream_1"] })
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:read", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_6",
+      lastReadSequence: "8",
+      lastReadOrdinal: 5,
+    })
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(0)
+    })
+    // No inboxHeld in the payload — the pre-existing hold must survive.
+    expect((await db.unreadState.get("ws_1"))?.inboxHeldStreamIds).toEqual(["stream_1"])
+
+    cleanup()
+  })
+
   it("applies stream:read_all reads as absolute positions", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)

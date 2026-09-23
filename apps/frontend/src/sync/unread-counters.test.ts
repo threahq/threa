@@ -185,23 +185,23 @@ describe("applyStreamReadOrdinal", () => {
     expect(applyStreamReadOrdinal(state, "s1", 8).unreadActivityCount).toBe(0)
   })
 
-  it("optimistically holds a stream in the Inbox when a read lowers its unread count", () => {
+  it("leaves held membership untouched when inboxHeld is not passed (no client-side guess)", () => {
+    // Server-authoritative: an absent `inboxHeld` (an older backend, or the
+    // read_all fold below) must not synthesize a hold from the unread delta.
     const next = applyStreamReadOrdinal(seeded, "s1", 6)
     expect(next.unreadCounts.s1).toBe(2)
+    expect(next.inboxHeldStreamIds).toBeUndefined()
+  })
+
+  it("sets held membership absolutely to true from the server's post-write inboxHeld", () => {
+    const next = applyStreamReadOrdinal(seeded, "s1", 6, undefined, true)
     expect(next.inboxHeldStreamIds).toEqual(["s1"])
   })
 
-  it("does not hold a stream whose unread count was already zero", () => {
-    const zero = makeState({ unreadCounts: { s1: 0 }, latestOrdinals: { s1: 8 } })
-    const next = applyStreamReadOrdinal(zero, "s1", 8)
+  it("sets held membership absolutely to false from the server's post-write inboxHeld, even when previously held", () => {
+    const held = { ...seeded, inboxHeldStreamIds: ["s1"] }
+    const next = applyStreamReadOrdinal(held, "s1", 6, undefined, false)
     expect(next.inboxHeldStreamIds ?? []).toEqual([])
-  })
-
-  it("does not hold a stream when the read does not lower its unread count (stale read)", () => {
-    const read = applyStreamReadOrdinal(seeded, "s1", 8)
-    const healed = { ...read, inboxHeldStreamIds: [] }
-    const stale = applyStreamReadOrdinal(healed, "s1", 5)
-    expect(stale.inboxHeldStreamIds ?? []).toEqual([])
   })
 })
 
@@ -272,6 +272,18 @@ describe("applyStreamsReadAllOrdinals", () => {
     expect(next.unreadActivities).toEqual([])
     expect(next.activityCounts).toEqual({})
     expect(next.unreadActivityCount).toBe(0)
+  })
+
+  it("never holds, and never unholds, a stream — read_all folds never pass inboxHeld", () => {
+    const state = makeState({
+      unreadCounts: { s1: 2 },
+      latestOrdinals: { s1: 4 },
+      inboxHeldStreamIds: ["s1"],
+    })
+    const next = applyStreamsReadAllOrdinals(state, [{ streamId: "s1", lastReadOrdinal: 4 }])
+    // A pre-existing hold must survive an echoed read_all from another tab's
+    // clear — only `applyInboxHeld`/`clearInbox`'s own response unholds.
+    expect(next.inboxHeldStreamIds).toEqual(["s1"])
   })
 })
 

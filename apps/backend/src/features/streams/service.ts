@@ -174,6 +174,8 @@ export interface MarkAsReadResult {
   readState: StreamReadFrontier | null
   lastReadOrdinal: number | null
   readMessageIds: string[] | null
+  /** Post-write `inbox_held`, server-authoritative. Null exactly when `readState` is. */
+  inboxHeld: boolean | null
 }
 
 const createThreadParamsSchema = z.object({
@@ -2573,6 +2575,7 @@ export class StreamService {
         readState: null,
         lastReadOrdinal: null,
         readMessageIds: null,
+        inboxHeld: null,
       }
     }
 
@@ -2584,7 +2587,7 @@ export class StreamService {
     // Source the payload from the post-write row: the store is monotonic, so a
     // stale-device advance is rejected and the post-write frontier — not the raw
     // event — is the read position this user's other sessions adopt.
-    const { state: postWrite, becameHeld } = await ReadStateRepository.advance(client, streamId, memberId, eventId, {
+    const { state: postWrite } = await ReadStateRepository.advance(client, streamId, memberId, eventId, {
       holdInInbox: true,
     })
     let readEventId = eventId
@@ -2608,7 +2611,10 @@ export class StreamService {
     const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
     // Absolute read position (sync phase 2c): clients derive unread as
     // latestOrdinal - lastReadOrdinal, so the event carries where this read
-    // lands in message-ordinal space.
+    // lands in message-ordinal space. `inboxHeld` is the post-write value —
+    // server-authoritative, so every recipient (other tabs, the clearing
+    // tab's own optimistic hold) sets Inbox membership absolutely rather than
+    // guessing from the unread delta.
     await OutboxRepository.insert(client, "stream:read", {
       workspaceId,
       authorId: memberId,
@@ -2617,15 +2623,8 @@ export class StreamService {
       lastReadSequence: readPosition.sequence.toString(),
       lastReadOrdinal: readPosition.messageOrdinal,
       readMessageIds,
+      inboxHeld: postWrite?.inboxHeld ?? false,
     })
-    if (becameHeld) {
-      await OutboxRepository.insert(client, "stream:inbox_updated", {
-        workspaceId,
-        authorId: memberId,
-        streamIds: [streamId],
-        held: true,
-      })
-    }
     return {
       membership,
       readState: {
@@ -2635,6 +2634,7 @@ export class StreamService {
       },
       lastReadOrdinal: readPosition.messageOrdinal,
       readMessageIds,
+      inboxHeld: postWrite?.inboxHeld ?? null,
     }
   }
 
@@ -2703,21 +2703,20 @@ export class StreamService {
 
   /**
    * Advance every listed stream's read frontier to its latest event and emit
-   * `stream:read_all`, shared by `markAllAsRead` and `clearInbox` (INV-35) —
-   * only `opts.holdInInbox` differs between the two callers.
+   * `stream:read_all`, shared by `markAllAsRead` and `clearInbox` (INV-35).
+   * Never holds (`batchAdvance` has no hold path): a bulk read shouldn't park
+   * streams in the Inbox, and an explicit clear can't create a new hold.
    */
   private async advanceStreamsToLatest(
     client: Querier,
     workspaceId: string,
     memberId: string,
-    streamIds: string[],
-    opts: { holdInInbox: boolean }
+    streamIds: string[]
   ): Promise<{
     updatedStreamIds: string[]
     frontiers: StreamReadFrontierSnapshot[]
-    becameHeldStreamIds: string[]
   }> {
-    if (streamIds.length === 0) return { updatedStreamIds: [], frontiers: [], becameHeldStreamIds: [] }
+    if (streamIds.length === 0) return { updatedStreamIds: [], frontiers: [] }
 
     const latestEventIds = await StreamEventRepository.getLatestEventIdByStreamBatch(client, streamIds)
 
@@ -2733,7 +2732,7 @@ export class StreamService {
       }
     }
 
-    if (updatesToApply.size === 0) return { updatedStreamIds: [], frontiers: [], becameHeldStreamIds: [] }
+    if (updatesToApply.size === 0) return { updatedStreamIds: [], frontiers: [] }
 
     // The batch advance returns the authoritative post-write standalone row
     // for EVERY attempted stream — including rows whose attempted advance the
@@ -2741,16 +2740,11 @@ export class StreamService {
     // (monotonic store; membership is never consulted). updatedStreamIds, the
     // per-stream reads, and the frontier snapshot all derive from that
     // complete set: one frontier per attempted valid stream, no gaps.
-    const { states: advancedStates, becameHeldStreamIds } = await ReadStateRepository.batchAdvance(
-      client,
-      memberId,
-      updatesToApply,
-      opts
-    )
+    const { states: advancedStates } = await ReadStateRepository.batchAdvance(client, memberId, updatesToApply)
 
     const updatedStreamIds = advancedStates.map((state) => state.streamId)
 
-    if (updatedStreamIds.length === 0) return { updatedStreamIds: [], frontiers: [], becameHeldStreamIds: [] }
+    if (updatedStreamIds.length === 0) return { updatedStreamIds: [], frontiers: [] }
 
     // Read-all pins each frontier to its stream's latest event, so nothing
     // can remain above the watermark — wipe every absorbed overlay row (the
@@ -2786,7 +2780,7 @@ export class StreamService {
       frontiers,
     })
 
-    return { updatedStreamIds, frontiers, becameHeldStreamIds }
+    return { updatedStreamIds, frontiers }
   }
 
   async markAllAsRead(
@@ -2804,24 +2798,9 @@ export class StreamService {
 
       const streamIds = workspaceMemberships.map((m) => m.streamId)
 
-      const { updatedStreamIds, frontiers, becameHeldStreamIds } = await this.advanceStreamsToLatest(
-        client,
-        workspaceId,
-        memberId,
-        streamIds,
-        { holdInInbox: true }
-      )
-
-      if (becameHeldStreamIds.length > 0) {
-        await OutboxRepository.insert(client, "stream:inbox_updated", {
-          workspaceId,
-          authorId: memberId,
-          streamIds: becameHeldStreamIds,
-          held: true,
-        })
-      }
-
-      return { updatedStreamIds, frontiers }
+      // Bulk read never holds — parking every caught-up stream in the Inbox
+      // would defeat the point of "mark all as read".
+      return this.advanceStreamsToLatest(client, workspaceId, memberId, streamIds)
     })
   }
 
@@ -2841,9 +2820,7 @@ export class StreamService {
       const accessibleStreamIds = [...(await listAccessibleStreamIds(client, workspaceId, userId, streamIds))]
       if (accessibleStreamIds.length === 0) return { clearedStreamIds: [], frontiers: [] }
 
-      const { frontiers } = await this.advanceStreamsToLatest(client, workspaceId, userId, accessibleStreamIds, {
-        holdInInbox: false,
-      })
+      const { frontiers } = await this.advanceStreamsToLatest(client, workspaceId, userId, accessibleStreamIds)
 
       const clearedStreamIds = await ReadStateRepository.clearInboxHeld(
         client,

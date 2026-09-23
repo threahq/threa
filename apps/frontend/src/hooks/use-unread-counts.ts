@@ -247,7 +247,7 @@ export function useUnreadCounts(workspaceId: string) {
       return { ...response, startedAt }
     },
     onSuccess: async (
-      { membership, readState, lastReadOrdinal, readMessageIds, startedAt },
+      { membership, readState, lastReadOrdinal, readMessageIds, inboxHeld, startedAt },
       { streamId, lastEventId, partial }
     ) => {
       // A null readState is the server saying the read was a no-op — the event
@@ -280,7 +280,7 @@ export function useUnreadCounts(workspaceId: string) {
       const reconcileFromOrdinal = typeof lastReadOrdinal === "number"
       if (reconcileFromOrdinal) {
         commitCounterMutation(queryClient, workspaceId, (state) =>
-          applyStreamReadOrdinal(state, streamId, lastReadOrdinal, readMessageIds ?? undefined)
+          applyStreamReadOrdinal(state, streamId, lastReadOrdinal, readMessageIds ?? undefined, inboxHeld ?? undefined)
         )
       }
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
@@ -439,12 +439,19 @@ export function useUnreadCounts(workspaceId: string) {
   const clearInboxMutation = useMutation({
     mutationFn: async ({ streamIds }: { streamIds: string[] }) => {
       const startedAt = Date.now()
+      const response = await workspaceService.clearInbox(workspaceId, streamIds)
+      return { ...response, startedAt }
+    },
+    onMutate: ({ streamIds }: { streamIds: string[] }) => {
+      // Record which of the requested ids were actually held before the
+      // optimistic unhold, so a failed clear can restore exactly those — not
+      // every requested id, some of which may not have been held at all.
+      const previouslyHeldStreamIds = streamIds.filter((streamId) => inboxHeldStreamIdsRef.current.has(streamId))
       // Optimistic: unhold immediately, ahead of the response — the request's
       // own `stream:inbox_updated` echo (or a bootstrap) reconciles/corrects it
       // if the server disagrees (e.g. a stream re-held by a newer message since).
       commitCounterMutation(queryClient, workspaceId, (state) => applyInboxHeld(state, streamIds, false))
-      const response = await workspaceService.clearInbox(workspaceId, streamIds)
-      return { ...response, startedAt }
+      return { previouslyHeldStreamIds }
     },
     onSuccess: async ({ frontiers, startedAt }) => {
       // `frontiers` (not the response's `clearedStreamIds`) drives the read
@@ -460,7 +467,12 @@ export function useUnreadCounts(workspaceId: string) {
         clearInboxActivityFilter
       )
     },
-    onError: () => {
+    onError: (_error, _variables, context) => {
+      if (context?.previouslyHeldStreamIds.length) {
+        commitCounterMutation(queryClient, workspaceId, (state) =>
+          applyInboxHeld(state, context.previouslyHeldStreamIds, true)
+        )
+      }
       toast.error("Couldn't clear from Inbox")
     },
   })

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react"
 import {
   Ban,
   Bell,
@@ -429,6 +429,26 @@ export function StreamItem({
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)
+  // A row that unmounts while hovered (row removed, list reordered, section
+  // collapsed) never fires a pointerleave — without this, the sidebar's
+  // hovered-row ref would keep pointing at a gone row and the `E` clear
+  // shortcut would silently target nothing (or the wrong row, once guarded).
+  const isInboxHoveredRef = useRef(false)
+  const onInboxHoverChangeRef = useRef(onInboxHoverChange)
+  onInboxHoverChangeRef.current = onInboxHoverChange
+  useEffect(() => {
+    return () => {
+      if (isInboxHoveredRef.current) onInboxHoverChangeRef.current?.(false)
+    }
+  }, [])
+  const handleInboxHoverEnter = () => {
+    isInboxHoveredRef.current = true
+    onInboxHoverChange?.(true)
+  }
+  const handleInboxHoverLeave = () => {
+    isInboxHoveredRef.current = false
+    onInboxHoverChange?.(false)
+  }
   const hasUnread = unreadCount > 0
   // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
   const isHeld = !!isInboxRow && !hasUnread
@@ -674,8 +694,8 @@ export function StreamItem({
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div
           className="group reveal-host relative"
-          onPointerEnter={isInboxRow ? () => onInboxHoverChange?.(true) : undefined}
-          onPointerLeave={isInboxRow ? () => onInboxHoverChange?.(false) : undefined}
+          onPointerEnter={isInboxRow ? handleInboxHoverEnter : undefined}
+          onPointerLeave={isInboxRow ? handleInboxHoverLeave : undefined}
         >
           <Link
             ref={itemRef}

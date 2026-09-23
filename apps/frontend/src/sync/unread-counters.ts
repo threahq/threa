@@ -50,9 +50,10 @@ export interface UnreadCounterState {
   /**
    * Streams currently held in the sidebar Inbox — read but not yet explicitly
    * cleared (`POST .../inbox/clear`). Membership is `(unread > 0 || held) &&
-   * !muted`. Server confirmation arrives via `stream:inbox_updated`; a local
-   * read that lowers a positive unread count adds the stream here optimistically
-   * (see `applyStreamReadOrdinal`) ahead of that echo.
+   * !muted`. Server-authoritative: `applyStreamReadOrdinal`'s `inboxHeld` param
+   * (from `stream:read`'s post-write value) and `applyInboxHeld` (from
+   * `stream:inbox_updated`, and the local mark-as-read/clear-inbox mutations'
+   * own responses) are the only writers — there is no client-side guess.
    */
   inboxHeldStreamIds?: string[]
 }
@@ -244,12 +245,19 @@ export function applyStreamActivityOrdinal(
  * after the read position stay unread. Coupling (D2): reading the stream also
  * drops its held activity rows, so the derived activity/mention counts for it
  * fall to zero without a separate counter event.
+ *
+ * `inboxHeld` is the server's post-write value (from `stream:read`'s payload):
+ * when defined, Inbox membership is SET absolutely via `applyInboxHeld` —
+ * never guessed from the unread delta. When undefined (an older backend, or a
+ * caller like `applyStreamsReadAllOrdinals` that never holds), held membership
+ * is left untouched.
  */
 export function applyStreamReadOrdinal(
   state: UnreadCounterState,
   streamId: string,
   lastReadOrdinal: number,
-  readMessageIds?: string[]
+  readMessageIds?: string[],
+  inboxHeld?: boolean
 ): UnreadCounterState {
   // Reconstruct the OLD watermark against the OLD overlay before the SET below,
   // since the stored unread was computed with the old overlay size.
@@ -267,12 +275,8 @@ export function applyStreamReadOrdinal(
   // read (lastReadOrdinal < prevRead) must NOT wipe activity that arrived after
   // the real read.
   const next = lastReadOrdinal >= prevRead ? dropActivitiesForStream(withOverlay, streamId) : withOverlay
-  const prevUnread = state.unreadCounts[streamId] ?? 0
+  const held = inboxHeld === undefined ? next : applyInboxHeld(next, [streamId], inboxHeld)
   const unread = Math.max(0, latest - read - ov)
-  // Inbox hold (approximation of the server's inbox_held flip): a local read
-  // that lowers a positive unread count enters the Inbox hold immediately,
-  // ahead of the `stream:inbox_updated` echo that confirms/corrects it.
-  const held = prevUnread > 0 && unread < prevUnread ? applyInboxHeld(next, [streamId], true) : next
   return {
     ...held,
     latestOrdinals: { ...held.latestOrdinals, [streamId]: latest },

@@ -200,7 +200,7 @@ describe("EventService attachment safety checks", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     // One fresh row to attach → the bind call reports one row updated.
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
     // Ciphertext send → the sink (INV-E1) requires the target stream to be E2E.
@@ -284,7 +284,7 @@ describe("EventService attachment safety checks", () => {
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
     return insertedEvents
   }
@@ -388,7 +388,7 @@ describe("EventService attachment safety checks", () => {
       type: "channel",
     } as any)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -499,7 +499,7 @@ describe("EventService attachment safety checks", () => {
       type: "channel",
     } as any)
     const isMemberSpy = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(AttachmentReferenceRepository, "findReferencingStreamIds").mockResolvedValue([])
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
@@ -954,7 +954,7 @@ describe("EventService.createMessage metadata propagation", () => {
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -1101,7 +1101,7 @@ describe("EventService.createMessage author born-read", () => {
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
   })
 
   afterEach(() => {
@@ -1155,7 +1155,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -1416,7 +1416,7 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
       streamId: params.streamId,
@@ -1580,7 +1580,7 @@ describe("EventService sharedMessages wire enrichment", () => {
       createdAt: new Date(),
     })) as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
     // Share validation runs over mocked repos (house style — the service
     // itself is not stubbed).
@@ -1947,7 +1947,7 @@ describe("EventService stream-context projection", () => {
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({
       id: "evt_1",
       streamId: "stream_1",
@@ -2169,7 +2169,7 @@ describe("EventService.createMessage outbox pairing (the sidebar's single previe
       createdAt,
     })) as any)
     spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
-    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, becameHeld: false } as any)
+    spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)

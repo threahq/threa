@@ -743,6 +743,13 @@ export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
    * client SETs its overlay to this absolute snapshot. See the sparse-read design.
    */
   readMessageIds: string[]
+  /**
+   * Post-write `inbox_held`, server-authoritative — the client sets Inbox
+   * membership to this absolute value rather than guessing from the unread
+   * delta (a guess re-holds on this same event's echo in every other tab
+   * after a clear, since unread also drops to zero there).
+   */
+  inboxHeld: boolean
 }
 
 /**

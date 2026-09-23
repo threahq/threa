@@ -295,7 +295,7 @@ interface RenderRowOptions {
   /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
   onClearInboxRow?: (streamId: string) => void
   /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
-  onInboxRowHoverChange?: (streamId: string | null) => void
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
 }
 
 /**
@@ -321,7 +321,7 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       onClearFromInbox={opts.onClearInboxRow ? () => opts.onClearInboxRow!(stream.id) : undefined}
       onInboxHoverChange={
         opts.onInboxRowHoverChange
-          ? (hovering: boolean) => opts.onInboxRowHoverChange!(hovering ? stream.id : null)
+          ? (hovering: boolean) => opts.onInboxRowHoverChange!(stream.id, hovering)
           : undefined
       }
     />
@@ -417,7 +417,7 @@ interface StreamSectionProps {
   /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
   onClearInboxRow?: (streamId: string) => void
   /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
-  onInboxRowHoverChange?: (streamId: string | null) => void
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
 }
 
 /** Simple binary collapsible section used for Important / Recent. */

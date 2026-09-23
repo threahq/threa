@@ -598,6 +598,39 @@ describe("useUnreadCounts", () => {
     })
   })
 
+  it("holds a stream from markAsRead's own response — server-authoritative, no client heuristic", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_1: 10 },
+      mutedStreamIds: [],
+      inboxHeldStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAsRead.mockResolvedValue({
+      membership: memberRow(),
+      readState: { lastReadEventId: "event_mid", lastReadSequence: "33", lastReadAt: new Date().toISOString() },
+      lastReadOrdinal: 8,
+      readMessageIds: [],
+      inboxHeld: true,
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "event_mid")
+    })
+
+    await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
+  })
+
   it("writes nothing when the server reports the read as a no-op", async () => {
     // A 200 with a null readState means the event id resolved to nothing: the
     // server wrote nothing, so neither counters nor frontier may move locally.
@@ -1481,7 +1514,7 @@ describe("useUnreadCounts", () => {
       expect(updated?.unreadActivities?.map((a) => a.id)).toEqual(["act_2"])
     })
 
-    it("shows an error toast and leaves state for the next reconcile on failure", async () => {
+    it("shows an error toast and rolls back the optimistic unhold on failure", async () => {
       const { toast } = await import("sonner")
       const toastError = vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
       await seedUnreadState({ inboxHeldStreamIds: ["stream_1"] })
@@ -1490,12 +1523,41 @@ describe("useUnreadCounts", () => {
       mockClearInbox.mockRejectedValue(new Error("network boom"))
 
       const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+      // The mutation's onMutate snapshots inboxHeldStreamIdsRef synchronously —
+      // it must reflect the seeded state before the clear fires, or the ref is
+      // still empty and previouslyHeldStreamIds comes back empty too.
+      await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
       act(() => {
         result.current.clearInbox(["stream_1"])
       })
 
       await waitFor(() => expect(toastError).toHaveBeenCalled())
+      // The failed clear re-holds exactly the stream this call actually unheld.
+      await waitFor(async () => {
+        expect((await db.unreadState.get("ws_1"))?.inboxHeldStreamIds).toEqual(["stream_1"])
+      })
       toastError.mockRestore()
+    })
+
+    it("rolls back only the streams that were actually held before the failed clear", async () => {
+      // stream_2 wasn't held to begin with — a failed clear must not
+      // manufacture a hold for it.
+      await seedUnreadState({ inboxHeldStreamIds: ["stream_1"] })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+      mockClearInbox.mockRejectedValue(new Error("network boom"))
+
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+      await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
+      act(() => {
+        result.current.clearInbox(["stream_1", "stream_2"])
+      })
+
+      await waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.inboxHeldStreamIds).toEqual(["stream_1"])
+        expect(state?.inboxHeldStreamIds).not.toContain("stream_2")
+      })
     })
   })
 })
