@@ -428,6 +428,15 @@ Second paragraph`
       expect(document.querySelector("iframe")).not.toBeInTheDocument()
     })
 
+    it("renders a linked image as the link, never an anchor inside an anchor", () => {
+      render(<MarkdownContent content="[![build status](https://img.example/badge.svg)](https://ci.example/runs)" />)
+      const link = screen.getByRole("link", { name: "build status" })
+      expect({ href: link.getAttribute("href"), nested: link.querySelector("a") }).toEqual({
+        href: "https://ci.example/runs",
+        nested: null,
+      })
+    })
+
     it("should escape HTML in inline content", () => {
       render(<MarkdownContent content="<div>test</div>" />)
       expect(document.querySelector("div.markdown-content div > div")).not.toBeInTheDocument()

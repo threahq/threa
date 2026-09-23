@@ -35,6 +35,16 @@ try {
 // Unique artifact identity: same commit rebuilt produces a different id.
 const buildId = `${buildVersion}@${buildTimestamp}`
 
+const MARKDOWN_HTML_PACKAGES = [
+  "parse5",
+  "hast-util-raw",
+  "hast-util-from-parse5",
+  "hast-util-to-parse5",
+  "hast-util-sanitize",
+  "rehype-raw",
+  "rehype-sanitize",
+]
+
 let buildOutputDir: string
 
 /**
@@ -206,7 +216,13 @@ export default defineConfig({
         // chunk crosses workbox's 2 MiB per-file precache limit and the build
         // fails outright. The chunk is still a static import of the entry, so it
         // loads before first paint and math never renders twice.
-        manualChunks: (id: string) => (id.includes("/node_modules/katex/") ? "katex" : undefined),
+        // The HTML parser behind GitHub previews (parse5 via rehype-raw) sits
+        // in its own chunk for the same reason.
+        manualChunks: (id: string) => {
+          if (id.includes("/node_modules/katex/")) return "katex"
+          if (MARKDOWN_HTML_PACKAGES.some((name) => id.includes(`/node_modules/${name}/`))) return "markdown-html"
+          return undefined
+        },
       },
     },
   },
