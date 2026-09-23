@@ -16,6 +16,8 @@ const config: EnclaveConfig = {
   buildHash: "unknown",
   openRouterApiKey: "sk-test",
   openRouterBaseUrl: "https://openrouter.ai/api/v1",
+  webSearchEngines: "tavily",
+  webSearchKeys: {},
 }
 
 const keyPair = {

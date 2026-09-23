@@ -1,5 +1,6 @@
 import express from "express"
 import { logger as baseLogger } from "@threahq/agent-runtime/logger"
+import { createWebSearchEngines } from "@threahq/agent-runtime/runtime"
 import { loadEnclaveConfig } from "./config"
 import { createEnclaveKeyPair } from "./keystore"
 import { registerWithBackend, revokeWithBackend } from "./register"
@@ -14,6 +15,7 @@ const logger = baseLogger.child({ name: "enclave" })
 
 async function main() {
   const config = loadEnclaveConfig()
+  const webSearchEngines = createWebSearchEngines(config.webSearchEngines, config.webSearchKeys)
   const keyPair = await createEnclaveKeyPair()
   logger.info({ instanceId: keyPair.instanceId, keyId: keyPair.keyId }, "Enclave EIK generated")
 
@@ -92,7 +94,7 @@ async function main() {
           // every callback, binding the turn to the runner that won it
           // (Phase 2.4b, E2EE-21).
           callbacks: createBackendCallbacks(config, assignment.callbackToken),
-          toolConfig: { tavilyApiKey: config.tavilyApiKey },
+          toolConfig: { webSearchEngines },
         },
         assignment
       ),

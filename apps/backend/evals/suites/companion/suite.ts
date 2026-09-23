@@ -342,8 +342,10 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
   }
 
   try {
-    if (!ctx.credentials.tavilyApiKey) {
-      throw new Error("TAVILY_API_KEY is required for companion evals to run with full web_search tool access")
+    if (ctx.credentials.webSearchEngines.length === 0) {
+      throw new Error(
+        "Companion evals need a web search engine with its key (WEB_SEARCH_ENGINES, default tavily + TAVILY_API_KEY) for full web_search tool access"
+      )
     }
 
     // Set up test data in the database
@@ -518,7 +520,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       memoExplorerService,
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
-      tavilyApiKey: ctx.credentials.tavilyApiKey,
+      webSearchEngines: ctx.credentials.webSearchEngines,
       createMessage,
       editMessage,
       deleteMessage,

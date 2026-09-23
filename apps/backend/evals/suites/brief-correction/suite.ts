@@ -288,7 +288,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       memoExplorerService,
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
-      tavilyApiKey: ctx.credentials.tavilyApiKey,
+      webSearchEngines: ctx.credentials.webSearchEngines,
       createMessage,
       editMessage,
       deleteMessage,

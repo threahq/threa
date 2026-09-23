@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { StreamTypes } from "@threahq/types"
-import { createReadUrlTool, createWebSearchTool } from "@threahq/agent-runtime"
+import { createReadUrlTool, createTavilyEngine, createWebSearchTool } from "@threahq/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
 import { createWorkspaceResearchTool } from "../../tools"
@@ -109,7 +109,7 @@ describe("buildSystemPrompt", () => {
         runWorkspaceAgent: async () => ({ sources: [], memos: [], messages: [], substeps: [] }) as never,
         searchFlag: "on",
       }),
-      createWebSearchTool({ tavilyApiKey: "tvly-test" }),
+      createWebSearchTool({ engines: [createTavilyEngine("tvly-test")] }),
       createReadUrlTool(),
     ]
     const prompt = buildJoinedPrompt({
@@ -136,7 +136,7 @@ describe("buildSystemPrompt", () => {
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
       rollingConversationSummary: null,
-      tools: [createWebSearchTool({ tavilyApiKey: "tvly-test" })],
+      tools: [createWebSearchTool({ engines: [createTavilyEngine("tvly-test")] })],
     })
 
     expect(prompt).toContain("## Web Search")
@@ -405,7 +405,11 @@ describe("buildSystemPrompt", () => {
       scratchpadCustomPrompt: null,
       rollingConversationSummary: null,
       tools: [
-        createWebSearchTool({ tavilyApiKey: "tvly-test", currentTime: "2026-11-15T10:00:00.000Z", timezone: "UTC" }),
+        createWebSearchTool({
+          engines: [createTavilyEngine("tvly-test")],
+          currentTime: "2026-11-15T10:00:00.000Z",
+          timezone: "UTC",
+        }),
       ],
     })
 

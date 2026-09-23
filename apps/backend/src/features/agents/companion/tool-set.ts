@@ -1,5 +1,5 @@
 import { AgentToolNames } from "@threahq/types"
-import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threahq/agent-runtime"
+import { createWebSearchTool, createReadUrlTool, type AgentTool, type WebSearchEngine } from "@threahq/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
@@ -54,7 +54,7 @@ import {
 
 export interface ToolSetConfig {
   enabledTools: string[] | null
-  tavilyApiKey?: string
+  webSearchEngines?: WebSearchEngine[]
   /** Invocation time used to ground current/latest/recent web searches. */
   currentTime?: string
   timezone?: string
@@ -137,7 +137,7 @@ export interface ToolSetConfig {
 export function buildToolSet(config: ToolSetConfig): AgentTool[] {
   const {
     enabledTools,
-    tavilyApiKey,
+    webSearchEngines,
     currentTime,
     timezone,
     runWorkspaceAgent,
@@ -191,8 +191,8 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       ? createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
       : null,
 
-    tavilyApiKey && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
-      ? createWebSearchTool({ tavilyApiKey, currentTime, timezone })
+    webSearchEngines && webSearchEngines.length > 0 && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
+      ? createWebSearchTool({ engines: webSearchEngines, currentTime, timezone })
       : null,
     isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision }) : null,
 

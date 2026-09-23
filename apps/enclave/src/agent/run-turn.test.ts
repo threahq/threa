@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { createWebSearchEngines } from "@threahq/agent-runtime/runtime"
 import {
   ATTACHMENT_AAD,
   ATTACHMENT_KEY_GENERATION,
@@ -730,7 +731,7 @@ describe("runEnclaveTurn", () => {
       baseRequest({ wraps: [wrap], prompt })
     )
 
-    // No Tavily key in deps → web_search is not wired, so its section must not
+    // No search engine in deps → web_search is not wired, so its section must not
     // be advertised; read_url + general_research are. No digest block.
     const system = systemText(chat.seen[0])
     expect(system).toMatch(/^You are Ariadne\./)
@@ -755,7 +756,15 @@ describe("runEnclaveTurn", () => {
     const { onMessage, onStepStarted, onStep, onSubstep, started, steps } = collector()
 
     await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep, tools: { tavilyApiKey: "tvly-test" } },
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        tools: { webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }) },
+      },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -808,7 +817,15 @@ describe("runEnclaveTurn", () => {
     const { onMessage, onStepStarted, onStep, onSubstep, sent, steps } = collector()
 
     const result = await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep, tools: { tavilyApiKey: "tvly-test" } },
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        tools: { webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }) },
+      },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -864,7 +881,7 @@ describe("runEnclaveTurn", () => {
           onStepStarted,
           onStep,
           onSubstep,
-          tools: { tavilyApiKey: "tvly-test" },
+          tools: { webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }) },
         },
         baseRequest({ wraps: [wrap], prompt })
       )

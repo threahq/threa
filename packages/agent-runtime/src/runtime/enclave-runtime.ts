@@ -69,6 +69,7 @@ export {
 // Web primitives + bounded research — enclave-safe (call external services
 // directly, no backend callback, no AI provider layer pull).
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "../tools/web-search-tool"
+export { createWebSearchEngines, type WebSearchEngine, type WebSearchEngineKeys } from "../tools/web-search-engines"
 export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "../tools/read-url-tool"
 export {
   runGeneralResearch,

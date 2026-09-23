@@ -6,7 +6,7 @@
  */
 
 import type { Pool } from "pg"
-import type { AI } from "@threahq/agent-runtime"
+import type { AI, WebSearchEngine } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../src/lib/ai/config-resolver"
 import type { ComponentOverrides } from "./config-types"
 
@@ -89,7 +89,7 @@ export interface EvalContext {
   usage: UsageAccumulator
   /** Eval credentials sourced by the runner from environment/config */
   credentials: {
-    tavilyApiKey?: string
+    webSearchEngines: WebSearchEngine[]
   }
   /** Component-specific overrides from config file */
   /**

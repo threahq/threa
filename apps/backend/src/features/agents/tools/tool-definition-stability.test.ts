@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { z } from "zod"
 import { MUTATING_TOOL_NAMES } from "@threahq/types"
 import { buildToolSet } from "../companion/tool-set"
+import { createTavilyEngine } from "@threahq/agent-runtime"
 
 /**
  * Tool definitions must be byte-identical across requests.
@@ -38,7 +39,7 @@ const subagentDelegation = { allowedModels: ["openrouter:openai/gpt-5.6-terra"],
 function definitions(over: { currentTime: string; timezone: string; briefVersion: number }) {
   const tools = buildToolSet({
     enabledTools: null,
-    tavilyApiKey: "test-key",
+    webSearchEngines: [createTavilyEngine("test-key")],
     currentTime: over.currentTime,
     timezone: over.timezone,
     briefVersion: over.briefVersion,
@@ -94,7 +95,7 @@ describe("mutating tools declare their own effects", () => {
   const built = new Map(
     buildToolSet({
       enabledTools: null,
-      tavilyApiKey: "test-key",
+      webSearchEngines: [createTavilyEngine("test-key")],
       currentTime: "2026-07-26T10:00:00.000Z",
       timezone: "Europe/Stockholm",
       briefVersion: 1,

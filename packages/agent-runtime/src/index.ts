@@ -77,6 +77,16 @@ export {
 } from "./runtime/trace-projector"
 
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "./tools/web-search-tool"
+export {
+  createExaEngine,
+  createSerperEngine,
+  createTavilyEngine,
+  createWebSearchEngines,
+  WebSearchEngineNames,
+  type WebSearchEngine,
+  type WebSearchEngineKeys,
+  type WebSearchEngineName,
+} from "./tools/web-search-engines"
 export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "./tools/read-url-tool"
 
 // Bounded research sub-agent (shared by backend personas + the enclave)

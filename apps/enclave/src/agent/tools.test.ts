@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
+import { createWebSearchEngines, type AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
 import type { ToolPrivacyCategory } from "@threahq/types"
 import type { LanguageModel } from "ai"
 import { buildEnclaveTools } from "./tools"
@@ -14,7 +14,7 @@ function toolNames(tavilyApiKey?: string, allowedCategories?: ToolPrivacyCategor
     ai,
     model,
     modelString: "anthropic/claude-sonnet-4.6",
-    tavilyApiKey,
+    webSearchEngines: createWebSearchEngines("tavily", { tavily: tavilyApiKey }),
     allowedCategories,
   }).map((t) => t.name)
 }
@@ -44,7 +44,7 @@ describe("buildEnclaveTools", () => {
       ai,
       model,
       modelString: "anthropic/claude-sonnet-4.6",
-      tavilyApiKey: "tvly-test",
+      webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }),
       allowedCategories: [],
       attachments: { refsById: new Map(), ciphertextById: new Map() },
     })

@@ -5,6 +5,7 @@ import {
   negotiateCapabilities,
   runGeneralResearch,
   type AgentTool,
+  type WebSearchEngine,
 } from "@threahq/agent-runtime/runtime"
 import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
 import type { ToolPrivacyCategory } from "@threahq/types"
@@ -15,13 +16,13 @@ import { createEnclaveReadAttachmentTool, type EnclaveAttachmentStore } from "./
  * The enclave-safe tool surface for an E2E turn.
  *
  * Only the primitives that call external services DIRECTLY — `web_search`
- * (Tavily) and `read_url` (`fetch` with SSRF guards) — are available inside the
+ * (the configured search engines) and `read_url` (`fetch` with SSRF guards) — are available inside the
  * enclave; the workspace/GitHub/Linear tools need a backend callback the enclave
  * deliberately cannot make (zero plaintext egress). `general_research` runs the
  * SAME bounded loop the backend persona uses, but driving only that web subset,
  * entirely in-process: no backend round-trip, plaintext never leaves the enclave.
  *
- * Without a Tavily key, `web_search` is omitted (and the researcher runs
+ * Without a search engine, `web_search` is omitted (and the researcher runs
  * URL-only) — a degraded but functional surface, not a failure.
  */
 export interface EnclaveToolDeps {
@@ -31,8 +32,8 @@ export interface EnclaveToolDeps {
   model: LanguageModel
   /** Bare model id (no `openrouter:` prefix) the loop forwards as `modelString`. */
   modelString: string
-  /** Tavily key for `web_search`; when absent, web search is unavailable. */
-  tavilyApiKey?: string
+  /** Engines for `web_search`; when empty, web search is unavailable. */
+  webSearchEngines?: WebSearchEngine[]
   /** Invocation time, used to ground recency-sensitive web searches. */
   currentTime?: string
   timezone?: string
@@ -63,9 +64,13 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
   // array — a future stateful tool then keeps per-loop state isolated by design.
   const webTools = (): AgentTool[] => {
     const tools: AgentTool[] = []
-    if (deps.tavilyApiKey) {
+    if (deps.webSearchEngines && deps.webSearchEngines.length > 0) {
       tools.push(
-        createWebSearchTool({ tavilyApiKey: deps.tavilyApiKey, currentTime: deps.currentTime, timezone: deps.timezone })
+        createWebSearchTool({
+          engines: deps.webSearchEngines,
+          currentTime: deps.currentTime,
+          timezone: deps.timezone,
+        })
       )
     }
     // The enclave only serves e2e-capable personas, which run vision-capable

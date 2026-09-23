@@ -10,6 +10,7 @@
  */
 
 import { APICallError, NoObjectGeneratedError } from "ai"
+import { createWebSearchEngines } from "@threahq/agent-runtime"
 import type {
   EvalSuite,
   EvalContext,
@@ -319,7 +320,11 @@ async function runPermutation<TInput, TOutput, TExpected>(
     permutation,
     usage: usageAccumulator,
     credentials: {
-      tavilyApiKey: process.env.TAVILY_API_KEY,
+      webSearchEngines: createWebSearchEngines(process.env.WEB_SEARCH_ENGINES || "tavily", {
+        tavily: process.env.TAVILY_API_KEY || undefined,
+        exa: process.env.EXA_API_KEY || undefined,
+        serper: process.env.SERPER_API_KEY || undefined,
+      }),
     },
     judgeModel: options.judgeModel,
     componentOverrides: options.componentOverrides,
@@ -799,7 +804,7 @@ export async function runFromConfigFile(
   const config = loadConfigFile(configPath)
   // `-s` narrows a multi-suite config to one suite's runs. A comparison config
   // pairs suites with different prerequisites (the companion half needs a
-  // Tavily key, the style half does not), so running one half has to be
+  // web search key, the style half does not), so running one half has to be
   // possible without editing the file that documents the comparison.
   const suiteRuns = baseOptions.suite ? config.suites.filter((s) => s.name === baseOptions.suite) : config.suites
   if (baseOptions.suite && suiteRuns.length === 0) {

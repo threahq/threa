@@ -244,7 +244,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
       memoExplorerService,
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
-      tavilyApiKey: ctx.credentials.tavilyApiKey,
+      webSearchEngines: ctx.credentials.webSearchEngines,
       createMessage,
       editMessage: async () => null,
       deleteMessage: async () => null,
