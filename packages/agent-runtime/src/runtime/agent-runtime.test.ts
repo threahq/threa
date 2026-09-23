@@ -1460,3 +1460,118 @@ describe("AgentRuntime opening calls", () => {
     })
   })
 })
+
+describe("AgentRuntime tool concurrency", () => {
+  it("runs neighbouring reads at once and a write alone, returning results in the model's order", async () => {
+    const log: string[] = []
+    const tool = (name: string) =>
+      defineAgentTool({
+        name,
+        description: "test",
+        categories: [],
+        inputSchema: z.object({ id: z.string() }),
+        execute: async ({ id }) => {
+          log.push(`start ${id}`)
+          await new Promise((resolve) => setTimeout(resolve, 10))
+          log.push(`end ${id}`)
+          return { output: id }
+        },
+        trace: { stepType: AgentStepTypes.VISIT_PAGE, formatContent: ({ id }) => id },
+      })
+    const calls = [
+      { toolCallId: "tc_page", toolName: AgentToolNames.READ_URL, input: { id: "page" } },
+      { toolCallId: "tc_search", toolName: AgentToolNames.WEB_SEARCH, input: { id: "search" } },
+      { toolCallId: "tc_memo", toolName: AgentToolNames.SAVE_MEMO, input: { id: "memo" } },
+      { toolCallId: "tc_later", toolName: AgentToolNames.SEARCH_MESSAGES, input: { id: "later" } },
+    ]
+    const seen: any[][] = []
+    const generateTextWithTools = async ({ messages }: { messages: any[] }) => {
+      seen.push(messages)
+      return seen.length === 1
+        ? { text: "", toolCalls: calls, response: { messages: [{ role: "assistant", content: "looking" } as any] } }
+        : { text: "Done.", toolCalls: [], response: { messages: [{ role: "assistant", content: "Done." } as any] } }
+    }
+
+    await new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "look it up" }],
+      tools: [
+        tool(AgentToolNames.READ_URL),
+        tool(AgentToolNames.WEB_SEARCH),
+        tool(AgentToolNames.SAVE_MEMO),
+        tool(AgentToolNames.SEARCH_MESSAGES),
+      ],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+    }).run()
+
+    const toolMessage = seen[1]!.find((m) => m.role === "tool")
+    expect({
+      log,
+      resultOrder: toolMessage.content.map((part: any) => part.toolCallId),
+    }).toEqual({
+      log: [
+        "start page",
+        "start search",
+        "end page",
+        "end search",
+        "start memo",
+        "end memo",
+        "start later",
+        "end later",
+      ],
+      resultOrder: ["tc_page", "tc_search", "tc_memo", "tc_later"],
+    })
+  })
+
+  it("runs at most four reads at once, and a failing call ends the turn only after its batch finishes", async () => {
+    const log: string[] = []
+    const events: AgentEvent[] = []
+    const denied = new AISpendDeniedError({ workspaceId: "ws_1", functionId: "injection-screen" }, "workspace_limit")
+    const reader = defineAgentTool({
+      name: AgentToolNames.READ_URL,
+      description: "test",
+      categories: [],
+      inputSchema: z.object({ id: z.string() }),
+      execute: async ({ id }) => {
+        log.push(`start ${id}`)
+        if (id === "2") throw denied
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        log.push(`end ${id}`)
+        return { output: id }
+      },
+      trace: { stepType: AgentStepTypes.VISIT_PAGE, formatContent: ({ id }) => id },
+    })
+    const calls = ["1", "2", "3", "4", "5"].map((id) => ({
+      toolCallId: `tc_${id}`,
+      toolName: AgentToolNames.READ_URL,
+      input: { id },
+    }))
+
+    const run = new AgentRuntime({
+      ai: {
+        generateTextWithTools: async () => ({
+          text: "",
+          toolCalls: calls,
+          response: { messages: [{ role: "assistant", content: "looking" } as any] },
+        }),
+      } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "read them" }],
+      tools: [reader],
+      observers: [{ handle: async (event: AgentEvent) => void events.push(event) }],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+    }).run()
+
+    await expect(run).rejects.toBe(denied)
+    expect({
+      log,
+      completed: events.flatMap((e) => (e.type === "tool:complete" ? [e.toolCallId] : [])),
+    }).toEqual({
+      log: ["start 1", "start 2", "start 3", "start 4", "end 1", "end 3", "end 4"],
+      completed: ["tc_1", "tc_3", "tc_4"],
+    })
+  })
+})
