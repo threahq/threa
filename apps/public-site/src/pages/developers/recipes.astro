@@ -56,13 +56,47 @@ import StreamPreview from "../../components/StreamPreview.astro"
       Take a memo's <code>id</code> from the results and pull its full provenance:
       the source stream and the exact messages, with authors and timestamps.
     </p>
-    <CodeBlock
-      slot="code"
-      lang="bash"
-      label="Memo with sources"
-      code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/MEMO_ID \\
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Memo with sources"
+        code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/MEMO_ID \\
   -H "Authorization: Bearer {{apiKey}}"`}
-    />
+      />
+      <StreamPreview stream="Memory" icon="icon-bookopen">
+        <div class="scene-memo">
+          <div class="smo-top">
+            <span class="smo-title">Auth refactor held pending token-rotation review</span>
+            <span class="smo-date">Mar 12</span>
+          </div>
+          <p class="smo-abstract">Jordan asked to pause the v3 auth boundary until the rotation flow has been walked through. The concern was migrating existing sessions without a forced re-auth wave.</p>
+          <div class="smo-tags">
+            <span class="kt-badge"><svg><use href="#icon-compass" /></svg>Decision</span>
+            <span class="smo-tag">#api-v3</span>
+            <span class="smo-tag">#auth</span>
+          </div>
+          <div class="smo-source">
+            <svg><use href="#icon-msgquote" /></svg>
+            <span>3 messages in #api-v3</span>
+            <svg class="smo-chev"><use href="#icon-chevron" /></svg>
+          </div>
+          <ul class="smo-sources">
+            <li>
+              <p>hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</p>
+              <p class="smo-by"><span>Jordan Lee</span><span class="smo-at">Mar 12</span></p>
+            </li>
+            <li>
+              <p>Fair. Let's hold v3 until you've walked us through it.</p>
+              <p class="smo-by"><span>Maya Reyes</span><span class="smo-at">Mar 12</span></p>
+            </li>
+            <li>
+              <p>a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</p>
+              <p class="smo-by"><span>Jordan Lee</span><span class="smo-at">Mar 12</span></p>
+            </li>
+          </ul>
+        </div>
+      </StreamPreview>
+    </Fragment>
   </DocRow>
 
   <DocRow class="dr-section">
@@ -100,6 +134,9 @@ import StreamPreview from "../../components/StreamPreview.astro"
         <Message author="deploy" time="16:40">
           <div class="tl-text"><strong>Deploy:</strong> v2.4.1 shipped to production. 🚀</div>
         </Message>
+        <Message author="jordan" time="16:44">
+          <div class="tl-text">Error rate is flat since 2.4.1 went out.</div>
+        </Message>
       </StreamPreview>
     </Fragment>
   </DocRow>
@@ -111,11 +148,11 @@ import StreamPreview from "../../components/StreamPreview.astro"
       filters by stream, type, author, and date window. Drop it behind a slash
       command, an editor extension, or a dashboard.
     </p>
-    <CodeBlock
-      slot="code"
-      lang="bash"
-      label="Search messages"
-      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search \\
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Search messages"
+        code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -124,12 +161,39 @@ import StreamPreview from "../../components/StreamPreview.astro"
     "type": ["channel", "thread"],
     "limit": 10
   }'`}
-      run={{
-        method: "POST",
-        path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search",
-        body: `{ "query": "rotation flow", "semantic": true, "type": ["channel", "thread"], "limit": 10 }`,
-      }}
-    />
+        run={{
+          method: "POST",
+          path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search",
+          body: `{ "query": "rotation flow", "semantic": true, "type": ["channel", "thread"], "limit": 10 }`,
+        }}
+      />
+      <StreamPreview stream="rotation flow" icon="icon-search">
+        <div class="scene-search">
+          <section class="ss-group">
+            <div class="ss-head"><svg><use href="#icon-chevron" /></svg><span>#api-v3</span><span class="ss-count">2</span></div>
+            <ul>
+              <li>
+                <p class="ss-snip">a walkthrough of the <mark>rotation</mark> <mark>flow</mark> + how existing sessions migrate. I'll block out time the week of the 18th</p>
+                <p class="ss-by"><span>Jordan Lee</span><span class="ss-at">Mar 12</span></p>
+              </li>
+              <li>
+                <p class="ss-snip">hold on, I'm not comfortable changing the auth boundary without working through the token-<mark>rotation</mark> <mark>flow</mark> first. can we pause this?</p>
+                <p class="ss-by"><span>Jordan Lee</span><span class="ss-at">Mar 12</span></p>
+              </li>
+            </ul>
+          </section>
+          <section class="ss-group">
+            <div class="ss-head"><svg><use href="#icon-chevron" /></svg><span>#security</span><span class="ss-count">1</span></div>
+            <ul>
+              <li>
+                <p class="ss-snip">Refresh tokens get a new id on every use now. The old one keeps working for one grace request, so a retry mid-refresh doesn't sign anyone out.</p>
+                <p class="ss-by"><span>Sam Patel</span><span class="ss-at">Mar 14</span></p>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </StreamPreview>
+    </Fragment>
   </DocRow>
 
   <h2 id="local-agent">Connect your local agent</h2>
@@ -165,6 +229,17 @@ npx @threahq/bot run -- my-agent`}
         <Message author="maya" time="09:15">
           <div class="tl-text">What changed in the billing module this week?</div>
         </Message>
+        <div class="trace-card is-static">
+          <div class="trace-icon-slot">
+            <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon" /></svg></div>
+            <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon" /></svg></div>
+          </div>
+          <div class="trace-main">
+            <div class="trace-row trace-row-running"><div class="trace-title">my-agent is working…</div></div>
+            <div class="trace-row trace-row-done"><div class="trace-title">Session complete</div><div class="trace-sub">3 steps · 8.4s</div></div>
+          </div>
+          <div class="trace-time">09:15</div>
+        </div>
         <Message author="my-agent" time="09:15">
           <div class="tl-text">Two PRs: proration moved to the invoice service, and failed renewals now retry three times before emailing.</div>
         </Message>
@@ -426,11 +501,11 @@ async function loop() {
       <code>find-by-metadata</code>). Retries are safe: a retried complete bearing the
       same token returns the committed outcome instead of double-posting.
     </p>
-    <CodeBlock
-      slot="code"
-      lang="bash"
-      label="Complete"
-      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/complete \\
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Complete"
+        code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/complete \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
   -H "Content-Type: application/json" \\
@@ -438,7 +513,38 @@ async function loop() {
     "resultMarkdown": "Shipped in PR #42. All acceptance criteria pass.",
     "metadata": { "github.pr": "https://github.com/acme/repo/pull/42" }
   }'`}
-    />
+      />
+      <StreamPreview stream="billing">
+        <Message author="maya" time="10:02">
+          <div class="tl-text"><span class="mention">@ariadne</span> can you add backoff between the failed-renewal retries and open a PR?</div>
+        </Message>
+        <div class="scene-delegation">
+          <div class="sd-card">
+            <div class="sd-row">
+              <span class="sd-tile"><svg><use href="#icon-terminal" /></svg></span>
+              <div class="sd-main">
+                <p class="sd-title">Add backoff between failed-renewal retries</p>
+                <p class="sd-meta">Ariadne · Completed · build-box / my agent</p>
+              </div>
+              <span class="sd-copy"><svg><use href="#icon-copy" /></svg></span>
+            </div>
+            <p class="sd-toggle"><svg><use href="#icon-chevronright" /></svg>Show hand-off prompt</p>
+          </div>
+          <div class="sd-thread">
+            <div class="sd-thread-line">
+              <span class="sd-av"><svg><use href="#icon-bot" /></svg></span>
+              <span class="sd-replies">1 reply</span>
+              <span class="sd-ago">4h</span>
+              <svg class="sd-chev"><use href="#icon-chevronright" /></svg>
+            </div>
+            <p class="sd-latest"><strong>my-agent</strong>: Shipped in PR #42. All acceptance criteria pass.</p>
+          </div>
+        </div>
+        <Message author="ariadne" time="10:02">
+          <div class="tl-text">This needs a checkout of the repo, so I wrote it up as a hand-off. It waits on the card above until a local agent claims it.</div>
+        </Message>
+      </StreamPreview>
+    </Fragment>
   </DocRow>
 
   <p>
@@ -697,11 +803,11 @@ await post(\u0060/bot-invocations/\${inv.id}/sealed-complete\u0060, {
       seals against the stream the card is posted to, which on a thread is not the
       root the key hangs off.
     </p>
-    <CodeBlock
-      slot="code"
-      lang="ts"
-      label="A sealed card"
-      code={`// BOT_ID is your own bot id, from the bot plane's hello ack.
+    <Fragment slot="code">
+      <CodeBlock
+        lang="ts"
+        label="A sealed card"
+        code={`// BOT_ID is your own bot id, from the bot plane's hello ack.
 const card = await sealDecision(
   turn.sealing,
   { streamId: cardStream, requesterBotId: BOT_ID },
@@ -723,7 +829,32 @@ await api(\u0060/streams/\${cardStream}/decisions\u0060, {
   invocationId: inv.id,
   sealed: { ciphertext: card.ciphertext, envelope: card.envelope },
 })`}
-    />
+      />
+      <StreamPreview stream="invoice-ref migration" scratchpad locked>
+        <Message author="maya" time="14:20">
+          <div class="tl-text">Backfill invoice_ref, then check with me before you touch prod.</div>
+        </Message>
+        <div class="scene-decision">
+          <div class="sq-card">
+            <div class="sq-row">
+              <svg class="sq-icon"><use href="#icon-circlehelp" /></svg>
+              <div class="sq-main">
+                <p class="sq-title">Run the migration now?</p>
+                <p class="sq-who"><strong>my-agent</strong> needs a decision</p>
+              </div>
+            </div>
+            <p class="sq-body">17 rows backfilled locally, none in prod.</p>
+            <div class="sq-actions">
+              <span class="sq-note">Add a note for the bot</span>
+              <div class="sq-buttons">
+                <span class="sq-btn is-primary">Run it</span>
+                <span class="sq-btn">Hold for review</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </StreamPreview>
+    </Fragment>
   </DocRow>
 
   <DocRow>
