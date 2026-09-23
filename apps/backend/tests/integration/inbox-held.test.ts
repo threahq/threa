@@ -672,6 +672,28 @@ describe("inbox hold", () => {
 
       expect(arrivals[sid]).toEqual(events[0].createdAt)
     })
+
+    test("a deleted other-author message never counts toward arrival", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      const [msg1] = await sendMessages(wid, sid, author, 1)
+
+      await eventService.deleteMessageInternal({ workspaceId: wid, streamId: sid, messageId: msg1, actorId: author })
+
+      const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+      expect(arrivals[sid]).toBeUndefined()
+
+      // A later, undeleted message still counts.
+      const [msg2] = await sendMessages(wid, sid, author, 1)
+      const events = await StreamEventRepository.list(pool, sid)
+      const evt2 = events.find((e) => e.payload?.messageId === msg2)!
+
+      const arrivalsAfter = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+      expect(arrivalsAfter[sid]).toEqual(evt2.createdAt)
+    })
   })
 
   describe("ReadStateRepository.clearInboxHeld", () => {
