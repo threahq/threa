@@ -46,14 +46,17 @@ function setupScript(internet: boolean): string {
 // returns. `timeout` alone is not enough: the image's (uutils) kills only its
 // direct child, and anything else the command started keeps the output open.
 // Polling closes the race where a stop lands before the command has started.
-function asSandboxUser(timeoutSec: number): string {
+// Each stream is cut in the box and the rest drained, because the SDK buffers
+// all output in backend memory before returning.
+function asSandboxUser(timeoutSec: number, maxOutputBytes: number): string {
   return [
     `stop="${STOP_DIR}/$${EXEC_ID_ENV}"`,
     `deadline=$(( $(date +%s) + ${timeoutSec} ))`,
     `( while :; do if [ -e "$stop" ] || [ $(date +%s) -ge $deadline ]; then ${KILL_USER}; fi; sleep 0.2; done ) >/dev/null 2>&1 &`,
     "watchdog=$!",
-    `runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}"`,
-    "status=$?",
+    `cap() { head -c ${maxOutputBytes + 1}; cat >/dev/null; }`,
+    `{ runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}" 2>&1 1>&3 3>&- | cap >&2; exit \${PIPESTATUS[0]}; } 3>&1 | cap`,
+    "status=${PIPESTATUS[0]}",
     'kill $watchdog; rm -f "$stop"',
     "exit $status",
   ].join("\n")
@@ -149,7 +152,7 @@ export class RailwaySandboxRunner implements SandboxRunner {
     const sandbox = await this.connect(sandboxId)
     const startedAt = Date.now()
     const execId = randomUUID()
-    const handle = sandbox.exec(asSandboxUser(options.timeoutSec), {
+    const handle = sandbox.exec(asSandboxUser(options.timeoutSec, options.maxOutputBytes), {
       cwd: "/work",
       timeoutSec: options.timeoutSec + CLIENT_GRACE_SEC,
       env: { [COMMAND_ENV]: command, [EXEC_ID_ENV]: execId },
