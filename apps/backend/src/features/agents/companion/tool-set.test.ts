@@ -115,7 +115,7 @@ describe("workspace_research prompt guidance", () => {
 })
 
 describe("run_command availability", () => {
-  const sandbox = { run: async () => ({}) as never }
+  const sandbox = { internet: async () => false, run: async () => ({}) as never }
 
   test("is built with workspace and sandbox deps", () => {
     expect(toolNames({ workspace, sandbox })).toContain(AgentToolNames.RUN_COMMAND)

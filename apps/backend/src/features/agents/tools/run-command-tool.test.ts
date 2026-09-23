@@ -14,7 +14,7 @@ const attachment = {
   e2eOnly: false,
 }
 
-function setup(getAccessible: AttachmentService["getAccessible"]) {
+function setup(getAccessible: AttachmentService["getAccessible"], run?: RunCommandToolDeps["run"]) {
   const sent: SandboxFile[][] = []
   const workspace = {
     workspaceId: "ws_1",
@@ -23,10 +23,13 @@ function setup(getAccessible: AttachmentService["getAccessible"]) {
     attachmentService: { getAccessible },
   } as unknown as WorkspaceToolDeps
   const deps: RunCommandToolDeps = {
-    run: async ({ files }) => {
-      sent.push(files)
-      return { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null, internet: false }
-    },
+    internet: async () => run !== undefined,
+    run:
+      run ??
+      (async ({ files }) => {
+        sent.push(files)
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
+      }),
   }
   return { tool: createRunCommandTool(workspace, deps), sent }
 }
@@ -99,20 +102,14 @@ describe("bindStreamSandbox", () => {
     sandboxInternet: boolean
     streamToolPolicy: ("web" | "workspace")[] | null
   }) {
-    const internetRequests: boolean[] = []
     const deps = bindStreamSandbox(
       {
-        service: {
-          run: async ({ internet }: { internet: boolean }) => {
-            internetRequests.push(internet)
-            return { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
-          },
-        } as unknown as SandboxService,
+        service: {} as SandboxService,
         workspaceSettings: { getSettings: async () => ({ sandboxInternet: params.sandboxInternet }) as never },
       },
       { workspaceId: "ws_1", streamId: "stream_1", sealed: params.sealed, streamToolPolicy: params.streamToolPolicy }
     )
-    return { deps, internetRequests }
+    return { deps }
   }
 
   test("withholds the sandbox on a sealed stream", () => {
@@ -127,16 +124,11 @@ describe("bindStreamSandbox", () => {
     ]
     const internet = []
     for (const c of cases) {
-      const { deps, internetRequests } = bind({ sealed: false, ...c })
-      const result = await deps!.run({ command: "true", files: [], timeoutSec: 5 })
-      internet.push({ requested: internetRequests[0], reported: result.internet })
+      const { deps } = bind({ sealed: false, ...c })
+      internet.push(await deps!.internet())
     }
 
-    expect(internet).toEqual([
-      { requested: true, reported: true },
-      { requested: false, reported: false },
-      { requested: false, reported: false },
-    ])
+    expect(internet).toEqual([true, false, false])
   })
 })
 
@@ -147,5 +139,18 @@ describe("run_command effects", () => {
       tool.config.trace.effects!({ command: "true" }, { output: JSON.stringify({ exitCode: 0, internet }) })
 
     expect({ on: effects(true), off: effects(false) }).toEqual({ on: [{ kind: "other" }], off: [] })
+  })
+
+  test("a command that fails in a box with internet still may have written elsewhere", async () => {
+    const { tool } = setup(
+      async () => null,
+      async () => {
+        throw new Error("exec connection dropped")
+      }
+    )
+
+    const result = await tool.config.execute({ command: "curl -X POST https://example.com" }, toolOpts)
+
+    expect(tool.config.trace.effects!({ command: "curl" }, result)).toEqual([{ kind: "other" }])
   })
 })

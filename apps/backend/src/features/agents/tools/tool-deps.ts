@@ -135,12 +135,14 @@ export interface UpdateStreamBriefToolDeps {
  * the internet access the workspace setting and stream policy allow together.
  */
 export interface RunCommandToolDeps {
+  internet: () => Promise<boolean>
   run: (params: {
+    internet: boolean
     command: string
     files: SandboxFile[]
     timeoutSec: number
     signal?: AbortSignal
-  }) => Promise<SandboxRunResult & { internet: boolean }>
+  }) => Promise<SandboxRunResult>
 }
 
 /**

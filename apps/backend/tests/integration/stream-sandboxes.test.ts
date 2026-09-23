@@ -264,7 +264,7 @@ describe("run_command", () => {
     const workspace = { workspaceId: at.workspaceId, accessibleStreamIds: [at.streamId] } as WorkspaceToolDeps
     return createRunCommandTool(
       workspace,
-      bindStreamSandbox({ service, workspaceSettings }, { ...at, streamToolPolicy: policy })
+      bindStreamSandbox({ service, workspaceSettings }, { ...at, sealed: false, streamToolPolicy: policy })!
     )
   }
 

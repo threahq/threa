@@ -78,12 +78,11 @@ export function bindStreamSandbox(
   const { workspaceId, streamId, sealed, streamToolPolicy } = target
   if (sealed) return undefined
   return {
-    run: async ({ command, files, timeoutSec, signal }) => {
+    internet: async () => {
       const settings = await sandbox.workspaceSettings.getSettings(workspaceId)
-      const internet = settings.sandboxInternet && isToolCategoryAllowed(streamToolPolicy, ToolPrivacyCategories.WEB)
-      const result = await sandbox.service.run({ workspaceId, streamId, internet, command, files, timeoutSec, signal })
-      return { ...result, internet }
+      return settings.sandboxInternet && isToolCategoryAllowed(streamToolPolicy, ToolPrivacyCategories.WEB)
     },
+    run: (params) => sandbox.service.run({ workspaceId, streamId, ...params }),
   }
 }
 
@@ -110,6 +109,7 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
     inputSchema: RunCommandSchema,
 
     execute: async (input, { signal }): Promise<AgentToolResult> => {
+      let internet = false
       try {
         const attachments = []
         for (const attachmentId of input.attachmentIds ?? []) {
@@ -138,7 +138,9 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
         }
         signal?.throwIfAborted()
 
+        internet = await deps.internet()
         const result = await deps.run({
+          internet,
           command: input.command,
           files,
           timeoutSec: input.timeoutSec ?? SANDBOX_DEFAULT_TIMEOUT_SEC,
@@ -152,7 +154,7 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
             stderr: result.stderr,
             ...(result.timedOut && { timedOut: true }),
             ...(result.truncated && { truncated: true }),
-            internet: result.internet,
+            internet,
             ...(result.replaced && { sandboxReplaced: REPLACED_NOTICES[result.replaced] }),
             ...(files.length > 0 && { files: files.map((f) => f.path) }),
           }),
@@ -163,6 +165,8 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
         return {
           output: JSON.stringify({
             error: `Sandbox failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+            // The command may have started before the failure.
+            ...(internet && { internet: true }),
           }),
         }
       }
