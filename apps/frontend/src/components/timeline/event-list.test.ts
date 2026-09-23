@@ -15,6 +15,7 @@ import {
   findMessageItemIndex,
   findEventItemIndex,
   findTimelineTargetIndex,
+  getTimelineItemArrivalKey,
   getTimelineItemKey,
   groupTimelineItems,
   injectGapItems,
@@ -738,6 +739,46 @@ describe("findMessageItemIndex", () => {
       },
     ]
     expect(findMessageItemIndex(items, "event_dlg")).toBe(1)
+  })
+})
+
+describe("getTimelineItemArrivalKey", () => {
+  it("should keep a command group's arrival key when the server copy replaces the optimistic one", () => {
+    const optimistic: TimelineItem = {
+      type: "command_group",
+      commandId: "temp_cmd_1",
+      events: [
+        createEvent({
+          id: "temp_cmd_1",
+          sequence: "9",
+          eventType: "command_dispatched",
+          payload: { commandId: "temp_cmd_1", name: "steer", args: "", status: "dispatched" },
+        }),
+      ],
+    }
+    const confirmed: TimelineItem = {
+      type: "command_group",
+      commandId: "cmd_1",
+      events: [
+        createEvent({
+          id: "evt_cmd_1",
+          sequence: "9",
+          eventType: "command_dispatched",
+          payload: { commandId: "cmd_1", clientCommandId: "temp_cmd_1", name: "steer", args: "", status: "dispatched" },
+        }),
+        createEvent({
+          id: "evt_cmd_2",
+          sequence: "10",
+          eventType: "command_completed",
+          payload: { commandId: "cmd_1" },
+        }),
+      ],
+    }
+
+    expect([getTimelineItemArrivalKey(optimistic), getTimelineItemArrivalKey(confirmed)]).toEqual([
+      "temp_cmd_1",
+      "temp_cmd_1",
+    ])
   })
 })
 

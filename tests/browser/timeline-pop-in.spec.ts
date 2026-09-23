@@ -18,6 +18,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  *   the frame its row appears, keeping whatever was typed while it was in flight.
  * - a message landing while that send is in flight grows in above it, and the
  *   send keeps its place when it confirms.
+ * - a slash command's chip grows in once, not again when the server's copy
+ *   replaces the optimistic one.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -297,4 +299,52 @@ test("a message landing while your send is in flight grows in above it, and your
     orders: ["first above second"],
     firstGrew: true,
   })
+})
+
+/** Counts the separate growths a row carrying `text` goes through. */
+function countGrowths({ text }: { text: string }) {
+  const seen = new WeakSet<Element>()
+  const state = { growths: 0 }
+  ;(window as unknown as { __growths: typeof state }).__growths = state
+  new MutationObserver(() => {
+    for (const growing of document.querySelectorAll("main .pop-in-grow")) {
+      if (seen.has(growing) || !growing.textContent?.includes(text)) continue
+      seen.add(growing)
+      state.growths++
+    }
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] })
+}
+
+test("a slash command's chip grows in once when the server confirms it", async ({ page }) => {
+  const { workspaceId } = await openSeededChannel(page)
+  const botResponse = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
+    data: { name: "PopBot", slug: `pop-bot-${generateTestId()}`, description: "A test bot", avatarEmoji: "🤖" },
+  })
+  await expectApiOk(botResponse, "create bot")
+  await page.reload()
+  await waitForSettledTail(page)
+  // Held past the chip's 450ms growth, so the optimistic → server swap lands on a settled row.
+  await page.route(/\/commands\/dispatch$/, async (route: Route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await route.continue()
+  })
+
+  const editor = page.locator("[contenteditable='true']").first()
+  await editor.click()
+  await page.keyboard.type("/inv")
+  await page
+    .locator("[aria-label='Slash command suggestions']")
+    .getByRole("option", { name: /invite/ })
+    .click()
+  await page.keyboard.type("@")
+  await page
+    .locator("[aria-label='Mention suggestions']")
+    .getByRole("option", { name: /PopBot/ })
+    .click()
+  await page.evaluate(countGrowths, { text: "/invite" })
+  await page.getByRole("button", { name: "Send", exact: true }).first().click()
+  await expect(page.getByText("PopBot was added to the conversation")).toBeVisible({ timeout: 20000 })
+  await page.waitForTimeout(1000)
+
+  expect(await page.evaluate(() => (window as unknown as { __growths: { growths: number } }).__growths.growths)).toBe(1)
 })
