@@ -38,9 +38,11 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
   const open = openProp ?? uncontrolledOpen
   const openRef = useRef(open)
   const menuGenerationRef = useRef(0)
+  const editorGenerationRef = useRef(0)
   if (open && !openRef.current) menuGenerationRef.current++
   openRef.current = open
   const menuGeneration = menuGenerationRef.current
+  const editorGeneration = editorGenerationRef.current
   const setOpen = (next: boolean) => {
     setUncontrolledOpen(next)
     onOpenChange?.(next)
@@ -104,6 +106,7 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
                     setOpen(false)
                   }}
                   onEdit={(editor) => {
+                    editorGenerationRef.current++
                     setOpen(false)
                     setCustomEditor(editor)
                   }}
@@ -140,7 +143,9 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
               conversationId={context.conversationId}
               saved={saved ?? null}
               editor={customEditor}
-              onReminderSet={() => setCustomEditor(null)}
+              onReminderSet={() => {
+                if (editorGenerationRef.current === editorGeneration) setCustomEditor(null)
+              }}
             />
           </DialogContent>
         </Dialog>
