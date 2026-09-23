@@ -1,10 +1,14 @@
 import { type CSSProperties, type ReactNode, useRef } from "react"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { cn } from "@/lib/utils"
+import { PopIn, useArrivals } from "./pop-in"
 
 interface VirtualizedScrollerItem {
   /** Stable across renders — this is the virtualizer's identity for the row. */
   key: string
+  /** Identity for arrival animation when it outlives `key` — an optimistic
+   *  row's client id, which its server row keeps. Defaults to `key`. */
+  arrivalKey?: string
   node: ReactNode
 }
 
@@ -58,6 +62,11 @@ interface VirtualizedScrollerProps {
    */
   mask?: ReactNode
   skeleton?: ReactNode
+  /**
+   * Rows appended at the tail after the landing grow in (`PopIn`). Off while the
+   * window isn't the live tail (jump mode), where appends are newer pages.
+   */
+  animateArrivals?: boolean
 }
 
 /**
@@ -105,8 +114,15 @@ export function VirtualizedScroller({
   overlay,
   mask,
   skeleton,
+  animateArrivals = true,
   ...dataAttributes
 }: VirtualizedScrollerProps) {
+  const arrivals = useArrivals(
+    items.map((item) => item.arrivalKey ?? item.key),
+    scrollKey,
+    animateArrivals && !isInitialSettling
+  )
+
   // Never mount the list empty: the initial landing and the settle mask in
   // useTimelineScroll both arm when items first exist, so a list mounted with
   // zero items paints an empty top-anchored frame and the populate + pin a
@@ -146,27 +162,30 @@ export function VirtualizedScroller({
               {startMargin.content}
             </div>
           )}
-          <Virtualizer
-            ref={listRef}
-            scrollRef={scrollerRef}
-            startMargin={startMargin?.heightPx}
-            // Maintain scroll from the end when an older page is prepended so the
-            // viewport doesn't move — the core reverse-infinite-scroll fix.
-            shift={shift}
-            // Off-screen px kept mounted so fast scrolling doesn't outrun
-            // mount+measure and flash blank rows. Was 1000 when every data tick
-            // re-rendered the whole window; with memoized rows the steady-state
-            // cost of extra mounted rows is near zero, so a larger buffer buys
-            // fling headroom. Mount cost still bounds it — don't raise further
-            // without profiling on a low-end device.
-            bufferSize={2000}
-          >
-            {items.map((item) => (
-              <div key={item.key} className={itemClassName}>
-                {item.node}
-              </div>
-            ))}
-          </Virtualizer>
+          {/* useTimelineScroll finds virtua's rows through this marker. */}
+          <div data-timeline-rows>
+            <Virtualizer
+              ref={listRef}
+              scrollRef={scrollerRef}
+              startMargin={startMargin?.heightPx}
+              // Maintain scroll from the end when an older page is prepended so the
+              // viewport doesn't move — the core reverse-infinite-scroll fix.
+              shift={shift}
+              // Off-screen px kept mounted so fast scrolling doesn't outrun
+              // mount+measure and flash blank rows. Was 1000 when every data tick
+              // re-rendered the whole window; with memoized rows the steady-state
+              // cost of extra mounted rows is near zero, so a larger buffer buys
+              // fling headroom. Mount cost still bounds it — don't raise further
+              // without profiling on a low-end device.
+              bufferSize={2000}
+            >
+              {items.map((item) => (
+                <PopIn key={item.key} className={itemClassName} arrivedAt={arrivals.get(item.arrivalKey ?? item.key)}>
+                  {item.node}
+                </PopIn>
+              ))}
+            </Virtualizer>
+          </div>
           {footer}
         </div>
       </div>

@@ -27,6 +27,7 @@ import { localStartOfDayMs } from "@/lib/dates"
 import { isSameAuthorRun } from "@/lib/message-grouping"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
+import { PopIn, useArrivals } from "./pop-in"
 import type {
   ConversationOverlayContext,
   ConversationOverlayModel,
@@ -54,6 +55,8 @@ interface EventListProps {
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
+  /** Rows appended at the tail after the first render grow in (`PopIn`). */
+  animateArrivals?: boolean
 }
 
 /**
@@ -606,6 +609,16 @@ export function getTimelineItemKey(item: TimelineItem): string {
     default:
       return item.event.id
   }
+}
+
+/** A row's identity across an own send's optimistic → server swap: the server
+ *  row carries the optimistic row's id as `clientMessageId`. */
+export function getTimelineItemArrivalKey(item: TimelineItem): string {
+  if (item.type === "event") {
+    const clientMessageId = (item.event.payload as { clientMessageId?: string } | undefined)?.clientMessageId
+    if (clientMessageId) return clientMessageId
+  }
+  return getTimelineItemKey(item)
 }
 
 /** Number of skeleton placeholder rows prepended while an older page is in flight. */
@@ -1339,6 +1352,7 @@ export function EventList({
   viewerIsMember,
   batch,
   conversationOverlay,
+  animateArrivals = false,
 }: EventListProps) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -1351,6 +1365,11 @@ export function EventList({
   // render all events with no zero-height filtering, so dividers go straight
   // onto the grouped list.
   const itemsWithDividers = useMemo(() => injectDayDividers(timelineItems), [timelineItems])
+  const arrivals = useArrivals(
+    itemsWithDividers.map(getTimelineItemArrivalKey),
+    streamId,
+    animateArrivals && !isLoading
+  )
 
   if (isLoading) {
     return (
@@ -1426,9 +1445,13 @@ export function EventList({
       {itemsWithDividers.map((item) => {
         const itemKey = getTimelineItemKey(item)
         return (
-          <div key={itemKey} className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}>
+          <PopIn
+            key={itemKey}
+            className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}
+            arrivedAt={arrivals.get(getTimelineItemArrivalKey(item))}
+          >
             <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={phase !== "ready"} />
-          </div>
+          </PopIn>
         )
       })}
     </div>

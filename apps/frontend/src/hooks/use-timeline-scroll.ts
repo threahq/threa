@@ -758,7 +758,7 @@ export function useTimelineScroll({
         pendingRecheck = 0
       }
     }
-    const observer = new ResizeObserver((entries) => {
+    const onResize = (entries: ResizeObserverEntry[]) => {
       const el = scrollerRef.current
       if (!el) return
       const hasViewportEntry = entries.some((entry) => entry.target === el)
@@ -803,10 +803,38 @@ export function useTimelineScroll({
       // on every composer open. When the viewport grows past the content end
       // the browser clamps scrollTop on its own; handleScroll never reads that
       // clamp as a user scroll (it lands exactly at the new bottom).
-    })
-
+    }
+    const observer = new ResizeObserver(onResize)
     observer.observe(scroller)
     observer.observe(content)
+
+    // Rows too. virtua learns a row's new height (a row growing in, an image
+    // decoding) from its own ResizeObserver and only then resizes the content,
+    // so the content entry above lands a frame late and that frame paints the
+    // row sliding under the composer. Observers deliver in creation order
+    // within a frame and virtua flushSyncs item resizes, so an observer created
+    // after virtua's sees its rows' entries after the new height is committed
+    // and pins in the same frame, before paint. virtua creates its observer
+    // when its first rows mount, hence the lazy construction on first rows.
+    let rowObserver: ResizeObserver | null = null
+    const observeRows = (nodes: Iterable<Node>) => {
+      for (const node of nodes) {
+        if (!(node instanceof Element)) continue
+        rowObserver ??= new ResizeObserver(onResize)
+        rowObserver.observe(node)
+      }
+    }
+    const rowList = content.querySelector(":scope > [data-timeline-rows] > *")
+    const rowMutations = new MutationObserver((records) => {
+      for (const record of records) {
+        observeRows(record.addedNodes)
+        record.removedNodes.forEach((node) => node instanceof Element && rowObserver?.unobserve(node))
+      }
+    })
+    if (rowList) {
+      observeRows(rowList.children)
+      rowMutations.observe(rowList, { childList: true })
+    }
 
     // Keyboard backstop. AppShell is sized to --viewport-height (pinned to the
     // visible viewport by useVisualViewport under interactive-widget=resizes-
@@ -827,6 +855,8 @@ export function useTimelineScroll({
 
     return () => {
       observer.disconnect()
+      rowObserver?.disconnect()
+      rowMutations.disconnect()
       clearPendingRecheck()
       vv?.removeEventListener("resize", pinIfFollowing)
       vv?.removeEventListener("scroll", pinIfFollowing)

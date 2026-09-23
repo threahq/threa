@@ -18,8 +18,10 @@ import {
   BoardEventRowItem,
   LedgerBoardEventGroup,
   LedgerBoardEventRow,
+  boardRowArrivalKey,
   type BoardRow,
 } from "@/components/board/board-row-item"
+import { PopIn, useArrivals } from "@/components/timeline/pop-in"
 import { LedgerBranchRow } from "@/components/board/ledger-row"
 import { DayDivider } from "@/components/timeline/day-divider"
 import { UnreadDivider } from "@/components/timeline/unread-divider"
@@ -346,6 +348,9 @@ export interface BranchedBoardRowProps {
 
 interface BranchedBoardRowsProps extends BranchedBoardRowProps {
   rows: BoardRow[]
+  /** Rows appended at the tail grow in (`PopIn`); a change reseeds, so a
+   *  reloaded or re-sourced row list never animates. */
+  arrivalResetKey: string
 }
 
 function renderRowContent(row: BoardRow, props: BranchedBoardRowProps): ReactNode {
@@ -457,6 +462,15 @@ export function renderBranchedBoardRow(row: BoardRow, props: BranchedBoardRowPro
 
 /** Render a branch-grouped row list in flow — the unvirtualized surfaces (board
  *  card). A virtualized one maps {@link renderBranchedBoardRow} itself. */
-export function BranchedBoardRows(props: BranchedBoardRowsProps) {
-  return <>{props.rows.map((row) => renderBranchedBoardRow(row, props))}</>
+export function BranchedBoardRows({ rows, arrivalResetKey, ...props }: BranchedBoardRowsProps) {
+  const arrivals = useArrivals(rows.map(boardRowArrivalKey), arrivalResetKey, true)
+  return (
+    <>
+      {rows.map((row) => (
+        <PopIn key={row.key} arrivedAt={arrivals.get(boardRowArrivalKey(row))}>
+          {renderBranchedBoardRow(row, props)}
+        </PopIn>
+      ))}
+    </>
+  )
 }

@@ -33,6 +33,13 @@ interface UseScrollBehaviorOptions {
    * A forced `scrollToBottom` still works.
    */
   skipInitialScroll?: boolean
+  /**
+   * The scrolled content box, mounted with the scroll container. While
+   * auto-scrolling its growth (a row growing in, an image decoding) re-pins in
+   * the same frame. An element, not a ref: the container can mount after this
+   * hook first runs, and the observers attach when it does.
+   */
+  content?: HTMLElement | null
 }
 
 interface UseScrollBehaviorReturn {
@@ -69,6 +76,7 @@ export function useScrollBehavior({
   triggerItemCount = Math.floor(EVENT_PAGE_SIZE * SCROLL_FETCH_RATIO),
   resetKey,
   skipInitialScroll = false,
+  content,
 }: UseScrollBehaviorOptions): UseScrollBehaviorReturn {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const shouldAutoScroll = useRef(true)
@@ -89,6 +97,11 @@ export function useScrollBehavior({
   // from falsely clearing shouldAutoScroll when content grows rapidly (the native
   // scroll event fires before the new scrollTop settles).
   const lastProgrammaticScrollAt = useRef(0)
+  // Where the resize observer last pinned. Content growing under the pin (a row
+  // growing in, an image decoding) reaches the scroll event a few pixels off
+  // the bottom, however long the frame took; only a scroll above the pin is the
+  // user leaving.
+  const pinnedScrollTop = useRef<number | null>(null)
   // Read through a ref so the reset below keys on `resetKey` alone: the option is
   // derived from live URL state (`?m=`), which other surfaces strip while the
   // panel is open — a dep on it would re-reset scroll mid-conversation.
@@ -108,6 +121,7 @@ export function useScrollBehavior({
     olderFetchScheduled.current = false
     newerFetchScheduled.current = false
     lastProgrammaticScrollAt.current = 0
+    pinnedScrollTop.current = null
     setIsScrolledFarFromBottom(false)
   }, [resetKey])
 
@@ -208,20 +222,21 @@ export function useScrollBehavior({
 
     const observer = new ResizeObserver(() => {
       const newHeight = el.clientHeight
-      if (newHeight === prevHeight) return
       const delta = prevHeight - newHeight
       prevHeight = newHeight
 
       if (shouldAutoScroll.current) {
         el.scrollTop = el.scrollHeight
+        pinnedScrollTop.current = el.scrollTop
       } else if (delta !== 0) {
         el.scrollTop += delta
       }
     })
 
     observer.observe(el)
+    if (content) observer.observe(content)
     return () => observer.disconnect()
-  }, [])
+  }, [content])
 
   const handleScroll = useCallback(() => {
     if (!scrollContainerRef.current) return
@@ -243,7 +258,8 @@ export function useScrollBehavior({
     // between React renders where scrollHeight has grown but scrollTop hasn't caught up,
     // making the user falsely appear to not be at the bottom.
     const isInGracePeriod = performance.now() - lastProgrammaticScrollAt.current < 150
-    if (isInGracePeriod) {
+    const grewUnderPin = pinnedScrollTop.current !== null && scrollTop >= pinnedScrollTop.current
+    if (isInGracePeriod || (shouldAutoScroll.current && grewUnderPin)) {
       if (isNearBottom) shouldAutoScroll.current = true
     } else {
       shouldAutoScroll.current = isNearBottom

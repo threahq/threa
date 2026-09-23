@@ -576,26 +576,23 @@ describe("MessageInput", () => {
       })
     })
 
-    it("should clear the composer immediately before send resolves", async () => {
-      let resolveSend: ((value: unknown) => void) | undefined
+    it("should keep the composer until the sent row renders, then clear text and attachments together", async () => {
       mockComposerState.canSend = true
       mockComposerState.content = makeDoc("Hello world")
-      mockSendMessage.mockImplementation(
-        () =>
-          new Promise((resolve) => {
-            resolveSend = resolve
-          })
-      )
+      mockSendMessage.mockResolvedValue({ optimisticMessageId: "temp_sent" })
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
-      const sendButton = screen.getByRole("button", { name: /send/i })
-      await userEvent.click(sendButton)
+      expect(mockSetContent).not.toHaveBeenCalled()
+      expect(mockClearAttachments).not.toHaveBeenCalled()
 
-      expect(mockSetContent).toHaveBeenCalledWith(EMPTY_DOC)
-      expect(mockResolveDraft).not.toHaveBeenCalled()
-
-      resolveSend?.({})
+      const row = document.createElement("div")
+      row.dataset.messageId = "temp_sent"
+      await act(async () => document.body.append(row))
+      expect(mockClearAttachments).toHaveBeenCalled()
+      expect(mockSetContent.mock.calls).toEqual([[EMPTY_DOC]])
+      row.remove()
     })
 
     it("should set isSending state during send", async () => {
@@ -1270,7 +1267,7 @@ describe("MessageInput", () => {
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
-      expect(mockSetContent.mock.calls).toEqual([[EMPTY_DOC]])
+      expect(mockSetContent).not.toHaveBeenCalled()
       expect(screen.queryByText("Failed to create stream. Please try again.")).not.toBeInTheDocument()
     })
   })

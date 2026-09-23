@@ -647,6 +647,44 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 }
 
+/* Row arrival (PopIn). The row's height grows from zero so everything above it
+   is pushed up while its content fades in. Each animation starts
+   --pop-in-elapsed in, so a remounted row resumes instead of replaying. Only
+   the keyframes carry the start state: with the animations off the row sits at
+   its final state. */
+.pop-in-grow {
+  display: grid;
+  animation: pop-in-grow 450ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(0ms - var(--pop-in-elapsed, 0ms));
+}
+.pop-in-grow > * {
+  min-height: 0;
+  overflow: hidden;
+}
+.pop-in-fx {
+  animation: pop-in-fade 300ms ease-out backwards;
+  animation-delay: calc(100ms - var(--pop-in-elapsed, 0ms));
+}
+@keyframes pop-in-grow {
+  from {
+    grid-template-rows: 0fr;
+  }
+  to {
+    grid-template-rows: 1fr;
+  }
+}
+@keyframes pop-in-fade {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop-in-grow,
+  .pop-in-fx {
+    animation: none;
+  }
+}
+
 /* Board card hover: the card holds still and its border warms to the primary
    (Ariadne thread) tint — a link-style highlight, no lift or float shadow, so
    nothing moves or reflows (INV-21). Per-message hover is a separate row-level
