@@ -428,9 +428,124 @@ Second paragraph`
       expect(document.querySelector("iframe")).not.toBeInTheDocument()
     })
 
+    it("renders a linked image as the link, never an anchor inside an anchor", () => {
+      render(<MarkdownContent content="[![build status](https://img.example/badge.svg)](https://ci.example/runs)" />)
+      const link = screen.getByRole("link", { name: "build status" })
+      expect({ href: link.getAttribute("href"), nested: link.querySelector("a") }).toEqual({
+        href: "https://ci.example/runs",
+        nested: null,
+      })
+    })
+
+    it("labels an alt-less linked image with its source", () => {
+      render(<MarkdownContent content="[![](https://img.example/badge.svg)](https://ci.example/runs)" />)
+      expect(screen.getByRole("link", { name: "https://img.example/badge.svg" })).toHaveAttribute(
+        "href",
+        "https://ci.example/runs"
+      )
+    })
+
     it("should escape HTML in inline content", () => {
       render(<MarkdownContent content="<div>test</div>" />)
       expect(document.querySelector("div.markdown-content div > div")).not.toBeInTheDocument()
+    })
+  })
+
+  describe("embedded HTML (allowHtml)", () => {
+    // What third-party HTML could use to run code, load remote content, restyle
+    // the app, clobber globals, or pose as a Threa pointer. Tag and attribute
+    // checks skip KaTeX output, which styles its own spans and draws with
+    // svg/MathML; links are checked everywhere. The <kbd> marker proves the HTML
+    // was parsed at all, so a payload escaped to text cannot pass vacuously.
+    const exposure = (container: HTMLElement) => {
+      const outsideKatex = (selector: string) =>
+        [...container.querySelectorAll(selector)].filter((el) => !el.closest(".katex"))
+      const all = outsideKatex("*")
+      return {
+        htmlRendered: container.querySelector("kbd") !== null,
+        elements: outsideKatex(
+          "script,iframe,frame,object,embed,form,video,audio,source,track,style,link,meta,base,svg,math,noscript,template"
+        ).map((el) => el.tagName.toLowerCase()),
+        handlers: all.flatMap((el) => el.getAttributeNames().filter((name) => name.startsWith("on"))),
+        styled: outsideKatex("[style]").map((el) => el.tagName.toLowerCase()),
+        remoteLoads: outsideKatex("[src],[srcset],[poster],[data],[action],[formaction],[background]").map((el) =>
+          el.tagName.toLowerCase()
+        ),
+        unsafeHrefs: [...container.querySelectorAll("[href]")]
+          .map((el) => el.getAttribute("href") ?? "")
+          .filter((href) => !/^(https?:|mailto:|\/|#|$)/i.test(href)),
+        katexLinks: [...container.querySelectorAll(".katex [href]")].map((el) => el.getAttribute("href")),
+        unprefixedIds: outsideKatex("[id],[name]")
+          .flatMap((el) => [el.getAttribute("id"), el.getAttribute("name")])
+          .filter((value): value is string => value !== null && !value.startsWith("user-content-")),
+      }
+    }
+    const safe = {
+      htmlRendered: true,
+      elements: [],
+      handlers: [],
+      styled: [],
+      remoteLoads: [],
+      unsafeHrefs: [],
+      katexLinks: [],
+      unprefixedIds: [],
+    }
+
+    it.each([
+      ["script", "<script>alert(1)</script>"],
+      ["script inside svg", "<svg><script>alert(1)</script></svg>"],
+      ["img onerror", "<img src=x onerror=alert(1)>"],
+      ["event handler attributes", '<div onclick="alert(1)" onmouseover="alert(1)">x</div>'],
+      ["javascript: href", '<a href="javascript:alert(1)">x</a>'],
+      ["entity-obfuscated javascript: href", '<a href="JaVaScRiPt&#58;alert(1)">x</a>'],
+      ["tab-obfuscated javascript: href", '<a href="java&#9;script:alert(1)">x</a>'],
+      ["markdown javascript: link", "[x](javascript:alert(1))"],
+      ["vbscript: href", '<a href="vbscript:msgbox(1)">x</a>'],
+      ["data: href", '<a href="data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==">x</a>'],
+      ["embeds", '<iframe src="https://evil.example"></iframe><object data="https://evil.example/x"></object>'],
+      [
+        "embed and form",
+        '<embed src="https://evil.example/x"><form action="https://evil.example"><button formaction="https://evil.example">go</button></form>',
+      ],
+      [
+        "media",
+        '<video src="https://evil.example/v.mp4" poster="https://evil.example/p.png"></video><audio src="https://evil.example/a.mp3"></audio>',
+      ],
+      [
+        "picture source",
+        '<picture><source srcset="https://evil.example/t.png"><img src="https://evil.example/t.png" alt="t"></picture>',
+      ],
+      [
+        "style attribute and sheets",
+        '<p style="position:fixed;inset:0">x</p><style>body{display:none}</style><link rel="stylesheet" href="https://evil.example/x.css">',
+      ],
+      [
+        "meta refresh and base",
+        '<meta http-equiv="refresh" content="0;url=https://evil.example"><base href="https://evil.example/">',
+      ],
+      [
+        "DOM clobbering ids",
+        '<a id="__proto__" name="location" href="https://ok.example">x</a><img name="getElementById" alt="y" src="https://a.example/y.png">',
+      ],
+      ["mXSS through noscript", '<noscript><p title="</noscript><img src=x onerror=alert(1)>"></noscript>'],
+      ["mXSS through math", "<math><mtext><table><mglyph><style><img src=x onerror=alert(1)>"],
+      [
+        "pointer protocols",
+        '<a href="user:usr_1">@kris</a> [m](memo:memo_1) [a](attachment:attach_1) [s](shared-message:stream_1/msg_1) [g](giphy:abc) [c](channel:stream_1)',
+      ],
+      ["KaTeX href", "$\\href{javascript:alert(1)}{x}$ and $\\href{/w/ws_1}{y}$"],
+    ])("neutralizes %s", (_label, payload) => {
+      const { container } = render(<MarkdownContent content={`<kbd>html</kbd> on\n\n${payload}`} allowHtml />)
+      expect(exposure(container)).toEqual(safe)
+    })
+
+    it.each([
+      ["math inside an HTML block as its TeX", "<p>Inline $x^2$ here</p>", "Inline $x^2$ here"],
+      ["a <pre> with no <code>", "<pre>( o.o )\n > ^ <</pre>", "( o.o )\n > ^ <"],
+      ["markup inside <pre><code>", "<pre><code>a <b>b</b> c</code></pre>", "a b c"],
+    ])("keeps the text of %s", (_label, content, text) => {
+      const { container } = render(<MarkdownContent content={content} allowHtml />)
+      expect(container.textContent).toContain(text)
     })
   })
 

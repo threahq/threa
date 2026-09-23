@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
 import { LinkPreviewCard } from "./link-preview-card"
 import type { LinkPreviewSummary } from "@threahq/types"
 
@@ -132,6 +133,64 @@ describe("LinkPreviewCard", () => {
 
     expect(screen.getByRole("heading", { name: "Hello" })).toBeInTheDocument()
     expect(screen.getByText("world")).toBeInTheDocument()
+  })
+
+  it("renders a README's HTML as sanitized markup instead of tag soup", () => {
+    const markdownContent = [
+      "# json-render",
+      "",
+      "<!-- badges -->",
+      '<p align="center">',
+      '  <a href="https://www.npmjs.com/package/@json-render/core"><img alt="npm version: @json-render/core" src="https://img.shields.io/npm/v/core.svg" height="28"></a>',
+      "</p>",
+      "",
+      "<details><summary>Install</summary>",
+      "",
+      "Run `npm install`.",
+      "",
+      "</details>",
+    ].join("\n")
+    const preview = makeGitHubPreview({
+      url: "https://github.com/vercel-labs/json-render",
+      title: "README.md",
+      previewType: "github_file",
+      previewData: {
+        type: "github_file",
+        url: "https://github.com/vercel-labs/json-render",
+        fetchedAt: "2026-09-23T10:00:00.000Z",
+        repository: { owner: "vercel-labs", name: "json-render", fullName: "vercel-labs/json-render", private: false },
+        data: {
+          path: "README.md",
+          language: "Markdown",
+          ref: "main",
+          renderMode: "markdown",
+          markdownContent,
+          startLine: 1,
+          endLine: 14,
+          truncated: true,
+          lines: [],
+        },
+      },
+    })
+
+    const { container } = render(
+      <MemoryRouter>
+        <LinkPreviewCard preview={preview} />
+      </MemoryRouter>
+    )
+    const readme = container.querySelector(".markdown-content")!
+
+    expect({
+      rawTags: /<\/?(p|a|img|details)\b|<!--/.test(readme.textContent ?? ""),
+      badge: screen.getByRole("link", { name: "npm version: @json-render/core" }).getAttribute("href"),
+      nestedLinks: readme.querySelectorAll(":scope a a").length,
+      summary: readme.querySelector("details summary")?.textContent,
+    }).toEqual({
+      rawTags: false,
+      badge: "https://www.npmjs.com/package/@json-render/core",
+      nestedLinks: 0,
+      summary: "Install",
+    })
   })
 
   it("renders GitHub PR preview with state badge and diff stats", () => {
@@ -349,6 +408,36 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText(/commented on/)).toBeInTheDocument()
     expect(screen.getByText(/Issue #7/)).toBeInTheDocument()
     expect(screen.getByText("Looks good to me!")).toBeInTheDocument()
+  })
+
+  it("renders HTML in a GitHub comment body instead of printing its tags", () => {
+    const preview = makeGitHubPreview({
+      url: "https://github.com/octocat/hello-world/issues/7#issuecomment-123",
+      title: "Comment on #7",
+      previewType: "github_comment",
+      previewData: {
+        type: "github_comment",
+        url: "https://github.com/octocat/hello-world/issues/7#issuecomment-123",
+        fetchedAt: "2026-04-08T10:00:00.000Z",
+        repository: { owner: "octocat", name: "hello-world", fullName: "octocat/hello-world", private: false },
+        data: {
+          body: "<!-- template -->First line<br>Second line\n\n<details><summary>Stack trace</summary>\n\nat foo",
+          truncated: true,
+          author: { login: "reviewer", avatarUrl: null },
+          createdAt: "2026-04-08T10:00:00.000Z",
+          parent: { kind: "issue", title: "Bug report", number: 7 },
+        },
+      },
+    })
+
+    const { container } = render(<LinkPreviewCard preview={preview} />)
+    const body = container.querySelector(".markdown-content")!
+
+    expect({
+      text: body.textContent?.includes("<"),
+      br: body.querySelectorAll("br").length,
+      summary: body.querySelector("details summary")?.textContent,
+    }).toEqual({ text: false, br: 1, summary: "Stack trace" })
   })
 
   it("renders an image preview inside the shared card chrome", () => {

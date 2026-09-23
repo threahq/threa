@@ -790,6 +790,7 @@ function GitHubFileContent({ preview, data }: { preview: LinkPreviewSummary; dat
       <div className="mt-2 overflow-hidden rounded-md border bg-muted/20 px-2.5 py-1.5">
         <MarkdownContent
           content={data.markdownContent}
+          allowHtml
           className="text-xs leading-relaxed text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
         />
       </div>
@@ -913,6 +914,7 @@ function GitHubCommentContent({ data }: { data: GitHubCommentPreviewData }) {
               <div className="min-w-0 flex-1 rounded-r-lg bg-muted/25 py-1 pr-2">
                 <MarkdownContent
                   content={data.body}
+                  allowHtml
                   className="text-xs leading-relaxed text-foreground/90 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
                 />
               </div>

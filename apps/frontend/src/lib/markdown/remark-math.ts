@@ -26,6 +26,11 @@ function splitMathInChildren(node: MdastNode, inTableCell: boolean): void {
   const next: MdastNode[] = []
   let replaced = false
   for (const child of node.children) {
+    // Raw HTML is parsed after this pass, so a token left in it would reach the
+    // page as private-use garbage. Its math goes back to the TeX source instead.
+    if (child.type === "html" && typeof child.value === "string") {
+      child.value = restoreMathSource(child.value)
+    }
     if (child.type === "text" && typeof child.value === "string") {
       const parts = splitMathTokens(child.value)
       if (parts) {
@@ -43,6 +48,18 @@ function splitMathInChildren(node: MdastNode, inTableCell: boolean): void {
     next.push(child)
   }
   if (replaced) node.children = next
+}
+
+function restoreMathSource(html: string): string {
+  const parts = splitMathTokens(html)
+  if (!parts) return html
+  return parts
+    .map((part) => {
+      if (!("tex" in part)) return part.text
+      const delimiter = part.display ? "$$" : "$"
+      return delimiter + part.tex + delimiter
+    })
+    .join("")
 }
 
 function textNode(value: string): MdastNode {
