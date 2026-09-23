@@ -136,7 +136,7 @@ export function LinkPreviewCard({
   const visibilityRef = useReportPreviewVisible({
     workspaceId,
     previewId: preview.id,
-    enabled: githubPreview !== null,
+    enabled: githubPreview !== null && !isCollapsedProp,
   })
 
   const handleDismiss = useCallback(

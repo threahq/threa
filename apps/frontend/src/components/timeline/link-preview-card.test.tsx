@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
 import { LinkPreviewCard } from "./link-preview-card"
 import type { LinkPreviewSummary } from "@threahq/types"
@@ -169,6 +169,48 @@ describe("LinkPreviewCard", () => {
     expect(screen.getByText("-30")).toBeInTheDocument()
     expect(screen.getByText("1 approved")).toBeInTheDocument()
     expect(screen.getByText(/octocat\/hello-world/)).toBeInTheDocument()
+  })
+
+  it("watches the expanded GitHub card again after it folds to a chip and back", () => {
+    const observed: Element[] = []
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe(element: Element) {
+          observed.push(element)
+        }
+        disconnect() {}
+      }
+    )
+    const preview = makeGitHubPreview({
+      previewType: "github_pr",
+      previewData: {
+        type: "github_pr",
+        url: "https://github.com/octocat/hello-world/pull/42",
+        fetchedAt: "2026-04-08T10:00:00.000Z",
+        repository: { owner: "octocat", name: "hello-world", fullName: "octocat/hello-world", private: false },
+        data: {
+          title: "Add feature",
+          number: 42,
+          state: "open",
+          author: { login: "octocat", avatarUrl: null },
+          baseBranch: "main",
+          headBranch: "feature-branch",
+          additions: 120,
+          deletions: 30,
+          reviewStatusSummary: { approvals: 1, changesRequested: 0, comments: 2, pendingReviewers: 0 },
+          createdAt: "2026-04-01T10:00:00.000Z",
+          updatedAt: "2026-04-08T10:00:00.000Z",
+        },
+      },
+    })
+
+    const { rerender } = render(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
+    rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed />)
+    rerender(<LinkPreviewCard preview={preview} workspaceId="ws_1" isCollapsed={false} />)
+    vi.unstubAllGlobals()
+
+    expect(observed.at(-1)?.isConnected).toBe(true)
   })
 
   it("renders GitHub issue preview with labels", () => {
