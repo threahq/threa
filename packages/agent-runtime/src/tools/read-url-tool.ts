@@ -456,7 +456,6 @@ When to use read_url:
   })
 }
 
-/** A page's result, truncated to what the model gets, with the page as a source when it has a title. */
 /** Opens pages the way `read_url` reads them, for a tool that reads pages on the model's behalf. */
 export function createWebPageOpener(readUrl: AgentTool): (url: string, signal: AbortSignal) => Promise<string | null> {
   return async (url, signal) => {
