@@ -311,7 +311,8 @@ export const ReadStateRepository = {
         SELECT s.stream_id,
           COALESCE(
             (SELECT e.sequence FROM stream_events e
-               WHERE e.id = CASE WHEN s.inbox_held THEN s.inbox_floor_event_id ELSE s.last_read_event_id END),
+               WHERE e.id = CASE WHEN s.inbox_held THEN s.inbox_floor_event_id ELSE s.last_read_event_id END
+                 AND e.stream_id = s.stream_id),
             0
           ) AS floor_sequence
         FROM state s
@@ -357,7 +358,8 @@ export const ReadStateRepository = {
 
   /**
    * A3 fix mirror (sparse-read design): after a move relocates events out of a
-   * source stream, any read-state row whose `last_read_event_id` is one of those
+   * source stream, any read-state row whose `last_read_event_id` (or held
+   * `inbox_floor_event_id`) is one of those
    * moved events now counts unread against a foreign thread-space sequence.
    * Repoint each to the nearest surviving prior event in the source stream
    * (greatest sequence strictly below the moved event's original source
@@ -392,6 +394,27 @@ export const ReadStateRepository = {
       )
       UPDATE stream_read_state rs
       SET last_read_event_id = repoint.new_event_id, updated_at = NOW()
+      FROM repoint
+      WHERE rs.stream_id = $1 AND rs.user_id = repoint.user_id
+      `,
+      [sourceStreamId, eventIds, sequences]
+    )
+    await db.query(
+      `
+      WITH moved AS (
+        SELECT unnest($2::text[]) AS event_id, unnest($3::bigint[]) AS src_seq
+      ),
+      repoint AS (
+        SELECT rs.user_id,
+          (SELECT e.id FROM stream_events e
+             WHERE e.stream_id = $1 AND e.sequence < moved.src_seq
+             ORDER BY e.sequence DESC LIMIT 1) AS new_event_id
+        FROM stream_read_state rs
+        JOIN moved ON moved.event_id = rs.inbox_floor_event_id
+        WHERE rs.stream_id = $1
+      )
+      UPDATE stream_read_state rs
+      SET inbox_floor_event_id = repoint.new_event_id, updated_at = NOW()
       FROM repoint
       WHERE rs.stream_id = $1 AND rs.user_id = repoint.user_id
       `,
