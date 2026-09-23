@@ -142,7 +142,7 @@ export function CollapsibleBody({
 
   return (
     <div>
-      <InsideCollapsibleBlockProvider active={group ? true : own.canToggle}>
+      <InsideCollapsibleBlockProvider active={group ? collapsible || collapsed : own.canToggle}>
         {/* Expansion lives only on the explicit Show more/less button below — the
             body itself is NOT click-to-toggle. A message body carries clickable
             mentions/links (their onClick would double-fire with the fold) and, on

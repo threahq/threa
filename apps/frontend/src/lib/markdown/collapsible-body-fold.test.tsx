@@ -3,11 +3,15 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { __resetCollapseCacheForTests } from "./collapse-cache"
 import { CollapsibleBody } from "./collapsible-body"
-import { MarkdownBlockProvider, useMarkdownBlockContext } from "./markdown-block-context"
+import { MarkdownBlockProvider, useIsInsideCollapsibleBlock, useMarkdownBlockContext } from "./markdown-block-context"
 
 function ScopeProbe({ label }: { label: string }) {
   const scope = useMarkdownBlockContext()
   return <span>{`${label}:${scope?.messageId ?? "none"}`}</span>
+}
+
+function NestedProbe() {
+  return <span>{`nested:${useIsInsideCollapsibleBlock()}`}</span>
 }
 
 describe("CollapsibleBody trailing content", () => {
@@ -91,5 +95,38 @@ describe("CollapsibleBody trailing content", () => {
 
     await user.click(screen.getByRole("button", { name: "Show more" }))
     expect(screen.getByText("Clipped")).not.toHaveAttribute("inert")
+  })
+
+  it("leaves nested blocks their own fold when a run holds a short body", () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(100)
+    const group = { collapsed: false, toggleLabel: null, onToggle: () => {} }
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody kind="message" content="short" collapseAtHeight={420} collapseToHeight={240} group={group}>
+          <NestedProbe />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    expect(screen.getByText("nested:false")).toBeInTheDocument()
+  })
+
+  it("takes over nested folds while a run clamps the body", () => {
+    const group = { collapsed: true, toggleLabel: null, onToggle: () => {} }
+    render(
+      <MarkdownBlockProvider messageId="msg_1">
+        <CollapsibleBody
+          kind="message"
+          content="long body"
+          collapseAtHeight={2000}
+          collapseToHeight={240}
+          group={group}
+        >
+          <NestedProbe />
+        </CollapsibleBody>
+      </MarkdownBlockProvider>
+    )
+
+    expect(screen.getByText("nested:true")).toBeInTheDocument()
   })
 })
