@@ -13,7 +13,7 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  *   animation clock frozen at the frame's time. A read outside a frame lets
  *   Chrome advance that clock, so it would measure growth nobody painted.
  * - detached: the rows the reader is looking at don't move at all.
- * - cold load: nothing animates.
+ * - cold load and the viewer's own send: nothing animates.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -182,6 +182,23 @@ test("opening a stream animates nothing", async ({ page }) => {
   await page.addInitScript(watchForAnimation)
   await page.reload()
   await waitForSettledTail(page)
+
+  expect(await sawAnimation(page)).toBe(false)
+})
+
+test("your own send lands at full height with nothing animating", async ({ page }) => {
+  await openSeededChannel(page)
+  await page.addInitScript(watchForAnimation)
+  await page.reload()
+  await waitForSettledTail(page)
+
+  const text = `own send ${generateTestId()}`
+  const editor = page.locator("[contenteditable='true']").first()
+  await editor.click()
+  await editor.pressSequentially(text)
+  await page.getByRole("button", { name: "Send", exact: true }).first().click()
+  await expect(page.getByRole("main").getByText(text).first()).toBeVisible({ timeout: 10000 })
+  await page.waitForTimeout(1500)
 
   expect(await sawAnimation(page)).toBe(false)
 })

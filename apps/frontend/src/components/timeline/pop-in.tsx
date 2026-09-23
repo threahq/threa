@@ -20,8 +20,10 @@ interface ArrivalTracker {
  * anywhere but after the last already-seen row (prepends, backfilled gaps, a
  * replaced window) never count.
  *
- * An identity must survive an optimistic row's swap to its server row
- * (`clientMessageId`), or the swap replays the arrival.
+ * The viewer's own send (an optimistic `temp_` identity) never counts: it lands
+ * at full height in the frame the composer clears, not a beat behind it. Its
+ * identity must survive the swap to its server row (`clientMessageId`), or the
+ * swap would count as an arrival.
  */
 export function useArrivals(
   identities: readonly string[],
@@ -41,7 +43,7 @@ export function useArrivals(
     while (i >= 0 && !seen.has(identities[i])) fresh.push(identities[i--])
     if (i >= 0 && fresh.length > 0 && fresh.length <= MAX_ARRIVALS_PER_COMMIT) {
       const now = performance.now()
-      for (const id of fresh) if (!tracker.arrivedAt.has(id)) tracker.arrivedAt.set(id, now)
+      for (const id of fresh) if (!id.startsWith("temp_") && !tracker.arrivedAt.has(id)) tracker.arrivedAt.set(id, now)
     }
   }
 
