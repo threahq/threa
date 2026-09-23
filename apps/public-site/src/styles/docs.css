@@ -428,7 +428,7 @@ a {
 }
 .docs-article h1 {
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: var(--display-weight);
   font-size: clamp(36px, 4.4vw, 54px);
   line-height: 1.02;
   letter-spacing: -0.035em;
@@ -436,7 +436,7 @@ a {
 }
 .docs-article h2 {
   font-family: var(--font-display);
-  font-weight: 750;
+  font-weight: var(--display-weight);
   font-size: clamp(24px, 2.4vw, 29px);
   line-height: 1.1;
   letter-spacing: -0.025em;
@@ -449,7 +449,7 @@ a {
 }
 .docs-article h3 {
   font-family: var(--font-display);
-  font-weight: 750;
+  font-weight: var(--display-weight);
   font-size: 18px;
   color: hsl(var(--ink));
   letter-spacing: -0.01em;

@@ -70,6 +70,7 @@
   --emerald-soft: 142 60% 92%;
 
   --font-display: "Cabinet Grotesk", "Switzer", system-ui, -apple-system, sans-serif;
+  --display-weight: 600;
   --font-body: "Switzer", system-ui, -apple-system, sans-serif;
   --font-mono: "Commit Mono", ui-monospace, monospace;
 
@@ -203,7 +204,7 @@ body {
 }
 .h-display {
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: var(--display-weight);
   font-size: clamp(42px, 5.2vw, 70px);
   line-height: 0.98;
   letter-spacing: -0.035em;
@@ -1017,7 +1018,7 @@ body {
 }
 .stop-date {
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: var(--display-weight);
   font-size: var(--date);
   line-height: 0.8;
   letter-spacing: -0.045em;
@@ -1093,7 +1094,7 @@ body {
 }
 .memo-shell h2 {
   font-family: var(--font-display);
-  font-weight: 750;
+  font-weight: var(--display-weight);
   font-size: clamp(32px, 3.9vw, 48px);
   line-height: 1.02;
   letter-spacing: -0.03em;
