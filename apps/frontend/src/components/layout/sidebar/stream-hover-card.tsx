@@ -4,18 +4,21 @@ import { useQuery } from "@tanstack/react-query"
 import { Check, CheckCheck, ExternalLink } from "lucide-react"
 import { ENCRYPTED_MESSAGE_PREVIEW_LABEL, type EventType, type StreamEvent } from "@threahq/types"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { RelativeTime } from "@/components/relative-time"
+import { ActorAvatar } from "@/components/actor-avatar"
+import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { useStreamService } from "@/contexts"
 import { useActors, useUnreadCounts } from "@/hooks"
+import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useDecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useWorkspaceStreamReadStates } from "@/stores/workspace-store"
 import { resolveFrontierSequence } from "@/lib/read-frontier"
+import { isSameAuthorRun } from "@/lib/message-grouping"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
@@ -167,7 +170,7 @@ interface HoverCardBodyProps {
 
 function HoverCardBody({ workspaceId, stream, unreadCount, onClearFromInbox, onNavigate }: HoverCardBodyProps) {
   const streamService = useStreamService()
-  const { getActorName, getActorAvatar } = useActors(workspaceId)
+  const { getActorName } = useActors(workspaceId)
   const { markAsRead } = useUnreadCounts(workspaceId)
   const readStates = useWorkspaceStreamReadStates(workspaceId)
   const { data: messages, isError } = useQuery({
@@ -183,7 +186,7 @@ function HoverCardBody({ workspaceId, stream, unreadCount, onClearFromInbox, onN
     return messages.findIndex((message) => frontier === null || message.sequence > frontier)
   }, [messages, unreadCount, frontier])
 
-  const groups = useMemo(() => groupByAuthor(messages ?? [], firstUnreadIndex), [messages, firstUnreadIndex])
+  const groups = useMemo(() => groupHoverMessages(messages ?? [], firstUnreadIndex), [messages, firstUnreadIndex])
   const latest = messages?.at(-1)
   const streamHref = `/w/${workspaceId}/s/${stream.id}`
 
@@ -217,74 +220,59 @@ function HoverCardBody({ workspaceId, stream, unreadCount, onClearFromInbox, onN
         {messages === undefined && !isError && <HoverCardSkeleton />}
         {isError && <p className="px-3 py-3 text-xs text-muted-foreground">Couldn't load messages</p>}
         {messages?.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">No messages yet</p>}
-        {groups.map((group) => {
-          const avatar = getActorAvatar(group.actorId, group.actorType)
-          return (
-            <div key={group.messages[0].messageId}>
-              {group.startsUnread && (
-                <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] font-medium text-primary">
-                  <span>New</span>
-                  <span className="h-px flex-1 bg-primary/30" />
-                </div>
-              )}
-              <div className="flex gap-2 px-3 pt-2">
-                <Avatar className="mt-0.5 h-5 w-5 rounded-md">
-                  {avatar.avatarUrl && <AvatarImage src={avatar.avatarUrl} alt="" />}
-                  <AvatarFallback className="rounded-md text-[10px]">{avatar.fallback}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-baseline gap-2">
-                    <span className="truncate text-xs font-semibold">
-                      {getActorName(group.actorId, group.actorType)}
-                    </span>
-                    <RelativeTime
-                      date={group.messages[0].event.createdAt}
-                      className="shrink-0 text-[11px] text-muted-foreground"
-                    />
-                  </div>
-                  {group.messages.map((message) => (
-                    <HoverCardMessageRow
-                      key={message.messageId}
-                      workspaceId={workspaceId}
-                      message={message}
-                      href={`${streamHref}?m=${message.messageId}`}
-                      onNavigate={onNavigate}
-                    />
-                  ))}
-                </div>
+        {groups.map((group) => (
+          <div key={group.messages[0].messageId}>
+            {group.startsUnread && (
+              <div className="flex items-center gap-2 px-3 pt-1.5 text-[11px] font-medium text-primary">
+                <span>New</span>
+                <span className="h-px flex-1 bg-primary/30" />
               </div>
-            </div>
-          )
-        })}
+            )}
+            {group.messages.map((message, index) => (
+              <HoverCardMessageRow
+                key={message.messageId}
+                workspaceId={workspaceId}
+                message={message}
+                authorName={getActorName(message.event.actorId, message.event.actorType)}
+                head={index === 0}
+                href={`${streamHref}?m=${message.messageId}`}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   )
 }
 
-interface MessageGroup {
-  actorId: string | null
-  actorType: StreamEvent["actorType"]
+export interface HoverMessageGroup {
   startsUnread: boolean
   messages: HoverCardMessage[]
 }
 
-function groupByAuthor(messages: HoverCardMessage[], firstUnreadIndex: number): MessageGroup[] {
-  const groups: MessageGroup[] = []
+/** Same-author runs by the timeline's rule; the first unread message always heads its own run. */
+export function groupHoverMessages(messages: HoverCardMessage[], firstUnreadIndex: number): HoverMessageGroup[] {
+  const groups: HoverMessageGroup[] = []
   messages.forEach((message, index) => {
     const last = groups.at(-1)
+    const previous = last?.messages.at(-1)
     const startsUnread = index === firstUnreadIndex
-    if (last && !startsUnread && last.actorId === message.event.actorId) {
+    if (last && previous && !startsUnread && isSameAuthorRun(toRunRow(previous), toRunRow(message))) {
       last.messages.push(message)
       return
     }
-    groups.push({
-      actorId: message.event.actorId,
-      actorType: message.event.actorType,
-      startsUnread,
-      messages: [message],
-    })
+    groups.push({ startsUnread, messages: [message] })
   })
   return groups
+}
+
+function toRunRow(message: HoverCardMessage) {
+  return {
+    authorId: message.event.actorId,
+    authorType: message.event.actorType,
+    createdAtMs: new Date(message.event.createdAt).getTime(),
+  }
 }
 
 function CardAction({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
@@ -309,17 +297,24 @@ function CardAction({ label, onClick, children }: { label: string; onClick: () =
 interface HoverCardMessageRowProps {
   workspaceId: string
   message: HoverCardMessage
+  authorName: string
+  /** First message of a same-author run: carries the avatar and name line. */
+  head: boolean
   href: string
   onNavigate: () => void
 }
 
-function HoverCardMessageRow({ workspaceId, message, href, onNavigate }: HoverCardMessageRowProps) {
+function HoverCardMessageRow({ workspaceId, message, authorName, head, href, onNavigate }: HoverCardMessageRowProps) {
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
+  const { formatTime, formatFull } = useFormattedDate()
   const content = useDecryptedMessageContent(message.event, workspaceId, currentUserId)
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
-  const textRef = useRef<HTMLAnchorElement>(null)
+  const textRef = useRef<HTMLParagraphElement>(null)
+  const { actorId, actorType, createdAt } = message.event
+  const theme = actorRowTheme(actorType)
+  const sentAt = new Date(createdAt)
 
   let text: string | null = null
   if (content.status === "plaintext" || content.status === "decrypted") {
@@ -336,26 +331,59 @@ function HoverCardMessageRow({ workspaceId, message, href, onNavigate }: HoverCa
     setOverflows(el.scrollHeight > el.clientHeight + 1)
   }, [text, expanded])
 
-  if (text === null) return <Skeleton className="my-1 h-3.5 w-3/4" />
-
   return (
-    <div className="-mx-1.5">
+    <div className={cn("message-hover-wash", theme.rowAccent, head ? "pt-2" : "pt-0.5", "pb-0.5")}>
       <Link
-        ref={textRef}
         to={href}
         onClick={onNavigate}
-        className={cn(
-          "block whitespace-pre-wrap break-words rounded px-1.5 py-0.5 text-[13px] leading-snug hover:bg-muted/60",
-          !expanded && "line-clamp-3",
-          (content.status === "locked" || content.status === "failed") && "text-muted-foreground"
-        )}
+        className="group flex gap-2 px-3 outline-none focus-visible:bg-muted/80"
+        data-message-id={message.messageId}
       >
-        {text || " "}
+        {head ? (
+          <ActorAvatar
+            actorId={actorId}
+            actorType={actorType}
+            workspaceId={workspaceId}
+            size="sm"
+            alt={authorName}
+            showStatus={false}
+          />
+        ) : (
+          <span
+            className="w-7 shrink-0 text-right font-mono text-[10px] tabular-nums leading-[18px] text-transparent transition-colors group-hover:text-muted-foreground/60"
+            title={formatFull(sentAt)}
+          >
+            {formatTime(sentAt)}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          {head && (
+            <div className="flex items-baseline gap-2">
+              <span className={cn("min-w-0 truncate text-xs font-semibold", theme.nameClassName)}>{authorName}</span>
+              {theme.badge}
+              <RelativeTime date={createdAt} className="shrink-0 text-[11px] text-muted-foreground" />
+            </div>
+          )}
+          {text === null ? (
+            <Skeleton className="my-1 h-3.5 w-3/4" />
+          ) : (
+            <p
+              ref={textRef}
+              className={cn(
+                "whitespace-pre-wrap break-words text-[13px] leading-[18px]",
+                !expanded && "line-clamp-3",
+                (content.status === "locked" || content.status === "failed") && "text-muted-foreground"
+              )}
+            >
+              {text || " "}
+            </p>
+          )}
+        </div>
       </Link>
       {(overflows || expanded) && (
         <button
           type="button"
-          className="px-1.5 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+          className="ml-12 text-[11px] font-medium text-muted-foreground hover:text-foreground"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? "Show less" : "Show more"}
@@ -370,7 +398,7 @@ function HoverCardSkeleton() {
     <div className="space-y-3 px-3 py-2">
       {[0, 1, 2].map((row) => (
         <div key={row} className="flex gap-2">
-          <Skeleton className="h-5 w-5 rounded-md" />
+          <Skeleton className="h-7 w-7 rounded-[6px]" />
           <div className="flex-1 space-y-1.5">
             <Skeleton className="h-3 w-1/3" />
             <Skeleton className="h-3.5 w-5/6" />
