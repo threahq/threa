@@ -575,7 +575,7 @@ export interface BoardCardMessages {
    *  reply can't inflate the gap); otherwise the server count, since older replies
    *  aren't in IDB yet. */
   totalReplies: number
-  /** Of `totalReplies`, the ones `conversation:updated` listed before their event
+  /** Of `totalReplies`, the ones `conversation:updated` listed while the card showed, before their event
    *  reached the rail and that are newer than every reply on hand — they will land
    *  at the tail, so they are never "earlier" mass. */
   trailingUnseen: number
@@ -829,6 +829,10 @@ export function useBoardCardMessages(
   // history and must keep counting toward the "N more" gap. Snapshot on the
   // pending 0→N transition, cleared when the episode drains.
   const pendingEpisodeRef = useRef<{ conversationId: string; baseline: Set<string> } | null>(null)
+  // The reply ids listed when the card first rendered this conversation. An
+  // unseen id among them is history the device never synced; only one that
+  // joins later can be a live arrival still waiting on its event.
+  const firstListedRef = useRef<{ conversationId: string; ids: Set<string> } | null>(null)
 
   const view = useMemo(() => {
     // The retained copy is read here but written only after commit (the effect
@@ -966,9 +970,12 @@ export function useBoardCardMessages(
     // Message ids are ULIDs, so id order is creation order.
     let newestKnownId = openingId ?? ""
     for (const m of liveReplies) if (m.id > newestKnownId) newestKnownId = m.id
+    const firstListed = firstListedRef.current?.conversationId === conversationId ? firstListedRef.current.ids : null
     let unseenNewer = 0
-    for (const id of replyIds)
-      if (id > newestKnownId && !rail.seen.has(id) && backfillById?.has(id) !== true) unseenNewer++
+    if (firstListed)
+      for (const id of replyIds)
+        if (id > newestKnownId && !firstListed.has(id) && !rail.seen.has(id) && backfillById?.has(id) !== true)
+          unseenNewer++
     const trailingUnseen = Math.max(0, unseenNewer - covered)
 
     // Retain a fresh pending row; keep the retained copy while it's still bridging;
@@ -994,6 +1001,9 @@ export function useBoardCardMessages(
   useEffect(() => {
     retainedPendingRef.current = view.nextRetained
     if (view.source !== "projection") lastLiveRef.current = { conversationId, view }
+    if (firstListedRef.current?.conversationId !== conversationId) {
+      firstListedRef.current = { conversationId, ids: new Set(replyIds) }
+    }
     if (view.pendingReplies.length > 0) {
       const episode = pendingEpisodeRef.current
       // Snapshot only on the 0→N transition — re-snapshotting mid-episode would
