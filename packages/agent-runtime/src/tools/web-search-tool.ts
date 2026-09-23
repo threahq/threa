@@ -23,7 +23,6 @@ export interface WebSearchResult {
   searchedAt?: string
   timezone?: string
   results: WebSearchResultItem[]
-  answer?: string
 }
 
 export interface CreateWebSearchToolParams {
@@ -97,19 +96,18 @@ ${recencyGroundingBullet}
       const sanitizedQuery = redactQuery(input.query)
 
       try {
-        const found = await searchWebEngines(engines, sanitizedQuery, { maxResults, signal: fetchSignal })
+        const pages = await searchWebEngines(engines, sanitizedQuery, { maxResults, signal: fetchSignal })
         const searchedAt = currentTime ? new Date(currentTime) : new Date()
 
         const result: WebSearchResult = {
           query: sanitizedQuery,
           ...(currentTime && { searchedAt: searchedAt.toISOString(), timezone }),
-          results: found.pages.map((page) => ({
+          results: pages.map((page) => ({
             title: page.title,
             url: page.url,
             content: page.content,
             age: describeWebPageAge(page, searchedAt),
           })),
-          ...(found.answer ? { answer: found.answer } : {}),
         }
 
         logger.debug({ query: input.query, resultCount: result.results.length }, "Web search completed")

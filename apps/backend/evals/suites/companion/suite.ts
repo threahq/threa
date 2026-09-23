@@ -344,7 +344,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
   try {
     if (ctx.credentials.webSearchEngines.length === 0) {
       throw new Error(
-        "Companion evals need a web search engine with its key (WEB_SEARCH_ENGINES, default tavily + TAVILY_API_KEY) for full web_search tool access"
+        "Companion evals need a web search engine with its key (EXA_API_KEY and/or SERPER_API_KEY) for full web_search tool access"
       )
     }
 

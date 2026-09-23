@@ -763,7 +763,7 @@ describe("runEnclaveTurn", () => {
         onStepStarted,
         onStep,
         onSubstep,
-        tools: { webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }) },
+        tools: { webSearchEngines: createWebSearchEngines({ exa: "exa-test" }) },
       },
       baseRequest({ wraps: [wrap], prompt })
     )
@@ -824,7 +824,7 @@ describe("runEnclaveTurn", () => {
         onStepStarted,
         onStep,
         onSubstep,
-        tools: { webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }) },
+        tools: { webSearchEngines: createWebSearchEngines({ exa: "exa-test" }) },
       },
       baseRequest({ wraps: [wrap], prompt })
     )
@@ -856,15 +856,13 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "What causes the tides?", "msg_user", "usr_owner")
 
-    // Hermetic Tavily: web_search's fetch returns one titled result, so the
+    // Hermetic Exa: web_search's fetch returns one titled result, so the
     // tool reports a SourceItem the loop accumulates into the commit payload.
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async () =>
       new Response(
         JSON.stringify({
-          query: "tides",
-          results: [{ title: "Tide Atlas", url: "https://tides.example/atlas", content: "the moon", score: 0.9 }],
-          answer: "The moon.",
+          results: [{ title: "Tide Atlas", url: "https://tides.example/atlas", text: "the moon" }],
         }),
         { status: 200, headers: { "content-type": "application/json" } }
       )) as unknown as typeof fetch
@@ -881,7 +879,7 @@ describe("runEnclaveTurn", () => {
           onStepStarted,
           onStep,
           onSubstep,
-          tools: { webSearchEngines: createWebSearchEngines("tavily", { tavily: "tvly-test" }) },
+          tools: { webSearchEngines: createWebSearchEngines({ exa: "exa-test" }) },
         },
         baseRequest({ wraps: [wrap], prompt })
       )

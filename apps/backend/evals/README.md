@@ -322,13 +322,11 @@ Results are displayed in the terminal with:
 
 ## Environment Variables
 
-| Variable             | Required | Description                                 |
-| -------------------- | -------- | ------------------------------------------- |
-| `OPENROUTER_API_KEY` | Yes      | API key for model calls                     |
-| `WEB_SEARCH_ENGINES` | No       | Engines for `web_search` (default `tavily`) |
-| `TAVILY_API_KEY`     | Yes\*    | Tavily key for companion `web_search` evals |
-| `EXA_API_KEY`        | Yes\*    | Exa key, when `exa` is listed               |
-| `SERPER_API_KEY`     | Yes\*    | Serper key, when `serper` is listed         |
-| `DATABASE_URL`       | Yes      | PostgreSQL connection                       |
+| Variable             | Required | Description                                  |
+| -------------------- | -------- | -------------------------------------------- |
+| `OPENROUTER_API_KEY` | Yes      | API key for model calls                      |
+| `EXA_API_KEY`        | Yes\*    | Exa key for `web_search`                     |
+| `SERPER_API_KEY`     | Yes\*    | Serper (Google results) key for `web_search` |
+| `DATABASE_URL`       | Yes      | PostgreSQL connection                        |
 
-\* The `companion` suite uses the real `web_search` tool path and needs the key for at least one listed engine.
+\* The `companion` suite uses the real `web_search` tool path and needs at least one of the two keys.

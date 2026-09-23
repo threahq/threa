@@ -80,7 +80,6 @@ export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "
 export {
   createExaEngine,
   createSerperEngine,
-  createTavilyEngine,
   createWebSearchEngines,
   WebSearchEngineNames,
   type WebSearchEngine,

@@ -4,10 +4,10 @@
 # 2026-07-11) vs gpt-5.6-luna. Both companion-backed suites run, because they
 # measure different halves of the persona:
 #   - `companion`     — the full turn: tools, retrieval, temporal grounding,
-#                       hallucination guards. Needs TAVILY_API_KEY (real
-#                       web_search) and has the widest case set.
+#                       hallucination guards. Needs EXA_API_KEY and/or
+#                       SERPER_API_KEY (real web_search) and has the widest case set.
 #   - `persona-style` — instruction following on the Tone/Brevity style slots,
-#                       send_message only, so no Tavily dependency. Its own
+#                       send_message only, so no search keys needed. Its own
 #                       default model is a cheap chat model; overriding it here
 #                       is deliberate — the question is whether Ariadne's model
 #                       obeys the slots, not whether the fragments work.
@@ -26,11 +26,11 @@
 # `general:researcher` override below preserves the isolation: a resolved config
 # model outranks the turn's, so every arm researches on the same production model.
 #
-# Run (needs OPENROUTER_API_KEY with credit headroom + TAVILY_API_KEY):
+# Run (needs OPENROUTER_API_KEY with credit headroom + EXA_API_KEY/SERPER_API_KEY):
 #   bun run eval -- --config evals/companion-model-comparison.yaml -r 3 -p 4 \
 #     --min-pass-rate 0.67 --json /tmp/ariadne-model-comparison.json
 #
-# Without a Tavily key, run the style half alone:
+# Without search keys, run the style half alone:
 #   bun run eval -- --config evals/companion-model-comparison.yaml -s persona-style
 
 suites:

@@ -74,10 +74,8 @@ What the enclave does not do:
 | `ENCLAVE_INTERNAL_API_KEY`        | yes                  | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY` and must NOT equal the shared `INTERNAL_API_KEY`. |
 | `OPENROUTER_API_KEY`              | yes                  | The enclave's LLM credential. Requests set `provider.data_collection: "deny"`. See the retention policy below.                                                                           |
 | `OPENROUTER_BASE_URL`             | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                                                   |
-| `WEB_SEARCH_ENGINES`              | no                   | Comma-separated web search engines: `tavily`, `exa`, `serper`. Default `tavily`. An engine without its key is left out with a warning.                                                   |
-| `TAVILY_API_KEY`                  | no                   | Tavily key. With no engine keyed, web search is off; URL reading and research using URL reads remain available.                                                                          |
-| `EXA_API_KEY`                     | no                   | Exa key, used when `exa` is listed.                                                                                                                                                      |
-| `SERPER_API_KEY`                  | no                   | Serper (Google results) key, used when `serper` is listed.                                                                                                                               |
+| `EXA_API_KEY`                     | no                   | Exa key for web search. With neither search key set, web search is off; URL reading and research using URL reads remain available.                                                       |
+| `SERPER_API_KEY`                  | no                   | Serper (Google results) key for web search. Each key set runs its engine; both run in parallel.                                                                                          |
 | `ENCLAVE_HEARTBEAT_INTERVAL_MS`   | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                                                          |
 | `ENCLAVE_CLAIM_POLL_INTERVAL_MS`  | no (default `1500`)  | Idle claim-poll interval — the turn-start latency floor when no work is flowing (a win re-polls immediately).                                                                            |
 | `ENCLAVE_MAX_CONCURRENT_SESSIONS` | no (default `8`)     | Per-instance ceiling on concurrently-running turns. At capacity the claim loop stops claiming until a turn settles, bounding per-box memory and OpenRouter spend. Scale with replicas.   |
@@ -95,9 +93,8 @@ Verify account policies before promising zero retention.
 - `BACKEND_BASE_URL` handles registration, claims, heartbeats and encrypted
   result callbacks under `/internal/enclave-runtimes/*`.
 - `OPENROUTER_BASE_URL`, default `openrouter.ai`, receives model requests.
-- `api.tavily.com`, `api.exa.ai` and `google.serper.dev` receive web-search
-  queries for each engine listed in `WEB_SEARCH_ENGINES` with its key set, when
-  the turn's tool policy permits web tools.
+- `api.exa.ai` and `google.serper.dev` receive web-search queries, each when
+  its key is set and the turn's tool policy permits web tools.
 - `read_url` fetches public HTTP and HTTPS URLs, including redirects and images.
   It rejects private/reserved addresses and rechecks redirect destinations.
 
@@ -144,8 +141,8 @@ railway add --service enclave
 #    same fresh secret on both services (it is dedicated to the enclave channel and
 #    must NOT equal the shared INTERNAL_API_KEY). OPENROUTER_API_KEY is your
 #    OpenRouter key (billing-attached, so set it yourself). The web search
-#    keys (TAVILY/EXA/SERPER_API_KEY) are optional; each listed, keyed engine adds
-#    its host to the egress surface.
+#    keys (EXA/SERPER_API_KEY) are optional; each key set adds its engine's host
+#    to the egress surface.
 railway variables --service enclave \
   --set "BACKEND_BASE_URL=http://backend.railway.internal:8080" \
   --set "ENCLAVE_INTERNAL_API_KEY=<same value as backend's ENCLAVE_INTERNAL_API_KEY>" \

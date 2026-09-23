@@ -7,8 +7,7 @@ export type { WorkosConfig } from "@threahq/backend-common"
 
 export interface AIConfig {
   openRouterApiKey: string
-  /** Comma-separated `web_search` engines, run in parallel (`WEB_SEARCH_ENGINES`: tavily, exa, serper). */
-  webSearchEngines: string
+  /** Keys for the `web_search` engines; each key set runs its engine in parallel with the other. */
   webSearchKeys: WebSearchEngineKeys
   /** ElevenLabs API key for realtime speech-to-text (voice dictation). Empty string disables voice. */
   elevenLabsApiKey: string
@@ -229,9 +228,7 @@ export function loadConfig(): Config {
     },
     ai: {
       openRouterApiKey: process.env.OPENROUTER_API_KEY || "",
-      webSearchEngines: process.env.WEB_SEARCH_ENGINES || "tavily",
       webSearchKeys: {
-        tavily: process.env.TAVILY_API_KEY || undefined,
         exa: process.env.EXA_API_KEY || undefined,
         serper: process.env.SERPER_API_KEY || undefined,
       },

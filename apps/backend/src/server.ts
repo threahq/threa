@@ -1143,7 +1143,7 @@ export async function startServer(): Promise<ServerInstance> {
     modelRegistry,
     workspaceIntegrationService,
     sandbox: sandboxService ? { service: sandboxService, workspaceSettings: workspaceSettingsService } : undefined,
-    webSearchEngines: createWebSearchEngines(config.ai.webSearchEngines, config.ai.webSearchKeys),
+    webSearchEngines: createWebSearchEngines(config.ai.webSearchKeys),
     stubResponse: config.useStubCompanion
       ? "This is a stub response from the companion. The real AI integration is disabled."
       : undefined,

@@ -15,7 +15,7 @@ const logger = baseLogger.child({ name: "enclave" })
 
 async function main() {
   const config = loadEnclaveConfig()
-  const webSearchEngines = createWebSearchEngines(config.webSearchEngines, config.webSearchKeys)
+  const webSearchEngines = createWebSearchEngines(config.webSearchKeys)
   const keyPair = await createEnclaveKeyPair()
   logger.info({ instanceId: keyPair.instanceId, keyId: keyPair.keyId }, "Enclave EIK generated")
 

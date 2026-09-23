@@ -1,6 +1,6 @@
 import { describe, it, expect, mock, afterEach } from "bun:test"
 import { createWebSearchTool } from "./web-search-tool"
-import { createExaEngine, createSerperEngine, createTavilyEngine, createWebSearchEngines } from "./web-search-engines"
+import { createExaEngine, createSerperEngine, createWebSearchEngines } from "./web-search-engines"
 
 const toolOpts = { toolCallId: "test" }
 
@@ -13,13 +13,10 @@ describe("web-search-tool", () => {
 
   it("should return search results on successful API call", async () => {
     const mockResponse = {
-      query: "test query",
-      answer: "This is the answer",
       results: [
-        { title: "Result 1", url: "https://example.com/1", content: "Content 1", score: 0.9 },
-        { title: "Result 2", url: "https://example.com/2", content: "Content 2", score: 0.8 },
+        { title: "Result 1", url: "https://example.com/1", text: "Content 1" },
+        { title: "Result 2", url: "https://example.com/2", text: "Content 2" },
       ],
-      response_time: 0.5,
     }
 
     globalThis.fetch = mock(() =>
@@ -29,55 +26,56 @@ describe("web-search-tool", () => {
       } as Response)
     ) as unknown as typeof fetch
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("test-api-key")] })
+    const tool = createWebSearchTool({ engines: [createExaEngine("test-api-key")] })
     const { output } = await tool.config.execute({ query: "test query" }, toolOpts)
     const parsed = JSON.parse(output)
 
     expect(parsed.query).toBe("test query")
-    expect(parsed.answer).toBe("This is the answer")
-    expect(parsed.results).toHaveLength(2)
-    expect(parsed.results[0].title).toBe("Result 1")
-    expect(parsed.results[0].url).toBe("https://example.com/1")
+    expect(
+      parsed.results.map((r: { title: string; url: string; content: string }) => [r.title, r.url, r.content])
+    ).toEqual([
+      ["Result 1", "https://example.com/1", "Content 1"],
+      ["Result 2", "https://example.com/2", "Content 2"],
+    ])
   })
 
-  it("should send correct headers and body to Tavily API", async () => {
+  it("should send correct headers and body to Exa API", async () => {
     let capturedRequest: { url: string; options: RequestInit } | null = null
 
     globalThis.fetch = mock((url: string, options: RequestInit) => {
       capturedRequest = { url, options }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ query: "test", results: [], response_time: 0.1 }),
+        json: () => Promise.resolve({ results: [] }),
       } as Response)
     }) as unknown as typeof fetch
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("test-api-key")] })
+    const tool = createWebSearchTool({ engines: [createExaEngine("test-api-key")] })
     await tool.config.execute({ query: "test query" }, toolOpts)
 
     expect(capturedRequest).not.toBeNull()
-    expect(capturedRequest!.url).toBe("https://api.tavily.com/search")
+    expect(capturedRequest!.url).toBe("https://api.exa.ai/search")
     expect(capturedRequest!.options.method).toBe("POST")
     expect(capturedRequest!.options.headers).toEqual({
       "Content-Type": "application/json",
-      Authorization: "Bearer test-api-key",
+      "x-api-key": "test-api-key",
     })
 
     const body = JSON.parse(capturedRequest!.options.body as string)
     expect(body.query).toBe("test query")
-    expect(body.max_results).toBe(5)
-    expect(body.include_answer).toBe(true)
+    expect(body.numResults).toBe(5)
   })
 
   it("should carry invocation time in output but never in the definition", async () => {
     globalThis.fetch = mock(() =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ query: "AI news 2026", results: [], response_time: 0.1 }),
+        json: () => Promise.resolve({ results: [] }),
       } as Response)
     ) as unknown as typeof fetch
 
     const tool = createWebSearchTool({
-      engines: [createTavilyEngine("test-api-key")],
+      engines: [createExaEngine("test-api-key")],
       currentTime: "2026-11-15T10:00:00.000Z",
       timezone: "Europe/Stockholm",
     })
@@ -96,7 +94,7 @@ describe("web-search-tool", () => {
   it("should produce a byte-identical definition across differing invocation times", () => {
     const define = (currentTime: string) => {
       const t = createWebSearchTool({
-        engines: [createTavilyEngine("test-api-key")],
+        engines: [createExaEngine("test-api-key")],
         currentTime,
         timezone: "Europe/Stockholm",
       })
@@ -115,18 +113,18 @@ describe("web-search-tool", () => {
       } as Response)
     ) as unknown as typeof fetch
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("invalid-key")] })
+    const tool = createWebSearchTool({ engines: [createExaEngine("invalid-key")] })
     const { output } = await tool.config.execute({ query: "test" }, toolOpts)
     const parsed = JSON.parse(output)
 
-    expect(parsed.error).toContain("Search failed: api.tavily.com 401")
+    expect(parsed.error).toContain("Search failed: api.exa.ai 401")
     expect(parsed.query).toBe("test")
   })
 
   it("should return error on network failure", async () => {
     globalThis.fetch = mock(() => Promise.reject(new Error("Network error"))) as unknown as typeof fetch
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("test-key")] })
+    const tool = createWebSearchTool({ engines: [createExaEngine("test-key")] })
     const { output } = await tool.config.execute({ query: "test" }, toolOpts)
     const parsed = JSON.parse(output)
 
@@ -140,15 +138,15 @@ describe("web-search-tool", () => {
       capturedBody = JSON.parse(options.body as string)
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ query: "test", results: [], response_time: 0.1 }),
+        json: () => Promise.resolve({ results: [] }),
       } as Response)
     }) as unknown as typeof fetch
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("test-key")], maxResults: 10 })
+    const tool = createWebSearchTool({ engines: [createExaEngine("test-key")], maxResults: 10 })
     await tool.config.execute({ query: "test" }, toolOpts)
 
     expect(capturedBody).not.toBeNull()
-    expect(capturedBody!.max_results).toBe(10)
+    expect(capturedBody!.numResults).toBe(10)
   })
 
   it("should return timeout error when request takes too long", async () => {
@@ -157,7 +155,7 @@ describe("web-search-tool", () => {
 
     globalThis.fetch = mock(() => Promise.reject(abortError)) as unknown as typeof fetch
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("test-key")] })
+    const tool = createWebSearchTool({ engines: [createExaEngine("test-key")] })
     const { output } = await tool.config.execute({ query: "test" }, toolOpts)
     const parsed = JSON.parse(output)
 
@@ -175,7 +173,7 @@ describe("web-search-tool", () => {
     const controller = new AbortController()
     controller.abort("user_abort")
 
-    const tool = createWebSearchTool({ engines: [createTavilyEngine("test-key")] })
+    const tool = createWebSearchTool({ engines: [createExaEngine("test-key")] })
     const { output } = await tool.config.execute({ query: "test" }, { toolCallId: "test", signal: controller.signal })
     const parsed = JSON.parse(output)
 
@@ -243,12 +241,12 @@ describe("web-search-tool", () => {
 })
 
 describe("createWebSearchEngines", () => {
-  it("builds the listed engines that have keys, in order", () => {
-    const engines = createWebSearchEngines(" exa, serper ,tavily", { exa: "e", serper: "s" })
-    expect(engines.map((engine) => engine.name)).toEqual(["exa", "serper"])
-  })
-
-  it("rejects an unknown engine name", () => {
-    expect(() => createWebSearchEngines("exa,bing", { exa: "e" })).toThrow('Unknown web search engine "bing"')
+  it("builds one engine per key that is set", () => {
+    const names = (keys: { exa?: string; serper?: string }) => createWebSearchEngines(keys).map((engine) => engine.name)
+    expect([names({ exa: "e", serper: "s" }), names({ serper: "s" }), names({})]).toEqual([
+      ["exa", "serper"],
+      ["serper"],
+      [],
+    ])
   })
 })

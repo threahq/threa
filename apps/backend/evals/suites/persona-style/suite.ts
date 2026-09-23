@@ -7,7 +7,7 @@
  * the same path a live turn takes, so the reply flows through the real
  * `resolvePersonaStyleSlots` → `buildResponseStyleSection` → `buildSystemPrompt`
  * assembly (INV-45). No web tools are enabled (send_message only), so there is no
- * Tavily dependency.
+ * web search dependency.
  *
  * The persona's slots are seeded as free-text (`tone_prompt`/`brevity_prompt`)
  * materialized from the preset fragment maps in `companion/config.ts` — the exact
@@ -81,7 +81,7 @@ function countWords(text: string): number {
 /**
  * Seed a private scratchpad whose companion persona carries the case's style
  * slots. The persona reuses Ariadne's resolved system prompt (so the assembly is
- * realistic) but only the send_message tool (no web tools → no Tavily). Tone and
+ * realistic) but only the send_message tool (no web tools → no search keys). Tone and
  * brevity slots are materialized from the preset fragment maps.
  */
 async function setupTestData(

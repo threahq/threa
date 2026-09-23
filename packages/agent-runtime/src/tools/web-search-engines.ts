@@ -1,7 +1,6 @@
 import { logger } from "../logger"
 
 export const WebSearchEngineNames = {
-  TAVILY: "tavily",
   EXA: "exa",
   SERPER: "serper",
 } as const
@@ -23,14 +22,9 @@ export interface WebPage {
   date?: string
 }
 
-export interface WebSearchEngineResult {
-  pages: WebPage[]
-  answer?: string
-}
-
 export interface WebSearchEngine {
   name: WebSearchEngineName
-  search(query: string, opts: { maxResults: number; signal: AbortSignal }): Promise<WebSearchEngineResult>
+  search(query: string, opts: { maxResults: number; signal: AbortSignal }): Promise<WebPage[]>
 }
 
 const EXA_TEXT_CHARACTERS = 3000
@@ -48,26 +42,6 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
   return (await response.json()) as any
 }
 
-export function createTavilyEngine(apiKey: string): WebSearchEngine {
-  return {
-    name: WebSearchEngineNames.TAVILY,
-    search: async (query, { maxResults, signal }) => {
-      const data = await postJson(
-        "https://api.tavily.com/search",
-        { Authorization: `Bearer ${apiKey}` },
-        { query, max_results: maxResults, include_answer: true, search_depth: "basic" },
-        signal
-      )
-      return {
-        pages: (data.results ?? []).map(
-          (r: any): WebPage => ({ title: r.title || r.url, url: r.url, content: r.content ?? "", seen: "stored" })
-        ),
-        ...(data.answer ? { answer: data.answer } : {}),
-      }
-    },
-  }
-}
-
 export function createExaEngine(apiKey: string): WebSearchEngine {
   return {
     name: WebSearchEngineNames.EXA,
@@ -78,17 +52,15 @@ export function createExaEngine(apiKey: string): WebSearchEngine {
         { query, numResults: maxResults, contents: { text: { maxCharacters: EXA_TEXT_CHARACTERS } } },
         signal
       )
-      return {
-        pages: (data.results ?? []).map(
-          (r: any): WebPage => ({
-            title: r.title || r.url,
-            url: r.url,
-            content: r.text ?? "",
-            seen: "stored",
-            ...(r.publishedDate ? { date: String(r.publishedDate).slice(0, 10) } : {}),
-          })
-        ),
-      }
+      return (data.results ?? []).map(
+        (r: any): WebPage => ({
+          title: r.title || r.url,
+          url: r.url,
+          content: r.text ?? "",
+          seen: "stored",
+          ...(r.publishedDate ? { date: String(r.publishedDate).slice(0, 10) } : {}),
+        })
+      )
     },
   }
 }
@@ -103,54 +75,37 @@ export function createSerperEngine(apiKey: string): WebSearchEngine {
         { q: query, num: maxResults },
         signal
       )
-      return {
-        pages: (data.organic ?? []).map(
-          (r: any): WebPage => ({
-            title: r.title || r.link,
-            url: r.link,
-            content: r.snippet ?? "",
-            seen: "listed",
-            ...(r.date ? { date: String(r.date) } : {}),
-          })
-        ),
-      }
+      return (data.organic ?? []).map(
+        (r: any): WebPage => ({
+          title: r.title || r.link,
+          url: r.link,
+          content: r.snippet ?? "",
+          seen: "listed",
+          ...(r.date ? { date: String(r.date) } : {}),
+        })
+      )
     },
   }
 }
 
 export interface WebSearchEngineKeys {
-  tavily?: string
   exa?: string
   serper?: string
 }
 
-const ENGINE_FACTORIES: Record<WebSearchEngineName, (apiKey: string) => WebSearchEngine> = {
-  tavily: createTavilyEngine,
-  exa: createExaEngine,
-  serper: createSerperEngine,
-}
-
 /**
- * Parses a comma-separated engine list (`WEB_SEARCH_ENGINES`). An unknown name
- * throws. A listed engine without its key is left out with a warning, so a host
- * without search keys runs without `web_search`, as it did before.
+ * One engine per key that is set. With neither key there is no `web_search`,
+ * and with one the other is logged as missing: Serper alone has only snippets,
+ * Exa alone only stored copies.
  */
-export function createWebSearchEngines(list: string, keys: WebSearchEngineKeys): WebSearchEngine[] {
-  const names = list
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean)
-  const engines: WebSearchEngine[] = []
-  for (const name of names) {
-    if (!(name in ENGINE_FACTORIES)) {
-      throw new Error(`Unknown web search engine "${name}". Known: ${Object.keys(ENGINE_FACTORIES).join(", ")}`)
-    }
-    const key = keys[name as WebSearchEngineName]
-    if (!key) {
-      logger.warn({ engine: name }, "Web search engine listed without an API key, leaving it out")
-      continue
-    }
-    engines.push(ENGINE_FACTORIES[name as WebSearchEngineName](key))
+export function createWebSearchEngines(keys: WebSearchEngineKeys): WebSearchEngine[] {
+  const engines = [
+    ...(keys.exa ? [createExaEngine(keys.exa)] : []),
+    ...(keys.serper ? [createSerperEngine(keys.serper)] : []),
+  ]
+  if (engines.length === 1) {
+    const missing = keys.exa ? WebSearchEngineNames.SERPER : WebSearchEngineNames.EXA
+    logger.warn({ missing }, "Web search runs on one engine, the other has no API key")
   }
   return engines
 }
@@ -206,7 +161,7 @@ export async function searchWebEngines(
   engines: WebSearchEngine[],
   query: string,
   opts: { maxResults: number; signal: AbortSignal }
-): Promise<WebSearchEngineResult> {
+): Promise<WebPage[]> {
   const settled = await Promise.allSettled(engines.map((engine) => engine.search(query, opts)))
   const failures = settled.flatMap((outcome, index) =>
     outcome.status === "rejected" ? [{ engine: engines[index]!.name, error: outcome.reason }] : []
@@ -220,7 +175,5 @@ export async function searchWebEngines(
     logger.warn({ engine: failure.engine, error: failure.error }, "Web search engine failed, continuing on the rest")
   }
 
-  const found = settled.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []))
-  const answer = found.find((result) => result.answer)?.answer
-  return { pages: combineWebPages(found.flatMap((result) => result.pages)), ...(answer ? { answer } : {}) }
+  return combineWebPages(settled.flatMap((outcome) => (outcome.status === "fulfilled" ? outcome.value : [])))
 }

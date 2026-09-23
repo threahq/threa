@@ -320,8 +320,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
     permutation,
     usage: usageAccumulator,
     credentials: {
-      webSearchEngines: createWebSearchEngines(process.env.WEB_SEARCH_ENGINES || "tavily", {
-        tavily: process.env.TAVILY_API_KEY || undefined,
+      webSearchEngines: createWebSearchEngines({
         exa: process.env.EXA_API_KEY || undefined,
         serper: process.env.SERPER_API_KEY || undefined,
       }),

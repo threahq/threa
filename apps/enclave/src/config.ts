@@ -49,12 +49,10 @@ export interface EnclaveConfig {
   /** OpenRouter base URL (override for self-host; tests inject their own client). */
   openRouterBaseUrl: string
   /**
-   * Engines for the `web_search` tool (`WEB_SEARCH_ENGINES`, default tavily) and
-   * their keys. Optional: an engine without its key is left out, and with none
-   * the enclave runs `read_url` + research only (a degraded but functional
-   * surface, not a failure), so no key is in the required-vars list.
+   * Keys for the `web_search` engines. Optional: with none the enclave runs
+   * `read_url` + research only (a degraded but functional surface, not a
+   * failure), so no key is in the required-vars list.
    */
-  webSearchEngines: string
   webSearchKeys: WebSearchEngineKeys
 }
 
@@ -98,9 +96,7 @@ export function loadEnclaveConfig(): EnclaveConfig {
     buildHash: process.env.BUILD_HASH || "unknown",
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,
     openRouterBaseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
-    webSearchEngines: process.env.WEB_SEARCH_ENGINES || "tavily",
     webSearchKeys: {
-      tavily: process.env.TAVILY_API_KEY || undefined,
       exa: process.env.EXA_API_KEY || undefined,
       serper: process.env.SERPER_API_KEY || undefined,
     },
