@@ -104,6 +104,30 @@ describe("foldAuthorRuns", () => {
     expect(describeRows(fold(store, items))).toEqual(["msg_1 open", "msg_2 open", "msg_3 open last"])
   })
 
+  it("re-derives the list only when a height report tips a run across the threshold", () => {
+    const store = createRunFoldStore()
+    const items = [...run(1, 3), message(4, false, VIEWER)]
+    measure(store, 1, 4, 100)
+    fold(store, items)
+    const versions: number[] = []
+    const record = () => versions.push(store.getVersion())
+
+    // A streaming reply grows on its own, then a run member grows within the threshold.
+    store.reportHeight("msg_4", 900)
+    record()
+    store.reportHeight("msg_2", 150)
+    record()
+    // The run crosses the threshold, grows further, then drops back under it.
+    store.reportHeight("msg_3", 300)
+    record()
+    store.reportHeight("msg_3", 350)
+    record()
+    store.reportHeight("msg_3", 100)
+    record()
+
+    expect(versions).toEqual([0, 0, 1, 1, 2])
+  })
+
   it("folds a run down to its head when the viewer collapses it, and remembers it", () => {
     const store = createRunFoldStore()
     const items = [message(1), ...run(2, 4), message(5)]

@@ -25,9 +25,12 @@ export type RunFold =
  */
 export interface RunFoldStore {
   subscribe(listener: () => void): () => void
+  /** Bumps only when a report tips a tracked run across the threshold. */
   getVersion(): number
   reportHeight(messageId: string, heightPx: number): void
   heightOf(messageId: string): number | undefined
+  /** The multi-message runs of the last pass, each with whether it measured tall. */
+  trackRuns(runs: Array<{ messageIds: string[]; tall: boolean }>, collapseAtHeight: number): void
   /** A viewer's explicit toggle: persisted, and it supersedes the reveal that opened the run. */
   setCollapsed(fold: RunFold, collapsed: boolean): void
   /** The run the viewer just toggled; the list restores scroll and focus once. */
@@ -45,6 +48,8 @@ export interface RunFoldStore {
 
 export function createRunFoldStore(): RunFoldStore {
   const heights = new Map<string, number>()
+  const runOf = new Map<string, { messageIds: string[]; tall: boolean }>()
+  let threshold = Infinity
   const listeners = new Set<() => void>()
   let version = 0
   const store: RunFoldStore = {
@@ -58,10 +63,20 @@ export function createRunFoldStore(): RunFoldStore {
     reportHeight(messageId, heightPx) {
       if (heights.get(messageId) === heightPx) return
       heights.set(messageId, heightPx)
+      const run = runOf.get(messageId)
+      if (!run) return
+      const tall = run.messageIds.reduce((sum, id) => sum + (heights.get(id) ?? 0), 0) > threshold
+      if (tall === run.tall) return
+      run.tall = tall
       version++
       for (const listener of listeners) listener()
     },
     heightOf: (messageId) => heights.get(messageId),
+    trackRuns(runs, collapseAtHeight) {
+      runOf.clear()
+      for (const run of runs) for (const id of run.messageIds) runOf.set(id, run)
+      threshold = collapseAtHeight
+    },
     setCollapsed(fold, collapsed) {
       const revealedBy = store.revealedBy.get(fold.key)
       if (revealedBy !== undefined) store.spentReveals.add(`${fold.key}\n${revealedBy}`)
@@ -106,14 +121,6 @@ function messageIdOf(item: TimelineItem): string | undefined {
   return (item.event.payload as { messageId?: string } | undefined)?.messageId
 }
 
-function parseSequence(sequence: string): bigint {
-  try {
-    return BigInt(sequence)
-  } catch {
-    return 0n
-  }
-}
-
 /**
  * Folds same-author runs (heads and `groupContinuation` rows, as stamped by the
  * grouping passes) behind one control. Runs of a single message are left to the
@@ -136,7 +143,7 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     const member = {
       index,
       messageId,
-      sequence: parseSequence(item.event.sequence),
+      sequence: BigInt(item.event.sequence),
       own: !!options.viewerId && item.event.actorId === options.viewerId,
     }
     if (item.groupContinuation === true && current) {
@@ -154,6 +161,7 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
   const reveal = new Set(options.revealMessageIds.filter((id): id is string => !!id))
   const annotations = new Map<number, RunFold>()
   const hidden = new Set<number>()
+  const tracked: Array<{ messageIds: string[]; tall: boolean }> = []
 
   for (const run of runs) {
     if (run.length < 2) continue
@@ -163,8 +171,10 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
 
     let knownHeight = 0
     for (const member of run) knownHeight += store.heightOf(member.messageId) ?? 0
+    const tall = knownHeight > options.collapseAtHeight
+    tracked.push({ messageIds: run.map((member) => member.messageId), tall })
     const persisted = options.persisted(key)
-    if (persisted !== true && knownHeight <= options.collapseAtHeight) continue
+    if (persisted !== true && !tall) continue
 
     let collapsed = persisted === true
     let end = run.length - 1
@@ -206,6 +216,7 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     }
   }
 
+  store.trackRuns(tracked, options.collapseAtHeight)
   if (annotations.size === 0) return items
   const out: TimelineItem[] = []
   for (let index = 0; index < items.length; index++) {
