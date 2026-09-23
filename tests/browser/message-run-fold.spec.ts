@@ -106,9 +106,16 @@ test("reload restores to a row inside a run collapsed since", async ({ page }) =
   await timeline.getByRole("button", { name: "Collapse", exact: true }).evaluate(click)
   const collapsed = await page.evaluate(() => localStorage.getItem("threa:blockCollapse:v1"))
   await timeline.getByRole("button", { name: "Show 2 more messages" }).evaluate(click)
+  const bravoId = await bravo.getAttribute("data-message-id")
   await bravo.evaluate((row) => row.scrollIntoView({ block: "start" }))
-  // Past the anchor-capture debounce.
-  await page.waitForTimeout(500)
+  await expect
+    .poll(() =>
+      page.evaluate((streamId) => {
+        const key = Object.keys(localStorage).find((candidate) => candidate.endsWith(":timeline-anchors"))
+        return key ? JSON.parse(localStorage.getItem(key) ?? "{}")[streamId]?.targetId : null
+      }, streamId)
+    )
+    .toBe(bravoId)
   await page.evaluate((value) => localStorage.setItem("threa:blockCollapse:v1", value!), collapsed)
 
   await page.reload()
