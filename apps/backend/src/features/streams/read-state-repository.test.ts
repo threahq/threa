@@ -61,7 +61,8 @@ describe("ReadStateRepository.advance", () => {
   test("binds streamId, userId, eventId, holdInInbox in order", async () => {
     const { db, query } = makeDb()
     await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
-    expect(sqlValues(query.mock.calls[0])).toEqual(["stream_1", "usr_1", "evt_9", true])
+    // A hold-enabled advance seeds and locks the row first (two statements).
+    expect(sqlValues(query.mock.calls[2])).toEqual(["stream_1", "usr_1", "evt_9", true])
   })
 
   test("returns the post-write row when the advance lands", async () => {
@@ -137,13 +138,16 @@ describe("ReadStateRepository.advance", () => {
       inbox_held: false,
     }
     const query = mock()
+    // ensureForUpdate's seed insert + row lock, then the rejected upsert and the read-back.
+    query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
+    query.mockResolvedValueOnce({ rows: [standing], rowCount: 1 })
     query.mockResolvedValueOnce({ rows: [], rowCount: 0 })
     query.mockResolvedValueOnce({ rows: [standing], rowCount: 1 })
     const db = { query } as unknown as Querier
 
     const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_stale", { holdInInbox: true })
 
-    expect(query).toHaveBeenCalledTimes(2)
+    expect(query).toHaveBeenCalledTimes(4)
     expect(result.state?.lastReadEventId).toBe("evt_higher")
     expect(result.held).toBe(false)
   })
@@ -187,15 +191,12 @@ describe("ReadStateRepository.batchAdvance", () => {
     )
 
     // The upsert, then the authoritative same-tx re-read of every attempted
-    // row (getBatch). No caller of this batch path ever holds, so the
-    // statement never references inbox_held — a fresh row keeps the column's
-    // `false` default.
+    // row (getBatch).
     expect(query).toHaveBeenCalledTimes(2)
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("unnest($1::text[])")
     expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).toContain("> COALESCE")
-    expect(text).not.toContain("inbox_held")
     expect(sqlValues(query.mock.calls[0])).toEqual([["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1"])
   })
 

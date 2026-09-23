@@ -294,8 +294,11 @@ interface RenderRowOptions {
   isInboxSection?: boolean
   /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
   onClearInboxRow?: (streamId: string) => void
-  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
   onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxSection`. */
+  clearInboxKeyHint?: string
 }
 
 /**
@@ -324,6 +327,7 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
           ? (hovering: boolean) => opts.onInboxRowHoverChange!(stream.id, hovering)
           : undefined
       }
+      clearInboxKeyHint={opts.clearInboxKeyHint}
     />
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
@@ -416,8 +420,11 @@ interface StreamSectionProps {
   isInboxSection?: boolean
   /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
   onClearInboxRow?: (streamId: string) => void
-  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
   onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxSection`. */
+  clearInboxKeyHint?: string
 }
 
 /** Simple binary collapsible section used for Important / Recent. */
@@ -452,6 +459,7 @@ export function StreamSection({
   isInboxSection,
   onClearInboxRow,
   onInboxRowHoverChange,
+  clearInboxKeyHint,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -472,6 +480,7 @@ export function StreamSection({
       isInboxSection,
       onClearInboxRow,
       onInboxRowHoverChange,
+      clearInboxKeyHint,
     })
 
   return (

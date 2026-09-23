@@ -774,6 +774,27 @@ export const StreamEventRepository = {
   },
 
   /**
+   * Batch {@link countMessagesThrough}: each stream's message ordinal at its
+   * given sequence. Streams absent from the result have no messages at or below it.
+   */
+  async countMessagesThroughBatch(db: Querier, sequences: Map<string, string>): Promise<Map<string, number>> {
+    if (sequences.size === 0) return new Map()
+    const result = await db.query<{ stream_id: string; count: string }>(sql`
+      WITH input AS (
+        SELECT unnest(${[...sequences.keys()]}::text[]) AS stream_id,
+               unnest(${[...sequences.values()]}::bigint[]) AS sequence
+      )
+      SELECT i.stream_id, COUNT(*)::text AS count
+      FROM input i
+      JOIN stream_events e ON e.stream_id = i.stream_id
+      WHERE e.event_type = 'message_created'
+        AND e.sequence <= i.sequence
+      GROUP BY i.stream_id
+    `)
+    return new Map(result.rows.map((row) => [row.stream_id, parseInt(row.count, 10)]))
+  },
+
+  /**
    * Count message_created events at or below a sequence — the message's
    * ordinal position in its stream. Exact under concurrency: the stream's
    * sequence allocator row lock serializes message inserts per stream until

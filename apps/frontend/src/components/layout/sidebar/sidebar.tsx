@@ -83,7 +83,7 @@ import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { isClearInboxShortcutEvent, resolveClearInboxTargetStreamId } from "./inbox-clear-shortcut"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
 import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
-import { CLEAR_INBOX_STREAM_ACTION_ID, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
+import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
@@ -280,13 +280,18 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   )
 
   // Inbox membership = isInInbox (unread + held), muted excluded; resolveSections
-  // excludes this set elsewhere. Board mode diverges on purpose (unreadStreamCount).
+  // excludes this set elsewhere. Board mode has no Inbox clear controls, so a
+  // held-but-read stream must not count as a member there — fall back to the
+  // plain unread predicate.
   const unreadStreamIds = useMemo(() => {
     if (!hasUnreadSection) return EMPTY_UNREAD_IDS
     const ids = new Set<string>()
-    for (const stream of processedStreams) if (isInInbox(stream.id)) ids.add(stream.id)
+    for (const stream of processedStreams) {
+      const isMember = isBoardPage ? isUnreadStream(stream, getUnreadCount(stream.id)) : isInInbox(stream.id)
+      if (isMember) ids.add(stream.id)
+    }
     return ids
-  }, [hasUnreadSection, processedStreams, isInInbox])
+  }, [hasUnreadSection, processedStreams, isBoardPage, isInInbox, getUnreadCount])
 
   // Unread badge count: plain unread predicate, NOT Inbox membership (held-but-read
   // streams don't inflate it); workspace-wide — the board view re-applies its own filters.
@@ -450,6 +455,13 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // Bare "e" fails `isSafeShortcutBinding`, so this bypasses
   // `useKeyboardShortcuts` — see `CLEAR_INBOX_STREAM_ACTION_ID`.
   const hoveredInboxStreamIdRef = useRef<string | null>(null)
+  const clearInboxBinding = getEffectiveKeyBinding(
+    CLEAR_INBOX_STREAM_ACTION_ID,
+    preferencesContext?.preferences?.keyboardShortcuts ?? {}
+  )
+  // Row tooltip hint: the effective binding, formatted for display — omitted
+  // (undefined) when the viewer disabled or unbound the shortcut.
+  const clearInboxKeyHint = clearInboxBinding ? formatKeyBinding(clearInboxBinding) : undefined
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const binding = getEffectiveKeyBinding(
@@ -668,6 +680,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             quickLinksSlot={quickLinksSlot}
             boardMode={boardMode}
             onClearInbox={clearInbox}
+            clearInboxKeyHint={clearInboxKeyHint}
             onInboxRowHoverChange={(streamId, hovering) => {
               if (hovering) {
                 hoveredInboxStreamIdRef.current = streamId

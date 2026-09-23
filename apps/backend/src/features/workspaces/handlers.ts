@@ -4,7 +4,7 @@ import { setAuditSubjects } from "../access-log"
 import { isValidIanaTimezone } from "../../lib/temporal"
 import { sendBootstrapJson } from "../../lib/observability"
 import type { WorkspaceService } from "./service"
-import type { StreamService } from "../streams"
+import type { StreamReadService, StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceSettingsService } from "../workspace-settings"
 import type { FeatureFlagService } from "../feature-flags"
@@ -70,6 +70,7 @@ export { createWorkspaceSchema }
 interface Dependencies {
   workspaceService: WorkspaceService
   streamService: StreamService
+  streamReadService: StreamReadService
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   featureFlagService: FeatureFlagService
@@ -92,6 +93,7 @@ interface Dependencies {
 export function createWorkspaceHandlers({
   workspaceService,
   streamService,
+  streamReadService,
   userPreferencesService,
   workspaceSettingsService,
   featureFlagService,
@@ -411,18 +413,7 @@ export function createWorkspaceHandlers({
       const workspaceId = req.workspaceId!
       const { streamIds } = validateRequest(clearInboxSchema, req.body)
 
-      const { clearedStreamIds, frontiers } = await streamService.clearInbox(workspaceId, userId, streamIds)
-
-      // Only streams whose frontier actually advanced can carry an unread
-      // mention worth clearing — a stream that only lost its held flag (already
-      // at latest) has nothing left to mark.
-      if (frontiers.length > 0) {
-        await activityService?.markStreamsAsRead(
-          userId,
-          workspaceId,
-          frontiers.map((f) => f.streamId)
-        )
-      }
+      const { clearedStreamIds, frontiers } = await streamReadService.clearInbox(workspaceId, userId, streamIds)
 
       res.json({ clearedStreamIds, frontiers })
     },

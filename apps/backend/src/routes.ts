@@ -319,9 +319,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
   const steeredMessageService = new SteeredMessageService({ commandAvailabilityService, botRuntimeService })
   const boardViewService = new BoardViewService(pool)
+  const streamReadService = new StreamReadService({ pool, streamService, activityService })
   const workspace = createWorkspaceHandlers({
     workspaceService,
     streamService,
+    streamReadService,
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
@@ -342,7 +344,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   })
   const streamBriefService = new StreamBriefService({ pool })
   const streamBrief = createStreamBriefHandlers({ pool, streamBriefService })
-  const streamReadService = new StreamReadService({ pool, streamService, activityService })
   const stream = createStreamHandlers({
     pool,
     streamService,

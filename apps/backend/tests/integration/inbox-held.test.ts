@@ -1,7 +1,13 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, testMessageContent } from "./setup"
-import { StreamService, StreamEventRepository, StreamMemberRepository, ReadStateRepository } from "../../src/features/streams"
+import {
+  StreamService,
+  StreamReadService,
+  StreamEventRepository,
+  StreamMemberRepository,
+  ReadStateRepository,
+} from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { ActivityRepository, ActivityService } from "../../src/features/activity"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
@@ -18,12 +24,14 @@ describe("inbox hold", () => {
   let streamService: StreamService
   let eventService: EventService
   let activityService: ActivityService
+  let streamReadService: StreamReadService
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
     streamService = new StreamService(pool)
     eventService = new EventService(pool)
     activityService = new ActivityService({ pool })
+    streamReadService = new StreamReadService({ pool, streamService, activityService })
   })
 
   afterAll(async () => {
@@ -164,14 +172,16 @@ describe("inbox hold", () => {
       const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
       expect(first.held).toBe(true)
 
-      // The reader's own message doesn't cross anyone else's — this call's
-      // hold rule is false — but the row's existing hold must survive.
+      // The reader's own send advances past only their own message — the
+      // send's hold rule is false, so it emits nothing — but the row's
+      // existing hold must survive.
       await sendMessages(wid, sid, reader, 1)
       const [, evt2] = await StreamEventRepository.list(pool, sid)
 
-      const second = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
-      expect(second.held).toBe(false)
-      expect(second.state?.inboxHeld).toBe(true)
+      expect(await ReadStateRepository.get(pool, sid, reader)).toEqual(
+        expect.objectContaining({ lastReadEventId: evt2.id, inboxHeld: true })
+      )
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
   })
 
@@ -348,7 +358,7 @@ describe("inbox hold", () => {
     })
   })
 
-  describe("StreamService.clearInbox", () => {
+  describe("StreamReadService.clearInbox", () => {
     test("restricts to accessible streams — a private channel the user can't read is dropped", async () => {
       const wid = workspaceId()
       const author = userId()
@@ -365,7 +375,7 @@ describe("inbox hold", () => {
       await ReadStateRepository.advance(pool, readableStream, reader, evtReadable.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, privateStream, reader, evtPrivate.id, { holdInInbox: true })
 
-      const result = await streamService.clearInbox(wid, reader, [readableStream, privateStream])
+      const result = await streamReadService.clearInbox(wid, reader, [readableStream, privateStream])
 
       expect(result.clearedStreamIds).toEqual([readableStream])
       expect((await ReadStateRepository.get(pool, readableStream, reader))?.inboxHeld).toBe(false)
@@ -395,7 +405,7 @@ describe("inbox hold", () => {
       await ReadStateRepository.advance(pool, thread, reader, evtThread.id, { holdInInbox: true })
       expect((await ReadStateRepository.get(pool, thread, reader))?.inboxHeld).toBe(true)
 
-      const result = await streamService.clearInbox(wid, reader, [thread])
+      const result = await streamReadService.clearInbox(wid, reader, [thread])
 
       expect(result.clearedStreamIds).toEqual([thread])
       expect((await ReadStateRepository.get(pool, thread, reader))?.inboxHeld).toBe(false)
@@ -413,7 +423,7 @@ describe("inbox hold", () => {
       await sendMessages(wid, sid, author, 2)
       const events = await StreamEventRepository.list(pool, sid)
 
-      const result = await streamService.clearInbox(wid, reader, [sid])
+      const result = await streamReadService.clearInbox(wid, reader, [sid])
 
       expect(result.frontiers).toEqual([
         expect.objectContaining({ streamId: sid, lastReadEventId: events[1].id }),
@@ -445,7 +455,7 @@ describe("inbox hold", () => {
         holdInInbox: false,
       })
 
-      const result = await streamService.clearInbox(wid, reader, [heldStream, alreadyCaughtUpStream])
+      const result = await streamReadService.clearInbox(wid, reader, [heldStream, alreadyCaughtUpStream])
 
       expect(result.clearedStreamIds).toEqual([heldStream])
       const emitted = await outboxFor("stream:inbox_updated", wid)
@@ -467,7 +477,7 @@ describe("inbox hold", () => {
       await seedChannel(wid, sid, author, "public")
       await sendMessages(wid, sid, author, 1)
 
-      const result = await streamService.clearInbox(wid, reader, [sid])
+      const result = await streamReadService.clearInbox(wid, reader, [sid])
 
       expect(result.clearedStreamIds).toEqual([])
       expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
@@ -475,7 +485,7 @@ describe("inbox hold", () => {
 
     test("returns empty results without querying when no candidate stream is accessible", async () => {
       const wid = workspaceId()
-      const result = await streamService.clearInbox(wid, userId(), ["stream_does_not_exist"])
+      const result = await streamReadService.clearInbox(wid, userId(), ["stream_does_not_exist"])
       expect(result).toEqual({ clearedStreamIds: [], frontiers: [] })
     })
   })
@@ -525,15 +535,9 @@ describe("inbox hold", () => {
     })
   })
 
-  describe("clearInbox + ActivityService.markStreamsAsRead composition (the workspace handler's pairing)", () => {
-    test("marks a stream's unread mention read when clearInbox advances its frontier", async () => {
-      const wid = workspaceId()
-      const author = userId()
-      const reader = userId()
-      const sid = streamId()
-      await seedChannel(wid, sid, author, "public")
-      const [msgId] = await sendMessages(wid, sid, author, 1)
-      await ActivityRepository.insert(pool, {
+  describe("StreamReadService.clearInbox marks activity read", () => {
+    async function insertMention(wid: string, reader: string, author: string, sid: string, msgId: string) {
+      return ActivityRepository.insert(pool, {
         workspaceId: wid,
         userId: reader,
         activityType: ActivityTypes.MENTION,
@@ -542,26 +546,31 @@ describe("inbox hold", () => {
         actorId: author,
         actorType: "user",
       })
+    }
 
-      const { frontiers } = await streamService.clearInbox(wid, reader, [sid])
+    async function readAt(activityId: string | undefined): Promise<Date | null | undefined> {
+      const row = await pool.query<{ read_at: Date | null }>(`SELECT read_at FROM user_activity WHERE id = $1`, [
+        activityId,
+      ])
+      return row.rows[0]?.read_at
+    }
+
+    test("marks a stream's unread mention read when clear advances its frontier", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      const activity = await insertMention(wid, reader, author, sid, msgId)
+
+      const { frontiers } = await streamReadService.clearInbox(wid, reader, [sid])
+
       expect(frontiers).toEqual([expect.objectContaining({ streamId: sid })])
-
-      // Mirrors createWorkspaceHandlers().clearInbox: activity clears for every
-      // stream whose frontier actually advanced.
-      await activityService.markStreamsAsRead(
-        reader,
-        wid,
-        frontiers.map((f) => f.streamId)
-      )
-
-      const row = await pool.query<{ read_at: Date | null }>(
-        `SELECT read_at FROM user_activity WHERE workspace_id = $1 AND user_id = $2 AND stream_id = $3`,
-        [wid, reader, sid]
-      )
-      expect(row.rows[0]?.read_at).not.toBeNull()
+      expect(await readAt(activity?.id)).not.toBeNull()
     })
 
-    test("leaves activity untouched for a stream whose frontier did not advance", async () => {
+    test("marks a caught-up stream's unread mention read even though its frontier did not move", async () => {
       const wid = workspaceId()
       const author = userId()
       const reader = userId()
@@ -569,25 +578,27 @@ describe("inbox hold", () => {
       await seedChannel(wid, sid, author, "public")
       const [msgId] = await sendMessages(wid, sid, author, 1)
       const [evt] = await StreamEventRepository.list(pool, sid)
-      // Reader is already caught up before clearInbox runs — no advance.
-      await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: false })
-      const activity = await ActivityRepository.insert(pool, {
-        workspaceId: wid,
-        userId: reader,
-        activityType: ActivityTypes.MENTION,
-        streamId: sid,
-        messageId: msgId,
-        actorId: author,
-        actorType: "user",
-      })
+      await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: true })
+      const activity = await insertMention(wid, reader, author, sid, msgId)
 
-      const { frontiers } = await streamService.clearInbox(wid, reader, [sid])
-      expect(frontiers).toEqual([])
+      const result = await streamReadService.clearInbox(wid, reader, [sid])
 
-      const row = await pool.query<{ read_at: Date | null }>(`SELECT read_at FROM user_activity WHERE id = $1`, [
-        activity?.id,
-      ])
-      expect(row.rows[0]?.read_at).toBeNull()
+      expect(result).toEqual({ clearedStreamIds: [sid], frontiers: [] })
+      expect(await readAt(activity?.id)).not.toBeNull()
+    })
+
+    test("leaves activity untouched in a stream the user can't access", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "private")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      const activity = await insertMention(wid, reader, author, sid, msgId)
+
+      await streamReadService.clearInbox(wid, reader, [sid])
+
+      expect(await readAt(activity?.id)).toBeNull()
     })
   })
 })
