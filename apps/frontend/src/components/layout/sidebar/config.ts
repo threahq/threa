@@ -1,5 +1,5 @@
 import { FileEdit, Hash, User, type LucideIcon } from "lucide-react"
-import type { SectionKey, SortType, UrgencyLevel } from "./types"
+import type { SectionKey, UrgencyLevel } from "./types"
 
 export const URGENCY_COLORS: Record<UrgencyLevel, string> = {
   mentions: "hsl(0 90% 55%)", // Vibrant red — someone mentioned you
@@ -25,7 +25,6 @@ interface SmartSectionConfig {
   icon: string
   compact: boolean
   showPreviewOnHover: boolean
-  sortType: SortType
 }
 
 /** Smart view section configuration - single source of truth for section behavior */
@@ -35,27 +34,17 @@ export const SMART_SECTIONS: Record<SectionKey, SmartSectionConfig> = {
     icon: "⚡",
     compact: false, // Shows full preview always
     showPreviewOnHover: false,
-    sortType: "importance",
   },
   recent: {
     label: "Recent",
     icon: "🕐",
     compact: true,
     showPreviewOnHover: true,
-    sortType: "activity",
   },
   other: {
     label: "Everything Else",
     icon: "📂",
     compact: true,
     showPreviewOnHover: true,
-    sortType: "activity",
   },
 }
-
-/** All view section configuration */
-export const ALL_SECTIONS = {
-  scratchpads: { sortType: "activity" as SortType },
-  channels: { sortType: "alphabetic_active_first" as SortType },
-  dms: { sortType: "alphabetic_active_first" as SortType },
-} as const

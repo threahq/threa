@@ -166,6 +166,87 @@ describe("normalizeSidebarConfig section sanitization", () => {
   })
 })
 
+describe("normalizeSidebarConfig section filter", () => {
+  test("keeps a valid unread filter on a smart section", () => {
+    const config: RawSidebarConfig = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" }],
+      quickLinks: [],
+    }
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections[0]).toEqual({ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" })
+  })
+
+  test("drops an unknown filter value", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "starred" }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections[0]).not.toHaveProperty("filter")
+  })
+
+  test("drops the default 'all' filter so the canonical form is absent", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "all" }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections[0]).not.toHaveProperty("filter")
+  })
+
+  test("drops a filter set on the Inbox section", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "unread", spec: { kind: "unread" }, filter: "unread" }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections[0]).not.toHaveProperty("filter")
+  })
+
+  test("drops a filter set on the quick-links section", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" }, filter: "unread" }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections[0]).not.toHaveProperty("filter")
+  })
+
+  test("is idempotent: normalizing an already-normalized config changes nothing", () => {
+    const config: RawSidebarConfig = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" }],
+      quickLinks: [],
+    }
+
+    const once = normalizeSidebarConfig(config)
+    const twice = normalizeSidebarConfig(once)
+
+    expect(twice).toEqual(once)
+  })
+})
+
 describe("normalizeSidebarConfig quick-link sanitization", () => {
   test("drops a retired quick-link key (board) while keeping the rest and appending missing keys", () => {
     const config = {

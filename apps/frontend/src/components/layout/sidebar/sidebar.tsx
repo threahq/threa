@@ -157,6 +157,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return ids
   }, [idbStreamMemberships])
 
+  const joinedAtByStreamId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const m of idbStreamMemberships) map.set(m.streamId, m.joinedAt)
+    return map
+  }, [idbStreamMemberships])
+
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
   // Archiving a stream marks only that row; everything under it along the
@@ -333,6 +339,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         unreadStreamIds,
         inboxOrder,
         inboxArrivedAt,
+        joinedAtByStreamId,
       }),
     [
       sidebarConfig,
@@ -343,6 +350,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       unreadStreamIds,
       inboxOrder,
       inboxArrivedAt,
+      joinedAtByStreamId,
     ]
   )
 

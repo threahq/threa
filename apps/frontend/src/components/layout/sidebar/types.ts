@@ -3,7 +3,7 @@ import type { StreamWithPreview, SidebarSectionKey } from "@threahq/types"
 export type UrgencyLevel = "mentions" | "ai" | "bot" | "activity" | "quiet"
 
 /** Sorting strategies for sidebar sections */
-export type SortType = "activity" | "importance" | "alphabetic_active_first"
+export type SortType = "activity" | "importance"
 
 /**
  * Smart-view bucket a stream is categorized into. The canonical list of keys

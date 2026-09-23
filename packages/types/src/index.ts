@@ -1248,6 +1248,8 @@ export {
   MAX_CUSTOM_SECTION_STREAM_IDS,
   type SidebarSectionSpec,
   type SidebarSection,
+  SIDEBAR_SECTION_FILTERS,
+  type SidebarSectionFilter,
   SIDEBAR_BASE_PRESETS,
   type SidebarBasePreset,
   SIDEBAR_QUICK_LINKS,
