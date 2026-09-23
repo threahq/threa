@@ -523,6 +523,8 @@ async function readLlmsTxtCopy(pageUrl: string, signal: AbortSignal): Promise<st
   if (!index) return null
   const path = barePath(page.pathname)
   if (!path) return index
+  // A one-segment path like /docs would also end /api/docs, a different page.
+  const matchesSuffix = path.lastIndexOf("/") > 0
 
   let tried = 0
   for (const match of index.matchAll(/\]\((\S+?)\)/g)) {
@@ -534,7 +536,7 @@ async function readLlmsTxtCopy(pageUrl: string, signal: AbortSignal): Promise<st
     }
     // A copy may live under a prefix or on another host, so the page's path only has to end the link's.
     const candidate = barePath(target.pathname)
-    if (candidate !== path && !candidate.endsWith(path)) continue
+    if (candidate !== path && !(matchesSuffix && candidate.endsWith(path))) continue
     const copy = await readMarkdownCopy(target.href, signal)
     if (copy) return copy
     if (++tried >= MAX_LLMS_TXT_CANDIDATES) break

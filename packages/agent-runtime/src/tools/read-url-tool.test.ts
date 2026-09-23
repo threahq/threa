@@ -580,6 +580,23 @@ describe("read-url-tool", () => {
       })
     })
 
+    it("never takes a one-segment page for a deeper llms.txt entry that ends the same", async () => {
+      const requested = routeFetch({
+        "https://example.com/docs": { type: "text/html", body: `<html><body>${LONG_TEXT}</body></html>` },
+        "https://example.com/llms.txt": {
+          type: "text/plain",
+          body: "# Site\n\n- [API](https://example.com/api/docs.md)",
+        },
+      })
+
+      const parsed = await read("https://example.com/docs")
+
+      expect({ via: parsed.via, requested }).toEqual({
+        via: "html",
+        requested: ["https://example.com/docs", "https://example.com/llms.txt"],
+      })
+    })
+
     it("never fetches a markdown copy at a private address", async () => {
       const requested = routeFetch({
         "https://example.com/post": {
