@@ -318,9 +318,9 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
       boardMode={opts.boardMode}
       isInboxRow={opts.isInboxSection}
-      onClearFromInbox={opts.isInboxSection && opts.onClearInboxRow ? () => opts.onClearInboxRow!(stream.id) : undefined}
+      onClearFromInbox={opts.onClearInboxRow ? () => opts.onClearInboxRow!(stream.id) : undefined}
       onInboxHoverChange={
-        opts.isInboxSection && opts.onInboxRowHoverChange
+        opts.onInboxRowHoverChange
           ? (hovering: boolean) => opts.onInboxRowHoverChange!(hovering ? stream.id : null)
           : undefined
       }
