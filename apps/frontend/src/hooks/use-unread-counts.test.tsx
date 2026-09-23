@@ -3,6 +3,7 @@ import { renderHook, waitFor, act } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService, type WorkspaceService } from "@/contexts"
+import * as contextsModule from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
 import {
   DEFAULT_SIDEBAR_CONFIG,
@@ -1429,6 +1430,25 @@ describe("useUnreadCounts", () => {
       await waitFor(() => expect(result.current.isInInbox("stream_2")).toBe(true)) // held, no unread
       expect(result.current.isInInbox("stream_1")).toBe(false) // unread but muted
       expect(result.current.isInInbox("stream_3")).toBe(false) // neither unread nor held
+    })
+
+    it("isInInbox ignores the held set when inboxClearMode is read", async () => {
+      const spy = vi.spyOn(contextsModule, "usePreferencesOptional").mockReturnValue({
+        preferences: { inboxClearMode: "read" },
+      } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
+      try {
+        await seedUnreadState({
+          unreadCounts: { stream_1: 2, stream_2: 0 },
+          inboxHeldStreamIds: ["stream_2"],
+        })
+        const queryClient = new QueryClient()
+        const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+
+        await waitFor(() => expect(result.current.isInInbox("stream_1")).toBe(true)) // unread
+        expect(result.current.isInInbox("stream_2")).toBe(false) // held only, "read" ignores holds
+      } finally {
+        spy.mockRestore()
+      }
     })
 
     it("isInboxHeld reflects the held set", async () => {

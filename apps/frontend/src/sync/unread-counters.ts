@@ -56,6 +56,15 @@ export interface UnreadCounterState {
    * own responses) are the only writers — there is no client-side guess.
    */
   inboxHeldStreamIds?: string[]
+  /**
+   * First-arrival timestamp per stream currently in the Inbox: when the
+   * earliest other-author message landed since the stream last left the Inbox
+   * (unread hit 0 and it wasn't held). Set once by `applyStreamActivityOrdinal`
+   * on the first other-author message after a stream has no recorded arrival;
+   * cleared by `dropArrivalIfSettled` wherever unread/held state changes.
+   * Powers `inboxOrder: "arrival"` (oldest-first) sidebar sorting.
+   */
+  inboxArrivedAt?: Record<string, string>
 }
 
 /** Size of a stream's sparse read overlay (0 when absent). */
@@ -183,6 +192,22 @@ export function clearActivities(state: UnreadCounterState): UnreadCounterState {
 }
 
 /**
+ * Drop a stream's recorded arrival once it's no longer in the Inbox (unread 0
+ * and not held) — the single normalization point every applier that changes
+ * unread/held state runs through, so a cleared/read stream never keeps a stale
+ * arrival that would resurface it in arrival-order sorting.
+ */
+function dropArrivalIfSettled(state: UnreadCounterState, streamId: string): UnreadCounterState {
+  if (state.inboxArrivedAt?.[streamId] === undefined) return state
+  const unread = state.unreadCounts[streamId] ?? 0
+  const held = state.inboxHeldStreamIds?.includes(streamId) ?? false
+  if (unread > 0 || held) return state
+  const next = { ...state.inboxArrivedAt }
+  delete next[streamId]
+  return { ...state, inboxArrivedAt: next }
+}
+
+/**
  * Set/unset Inbox-hold membership for a set of streams. Same-reference no-op
  * when every stream's membership already matches `held`.
  */
@@ -201,7 +226,11 @@ export function applyInboxHeld(
     }
   }
   if (!changed) return state
-  return { ...state, inboxHeldStreamIds: Array.from(next) }
+  let result: UnreadCounterState = { ...state, inboxHeldStreamIds: Array.from(next) }
+  if (!held) {
+    for (const streamId of streamIds) result = dropArrivalIfSettled(result, streamId)
+  }
+  return result
 }
 
 /**
@@ -217,7 +246,7 @@ export function applyStreamActivityOrdinal(
   state: UnreadCounterState,
   streamId: string,
   messageOrdinal: number,
-  opts: { isOwnMessage: boolean }
+  opts: { isOwnMessage: boolean; createdAt?: string }
 ): UnreadCounterState {
   const ov = overlaySize(state, streamId)
   const prevLatest = state.latestOrdinals?.[streamId]
@@ -231,10 +260,17 @@ export function applyStreamActivityOrdinal(
     latest = Math.max(prevLatest, messageOrdinal)
     read = opts.isOwnMessage ? Math.max(prevRead, messageOrdinal) : prevRead
   }
+  // First other-author arrival since the stream last left the Inbox: seed the
+  // arrival timestamp once. Never set for the viewer's own sends.
+  const inboxArrivedAt =
+    !opts.isOwnMessage && opts.createdAt !== undefined && state.inboxArrivedAt?.[streamId] === undefined
+      ? { ...state.inboxArrivedAt, [streamId]: opts.createdAt }
+      : state.inboxArrivedAt
   return {
     ...state,
     latestOrdinals: { ...state.latestOrdinals, [streamId]: latest },
     unreadCounts: { ...state.unreadCounts, [streamId]: Math.max(0, latest - read - ov) },
+    inboxArrivedAt,
   }
 }
 
@@ -277,11 +313,12 @@ export function applyStreamReadOrdinal(
   const next = lastReadOrdinal >= prevRead ? dropActivitiesForStream(withOverlay, streamId) : withOverlay
   const held = inboxHeld === undefined ? next : applyInboxHeld(next, [streamId], inboxHeld)
   const unread = Math.max(0, latest - read - ov)
-  return {
+  const result = {
     ...held,
     latestOrdinals: { ...held.latestOrdinals, [streamId]: latest },
     unreadCounts: { ...held.unreadCounts, [streamId]: unread },
   }
+  return dropArrivalIfSettled(result, streamId)
 }
 
 /**
@@ -469,6 +506,10 @@ export function diffCounterStreams(prev: UnreadCounterState, next: UnreadCounter
   for (const id of new Set([...prevHeld, ...nextHeld])) {
     if (prevHeld.has(id) !== nextHeld.has(id)) out.add(id)
   }
+  const arrivalIds = new Set([...Object.keys(prev.inboxArrivedAt ?? {}), ...Object.keys(next.inboxArrivedAt ?? {})])
+  for (const id of arrivalIds) {
+    if ((prev.inboxArrivedAt?.[id] ?? null) !== (next.inboxArrivedAt?.[id] ?? null)) out.add(id)
+  }
   return out
 }
 
@@ -496,6 +537,7 @@ export interface LocalCounterCache {
   latestOrdinals?: Record<string, number>
   readMessageIds?: Record<string, string[]>
   inboxHeldStreamIds?: string[]
+  inboxArrivedAt?: Record<string, string>
   mutedStreamIds: string[]
   /** Per-stream timestamp of the last local counter write — see `diffCounterStreams` stamping in `putCountersIdb`. */
   counterTouchedAt?: Record<string, number>
@@ -524,6 +566,7 @@ export function mergeBootstrapUnreadFields(
   latestOrdinals: Record<string, number>
   readMessageIds: Record<string, string[]>
   inboxHeldStreamIds: string[]
+  inboxArrivedAt: Record<string, string>
   mutedStreamIds: string[]
   counterTouchedAt: Record<string, number>
   mutedTouchedAt: Record<string, number>
@@ -539,6 +582,7 @@ export function mergeBootstrapUnreadFields(
       latestOrdinals: bootstrap.messageCounts ?? {},
       readMessageIds: bootstrap.readMessageIds ?? {},
       inboxHeldStreamIds: bootstrap.inboxHeldStreamIds ?? [],
+      inboxArrivedAt: bootstrap.inboxArrivedAt ?? {},
       mutedStreamIds: bootstrap.mutedStreamIds,
       counterTouchedAt,
       mutedTouchedAt,
@@ -552,6 +596,7 @@ export function mergeBootstrapUnreadFields(
   // server snapshot would otherwise un-hold a stream the local device just
   // (re)held.
   const inboxHeldStreamIds = new Set(bootstrap.inboxHeldStreamIds ?? [])
+  const inboxArrivedAt = { ...bootstrap.inboxArrivedAt }
   for (const streamId of touched) {
     unreadCounts[streamId] = local.unreadCounts[streamId] ?? 0
     // The triple stays paired: a stream keeping its local unread keeps its
@@ -564,6 +609,11 @@ export function mergeBootstrapUnreadFields(
     else delete readMessageIds[streamId]
     if (local.inboxHeldStreamIds?.includes(streamId)) inboxHeldStreamIds.add(streamId)
     else inboxHeldStreamIds.delete(streamId)
+    // Arrival rides the same touched-set for the same reason: it's part of
+    // the local device's Inbox-membership picture for this stream.
+    const localArrival = local.inboxArrivedAt?.[streamId]
+    if (localArrival !== undefined) inboxArrivedAt[streamId] = localArrival
+    else delete inboxArrivedAt[streamId]
   }
   // Mute membership merges on its OWN freshness — a mute-only toggle must not
   // freeze the stream's counter triple, and counter writes must not carry a
@@ -585,6 +635,7 @@ export function mergeBootstrapUnreadFields(
     latestOrdinals,
     readMessageIds,
     inboxHeldStreamIds: Array.from(inboxHeldStreamIds),
+    inboxArrivedAt,
     mutedStreamIds: Array.from(mutedStreamIds),
     counterTouchedAt,
     mutedTouchedAt,
@@ -604,6 +655,7 @@ export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterStat
     latestOrdinals: bootstrap.messageCounts,
     readMessageIds: bootstrap.readMessageIds,
     inboxHeldStreamIds: bootstrap.inboxHeldStreamIds,
+    inboxArrivedAt: bootstrap.inboxArrivedAt,
   }
 }
 
@@ -619,5 +671,6 @@ export function withCounterState(bootstrap: WorkspaceBootstrap, state: UnreadCou
     messageCounts: state.latestOrdinals,
     readMessageIds: state.readMessageIds,
     inboxHeldStreamIds: state.inboxHeldStreamIds,
+    inboxArrivedAt: state.inboxArrivedAt,
   }
 }

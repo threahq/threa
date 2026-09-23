@@ -55,6 +55,8 @@ function makeInput(
     getUnreadCount: () => 0,
     streamIdsByLabel: new Map(),
     unreadStreamIds: new Set(),
+    inboxOrder: "newest",
+    inboxArrivedAt: {},
     ...over,
   }
 }
@@ -547,6 +549,68 @@ describe("resolveSections — Unread section", () => {
       // The unread member leaves its type section for Unread; the other DM stays.
       { id: "dms", items: ["dm_read"] },
     ])
+  })
+
+  it("sorts Unread oldest-arrival-first when inboxOrder is arrival", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 2 }),
+      makeItem({ id: "u3", section: "recent", urgency: "activity", activity: 3 }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2", "u3"]),
+        inboxOrder: "arrival",
+        inboxArrivedAt: {
+          u1: "2026-01-03T00:00:00.000Z",
+          u2: "2026-01-01T00:00:00.000Z",
+          u3: "2026-01-02T00:00:00.000Z",
+        },
+      },
+      unreadFirst
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u3", "u1"])
+  })
+
+  it("sorts a stream with no recorded arrival after those with one, in arrival order", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 2 }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2"]),
+        inboxOrder: "arrival",
+        inboxArrivedAt: { u2: "2026-01-01T00:00:00.000Z" },
+      },
+      unreadFirst
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])
+  })
+
+  it("sorts Unread by activity (newest first) when inboxOrder is newest, ignoring arrival", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 9 }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2"]),
+        inboxOrder: "newest",
+        inboxArrivedAt: { u1: "2026-01-01T00:00:00.000Z" },
+      },
+      unreadFirst
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])
   })
 })
 

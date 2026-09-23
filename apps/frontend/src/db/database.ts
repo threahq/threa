@@ -636,6 +636,12 @@ export interface CachedUnreadState {
    * held). See sync/unread-counters.ts.
    */
   inboxHeldStreamIds?: string[]
+  /**
+   * First-arrival timestamp per stream currently in the Inbox. Absent for
+   * rows cached before the field shipped (reads as no known arrival). See
+   * sync/unread-counters.ts.
+   */
+  inboxArrivedAt?: Record<string, string>
   mutedStreamIds: string[]
   /**
    * Per-stream timestamp of the last local counter write (stamped by

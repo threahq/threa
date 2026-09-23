@@ -1,4 +1,4 @@
-import { type StreamType, StreamTypes } from "@threahq/types"
+import { type StreamType, StreamTypes, type InboxOrder } from "@threahq/types"
 import { ALL_SECTIONS, SMART_SECTIONS } from "./config"
 import type { SidebarConfig, SidebarSection, SidebarSectionSpec } from "./sidebar-config"
 import type { SectionKey, StreamItemData } from "./types"
@@ -42,6 +42,10 @@ export interface ResolveSectionsInput {
    * the Unread section's contents and the exclusion the other sections apply.
    */
   unreadStreamIds: ReadonlySet<string>
+  /** Sidebar Inbox sort order (`inboxOrder` preference). Drives Unread section ordering only. */
+  inboxOrder: InboxOrder
+  /** First-arrival timestamp per stream currently held/unread, for `inboxOrder: "arrival"` sorting. */
+  inboxArrivedAt: Record<string, string>
 }
 
 export interface ResolvedSection {
@@ -170,10 +174,25 @@ function resolveUnreadSection({
   processedStreams,
   unreadStreamIds,
   getUnreadCount,
+  inboxOrder,
+  inboxArrivedAt,
 }: ResolveSectionsInput): StreamItemData[] {
   if (unreadStreamIds.size === 0) return []
   const items = processedStreams.filter((stream) => unreadStreamIds.has(stream.id))
-  return sortStreams(items, "activity", getUnreadCount)
+  sortStreams(items, "activity", getUnreadCount)
+  if (inboxOrder !== "arrival") return items
+  // Oldest-arrival first; streams with no recorded arrival sort after those
+  // with one and keep the activity order just established (stable sort).
+  return items.sort((a, b) => {
+    const arrivalA = inboxArrivedAt[a.id]
+    const arrivalB = inboxArrivedAt[b.id]
+    if (arrivalA !== undefined && arrivalB !== undefined) {
+      return new Date(arrivalA).getTime() - new Date(arrivalB).getTime()
+    }
+    if (arrivalA !== undefined) return -1
+    if (arrivalB !== undefined) return 1
+    return 0
+  })
 }
 
 /**
