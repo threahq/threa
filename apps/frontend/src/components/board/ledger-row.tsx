@@ -11,7 +11,7 @@ import { MessageActionDrawer } from "@/components/timeline/message-action-drawer
 import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
 import { isGalleryPreviewableAttachment } from "@/components/timeline/attachment-list"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
-import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
+import { ReminderPicker, reminderAnchorRect } from "@/components/timeline/reminder-picker"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useMediaGallery } from "@/contexts"
@@ -93,6 +93,7 @@ export function LedgerRow({
   const [menuOpen, setMenuOpen] = useState(false)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
+  const reminderAnchor = useRef<DOMRect | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
 
@@ -202,7 +203,10 @@ export function LedgerRow({
     onOpenFullPicker: () => setPickerOpen(true),
     isSaved,
     onToggleSave: handleToggleSave,
-    onRequestReminder: () => setReminderSheetOpen(true),
+    onRequestReminder: () => {
+      reminderAnchor.current = reminderAnchorRect()
+      setReminderSheetOpen(true)
+    },
     onLabelMessage: () => setLabelPickerOpen(true),
     onNewSubtopic,
     onMoveToSubtopic: isSettling ? undefined : onMoveToSubtopic,
@@ -230,7 +234,8 @@ export function LedgerRow({
         />
       )}
       {reminderSheetOpen && (
-        <ReminderPickerSheet
+        <ReminderPicker
+          anchorRect={reminderAnchor.current}
           open={reminderSheetOpen}
           onOpenChange={setReminderSheetOpen}
           workspaceId={workspaceId}

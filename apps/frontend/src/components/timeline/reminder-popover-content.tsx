@@ -17,9 +17,16 @@ interface ReminderPopoverContentProps {
   /** Conversation origin for the save-new path; omitted on stream/label surfaces. */
   conversationId?: string
   saved: SavedMessageView | null
+  onReminderSet?: () => void
 }
 
-export function ReminderPopoverContent({ workspaceId, messageId, conversationId, saved }: ReminderPopoverContentProps) {
+export function ReminderPopoverContent({
+  workspaceId,
+  messageId,
+  conversationId,
+  saved,
+  onReminderSet,
+}: ReminderPopoverContentProps) {
   // Browser-local everywhere in the UI — never use `preferences.timezone`
   // here. Native pickers operate in device-local; any drift would silently
   // shift saved reminders by the device-vs-preference offset.
@@ -60,6 +67,7 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
       saveMutation.mutate(
         { messageId, conversationId, remindAt: date?.toISOString() ?? null },
         {
+          onSuccess: onReminderSet,
           onError: () => toast.error("Could not save"),
         }
       )
@@ -68,6 +76,7 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
     updateMutation.mutate(
       { savedId: saved.id, input: { remindAt: date?.toISOString() ?? null } },
       {
+        onSuccess: onReminderSet,
         onError: () => toast.error("Could not update reminder"),
       }
     )

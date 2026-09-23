@@ -64,7 +64,7 @@ import { useRunFoldBody } from "./run-fold-context"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
-import { ReminderPickerSheet } from "./reminder-picker-sheet"
+import { ReminderPicker, reminderAnchorRect } from "./reminder-picker"
 import { useSavedForMessage, useSaveMessage, useDeleteSaved } from "@/hooks/use-saved"
 import { useOpenAside } from "@/hooks/use-open-aside"
 import { useAgentBlock } from "./agent-block-context"
@@ -1141,6 +1141,7 @@ function SentMessageEvent({
   const unsaveMessageMutation = useDeleteSaved(workspaceId)
   const isSaved = !!savedForMessage && savedForMessage.status === "saved"
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
+  const reminderAnchor = useRef<DOMRect | null>(null)
 
   const handleToggleSave = useCallback(() => {
     // Mirror the desktop hover-button: swallow double-taps while a mutation is
@@ -1170,7 +1171,10 @@ function SentMessageEvent({
     })
   }, [savedForMessage, saveMessageMutation, unsaveMessageMutation, payload.messageId])
 
-  const handleRequestReminder = useCallback(() => setReminderSheetOpen(true), [])
+  const handleRequestReminder = useCallback(() => {
+    reminderAnchor.current = reminderAnchorRect()
+    setReminderSheetOpen(true)
+  }, [])
 
   // Conversation-overlay correction via the action menu/drawer. The row
   // context is non-null only while the overlay decorates this row, so the
@@ -1738,7 +1742,8 @@ function SentMessageEvent({
         />
       )}
       {reminderSheetOpen && (
-        <ReminderPickerSheet
+        <ReminderPicker
+          anchorRect={reminderAnchor.current}
           open={reminderSheetOpen}
           onOpenChange={setReminderSheetOpen}
           workspaceId={workspaceId}
