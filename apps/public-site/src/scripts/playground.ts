@@ -275,16 +275,27 @@ function bindTokenFocus(): void {
 }
 
 /* ---- copy ---- */
+function setCopied(btn: HTMLElement, copied: boolean): void {
+  const label = copied ? "Copied" : "Copy"
+  btn.toggleAttribute("data-copied", copied)
+  btn.setAttribute("aria-label", label)
+  btn.title = label
+}
+
 function bindCopy(): void {
+  const resets = new WeakMap<HTMLElement, number>()
   document.querySelectorAll<HTMLElement>("[data-copy]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const block = btn.closest(".pg-block")
       const tmpl = block?.querySelector<HTMLElement>("[data-template]")?.dataset.template
       if (!tmpl) return
       await navigator.clipboard.writeText(substitute(tmpl, readCreds()))
-      const prev = btn.textContent
-      btn.textContent = "Copied"
-      setTimeout(() => (btn.textContent = prev), 1200)
+      clearTimeout(resets.get(btn))
+      setCopied(btn, true)
+      resets.set(
+        btn,
+        window.setTimeout(() => setCopied(btn, false), 1500)
+      )
     })
   })
 }
@@ -431,6 +442,18 @@ function bindSubnavCollapse(): void {
   })
 }
 
+/* The open page's section list folds away under its nav row. */
+function bindPageCollapse(): void {
+  const toggle = document.querySelector<HTMLButtonElement>(".dsp-toggle")
+  const sub = document.getElementById("docs-side-sub")
+  if (!toggle || !sub) return
+  toggle.addEventListener("click", () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true"
+    toggle.setAttribute("aria-expanded", String(open))
+    sub.hidden = !open
+  })
+}
+
 /* Mobile navigation drawer. On narrow viewports the side nav is hidden off
    canvas; the hamburger slides it in. Closing on backdrop tap, link tap, or
    Escape keeps it out of the way once the reader has chosen where to go. */
@@ -471,6 +494,7 @@ function boot(): void {
   bindCopy()
   bindRun()
   bindSubnavCollapse()
+  bindPageCollapse()
   bindSectionSpy()
 }
 

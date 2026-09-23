@@ -1,0 +1,19 @@
+---
+/*
+ * One step on the quickstart rail. The number comes from the parent
+ * <ol class="rail">.
+ */
+interface Props {
+  id: string
+  title: string
+}
+const { id, title } = Astro.props
+---
+
+<li class="rail-step">
+  <span class="rail-node" aria-hidden="true"></span>
+  <div class="rail-main">
+    <h2 id={id}>{title}</h2>
+    <slot />
+  </div>
+</li>

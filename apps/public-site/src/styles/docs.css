@@ -73,6 +73,7 @@ a {
 .docs-nav .brand svg {
   width: 26px;
   height: 26px;
+  flex-shrink: 0;
   color: hsl(var(--gold));
 }
 .docs-nav .brand .wordmark {
@@ -93,6 +94,7 @@ a {
 .docs-nav-links a {
   color: hsl(var(--muted));
   text-decoration: none;
+  white-space: nowrap;
   transition: color 0.15s;
 }
 .docs-nav-links a:hover {
@@ -103,21 +105,111 @@ a {
 }
 
 /* ---------- SHELL ---------- */
+/* Every docs page puts the sidebar at the same x: under the top bar's brand,
+   centring only once the screen is wider than 1560px. Its width is the
+   reader's (scripts/docs-side.ts), capped so the article always keeps room. */
 .docs-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  gap: 0;
-  max-width: 1240px;
-  margin: 0 auto;
+  grid-template-columns: min(var(--docs-side-w, 272px), 40vw) minmax(0, 1fr);
+  padding-left: max(clamp(20px, 4vw, 48px), calc((100% - 1560px) / 2));
 }
 .docs-side {
+  grid-area: 1 / 1;
   position: sticky;
   top: 49px;
   align-self: start;
   height: calc(100vh - 49px);
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 32px 20px 48px 0;
   border-right: 1px solid hsl(var(--line));
+  /* The gutter is reserved so opening a section never shifts the list, and
+     the thumb only shows while the pointer or focus is in the sidebar. */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.docs-side:hover,
+.docs-side:focus-within {
+  scrollbar-color: hsl(var(--muted) / 0.45) transparent;
+}
+.docs-main {
+  grid-area: 1 / 2;
+}
+
+/* Sits over the sidebar's border; the line lights up when grabbed. */
+.docs-side-resize {
+  grid-area: 1 / 1;
+  justify-self: end;
+  align-self: start;
+  position: sticky;
+  top: 49px;
+  z-index: 5;
+  width: 11px;
+  height: calc(100vh - 49px);
+  margin-right: -6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.docs-side-resize::after {
+  content: "";
+  position: absolute;
+  inset: 0 4px 0 5px;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+.docs-side-resize:focus-visible {
+  outline: none;
+}
+.docs-side-resize:focus-visible::after,
+.docs-resizing .docs-side-resize::after {
+  background: hsl(var(--gold));
+}
+@media (hover: hover) {
+  .docs-side-resize:hover::after {
+    background: hsl(var(--gold) / 0.7);
+    transition-delay: 0.12s;
+  }
+}
+body.docs-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* The reference is ~18k nodes and a full reflow costs ~100ms, so a drag only
+   lays out the operations on screen. `auto` keeps each skipped operation at its
+   last real height, so nothing above the viewport moves until release. */
+.api-op {
+  contain-intrinsic-size: auto 600px;
+}
+body.docs-resizing .api-op {
+  content-visibility: auto;
+}
+
+/* Entries never wrap or scroll sideways; a clipped one ends in an ellipsis
+   and shows in full on hover (.docs-side-tip). */
+.docs-side-group h4,
+.docs-side-group a,
+.dss-group-head > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.dss-group-head > span {
+  min-width: 0;
+}
+.docs-side-tip {
+  position: fixed;
+  z-index: 60;
+  white-space: nowrap;
+  pointer-events: none;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  box-shadow: 0 6px 18px -8px hsl(28 30% 22% / 0.35);
+}
+.docs-side-tip[hidden] {
+  display: none;
 }
 .docs-side-group {
   margin-bottom: 26px;
@@ -147,6 +239,41 @@ a {
   color: hsl(var(--gold));
   border-left-color: hsl(var(--gold));
   font-weight: 500;
+}
+
+/* The open page's row carries a toggle that folds its section list away. */
+.docs-side-page {
+  display: flex;
+  align-items: center;
+}
+.docs-side-page > a {
+  flex: 1;
+  min-width: 0;
+}
+.dsp-toggle {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: hsl(var(--muted));
+  cursor: pointer;
+}
+.dsp-toggle[aria-expanded="true"] .dss-chevron {
+  transform: rotate(0);
+}
+@media (hover: hover) {
+  .dsp-toggle:hover {
+    color: hsl(var(--ink));
+    background: hsl(var(--ink) / 0.06);
+  }
+}
+.docs-side-sub[hidden] {
+  display: none;
 }
 
 /* Per-page section anchors, nested under the active nav item. */
@@ -224,7 +351,7 @@ a {
 
 .docs-main {
   min-width: 0;
-  padding: 0 clamp(20px, 4vw, 56px) 80px;
+  padding: clamp(32px, 5vw, 64px) clamp(20px, 4vw, 56px) 80px;
 }
 
 /* ---------- CREDENTIALS (nav toggle + popover) ---------- */
@@ -428,20 +555,19 @@ a {
 }
 .docs-article h1 {
   font-family: var(--font-display);
-  font-weight: 300;
-  font-size: clamp(30px, 3.4vw, 40px);
-  line-height: 1.1;
-  letter-spacing: -0.02em;
-  margin: 0 0 16px;
+  font-weight: var(--display-weight);
+  font-size: clamp(36px, 4.4vw, 54px);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  margin: 0 0 18px;
 }
 .docs-article h2 {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 52px 0 14px;
-  padding-top: 16px;
-  border-top: 1px solid hsl(var(--line));
+  font-weight: var(--display-weight);
+  font-size: clamp(24px, 2.4vw, 29px);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  margin: 76px 0 12px;
 }
 /* Anchored sections shouldn't land under the sticky nav. */
 .docs-article h2[id],
@@ -450,22 +576,27 @@ a {
 }
 .docs-article h3 {
   font-family: var(--font-display);
-  font-weight: 500;
-  font-size: 16px;
-  margin: 30px 0 10px;
+  font-weight: var(--display-weight);
+  font-size: 18px;
+  color: hsl(var(--ink));
+  letter-spacing: -0.01em;
+  margin: 36px 0 8px;
 }
+/* Prose holds to a reading measure; code, tables and previews use the full
+   column. */
 .docs-article p,
 .docs-article li {
-  font-size: 15px;
-  line-height: 1.62;
+  font-size: 15.5px;
+  line-height: 1.65;
   color: hsl(var(--ink-soft));
+  max-width: 64ch;
 }
 .docs-article .lead {
-  font-size: 17px;
-  line-height: 1.6;
+  font-size: 19px;
+  line-height: 1.5;
   color: hsl(var(--ink));
-  max-width: none;
-  margin: 0 0 28px;
+  max-width: 34em;
+  margin: 0 0 36px;
 }
 .docs-article ul,
 .docs-article ol {
@@ -481,10 +612,9 @@ a {
 }
 .docs-article code:not(.pg-pre code) {
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  background: hsl(var(--paper-warm));
-  border: 1px solid hsl(var(--line));
-  border-radius: 3px;
+  font-size: 0.84em;
+  background: hsl(var(--ink) / 0.055);
+  border-radius: 4px;
   padding: 1px 5px;
 }
 .docs-article strong {
@@ -494,26 +624,666 @@ a {
 
 /* ---------- CALLOUT ---------- */
 .note {
-  margin: 22px 0;
-  padding: 14px 16px;
+  margin: 26px 0;
+  padding: 14px 18px;
+  max-width: 64ch;
   background: hsl(var(--paper));
-  border: 1px solid hsl(var(--line));
   border-left: 3px solid hsl(var(--gold));
-  border-radius: 0 5px 5px 0;
-  font-size: 14px;
-  line-height: 1.55;
+  border-radius: 0 8px 8px 0;
+  font-size: 14.5px;
+  line-height: 1.6;
   color: hsl(var(--ink-soft));
 }
 .note strong {
   display: block;
-  margin-bottom: 3px;
-  font-size: 13.5px;
-  font-weight: 600;
+  margin-bottom: 2px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
   color: hsl(var(--ink));
-  font-family: var(--font-mono);
 }
 .note.warn {
   border-left-color: hsl(8 60% 52%);
+}
+
+/* ---------- FACT ROWS ---------- */
+.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 10px 28px;
+  margin: 18px 0 0;
+  font-size: 15px;
+}
+.facts dt {
+  color: hsl(var(--muted));
+}
+.facts dd {
+  margin: 0;
+  color: hsl(var(--ink));
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- STREAM PREVIEW ----------
+   What a sample produces in the app (components/StreamPreview.astro). Sits
+   directly under the code block that causes it. */
+.stream-preview {
+  margin: 0 0 36px;
+  padding: 0 0 10px;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 8px;
+}
+.pg-block + .stream-preview {
+  margin-top: -20px;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+.sp-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: hsl(var(--muted));
+}
+.sp-head svg {
+  width: 14px;
+  height: 14px;
+}
+.sp-link {
+  color: hsl(var(--gold-dim));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.pg-block:has(+ .stream-preview) {
+  border-radius: 6px 6px 0 0;
+}
+.sp-head .sp-lock {
+  width: 12px;
+  height: 12px;
+}
+.sp-body > * + * {
+  margin-top: 10px;
+}
+.stream-preview .trace-card.is-static {
+  margin: 10px 12px 0;
+}
+
+/* Recipe scenes: the app surfaces a sample's result lands in, redrawn at the
+   app's metrics. Each class block names the component it follows. */
+
+.stream-preview p,
+.stream-preview li {
+  max-width: none;
+}
+
+/* memo/memo-result-item.tsx, sources expanded */
+.stream-preview .scene-memo {
+  margin: 10px 12px 0;
+  border: 1px solid hsl(var(--line));
+  border-radius: 8px;
+  background: hsl(var(--paper));
+  overflow-wrap: anywhere;
+}
+.stream-preview .smo-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px 0;
+}
+.stream-preview .smo-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: hsl(var(--ink));
+}
+.stream-preview .smo-date,
+.stream-preview .smo-at,
+.stream-preview .ss-at {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: hsl(var(--muted));
+  white-space: nowrap;
+}
+.stream-preview .smo-date {
+  margin-top: 2px;
+}
+.stream-preview .smo-abstract {
+  margin: 6px 14px 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: hsl(var(--muted));
+}
+.stream-preview .smo-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 14px 0;
+}
+.stream-preview .kt-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: rgb(59 130 246 / 0.1);
+  color: #2563eb;
+  font-size: 10.5px;
+  font-weight: 500;
+}
+:root[data-theme="dark"] .stream-preview .kt-badge {
+  border-color: #1e40af;
+  color: #60a5fa;
+}
+.stream-preview .kt-badge svg {
+  width: 10px;
+  height: 10px;
+}
+.stream-preview .smo-tag {
+  font-size: 10.5px;
+  color: hsl(var(--muted));
+}
+.stream-preview .smo-source {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 14px 8px;
+  font-size: 10.5px;
+  color: hsl(var(--muted));
+}
+.stream-preview .smo-source svg {
+  width: 11px;
+  height: 11px;
+}
+.stream-preview .smo-source .smo-chev {
+  margin-left: auto;
+  width: 12px;
+  height: 12px;
+}
+.stream-preview .smo-sources {
+  list-style: none;
+  margin: 0;
+  padding: 6px 6px 8px;
+  border-top: 1px solid hsl(var(--line));
+}
+.stream-preview .smo-sources li {
+  margin: 0;
+  padding: 5px 8px;
+}
+.stream-preview .smo-sources p,
+.stream-preview .ss-snip {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: hsl(var(--ink-soft));
+}
+.stream-preview p.smo-by,
+.stream-preview p.ss-by {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  color: hsl(var(--muted));
+}
+
+/* search/search-grouped-list.tsx + result-row.tsx */
+.stream-preview .scene-search {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 12px 0;
+}
+.stream-preview .ss-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: hsl(var(--ink));
+}
+.stream-preview .ss-head svg {
+  width: 12px;
+  height: 12px;
+  color: hsl(var(--muted));
+}
+.stream-preview .ss-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: hsl(var(--paper-warm));
+  font-size: 10.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--muted));
+}
+.stream-preview .scene-search ul {
+  list-style: none;
+  margin: 2px 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stream-preview .scene-search li {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+.stream-preview .ss-snip mark {
+  background: hsl(var(--gold) / 0.2);
+  color: inherit;
+  font-weight: 500;
+  border-radius: 2px;
+}
+
+/* timeline/delegation-event.tsx (completed) over its thread-card.tsx */
+.stream-preview .scene-delegation {
+  margin: 10px 12px 0;
+}
+.stream-preview .sd-card {
+  border: 1px solid hsl(var(--line) / 0.6);
+  border-radius: 10px;
+  background: hsl(var(--paper-warm) / 0.5);
+  padding: 8px 12px;
+}
+.stream-preview .sd-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.stream-preview .sd-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: hsl(var(--paper-warm));
+  color: hsl(var(--muted));
+}
+.stream-preview .sd-tile svg,
+.stream-preview .sd-copy svg {
+  width: 16px;
+  height: 16px;
+}
+.stream-preview .sd-main {
+  min-width: 0;
+  flex: 1;
+}
+.stream-preview .sd-title,
+.stream-preview .sd-meta {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stream-preview .sd-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--ink));
+}
+.stream-preview .sd-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: hsl(var(--muted));
+}
+.stream-preview .sd-copy {
+  display: none;
+  color: hsl(var(--muted));
+}
+.stream-preview .sd-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0 0 40px;
+  font-size: 11px;
+  font-weight: 500;
+  color: hsl(var(--muted));
+}
+.stream-preview .sd-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+.stream-preview .sd-thread {
+  position: relative;
+  margin-top: 8px;
+  padding: 6px 8px 6px 12px;
+}
+.stream-preview .sd-thread::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -4px;
+  bottom: -2px;
+  width: 2px;
+  border-radius: 999px;
+  background: hsl(var(--gold) / 0.7);
+}
+.stream-preview .sd-thread-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.stream-preview .sd-av {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: hsl(var(--emerald) / 0.14);
+  color: hsl(var(--emerald));
+}
+.stream-preview .sd-av svg {
+  width: 12px;
+  height: 12px;
+}
+.stream-preview .sd-replies {
+  font-weight: 500;
+  color: hsl(var(--gold-dim));
+}
+:root[data-theme="dark"] .stream-preview .sd-replies {
+  color: hsl(var(--gold));
+}
+.stream-preview .sd-ago {
+  color: hsl(var(--muted));
+}
+.stream-preview .sd-chev {
+  margin-left: auto;
+  width: 14px;
+  height: 14px;
+  color: hsl(var(--muted) / 0.6);
+}
+.stream-preview .sd-latest {
+  margin: 4px 0 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: hsl(var(--muted));
+}
+.stream-preview .sd-latest strong {
+  font-weight: 500;
+  color: hsl(var(--ink-soft));
+}
+
+/* timeline/decision-event.tsx, open, decrypted for the viewer */
+.stream-preview .scene-decision {
+  margin: 10px 12px 0;
+}
+.stream-preview .sq-card {
+  border-left: 3px solid hsl(var(--gold));
+  border-radius: 0 10px 10px 0;
+  background: hsl(var(--gold) / 0.06);
+  padding: 10px 16px 12px 16px;
+}
+.stream-preview .sq-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.stream-preview .sq-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 3px;
+  flex-shrink: 0;
+  color: hsl(var(--gold));
+}
+.stream-preview .sq-main {
+  min-width: 0;
+}
+.stream-preview .sq-title,
+.stream-preview .sq-who,
+.stream-preview .sq-body {
+  margin: 0;
+}
+.stream-preview .sq-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: hsl(var(--ink));
+}
+.stream-preview .sq-who {
+  margin-top: 2px;
+  font-size: 12px;
+  color: hsl(var(--muted));
+}
+.stream-preview .sq-who strong {
+  font-weight: 500;
+  color: hsl(var(--ink-soft));
+}
+.stream-preview .sq-body {
+  margin: 8px 0 0 24px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: hsl(var(--ink));
+}
+.stream-preview .sq-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 0 24px;
+}
+.stream-preview .sq-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.stream-preview .sq-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  background: hsl(var(--paper));
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--ink));
+  white-space: nowrap;
+}
+.stream-preview .sq-btn.is-primary {
+  border-color: transparent;
+  background: hsl(var(--send-armed-bg));
+  color: hsl(var(--send-armed-fg));
+}
+.stream-preview .sq-note {
+  order: 1;
+  flex: 1;
+  min-width: 12rem;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  background: hsl(var(--paper));
+  font-size: 13px;
+  color: hsl(var(--muted));
+}
+
+@media (max-width: 640px) {
+  .stream-preview .sd-copy {
+    display: flex;
+  }
+  .stream-preview .sd-toggle {
+    display: none;
+  }
+  .stream-preview .sq-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .stream-preview .sq-note {
+    order: 0;
+    flex: none;
+    min-width: 0;
+  }
+}
+
+/* ---------- OUTCOMES (overview) ----------
+   A thread down the middle of the column with outcomes hung off it. Outcome k
+   spans grid rows k and k+1 on alternating sides, so each side starts half an
+   outcome below the other and uneven heights never sit side by side. A column
+   too narrow for two previews gets a numbered rail instead. */
+.outcomes {
+  container-type: inline-size;
+}
+.docs-article .ot {
+  --ot-node: 32px;
+  position: relative;
+  list-style: none;
+  counter-reset: ot;
+  margin: 28px 0 8px;
+  padding: 0;
+}
+.ot::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--ot-node) / 2);
+  bottom: 0;
+  left: calc(var(--ot-node) / 2 - 1px);
+  width: 2px;
+  background: hsl(var(--gold) / 0.45);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 120px), transparent);
+}
+.docs-article .ot-item {
+  position: relative;
+  counter-increment: ot;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: none;
+  margin: 0;
+  padding: 0 0 40px calc(var(--ot-node) + 18px);
+}
+.ot-node {
+  position: absolute;
+  top: calc(12px - var(--ot-node) / 2);
+  left: 0;
+  z-index: 1;
+  width: var(--ot-node);
+  height: var(--ot-node);
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1.5px solid hsl(var(--gold) / 0.55);
+  background: hsl(var(--paper));
+  color: hsl(var(--gold-dim));
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 14px;
+  text-decoration: none;
+}
+.ot-node::before {
+  content: counter(ot);
+}
+.ot-node svg {
+  display: none;
+  width: 17px;
+  height: 17px;
+}
+.ot-text {
+  min-width: 0;
+}
+.docs-article .ot-text h3 {
+  margin: 0 0 4px;
+  line-height: 1.3;
+}
+.ot-text h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+/* The whole outcome is the link. */
+.ot-text h3 a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.ot-text h3 a:focus-visible,
+.ot-item:hover .ot-text h3 a {
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold));
+  text-underline-offset: 3px;
+}
+.docs-article .ot-text p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: hsl(var(--muted));
+}
+.ot-item .stream-preview {
+  margin: 0;
+}
+@media (hover: hover) {
+  .ot-item:hover .ot-node {
+    border-color: hsl(var(--gold));
+    background: hsl(var(--gold));
+    color: hsl(var(--paper));
+  }
+  .ot-item:hover .stream-preview {
+    border-color: hsl(var(--gold) / 0.6);
+  }
+}
+@container (min-width: 600px) {
+  .docs-article .ot {
+    --ot-node: 36px;
+    --ot-gutter: 64px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--ot-gutter);
+  }
+  .ot::before {
+    left: calc(50% - 1px);
+  }
+  .docs-article .ot-item {
+    grid-row: var(--row) / span 2;
+    padding: 0 0 48px;
+  }
+  .docs-article .ot-item:nth-child(odd) {
+    grid-column: 1;
+  }
+  .docs-article .ot-item:nth-child(even) {
+    grid-column: 2;
+  }
+  .ot-node::before {
+    content: none;
+  }
+  .ot-node svg {
+    display: block;
+  }
+  .ot-item:nth-child(odd) .ot-node {
+    left: auto;
+    right: calc((var(--ot-gutter) + var(--ot-node)) / -2);
+  }
+  .ot-item:nth-child(even) .ot-node {
+    left: calc((var(--ot-gutter) + var(--ot-node)) / -2);
+  }
+  /* The stub from the thread to the outcome's edge. */
+  .ot-item::before {
+    content: "";
+    position: absolute;
+    top: 11px;
+    width: calc((var(--ot-gutter) - var(--ot-node)) / 2);
+    height: 2px;
+    background: hsl(var(--gold) / 0.45);
+  }
+  .ot-item:nth-child(odd)::before {
+    right: calc((var(--ot-gutter) - var(--ot-node)) / -2);
+  }
+  .ot-item:nth-child(even)::before {
+    left: calc((var(--ot-gutter) - var(--ot-node)) / -2);
+  }
+  .docs-article .ot-item:nth-child(odd) .ot-text {
+    text-align: right;
+  }
 }
 
 /* ---------- CODE BLOCK + VARIABLE CHIPS ---------- */
@@ -549,48 +1319,104 @@ a {
   display: flex;
   gap: 6px;
 }
+/* Bare controls that wash in on hover. Copy carries both icons and swaps
+   them in place (data-copied, scripts/playground.ts), so confirming never
+   moves anything. */
 .pg-btn {
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.2;
-  padding: 4px 11px;
-  border-radius: 4px;
-  border: 1px solid hsl(var(--line));
-  background: hsl(var(--paper));
-  color: hsl(var(--ink-soft));
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--muted));
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.pg-btn svg {
+  grid-area: 1 / 1;
+  width: 15px;
+  height: 15px;
 }
 .pg-btn:hover {
   color: hsl(var(--ink));
-  border-color: hsl(var(--muted));
+  background: hsl(var(--ink) / 0.07);
+}
+.pg-btn:focus-visible {
+  outline: 2px solid hsl(var(--gold));
+  outline-offset: 1px;
 }
 .pg-run {
-  background: hsl(var(--gold) / 0.12);
-  border-color: hsl(var(--gold) / 0.5);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
   color: hsl(var(--gold-dim));
 }
 .pg-run:hover {
-  background: hsl(var(--gold) / 0.2);
-  border-color: hsl(var(--gold));
   color: hsl(var(--gold-dim));
+  background: hsl(var(--gold) / 0.14);
 }
-/* Code goes night — the samples are the substance of these pages, so they
-   carry the contrast. Light header above, dark body, light output below. */
+.pg-copy-done,
+.pg-copy[data-copied] .pg-copy-idle {
+  visibility: hidden;
+}
+.pg-copy[data-copied] .pg-copy-done {
+  visibility: visible;
+}
+.pg-copy[data-copied] {
+  color: hsl(var(--emerald));
+}
+@media (pointer: coarse) {
+  .pg-btn {
+    min-width: 36px;
+    height: 36px;
+  }
+}
+/* The code surface follows the theme: paper in light mode, night in dark.
+   Token colors come from lib/highlight.ts as --shiki-light / --shiki-dark. */
 .pg-pre {
   margin: 0;
   padding: 14px 16px;
   overflow-x: auto;
+  scrollbar-width: thin;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
-  background: hsl(var(--night));
-  color: hsl(38 14% 86%);
+  background: hsl(var(--paper));
+  color: hsl(var(--ink));
   white-space: pre;
   tab-size: 2;
 }
-.pg-pre:last-child {
+.pg-pre code span[style] {
+  color: var(--shiki-light);
+}
+[data-theme="dark"] .pg-pre {
+  background: hsl(var(--night));
+  color: hsl(38 14% 86%);
+}
+[data-theme="dark"] .pg-pre code span[style] {
+  color: var(--shiki-dark);
+}
+/* Chrome breaks at <wbr> even under white-space: pre; only wrapping blocks
+   (the API reference) use the slash breaks highlight.ts emits. */
+.pg-pre wbr {
+  display: none;
+}
+.api-op-code .pg-pre wbr {
+  display: inline;
+}
+/* The pre closes the block unless Run's output or a joined preview follows. */
+.pg-pre {
   border-radius: 0 0 5px 5px;
+}
+.pg-pre:has(~ .pg-output:not([hidden])),
+.pg-block:has(+ .stream-preview) .pg-pre {
+  border-radius: 0;
 }
 .pg-pre code {
   font-family: inherit;
@@ -601,7 +1427,7 @@ a {
 
 /* ---------- RENDERED MATH SAMPLE ---------- */
 /* The .pg-block frame with a light body: what's inside is the equation as a
-   reader sees it in Threa, not a code sample, so it doesn't go night. */
+   reader sees it in Threa, not a code sample. */
 .math-render {
   margin: 20px 0;
   border: 1px solid hsl(var(--line));
@@ -645,15 +1471,15 @@ a {
   position: relative;
   transition: background 0.15s;
 }
-/* Chip colors tuned for the night code surface: gold lifts instead of dims. */
+/* Gold dims on the light code surface and lifts on the night one. */
 .pg-var.is-set {
-  background: hsl(var(--gold) / 0.22);
-  color: hsl(var(--gold-soft));
+  background: hsl(var(--gold) / 0.16);
+  color: hsl(var(--gold-dim));
   box-shadow: inset 0 -1px 0 hsl(var(--gold) / 0.6);
 }
 .pg-var.is-unset {
   background: hsl(var(--gold) / 0.1);
-  color: hsl(var(--gold-soft) / 0.9);
+  color: hsl(var(--gold-dim));
   box-shadow: inset 0 0 0 1px hsl(var(--gold) / 0.45);
   cursor: pointer;
 }
@@ -705,94 +1531,16 @@ a {
   color: hsl(8 55% 42%);
 }
 
-/* ---------- ENDPOINT REFERENCE ---------- */
-.ep {
-  margin: 14px 0;
-  border: 1px solid hsl(var(--line));
-  border-radius: 6px;
-  background: hsl(var(--paper));
-  overflow: hidden;
-}
-.ep-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 14px;
-  flex-wrap: wrap;
-}
-.ep-method {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  padding: 3px 9px;
-  border-radius: 4px;
-  text-transform: uppercase;
-}
-.ep-method.get {
-  background: hsl(205 60% 92%);
-  color: hsl(205 55% 34%);
-}
-.ep-method.post {
-  background: hsl(var(--emerald-soft));
-  color: hsl(var(--emerald));
-}
-.ep-method.patch {
-  background: hsl(38 70% 90%);
-  color: hsl(var(--gold-dim));
-}
-.ep-method.delete {
-  background: hsl(8 65% 92%);
-  color: hsl(8 60% 44%);
-}
-.ep-path {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: hsl(var(--ink));
-  word-break: break-all;
-}
-.ep-scope {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  color: hsl(var(--muted));
-  border: 1px solid hsl(var(--line));
-  border-radius: 999px;
-  padding: 2px 9px;
-}
-.ep-scope.none {
-  color: hsl(var(--emerald));
-  border-color: hsl(var(--emerald) / 0.4);
-}
-.ep-desc {
-  padding: 0 14px 12px;
-  font-size: 14px;
-  color: hsl(var(--ink-soft));
-  line-height: 1.55;
-}
-
 /* parameter / scope tables */
 /* Cells hold unbreakable code strings, so a table wider than its column would
    push the page past the viewport. The wrapper clips that to a horizontal
-   scroll; the scrollbar is thin and overlay-style so it isn't always visible. */
+   scroll with a thin scrollbar. */
 .docs-table-wrap {
   max-width: 100%;
   margin: 18px 0;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--line)) transparent;
-}
-.docs-table-wrap::-webkit-scrollbar {
-  height: 6px;
-}
-.docs-table-wrap::-webkit-scrollbar-thumb {
-  background: hsl(var(--line));
-  border-radius: 3px;
-}
-.docs-table-wrap::-webkit-scrollbar-track {
-  background: transparent;
 }
 .docs-table {
   width: 100%;
@@ -851,8 +1599,7 @@ a {
 }
 .keytype h3 {
   margin: 0 0 4px;
-  font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: 17px;
 }
 .keytype .prefix {
   font-family: var(--font-mono);
@@ -882,7 +1629,7 @@ a {
 }
 
 /* step list */
-.steps {
+.docs-article .steps {
   list-style: none;
   counter-reset: step;
   padding: 0;
@@ -908,12 +1655,12 @@ a {
   height: 28px;
   display: grid;
   place-items: center;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--gold) / 0.5);
-  color: hsl(var(--gold-dim));
+  background: hsl(var(--gold));
+  color: hsl(var(--paper));
   border-radius: 999px;
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 14px;
 }
 .steps > li h3 {
   margin: 0 0 6px;
@@ -963,50 +1710,21 @@ a {
 }
 
 /* ---------- API REFERENCE (hand-rendered from the spec) ---------- */
-/* The reference runs full width: each operation is a two-column band — the
-   contract (params, body, response shape) on the left, the wire (example
-   request + example response) sticky on the right. Lead prose stays at
-   reading width. */
-.docs-article.is-wide {
-  max-width: none;
-}
-.docs-article.is-wide > p {
-  max-width: 760px;
-}
-.api-op-cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
-  gap: 36px;
-  align-items: start;
-  margin-top: 6px;
-}
-.api-op-main {
-  min-width: 0;
-}
-.api-op-side {
-  min-width: 0;
-  position: sticky;
-  top: 64px;
-}
-.api-op-side .pg-block {
-  margin: 0 0 14px;
-}
-/* The side column is narrow; wrap long request lines instead of clipping
-   them behind a scrollbar (copy still uses the raw template, so display
-   wrapping is safe), and cap very long response examples. */
-.api-op-side .pg-pre {
+/* Each operation is a DocRow (components/ApiEndpoint.astro): the contract as
+   prose, the example request and response as its code. Request lines and
+   example strings wrap instead of hiding behind a sideways scrollbar; Copy
+   uses the raw template, so display wrapping is safe. */
+.api-op-code .pg-pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 520px;
-  overflow-y: auto;
 }
-@media (max-width: 1120px) {
-  .api-op-cols {
-    grid-template-columns: 1fr;
-    gap: 8px;
+@media (max-width: 1199px) {
+  .api-op-code .pg-block {
+    margin: 14px 0 0;
   }
-  .api-op-side {
-    position: static;
+  .api-op-code .pg-pre {
+    max-height: 520px;
+    overflow-y: auto;
   }
 }
 
@@ -1291,10 +2009,359 @@ a {
   color: hsl(var(--ink));
 }
 
+/* ---------- SEARCH ---------- */
+.ds-inline {
+  position: relative;
+}
+/* Three tracks: the field sits at the page's centre while the side groups
+   fit beside it, and slides toward the brand once the right group needs the
+   room. */
+@media (min-width: 1301px) {
+  .docs-nav {
+    display: grid;
+    grid-template-columns: 1fr minmax(0, 560px) 1fr;
+  }
+  .docs-nav-right {
+    justify-self: end;
+  }
+}
+.ds-glass {
+  flex: none;
+  color: hsl(var(--muted));
+}
+.ds-inline .ds-glass {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.ds-inline-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 56px 0 33px;
+  font: inherit;
+  font-size: 13.5px;
+  color: hsl(var(--ink));
+  background: hsl(var(--paper-warm));
+  border: 1px solid hsl(var(--line));
+  border-radius: 9px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.ds-inline-input::placeholder,
+.ds-dialog-input::placeholder {
+  color: hsl(var(--muted));
+}
+.ds-inline-input:hover {
+  border-color: hsl(var(--muted) / 0.6);
+}
+.ds-inline-input:focus {
+  background: hsl(var(--paper));
+  border-color: hsl(var(--gold) / 0.7);
+  box-shadow: 0 0 0 3px hsl(var(--gold) / 0.18);
+}
+.ds-kbd {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 18px;
+  color: hsl(var(--muted));
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 5px;
+  padding: 0 6px;
+  pointer-events: none;
+}
+.ds-kbd:empty,
+.ds-inline:focus-within .ds-kbd {
+  display: none;
+}
+.ds-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: min(64vh, 540px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 12px;
+  box-shadow: 0 22px 60px -22px hsl(28 30% 12% / 0.5);
+}
+.ds-inline.is-open .ds-pop {
+  display: block;
+}
+
+.ds-icon-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: hsl(var(--muted));
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ds-icon-btn .ds-glass {
+  color: inherit;
+}
+.ds-icon-btn:hover {
+  color: hsl(var(--ink));
+  border-color: hsl(var(--line));
+}
+
+.ds-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ds-opt a {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+.ds-opt[aria-selected="true"] a {
+  background: hsl(var(--gold) / 0.13);
+}
+.ds-opt-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: hsl(var(--muted));
+}
+.ds-opt[aria-selected="true"] .ds-opt-icon {
+  color: hsl(var(--gold-dim));
+}
+.ds-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ds-opt-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: hsl(var(--ink));
+  overflow-wrap: anywhere;
+}
+.ds-opt-title.is-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+.ds-opt-where {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: hsl(var(--muted));
+  overflow-wrap: anywhere;
+}
+.ds-opt-path {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: hsl(var(--ink-soft));
+  overflow-wrap: anywhere;
+}
+.ds-opt-path .api-method {
+  margin-right: 7px;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+}
+.ds-opt-opid {
+  margin-left: 9px;
+  color: hsl(var(--muted));
+}
+.ds-list mark {
+  color: inherit;
+  background: hsl(var(--gold) / 0.3);
+  border-radius: 3px;
+}
+.ds-status {
+  margin: 0;
+  padding: 14px 12px;
+  font-size: 13.5px;
+  color: hsl(var(--muted));
+}
+.ds-status:empty {
+  display: none;
+}
+
+.ds-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(72vh, 640px);
+  margin: 12vh auto auto;
+  padding: 0;
+  overflow: hidden;
+  color: hsl(var(--ink));
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 14px;
+  box-shadow: 0 30px 80px -24px hsl(28 30% 12% / 0.55);
+}
+.ds-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.ds-dialog::backdrop {
+  background: hsl(28 20% 10% / 0.38);
+}
+.ds-dialog-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid hsl(var(--line));
+}
+.ds-dialog-input {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  padding: 0;
+  font: inherit;
+  font-size: 16px;
+  color: hsl(var(--ink));
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.ds-dialog-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: hsl(var(--muted));
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ds-dialog-close:hover {
+  color: hsl(var(--ink));
+  background: hsl(var(--paper-warm));
+}
+.ds-dialog .ds-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+.ds-dialog .ds-list:empty {
+  display: none;
+}
+
+/* Below this the field would be too narrow for results, so search opens as
+   a dialog from the icon button. */
+@media (max-width: 1300px) {
+  .ds-inline {
+    display: none;
+  }
+  .ds-icon-btn {
+    display: inline-flex;
+  }
+}
+@media (max-width: 640px) {
+  .ds-dialog {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  html:has(.ds-dialog[open]) {
+    overflow: hidden;
+  }
+}
+
+/* Where a search result lands: a gold wash that fades out. A field row's
+   parts are washed separately (its nested fields stay clear), so they take an
+   opaque mix with the canvas: translucent washes would darken where they meet. */
+.api-prop[id] {
+  scroll-margin-top: 76px;
+}
+.docs-article {
+  --ds-hit: hsl(var(--gold) / 0.3);
+  --ds-hit-end: hsl(var(--gold) / 0);
+}
+.api-prop {
+  --ds-hit: color-mix(in srgb, hsl(var(--gold)) 30%, hsl(var(--paper-sunk)));
+  --ds-hit-end: hsl(var(--paper-sunk));
+}
+@keyframes ds-hit {
+  0%,
+  30% {
+    background-color: var(--ds-hit);
+    box-shadow: 0 0 0 6px var(--ds-hit);
+  }
+  100% {
+    background-color: var(--ds-hit-end);
+    box-shadow: 0 0 0 6px var(--ds-hit-end);
+  }
+}
+.docs-article :is(h1, h2, h3).search-hit,
+.api-op.search-hit > :is(.api-op-head, .api-op-title),
+.api-prop.search-hit > :not(.api-nest) {
+  border-radius: 4px;
+  animation: ds-hit 1.5s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-article :is(h1, h2, h3).search-hit,
+  .api-op.search-hit > :is(.api-op-head, .api-op-title),
+  .api-prop.search-hit > :not(.api-nest) {
+    animation: none;
+    background-color: var(--ds-hit);
+    box-shadow: 0 0 0 6px var(--ds-hit);
+  }
+}
+
 /* ---------- RESPONSIVE ---------- */
 @media (max-width: 880px) {
   .docs-shell {
     grid-template-columns: 1fr;
+    padding-left: 0;
+  }
+  .docs-main {
+    grid-area: 1 / 1;
+  }
+  .docs-side-resize {
+    display: none;
+  }
+  /* The drawer has no hover to reveal a clipped entry, so entries wrap. */
+  .docs-side-group h4,
+  .docs-side-group a,
+  .dss-group-head > span {
+    white-space: normal;
   }
 
   /* Reveal the hamburger; the horizontal top links collapse into the drawer
@@ -1305,15 +2372,16 @@ a {
   .docs-nav-links {
     display: none;
   }
-  /* The top bar collapses to hamburger + brand + toggle + Credentials here.
-     The fixed-width theme toggle doesn't shrink, so on narrow phones the
-     brand's "Developers" tag would overflow into it — drop the tag and
-     tighten the gaps so the row fits down to ~320px. */
+  /* The top bar collapses to hamburger + brand + search + theme toggle +
+     Credentials here. None of the right-hand controls shrink, so on narrow
+     phones the brand's "Developers" tag would overflow into them — drop the
+     tag and tighten the gaps; below 360px the mark goes too, so the row fits
+     down to 320px. */
   .docs-nav {
-    gap: 12px;
+    gap: 8px;
   }
   .docs-nav-right {
-    gap: 12px;
+    gap: 8px;
   }
   .docs-nav .brand .tag {
     display: none;
@@ -1339,15 +2407,16 @@ a {
     padding: 26px 22px 40px;
     background: hsl(var(--paper));
     border-right: 1px solid hsl(var(--line));
-    box-shadow: 0 0 60px -18px hsl(28 30% 22% / 0.5);
     transform: translateX(-100%);
     transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   }
   body.docs-nav-open {
     overflow: hidden;
   }
+  /* Shadow only while open: a closed drawer's blur bleeds past the left edge. */
   body.docs-nav-open .docs-side {
     transform: translateX(0);
+    box-shadow: 0 0 60px -18px hsl(28 30% 22% / 0.5);
   }
 
   .docs-side-backdrop {
@@ -1395,6 +2464,9 @@ a {
   .keytype-grid {
     grid-template-columns: 1fr;
   }
+  .steps > li {
+    padding-left: 30px;
+  }
 
   /* Stack the footer: brand over links, both left-aligned. space-between +
      mono-uppercase links crammed to the right wrapped mid-separator on narrow
@@ -1405,20 +2477,284 @@ a {
     gap: 14px;
   }
 }
+@media (max-width: 359px) {
+  .docs-nav .brand svg {
+    display: none;
+  }
+}
+
+/* ---------- SPLIT ROWS (DocsLayout `split`, components/DocRow.astro) ----------
+   Below 1200px a row is plain flow, prose then its code, and code takes the
+   article's full width. From 1200px each row is prose beside a pane that runs
+   the article's full height to the viewport edge, with the row's code sticky
+   inside it. The pane follows the theme: a shade below the page in light mode,
+   near-black in dark. */
+.docs-article.is-split {
+  --pane: 36 14% 90%;
+  --pane-block: var(--paper);
+  --pane-head: var(--paper-warm);
+  --pane-line: 35 13% 83%;
+  --pane-ink: var(--ink);
+  --pane-ink-soft: var(--ink-soft);
+  --pane-muted: var(--muted);
+  --pane-run: var(--gold-dim);
+}
+:root[data-theme="dark"] .docs-article.is-split {
+  --pane: 26 16% 6%;
+  --pane-block: 26 13% 10.5%;
+  --pane-head: 26 12% 13%;
+  --pane-line: 26 8% 19%;
+  --pane-ink: 38 16% 90%;
+  --pane-ink-soft: 35 10% 74%;
+  --pane-muted: 32 8% 60%;
+  --pane-run: var(--gold-soft);
+}
+.docs-article li.dr {
+  max-width: none;
+}
+
+/* Steps whose code runs the full width: the number and prose keep their
+   indent, the rail runs behind the code. */
+.steps > li.dr {
+  padding-left: 0;
+  margin-left: 0;
+  border-left: 0;
+}
+.steps > li.dr > .dr-text {
+  padding-left: 58px;
+}
+.steps > li.dr::before {
+  left: 0;
+  z-index: 1;
+}
+.steps > li.dr::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid hsl(var(--line));
+}
+.steps > li.dr:last-child::after {
+  display: none;
+}
+.steps > li.dr > .dr-code {
+  position: relative;
+  z-index: 1;
+}
+@media (max-width: 880px) {
+  .steps > li.dr > .dr-text {
+    padding-left: 44px;
+  }
+}
+
+@media (min-width: 1200px) {
+  /* The article runs to the right edge, so the pane takes whatever width the
+     screen has. */
+  body.docs-split .docs-shell {
+    overflow-x: clip;
+  }
+  /* The pane would read through the translucent bar as a grey band. */
+  body.docs-split .docs-nav {
+    background: hsl(var(--paper));
+  }
+  body.docs-split .docs-main {
+    padding-top: 0;
+    padding-right: 0;
+  }
+
+  .docs-article.is-split {
+    --split: max(40%, 430px);
+    --gut: 52px;
+    --pane-x: 32px;
+    --row-y: 22px;
+    max-width: none;
+    position: relative;
+    isolation: isolate;
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  .docs-article.is-split::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    top: 0;
+    bottom: 0;
+    left: var(--split);
+    right: -100vw;
+    background: hsl(var(--pane));
+  }
+
+  /* Anything between rows (headings, lone prose, notes) holds the prose
+     column like row text does. */
+  .docs-article.is-split > :not(.dr, .api-group),
+  .is-split .api-group > :not(.dr) {
+    box-sizing: border-box;
+    width: var(--split);
+    padding-right: var(--gut);
+  }
+  .docs-article.is-split > .note {
+    width: calc(var(--split) - var(--gut));
+    padding-right: 18px;
+  }
+  .docs-article.is-split > h2,
+  .is-split .api-group > h2 {
+    position: relative;
+    margin: 0;
+    padding-top: 80px;
+    padding-bottom: 6px;
+  }
+
+  .is-split .dr {
+    display: grid;
+    grid-template-columns: var(--split) minmax(0, 1fr);
+    padding: var(--row-y) 0;
+  }
+  .is-split .dr:has(> .dr-text > h3:first-child) {
+    padding-top: 36px;
+  }
+  .docs-article.is-split > h2::before,
+  .is-split .api-group > h2::before {
+    content: "";
+    position: absolute;
+    top: 40px;
+    left: 0;
+    width: calc(100% - var(--gut));
+    border-top: 1px solid hsl(var(--line));
+  }
+  .is-split .dr-text {
+    min-width: 0;
+    padding-right: var(--gut);
+  }
+  .is-split .dr-text > :first-child {
+    margin-top: 0;
+  }
+  .is-split .dr-text > :last-child {
+    margin-bottom: 0;
+  }
+
+  .is-split .dr-code {
+    position: sticky;
+    top: 72px;
+    align-self: start;
+    min-width: 0;
+    padding: 2px var(--pane-x) 0;
+    color: hsl(var(--pane-ink));
+  }
+  .is-split .dr-code > * {
+    max-width: 920px;
+  }
+  .is-split .dr-code > * + * {
+    margin-top: 14px;
+  }
+
+  /* Code on the pane: the block steps up one shade from the pane instead of
+     carrying the paper header it has in flow. */
+  .is-split .dr-code .pg-block {
+    margin: 0;
+    background: hsl(var(--pane-block));
+    border-color: hsl(var(--pane-line));
+  }
+  .is-split .dr-code .pg-block-head {
+    background: hsl(var(--pane-head));
+    border-bottom-color: hsl(var(--pane-line));
+  }
+  .is-split .dr-code .pg-lang {
+    color: hsl(var(--pane-muted));
+  }
+  .is-split .dr-code .pg-btn {
+    color: hsl(var(--pane-muted));
+  }
+  .is-split .dr-code .pg-btn:hover {
+    color: hsl(var(--pane-ink));
+    background: hsl(var(--pane-ink) / 0.08);
+  }
+  .is-split .dr-code .pg-run,
+  .is-split .dr-code .pg-run:hover {
+    color: hsl(var(--pane-run));
+  }
+  .is-split .dr-code .pg-run:hover {
+    background: hsl(var(--gold) / 0.18);
+  }
+  .is-split .dr-code .pg-copy[data-copied] {
+    color: hsl(var(--emerald));
+  }
+  .is-split .dr-code .pg-pre {
+    background: hsl(var(--pane-block));
+    font-size: 12.5px;
+  }
+  .is-split .dr-code .pg-output {
+    background: hsl(var(--pane));
+    border-top-color: hsl(var(--pane-line));
+    color: hsl(var(--pane-ink-soft));
+  }
+
+  .is-split .api-op {
+    position: relative;
+    padding: 34px 0;
+    border-bottom: 0;
+  }
+  .is-split .api-op + .api-op::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(var(--split) - var(--gut));
+    border-top: 1px solid hsl(var(--line));
+  }
+  /* The operation's height comes from its contract: size containment keeps
+     the code out of the row's height, the cell stretches to the row, and the
+     code rides sticky inside it at full length. Only code taller than the
+     operation or the viewport scrolls, in a box the smaller of the two, and
+     a wheel past either end of it moves the page. A short
+     contract still gives the code up to 360px, sized from the build-time
+     line and block counts ApiEndpoint sets (12.5px x 1.6 lines, ~84px of
+     block chrome and gap each), so a short DELETE gets no empty band. */
+  .is-split .api-op > .dr-code {
+    position: relative;
+    top: auto;
+    align-self: stretch;
+    contain: size;
+    min-height: min(360px, calc(var(--code-lines) * 20px + var(--code-blocks) * 84px));
+    padding-bottom: 2px;
+  }
+  .api-op-code {
+    position: sticky;
+    top: 72px;
+    display: flex;
+    flex-direction: column;
+    max-height: min(100%, calc(100dvh - 72px - 16px));
+    overflow-y: auto;
+  }
+  /* The example response gives up height first and scrolls inside its own
+     block, so a clipped sample keeps its frame. */
+  .is-split .api-op-code .pg-block {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-height: 0;
+  }
+  .is-split .api-op-code .pg-block + .pg-block {
+    flex-shrink: 1;
+    margin-top: 14px;
+  }
+  .is-split .api-op-code .pg-block-head {
+    flex-shrink: 0;
+  }
+  .is-split .api-op-code .pg-block .pg-pre {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
 
 /* ---------- DARK MODE OVERRIDES ----------
-   Tokens flip in global.css; these are the docs-local hardcoded values.
-   The code surfaces (.pg-pre) are always dark and need nothing here. */
-[data-theme="dark"] .ep-method.get {
-  background: hsl(205 35% 22%);
-  color: hsl(205 50% 72%);
+   Tokens flip in global.css; these are the docs-local hardcoded values. */
+[data-theme="dark"] .pg-var.is-set {
+  background: hsl(var(--gold) / 0.22);
+  color: hsl(var(--gold-soft));
 }
-[data-theme="dark"] .ep-method.patch {
-  background: hsl(38 40% 22%);
-}
-[data-theme="dark"] .ep-method.delete {
-  background: hsl(8 40% 22%);
-  color: hsl(8 60% 70%);
+[data-theme="dark"] .pg-var.is-unset {
+  color: hsl(var(--gold-soft) / 0.9);
 }
 [data-theme="dark"] .api-method.m-patch {
   color: hsl(28 60% 65%);

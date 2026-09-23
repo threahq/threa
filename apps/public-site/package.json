@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build && bun scripts/build-llms.ts && bun scripts/build-agent-discovery.ts",
+    "build": "astro build && bun scripts/build-llms.ts && bun scripts/build-agent-discovery.ts && bun scripts/build-search-index.ts",
     "preview": "astro preview",
     "test": "bun test tests/",
     "typecheck": "astro check",

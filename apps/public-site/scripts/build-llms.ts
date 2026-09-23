@@ -53,6 +53,13 @@ const PAGES: Page[] = [
     blurb: "What the API covers, base URL, and a quickstart from key to first search.",
   },
   {
+    route: "/developers/quickstart",
+    html: "developers/quickstart/index.html",
+    md: "developers/quickstart.md",
+    title: "Quickstart",
+    blurb: "From an API key to your first memo search, one step at a time.",
+  },
+  {
     route: "/developers/authentication",
     html: "developers/authentication/index.html",
     md: "developers/authentication.md",
@@ -183,6 +190,12 @@ function createConverter(): TurndownService {
     codeBlockStyle: "fenced",
     bulletListMarker: "-",
     emDelimiter: "*",
+  })
+  // Product mockups (marketing illustrations, docs StreamPreview) are staged
+  // conversations; as markdown they would read like real Threa content.
+  td.addRule("decorative", {
+    filter: (node) => (node as DomNode).getAttribute?.("data-decorative") !== null,
+    replacement: () => "",
   })
   td.remove("script")
   td.remove("style")
@@ -333,16 +346,11 @@ function rewriteLinks(markdown: string): string {
   })
 }
 
-/* Marketing pages carry chrome and product mockups — fabricated conversations
-   staged to show the UI. Read as markdown those would look like real Threa
-   content, so the mockup roots are marked data-decorative in the .astro source
-   and dropped here, along with the nav and footer that repeat on every page. */
+/* Marketing pages also carry chrome: the nav and footer repeat on every page. */
 function createPageConverter(): TurndownService {
   const td = createConverter()
-  td.addRule("decorative", {
-    filter: (node) =>
-      (node as DomNode).getAttribute?.("data-decorative") !== null ||
-      /^(svg|header|nav|footer|form)$/i.test(node.nodeName),
+  td.addRule("chrome", {
+    filter: (node) => /^(svg|header|nav|footer|form)$/i.test(node.nodeName),
     replacement: () => "",
   })
   // A <br> inside a display heading would split the ATX line in two.
@@ -365,7 +373,7 @@ function extract(page: Page, html: string): { body: string; converter: TurndownS
     return { body, converter: createPageConverter() }
   }
   // The wrapper comes from DocsLayout.astro's <article class="docs-article">
-  // (plus variant classes like is-wide); this extraction is what breaks if
+  // (plus variant classes like is-split); this extraction is what breaks if
   // that layout renames or re-nests it.
   const article = html.match(/<article class="docs-article[^"]*">([\s\S]*?)<\/article>/)?.[1]
   if (!article) {

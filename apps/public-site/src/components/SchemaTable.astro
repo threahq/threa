@@ -9,14 +9,17 @@ import type { SchemaNode } from "../lib/openapi"
 
 interface Props {
   nodes: SchemaNode[]
+  /** Row ids extend this with the property path: `sendMessage.body.sealed.envelope`. */
+  idPrefix: string
 }
-const { nodes } = Astro.props
+const { nodes, idPrefix } = Astro.props
+const rowId = (name: string) => `${idPrefix}.${name}`
 ---
 
 {nodes.length > 0 && (
   <div class="api-props">
     {nodes.map((n) => (
-      <div class="api-prop">
+      <div class="api-prop" id={rowId(n.name)}>
         <div class="api-prop-head">
           <code class="api-prop-name">{n.name}</code>
           <span class="api-prop-type">{n.type}</span>
@@ -26,7 +29,7 @@ const { nodes } = Astro.props
         {n.description && <p class="api-prop-desc">{n.description}</p>}
         {n.children.length > 0 && (
           <div class="api-nest">
-            <Astro.self nodes={n.children} />
+            <Astro.self nodes={n.children} idPrefix={rowId(n.name)} />
           </div>
         )}
       </div>

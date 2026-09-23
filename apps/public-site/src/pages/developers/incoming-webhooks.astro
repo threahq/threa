@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro"
 import CodeBlock from "../../components/CodeBlock.astro"
+import Message from "../../components/Message.astro"
+import StreamPreview from "../../components/StreamPreview.astro"
 ---
 
 <DocsLayout
@@ -19,16 +21,14 @@ import CodeBlock from "../../components/CodeBlock.astro"
 >
   <h1>Incoming webhooks.</h1>
   <p class="lead">
-    An incoming webhook is a secret URL that posts a message into one channel or
-    scratchpad, as one of your bots. It needs no API key. The URL is the
-    credential. Each hook has two shapes, a native one that takes markdown and a
-    Slack-compatible one that takes a Slack payload, so a tool that can already
-    send to a Slack webhook can send to Threa unchanged.
+    A secret URL that posts into one channel or scratchpad as one of your bots.
+    No API key: the URL is the credential. Tools that already send to Slack
+    webhooks can send here unchanged.
   </p>
 
   <h2 id="create">Create a webhook</h2>
   <p>
-    Open <strong>Settings → Bots</strong>, pick a bot, and use
+    Open <strong>Workspace Settings → Bots</strong>, pick a bot, and use
     <strong>New webhook</strong> in its Webhooks section. A webhook belongs to
     that bot and targets one stream. Creating it adds the bot to that stream, and
     every message the hook delivers is posted by the bot.
@@ -60,6 +60,11 @@ import CodeBlock from "../../components/CodeBlock.astro"
   -H "Content-Type: application/json" \\
   -d '{"content": "Deploy **v2.4.1** finished. [Run log](https://ci.example.com/42)"}'`}
   />
+  <StreamPreview stream="deploys">
+    <Message author="deploy" time="16:40">
+      <div class="tl-text">Deploy <strong>v2.4.1</strong> finished. <span class="sp-link">Run log</span></div>
+    </Message>
+  </StreamPreview>
   <p>
     Errors come back in the API's usual JSON error shape (see
     <a class="link" href="/developers/operations">Operations</a>). An empty or
@@ -158,7 +163,7 @@ import CodeBlock from "../../components/CodeBlock.astro"
   <p>
     Anything that posts a Slack-shaped payload works. Three common ones:
   </p>
-  <h3>PostHog</h3>
+  <h3 id="senders-posthog">PostHog</h3>
   <p>
     PostHog's own Slack destination connects through a Slack app and has no URL
     field, so use its HTTP webhook destination instead. Set the URL to the
@@ -166,13 +171,13 @@ import CodeBlock from "../../components/CodeBlock.astro"
     to a Slack payload such as <code>{`{"text": "..."}`}</code> built from the
     event fields you want in the message.
   </p>
-  <h3>Grafana</h3>
+  <h3 id="senders-grafana">Grafana</h3>
   <p>
     Create a contact point of type Slack and paste the <code>/slack</code> URL
     as its webhook URL, then point an alert notification policy at it. Grafana's
     Slack payload uses <code>attachments</code> with title, text and fields.
   </p>
-  <h3>GitHub</h3>
+  <h3 id="senders-github">GitHub</h3>
   <p>
     GitHub's own repository webhooks send GitHub's payload shape, not Slack's,
     so pointing one at the <code>/slack</code> URL does not work. There is no

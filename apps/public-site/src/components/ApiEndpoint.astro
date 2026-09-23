@@ -3,9 +3,12 @@
  * One operation in the API reference, rendered from the OpenAPI spec we ship.
  * Method + path header, description, path/query parameters, request body, the
  * success response shape, status codes, and a runnable curl whose credentials
- * come from the one Credentials panel (top right). No embedded widget.
+ * come from the one Credentials panel (top right). The contract is the row's
+ * prose and the curl + example response its code (DocRow), so on the split
+ * layout the code sits on the pane beside the contract it illustrates.
  */
 import CodeBlock from "./CodeBlock.astro"
+import DocRow from "./DocRow.astro"
 import SchemaTable from "./SchemaTable.astro"
 import {
   buildSchemaTree,
@@ -134,67 +137,73 @@ if (method === "get") {
 const responseExample = successSchema?.properties
   ? JSON.stringify(exampleResponse(successSchema, hint), null, 2)
   : null
+
+// Rendered size of the code column, in wrapped lines and blocks, so the split
+// layout can give a short operation enough height for its code without
+// measuring it at runtime (styles/docs.css, .api-op). Tokens count at the width
+// of their default chip values; lines wrap at about 80 columns in the pane.
+const codeSamples = [curl, responseExample].filter((c): c is string => c !== null)
+const wrappedLines = codeSamples
+  .flatMap((c) => c.replace(/\{\{\w+\}\}/g, "x".repeat(22)).split("\n"))
+  .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 80)), 0)
+const codeSize = `--code-lines: ${wrappedLines}; --code-blocks: ${codeSamples.length}`
 ---
 
-<section class="api-op" id={anchor}>
+<DocRow as="section" id={anchor} class="api-op" style={codeSize}>
   <div class="api-op-head">
     <span class={`api-method m-${method}`}>{verb}</span>
     <code class="api-path">{path}</code>
   </div>
   {op.summary && <h3 class="api-op-title">{op.summary}</h3>}
 
-  <div class="api-op-cols">
-    <div class="api-op-main">
-      {op.description && <p class="api-op-desc">{op.description}</p>}
+  {op.description && <p class="api-op-desc">{op.description}</p>}
 
-      <p class="api-scopes">
-        <span class="api-scopes-label">Scope</span>
-        {scopes.length > 0 ? (
-          scopes.map((s) => <code class="api-scope">{s}</code>)
-        ) : (
-          <span class="api-scope-none">none · any valid key</span>
-        )}
-      </p>
+  <p class="api-scopes">
+    <span class="api-scopes-label">Scope</span>
+    {scopes.length > 0 ? (
+      scopes.map((s) => <code class="api-scope">{s}</code>)
+    ) : (
+      <span class="api-scope-none">none · any valid key</span>
+    )}
+  </p>
 
-      {pathParams.length > 0 && (
-        <>
-          <h4 class="api-sub">Path parameters</h4>
-          <SchemaTable nodes={pathParams.map(paramNode)} />
-        </>
-      )}
+  {pathParams.length > 0 && (
+    <>
+      <h4 class="api-sub">Path parameters</h4>
+      <SchemaTable nodes={pathParams.map(paramNode)} idPrefix={`${anchor}.path`} />
+    </>
+  )}
 
-      {queryParams.length > 0 && (
-        <>
-          <h4 class="api-sub">Query parameters</h4>
-          <SchemaTable nodes={queryParams.map(paramNode)} />
-        </>
-      )}
+  {queryParams.length > 0 && (
+    <>
+      <h4 class="api-sub">Query parameters</h4>
+      <SchemaTable nodes={queryParams.map(paramNode)} idPrefix={`${anchor}.query`} />
+    </>
+  )}
 
-      {bodyNodes.length > 0 && (
-        <>
-          <h4 class="api-sub">Request body</h4>
-          <SchemaTable nodes={bodyNodes} />
-        </>
-      )}
+  {bodyNodes.length > 0 && (
+    <>
+      <h4 class="api-sub">Request body</h4>
+      <SchemaTable nodes={bodyNodes} idPrefix={`${anchor}.body`} />
+    </>
+  )}
 
-      {successNodes.length > 0 && (
-        <>
-          <h4 class="api-sub">Response {successCode}</h4>
-          <SchemaTable nodes={successNodes} />
-        </>
-      )}
+  {successNodes.length > 0 && (
+    <>
+      <h4 class="api-sub">Response {successCode}</h4>
+      <SchemaTable nodes={successNodes} idPrefix={`${anchor}.response`} />
+    </>
+  )}
 
-      <h4 class="api-sub">Status codes</h4>
-      <ul class="api-status">
-        {responseEntries.map(([code, r]) => (
-          <li><code>{code}</code> {r.description}</li>
-        ))}
-      </ul>
-    </div>
+  <h4 class="api-sub">Status codes</h4>
+  <ul class="api-status">
+    {responseEntries.map(([code, r]) => (
+      <li><code>{code}</code> {r.description}</li>
+    ))}
+  </ul>
 
-    <aside class="api-op-side">
-      <CodeBlock lang="bash" label={`${verb} ${path.replace("/api/v1/workspaces/{workspaceId}", "")}`} code={curl} run={run} />
-      {responseExample && <CodeBlock lang="json" label={`Response ${successCode} · example`} code={responseExample} />}
-    </aside>
+  <div class="api-op-code" slot="code">
+    <CodeBlock lang="bash" label={`${verb} ${path.replace("/api/v1/workspaces/{workspaceId}", "")}`} code={curl} run={run} />
+    {responseExample && <CodeBlock lang="json" label={`Response ${successCode} · example`} code={responseExample} />}
   </div>
-</section>
+</DocRow>

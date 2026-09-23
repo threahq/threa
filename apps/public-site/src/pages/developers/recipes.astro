@@ -1,6 +1,9 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro"
 import CodeBlock from "../../components/CodeBlock.astro"
+import DocRow from "../../components/DocRow.astro"
+import Message from "../../components/Message.astro"
+import StreamPreview from "../../components/StreamPreview.astro"
 ---
 
 <DocsLayout
@@ -18,80 +21,138 @@ import CodeBlock from "../../components/CodeBlock.astro"
 >
   <h1>Worked examples.</h1>
   <p class="lead">
-    Each one is a real task. Set your credentials in the panel (top right) and the
-    runnable samples work as you read. The last wires a local agent into your
-    workspace, the way the Pi extension does.
+    Real tasks, start to finish. With Credentials set, the runnable samples work
+    as you read.
   </p>
 
-  <h2 id="decisions">Find out what was decided, and why</h2>
-  <p>
-    Memos are Threa's record of decisions and context pulled from conversations.
-    Search them by topic (semantic by default) and you get back titles, abstracts,
-    tags, and links to the source messages.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Search memos"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
+  <DocRow class="dr-section">
+    <h2 id="decisions">Find out what was decided, and why</h2>
+    <p>
+      Memos are Threa's record of decisions and context pulled from conversations.
+      Search them by topic (semantic by default) and you get back titles, abstracts,
+      tags, and links to the source messages.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="Search memos"
+      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "query": "why did we pause the auth refactor",
     "limit": 5
   }'`}
-    run={{
-      method: "POST",
-      path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search",
-      body: `{ "query": "why did we pause the auth refactor", "limit": 5 }`,
-    }}
-  />
-  <p>
-    Take a memo's <code>id</code> from the results and pull its full provenance:
-    the source stream and the exact messages, with authors and timestamps.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Memo with sources"
-    code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/MEMO_ID \\
-  -H "Authorization: Bearer {{apiKey}}"`}
-  />
+      run={{
+        method: "POST",
+        path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search",
+        body: `{ "query": "why did we pause the auth refactor", "limit": 5 }`,
+      }}
+    />
+  </DocRow>
 
-  <h2 id="ci-notify">Notify a stream from CI</h2>
-  <p>
-    A build or deploy script can post into a channel. Give the message a stable
-    <code>clientMessageId</code> so a retried pipeline step never double-posts.
-    First find a stream to post into:
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="List channels"
-    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" \\
+  <DocRow>
+    <p>
+      Take a memo's <code>id</code> from the results and pull its full provenance:
+      the source stream and the exact messages, with authors and timestamps.
+    </p>
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Memo with sources"
+        code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/MEMO_ID \\
   -H "Authorization: Bearer {{apiKey}}"`}
-    run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" }}
-  />
-  <p>Then post, reusing the same ID across retries:</p>
-  <CodeBlock
-    lang="bash"
-    label="Post once"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
+      />
+      <StreamPreview stream="Memory" icon="icon-bookopen">
+        <div class="scene-memo">
+          <div class="smo-top">
+            <span class="smo-title">Auth refactor held pending token-rotation review</span>
+            <span class="smo-date">Mar 12</span>
+          </div>
+          <p class="smo-abstract">Jordan asked to pause the v3 auth boundary until the rotation flow has been walked through. The concern was migrating existing sessions without a forced re-auth wave.</p>
+          <div class="smo-tags">
+            <span class="kt-badge"><svg><use href="#icon-compass" /></svg>Decision</span>
+            <span class="smo-tag">#api-v3</span>
+            <span class="smo-tag">#auth</span>
+          </div>
+          <div class="smo-source">
+            <svg><use href="#icon-msgquote" /></svg>
+            <span>3 messages in #api-v3</span>
+            <svg class="smo-chev"><use href="#icon-chevron" /></svg>
+          </div>
+          <ul class="smo-sources">
+            <li>
+              <p>hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</p>
+              <p class="smo-by"><span>Jordan Lee</span><span class="smo-at">Mar 12</span></p>
+            </li>
+            <li>
+              <p>Fair. Let's hold v3 until you've walked us through it.</p>
+              <p class="smo-by"><span>Maya Reyes</span><span class="smo-at">Mar 12</span></p>
+            </li>
+            <li>
+              <p>a walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th</p>
+              <p class="smo-by"><span>Jordan Lee</span><span class="smo-at">Mar 12</span></p>
+            </li>
+          </ul>
+        </div>
+      </StreamPreview>
+    </Fragment>
+  </DocRow>
+
+  <DocRow class="dr-section">
+    <h2 id="ci-notify">Notify a stream from CI</h2>
+    <p>
+      A build or deploy script can post into a channel. Give the message a stable
+      <code>clientMessageId</code> so a retried pipeline step never double-posts.
+      First find a stream to post into:
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="List channels"
+      code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+      run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" }}
+    />
+  </DocRow>
+
+  <DocRow>
+    <p>Then post, reusing the same ID across retries:</p>
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Post once"
+        code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
   -d '{
     "content": "**Deploy:** v2.4.1 shipped to production. :rocket:",
     "clientMessageId": "ci-deploy-2.4.1"
   }'`}
-  />
+      />
+      <StreamPreview stream="deploys">
+        <Message author="deploy" time="16:40">
+          <div class="tl-text"><strong>Deploy:</strong> v2.4.1 shipped to production. 🚀</div>
+        </Message>
+        <Message author="jordan" time="16:44">
+          <div class="tl-text">Error rate is flat since 2.4.1 went out.</div>
+        </Message>
+      </StreamPreview>
+    </Fragment>
+  </DocRow>
 
-  <h2 id="mirror-search">Mirror a search into your own tool</h2>
-  <p>
-    Message search takes <code>semantic</code> and <code>exact</code> toggles and
-    filters by stream, type, author, and date window. Drop it behind a slash
-    command, an editor extension, or a dashboard.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Search messages"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search \\
+  <DocRow class="dr-section">
+    <h2 id="mirror-search">Mirror a search into your own tool</h2>
+    <p>
+      Message search takes <code>semantic</code> and <code>exact</code> toggles and
+      filters by stream, type, author, and date window. Drop it behind a slash
+      command, an editor extension, or a dashboard.
+    </p>
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Search messages"
+        code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -100,12 +161,40 @@ import CodeBlock from "../../components/CodeBlock.astro"
     "type": ["channel", "thread"],
     "limit": 10
   }'`}
-    run={{
-      method: "POST",
-      path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search",
-      body: `{ "query": "rotation flow", "semantic": true, "type": ["channel", "thread"], "limit": 10 }`,
-    }}
-  />
+        run={{
+          method: "POST",
+          path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search",
+          body: `{ "query": "rotation flow", "semantic": true, "type": ["channel", "thread"], "limit": 10 }`,
+        }}
+      />
+      <StreamPreview stream="rotation flow" icon="icon-search">
+        <div class="scene-search">
+          <section class="ss-group">
+            <div class="ss-head"><svg><use href="#icon-chevron" /></svg><span>#api-v3</span><span class="ss-count">2</span></div>
+            <ul>
+              <li>
+                <p class="ss-snip">a walkthrough of the <mark>rotation</mark> <mark>flow</mark> + how existing sessions migrate. I'll block out time the week of the 18th</p>
+                <p class="ss-by"><span>Jordan Lee</span><span class="ss-at">Mar 12</span></p>
+              </li>
+              <li>
+                <p class="ss-snip">hold on, I'm not comfortable changing the auth boundary without working through the token-<mark>rotation</mark> <mark>flow</mark> first. can we pause this?</p>
+                <p class="ss-by"><span>Jordan Lee</span><span class="ss-at">Mar 12</span></p>
+              </li>
+            </ul>
+          </section>
+          <section class="ss-group">
+            <div class="ss-head"><svg><use href="#icon-chevron" /></svg><span>#security</span><span class="ss-count">1</span></div>
+            <ul>
+              <li>
+                <p class="ss-snip">Refresh tokens get a new id on every use now. The old one keeps working for one grace request, so a retry mid-refresh doesn't sign anyone out.</p>
+                <p class="ss-by"><span>Sam Patel</span><span class="ss-at">Mar 14</span></p>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </StreamPreview>
+    </Fragment>
+  </DocRow>
 
   <h2 id="local-agent">Connect your local agent</h2>
   <p>
@@ -116,24 +205,48 @@ import CodeBlock from "../../components/CodeBlock.astro"
     The Pi remote extension implements this in full.
   </p>
 
-  <h3>The short path: two commands</h3>
-  <p>
-    If your agent is a command that reads a prompt and prints an answer, you
-    don't create anything by hand. <code>connect</code> prints a URL and a code.
-    Open it in a browser where you're signed in to Threa, pick a workspace, name
-    the bot, and confirm. Threa creates the bot and its key, and the key lands in
-    <code>~/.threa/bot.json</code> on the machine that asked. The key never
-    passes through your clipboard.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Connect and run"
-    code={`# once per machine: approve in a browser
+  <DocRow>
+    <h3 id="local-agent-two-commands">The short path: two commands</h3>
+    <p>
+      If your agent is a command that reads a prompt and prints an answer, you
+      don't create anything by hand. <code>connect</code> prints a URL and a code.
+      Open it in a browser where you're signed in to Threa, pick a workspace, name
+      the bot, and confirm. Threa creates the bot and its key, and the key lands in
+      <code>~/.threa/bot.json</code> on the machine that asked. The key never
+      passes through your clipboard.
+    </p>
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Connect and run"
+        code={`# once per machine: approve in a browser
 npx @threahq/bot connect
 
 # message on stdin, reply from stdout
 npx @threahq/bot run -- my-agent`}
-  />
+      />
+      <StreamPreview stream="my-project" scratchpad>
+        <Message author="maya" time="09:15">
+          <div class="tl-text">What changed in the billing module this week?</div>
+        </Message>
+        <div class="trace-card is-static">
+          <div class="trace-icon-slot">
+            <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon" /></svg></div>
+            <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon" /></svg></div>
+          </div>
+          <div class="trace-main">
+            <div class="trace-row trace-row-running"><div class="trace-title">my-agent is working…</div></div>
+            <div class="trace-row trace-row-done"><div class="trace-title">Session complete</div><div class="trace-sub">3 steps · 8.4s</div></div>
+          </div>
+          <div class="trace-time">09:15</div>
+        </div>
+        <Message author="my-agent" time="09:15">
+          <div class="tl-text">Two PRs: proration moved to the invoice service, and failed renewals now retry three times before emailing.</div>
+        </Message>
+      </StreamPreview>
+    </Fragment>
+  </DocRow>
+
   <p>
     <code>run</code> links a scratchpad for the directory you start it in and
     prints its URL. Every message there runs your command once; what it prints to
@@ -144,13 +257,13 @@ npx @threahq/bot run -- my-agent`}
     the access back, archive the bot or revoke its key in Workspace settings.
   </p>
 
-  <h3>Writing your own runtime</h3>
+  <h3 id="local-agent-writing-your-own-runtime">Writing your own runtime</h3>
   <p>
     Write one when a command on stdin and stdout isn't enough. The rest of this
     recipe is the protocol those two commands speak.
   </p>
 
-  <h3>1 · Create a bot and a bot key</h3>
+  <h3 id="local-agent-create-a-bot-and-a-bot-key">1 · Create a bot and a bot key</h3>
   <p>
     In the app, create a bot (give it the <code>mentionable</code> trait so people
     can summon it), then mint a <code>threa_bk_</code> key on it with
@@ -161,17 +274,19 @@ npx @threahq/bot run -- my-agent`}
     credential below.
   </p>
 
-  <h3>2 · Heartbeat a presence</h3>
-  <p>
-    Tell Threa your runtime is alive and accepting work. Repeat every 15–30s. The
-    <code>instanceId</code> is any stable per-process string; <code>runtimeKind</code>
-    is one of <code>pi-local</code>, <code>hermes</code>, <code>openclaw</code>,
-    <code>claude-code-channel</code>, or <code>custom</code>.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Heartbeat"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/bot-runtime/presence \\
+  <DocRow>
+    <h3 id="local-agent-heartbeat-a-presence">2 · Heartbeat a presence</h3>
+    <p>
+      Tell Threa your runtime is alive and accepting work. Repeat every 15–30s. The
+      <code>instanceId</code> is any stable per-process string; <code>runtimeKind</code>
+      is one of <code>pi-local</code>, <code>hermes</code>, <code>openclaw</code>,
+      <code>claude-code-channel</code>, or <code>custom</code>.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="Heartbeat"
+      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/bot-runtime/presence \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -181,18 +296,21 @@ npx @threahq/bot run -- my-agent`}
     "acceptingInvocations": true,
     "capabilities": { "supportsActiveScratchpad": false }
   }'`}
-  />
+    />
+  </DocRow>
 
-  <h3>3 · Claim, work, reply</h3>
-  <p>
-    Poll for a pending invocation. When you get one, it carries the prompt and a
-    <code>claimToken</code>; do your work, then complete it with a reply (or renew
-    the claim first if you need longer than the TTL). A full loop in TypeScript:
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="agent-loop.ts"
-    code={`const BASE = "{{baseUrl}}"
+  <DocRow>
+    <h3 id="local-agent-claim-work-reply">3 · Claim, work, reply</h3>
+    <p>
+      Poll for a pending invocation. When you get one, it carries the prompt and a
+      <code>claimToken</code>; do your work, then complete it with a reply (or renew
+      the claim first if you need longer than the TTL). A full loop in TypeScript:
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="ts"
+      label="agent-loop.ts"
+      code={`const BASE = "{{baseUrl}}"
 const WS = "{{workspaceId}}"
 const KEY = "{{apiKey}}" // a threa_bk_ bot key
 const INSTANCE = "my-laptop-1"
@@ -241,7 +359,9 @@ async function loop() {
     })
   }
 }`}
-  />
+    />
+  </DocRow>
+
   <div class="note">
     <strong>Faster than polling</strong>
     There's also a Socket.IO <code>/bot</code> namespace that pushes
@@ -279,96 +399,113 @@ async function loop() {
     <code>delegations:write</code> scopes.
   </p>
 
-  <h3>1 · Find and inspect open work</h3>
-  <p>
-    The queue includes only open tasks in streams your key can access. For polling,
-    pass <code>since</code>: it compares the cursor with <code>status_changed_at</code>,
-    not the task's creation time, so a task that reopens appears in the delta.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="List open delegations"
-    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" \\
+  <DocRow>
+    <h3 id="delegations-find-and-inspect-open-work">1 · Find and inspect open work</h3>
+    <p>
+      The queue includes only open tasks in streams your key can access. For polling,
+      pass <code>since</code>: it compares the cursor with <code>status_changed_at</code>,
+      not the task's creation time, so a task that reopens appears in the delta.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="List open delegations"
+      code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" \\
   -H "Authorization: Bearer {{apiKey}}"`}
-    run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" }}
-  />
+      run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations" }}
+    />
+  </DocRow>
 
-  <p>
-    Inspect a candidate before claiming it. This read requires
-    <code>delegations:read</code> and returns the full brief and context-reference
-    pointers without creating a claim or exposing claim secrets.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Inspect"
-    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID" \\
+  <DocRow>
+    <p>
+      Inspect a candidate before claiming it. This read requires
+      <code>delegations:read</code> and returns the full brief and context-reference
+      pointers without creating a claim or exposing claim secrets.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="Inspect"
+      code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID" \\
   -H "Authorization: Bearer {{apiKey}}"`}
-  />
+    />
+  </DocRow>
 
-  <h3>2 · Claim it</h3>
-  <p>
-    Claim only after reviewing the brief. Only one claimer succeeds; a lost race
-    returns <code>409 DELEGATION_NOT_OPEN</code>. The response carries the brief,
-    context-reference pointers, and a <code>claimToken</code> on a 15-minute lease.
-    The token is shown once and cannot be retrieved again. A historical task still
-    stored as <code>expired</code> is absent from the open queue but can be inspected
-    and claimed directly by id.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Claim"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/claim \\
+  <DocRow>
+    <h3 id="delegations-claim-it">2 · Claim it</h3>
+    <p>
+      Claim only after reviewing the brief. Only one claimer succeeds; a lost race
+      returns <code>409 DELEGATION_NOT_OPEN</code>. The response carries the brief,
+      context-reference pointers, and a <code>claimToken</code> on a 15-minute lease.
+      The token is shown once and cannot be retrieved again. A historical task still
+      stored as <code>expired</code> is absent from the open queue but can be inspected
+      and claimed directly by id.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="Claim"
+      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/claim \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "Content-Type: application/json" \\
   -d '{ "claimedByLabel": "build-box / my agent" }'`}
-  />
+    />
+  </DocRow>
 
-  <h3>3 · Report progress, keep the lease alive</h3>
-  <p>
-    Send the token as an <code>X-Threa-Callback-Token</code> header on every later
-    call. <code>status</code> puts a note on the card and renews the lease;
-    <code>heartbeat</code> renews it silently. Heartbeat is a normal HTTP endpoint,
-    so any client can call it manually; no runner is required. If a newly claimed or
-    running task lapses, the lease sweep clears its claim and returns it to
-    <code>open</code>. Rows historically stored as <code>expired</code> stay that way
-    until explicitly claimed, requeued, marked done, or cancelled.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Progress note"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/status \\
+  <DocRow>
+    <h3 id="delegations-report-progress-keep-the-lease-alive">3 · Report progress, keep the lease alive</h3>
+    <p>
+      Send the token as an <code>X-Threa-Callback-Token</code> header on every later
+      call. <code>status</code> puts a note on the card and renews the lease;
+      <code>heartbeat</code> renews it silently. Heartbeat is a normal HTTP endpoint,
+      so any client can call it manually; no runner is required. If a newly claimed or
+      running task lapses, the lease sweep clears its claim and returns it to
+      <code>open</code>. Rows historically stored as <code>expired</code> stay that way
+      until explicitly claimed, requeued, marked done, or cancelled.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="Progress note"
+      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/status \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{ "statusNote": "Tests passing, writing the migration" }'`}
-  />
+    />
+  </DocRow>
 
-  <p>
-    On a controlled stop, release the live claim rather than fail it. Release
-    returns the task to the open queue. It requires <code>delegations:write</code>
-    and the callback token; a missing, inaccessible, stale, replaced, or lapsed
-    claim returns the same privacy-safe <code>404</code>.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Release"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/release \\
+  <DocRow>
+    <p>
+      On a controlled stop, release the live claim rather than fail it. Release
+      returns the task to the open queue. It requires <code>delegations:write</code>
+      and the callback token; a missing, inaccessible, stale, replaced, or lapsed
+      claim returns the same privacy-safe <code>404</code>.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="Release"
+      code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/release \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN"`}
-  />
+    />
+  </DocRow>
 
-  <h3>4 · Complete with the result</h3>
-  <p>
-    Completion posts the full result as a reply in the thread anchored on the
-    delegation card, and the card flips in the same transaction. Optional
-    <code>metadata</code> is stamped on the result message (queryable later with
-    <code>find-by-metadata</code>). Retries are safe: a retried complete bearing the
-    same token returns the committed outcome instead of double-posting.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="Complete"
-    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/complete \\
+  <DocRow>
+    <h3 id="delegations-complete-with-the-result">4 · Complete with the result</h3>
+    <p>
+      Completion posts the full result as a reply in the thread anchored on the
+      delegation card, and the card flips in the same transaction. Optional
+      <code>metadata</code> is stamped on the result message (queryable later with
+      <code>find-by-metadata</code>). Retries are safe: a retried complete bearing the
+      same token returns the committed outcome instead of double-posting.
+    </p>
+    <Fragment slot="code">
+      <CodeBlock
+        lang="bash"
+        label="Complete"
+        code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/delegations/DELEGATION_ID/complete \\
   -H "Authorization: Bearer {{apiKey}}" \\
   -H "X-Threa-Callback-Token: CLAIM_TOKEN" \\
   -H "Content-Type: application/json" \\
@@ -376,7 +513,40 @@ async function loop() {
     "resultMarkdown": "Shipped in PR #42. All acceptance criteria pass.",
     "metadata": { "github.pr": "https://github.com/acme/repo/pull/42" }
   }'`}
-  />
+      />
+      <StreamPreview stream="billing">
+        <Message author="maya" time="10:02">
+          <div class="tl-text"><span class="mention">@ariadne</span> can you add backoff between the failed-renewal retries and open a PR?</div>
+        </Message>
+        <div class="scene-delegation">
+          <div class="sd-card">
+            <div class="sd-row">
+              <span class="sd-tile"><svg><use href="#icon-terminal" /></svg></span>
+              <div class="sd-main">
+                <p class="sd-title">Add backoff between failed-renewal retries</p>
+                <p class="sd-meta">Ariadne · Completed · build-box / my agent</p>
+              </div>
+              <span class="sd-copy"><svg><use href="#icon-copy" /></svg></span>
+            </div>
+            <p class="sd-toggle"><svg><use href="#icon-chevronright" /></svg>Show hand-off prompt</p>
+          </div>
+          <div class="sd-thread">
+            <div class="sd-thread-line">
+              <span class="sd-av"><svg><use href="#icon-bot" /></svg></span>
+              <span class="sd-replies">1 reply</span>
+              <span class="sd-ago">4h</span>
+              <svg class="sd-chev"><use href="#icon-chevronright" /></svg>
+            </div>
+            <p class="sd-latest"><strong>my-agent</strong>: Shipped in PR #42. All acceptance criteria pass.</p>
+          </div>
+        </div>
+        <Message author="ariadne" time="10:02">
+          <div class="tl-text">This needs a checkout of the repo, so I wrote it up as a hand-off. It waits on the card above until a local agent claims it.</div>
+        </Message>
+      </StreamPreview>
+    </Fragment>
+  </DocRow>
+
   <p>
     Something went wrong instead? <code>POST …/fail</code> with an
     <code>errorMessage</code> puts the reason on the card. And the card's own
@@ -391,21 +561,26 @@ async function loop() {
     can send the command it actually ran, the whole diff, and real output. The loop
     is the one above with sealed bodies.
   </p>
-  <h3>The short path: the CLI</h3>
-  <p>
-    None of what follows is needed to work inside a sealed scratchpad. If your
-    agent has a shell, the CLI holds the key and does the crypto.
-    <code>threa e2e unlock</code> files your key on the machine once, and every
-    command that touches a sealed stream opens and seals bodies with it. Reading
-    one is the same command as reading any other stream.
-  </p>
-  <CodeBlock
-    lang="bash"
-    label="A sealed loop, without a line of code"
-    code={`threa e2e unlock                            # once per machine
+
+  <DocRow>
+    <h3 id="sealed-agent-the-cli">The short path: the CLI</h3>
+    <p>
+      None of what follows is needed to work inside a sealed scratchpad. If your
+      agent has a shell, the CLI holds the key and does the crypto.
+      <code>threa e2e unlock</code> files your key on the machine once, and every
+      command that touches a sealed stream opens and seals bodies with it. Reading
+      one is the same command as reading any other stream.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="bash"
+      label="A sealed loop, without a line of code"
+      code={`threa e2e unlock                            # once per machine
 threa streams read stream_01H...            # ciphertext in, plaintext out
 threa messages send stream_01H... "on it"   # sealed here, then sent`}
-  />
+    />
+  </DocRow>
+
   <p>
     <code>threa mcp serve</code> carries the same handling over MCP, so a host
     that speaks MCP rather than a shell reads and posts into a sealed scratchpad
@@ -415,7 +590,7 @@ threa messages send stream_01H... "on it"   # sealed here, then sent`}
     <a class="link" href="/developers/cli#e2e">CLI page</a>.
   </p>
 
-  <h3>Writing your own runtime</h3>
+  <h3 id="sealed-agent-writing-your-own-runtime">Writing your own runtime</h3>
   <p>
     Write one when you want the sealed invocation loop itself: claims over the
     socket, trace steps as the work happens, decision cards.
@@ -427,17 +602,19 @@ threa messages send stream_01H... "on it"   # sealed here, then sent`}
     tells you.
   </p>
 
-  <h3>1 · Load a keyring</h3>
-  <p>
-    One X25519 keypair per machine is the usual setup. <code>E2eKeyring</code> mints
-    it the first time, keeps it in the OS keychain, and finds it again after a
-    restart. <code>BotKeyring</code> imports it for the runtime and hands you the
-    fields presence needs.
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="Keyring"
-    code={`import {
+  <DocRow>
+    <h3 id="sealed-agent-load-a-keyring">1 · Load a keyring</h3>
+    <p>
+      One X25519 keypair per machine is the usual setup. <code>E2eKeyring</code> mints
+      it the first time, keeps it in the OS keychain, and finds it again after a
+      restart. <code>BotKeyring</code> imports it for the runtime and hands you the
+      fields presence needs.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="ts"
+      label="Keyring"
+      code={`import {
   BotKeyring,
   E2eKeyring,
   e2eKeyAccount,
@@ -470,7 +647,9 @@ await api("/bot-runtime/presence", {
   acceptingInvocations: true,
   ...keys.presenceFields(),
 })`}
-  />
+    />
+  </DocRow>
+
   <p>
     Every presence write carries the keys, because the server reads what arrives as
     your complete set. An empty array unregisters all of them, and leaving the field
@@ -487,16 +666,18 @@ await api("/bot-runtime/presence", {
     keys to disk.
   </p>
 
-  <h3>2 · Create an encrypted scratchpad</h3>
-  <p>
-    Two calls, because the key wrap binds to the stream id the server mints. Ask for
-    the owner's public key, create the session encrypted, then mint a generation-0
-    stream key and store the wraps.
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="Create and provision"
-    code={`// A 404 here means the owner has not set an encryption passphrase yet. Say so, and stop.
+  <DocRow>
+    <h3 id="sealed-agent-create-an-encrypted-scratchpad">2 · Create an encrypted scratchpad</h3>
+    <p>
+      Two calls, because the key wrap binds to the stream id the server mints. Ask for
+      the owner's public key, create the session encrypted, then mint a generation-0
+      stream key and store the wraps.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="ts"
+      label="Create and provision"
+      code={`// A 404 here means the owner has not set an encryption passphrase yet. Say so, and stop.
 const { data: owner } = await get("/bot-runtime/owner-e2e-key") // { keyId, publicKey }
 
 const { data: link } = await api("/bot-runtime/sessions", {
@@ -519,7 +700,9 @@ const { wraps } = await mintStreamKeyWraps({
   ],
 })
 await api(\u0060/streams/\${link.rootStreamId}/e2e/key-wraps\u0060, { keyGeneration: 0, wraps })`}
-  />
+    />
+  </DocRow>
+
   <p>
     The stream key never leaves that call. Later turns recover it from the wraps in
     the claim, so the only thing your runtime persists is its identity key. A 409 on
@@ -527,18 +710,20 @@ await api(\u0060/streams/\${link.rootStreamId}/e2e/key-wraps\u0060, { keyGenerat
     hear.
   </p>
 
-  <h3>3 · Open a sealed claim</h3>
-  <p>
-    Claim as usual. On an encrypted stream the response carries a
-    <code>sealedContext</code> where the plaintext prompt would be.
-    <code>parseSealedTurnContext</code> checks the wire shape and
-    <code>openSealedTurnContext</code> unwraps the stream key with your identity
-    key, then decrypts the trigger and the messages before it.
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="Open the turn"
-    code={`const { data: inv } = await api("/bot-invocations/claim", {
+  <DocRow>
+    <h3 id="sealed-agent-open-a-sealed-claim">3 · Open a sealed claim</h3>
+    <p>
+      Claim as usual. On an encrypted stream the response carries a
+      <code>sealedContext</code> where the plaintext prompt would be.
+      <code>parseSealedTurnContext</code> checks the wire shape and
+      <code>openSealedTurnContext</code> unwraps the stream key with your identity
+      key, then decrypts the trigger and the messages before it.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="ts"
+      label="Open the turn"
+      code={`const { data: inv } = await api("/bot-invocations/claim", {
   runtimeKind: "custom",
   instanceId: INSTANCE,
   supportedCapabilities: ["active-scratchpad"],
@@ -553,7 +738,9 @@ const identities = await keys.ensureForStream(inv.rootStreamId)
 const turn = await openSealedTurnContext({ sealed, identities, streamId: inv.rootStreamId })
 
 const answer = await runYourAgent(turn.promptMarkdown, turn.history)`}
-  />
+    />
+  </DocRow>
+
   <p>
     <code>turn.history</code> is the conversation so far, decrypted, oldest first.
     <code>turn.sealing</code> holds the key generation, the sender id, and the
@@ -562,16 +749,18 @@ const answer = await runYourAgent(turn.promptMarkdown, turn.history)`}
     can quote decrypted content, so only the class name goes back to the server.
   </p>
 
-  <h3>4 · Seal every reply and step</h3>
-  <p>
-    <code>sealStep</code> and <code>sealReply</code> return the wire bodies for the
-    sealed endpoints, each bound to an id they mint. Send the callback token in the
-    <code>X-Threa-Callback-Token</code> header.
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="Seal back"
-    code={`const headers = {
+  <DocRow>
+    <h3 id="sealed-agent-seal-every-reply-and-step">4 · Seal every reply and step</h3>
+    <p>
+      <code>sealStep</code> and <code>sealReply</code> return the wire bodies for the
+      sealed endpoints, each bound to an id they mint. Send the callback token in the
+      <code>X-Threa-Callback-Token</code> header.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="ts"
+      label="Seal back"
+      code={`const headers = {
   [THREA_CALLBACK_TOKEN_HEADER]: turn.sealing.callbackToken,
   "Content-Type": "application/json",
 }
@@ -588,7 +777,9 @@ await post(
 await post(\u0060/bot-invocations/\${inv.id}/sealed-complete\u0060, {
   reply: await sealReply(turn.sealing, answer),
 })`}
-  />
+    />
+  </DocRow>
+
   <div class="note">
     <strong>Steps over the socket</strong>
     High-volume steps go over the Socket.IO <code>/bot</code> namespace as
@@ -602,19 +793,21 @@ await post(\u0060/bot-invocations/\${inv.id}/sealed-complete\u0060, {
     (<code>extensions/claude-code-remote/</code>) are complete implementations.
   </div>
 
-  <h3>5 · Ask a sealed decision</h3>
-  <p>
-    A decision card puts a question in the stream and blocks your turn until someone
-    picks an option. Option ids and tones stay in the clear, because the server
-    checks an answer against them. The title, the body and the labels travel inside
-    the ciphertext. <code>sealDecision</code> mints the <code>dreq_</code> id and
-    seals against the stream the card is posted to, which on a thread is not the
-    root the key hangs off.
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="A sealed card"
-    code={`// BOT_ID is your own bot id, from the bot plane's hello ack.
+  <DocRow>
+    <h3 id="sealed-agent-ask-a-sealed-decision">5 · Ask a sealed decision</h3>
+    <p>
+      A decision card puts a question in the stream and blocks your turn until someone
+      picks an option. Option ids and tones stay in the clear, because the server
+      checks an answer against them. The title, the body and the labels travel inside
+      the ciphertext. <code>sealDecision</code> mints the <code>dreq_</code> id and
+      seals against the stream the card is posted to, which on a thread is not the
+      root the key hangs off.
+    </p>
+    <Fragment slot="code">
+      <CodeBlock
+        lang="ts"
+        label="A sealed card"
+        code={`// BOT_ID is your own bot id, from the bot plane's hello ack.
 const card = await sealDecision(
   turn.sealing,
   { streamId: cardStream, requesterBotId: BOT_ID },
@@ -636,21 +829,50 @@ await api(\u0060/streams/\${cardStream}/decisions\u0060, {
   invocationId: inv.id,
   sealed: { ciphertext: card.ciphertext, envelope: card.envelope },
 })`}
-  />
-  <p>
-    The answer arrives on the <code>/bot</code> namespace as
-    <code>decision:resolved</code>, or from <code>GET /decisions/:id</code> if you
-    poll instead. <code>optionId</code> is in the clear.
-    <code>openSealedDecisionNote</code> opens the note the person typed, and returns
-    null when that note was sealed to another slot or under a generation this turn
-    no longer holds. Settle the decision anyway. A rotation between the question and
-    the answer leaves the answer readable and the note not, and losing the note
-    beats stranding the turn on it.
-  </p>
-  <CodeBlock
-    lang="ts"
-    label="Open the answer"
-    code={`socket.on("decision:resolved", async (d) => {
+      />
+      <StreamPreview stream="invoice-ref migration" scratchpad locked>
+        <Message author="maya" time="14:20">
+          <div class="tl-text">Backfill invoice_ref, then check with me before you touch prod.</div>
+        </Message>
+        <div class="scene-decision">
+          <div class="sq-card">
+            <div class="sq-row">
+              <svg class="sq-icon"><use href="#icon-circlehelp" /></svg>
+              <div class="sq-main">
+                <p class="sq-title">Run the migration now?</p>
+                <p class="sq-who"><strong>my-agent</strong> needs a decision</p>
+              </div>
+            </div>
+            <p class="sq-body">17 rows backfilled locally, none in prod.</p>
+            <div class="sq-actions">
+              <span class="sq-note">Add a note for the bot</span>
+              <div class="sq-buttons">
+                <span class="sq-btn is-primary">Run it</span>
+                <span class="sq-btn">Hold for review</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </StreamPreview>
+    </Fragment>
+  </DocRow>
+
+  <DocRow>
+    <p>
+      The answer arrives on the <code>/bot</code> namespace as
+      <code>decision:resolved</code>, or from <code>GET /decisions/:id</code> if you
+      poll instead. <code>optionId</code> is in the clear.
+      <code>openSealedDecisionNote</code> opens the note the person typed, and returns
+      null when that note was sealed to another slot or under a generation this turn
+      no longer holds. Settle the decision anyway. A rotation between the question and
+      the answer leaves the answer readable and the note not, and losing the note
+      beats stranding the turn on it.
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="ts"
+      label="Open the answer"
+      code={`socket.on("decision:resolved", async (d) => {
   if (d.decisionId !== card.decisionId) return
   const note =
     d.noteCiphertext && d.noteEnvelope && d.decidedBy
@@ -664,9 +886,10 @@ await api(\u0060/streams/\${cardStream}/decisions\u0060, {
       : null
   resume(d.optionId, note) // "run" or "hold", and why
 })`}
-  />
+    />
+  </DocRow>
 
-  <h3>6 · When the grant is taken back</h3>
+  <h3 id="sealed-agent-when-the-grant-is-taken-back">6 · When the grant is taken back</h3>
   <p>
     The owner removing your bot from a sealed scratchpad deletes the wraps only your
     keys could open, and rolls the stream key forward. You keep what you have

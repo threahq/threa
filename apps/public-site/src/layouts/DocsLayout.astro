@@ -4,21 +4,22 @@ import "../styles/docs.css"
 import BaseHead from "../components/BaseHead.astro"
 import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
+import { SIDE_WIDTH } from "../lib/docs-side-width"
 
 interface Props {
   title?: string
   description?: string
   current?: string
   sections?: { id: string; label: string; group?: string }[]
-  /** Full-width article (the API reference's two-column endpoint layout). */
-  wide?: boolean
+  /** Prose beside a code pane from 1200px (rows are components/DocRow.astro). */
+  split?: boolean
 }
 const {
   title = "Threa Developers",
   description = "Build on Threa: a public REST API over your workspace covering messages, streams, memos, search, and a bot runtime for connecting your own agent.",
   current = "",
   sections = [],
-  wide = false,
+  split = false,
 } = Astro.props
 
 const nav = [
@@ -26,6 +27,7 @@ const nav = [
     group: "Get started",
     items: [
       { slug: "overview", label: "Overview", href: "/developers" },
+      { slug: "quickstart", label: "Quickstart", href: "/developers/quickstart" },
       { slug: "authentication", label: "Authentication", href: "/developers/authentication" },
     ],
   },
@@ -97,8 +99,15 @@ const schema: Record<string, unknown>[] = [
   <head>
     <BaseHead title={title} description={description} ogType="article" schema={schema} />
     {markdownHref && <link rel="alternate" type="text/markdown" href={markdownHref} title="Markdown version of this page" />}
+    <script is:inline define:vars={{ side: SIDE_WIDTH }}>
+      /* Before first paint, so a stored sidebar width never jumps in. */
+      try {
+        const w = Number(localStorage.getItem(side.storageKey))
+        if (w >= side.min && w <= side.max) document.documentElement.style.setProperty("--docs-side-w", `${w}px`)
+      } catch {}
+    </script>
   </head>
-  <body class="docs">
+  <body class:list={["docs", split && "docs-split"]}>
     <SvgDefs />
 
     <header class="docs-nav">
@@ -121,6 +130,30 @@ const schema: Record<string, unknown>[] = [
           <span class="tag">Developers</span>
         </a>
       </div>
+      <div class="ds-inline" id="ds-inline">
+        <svg class="ds-glass" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M10.5 10.5 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        <input
+          id="ds-inline-input"
+          class="ds-inline-input"
+          type="text"
+          role="combobox"
+          aria-label="Search docs"
+          aria-expanded="false"
+          aria-controls="ds-inline-list"
+          aria-autocomplete="list"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search docs"
+        />
+        <kbd class="ds-kbd" aria-hidden="true"></kbd>
+        <div class="ds-pop">
+          <ul class="ds-list" id="ds-inline-list" role="listbox" aria-label="Search results"></ul>
+          <p class="ds-status" id="ds-inline-status" role="status"></p>
+        </div>
+      </div>
       <div class="docs-nav-right">
         <nav class="docs-nav-links">
           <a href="/developers/reference">Reference</a>
@@ -129,6 +162,12 @@ const schema: Record<string, unknown>[] = [
           <a href="/llms.txt">llms.txt</a>
           <a class="home" href="/">↩ threa.io</a>
         </nav>
+        <button type="button" class="ds-icon-btn" data-search-open aria-label="Search docs">
+          <svg class="ds-glass" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M10.5 10.5 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
         <ThemeToggle />
         <button type="button" class="pg-toggle" id="pg-toggle" aria-expanded="false" aria-controls="pg-panel">
           <span class="pg-dot" id="pg-dot" data-state="idle"></span>
@@ -136,6 +175,36 @@ const schema: Record<string, unknown>[] = [
         </button>
       </div>
     </header>
+
+    <dialog class="ds-dialog" id="ds-dialog" aria-label="Search docs">
+      <div class="ds-dialog-bar">
+        <svg class="ds-glass" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M10.5 10.5 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        <input
+          id="ds-dialog-input"
+          class="ds-dialog-input"
+          type="text"
+          role="combobox"
+          aria-label="Search docs"
+          aria-expanded="true"
+          aria-controls="ds-dialog-list"
+          aria-autocomplete="list"
+          autocomplete="off"
+          spellcheck="false"
+          enterkeyhint="go"
+          placeholder="Search docs"
+        />
+        <button type="button" class="ds-dialog-close" id="ds-dialog-close" aria-label="Close search">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+      <ul class="ds-list" id="ds-dialog-list" role="listbox" aria-label="Search results"></ul>
+      <p class="ds-status" id="ds-dialog-status" role="status"></p>
+    </dialog>
 
     <!-- Credentials: set once, kept in this browser. Every code sample
          substitutes your real values into the {{tokens}}; runnable ones call
@@ -186,10 +255,27 @@ const schema: Record<string, unknown>[] = [
             <h4>{g.group}</h4>
             {g.items.map((it) => (
               <>
-                <a href={it.href} class={it.slug === current ? "current" : ""}>{it.label}</a>
+                {it.slug === current && sections.length > 0 ? (
+                  <div class="docs-side-page">
+                    <a href={it.href} class="current">{it.label}</a>
+                    <button
+                      type="button"
+                      class="dsp-toggle"
+                      aria-expanded="true"
+                      aria-controls="docs-side-sub"
+                      aria-label={`${it.label} sections`}
+                    >
+                      <svg class="dss-chevron" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <a href={it.href} class={it.slug === current ? "current" : ""}>{it.label}</a>
+                )}
                 {it.slug === current && sections.length > 0 && (
                   subnavHasGroups ? (
-                    <div class="docs-side-sub" data-collapsible>
+                    <div class="docs-side-sub" id="docs-side-sub" data-collapsible>
                       {subnavGroups.map((g, gi) => (
                         <details class="dss-group" open={gi === 0}>
                           <summary class="dss-group-head">
@@ -207,7 +293,7 @@ const schema: Record<string, unknown>[] = [
                       ))}
                     </div>
                   ) : (
-                    <div class="docs-side-sub">
+                    <div class="docs-side-sub" id="docs-side-sub">
                       {sections.map((s) => (
                         <a href={`#${s.id}`} data-section={s.id}>{s.label}</a>
                       ))}
@@ -227,9 +313,20 @@ const schema: Record<string, unknown>[] = [
           <a href="/">↩ threa.io</a>
         </div>
       </aside>
+      <div
+        class="docs-side-resize"
+        id="docs-side-resize"
+        role="separator"
+        tabindex="0"
+        aria-orientation="vertical"
+        aria-controls="docs-side"
+        aria-label="Resize navigation"
+        aria-valuemin={SIDE_WIDTH.min}
+        aria-valuemax={SIDE_WIDTH.max}
+      ></div>
 
       <main class="docs-main">
-        <article class={`docs-article${wide ? " is-wide" : ""}`}>
+        <article class:list={["docs-article", split && "is-split"]}>
           <slot />
         </article>
 
@@ -249,6 +346,8 @@ const schema: Record<string, unknown>[] = [
 
     <script>
       import "../scripts/playground.ts"
+      import "../scripts/search.ts"
+      import "../scripts/docs-side.ts"
     </script>
   </body>
 </html>

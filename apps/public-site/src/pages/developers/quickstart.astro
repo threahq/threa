@@ -1,0 +1,179 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+import Message from "../../components/Message.astro"
+import RailStep from "../../components/RailStep.astro"
+import StreamPreview from "../../components/StreamPreview.astro"
+import { currentApiVersion } from "../../lib/api-versions"
+import "../../styles/quickstart.css"
+
+const currentVersion = currentApiVersion()
+
+const steps = [
+  { id: "key", title: "Create an API key" },
+  { id: "env", title: "Put it in your shell" },
+  { id: "me", title: "Confirm who you are" },
+  { id: "search", title: "Search what Threa remembers" },
+]
+---
+
+<DocsLayout
+  title="Quickstart · Threa Developers"
+  description="Four steps from a new Threa API key to your first memo search, run from your own terminal."
+  current="quickstart"
+>
+  <h1 id="quickstart">Quickstart.</h1>
+  <p class="lead">
+    Four steps from a new API key to searching what Threa remembers, run
+    from your own terminal.
+  </p>
+
+  <section class="guide" data-guide aria-labelledby="quickstart">
+    <div class="guide-bar" aria-hidden="true" data-decorative>
+      <p class="guide-status" data-guide-status>
+        Step 1 of 4: {steps[0].title}
+      </p>
+      <div class="guide-meter">
+        {
+          steps.map((s, i) => (
+            <a class="gm-seg" href={`#step-${s.id}`} data-seg tabindex="-1" style={i === 0 ? "--fill: 1" : undefined}>
+              <span class="gm-bar" />
+            </a>
+          ))
+        }
+      </div>
+    </div>
+
+    <ol class="rail">
+      <RailStep id="step-key" title={steps[0].title}>
+        <p>
+          In the app, open <strong>Workspace Settings → API Keys</strong>, create a
+          personal access key, pick its scopes, and copy the
+          <code>threa_uk_…</code> value. Threa shows it once and can't show
+          it again.
+        </p>
+        <p>
+          Give it <code>memos:read</code> for step 4. <code>GET /me</code> in
+          step 3 takes no scope. Bot keys and the other scopes are in
+          <a class="link" href="/developers/authentication">Authentication</a>.
+        </p>
+      </RailStep>
+
+      <RailStep id="step-env" title={steps[1].title}>
+        <p>
+          Export the key and your workspace ID. The workspace ID is in the app
+          URL, after <code>/w/</code>.
+        </p>
+        <CodeBlock
+          lang="bash"
+          label="Shell"
+          code={`export THREA_API_KEY=threa_uk_...
+export THREA_WORKSPACE_ID=ws_...`}
+        />
+      </RailStep>
+
+      <RailStep id="step-me" title={steps[2].title}>
+        <p>
+          <code>GET /me</code> returns the identity behind the key. It's the
+          quickest way to confirm a key is live and pointed at the right
+          workspace.
+        </p>
+        <CodeBlock
+          lang="bash"
+          label="Who am I"
+          code={`curl https://app.threa.io/api/v1/workspaces/$THREA_WORKSPACE_ID/me \\
+  -H "Authorization: Bearer $THREA_API_KEY"`}
+        />
+        <div class="expect">
+          <p class="expect-lead">
+            A working key comes back as a <code>user</code> or a
+            <code>bot</code> principal, with its API version:
+          </p>
+          <CodeBlock
+            lang="json"
+            label="200 response"
+            code={`{
+  "data": {
+    "kind": "user",
+    "workspaceId": "ws_...",
+    "userId": "usr_...",
+    "apiVersion": {
+      "pinned": "${currentVersion}",
+      "resolved": "${currentVersion}",
+      "current": "${currentVersion}",
+      "supported": ["${currentVersion}"]
+    }
+  }
+}`}
+          />
+          <dl class="facts">
+            <dt><code>user</code></dt>
+            <dd>A personal access key. It acts as you, and messages it sends show as yours, flagged as sent via the API.</dd>
+            <dt><code>bot</code></dt>
+            <dd>A bot key. The bot acts as itself, in the streams it's been added to.</dd>
+            <dt><code>401</code></dt>
+            <dd>The key is missing or invalid.</dd>
+          </dl>
+        </div>
+      </RailStep>
+
+      <RailStep id="step-search" title={steps[3].title}>
+        <p>
+          With <code>memos:read</code>, search memos the way Ariadne does.
+          Search is semantic by default.
+        </p>
+        <CodeBlock
+          lang="bash"
+          label="Search memos"
+          code={`curl -X POST https://app.threa.io/api/v1/workspaces/$THREA_WORKSPACE_ID/memos/search \\
+  -H "Authorization: Bearer $THREA_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "query": "auth", "limit": 5 }'`}
+        />
+        <div class="expect">
+          <p class="expect-lead">
+            Each result is a memo: a title, an abstract, its knowledge type
+            (a decision, a procedure, and so on), tags, and the ids of the
+            messages it came from. It's the same memo Ariadne answers
+            from in Threa:
+          </p>
+          <StreamPreview stream="platform">
+            <Message author="maya" time="14:02">
+              <div class="tl-text"><span class="mention">@ariadne</span> why did we pause the auth refactor?</div>
+            </Message>
+            <Message author="ariadne" time="14:02">
+              <div class="tl-text">It's on hold until Jordan's review of the token-rotation model.</div>
+              <div class="recall-memo-card">
+                <div class="rmc-icon"><svg><use href="#icon-compass" /></svg></div>
+                <div class="rmc-body">
+                  <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
+                  <div class="rmc-title">Auth refactor held pending token-rotation review</div>
+                </div>
+                <div class="rmc-meta">Mar 12</div>
+              </div>
+            </Message>
+          </StreamPreview>
+          <p>
+            Take a memo's <code>id</code> to
+            <code>GET /memos/&#123;memoId&#125;</code> for the source stream and
+            the exact messages, as in
+            <a class="link" href="/developers/recipes#decisions">Find out what was decided, and why</a>.
+          </p>
+        </div>
+      </RailStep>
+    </ol>
+
+    <div class="guide-next">
+      <h2 id="next">Then pick a recipe</h2>
+      <ul>
+        <li><a class="link" href="/developers/recipes#ci-notify">Notify a stream from CI</a>, with sends that never double-post on retry.</li>
+        <li><a class="link" href="/developers/recipes#local-agent">Connect your local agent</a> so it replies in Threa.</li>
+        <li><a class="link" href="/developers/reference">API reference</a> for every endpoint and its scope.</li>
+      </ul>
+    </div>
+  </section>
+
+  <script>
+    import "../../scripts/guide.ts"
+  </script>
+</DocsLayout>

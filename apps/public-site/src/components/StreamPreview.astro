@@ -1,0 +1,25 @@
+---
+/*
+ * What a docs sample produces in Threa: a stream header over <Message> rows.
+ * Decorative, so the markdown mirrors skip it. `icon` swaps the channel hash
+ * for another surface's glyph (Memory, search); `locked` is the encrypted
+ * scratchpad's sidebar lock.
+ */
+interface Props {
+  stream: string
+  scratchpad?: boolean
+  icon?: string
+  locked?: boolean
+}
+const { stream, scratchpad = false, icon, locked = false } = Astro.props
+const headIcon = icon ?? (scratchpad ? null : "icon-hash")
+---
+
+<figure class="stream-preview" data-decorative aria-hidden="true">
+  <div class="sp-head">
+    {headIcon && <svg><use href={`#${headIcon}`} /></svg>}
+    <span>{stream}</span>
+    {locked && <svg class="sp-lock"><use href="#icon-lock" /></svg>}
+  </div>
+  <div class="sp-body"><slot /></div>
+</figure>
