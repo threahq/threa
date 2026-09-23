@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Archive, ArrowDownUp, Check, Compass, Flame, Lock, Search } from "lucide-react"
@@ -118,7 +118,6 @@ function StreamsPageInner({
   membership: DirectoryMembership
 }) {
   const [query, setQuery] = useState("")
-  const isMobile = useIsMobile()
   const streamService = useStreamService()
   const cachedStreams = useWorkspaceStreams(workspaceId)
   const streamIndex = useWorkspaceStreamIndex(workspaceId)
@@ -162,12 +161,6 @@ function StreamsPageInner({
       }),
     [streams, memberStreamIds, tab, archived, query, membership, sort, statsById, users, dmPeers]
   )
-
-  const hoverCardStreamIds = useMemo(
-    () => (isMobile ? [] : rows.filter((row) => !row.stream.archivedAt).map((row) => row.stream.id)),
-    [isMobile, rows]
-  )
-  useStreamWarmup(hoverCardStreamIds)
 
   const mostActive = useMemo(
     () =>
@@ -366,6 +359,23 @@ function MostActiveCard({
   )
 }
 
+/** True once the element has scrolled into view; stays true so a row warms once. */
+function useSeen(ref: React.RefObject<HTMLElement | null>, enabled: boolean): boolean {
+  const [seen, setSeen] = useState(false)
+
+  useEffect(() => {
+    const element = ref.current
+    if (!enabled || seen || !element || typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setSeen(true)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [ref, enabled, seen])
+
+  return seen
+}
+
 function DirectoryItem({
   workspaceId,
   row,
@@ -387,7 +397,12 @@ function DirectoryItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { formatDate, formatRelative } = useFormattedDate()
   const { stream, name, joinable } = row
-  const hover = useSidebarHoverIntent(!isMobile && !stream.archivedAt)
+  const hoverCardEnabled = !isMobile && !stream.archivedAt
+  const hover = useSidebarHoverIntent(hoverCardEnabled)
+  const itemRef = useRef<HTMLLIElement>(null)
+  const seen = useSeen(itemRef, hoverCardEnabled)
+  const warmStreamIds = useMemo(() => (seen ? [stream.id] : []), [seen, stream.id])
+  useStreamWarmup(warmStreamIds)
   const Icon = STREAM_ICONS[stream.type]
   const preview = stream.lastMessagePreview
   const lastActive = formatRelative(new Date(getActivityTime(stream)), new Date(), { terse: true })
@@ -404,6 +419,7 @@ function DirectoryItem({
 
   return (
     <li
+      ref={itemRef}
       className="group flex items-center gap-2 px-2"
       onPointerEnter={hover.onPointerEnter}
       onPointerLeave={hover.onPointerLeave}

@@ -150,7 +150,7 @@ export class SyncEngine {
    *  below-floor `forceFull` request arriving while a slim reconnect is already
    *  queued upgrades the queued run rather than being collapsed away. */
   private queuedReconnectForceFull = false
-  private activeStreamRefreshes = new Map<string, Promise<void>>()
+  private activeStreamRefreshes = new Map<string, Promise<boolean>>()
   /** Single-flighted display-only HTTP warm fetches (see warmStreamOverHttp).
    *  Kept separate from activeStreamRefreshes: a warm fetch performs no room
    *  join, so it must never satisfy a reconnect-path refresh that needs one. */
@@ -253,14 +253,16 @@ export class SyncEngine {
    *  here, re-asserted across reconnects, never torn down per-card. */
   private panelStreamIds = new Set<string>()
   /** Streams whose hover cards read local history, declared by every surface
-   *  that shows one. Each is refreshed once per page load: a first connect starts
-   *  the workspace catch-up at the server head, so a window persisted by an
-   *  earlier load misses whatever arrived while the app was closed. After that
-   *  refresh the room join and the catch-up cursor keep it current. */
+   *  that shows one. Timeline events heal only through a per-stream bootstrap,
+   *  never the workspace catch-up, so each is refreshed after every connect: a
+   *  window persisted by an earlier load and a reconnect's disconnect gap are the
+   *  same hole. Between connects the room join keeps it live. */
   private warmStreamIds = new Set<string>()
+  /** Refreshed (or in flight) since the last connect; a refresh that doesn't land
+   *  leaves the set so the next declaration or connect retries it. */
   private refreshedWarmStreamIds = new Set<string>()
-  /** Set once the first connect's bootstrap has run; a refresh before it is
-   *  deferred by the cold sweep and dropped. */
+  /** Set once the first connect's bootstrap has run; a refresh before it would be
+   *  deferred by the cold sweep. */
   private warmStreamsOpen = false
   private currentUser: { id: string } | null = null
   /** Last workspace bootstrap error, if any. Consumers can check this for 404/403 handling. */
@@ -376,7 +378,10 @@ export class SyncEngine {
     if (!this.warmStreamsOpen) return
     const toSync = [...this.warmStreamIds].filter((id) => !this.refreshedWarmStreamIds.has(id))
     for (const id of toSync) this.refreshedWarmStreamIds.add(id)
-    if (toSync.length > 0) void this.syncBoardStreams(toSync, { refreshPersisted: true })
+    if (toSync.length === 0) return
+    void this.syncBoardStreams(toSync, { refreshPersisted: true }).then((missed) => {
+      for (const id of missed) this.refreshedWarmStreamIds.delete(id)
+    })
   }
 
   /** Update the current auth user (called from React when auth state settles). */
@@ -464,10 +469,9 @@ export class SyncEngine {
         const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(isServerStreamId)
         if (pending.length > 0) void this.syncBoardStreams([...new Set(pending)])
       }
-      if (!isReconnect) {
-        this.warmStreamsOpen = true
-        this.warmStreams([])
-      }
+      this.refreshedWarmStreamIds.clear()
+      this.warmStreamsOpen = true
+      this.warmStreams([])
 
       // Process pending offline operations (edits, deletes, reactions, drafts)
       this.kickOperationQueue()
@@ -1290,9 +1294,11 @@ export class SyncEngine {
    * cursor-before-join → bootstrap → applyStreamBootstrap path opening a stream
    * runs — which dedupes in-flight refreshes and, while the socket is down,
    * degrades to the display-only HTTP warm fetch (delta-only, so cards with no
-   * persisted window skip instead of fetching).
+   * persisted window skip instead of fetching). Resolves to the streams whose
+   * refresh didn't land.
    */
-  private async syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<void> {
+  private async syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<string[]> {
+    const missed: string[] = []
     let cursor = 0
     const worker = async (): Promise<void> => {
       while (cursor < streamIds.length && !this.isDestroyed) {
@@ -1313,11 +1319,12 @@ export class SyncEngine {
           (await getLatestPersistedSequence(streamId)) !== null
         )
           continue
-        await this.refreshStreamAfterNavigation(streamId)
+        if (!(await this.refreshStreamAfterNavigation(streamId))) missed.push(streamId)
       }
     }
     const lanes = Math.min(BOARD_SYNC_CONCURRENCY, streamIds.length)
     await Promise.all(Array.from({ length: lanes }, () => worker()))
+    return missed
   }
 
   /** Member stream ids from the offline cache, for the bootstrap-failure path. */
@@ -1377,14 +1384,15 @@ export class SyncEngine {
     joinRoomFireAndForget(this.socket, room, new AbortController().signal, "SyncEngine")
   }
 
-  private refreshStreamAfterNavigation(streamId: string): Promise<void> {
-    if (this.isDestroyed || !isServerStreamId(streamId)) return Promise.resolve()
+  /** Resolves true only when a socket-backed refresh landed. */
+  private refreshStreamAfterNavigation(streamId: string): Promise<boolean> {
+    if (this.isDestroyed || !isServerStreamId(streamId)) return Promise.resolve(false)
     // Until the first-connect sweep has run it owns the first window of every
     // stream it fetches; a refresh here would apply a second, separate state.
     // Before the sweep starts every visible stream is in its set.
     if (!this.coldSweepSettled && (this.coldSweepStreamIds === null || this.coldSweepStreamIds.has(streamId))) {
       this.refreshesDeferredBySweep.add(streamId)
-      return Promise.resolve()
+      return Promise.resolve(false)
     }
 
     // Socket down (backgrounded transport, reconnect in flight): don't skip
@@ -1392,7 +1400,7 @@ export class SyncEngine {
     // window now; the reconnect's slim bootstrap re-runs the cursor-owned
     // refresh (with the room join) once the socket is back.
     if (!this.socket || !this.socket.connected) {
-      return this.warmStreamOverHttp(streamId)
+      return this.warmStreamOverHttp(streamId).then(() => false)
     }
 
     const existing = this.activeStreamRefreshes.get(streamId)
@@ -1407,7 +1415,7 @@ export class SyncEngine {
     return refresh
   }
 
-  private async performStreamRefresh(streamId: string): Promise<void> {
+  private async performStreamRefresh(streamId: string): Promise<boolean> {
     const { workspaceId, syncStatus, streamService, queryClient } = this.deps
     const key = `stream:${streamId}`
 
@@ -1418,7 +1426,7 @@ export class SyncEngine {
       const queryKey = streamKeys.bootstrap(workspaceId, streamId)
       const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
       const cursor = await this.joinStreamForCatchUp(streamId)
-      if (this.isDestroyed) return
+      if (this.isDestroyed) return false
       // Without a cached bootstrap this is a fresh open, not a catch-up —
       // fetch the full latest window instead of an append from the cursor.
       const after = previousBootstrap ? cursor : null
@@ -1433,9 +1441,11 @@ export class SyncEngine {
         })
       )
       syncStatus.set(key, "synced")
+      return true
     } catch (error) {
       this.applyReconnectStreamError(streamId, error)
       syncStatus.set(key, syncStatus.getError(key) ? "error" : "stale")
+      return false
     }
   }
 

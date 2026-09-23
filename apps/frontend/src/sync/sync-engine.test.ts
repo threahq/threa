@@ -990,25 +990,41 @@ describe("SyncEngine.warmStreams", () => {
     })
   })
 
-  it("should refresh a warm stream once per page load, leaving reconnects to the workspace catch-up", async () => {
+  it("should refresh a warm stream once per connect and again after a reconnect", async () => {
     const deps = makeDeps()
     memberBootstrap(deps, "stream_member")
     await persistMessage("stream_member", 3)
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     await primeConnectedEngine(engine, socket)
+    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
 
     engine.warmStreams(["stream_member"])
-    await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
-    })
-    deps.streamService.bootstrap.mockClear()
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
 
     engine.warmStreams(["stream_member"])
-    await engine.onConnect(asSocket(socket))
-
     await new Promise((resolve) => setTimeout(resolve, 25))
-    expect(deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")).toEqual([])
+    expect(warmCalls()).toHaveLength(1)
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(2))
+  })
+
+  it("should retry a warm stream whose refresh failed on its next declaration", async () => {
+    const deps = makeDeps()
+    memberBootstrap(deps, "stream_member")
+    await persistMessage("stream_member", 3)
+    const engine = new SyncEngine(deps)
+    await primeConnectedEngine(engine, new MockSocket())
+    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+
+    deps.streamService.bootstrap.mockRejectedValueOnce(new Error("network"))
+    engine.warmStreams(["stream_member"])
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    engine.warmStreams(["stream_member"])
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(2))
   })
 })
 
