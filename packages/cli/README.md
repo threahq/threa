@@ -6,22 +6,16 @@ It is one package with two heads. The command-line interface is the primary head
 
 ## Install
 
-The CLI runs `.ts` directly under [Bun](https://bun.sh) with no build step. It needs Bun on the machine and this repository checked out. It works from any project on the machine.
-
-Link the `threa` bin onto your PATH from the package directory:
+The CLI needs Node.js 22.13 or newer. Install it globally to put `threa` on your PATH:
 
 ```bash
-cd /abs/path/to/threa/packages/cli
-bun link
+npm install -g @threahq/cli
+threa whoami
 ```
 
-Or skip linking and invoke the entry point directly:
+Or run it without installing: `npx -y @threahq/cli whoami`. Update with `npm install -g @threahq/cli@latest`.
 
-```bash
-bun /abs/path/to/threa/packages/cli/src/cli.ts whoami
-```
-
-If you keep the CLI on PATH for a Claude Code session, add the bin directory to PATH in the environment Claude Code launches with, or call it by absolute path. Replace `/abs/path/to/threa` throughout with the absolute path to your checkout.
+From a checkout of this repository it also runs in place under [Bun](https://bun.sh): `bun /abs/path/to/threa/packages/cli/src/cli.ts whoami`.
 
 ## Configuration
 
@@ -146,7 +140,7 @@ Register it persistently for the current project:
 claude mcp add threa --scope local \
   --env THREA_API_KEY=threa_uk_… \
   --env THREA_WORKSPACE_ID=ws_… \
-  -- bun /abs/path/to/threa/packages/cli/src/cli.ts mcp serve
+  -- threa mcp serve
 ```
 
 Claude Code maps every worktree of a repo to the same project entry, so a persisted local-scope registration from one worktree repoints the others the next time they start. If you run more than one worktree, prefer a session-scoped registration passed at launch (`claude --mcp-config <path>`):
@@ -156,8 +150,8 @@ Claude Code maps every worktree of a repo to the same project entry, so a persis
   "mcpServers": {
     "threa": {
       "type": "stdio",
-      "command": "bun",
-      "args": ["/abs/path/to/threa/packages/cli/src/cli.ts", "mcp", "serve"],
+      "command": "threa",
+      "args": ["mcp", "serve"],
       "env": {
         "THREA_API_KEY": "threa_uk_…",
         "THREA_WORKSPACE_ID": "ws_…",

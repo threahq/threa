@@ -141,8 +141,8 @@ there is nothing to drop: the same key still opens your other scratchpads, and t
    ```yaml
    mcp_servers:
      threa:
-       command: "bun"
-       args: ["/path/to/threa/packages/cli/src/cli.ts", "mcp", "serve"]
+       command: "npx"
+       args: ["-y", "@threahq/cli", "mcp", "serve"]
        env:
          THREA_CONFIG: "/home/you/.threa/hermes-remote/threa-cli.json"
    ```
