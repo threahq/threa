@@ -36,7 +36,9 @@ const steps = [
       <div class="guide-meter">
         {
           steps.map((s, i) => (
-            <a class="gm-seg" href={`#step-${s.id}`} data-seg tabindex="-1" style={i === 0 ? "--fill: 1" : undefined} />
+            <a class="gm-seg" href={`#step-${s.id}`} data-seg tabindex="-1" style={i === 0 ? "--fill: 1" : undefined}>
+              <span class="gm-bar" />
+            </a>
           ))
         }
       </div>
