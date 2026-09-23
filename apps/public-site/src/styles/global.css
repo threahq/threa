@@ -974,6 +974,9 @@ body {
 .stop.is-kept {
   --dot-y: 50%;
 }
+.stop > .tl-row + .tl-row {
+  margin-top: 10px;
+}
 .stop:not(:first-child)::before,
 .stop:not(:last-child)::after {
   content: "";
