@@ -8,6 +8,7 @@ import {
   type BotAccessStatusChangedEventPayload,
   type DecisionResolvedEventPayload,
   type CallEndedEventPayload,
+  type CommandDispatchedPayload,
 } from "@threahq/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
@@ -613,11 +614,17 @@ export function getTimelineItemKey(item: TimelineItem): string {
 }
 
 /** A row's identity across an own send's optimistic → server swap: the server
- *  row carries the optimistic row's id as `clientMessageId`. */
+ *  row carries the optimistic row's id as `clientMessageId`, and a command's
+ *  dispatched event carries the optimistic command id as `clientCommandId`. */
 export function getTimelineItemArrivalKey(item: TimelineItem): string {
   if (item.type === "event") {
     const clientMessageId = (item.event.payload as { clientMessageId?: string } | undefined)?.clientMessageId
     if (clientMessageId) return clientMessageId
+  }
+  if (item.type === "command_group") {
+    const dispatched = item.events.find((event) => event.eventType === "command_dispatched")
+    const clientCommandId = (dispatched?.payload as CommandDispatchedPayload | undefined)?.clientCommandId
+    if (clientCommandId) return clientCommandId
   }
   return getTimelineItemKey(item)
 }
