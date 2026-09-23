@@ -3129,6 +3129,29 @@ describe("SyncEngine first-connect sweep", () => {
     engine.destroy()
   })
 
+  it("resolves claims to null when a resume bootstrap absorbs the first connect", async () => {
+    const deps = makeDeps()
+    let releaseWorkspace: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      releaseWorkspace = resolve
+    })
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      await held
+      return makeWorkspaceBootstrap()
+    })
+    const engine = new SyncEngine(deps)
+    const resumed = engine.refreshAfterConnectivityResume()
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalled())
+    const claim = engine.claimWorkspaceBootstrap()
+    const connecting = engine.onConnect(asSocket(new MockSocket()))
+
+    releaseWorkspace()
+    await Promise.all([resumed, connecting])
+
+    expect(await Promise.race([claim, Promise.resolve("pending")])).toBeNull()
+    engine.destroy()
+  })
+
   it("rejects a claim with the stream's own fetch error", async () => {
     const deps = makeSyncDeps()
     const forbidden = new ApiError(403, "FORBIDDEN", "Forbidden")

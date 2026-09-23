@@ -1215,6 +1215,10 @@ export class SyncEngine {
           })
           this.queuedReconnectBootstrap = chained
         }
+      } else if (!this.coldSweepSettled) {
+        // A first connect absorbed by an in-flight resume runs no sweep of its
+        // own, so nothing would ever settle its claimants.
+        return this.activeBootstrap.finally(() => this.settleColdSweep())
       }
       return this.queuedReconnectBootstrap ?? this.activeBootstrap
     }
