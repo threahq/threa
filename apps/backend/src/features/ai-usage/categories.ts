@@ -18,6 +18,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "general-research-loop": { category: "agents", stage: "agents" },
   "enclave-agent-loop": { category: "agents", stage: "agents" },
   "tool-guardian": { category: "agents", stage: "agents" },
+  "tool-guardian-decisions": { category: "agents", stage: "agents" },
   "turn-digest": { category: "agents", stage: "agents" },
   "summary-update": { category: "agents", stage: "agents" },
   "agent.episode-summary": { category: "agents", stage: "agents" },
