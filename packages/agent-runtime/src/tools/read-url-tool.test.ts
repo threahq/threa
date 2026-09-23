@@ -504,13 +504,13 @@ describe("read-url-tool", () => {
         requested.push(url)
         const route = routes[url] ?? { status: 404, type: "text/html", body: "not found" }
         const status = route.status ?? 200
-        return Promise.resolve({
-          ok: status < 400,
-          status,
-          statusText: status === 403 ? "Forbidden" : "",
-          headers: new Headers({ "content-type": route.type }),
-          text: () => Promise.resolve(route.body),
-        } as Response)
+        return Promise.resolve(
+          new Response(route.body, {
+            status,
+            statusText: status === 403 ? "Forbidden" : "",
+            headers: { "content-type": route.type },
+          })
+        )
       }) as unknown as typeof fetch
       return requested
     }

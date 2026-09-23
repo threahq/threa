@@ -43,6 +43,9 @@ const MAX_CONTENT_LENGTH = 50000
 const FETCH_TIMEOUT_MS = 30000
 const MAX_REDIRECTS = 5
 const MARKDOWN_COPY_TIMEOUT_MS = 3000
+// A markdown copy or llms.txt index is read no further than this. The model sees
+// MAX_CONTENT_LENGTH of a copy anyway, and an index this long is a full-text dump.
+const MAX_MARKDOWN_COPY_BYTES = 1024 * 1024
 const BROWSER_TIMEOUT_MS = 20000
 // Less text than this after conversion means a script draws the page.
 const THIN_PAGE_CHARS = 300
@@ -565,7 +568,7 @@ async function readMarkdownCopy(url: string, parent: AbortSignal): Promise<strin
     if ("error" in result || !result.response.ok) return null
     const contentType = (result.response.headers.get("content-type") || "").toLowerCase()
     if (!MARKDOWN_TYPE.test(contentType) && !contentType.includes("text/plain")) return null
-    const body = await result.response.text()
+    const body = await readTextUpTo(result.response, MAX_MARKDOWN_COPY_BYTES)
     return body.trim() ? body : null
   } catch (error) {
     if (parent.aborted) throw error
@@ -574,6 +577,21 @@ async function readMarkdownCopy(url: string, parent: AbortSignal): Promise<strin
   } finally {
     cleanup()
   }
+}
+
+async function readTextUpTo(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ""
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (total < maxBytes) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    total += value.byteLength
+  }
+  await reader.cancel()
+  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, maxBytes))
 }
 
 function markdownAlternate(html: string, baseUrl: string): string | null {
