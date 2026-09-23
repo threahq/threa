@@ -296,17 +296,7 @@ function CollapsedPreviewChip({
       >
         <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
         {icon}
-        {faviconUrl && (
-          <img
-            src={faviconUrl}
-            alt=""
-            className="h-3.5 w-3.5 shrink-0 rounded-sm"
-            loading="lazy"
-            onError={(e) => {
-              ;(e.target as HTMLImageElement).style.display = "none"
-            }}
-          />
-        )}
+        {faviconUrl && <PreviewFavicon src={faviconUrl} />}
         <span className="max-w-64 truncate">{label}</span>
       </Button>
       {onDismiss && (
@@ -350,17 +340,7 @@ function PreviewCardHeader({
         <ChevronDown className="h-3 w-3" />
       </button>
       {icon}
-      {faviconUrl && (
-        <img
-          src={faviconUrl}
-          alt=""
-          className="h-3.5 w-3.5 rounded-sm"
-          loading="lazy"
-          onError={(e) => {
-            ;(e.target as HTMLImageElement).style.display = "none"
-          }}
-        />
-      )}
+      {faviconUrl && <PreviewFavicon src={faviconUrl} />}
       <span className="text-xs text-muted-foreground truncate">{label}</span>
       <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
       <div className="reveal-actions flex gap-1">
@@ -1197,4 +1177,18 @@ function formatLinearStatus(status: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ")
+}
+
+function PreviewFavicon({ src }: { src: string }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-3.5 w-3.5 shrink-0 rounded-sm"
+      loading="lazy"
+      onError={(e) => {
+        ;(e.target as HTMLImageElement).style.display = "none"
+      }}
+    />
+  )
 }
