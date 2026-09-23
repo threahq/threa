@@ -83,8 +83,9 @@ async function seedUnreadChannel(page: Page, browser: import("@playwright/test")
   const { workspaceId, streamId } = extractIds(page)
 
   // Navigate away before the second user posts, so the unread is real
-  // server-side rather than optimistically-not-counted while open.
-  await page.goto(`/w/${workspaceId}`)
+  // server-side rather than optimistically-not-counted while open. Not to
+  // `/w/:id`: that can restore the last-opened stream, which is this one.
+  await page.goto(`/w/${workspaceId}/streams`)
 
   const other = await loginInNewContext(browser, `${prefix}-b-${testId}@example.com`, `${prefix} B ${testId}`)
   await expectApiOk(
@@ -214,9 +215,7 @@ test.describe("Inbox sidebar section", () => {
     // sidebar off-canvas with nothing to toggle) and the row is a realistic
     // "held" Inbox row for the drawer Clear action to act on.
     await setupPage.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect
-      .poll(() => serverUnreadCount(setupPage, workspaceId, streamId), { timeout: 15000 })
-      .toBe(0)
+    await expect.poll(() => serverUnreadCount(setupPage, workspaceId, streamId), { timeout: 15000 }).toBe(0)
 
     const storageState = await setupPage.context().storageState()
     const context = await browser.newContext({ storageState, hasTouch: true, viewport: PHONE })

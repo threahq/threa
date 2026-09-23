@@ -72,16 +72,19 @@ interface RecordedSnapshot {
 function snapshotRegions(): RegionSnapshot {
   const nav = document.querySelector('[role="navigation"][aria-label="Sidebar navigation"]')
   const rows = nav ? Array.from(nav.querySelectorAll('a[href*="/s/"]')) : []
-  // The open stream's own row is left out: viewing it marks it read (debounced
-  // auto-read), which unbolds and re-sorts that one row a moment after the gap
-  // lands. That is the viewer reading, not a load; the timeline region covers
-  // the open stream's content.
-  const openStream = location.pathname.match(/\/s\/([^/]+)/)?.[1]
+  // The open streams' own rows are left out: viewing one marks it read (debounced
+  // auto-read), which unbolds and re-sorts that row a moment after the gap
+  // lands. That is the viewer reading, not a load; the timeline and panel
+  // regions cover the open streams' content.
+  const openStreams = [
+    location.pathname.match(/\/s\/([^/]+)/)?.[1],
+    new URLSearchParams(location.search).get("panel"),
+  ].filter((id): id is string => !!id)
   const sidebar =
     rows.length === 0
       ? null
       : rows
-          .filter((link) => !openStream || !link.getAttribute("href")?.includes(`/s/${openStream}`))
+          .filter((link) => !openStreams.some((id) => link.getAttribute("href")?.includes(`/s/${id}`)))
           .map((link) => {
             const name = link.querySelector("span.text-sm.truncate")
             const preview = link.querySelector("span.flex-1.truncate")

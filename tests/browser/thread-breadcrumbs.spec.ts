@@ -91,12 +91,13 @@ test.describe("Thread Breadcrumbs", () => {
     await expect(page.getByRole("main").getByText(channelMessage).first()).toBeVisible({ timeout: 3000 })
   })
 
-  test("should show thread with root context suffix in sidebar", async ({ page }) => {
+  test("should nest the thread under its channel in the sidebar", async ({ page }) => {
     const testId = generateTestId()
 
     // Create a channel
     const channelName = `sidebar-${testId}`
     await createChannel(page, channelName, { switchToAll: false })
+    const channelId = page.url().match(/\/s\/([^/?]+)/)![1]
 
     // Post a message
     const editor = page.locator("[contenteditable='true']")
@@ -118,6 +119,7 @@ test.describe("Thread Breadcrumbs", () => {
     await expect(page.getByTestId("panel").getByText(`Thread reply ${testId}`)).toBeVisible({ timeout: 5000 })
     await expect(page.getByText(/Start a new thread/)).not.toBeVisible({ timeout: 3000 })
     await waitForRealThreadPanel(page)
+    const threadId = new URL(page.url()).searchParams.get("panel")!
 
     // Threads only appear in the Smart preset's urgency buckets — the suite's
     // default All preset has type sections (Channels/Scratchpads/DMs) that never
@@ -127,8 +129,10 @@ test.describe("Thread Breadcrumbs", () => {
     await expect(page.getByRole("navigation", { name: "Sidebar navigation" })).toBeVisible({ timeout: 10000 })
     await expandCollapsedSidebarSections(page)
 
-    // The sidebar should show the thread with a root context suffix " · #channel-name"
-    // This unique format (dot separator + channel slug) only appears on thread entries
-    await expect(page.getByText(`· #${channelName}`).first()).toBeVisible({ timeout: 10000 })
+    const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
+    await expect(sidebar.locator(`[data-tree-role="root"] a[href$="/s/${channelId}"]`).first()).toBeVisible({
+      timeout: 10000,
+    })
+    await expect(sidebar.locator(`[data-tree-role="child"] a[href$="/s/${threadId}"]`).first()).toBeVisible()
   })
 })

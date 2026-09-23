@@ -80,7 +80,7 @@ async function seedWorkspace(page: Page, browser: Browser, prefix: string): Prom
 async function createChannelAway(page: Page, workspaceId: string, name: string): Promise<string> {
   await createChannel(page, name)
   const streamId = page.url().match(/\/s\/([^/?]+)/)![1]
-  await page.goto(`/w/${workspaceId}`)
+  await page.goto(`/w/${workspaceId}/streams`)
   return streamId
 }
 

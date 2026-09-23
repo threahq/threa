@@ -14,7 +14,7 @@ function sidebarRow(section: Locator, streamId: string): Locator {
 async function createChannelAway(page: Page, workspaceId: string, name: string): Promise<string> {
   await createChannel(page, name)
   const streamId = page.url().match(/\/s\/([^/?]+)/)![1]
-  await page.goto(`/w/${workspaceId}`)
+  await page.goto(`/w/${workspaceId}/streams`)
   return streamId
 }
 

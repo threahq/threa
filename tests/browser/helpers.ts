@@ -157,10 +157,10 @@ export async function expandCollapsedSidebarSections(page: Page): Promise<void> 
   const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
   for (let i = 0; i < 6; i += 1) {
     const collapsed = sidebar.locator('[role="button"][aria-expanded="false"]')
-    if ((await collapsed.count()) === 0) break
-    const section = collapsed.first()
-    await section.click()
-    await expect(section).toHaveAttribute("aria-expanded", "true")
+    const count = await collapsed.count()
+    if (count === 0) break
+    await collapsed.first().click()
+    await expect(collapsed).toHaveCount(count - 1)
   }
 }
 

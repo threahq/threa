@@ -82,7 +82,7 @@ async function expectLandedOffOutgoingStream(page: Page, workspaceId: string, ou
 
 async function openScratchpad(page: Page, account: AccountFixture) {
   await page.getByRole("link", { name: account.scratchpadName }).first().click()
-  await expect(page.getByText(account.message).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole("main").getByText(account.message).first()).toBeVisible({ timeout: 30_000 })
 }
 
 test.describe("Account switch — two accounts sharing a workspace", () => {
@@ -171,7 +171,7 @@ test.describe("Account switch — two accounts sharing a workspace", () => {
 
     const openChannel = async (): Promise<void> => {
       await page.goto(`/w/${workspaceId}/s/${channelId}`)
-      await expect(page.getByText(seedText).first()).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByRole("main").getByText(seedText).first()).toBeVisible({ timeout: 30_000 })
     }
     await openChannel()
     // The picker lists this browser's accounts from a workspace-scoped query,
@@ -294,7 +294,7 @@ test.describe("Account switch — two accounts sharing a workspace", () => {
       )
 
       await expect(page).toHaveURL(new RegExp(`/s/${b.scratchpadId}`), { timeout: 30_000 })
-      await expect(page.getByText(b.message).first()).toBeVisible({ timeout: 30_000 })
+      await expect(page.getByRole("main").getByText(b.message).first()).toBeVisible({ timeout: 30_000 })
       await expectAccountOwnsWorkspace(page, b, a)
     })
   })
