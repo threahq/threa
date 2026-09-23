@@ -284,22 +284,11 @@ export const ReadStateRepository = {
   },
 
   /**
-   * Inbox "arrived at" timestamps for bootstrap: for each candidate stream,
-   * the `created_at` of the first other-author `message_created` event above
-   * this user's effective floor sequence — the read frontier the current
-   * Inbox membership is measured from. Held streams measure from
-   * `inbox_floor_event_id` (the frontier just before the hold began, frozen
-   * so later reads-without-clearing don't shift it); unheld streams measure
-   * from `last_read_event_id`. Either resolves to sequence 0 when null (never
-   * read / held from the start). A stream absent from the result has no
-   * arrival — fully read and unheld. A deleted message never qualifies (same
-   * `messages.deleted_at` join as `advance`'s hold rule), so deleting the
-   * only unread message clears the arrival too.
-   *
-   * One set-based lateral join (INV-56) over the `(stream_id, sequence)`
-   * index; the lateral naturally drops streams with no qualifying message, so
-   * the "held or has an unread other-author message" scoping falls out of
-   * the join rather than a separate filter.
+   * Inbox arrival per candidate stream: `created_at` of the first non-deleted
+   * other-author message above the floor. Held streams measure from the frozen
+   * `inbox_floor_event_id` so reading without clearing doesn't move arrival;
+   * unheld streams from `last_read_event_id`. Absent from the result = not in
+   * the Inbox.
    */
   async listInboxArrivals(
     db: Querier,

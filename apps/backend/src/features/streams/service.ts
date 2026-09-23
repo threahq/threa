@@ -30,6 +30,7 @@ import {
 import { formatParticipantNames } from "./display-name"
 import { checkStreamAccess, listAccessibleStreamIds } from "./access"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
+import { releaseInboxHold } from "./inbox-release"
 import {
   assertStreamWritable,
   assertViewerStreamWritable,
@@ -2833,16 +2834,7 @@ export class StreamService {
     await ReadStateRepository.ensureBatchForUpdate(client, userId, accessibleStreamIds)
     const { frontiers } = await this.advanceStreamsToLatest(client, workspaceId, userId, accessibleStreamIds)
 
-    const clearedStreamIds = await ReadStateRepository.clearInboxHeld(client, workspaceId, userId, accessibleStreamIds)
-
-    if (clearedStreamIds.length > 0) {
-      await OutboxRepository.insert(client, "stream:inbox_updated", {
-        workspaceId,
-        authorId: userId,
-        streamIds: clearedStreamIds,
-        held: false,
-      })
-    }
+    const clearedStreamIds = await releaseInboxHold(client, workspaceId, userId, accessibleStreamIds)
 
     return { accessibleStreamIds, clearedStreamIds, frontiers }
   }
