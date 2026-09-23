@@ -26,57 +26,47 @@ const schema = [
 >
   <SvgDefs />
 
-  <!-- ============================================================
-       HERO — premise stated plainly. Two columns so the masthead
-       doesn't hug the left margin: headline left, framing right.
-       ============================================================ -->
-  <div class="frame">
-    <div class="hero-shell">
-      <div class="hero-inner">
-        <div class="nav-row" data-decorative>
-          <div class="brand">
-            <svg><use href="#threa-mark" /></svg>
-            <span class="wordmark">Threa</span>
+  <div class="about">
+    <div class="frame">
+      <div class="hero-shell">
+        <div class="hero-inner">
+          <div class="nav-row" data-decorative>
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links">
+              <a href="/">Product</a>
+              <a href="/developers">Developers</a>
+              <a href="/about" aria-current="page">About</a>
+            </nav>
+            <a class="nav-login" href={loginUrl}>Log in</a>
+            <ThemeToggle />
           </div>
-          <nav class="nav-links">
-            <a href="/">Product</a>
-            <a href="/developers">Developers</a>
-            <a href="/about" aria-current="page">About</a>
-          </nav>
-          <a class="nav-login" href={loginUrl}>Log in</a>
-          <ThemeToggle />
-        </div>
 
-        <div class="about-hero">
-          <h1 class="h-display">
-            Threa came out of<br />
-            curiosity, and a bit<br />
-            of frustration.
-          </h1>
-          <p class="lede">
-            My day job is software engineering, where I spend a lot of time in
-            tools that are <em>fine</em> but never great. The little frustrations
-            add up, and eventually my curiosity got out of hand. So now
-            there's this.
-          </p>
+          <div class="ab-grid ab-hero">
+            <h1 class="h-display">Threa came out of curiosity, and a bit of frustration.</h1>
+            <p class="ab-lead">
+              My day job is software engineering, where I spend a lot of time in
+              tools that are <em>fine</em> but never great. The little frustrations
+              add up, and eventually my curiosity got out of hand. So now
+              there's this.
+            </p>
+          </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- ============================================================
-       01 · THE ORIGIN. Three strands of curiosity and frustration in
-       open columns, no cards. Mono gold labels carry the structure.
-       ============================================================ -->
-  <div class="frame warm">
-    <div class="memo-shell">
-      <h2>What I kept running into.</h2>
-      <p class="lede about-why-lede">
-        Three of them stuck around long enough that I did something about them.
-      </p>
+    <div class="frame warm">
+      <div class="memo-shell">
+        <div class="ab-grid">
+          <h2>What I kept running into.</h2>
+          <p class="ab-lede">
+            Three of them stuck around long enough that I did something about them.
+          </p>
+        </div>
 
-      <div class="about-duo">
-        <div class="about-q">
+        <div class="ab-grid ab-strand">
           <h3>What did we say again?</h3>
           <p>
             Years of decisions and their reasoning pile up in workplace chat,
@@ -89,7 +79,7 @@ const schema = [
             cost too much. So far it hasn't.
           </p>
         </div>
-        <div class="about-q">
+        <div class="ab-grid ab-strand">
           <h3>Tools are supposed to be yours.</h3>
           <p>
             Most tools want to become the platform you can't afford to leave, and
@@ -103,7 +93,7 @@ const schema = [
             server instead of trying to replace it.
           </p>
         </div>
-        <div class="about-q">
+        <div class="ab-grid ab-strand">
           <h3>Chat could be so much nicer.</h3>
           <p>
             Nested threading, quoting, replying to one message in a busy room,
@@ -115,129 +105,158 @@ const schema = [
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- ============================================================
-       MEET THE TEAM. Short, playful, first-person. It's one person.
-       ============================================================ -->
-  <div class="frame">
-    <div class="memo-shell is-centerpiece">
-      <h2>I'm the team.</h2>
-      <p class="lede">
-        Hi, I'm Kristoffer. People have paid me to build software for over ten
-        years now. During parental leave I started tinkering on Threa to keep
-        myself from going insane, and I'm not sure it worked: here I am, up late
-        after my wife has gone to bed, talking to an agent about who I am and why
-        I'm building this.
-      </p>
-      <div class="about-links">
-        <a href="https://github.com/kristofferremback" rel="me noopener" target="_blank">GitHub</a>
-        <a href="https://www.linkedin.com/in/kristofferremback/" rel="me noopener" target="_blank">LinkedIn</a>
+    <div class="frame">
+      <div class="memo-shell">
+        <div class="ab-grid">
+          <h2>I'm the team.</h2>
+          <div>
+            <p class="ab-lede">
+              Hi, I'm Kristoffer. People have paid me to build software for over ten
+              years now. During parental leave I started tinkering on Threa to keep
+              myself from going insane, and I'm not sure it worked: here I am, up late
+              after my wife has gone to bed, talking to an agent about who I am and why
+              I'm building this.
+            </p>
+            <div class="ab-links">
+              <a href="https://github.com/kristofferremback" rel="me noopener" target="_blank">GitHub</a>
+              <a href="https://www.linkedin.com/in/kristofferremback/" rel="me noopener" target="_blank">LinkedIn</a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ============================================================
-       HOW IT'S BUILT. Left-aligned process notes: the tools
-       philosophy, then building with agents. Public repo CTAs.
-       ============================================================ -->
-  <div class="frame warm">
-    <div class="memo-shell">
-      <h2>Built the way I want tools to work.</h2>
-      <p class="lede about-built-lede">
-        Good at its job, composable with everything else, and easy to step away
-        from. Threa is built that way on purpose. The door stays open, so if you
-        stay it's because you want to, not because leaving would cost you.
-      </p>
-      <p class="lede about-built-lede">
-        It has also been my way into building with AI agents. Most of Threa is
-        written by directing them, but the thinking stays mine, and that matters
-        more than ever. They're a good way to chase a curiosity, and you can get
-        genuinely decent software out of them as long as you do the thinking
-        yourself. Seeing where they shine and where they fall short has been half
-        the fun. It's a work in progress, on what I think is a good trajectory.
-        The repo is public, so have a look.
-      </p>
-      <div class="about-cta-row">
-        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source on GitHub</a>
-        <a class="os-cta" href="/developers/feature-requests">Request a feature</a>
+    <div class="frame warm">
+      <div class="memo-shell">
+        <div class="ab-grid">
+          <h2>Built the way I want tools to work.</h2>
+          <div>
+            <p class="ab-lede">
+              Good at its job, composable with everything else, and easy to step away
+              from. Threa is built that way on purpose. The door stays open, so if you
+              stay it's because you want to, not because leaving would cost you.
+            </p>
+            <p class="ab-lede">
+              It has also been my way into building with AI agents. Most of Threa is
+              written by directing them, but the thinking stays mine, and that matters
+              more than ever. They're a good way to chase a curiosity, and you can get
+              genuinely decent software out of them as long as you do the thinking
+              yourself. Seeing where they shine and where they fall short has been half
+              the fun. It's a work in progress, on what I think is a good trajectory.
+              The repo is public, so have a look.
+            </p>
+            <div class="ab-links">
+              <a href="https://github.com/threahq/threa">Browse the source on GitHub</a>
+              <a href="/developers/feature-requests">Request a feature</a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ============================================================
-       CLOSE
-       ============================================================ -->
-  <div class="frame">
-    <div class="memo-shell is-centerpiece about-close">
-      <h2>Early, and built in the open.</h2>
-      <p class="lede">
-        Threa is early, and there's plenty left to build. Join the waitlist, or
-        follow along in the public repo.
-      </p>
-      <div class="actions">
-        <a class="cta" href="/#waitlist">Join the waitlist</a>
+    <div class="frame night">
+      <div class="memo-shell ab-close">
+        <div class="ab-grid">
+          <h2>Early, and built in the open.</h2>
+          <div>
+            <p class="ab-lede">
+              Threa is early, and there's plenty left to build. Join the waitlist, or
+              follow along in the public repo.
+            </p>
+            <a class="cta" href="/#waitlist">Join the waitlist</a>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <footer class="footer">
-    <div class="brand" style="gap:10px;">
-      <svg style="width:24px;height:24px;color:hsl(var(--gold));"><use href="#threa-mark" /></svg>
-      <span class="wordmark" style="font-size:18px;">Threa</span>
-      <span class="year">2026</span>
-    </div>
-    <div class="ln">
-      <a href="/">Product</a>
-      <a href="/developers">Developers</a>
-      <a href="/about">About</a>
-    </div>
-  </footer>
+    <footer class="footer">
+      <div class="brand" style="gap:10px;">
+        <svg style="width:24px;height:24px;color:hsl(var(--gold));"><use href="#threa-mark" /></svg>
+        <span class="wordmark" style="font-size:18px;">Threa</span>
+        <span class="year">2026</span>
+      </div>
+      <div class="ln">
+        <a href="/">Product</a>
+        <a href="/developers">Developers</a>
+        <a href="/about">About</a>
+      </div>
+    </footer>
+  </div>
 
   <style>
-    /* Two-column masthead: headline and framing sit side by side. */
-    .about-hero {
+    /* Every section shares one grid: headings hang in the left column, prose
+       reads down the right one, so the page keeps the same two axes top to
+       bottom instead of switching between split, left and centred layouts. */
+    .ab-grid {
       display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
-      gap: 56px;
-      align-items: end;
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      column-gap: clamp(40px, 5vw, 72px);
+      align-items: baseline;
     }
-    .about-hero .lede { max-width: 460px; font-size: 18px; margin: 0 0 6px; }
-    .about-why-lede { max-width: 620px; font-size: 17px; margin: 0 0 4px; }
+    .ab-grid > :first-child { grid-column: 1; }
+    .ab-grid > :last-child { grid-column: 2; }
 
-    /* The strands: open columns, no card chrome. A hairline rule and a mono
-       label give structure without boxing them in. */
-    .about-duo {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 40px;
-      margin-top: 24px;
+    .hero-shell::before { display: none; }
+    .ab-hero .h-display {
+      grid-column: 1 / -1;
+      font-size: clamp(42px, 6.4vw, 92px);
+      text-wrap: balance;
+      margin: 0 0 40px;
     }
-    .about-q { border-top: 1px solid hsl(var(--line)); padding-top: 20px; }
-    .about-q h3 {
-      margin: 0 0 10px;
-      font-family: var(--font-display);
-      font-weight: 500;
-      font-size: 19px;
-      line-height: 1.3;
-      letter-spacing: -0.01em;
+    .ab-lead {
+      margin: 0;
+      max-width: 34em;
+      font-size: 20px;
+      line-height: 1.5;
       color: hsl(var(--ink));
     }
-    .about-q p {
+
+    .memo-shell h2 {
       margin: 0;
-      font-size: 14px;
+      max-width: 9.5em;
+      text-wrap: balance;
+    }
+    .ab-lede {
+      margin: 0;
+      max-width: 36em;
+      font-size: 18px;
       line-height: 1.6;
       color: hsl(var(--ink-soft));
     }
+    .ab-lede + .ab-lede { margin-top: 18px; }
 
-    /* Centered profile links under the bio. Quiet mono, gold underline. */
-    .about-links {
+    .ab-strand {
+      margin-top: 44px;
+      padding-top: 28px;
+      border-top: 1px solid hsl(var(--line));
+    }
+    .ab-grid + .ab-strand { margin-top: 56px; }
+    .ab-strand h3 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-weight: 750;
+      font-size: 24px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      color: hsl(var(--ink));
+      text-wrap: balance;
+    }
+    .ab-strand p {
+      margin: 0;
+      max-width: 38em;
+      font-size: 16px;
+      line-height: 1.7;
+      color: hsl(var(--ink-soft));
+    }
+
+    .ab-links {
       display: flex;
-      justify-content: center;
-      gap: 24px;
+      flex-wrap: wrap;
+      gap: 12px 28px;
       margin-top: 26px;
     }
-    .about-links a {
+    .ab-links a {
       font-size: 15px;
       font-weight: 500;
       color: hsl(var(--ink));
@@ -245,31 +264,37 @@ const schema = [
       text-decoration-color: hsl(var(--gold) / 0.5);
       text-underline-offset: 4px;
     }
-    .about-links a:hover { text-decoration-color: hsl(var(--gold)); }
-
-    /* Section 03 reads as personal process notes: left-aligned prose with a
-       readable measure, and its "get involved" links sit under it. */
-    .about-built-lede { max-width: 640px; font-size: 17px; }
-    .about-built-lede + .about-built-lede { margin-top: 16px; }
-    .about-cta-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 14px 28px;
-      margin-top: 24px;
+    .ab-links a:focus-visible {
+      outline: 2px solid hsl(var(--gold));
+      outline-offset: 3px;
+      border-radius: 2px;
     }
-    .about-cta-row .os-cta { margin-top: 0; }
-    .about-close .actions {
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 12px 18px;
-      margin-top: 8px;
+
+    /* The close takes the home page's night register, so both pages end on
+       the same weight. */
+    .ab-close h2 { color: hsl(38 16% 94%); }
+    .ab-close .ab-lede { color: hsl(35 12% 72%); margin-bottom: 28px; }
+
+    @media (hover: hover) {
+      .ab-links a:hover { text-decoration-color: hsl(var(--gold)); }
     }
 
     @media (max-width: 880px) {
-      .about-hero { grid-template-columns: 1fr; gap: 24px; align-items: start; }
-      .about-duo { grid-template-columns: 1fr; gap: 28px; }
+      .ab-grid { grid-template-columns: minmax(0, 1fr); }
+      .ab-grid > :first-child,
+      .ab-grid > :last-child { grid-column: 1; }
+      .memo-shell h2 { margin-bottom: 18px; max-width: none; }
+      .ab-hero .h-display { margin-bottom: 24px; }
+      .ab-lead { font-size: 18px; }
+      .ab-lede { font-size: 17px; }
+      .ab-strand { margin-top: 36px; padding-top: 24px; }
+      .ab-grid + .ab-strand { margin-top: 40px; }
+      .ab-strand h3 { font-size: 21px; margin-bottom: 10px; }
+      .ab-strand p { font-size: 16px; }
+    }
+
+    @media (max-width: 560px) {
+      .about .memo-shell { padding-top: 64px; padding-bottom: 64px; }
     }
   </style>
 </Layout>
