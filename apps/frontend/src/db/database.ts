@@ -239,6 +239,8 @@ export interface CachedEvent {
   _sentAt?: number
   /** Persisted stream sequence visible when this optimistic row was created. */
   _anchorSequenceNum?: number
+  /** `_status` before the current edit; read only while `_status` is "editing". */
+  _preEditStatus?: "pending" | "failed"
   _cachedAt: number
   /**
    * Client wall-clock (ms) of the most recent socket-driven payload patch

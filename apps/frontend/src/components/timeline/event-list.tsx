@@ -28,6 +28,7 @@ import { isSameAuthorRun } from "@/lib/message-grouping"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
 import { PopIn, useArrivals } from "./pop-in"
+import { isInFlight } from "@/stores/stream-store"
 import type {
   ConversationOverlayContext,
   ConversationOverlayModel,
@@ -619,6 +620,12 @@ export function getTimelineItemArrivalKey(item: TimelineItem): string {
     if (clientMessageId) return clientMessageId
   }
   return getTimelineItemKey(item)
+}
+
+/** An own send not yet echoed; it sits at the tail until its server row replaces it. */
+export function isTimelineItemInFlight(item: TimelineItem): boolean {
+  // Unsent rows reach the timeline as their cached rows, `_status` included.
+  return item.type === "event" && isInFlight(item.event as { _status?: string; _preEditStatus?: string })
 }
 
 /** Number of skeleton placeholder rows prepended while an older page is in flight. */
@@ -1368,7 +1375,8 @@ export function EventList({
   const arrivals = useArrivals(
     itemsWithDividers.map(getTimelineItemArrivalKey),
     streamId,
-    animateArrivals && !isLoading
+    animateArrivals && !isLoading,
+    new Set(itemsWithDividers.filter(isTimelineItemInFlight).map(getTimelineItemArrivalKey))
   )
 
   if (isLoading) {

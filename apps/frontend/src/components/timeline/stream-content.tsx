@@ -100,6 +100,7 @@ import {
   findTimelineTargetIndex,
   getTimelineItemKey,
   getTimelineItemArrivalKey,
+  isTimelineItemInFlight,
   filterVisibleItems,
   collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
@@ -3545,6 +3546,7 @@ function TimelineMessageList({
   const scrollerItems = visibleItems.map((item, index) => ({
     key: getTimelineItemKey(item),
     arrivalKey: getTimelineItemArrivalKey(item),
+    inFlight: isTimelineItemInFlight(item),
     node: (
       <TimelineItemContent
         item={item}
