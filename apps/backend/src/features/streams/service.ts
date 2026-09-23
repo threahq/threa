@@ -10,6 +10,7 @@ import {
   type UpdateStreamParams,
 } from "./repository"
 import { StreamMemberRepository, StreamMember } from "./member-repository"
+import { StreamDirectoryStatsRepository } from "./directory-stats-repository"
 import { ReadStateRepository, type StreamReadState } from "./read-state-repository"
 import { getEffectiveReadState, type EffectiveReadState } from "./effective-read-state"
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
@@ -70,6 +71,7 @@ import {
   type StreamReadFrontier,
   type StreamReadFrontierSnapshot,
   TitleSources,
+  type StreamDirectoryStats,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { draftStreamUniquenessKey } from "../drafts"
@@ -2036,6 +2038,10 @@ export class StreamService {
         },
       ])
     })
+  }
+
+  async listDirectoryStats(workspaceId: string, userId: string): Promise<StreamDirectoryStats[]> {
+    return StreamDirectoryStatsRepository.listForViewer(this.pool, workspaceId, userId)
   }
 
   async checkSlugAvailable(workspaceId: string, slug: string, excludeStreamId?: string): Promise<boolean> {

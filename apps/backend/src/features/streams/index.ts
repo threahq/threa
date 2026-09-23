@@ -52,6 +52,7 @@ export { resolveNotificationLevelsForStream } from "./notification-resolver"
 export type { ResolvedNotification } from "./notification-resolver"
 
 export { StreamRepository } from "./repository"
+export { StreamDirectoryStatsRepository, DIRECTORY_ACTIVITY_DAYS } from "./directory-stats-repository"
 export type {
   Stream,
   InsertStreamParams,

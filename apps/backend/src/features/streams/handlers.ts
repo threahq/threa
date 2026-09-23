@@ -1244,6 +1244,11 @@ export function createStreamHandlers({
       })
     },
 
+    async directoryStats(req: Request, res: Response) {
+      const stats = await streamService.listDirectoryStats(req.workspaceId!, req.user!.id)
+      res.json({ stats })
+    },
+
     async checkSlugAvailable(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 

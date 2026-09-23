@@ -740,6 +740,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspace.clearInbox
   )
   app.get(
+    "/api/workspaces/:workspaceId/streams/directory-stats",
+    ...authed,
+    audit("streams.directory_stats", "read"),
+    stream.directoryStats
+  )
+  app.get(
     "/api/workspaces/:workspaceId/streams/slug-available",
     ...authed,
     audit("streams.slug_available", "read"),

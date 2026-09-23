@@ -431,6 +431,7 @@ export type {
   E2eActor,
   LastMessagePreview,
   StreamWithPreview,
+  StreamDirectoryStats,
   StreamViewerState,
   ViewerStream,
   ViewerStreamWithPreview,

@@ -84,6 +84,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "streams.read_all",
   "streams.inbox_clear",
   "streams.slug_available",
+  "streams.directory_stats",
   "streams.get",
   "streams.update",
   "streams.regenerate_title",

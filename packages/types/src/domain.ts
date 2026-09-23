@@ -334,6 +334,15 @@ export interface StreamWithPreview extends Stream {
   lastMessagePreview: LastMessagePreview | null
 }
 
+/** Explorer facts for one readable stream; `activity[i]` counts messages in the 24h window ending `i` days ago. */
+export interface StreamDirectoryStats {
+  streamId: string
+  memberCount: number
+  /** Up to five member ids, most recently joined first. */
+  recentMemberIds: string[]
+  activity: number[]
+}
+
 export interface StreamViewerState {
   readOnly: boolean
   readOnlyReason: StreamReadOnlyReason | null
