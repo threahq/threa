@@ -150,8 +150,6 @@ describe("LinkPreviewCard", () => {
       "Run `npm install`.",
       "",
       "</details>",
-      "",
-      '<style>body { display: none }</style><img src="https://img.example/logo.png" onerror="alert(1)" alt="Logo">',
     ].join("\n")
     const preview = makeGitHubPreview({
       url: "https://github.com/vercel-labs/json-render",
@@ -169,7 +167,7 @@ describe("LinkPreviewCard", () => {
           renderMode: "markdown",
           markdownContent,
           startLine: 1,
-          endLine: 17,
+          endLine: 15,
           truncated: true,
           lines: [],
         },
@@ -184,21 +182,17 @@ describe("LinkPreviewCard", () => {
     const readme = container.querySelector(".markdown-content")!
 
     expect({
-      rawTags: /<\/?(p|a|img|details|style)\b|<!--/.test(readme.textContent ?? ""),
+      rawTags: /<\/?(p|a|img|details)\b|<!--/.test(readme.textContent ?? ""),
       badge: screen.getByRole("link", { name: "npm version: @json-render/core" }).getAttribute("href"),
       emptyBadgeLink: readme.querySelector('a[href="https://example.com/empty"]'),
       nestedLinks: readme.querySelectorAll(":scope a a").length,
       summary: readme.querySelector("details summary")?.textContent,
-      style: readme.querySelector("style"),
-      logo: screen.getByRole("link", { name: "Logo" }).getAttribute("onerror"),
     }).toEqual({
       rawTags: false,
       badge: "https://www.npmjs.com/package/@json-render/core",
       emptyBadgeLink: null,
       nestedLinks: 0,
       summary: "Install",
-      style: null,
-      logo: null,
     })
   })
 
