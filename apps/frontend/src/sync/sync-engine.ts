@@ -168,7 +168,9 @@ export class SyncEngine {
    * non-reconnect bootstrap finishes; from then on the query layer fetches for
    * itself.
    */
-  private coldSweepClaims = new Map<string, StreamBootstrapClaim>()
+  private coldSweepClaims = new Map<string, BootstrapClaim<CachedStreamBootstrap>>()
+  /** The workspace snapshot's equivalent (`claimWorkspaceBootstrap`), settled with the stream claims. */
+  private coldWorkspaceClaim: BootstrapClaim<WorkspaceBootstrap> | null = null
   private coldSweepSettled = false
   /** The streams the running first-connect sweep fetches; null until it starts. */
   private coldSweepStreamIds: ReadonlySet<string> | null = null
@@ -727,16 +729,34 @@ export class SyncEngine {
     if (this.coldSweepStreamIds !== null && !this.coldSweepStreamIds.has(streamId)) return null
     let claim = this.coldSweepClaims.get(streamId)
     if (!claim) {
-      claim = createStreamBootstrapClaim()
+      claim = createBootstrapClaim<CachedStreamBootstrap>()
       this.coldSweepClaims.set(streamId, claim)
     }
     return claim.promise
   }
 
-  private settleColdSweep(sweptStreamIds: ReadonlySet<string> = new Set()): void {
+  /**
+   * Hand the workspace snapshot to the query layer from the first connect
+   * instead of a second fetch. That fetch would apply outside the sweep's apply
+   * window, so the sidebar would land in its own renders ahead of the timelines.
+   * Null once the first connect has settled: the caller fetches for itself. The
+   * promise resolves to null when that connect landed no snapshot.
+   */
+  claimWorkspaceBootstrap(): Promise<WorkspaceBootstrap | null> | null {
+    if (this.coldSweepSettled || this.isDestroyed) return null
+    this.coldWorkspaceClaim ??= createBootstrapClaim<WorkspaceBootstrap>()
+    return this.coldWorkspaceClaim.promise
+  }
+
+  private settleColdSweep(
+    sweptStreamIds: ReadonlySet<string> = new Set(),
+    workspaceBootstrap: WorkspaceBootstrap | null = null
+  ): void {
     this.coldSweepSettled = true
     for (const claim of this.coldSweepClaims.values()) claim.resolve(null)
     this.coldSweepClaims.clear()
+    this.coldWorkspaceClaim?.resolve(workspaceBootstrap)
+    this.coldWorkspaceClaim = null
     // A stream navigated to during the sweep that the sweep did not cover has a
     // cached window the query layer will not refetch (infinite stale time), so
     // its deferred navigation refresh runs now.
@@ -815,6 +835,7 @@ export class SyncEngine {
     // Only the streams whose window actually landed count as swept; a stream
     // whose fetch failed keeps its deferred refresh so settle retries it.
     let sweptStreamIds: ReadonlySet<string> = new Set()
+    let landedBootstrap: WorkspaceBootstrap | null = null
     for (const streamId of visibleStreamIds) {
       syncStatus.set(`stream:${streamId}`, "syncing")
       syncStatus.setError(`stream:${streamId}`, null)
@@ -1020,6 +1041,7 @@ export class SyncEngine {
       // Snapshot applied: no pending cold snapshot can be masked any more, so
       // catch-up's fallback seed may read head again from here on.
       if (!_isReconnect) this.coldSnapshotSettled = true
+      landedBootstrap = bootstrap
 
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")
@@ -1060,7 +1082,7 @@ export class SyncEngine {
       return !this.isAccountCurrent() ? { status: "cancelled" } : { status: "error", error }
     } finally {
       // Whatever the sweep did not hand over, the query layer now fetches itself.
-      if (!_isReconnect) this.settleColdSweep(sweptStreamIds)
+      if (!_isReconnect) this.settleColdSweep(sweptStreamIds, landedBootstrap)
     }
   }
 
@@ -1193,6 +1215,10 @@ export class SyncEngine {
           })
           this.queuedReconnectBootstrap = chained
         }
+      } else if (!this.coldSweepSettled) {
+        // A first connect absorbed by an in-flight resume runs no sweep of its
+        // own, so nothing would ever settle its claimants.
+        return this.activeBootstrap.finally(() => this.settleColdSweep())
       }
       return this.queuedReconnectBootstrap ?? this.activeBootstrap
     }
@@ -2103,16 +2129,16 @@ export function isSyncEngineCurrent(engine: SyncEngine, workspaceId: string): bo
   return engine.workspaceId === workspaceId && !engine.isDestroyed
 }
 
-interface StreamBootstrapClaim {
-  promise: Promise<CachedStreamBootstrap | null>
-  resolve: (bootstrap: CachedStreamBootstrap | null) => void
+interface BootstrapClaim<T> {
+  promise: Promise<T | null>
+  resolve: (bootstrap: T | null) => void
   reject: (error: unknown) => void
 }
 
-function createStreamBootstrapClaim(): StreamBootstrapClaim {
-  let resolve: StreamBootstrapClaim["resolve"] = () => {}
-  let reject: StreamBootstrapClaim["reject"] = () => {}
-  const promise = new Promise<CachedStreamBootstrap | null>((res, rej) => {
+function createBootstrapClaim<T>(): BootstrapClaim<T> {
+  let resolve: BootstrapClaim<T>["resolve"] = () => {}
+  let reject: BootstrapClaim<T>["reject"] = () => {}
+  const promise = new Promise<T | null>((res, rej) => {
     resolve = res
     reject = rej
   })

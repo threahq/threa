@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react"
-import { Check, ChevronDown, MoreHorizontal } from "lucide-react"
+import { Check, ChevronDown, Compass, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -58,6 +58,23 @@ export interface SidebarActionItem {
    * dropdown on touch). Same grouping helper the message action menus use.
    */
   groupId?: string
+}
+
+const BROWSE_LABELS = { all: "Browse streams", scratchpads: "Browse scratchpads" } as const
+
+/** The stream explorer entry every sidebar menu carries, so the explorer is one right-click away. */
+export function browseStreamsAction(
+  workspaceId: string,
+  onSelect: () => void,
+  tab: keyof typeof BROWSE_LABELS = "all"
+): SidebarActionItem {
+  return {
+    id: "browse-streams",
+    label: BROWSE_LABELS[tab],
+    icon: Compass,
+    href: tab === "all" ? `/w/${workspaceId}/streams` : `/w/${workspaceId}/streams/${tab}`,
+    onSelect,
+  }
 }
 
 export interface SidebarActionPreview {
@@ -379,14 +396,27 @@ export function SidebarActionContextMenu({ actions, children, disabled, focusRef
     setOpen(false)
     setMountKey((key) => key + 1)
   })
+  // Linux and macOS fire contextmenu on mousedown, so the menu mounts under the held button and Radix
+  // would select whichever item the release lands on. The window listener runs after React's handlers.
+  const heldRef = useRef(false)
+  const onContextMenu = (event: MouseEvent) => {
+    if (event.buttons === 0 || heldRef.current) return
+    heldRef.current = true
+    window.addEventListener("pointerup", () => (heldRef.current = false), { once: true })
+  }
 
   if (disabled || actions.length === 0) return <>{children}</>
 
   return (
     <ContextMenu key={mountKey} onOpenChange={setOpen}>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild onContextMenu={onContextMenu}>
+        {children}
+      </ContextMenuTrigger>
       <ContextMenuContent
         className="w-40"
+        onPointerUpCapture={(event) => {
+          if (heldRef.current) event.stopPropagation()
+        }}
         onCloseAutoFocus={(event) => {
           const target = focusRef?.current
           if (!target) return

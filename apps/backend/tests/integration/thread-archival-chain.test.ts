@@ -136,6 +136,9 @@ describe("thread archival chain", () => {
     )
     await pool.query("DELETE FROM streams WHERE workspace_id = $1 AND id <> $2", [workspace, ids.A])
     await pool.query("UPDATE streams SET archived_at = NULL WHERE id = $1", [ids.A])
+    // The preloaded server's outbox handler can still be ending session links for
+    // the previous test's archive cascade; fresh ids keep it off this test's rows.
+    for (const key of ["B", "C", "D", "E", "F", "G"] as const) ids[key] = streamId()
     await insertThread(ids.B, ids.A, author)
     await insertThread(ids.C, ids.B, author)
     await insertThread(ids.D, ids.C, owner)

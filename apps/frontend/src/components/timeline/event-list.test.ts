@@ -614,6 +614,71 @@ describe("annotateConversationRevivals", () => {
   })
 })
 
+describe("annotateConversationRevivals run splits", () => {
+  // One author, one minute apart: annotateAuthorGroups folds all of them into a
+  // single run, so any head after the first comes from the conversation split.
+  const run = (count: number): TimelineItem[] =>
+    annotateAuthorGroups(
+      Array.from({ length: count }, (_, i) =>
+        toEventItem(createMessageEvent({ id: String(i + 1), actorId: "user_a", createdAt: `2026-04-19T10:0${i}:00Z` }))
+      )
+    )
+
+  const split = (items: TimelineItem[], membership: Record<string, string>) => {
+    const conversationIds = new Map(Object.entries(membership))
+    return continuationFlags(annotateConversationRevivals(items, conversationIds, new Map(), NO_SETTLING))
+  }
+
+  it("keeps a run whose messages share a conversation", () => {
+    expect(split(run(3), { msg_1: "conv_x", msg_2: "conv_x", msg_3: "conv_x" })).toEqual([false, true, true])
+  })
+
+  it("starts a new run when the conversation changes", () => {
+    expect(split(run(3), { msg_1: "conv_x", msg_2: "conv_x", msg_3: "conv_y" })).toEqual([false, true, false])
+  })
+
+  it("does not split on an unassigned message, and compares across it", () => {
+    expect(split(run(4), { msg_1: "conv_x", msg_3: "conv_x", msg_4: "conv_y" })).toEqual([false, true, true, false])
+  })
+
+  it("starts a new run at the message carrying the revival chip", () => {
+    // msg_2 declares conv_x after an unassigned msg_1: no known conversation
+    // changed, but the chip row still heads its own run.
+    const items = annotateAuthorGroups([
+      toEventItem(createMessageEvent({ id: "1", actorId: "user_a", createdAt: "2026-04-19T10:00:00Z" })),
+      toEventItem(
+        createMessageEvent({
+          id: "2",
+          actorId: "user_a",
+          createdAt: "2026-04-19T10:01:00Z",
+          payload: { declaredConversationId: "conv_x" },
+        })
+      ),
+    ])
+    expect(continuationFlags(annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING))).toEqual([
+      false,
+      false,
+    ])
+  })
+
+  it("adopts the first known conversation of a run that opened unassigned", () => {
+    expect(split(run(3), { msg_2: "conv_x", msg_3: "conv_y" })).toEqual([false, true, false])
+  })
+
+  it("leaves a still-settling message in the run", () => {
+    const items = run(2)
+    const membership = new Map([
+      ["msg_1", "conv_x"],
+      ["msg_2", "conv_y"],
+    ])
+    const settling = new Set(["msg_2"])
+    expect(continuationFlags(annotateConversationRevivals(items, membership, new Map(), settling))).toEqual([
+      false,
+      true,
+    ])
+  })
+})
+
 describe("findMessageItemIndex", () => {
   function eventItem(id: string, messageId: string): TimelineItem {
     return {

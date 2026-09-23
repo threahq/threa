@@ -2335,6 +2335,83 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
   })
 
+  describe("stream:inbox_updated", () => {
+    function seedUnreadState(inboxHeldStreamIds?: string[]) {
+      return db.unreadState.put({
+        id: "ws_1",
+        workspaceId: "ws_1",
+        unreadCounts: {},
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        latestOrdinals: {},
+        mutedStreamIds: [],
+        inboxHeldStreamIds,
+        _cachedAt: Date.now(),
+      })
+    }
+
+    it("adds streams to the held set when held is true", async () => {
+      await seedUnreadState([])
+      const queryClient = new QueryClient()
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:inbox_updated", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1", "stream_2"],
+        held: true,
+      })
+
+      await vi.waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.inboxHeldStreamIds).toEqual(expect.arrayContaining(["stream_1", "stream_2"]))
+      })
+      cleanup()
+    })
+
+    it("removes streams from the held set when held is false", async () => {
+      await seedUnreadState(["stream_1", "stream_2"])
+      const queryClient = new QueryClient()
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:inbox_updated", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        held: false,
+      })
+
+      await vi.waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.inboxHeldStreamIds).toEqual(["stream_2"])
+      })
+      cleanup()
+    })
+
+    it("ignores a payload for another workspace", async () => {
+      await seedUnreadState([])
+      const queryClient = new QueryClient()
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:inbox_updated", {
+        workspaceId: "ws_other",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        held: true,
+      })
+
+      await new Promise((r) => setTimeout(r, 20))
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.inboxHeldStreamIds).toEqual([])
+      cleanup()
+    })
+  })
+
   it("applies gate-dispatched saved/scheduled catch-up replays to IDB", async () => {
     // The coverage the engine-gated `refetchOnReconnect` is traded for: these
     // handlers register on the engine's event gate, so a catch-up replay
@@ -4072,6 +4149,54 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     cleanup()
   })
 
+  it("sets held membership from stream:read's post-write inboxHeld, server-authoritative", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:read", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_6",
+      lastReadSequence: "8",
+      lastReadOrdinal: 5,
+      inboxHeld: true,
+    })
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.inboxHeldStreamIds).toEqual(["stream_1"])
+    })
+
+    cleanup()
+  })
+
+  it("leaves held membership untouched when stream:read omits inboxHeld", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    await db.unreadState.update("ws_1", { inboxHeldStreamIds: ["stream_1"] })
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:read", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_6",
+      lastReadSequence: "8",
+      lastReadOrdinal: 5,
+    })
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(0)
+    })
+    // No inboxHeld in the payload — the pre-existing hold must survive.
+    expect((await db.unreadState.get("ws_1"))?.inboxHeldStreamIds).toEqual(["stream_1"])
+
+    cleanup()
+  })
+
   it("applies stream:read_all reads as absolute positions", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
@@ -4471,6 +4596,54 @@ describe("latest ordinal seeding and reconnect merge (sync phase 2c)", () => {
 
     expect(merged.unreadCounts).toEqual({ stream_drifted: 4, stream_busy: 3 })
     expect(merged.messageCounts).toEqual({ stream_drifted: 10, stream_busy: 12 })
+  })
+
+  it("mergeReconnectWorkspaceBootstrap keeps a locally-cleared hold from being reinstated by a stale snapshot", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({
+        unreadCounts: { stream_held: 0 },
+        inboxHeldStreamIds: ["stream_held"],
+      }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(),
+      localStreams: [],
+      localMemberships: [],
+      localReadStates: [],
+      localUnreadState: {
+        id: "ws_1",
+        workspaceId: "ws_1",
+        // stream_held was cleared locally after the server snapshot was taken;
+        // the touched-set must win so the stale snapshot can't reinstate it.
+        unreadCounts: { stream_held: 0 },
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        inboxHeldStreamIds: [],
+        mutedStreamIds: [],
+        counterTouchedAt: { stream_held: fetchStartedAt + 500 },
+        _cachedAt: fetchStartedAt + 500,
+      },
+      fetchStartedAt,
+    })
+
+    expect(merged.inboxHeldStreamIds).toEqual([])
+  })
+
+  it("mergeReconnectWorkspaceBootstrap drops a terminal stream's held membership", () => {
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({ inboxHeldStreamIds: ["stream_gone"] }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(["stream_gone"]),
+      localStreams: [],
+      localMemberships: [],
+      localReadStates: [],
+    })
+
+    expect(merged.inboxHeldStreamIds).toEqual([])
   })
 })
 

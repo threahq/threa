@@ -1,0 +1,106 @@
+import { test, expect } from "@playwright/test"
+import { createChannel, expectApiOk, loginAndCreateWorkspace } from "./helpers"
+
+test("keeps the sent-message menu open beside its reminder choices", async ({ page }) => {
+  test.setTimeout(60000)
+  const { testId } = await loginAndCreateWorkspace(page, "reminder-menu")
+  await createChannel(page, `reminder-${testId}`, { switchToAll: false })
+  const [, workspaceId, streamId] = page.url().match(/\/w\/([^/]+)\/s\/([^/?]+)/) ?? []
+  if (!workspaceId || !streamId) throw new Error(`Unexpected channel URL ${page.url()}`)
+  const message = "Please review the notes before Thursday's planning call."
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+    data: {
+      streamId,
+      contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: message }] }] },
+      contentMarkdown: message,
+    },
+  })
+  await expectApiOk(response, "Create message")
+  const row = page.getByRole("main").locator("[data-message-id]").filter({ hasText: message }).first()
+  await expect(row).toBeVisible()
+  await row.hover()
+  const trigger = row.getByRole("button", { name: "Message actions" })
+  await trigger.click()
+  const rootMenu = page.getByRole("menu", { name: "Message actions" })
+  const reminderTrigger = rootMenu.getByRole("menuitem", { name: "Set reminder…" })
+  await reminderTrigger.click()
+  const preset = page.getByRole("menuitem", { name: "In 15 minutes" })
+  await expect(rootMenu).toBeVisible()
+  await expect(reminderTrigger).toHaveAttribute("data-state", "open")
+  await expect(preset).toBeVisible()
+  const anchor = await reminderTrigger.boundingBox()
+  const choice = await preset.boundingBox()
+  expect(anchor && choice).toBeTruthy()
+  expect(Math.abs(choice!.y - anchor!.y)).toBeLessThan(190)
+  const horizontalGap = Math.min(
+    Math.abs(choice!.x + choice!.width - anchor!.x),
+    Math.abs(anchor!.x + anchor!.width - choice!.x)
+  )
+  expect(horizontalGap).toBeLessThan(24)
+  await page.keyboard.press("Escape")
+  await expect(rootMenu).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+  await trigger.click()
+  await rootMenu.getByRole("menuitem", { name: "Set reminder…" }).hover()
+  await page.getByRole("menuitem", { name: "Custom duration…" }).focus()
+  await page.keyboard.press("Enter")
+  const durationInput = page.getByRole("spinbutton", { name: "Custom duration" })
+  await expect(durationInput).toBeVisible()
+  await expect(rootMenu).toBeVisible()
+  await expect(durationInput).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(page.getByRole("combobox", { name: "Duration unit" })).toBeFocused()
+  await durationInput.fill("20")
+  await page.getByRole("combobox", { name: "Duration unit" }).click()
+  await page.getByRole("option", { name: "hours" }).click()
+  await expect(rootMenu).toBeVisible()
+  await page.getByRole("button", { name: "Set reminder" }).click()
+  await expect(rootMenu).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+
+  await trigger.click()
+  await rootMenu.getByRole("menuitem", { name: "Set reminder…" }).hover()
+  await page.getByRole("menuitem", { name: "Pick a time…" }).click()
+  const dateInput = page.getByLabel("Date", { exact: true })
+  const timeInput = page.getByLabel("Time", { exact: true })
+  await expect(dateInput).toBeVisible()
+  await expect(timeInput).toBeVisible()
+  await expect(rootMenu).toBeVisible()
+  await expect(dateInput).toBeFocused()
+  await dateInput.fill(await dateInput.inputValue())
+  await timeInput.fill(await timeInput.inputValue())
+  const setTimeButton = page.getByRole("button", { name: "Set reminder" })
+  for (let i = 0; i < 16 && !(await setTimeButton.evaluate((button) => button === document.activeElement)); i++) {
+    await page.keyboard.press("Tab")
+  }
+  await expect(setTimeButton).toBeFocused()
+  await rootMenu.getByRole("menuitem", { name: "Label message" }).focus()
+  await expect(reminderTrigger).toHaveAttribute("data-state", "closed")
+  await expect(rootMenu).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(rootMenu).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+
+  await trigger.click()
+  await rootMenu.getByRole("menuitem", { name: "Set reminder…" }).hover()
+  await page.getByRole("menuitem", { name: "Pick a time…" }).click()
+  await expect(dateInput).toBeVisible()
+  await expect(timeInput).toBeVisible()
+  await dateInput.fill(await dateInput.inputValue())
+  await timeInput.fill(await timeInput.inputValue())
+  await expect(rootMenu).toBeVisible()
+  await setTimeButton.click()
+  await expect(rootMenu).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+
+  await trigger.click()
+  await rootMenu.getByRole("menuitem", { name: "Set reminder…" }).hover()
+  await page.getByRole("menuitem", { name: "In 15 minutes" }).click()
+  await expect(rootMenu).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+
+  await row.getByRole("button", { name: "Saved" }).hover()
+  await page.getByRole("button", { name: "Pick a time…" }).click()
+  await expect(dateInput).toBeVisible()
+  await expect(timeInput).toBeVisible()
+})

@@ -71,7 +71,7 @@ test.describe("Launch ancestors", () => {
     const workspaceId = setup.url().match(/\/w\/([^/?]+)/)![1]
 
     const page = await coldLaunch(context, `${base}/w/${workspaceId}/s/${threadId}`)
-    await expect(page.getByText(`launch reply ${testId}`)).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByRole("main").getByText(`launch reply ${testId}`).first()).toBeVisible({ timeout: 20_000 })
     await expect.poll(() => pushes(page), { timeout: 20_000 }).toBe(1)
 
     await page.goBack()

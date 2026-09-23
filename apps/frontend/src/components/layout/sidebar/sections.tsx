@@ -1,17 +1,18 @@
 import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, ListFilter, Plus } from "lucide-react"
 import { Fragment, type ReactNode } from "react"
 import { Link } from "react-router-dom"
+import type { SidebarSectionFilter } from "@threahq/types"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
 import { UnreadBadge } from "@/components/unread-badge"
 import { isDraftId } from "@/hooks"
+import { useInputMode } from "@/hooks/use-input-mode"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
-import { getActivityTime } from "./utils"
 
 interface SectionHeaderProps {
   label: string
@@ -62,6 +63,14 @@ interface SectionHeaderProps {
    * caller points the href at the clearing URL, so the same control un-toggles.
    */
   filterActive?: boolean
+  /**
+   * Chats-mode-only stream filter toggle ("all" | "unread"), independent of the
+   * board-mode `filterAffordance`/`filterActive` pair above. `undefined` on
+   * sections that never offer it (Inbox, Quick Links) and in board mode.
+   */
+  sectionFilter?: SidebarSectionFilter
+  /** Toggle `sectionFilter` between "all" and "unread". Omitted alongside `sectionFilter`. */
+  onToggleFilter?: () => void
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -104,6 +113,8 @@ export function SectionHeader({
   scopeAllTitle: scopeAllTitleOverride,
   filterAffordance = false,
   filterActive = false,
+  sectionFilter,
+  onToggleFilter,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -123,7 +134,11 @@ export function SectionHeader({
     // sections) stay distinguishable to screen readers and on hover.
     headerTitle = label ? `${verb} ${label}` : `${verb} section`
   }
-  const hasAggregate = isCollapsed && unreadAggregate > 0
+  const isUnreadFilter = sectionFilter === "unread"
+  // Collapsed always shows the aggregate (it's the only signal left); expanded
+  // shows it too once the list is already unread-only, so the count stays
+  // visible while toggled on instead of disappearing into the row list.
+  const hasAggregate = (isCollapsed || isUnreadFilter) && unreadAggregate > 0
   const hasMentions = mentionAggregate > 0
   const hasMenu = !!addMenuActions && addMenuActions.length > 0
 
@@ -183,6 +198,15 @@ export function SectionHeader({
     : "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
   const TitleIcon = filterAffordance ? ListFilter : ArrowUpRight
 
+  const toggleFilterVerb = isUnreadFilter ? "Show all" : "Show unread only"
+  const toggleFilterLabel = label ? `${toggleFilterVerb} in ${label}` : toggleFilterVerb
+  // Same footprint on and off (INV-21): off uses the shared hover-reveal
+  // pattern (always visible on touch); on gets a persistent tint so the
+  // active filter stays legible without hovering.
+  const filterButtonClass = isUnreadFilter
+    ? "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded bg-primary/10 text-primary"
+    : "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
+
   const rightContent = (
     <div
       className="flex items-center gap-1"
@@ -190,6 +214,21 @@ export function SectionHeader({
       onKeyDown={(e) => e.stopPropagation()}
     >
       {headerAccessory}
+      {onToggleFilter && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleFilter()
+          }}
+          aria-pressed={isUnreadFilter}
+          className={filterButtonClass}
+          title={toggleFilterLabel}
+          aria-label={toggleFilterLabel}
+        >
+          <ListFilter className="h-3.5 w-3.5" />
+        </button>
+      )}
       {scopeAllHref && (
         <Link
           to={scopeAllHref}
@@ -290,6 +329,15 @@ interface RenderRowOptions {
   streamDragEnabled: boolean
   homeHintFor?: (streamId: string) => string | null
   boardMode?: SidebarBoardMode | null
+  /** True in the Inbox section (chats mode only — board mode never sets this). */
+  isInboxSection?: boolean
+  /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
+  onClearInboxRow?: (streamId: string) => void
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxSection`. */
+  clearInboxKeyHint?: string
 }
 
 /**
@@ -311,6 +359,12 @@ function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): React
       showPreviewOnHover={opts.showPreviewOnHover}
       homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
       boardMode={opts.boardMode}
+      isInboxRow={opts.isInboxSection}
+      onClearFromInbox={opts.onClearInboxRow ? () => opts.onClearInboxRow!(stream.id) : undefined}
+      onInboxHoverChange={
+        opts.onInboxRowHoverChange ? (hovering: boolean) => opts.onInboxRowHoverChange!(stream.id, hovering) : undefined
+      }
+      clearInboxKeyHint={opts.clearInboxKeyHint}
     />
   )
   const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
@@ -338,17 +392,6 @@ function sumMentions(items: StreamItemData[], getMentionCount: (streamId: string
   return total
 }
 
-/** Items with any unread or mention signal, sorted by recency (most recent first). */
-function filterActiveByRecency(
-  items: StreamItemData[],
-  getUnreadCount: (streamId: string) => number,
-  getMentionCount: (streamId: string) => number
-): StreamItemData[] {
-  return items
-    .filter((stream) => getUnreadCount(stream.id) > 0 || getMentionCount(stream.id) > 0)
-    .sort((a, b) => getActivityTime(b) - getActivityTime(a))
-}
-
 interface StreamSectionProps {
   label: string
   icon?: string
@@ -370,6 +413,10 @@ interface StreamSectionProps {
   filterAffordance?: boolean
   /** Board mode: this section's filter is the board's current selection. Forwarded to SectionHeader. */
   filterActive?: boolean
+  /** Chats-mode stream filter ("all" | "unread"). Forwarded to SectionHeader; drives which rows render. */
+  sectionFilter?: SidebarSectionFilter
+  /** Toggle `sectionFilter`. Omitted alongside `sectionFilter`. */
+  onToggleFilter?: () => void
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -378,6 +425,13 @@ interface StreamSectionProps {
   getMentionCount: (streamId: string) => number
   state?: CollapseState
   onToggle?: () => void
+  /**
+   * Current state of the inline "more" expander backing the unread-filter's
+   * hidden tail. Required whenever `sectionFilter` is set.
+   */
+  moreState?: CollapseState
+  /** Toggle the inline "more" expander above. */
+  onToggleMore?: () => void
   /** Trailing header status/control (e.g. Unread's "All caught up" / "Clear read"). */
   headerAccessory?: ReactNode
   /** Show compact view (title only, no preview) */
@@ -399,6 +453,15 @@ interface StreamSectionProps {
   homeHintFor?: (streamId: string) => string | null
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. */
   boardMode?: SidebarBoardMode | null
+  /** True when this is the Inbox section (chats mode only — never set in board mode). */
+  isInboxSection?: boolean
+  /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
+  onClearInboxRow?: (streamId: string) => void
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxSection`. */
+  clearInboxKeyHint?: string
 }
 
 /** Simple binary collapsible section used for Important / Recent. */
@@ -413,6 +476,8 @@ export function StreamSection({
   scopeAllTitle,
   filterAffordance,
   filterActive,
+  sectionFilter,
+  onToggleFilter,
   items,
   allStreams,
   workspaceId,
@@ -421,6 +486,8 @@ export function StreamSection({
   getMentionCount,
   state = "open",
   onToggle,
+  moreState,
+  onToggleMore,
   headerAccessory,
   compact = false,
   showPreviewOnHover = false,
@@ -430,10 +497,27 @@ export function StreamSection({
   streamDragEnabled = false,
   homeHintFor,
   boardMode,
+  isInboxSection,
+  onClearInboxRow,
+  onInboxRowHoverChange,
+  clearInboxKeyHint,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
   const mentionAggregate = sumMentions(items, getMentionCount)
+
+  const isMoreOpen = moreState === "open"
+  const {
+    visible: visibleItems,
+    hiddenCount,
+    contextIds,
+  } = sectionVisibleItems(items, {
+    tiered: false,
+    filter: sectionFilter ?? "all",
+    moreOpen: isMoreOpen,
+    isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
+  })
+  const hasMore = hiddenCount > 0
 
   const renderRow = (stream: StreamItemData) =>
     renderSectionRow(stream, {
@@ -447,6 +531,10 @@ export function StreamSection({
       streamDragEnabled,
       homeHintFor,
       boardMode,
+      isInboxSection,
+      onClearInboxRow,
+      onInboxRowHoverChange,
+      clearInboxKeyHint,
     })
 
   return (
@@ -462,6 +550,8 @@ export function StreamSection({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={filterAffordance}
         filterActive={filterActive}
+        sectionFilter={sectionFilter}
+        onToggleFilter={onToggleFilter}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -472,7 +562,13 @@ export function StreamSection({
         headerAccessory={headerAccessory}
       />
 
-      {!isCollapsed && items.length > 0 && <div className="mt-1 flex flex-col gap-0.5">{items.map(renderRow)}</div>}
+      {!isCollapsed && visibleItems.length > 0 && (
+        <div className="mt-1 flex flex-col gap-0.5">{renderTreeRows(visibleItems, contextIds, renderRow)}</div>
+      )}
+
+      {!isCollapsed && hasMore && onToggleMore && (
+        <MoreDivider isOpen={isMoreOpen} hiddenCount={hiddenCount} onToggle={onToggleMore} />
+      )}
     </div>
   )
 }
@@ -496,31 +592,144 @@ interface TieredStreamSectionProps extends Omit<StreamSectionProps, "state" | "o
 /** Soft cap on visible items when the more expander is collapsed. */
 const TIER_VISIBLE_LIMIT = 10
 
-/**
- * The rows a tiered section renders, in render order, plus the count left
- * behind the "more" expander. Exported because the sidebar's quick-jump
- * numbering has to walk exactly this order — deriving it a second time from the
- * section's raw items would number rows that aren't on screen (INV-43).
- */
-export function tieredVisibleItems(
-  items: StreamItemData[],
-  getUnreadCount: (streamId: string) => number,
-  getMentionCount: (streamId: string) => number,
+interface SectionVisibleItemsOptions {
+  /** Tiered sections cap the "all"-filter view at {@link TIER_VISIBLE_LIMIT}; binary sections show every row. */
+  tiered: boolean
+  /** The section's persisted stream filter — "all" shows every row (subject to tiering); "unread" hides quiet ones. */
+  filter: SidebarSectionFilter
+  /** The inline "more" expander's state. "open" reveals every row regardless of filter/tier. */
   moreOpen: boolean
-): { visible: StreamItemData[]; hiddenCount: number } {
-  const activeItems = filterActiveByRecency(items, getUnreadCount, getMentionCount)
-  const activeIds = new Set(activeItems.map((s) => s.id))
-  const quietItems = items.filter((s) => !activeIds.has(s.id))
+  /** Whether a stream carries an unread/mention signal. */
+  isActive: (streamId: string) => boolean
+}
 
-  // Fill the visible tier with quiet items up to the soft cap. Actives always
-  // render in full, even if that pushes past the cap.
-  const quietFillCount = Math.max(0, TIER_VISIBLE_LIMIT - activeItems.length)
-  const quietHidden = quietItems.slice(quietFillCount)
+/**
+ * The rows a section renders, in render order, plus the count left behind the
+ * "more" expander. Never reorders — `resolveSections` already puts sections in
+ * their final order, so this is the one place that decides which of those rows
+ * are visible. Both {@link StreamSection} and {@link TieredStreamSection}, and
+ * the sidebar's quick-jump numbering (which has to walk exactly these rows),
+ * read through this single helper (INV-43).
+ */
+export function sectionVisibleItems(
+  items: StreamItemData[],
+  { tiered, filter, moreOpen, isActive }: SectionVisibleItemsOptions
+): SectionVisibleItems {
+  if (moreOpen) return { visible: items, hiddenCount: 0, contextIds: EMPTY_IDS }
+  if (filter !== "unread" && !tiered) return { visible: items, hiddenCount: 0, contextIds: EMPTY_IDS }
 
-  return {
-    visible: moreOpen ? [...activeItems, ...quietItems] : [...activeItems, ...quietItems.slice(0, quietFillCount)],
-    hiddenCount: quietHidden.length,
+  // A root and its nested threads (`treeParentId`) show or hide together, except
+  // that an active thread always shows: when its root would otherwise hide, the
+  // root comes along as a muted context row so the thread keeps its place.
+  const visible: StreamItemData[] = []
+  const contextIds = new Set<string>()
+  for (let headIndex = 0, end = 1; headIndex < items.length; headIndex = end, end = headIndex + 1) {
+    const head = items[headIndex]
+    while (end < items.length && items[end].treeParentId === head.id) end++
+    const kids = items.slice(headIndex + 1, end)
+
+    const headActive = isActive(head.id)
+    const wholeGroup = filter !== "unread" && (headIndex < TIER_VISIBLE_LIMIT || headActive)
+    if (wholeGroup) {
+      visible.push(head, ...kids)
+      continue
+    }
+    const activeKids = kids.filter((kid) => isActive(kid.id))
+    if (!headActive && activeKids.length === 0) continue
+    if (!headActive) contextIds.add(head.id)
+    visible.push(head, ...activeKids)
   }
+  return { visible, hiddenCount: items.length - visible.length, contextIds }
+}
+
+interface SectionVisibleItems {
+  visible: StreamItemData[]
+  hiddenCount: number
+  /** Roots shown only because a nested thread under them is active; rendered muted. */
+  contextIds: ReadonlySet<string>
+}
+
+const EMPTY_IDS: ReadonlySet<string> = new Set()
+
+interface TreeRole {
+  child: boolean
+  /** Last nested thread under its root among the visible rows. */
+  last: boolean
+  hasKids: boolean
+  context: boolean
+}
+
+/** Render a section's visible rows, wrapping the ones that take part in a thread tree. */
+function renderTreeRows(
+  visible: StreamItemData[],
+  contextIds: ReadonlySet<string>,
+  renderRow: (stream: StreamItemData) => ReactNode
+): ReactNode[] {
+  return visible.map((stream, index) => {
+    const next = visible[index + 1]
+    const child = !!stream.treeParentId
+    const hasKids = next?.treeParentId === stream.id
+    const context = contextIds.has(stream.id)
+    if (!child && !hasKids && !context) return renderRow(stream)
+    const role = { child, last: next?.treeParentId !== stream.treeParentId, hasKids, context }
+    return (
+      <TreeRow key={stream.id} role={role}>
+        {renderRow(stream)}
+      </TreeRow>
+    )
+  })
+}
+
+// Tile centre and bottom within a row, per row height: dense pointer rows carry a
+// 20px tile in 32px, touch rows a 32px tile in 48px. The 2px overshoot bridges the
+// `gap-0.5` between rows so the lines read as continuous.
+const TREE_GEOMETRY = {
+  dense: { x: 18, centerY: 16, tileBottom: 26, indent: 30 },
+  touch: { x: 24, centerY: 24, tileBottom: 40, indent: 36 },
+}
+const ROW_GAP = 2
+const LINE_GAP_BEFORE_TILE = 4
+
+function TreeRow({ role, children }: { role: TreeRole; children: ReactNode }) {
+  const geometry = TREE_GEOMETRY[useInputMode() === "touch" ? "touch" : "dense"]
+  const lineClass = "pointer-events-none absolute border-muted-foreground/30"
+  return (
+    <div
+      className="relative"
+      style={role.child ? { paddingLeft: geometry.indent } : undefined}
+      data-tree-role={role.child ? "child" : "root"}
+    >
+      {role.child && (
+        <span
+          aria-hidden
+          className={cn(lineClass, "border-l border-b rounded-bl-[7px]")}
+          style={{
+            left: geometry.x,
+            top: -ROW_GAP,
+            height: geometry.centerY + ROW_GAP,
+            width: geometry.indent + 8 - geometry.x - LINE_GAP_BEFORE_TILE,
+          }}
+        />
+      )}
+      {role.child && !role.last && (
+        <span
+          aria-hidden
+          className={cn(lineClass, "border-l")}
+          style={{ left: geometry.x, top: geometry.centerY, bottom: -ROW_GAP }}
+        />
+      )}
+      {role.hasKids && (
+        <span
+          aria-hidden
+          className={cn(lineClass, "border-l")}
+          style={{ left: geometry.x, top: geometry.tileBottom, bottom: -ROW_GAP }}
+        />
+      )}
+      <div className={cn(role.context && "opacity-60 transition-opacity hover:opacity-100 focus-within:opacity-100")}>
+        {children}
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -545,6 +754,8 @@ export function TieredStreamSection({
   scopeAllTitle,
   filterAffordance,
   filterActive,
+  sectionFilter,
+  onToggleFilter,
   items,
   allStreams,
   workspaceId,
@@ -569,7 +780,16 @@ export function TieredStreamSection({
   const mentionAggregate = sumMentions(items, getMentionCount)
 
   const isMoreOpen = moreState === "open"
-  const { visible: visibleItems, hiddenCount } = tieredVisibleItems(items, getUnreadCount, getMentionCount, isMoreOpen)
+  const {
+    visible: visibleItems,
+    hiddenCount,
+    contextIds,
+  } = sectionVisibleItems(items, {
+    tiered: true,
+    filter: sectionFilter ?? "all",
+    moreOpen: isMoreOpen,
+    isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
+  })
   const hasMore = hiddenCount > 0
 
   const renderItem = (stream: StreamItemData) =>
@@ -599,6 +819,8 @@ export function TieredStreamSection({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={filterAffordance}
         filterActive={filterActive}
+        sectionFilter={sectionFilter}
+        onToggleFilter={onToggleFilter}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -609,7 +831,7 @@ export function TieredStreamSection({
       />
 
       {!isCollapsed && visibleItems.length > 0 && (
-        <div className="mt-1 flex flex-col gap-0.5">{visibleItems.map(renderItem)}</div>
+        <div className="mt-1 flex flex-col gap-0.5">{renderTreeRows(visibleItems, contextIds, renderItem)}</div>
       )}
 
       {!isCollapsed && hasMore && <MoreDivider isOpen={isMoreOpen} hiddenCount={hiddenCount} onToggle={onToggleMore} />}

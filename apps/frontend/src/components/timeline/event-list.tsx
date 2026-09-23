@@ -16,6 +16,8 @@ import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
+import type { RunFold, RunFoldStore } from "./run-fold"
+import { RunFoldProvider } from "./run-fold-context"
 import { AsideAnchorEvent } from "./aside-anchor-event"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
@@ -25,6 +27,8 @@ import { localStartOfDayMs } from "@/lib/dates"
 import { isSameAuthorRun } from "@/lib/message-grouping"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
+import { PopIn, useArrivals } from "./pop-in"
+import { isInFlight } from "@/stores/stream-store"
 import type {
   ConversationOverlayContext,
   ConversationOverlayModel,
@@ -52,6 +56,8 @@ interface EventListProps {
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
+  /** Rows appended at the tail after the first render grow in (`PopIn`). */
+  animateArrivals?: boolean
 }
 
 /**
@@ -114,6 +120,8 @@ export type TimelineItem =
        * provenance chip. Absent on non-message events and non-revival rows.
        */
       revival?: ConversationRevival
+      /** Same-author run fold, stamped by `foldAuthorRuns` on runs tall enough to fold. */
+      runFold?: RunFold
       asideAnchors?: StreamEvent[]
     }
   | { type: "command_group"; commandId: string; events: StreamEvent[]; asideAnchors?: StreamEvent[] }
@@ -267,8 +275,13 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * break a run — only a different real conversation does. This diverges from
  * `annotateConversationRows` (which resets its run on an unassigned row for
  * coloring): a lone unclustered aside between two members of the same topic is
- * not a topic switch, so it must not manufacture a chip. Pure and export-only
- * for isolated coverage.
+ * not a topic switch, so it must not manufacture a chip.
+ *
+ * The same pass splits same-author runs where the conversation changes, so each
+ * run reads as one conversation's block: a chip row always heads its own run,
+ * and a continuation whose known conversation differs from the run's starts a
+ * new one. Unassigned rows never split a run. Pure and export-only for isolated
+ * coverage.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
@@ -279,6 +292,7 @@ export function annotateConversationRevivals(
   const seen = new Set<string>()
   const lastActivityByConversation = new Map<string, string>()
   let previousConversationId: string | null = null
+  let runConversationId: string | null = null
   return items.map((item) => {
     if (item.type !== "event" || !isGroupableMessage(item.event)) return item
     const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
@@ -333,6 +347,11 @@ export function annotateConversationRevivals(
       // conversation between the prior member and now, not merely a gap.
       previousConversationId = conversationId
     }
+    const splits =
+      item.groupContinuation === true &&
+      (revival != null || (conversationId != null && runConversationId != null && conversationId !== runConversationId))
+    runConversationId = !item.groupContinuation || splits ? conversationId : (runConversationId ?? conversationId)
+    if (splits) return { ...item, revival, groupContinuation: false }
     return revival ? { ...item, revival } : item
   })
 }
@@ -591,6 +610,22 @@ export function getTimelineItemKey(item: TimelineItem): string {
     default:
       return item.event.id
   }
+}
+
+/** A row's identity across an own send's optimistic → server swap: the server
+ *  row carries the optimistic row's id as `clientMessageId`. */
+export function getTimelineItemArrivalKey(item: TimelineItem): string {
+  if (item.type === "event") {
+    const clientMessageId = (item.event.payload as { clientMessageId?: string } | undefined)?.clientMessageId
+    if (clientMessageId) return clientMessageId
+  }
+  return getTimelineItemKey(item)
+}
+
+/** An own send not yet echoed; it sits at the tail until its server row replaces it. */
+export function isTimelineItemInFlight(item: TimelineItem): boolean {
+  // Unsent rows reach the timeline as their cached rows, `_status` included.
+  return item.type === "event" && isInFlight(item.event as { _status?: string; _preEditStatus?: string })
 }
 
 /** Number of skeleton placeholder rows prepended while an older page is in flight. */
@@ -862,6 +897,7 @@ function itemAnchorIds(item: TimelineItem): string[] {
 export interface TimelineItemRenderContext {
   workspaceId: string
   streamId: string
+  runFoldStore?: RunFoldStore
   highlightMessageId?: string | null
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
@@ -959,6 +995,13 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         revival={item.revival}
       />
     )
+    if (ctx.runFoldStore) {
+      eventNode = (
+        <RunFoldProvider store={ctx.runFoldStore} fold={item.runFold}>
+          {eventNode}
+        </RunFoldProvider>
+      )
+    }
     const overlayMessageId = (item.event.payload as { messageId?: string })?.messageId
     if (ctx.conversationOverlay && item.conversationRow && overlayMessageId) {
       eventNode = (
@@ -1068,6 +1111,13 @@ function eventsArrayEqual(a: StreamEvent[], b: StreamEvent[]): boolean {
  * objects keep identity when unchanged (structural sharing in
  * `useStreamEvents`), so identity of the contained events is the real signal.
  */
+function runFoldEqual(a: RunFold | undefined, b: RunFold | undefined): boolean {
+  if (!a || !b) return a === b
+  if (a.state === "folded")
+    return b.state === "folded" && a.key === b.key && a.hiddenCount === b.hiddenCount && a.unreadCount === b.unreadCount
+  return b.state === "open" && a.key === b.key && a.isLast === b.isLast
+}
+
 export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
   if (a === b) return true
   if (a.type !== b.type) return false
@@ -1086,7 +1136,8 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
         (a.conversationRow?.blockStart ?? false) === (other.conversationRow?.blockStart ?? false) &&
         (a.revival?.conversationId ?? null) === (other.revival?.conversationId ?? null) &&
         (a.revival?.topicSummary ?? null) === (other.revival?.topicSummary ?? null) &&
-        (a.revival?.previousActivityAt ?? null) === (other.revival?.previousActivityAt ?? null)
+        (a.revival?.previousActivityAt ?? null) === (other.revival?.previousActivityAt ?? null) &&
+        runFoldEqual(a.runFold, other.runFold)
       )
     }
     case "command_group": {
@@ -1145,7 +1196,8 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     p.hideSessionCards !== n.hideSessionCards ||
     p.subagentThreadRun !== n.subagentThreadRun ||
     p.isDividerDimmed !== n.isDividerDimmed ||
-    p.onStopSession !== n.onStopSession
+    p.onStopSession !== n.onStopSession ||
+    p.runFoldStore !== n.runFoldStore
   ) {
     return false
   }
@@ -1307,6 +1359,7 @@ export function EventList({
   viewerIsMember,
   batch,
   conversationOverlay,
+  animateArrivals = false,
 }: EventListProps) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -1319,6 +1372,12 @@ export function EventList({
   // render all events with no zero-height filtering, so dividers go straight
   // onto the grouped list.
   const itemsWithDividers = useMemo(() => injectDayDividers(timelineItems), [timelineItems])
+  const arrivals = useArrivals(
+    itemsWithDividers.map(getTimelineItemArrivalKey),
+    streamId,
+    animateArrivals && !isLoading,
+    new Set(itemsWithDividers.filter(isTimelineItemInFlight).map(getTimelineItemArrivalKey))
+  )
 
   if (isLoading) {
     return (
@@ -1394,9 +1453,13 @@ export function EventList({
       {itemsWithDividers.map((item) => {
         const itemKey = getTimelineItemKey(item)
         return (
-          <div key={itemKey} className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}>
+          <PopIn
+            key={itemKey}
+            className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}
+            arrivedAt={arrivals.get(getTimelineItemArrivalKey(item))}
+          >
             <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={phase !== "ready"} />
-          </div>
+          </PopIn>
         )
       })}
     </div>

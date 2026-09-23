@@ -11,6 +11,7 @@ import {
   applyStreamReadMessages,
   applyStreamsReadAllOrdinals,
   applyMovedSourceOrdinal,
+  applyInboxHeld,
   deriveActivityCounts,
   upsertActivity,
   dropActivitiesById,
@@ -120,6 +121,61 @@ describe("applyStreamActivityOrdinal", () => {
     const next = applyStreamActivityOrdinal(noBaseline, "s1", 9, { isOwnMessage: true })
     expect(next.unreadCounts.s1).toBe(0)
   })
+
+  it("sets the arrival timestamp on the first other-author message", () => {
+    const next = applyStreamActivityOrdinal(seeded, "s1", 6, {
+      isOwnMessage: false,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    })
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-02T00:00:00.000Z" })
+  })
+
+  it("does not set the arrival timestamp for the viewer's own message", () => {
+    const next = applyStreamActivityOrdinal(seeded, "s1", 6, {
+      isOwnMessage: true,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    })
+    expect(next.inboxArrivedAt).toBeUndefined()
+  })
+
+  it("keeps the first-recorded arrival on a later other-author message", () => {
+    const first = applyStreamActivityOrdinal(seeded, "s1", 6, {
+      isOwnMessage: false,
+      createdAt: "2026-01-02T00:00:00.000Z",
+    })
+    const second = applyStreamActivityOrdinal(first, "s1", 7, {
+      isOwnMessage: false,
+      createdAt: "2026-01-03T00:00:00.000Z",
+    })
+    expect(second.inboxArrivedAt).toEqual({ s1: "2026-01-02T00:00:00.000Z" })
+  })
+
+  it("replaces a stale arrival when the stream had left the Inbox without dropping it", () => {
+    const settled = makeState({
+      unreadCounts: { s1: 0 },
+      latestOrdinals: { s1: 5 },
+      inboxArrivedAt: { s1: "2026-01-01T00:00:00.000Z" },
+    })
+    const next = applyStreamActivityOrdinal(settled, "s1", 6, {
+      isOwnMessage: false,
+      createdAt: "2026-01-03T00:00:00.000Z",
+    })
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-03T00:00:00.000Z" })
+  })
+
+  it("keeps a held stream's arrival when a new message lands on it", () => {
+    const held = makeState({
+      unreadCounts: { s1: 0 },
+      latestOrdinals: { s1: 5 },
+      inboxHeldStreamIds: ["s1"],
+      inboxArrivedAt: { s1: "2026-01-01T00:00:00.000Z" },
+    })
+    const next = applyStreamActivityOrdinal(held, "s1", 6, {
+      isOwnMessage: false,
+      createdAt: "2026-01-03T00:00:00.000Z",
+    })
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-01T00:00:00.000Z" })
+  })
 })
 
 describe("applyStreamReadOrdinal", () => {
@@ -183,6 +239,87 @@ describe("applyStreamReadOrdinal", () => {
     // A read at the current position (the D5 caught-up heal) still clears it.
     expect(applyStreamReadOrdinal(state, "s1", 8).unreadActivityCount).toBe(0)
   })
+
+  it("leaves held membership untouched when inboxHeld is not passed (no client-side guess)", () => {
+    // Server-authoritative: an absent `inboxHeld` (an older backend, or the
+    // read_all fold below) must not synthesize a hold from the unread delta.
+    const next = applyStreamReadOrdinal(seeded, "s1", 6)
+    expect(next.unreadCounts.s1).toBe(2)
+    expect(next.inboxHeldStreamIds).toBeUndefined()
+  })
+
+  it("sets held membership absolutely to true from the server's post-write inboxHeld", () => {
+    const next = applyStreamReadOrdinal(seeded, "s1", 6, undefined, true)
+    expect(next.inboxHeldStreamIds).toEqual(["s1"])
+  })
+
+  it("sets held membership absolutely to false from the server's post-write inboxHeld, even when previously held", () => {
+    const held = { ...seeded, inboxHeldStreamIds: ["s1"] }
+    const next = applyStreamReadOrdinal(held, "s1", 6, undefined, false)
+    expect(next.inboxHeldStreamIds ?? []).toEqual([])
+  })
+
+  it("drops the recorded arrival once a read clears unread and leaves the stream unheld", () => {
+    const arrived = { ...seeded, inboxArrivedAt: { s1: "2026-01-02T00:00:00.000Z" } }
+    const next = applyStreamReadOrdinal(arrived, "s1", 8, undefined, false)
+    expect(next.unreadCounts.s1).toBe(0)
+    expect(next.inboxArrivedAt).toEqual({})
+  })
+
+  it("keeps the recorded arrival when the read leaves the stream still unread", () => {
+    const arrived = { ...seeded, inboxArrivedAt: { s1: "2026-01-02T00:00:00.000Z" } }
+    const next = applyStreamReadOrdinal(arrived, "s1", 6, undefined, false)
+    expect(next.unreadCounts.s1).toBeGreaterThan(0)
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-02T00:00:00.000Z" })
+  })
+
+  it("keeps the recorded arrival when the read clears unread but the server still holds the stream", () => {
+    const arrived = { ...seeded, inboxArrivedAt: { s1: "2026-01-02T00:00:00.000Z" } }
+    const next = applyStreamReadOrdinal(arrived, "s1", 8, undefined, true)
+    expect(next.unreadCounts.s1).toBe(0)
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-02T00:00:00.000Z" })
+  })
+})
+
+describe("applyInboxHeld", () => {
+  it("adds streams to the held set", () => {
+    const state = makeState()
+    const next = applyInboxHeld(state, ["s1", "s2"], true)
+    expect(next.inboxHeldStreamIds).toEqual(expect.arrayContaining(["s1", "s2"]))
+    expect(next.inboxHeldStreamIds).toHaveLength(2)
+  })
+
+  it("removes streams from the held set", () => {
+    const state = makeState({ inboxHeldStreamIds: ["s1", "s2"] })
+    const next = applyInboxHeld(state, ["s1"], false)
+    expect(next.inboxHeldStreamIds).toEqual(["s2"])
+  })
+
+  it("returns the same reference when every stream's membership already matches", () => {
+    const state = makeState({ inboxHeldStreamIds: ["s1"] })
+    expect(applyInboxHeld(state, ["s1"], true)).toBe(state)
+    expect(applyInboxHeld(state, [], true)).toBe(state)
+  })
+
+  it("drops the recorded arrival when unheld while unread is zero", () => {
+    const state = makeState({
+      unreadCounts: { s1: 0 },
+      inboxHeldStreamIds: ["s1"],
+      inboxArrivedAt: { s1: "2026-01-02T00:00:00.000Z" },
+    })
+    const next = applyInboxHeld(state, ["s1"], false)
+    expect(next.inboxArrivedAt).toEqual({})
+  })
+
+  it("keeps the recorded arrival when unheld while the stream is still unread", () => {
+    const state = makeState({
+      unreadCounts: { s1: 2 },
+      inboxHeldStreamIds: ["s1"],
+      inboxArrivedAt: { s1: "2026-01-02T00:00:00.000Z" },
+    })
+    const next = applyInboxHeld(state, ["s1"], false)
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-02T00:00:00.000Z" })
+  })
 })
 
 describe("applyStreamReadSet", () => {
@@ -231,6 +368,18 @@ describe("applyStreamsReadAllOrdinals", () => {
     expect(next.unreadActivities).toEqual([])
     expect(next.activityCounts).toEqual({})
     expect(next.unreadActivityCount).toBe(0)
+  })
+
+  it("never holds, and never unholds, a stream — read_all folds never pass inboxHeld", () => {
+    const state = makeState({
+      unreadCounts: { s1: 2 },
+      latestOrdinals: { s1: 4 },
+      inboxHeldStreamIds: ["s1"],
+    })
+    const next = applyStreamsReadAllOrdinals(state, [{ streamId: "s1", lastReadOrdinal: 4 }])
+    // A pre-existing hold must survive an echoed read_all from another tab's
+    // clear — only `applyInboxHeld`/`clearInbox`'s own response unholds.
+    expect(next.inboxHeldStreamIds).toEqual(["s1"])
   })
 })
 
@@ -630,6 +779,18 @@ describe("diffCounterStreams", () => {
     const state = makeState({ unreadCounts: { s1: 1 }, unreadActivities: [act("a1", "s1")] })
     expect(diffCounterStreams(state, state)).toEqual(new Set())
   })
+
+  it("collects a stream whose held membership flipped", () => {
+    const prev = makeState({ inboxHeldStreamIds: ["s1"] })
+    const next = makeState({ inboxHeldStreamIds: ["s1", "s2"] })
+    expect(diffCounterStreams(prev, next)).toEqual(new Set(["s2"]))
+  })
+
+  it("collects a stream whose arrival changed", () => {
+    const prev = makeState({ inboxArrivedAt: { s1: "2026-01-01T00:00:00.000Z" } })
+    const next = makeState({ inboxArrivedAt: { s1: "2026-01-01T00:00:00.000Z", s2: "2026-01-02T00:00:00.000Z" } })
+    expect(diffCounterStreams(prev, next)).toEqual(new Set(["s2"]))
+  })
 })
 
 describe("mergeBootstrapUnreadFields", () => {
@@ -731,6 +892,91 @@ describe("mergeBootstrapUnreadFields", () => {
     const merged = mergeBootstrapUnreadFields(bootstrap, undefined, undefined)
     expect(merged.unreadCounts).toEqual({ s1: 4, s2: 2 })
     expect(merged.mutedStreamIds).toEqual(["s9"])
+  })
+
+  it("held membership: a counter-touched stream keeps its local hold, an untouched stream takes the server's", () => {
+    const heldBootstrap = {
+      ...bootstrap,
+      inboxHeldStreamIds: ["s2"],
+    } as unknown as import("@threahq/types").WorkspaceBootstrap
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      heldBootstrap,
+      {
+        unreadCounts: { s1: 5 },
+        latestOrdinals: { s1: 11 },
+        mutedStreamIds: [],
+        inboxHeldStreamIds: ["s1"],
+        counterTouchedAt: { s1: fetchStartedAt + 500 },
+      },
+      fetchStartedAt
+    )
+    // s1 (touched): local hold wins over the server, which had no entry for it.
+    // s2 (untouched): server's hold stands even though it wasn't in local state.
+    expect(merged.inboxHeldStreamIds.sort()).toEqual(["s1", "s2"])
+  })
+
+  it("held membership: a touched stream that is locally unheld drops the server's hold for it", () => {
+    const heldBootstrap = {
+      ...bootstrap,
+      inboxHeldStreamIds: ["s1", "s2"],
+    } as unknown as import("@threahq/types").WorkspaceBootstrap
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      heldBootstrap,
+      {
+        unreadCounts: { s1: 0 },
+        mutedStreamIds: [],
+        inboxHeldStreamIds: [],
+        counterTouchedAt: { s1: fetchStartedAt + 500 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.inboxHeldStreamIds).toEqual(["s2"])
+  })
+
+  it("arrival: a counter-touched stream keeps its local arrival, an untouched stream takes the server's", () => {
+    const arrivedBootstrap = {
+      ...bootstrap,
+      inboxArrivedAt: { s2: "2026-01-02T00:00:00.000Z" },
+    } as unknown as import("@threahq/types").WorkspaceBootstrap
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      arrivedBootstrap,
+      {
+        unreadCounts: { s1: 5 },
+        latestOrdinals: { s1: 11 },
+        mutedStreamIds: [],
+        inboxArrivedAt: { s1: "2026-01-03T00:00:00.000Z" },
+        counterTouchedAt: { s1: fetchStartedAt + 500 },
+      },
+      fetchStartedAt
+    )
+    // s1 (touched): local arrival wins over the server, which had no entry for it.
+    // s2 (untouched): server's arrival stands even though it wasn't in local state.
+    expect(merged.inboxArrivedAt).toEqual({
+      s1: "2026-01-03T00:00:00.000Z",
+      s2: "2026-01-02T00:00:00.000Z",
+    })
+  })
+
+  it("arrival: a touched stream with no local arrival drops the server's arrival for it", () => {
+    const arrivedBootstrap = {
+      ...bootstrap,
+      inboxArrivedAt: { s1: "2026-01-02T00:00:00.000Z", s2: "2026-01-02T00:00:00.000Z" },
+    } as unknown as import("@threahq/types").WorkspaceBootstrap
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      arrivedBootstrap,
+      {
+        unreadCounts: { s1: 0 },
+        mutedStreamIds: [],
+        inboxArrivedAt: {},
+        counterTouchedAt: { s1: fetchStartedAt + 500 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.inboxArrivedAt).toEqual({ s2: "2026-01-02T00:00:00.000Z" })
   })
 })
 

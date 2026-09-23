@@ -683,6 +683,25 @@ export class ActivityService {
     await this.emitActivityRead(client, workspaceId, userId, cleared, true)
   }
 
+  /**
+   * Mark activity read for a batch of streams inside the caller's transaction —
+   * `clearInbox`'s companion to `markStreamActivityAsRead` (INV-35): a cleared/advanced stream can carry
+   * an unread mention that a bare read-frontier advance never touches, so the
+   * badge would otherwise resurrect on the next bootstrap.
+   */
+  async markStreamsAsReadInTransaction(
+    client: PoolClient,
+    userId: string,
+    workspaceId: string,
+    streamIds: string[]
+  ): Promise<void> {
+    if (streamIds.length === 0) return
+    const cleared = await ActivityRepository.markStreamsAsRead(client, workspaceId, userId, streamIds)
+    if (cleared.length === 0) return
+    logger.debug({ userId, workspaceId, streamIds, count: cleared.length }, "Marked streams' activity as read")
+    await this.emitActivityRead(client, workspaceId, userId, cleared, true)
+  }
+
   async markAllAsRead(userId: string, workspaceId: string): Promise<void> {
     await withTransaction(this.pool, async (client) => {
       const cleared = await ActivityRepository.markAllAsRead(client, workspaceId, userId)

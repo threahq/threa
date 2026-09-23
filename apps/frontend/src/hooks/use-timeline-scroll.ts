@@ -8,11 +8,6 @@ const JUMP_TO_LATEST_PX = 600
 /** A scroll-away-from-bottom only disarms follow if a real user gesture landed
  *  within this window; otherwise it's content growth and the tail re-pins. */
 const USER_SCROLL_GRACE_MS = 300
-/** Scroll-event silence that marks a user scroll (incl. momentum) as settled,
- *  after which a downward release inside the composer dead band docks to the
- *  true bottom. Longer than any inter-event gap of an active scroll; short
- *  enough that the dock reads as part of the gesture. */
-const DEAD_BAND_DOCK_SETTLE_MS = 200
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
@@ -23,12 +18,10 @@ const SETTLE_DEFER_FAILSAFE_MS = 1500
 /** Finger travel (px) from the last recorded anchor before a touchmove records
  *  a gesture direction. The final touchmove before lift-off commonly reverses
  *  2–3px as the finger peels off the glass; recording that flipped a long
- *  downward drag to "up", suppressing the dead-band dock and detaching follow.
+ *  downward drag to "up" and detached follow as it reached the bottom.
  *  Sub-threshold moves keep the anchor, so a slow consistent drag accumulates
  *  past it while jitter oscillates around it and never flips. */
 const TOUCH_DIRECTION_HYSTERESIS_PX = 8
-/** Cap on the dead-band dock's trigger band, as a fraction of the viewport. */
-const DOCK_BAND_MAX_VIEWPORT_FRACTION = 0.25
 
 /**
  * Default CSS variable carrying the reserved composer height: `--composer-height`,
@@ -49,19 +42,6 @@ function readComposerHeight(el: HTMLElement, varName: string): number {
   const raw = getComputedStyle(el).getPropertyValue(varName)
   const px = Number.parseFloat(raw)
   return Number.isFinite(px) ? px : 0
-}
-
-/**
- * The dead-band dock's trigger band. The composer hides exactly
- * `--composer-height` px of scroll range, but on mobile (keyboard open) the
- * composer can dwarf the visible strip — treating ALL of it as "undershot the
- * bottom" docked deliberate reading positions. A downward release more than a
- * quarter of the viewport above the tail is a chosen position, not an
- * undershoot; desktop composers are far under the cap, so nothing changes
- * there.
- */
-function dockBandPx(el: HTMLElement, varName: string): number {
-  return Math.min(readComposerHeight(el, varName), el.clientHeight * DOCK_BAND_MAX_VIEWPORT_FRACTION)
 }
 
 interface UseTimelineScrollOptions {
@@ -296,21 +276,23 @@ export function useTimelineScroll({
   //    the gesture-stamp effect below). Unambiguous regardless of content
   //    reflow — on mobile the content height is rarely stable mid-drag (virtua
   //    measuring rows, the composer growing per keystroke), so scrollTop-delta
-  //    recording alone skipped those frames and a stale "down" made the
-  //    dead-band dock complete an upward gesture the user never made. A fresh
-  //    touchstart clears it: a tap must not inherit the previous gesture's
-  //    direction.
+  //    recording alone skipped those frames and an upward drag never disarmed
+  //    follow. A fresh touchstart clears it: a tap must not inherit the
+  //    previous gesture's direction.
   //  - Gesture-fresh, height-stable scrollTop deltas in handleScroll — the
   //    only signal a desktop scrollbar drag emits.
   // Momentum events after a flick carry no fresh gesture stamp but only ever
   // continue the drag's direction, so the drag-phase value stays correct
-  // through them. The dead-band dock consults this so it only ever completes a
-  // gesture that was heading TOWARD the bottom; an upward nudge (peeking at
-  // context while typing) is a position the user chose, and docking it would
-  // undo what they just revealed at the top of the viewport. handleScroll also
-  // reads it to disarm follow on an upward drag whose scrollTop movement is
-  // masked by reflow.
+  // through them. handleScroll reads it to disarm follow on an upward drag
+  // whose scrollTop movement is masked by reflow.
   const lastGestureScrollDirRef = useRef<"up" | "down" | null>(null)
+
+  // Set by a pin, cleared by the next scroll event. Virtua applies its
+  // above-viewport size compensation as an absolute write from the offset it
+  // last saw in a scroll event, so a pin and a compensation in the same frame
+  // let virtua restore the pre-pin offset. That lands as one height-stable,
+  // gesture-less drop, the same shape as a scrollbar drag.
+  const pinUnobservedRef = useRef(false)
 
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
@@ -326,6 +308,7 @@ export function useTimelineScroll({
     prevScrollHeightRef.current = 0
     didInitialScrollRef.current = false
     lastGestureScrollDirRef.current = null
+    pinUnobservedRef.current = false
     isFollowingTailRef.current = !skipInitialScroll
     deferredRevealRef.current = false
     if (deferFailsafeTimerRef.current) {
@@ -414,9 +397,12 @@ export function useTimelineScroll({
   const pinToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
+    const before = el.scrollTop
     el.scrollTop = el.scrollHeight
     prevScrollTopRef.current = el.scrollTop
     prevScrollHeightRef.current = el.scrollHeight
+    // A write that doesn't move scrollTop fires no scroll event to clear the flag.
+    if (el.scrollTop !== before) pinUnobservedRef.current = true
   }, [])
 
   // A smooth scrollToBottom animates over many frames the browser owns, so a
@@ -628,6 +614,15 @@ export function useTimelineScroll({
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+    const pinUnobserved = pinUnobservedRef.current
+    pinUnobservedRef.current = false
+    if (pinUnobserved && scrolledUp && !userGestured && isFollowingTailRef.current && !isJumpMode) {
+      pinToBottom()
+      // One retry: a scrollbar drag landing on every frame would otherwise
+      // re-arm this branch from its own pin and never disarm follow.
+      pinUnobservedRef.current = false
+      return
+    }
     // Keep the programmatic stamp fresh through a smooth-to-bottom animation:
     // its frames are browser-driven scroll events indistinguishable from a
     // fling, and the frontier sweep must not read the jumped range as read.
@@ -686,7 +681,7 @@ export function useTimelineScroll({
     // While following we're effectively at the tail (the observer re-pins), so
     // never surface jump-to-latest; only when the user has actually scrolled up.
     setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
-  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef, composerHeightVar])
+  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef, composerHeightVar, pinToBottom])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
   // layout effect (pre-paint) against the owned scroller so there is no visible
@@ -763,7 +758,7 @@ export function useTimelineScroll({
         pendingRecheck = 0
       }
     }
-    const observer = new ResizeObserver((entries) => {
+    const onResize = (entries: ResizeObserverEntry[]) => {
       const el = scrollerRef.current
       if (!el) return
       const hasViewportEntry = entries.some((entry) => entry.target === el)
@@ -808,10 +803,38 @@ export function useTimelineScroll({
       // on every composer open. When the viewport grows past the content end
       // the browser clamps scrollTop on its own; handleScroll never reads that
       // clamp as a user scroll (it lands exactly at the new bottom).
-    })
-
+    }
+    const observer = new ResizeObserver(onResize)
     observer.observe(scroller)
     observer.observe(content)
+
+    // Rows too. virtua learns a row's new height (a row growing in, an image
+    // decoding) from its own ResizeObserver and only then resizes the content,
+    // so the content entry above lands a frame late and that frame paints the
+    // row sliding under the composer. Observers deliver in creation order
+    // within a frame and virtua flushSyncs item resizes, so an observer created
+    // after virtua's sees its rows' entries after the new height is committed
+    // and pins in the same frame, before paint. virtua creates its observer
+    // when its first rows mount, hence the lazy construction on first rows.
+    let rowObserver: ResizeObserver | null = null
+    const observeRows = (nodes: Iterable<Node>) => {
+      for (const node of nodes) {
+        if (!(node instanceof Element)) continue
+        rowObserver ??= new ResizeObserver(onResize)
+        rowObserver.observe(node)
+      }
+    }
+    const rowList = content.querySelector(":scope > [data-timeline-rows] > *")
+    const rowMutations = new MutationObserver((records) => {
+      for (const record of records) {
+        observeRows(record.addedNodes)
+        record.removedNodes.forEach((node) => node instanceof Element && rowObserver?.unobserve(node))
+      }
+    })
+    if (rowList) {
+      observeRows(rowList.children)
+      rowMutations.observe(rowList, { childList: true })
+    }
 
     // Keyboard backstop. AppShell is sized to --viewport-height (pinned to the
     // visible viewport by useVisualViewport under interactive-widget=resizes-
@@ -832,6 +855,8 @@ export function useTimelineScroll({
 
     return () => {
       observer.disconnect()
+      rowObserver?.disconnect()
+      rowMutations.disconnect()
       clearPendingRecheck()
       vv?.removeEventListener("resize", pinIfFollowing)
       vv?.removeEventListener("scroll", pinIfFollowing)
@@ -907,88 +932,6 @@ export function useTimelineScroll({
       el.removeEventListener("keydown", mark)
     }
   }, [scrollerEl, userInteractedAtRef])
-
-  // Dead-band dock. The bottom `--composer-height` px of scroll range sit
-  // behind the floating composer, so any scroll position resting in that band
-  // shows the tail clipped by the pill — and nothing ever corrects it: the
-  // gesture disarmed follow, the at-bottom re-arm band (AT_BOTTOM_PX) is
-  // narrower than the dead band, and jump-to-latest needs 600px. A mouse wheel
-  // overshoots and clamps at the true max (which re-arms follow), which is why
-  // this parked state is a touch-drag/trackpad problem: a finger releases
-  // wherever it stops. So once user scrolling settles (scroll events quiet,
-  // no finger/button held) with the last gesture heading DOWN — the user was
-  // returning to the bottom and undershot — ease the rest of the way and let
-  // the pin re-arm follow. Upward releases in the band are left alone: that is
-  // the deliberate "nudge up to read context" position, and the direction ref
-  // never records programmatic positioning (deep-link/divider scrolls), so a
-  // jump target near the tail is never yanked from under the user either.
-  useEffect(() => {
-    const el = scrollerEl
-    if (!el) return
-    let settleTimer = 0
-    // A held press must not dock mid-gesture (a still finger emits no scroll
-    // events, so the quiet window alone would elapse under it). Tracked via
-    // touch events, not pointer events — browsers fire pointercancel when a
-    // touch scroll takes over, which would read as "released" while the finger
-    // is still dragging. Mouse-side, a held selection drag is the same hazard.
-    let touchHeld = false
-    let mouseHeld = false
-    const clearSettle = () => {
-      if (settleTimer) {
-        window.clearTimeout(settleTimer)
-        settleTimer = 0
-      }
-    }
-    const evaluate = () => {
-      settleTimer = 0
-      if (touchHeld || mouseHeld) return
-      if (isJumpMode || isInitialSettlingRef.current) return
-      if (lastGestureScrollDirRef.current !== "down") return
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-      if (distanceFromBottom <= 1) return
-      if (distanceFromBottom > dockBandPx(el, composerHeightVar) + AT_BOTTOM_PX) return
-      scrollToBottom({ force: true, behavior: "smooth" })
-    }
-    const schedule = () => {
-      clearSettle()
-      settleTimer = window.setTimeout(evaluate, DEAD_BAND_DOCK_SETTLE_MS)
-    }
-    const onScroll = () => schedule()
-    const onTouchStart = () => {
-      touchHeld = true
-      clearSettle()
-    }
-    const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length > 0) return
-      touchHeld = false
-      schedule()
-    }
-    const onMouseDown = () => {
-      mouseHeld = true
-      clearSettle()
-    }
-    const onMouseUp = () => {
-      if (!mouseHeld) return
-      mouseHeld = false
-      schedule()
-    }
-    el.addEventListener("scroll", onScroll, { passive: true })
-    el.addEventListener("touchstart", onTouchStart, { passive: true })
-    el.addEventListener("touchend", onTouchEnd, { passive: true })
-    el.addEventListener("touchcancel", onTouchEnd, { passive: true })
-    el.addEventListener("mousedown", onMouseDown, { passive: true })
-    // window, not el: a drag can end with the cursor outside the scroller.
-    window.addEventListener("mouseup", onMouseUp, { passive: true })
-    return () => {
-      clearSettle()
-      el.removeEventListener("scroll", onScroll)
-      el.removeEventListener("touchstart", onTouchStart)
-      el.removeEventListener("touchend", onTouchEnd)
-      el.removeEventListener("touchcancel", onTouchEnd)
-      el.removeEventListener("mousedown", onMouseDown)
-      window.removeEventListener("mouseup", onMouseUp)
-    }
-  }, [scrollerEl, isJumpMode, scrollToBottom, composerHeightVar])
 
   // Abort an in-flight cold-load settle when the hook unmounts. Kept separate
   // from the ResizeObserver effect above so that effect can re-run when the

@@ -5,11 +5,13 @@ import { linkPreviewsApi } from "@/api"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
+import { useLinkPreviewOpen } from "@/hooks/use-link-preview-collapse"
 import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
 import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threahq/types"
 
-const DEFAULT_VISIBLE_COUNT = 3
+/** Previews a message opens as cards; web previews past it start as one-line chips. */
+const MAX_OPEN_CARDS = 3
 
 interface LinkPreviewListProps {
   messageId: string
@@ -49,11 +51,8 @@ export function LinkPreviewList({
 }: LinkPreviewListProps) {
   const [previews, setPreviews] = useState<LinkPreviewSummary[]>(initialPreviews ?? [])
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set())
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set())
   const [isExpanded, setIsExpanded] = useState(false)
   const { preferences } = usePreferences()
-
-  const defaultCollapsed = preferences?.linkPreviewDefault === "collapsed"
 
   // An explicit empty array (edited message that removed URLs, or backend
   // dismissal filtering) clears stale previews; undefined leaves them intact.
@@ -97,66 +96,60 @@ export function LinkPreviewList({
 
   if (visiblePreviews.length === 0) return null
 
-  const displayedPreviews = isExpanded ? visiblePreviews : visiblePreviews.slice(0, DEFAULT_VISIBLE_COUNT)
-  const hiddenCount = visiblePreviews.length - DEFAULT_VISIBLE_COUNT
+  // In-app previews have no chip form, so past the cap they hide behind "Show more"
+  // while web previews fold to chips, which share lines and never count.
+  const collapsedByPreference = preferences?.linkPreviewDefault === "collapsed"
+  let openCount = 0
+  const displayedPreviews = visiblePreviews.flatMap((preview) => {
+    if (isInAppLinkContentType(preview.contentType)) {
+      openCount++
+      return isExpanded || openCount <= MAX_OPEN_CARDS ? [{ preview, defaultOpen: true }] : []
+    }
+    const defaultOpen = !collapsedByPreference && openCount < MAX_OPEN_CARDS
+    if (defaultOpen) openCount++
+    return [{ preview, defaultOpen }]
+  })
+  const hiddenCount = visiblePreviews.length - displayedPreviews.length
 
   return (
-    <div className={cn("flex flex-col gap-2 mt-2", className)}>
-      {displayedPreviews.map((preview) => {
+    <div className={cn("flex flex-wrap items-start gap-2 mt-2", className)}>
+      {displayedPreviews.map(({ preview, defaultOpen }) => {
         // In-app links (message / stream / memo / conversation) use a specialized card with
         // permission-checked resolve instead of a network-fetched web card.
         if (isInAppLinkContentType(preview.contentType)) {
           return (
             <PreviewRenderBoundary key={preview.id}>
-              <InAppLinkPreviewCard
-                preview={preview}
-                workspaceId={workspaceId}
-                onDismiss={handleDismiss}
-                hydrate={hydrateFromApi}
-              />
+              <div className="basis-full min-w-0">
+                <InAppLinkPreviewCard
+                  preview={preview}
+                  workspaceId={workspaceId}
+                  onDismiss={handleDismiss}
+                  hydrate={hydrateFromApi}
+                />
+              </div>
             </PreviewRenderBoundary>
           )
         }
 
-        const isHighlighted = hoveredUrl ? normalizeForCompare(preview.url) === normalizeForCompare(hoveredUrl) : false
-
-        const explicitlyCollapsed = collapsedIds.has(preview.id)
-        const explicitlyOpened = collapsedIds.has(`__opened_${preview.id}`)
-        const isCollapsed = explicitlyCollapsed || (defaultCollapsed && !explicitlyOpened)
-
         return (
           <PreviewRenderBoundary key={preview.id}>
-            <LinkPreviewCard
+            <WebPreviewItem
               preview={preview}
               messageId={messageId}
               workspaceId={workspaceId}
-              isHighlighted={isHighlighted}
-              isCollapsed={isCollapsed}
+              isHighlighted={hoveredUrl ? normalizeForCompare(preview.url) === normalizeForCompare(hoveredUrl) : false}
+              defaultOpen={defaultOpen}
               onDismiss={handleDismiss}
-              onToggleCollapse={(id) => {
-                setCollapsedIds((prev) => {
-                  const next = new Set(prev)
-                  const currentlyCollapsed = next.has(id) || (defaultCollapsed && !next.has(`__opened_${id}`))
-                  next.delete(id)
-                  next.delete(`__opened_${id}`)
-                  if (currentlyCollapsed) {
-                    next.add(`__opened_${id}`)
-                  } else {
-                    next.add(id)
-                  }
-                  return next
-                })
-              }}
             />
           </PreviewRenderBoundary>
         )
       })}
 
-      {hiddenCount > 0 && !isExpanded && (
+      {hiddenCount > 0 && (
         <Button
           variant="ghost"
           size="sm"
-          className="self-start h-7 text-xs text-muted-foreground"
+          className="basis-full justify-start h-7 text-xs text-muted-foreground"
           onClick={() => setIsExpanded(true)}
         >
           <ChevronDown className="h-3 w-3 mr-1" />
@@ -165,6 +158,36 @@ export function LinkPreviewList({
       )}
     </div>
   )
+}
+
+function WebPreviewItem({
+  preview,
+  messageId,
+  workspaceId,
+  isHighlighted,
+  defaultOpen,
+  onDismiss,
+}: {
+  preview: LinkPreviewSummary
+  messageId: string
+  workspaceId: string
+  isHighlighted: boolean
+  defaultOpen: boolean
+  onDismiss: (previewId: string) => void
+}) {
+  const { open, toggle } = useLinkPreviewOpen(messageId, preview.id, defaultOpen)
+  const card = (
+    <LinkPreviewCard
+      preview={preview}
+      messageId={messageId}
+      workspaceId={workspaceId}
+      isHighlighted={isHighlighted}
+      isCollapsed={!open}
+      onDismiss={onDismiss}
+      onToggleCollapse={toggle}
+    />
+  )
+  return open ? <div className="basis-full min-w-0">{card}</div> : card
 }
 
 /** Normalize URL for hover comparison (strip trailing slash, lowercase) */

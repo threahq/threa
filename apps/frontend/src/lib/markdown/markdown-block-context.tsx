@@ -1,6 +1,6 @@
 import { createContext, useContext, type ReactNode } from "react"
 
-export type MarkdownBlockKind = "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card"
+export type MarkdownBlockKind = "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card" | "run"
 
 /**
  * Scopes collapsible markdown blocks to the surrounding message so per-block
@@ -15,12 +15,15 @@ interface MarkdownBlockContextValue {
 const MarkdownBlockContext = createContext<MarkdownBlockContextValue | null>(null)
 
 interface MarkdownBlockProviderProps {
-  messageId: string
+  /** `null` clears an outer scope: content inside renders as standalone, with no persisted fold chrome. */
+  messageId: string | null
   children: ReactNode
 }
 
 export function MarkdownBlockProvider({ messageId, children }: MarkdownBlockProviderProps) {
-  return <MarkdownBlockContext.Provider value={{ messageId }}>{children}</MarkdownBlockContext.Provider>
+  return (
+    <MarkdownBlockContext.Provider value={messageId ? { messageId } : null}>{children}</MarkdownBlockContext.Provider>
+  )
 }
 
 export function useMarkdownBlockContext(): MarkdownBlockContextValue | null {

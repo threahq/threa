@@ -1,4 +1,12 @@
-import { ArrowLeft, ArrowRight, Command, FileText, History, Search as SearchIcon, Terminal } from "lucide-react"
+import {
+  ArrowLeft,
+  ArrowRight,
+  Command,
+  FileText,
+  History,
+  Search as SearchIcon,
+  Terminal,
+} from "lucide-react"
 import { Link } from "react-router-dom"
 import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
 import { useSearchPanel } from "@/components/search/search-panel-context"
@@ -13,7 +21,7 @@ import { formatRelativeTime } from "@/lib/dates"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { useWorkspaceDmPeers, useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "@/lib/keyboard-shortcuts"
-import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
+import { SidebarActionMenu, browseStreamsAction, type SidebarActionItem } from "./sidebar-actions"
 
 interface SidebarHeaderProps {
   workspaceName: string
@@ -83,6 +91,7 @@ export function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps
       description: !isTouch && commandBinding ? formatKeyBinding(commandBinding) : null,
       onSelect: openSwitcherIn("command"),
     },
+    browseStreamsAction(workspaceId, collapseOnMobile),
   ]
 
   return (

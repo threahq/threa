@@ -410,9 +410,6 @@ export const messageActions: MessageAction[] = [
   },
   {
     id: "set-reminder",
-    // Mobile hover can't show the desktop popover, so mobile users get a
-    // dedicated drawer entry that opens a bottom sheet with presets + a
-    // custom-time dialog.
     label: "Set reminder…",
     icon: Bell,
     groupId: "save",

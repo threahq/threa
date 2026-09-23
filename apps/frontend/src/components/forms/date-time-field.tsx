@@ -12,6 +12,7 @@ interface DateTimeFieldProps {
   /** Optional YYYY-MM-DD lower bound applied to the date input's `min` attribute. */
   minDate?: string
   disabled?: boolean
+  autoFocusDate?: boolean
   /**
    * `comfortable` (default) sizes inputs for thumb taps in a bottom sheet —
    * `bg-muted/30` background, `py-4 text-base`. `compact` matches dialog/form
@@ -38,6 +39,7 @@ export function DateTimeField({
   onTimeChange,
   minDate,
   disabled,
+  autoFocusDate,
   density = "comfortable",
   gridClassName,
 }: DateTimeFieldProps) {
@@ -56,6 +58,7 @@ export function DateTimeField({
           type="date"
           value={date}
           min={minDate}
+          autoFocus={autoFocusDate}
           onChange={(e) => onDateChange(e.target.value)}
           disabled={disabled}
           className={inputClass}

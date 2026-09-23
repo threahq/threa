@@ -28,7 +28,16 @@ import { linkPreviewGalleryId } from "@/components/gallery/link-preview-gallery-
 import { isVideoPreview, videoPlaybackSrc } from "@/components/gallery/video-embed"
 import { LinkPreviewBody } from "./link-preview-body"
 import { useReportPreviewVisible } from "@/hooks/use-report-preview-visible"
-import { AccentGlow, colorWithAlpha, Field, FieldGrid, LabelChip, MonoTag, StatePill } from "./link-preview-primitives"
+import {
+  AccentGlow,
+  colorWithAlpha,
+  Field,
+  FieldGrid,
+  LabelChip,
+  MonoTag,
+  PREVIEW_CARD_WIDTH,
+  StatePill,
+} from "./link-preview-primitives"
 import type {
   GitHubFilePreviewData,
   GitHubPrPreviewData,
@@ -136,7 +145,7 @@ export function LinkPreviewCard({
   const visibilityRef = useReportPreviewVisible({
     workspaceId,
     previewId: preview.id,
-    enabled: githubPreview !== null,
+    enabled: githubPreview !== null && !isCollapsedProp,
   })
 
   const handleDismiss = useCallback(
@@ -157,143 +166,151 @@ export function LinkPreviewCard({
     [onToggleCollapse, preview.id]
   )
 
+  const headerIcon = resolveHeaderIcon(githubPreview, linearPreview, preview.contentType)
+  const headerLabel = resolveHeaderLabel(githubPreview, linearPreview, preview.siteName, domain)
+  const headerFavicon = !githubPreview && !linearPreview ? preview.faviconUrl : null
+
+  if (isCollapsedProp) {
+    return (
+      <div className={previewCardClassName(isHighlighted)}>
+        <PreviewCardHeader
+          collapsed
+          icon={headerIcon}
+          label={preview.title || headerLabel}
+          faviconUrl={headerFavicon}
+          onToggleCollapse={handleToggleCollapse}
+          onDismiss={onDismiss ? handleDismiss : undefined}
+        />
+      </div>
+    )
+  }
+
   if (preview.contentType === "image") {
     // data-native-context makes the row long-press hook defer to the browser's
     // native menu (via `deferToNativeLinks`), so long-pressing the image still
     // gets "save/copy image" on touch instead of the app drawer — the tap opens
     // the gallery, and the gallery gates download/copy off for external images.
     return (
-      <div
-        data-native-context="true"
-        className={cn(
-          "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
-          "hover:border-primary/50 hover:shadow-sm",
-          isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
-        )}
-      >
+      <div data-native-context="true" className={previewCardClassName(isHighlighted)}>
         <PreviewCardHeader
           icon={<ContentTypeIcon contentType="image" />}
           label={preview.siteName ?? domain}
           faviconUrl={preview.faviconUrl}
-          isCollapsed={isCollapsedProp}
           onToggleCollapse={handleToggleCollapse}
           onDismiss={onDismiss ? handleDismiss : undefined}
         />
-        {!isCollapsedProp && <ImagePreviewContent preview={preview} workspaceId={workspaceId} />}
+        <ImagePreviewContent preview={preview} workspaceId={workspaceId} />
       </div>
     )
   }
 
   if (preview.contentType === "video" && videoPreview) {
     return (
-      <div
-        data-native-context="true"
-        className={cn(
-          "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
-          "hover:border-primary/50 hover:shadow-sm",
-          isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
-        )}
-      >
+      <div data-native-context="true" className={previewCardClassName(isHighlighted)}>
         <PreviewCardHeader
           icon={<ContentTypeIcon contentType="video" />}
           label={preview.siteName ?? domain}
           faviconUrl={preview.faviconUrl}
-          isCollapsed={isCollapsedProp}
           onToggleCollapse={handleToggleCollapse}
           onDismiss={onDismiss ? handleDismiss : undefined}
         />
-        {!isCollapsedProp && <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />}
+        <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />
       </div>
     )
   }
-
-  const headerIcon = resolveHeaderIcon(githubPreview, linearPreview, preview.contentType)
-  const headerLabel = resolveHeaderLabel(githubPreview, linearPreview, preview.siteName, domain)
 
   // data-native-context tells the message-level long-press hook to skip its
   // timer so long-pressing anywhere on the card gets the browser's native link
   // menu (via the inner <a>) instead of the message drawer.
   return (
-    <div
-      ref={visibilityRef}
-      data-native-context="true"
-      className={cn(
-        "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all max-w-md",
-        "hover:border-primary/50 hover:shadow-sm",
-        isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
-      )}
-    >
+    <div ref={visibilityRef} data-native-context="true" className={previewCardClassName(isHighlighted)}>
       <PreviewCardHeader
         icon={headerIcon}
         label={headerLabel}
-        faviconUrl={!githubPreview && !linearPreview ? preview.faviconUrl : null}
-        isCollapsed={isCollapsedProp}
+        faviconUrl={headerFavicon}
         onToggleCollapse={handleToggleCollapse}
         onDismiss={onDismiss ? handleDismiss : undefined}
       />
 
       {/* Clamped to a shared body height so a message with mixed preview types
           (e.g. a PR + a diff) lines up. */}
-      {!isCollapsedProp && (
-        <LinkPreviewBody messageId={messageId} previewId={preview.id}>
-          <a
-            href={preview.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block hover:bg-muted/20 transition-colors"
-          >
-            <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
-          </a>
-        </LinkPreviewBody>
-      )}
+      <LinkPreviewBody messageId={messageId} previewId={preview.id}>
+        <a
+          href={preview.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block hover:bg-muted/20 transition-colors"
+        >
+          <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
+        </a>
+      </LinkPreviewBody>
     </div>
+  )
+}
+
+function previewCardClassName(isHighlighted?: boolean): string {
+  return cn(
+    "group/preview reveal-host relative overflow-hidden rounded-lg border bg-card transition-all",
+    PREVIEW_CARD_WIDTH,
+    "hover:border-primary/50 hover:shadow-sm",
+    isHighlighted && "ring-2 ring-primary border-primary shadow-sm"
   )
 }
 
 /**
  * Card chrome header shared by every preview family: collapse toggle, provider
  * icon, optional favicon, source label, and dismiss. `faviconUrl` is null when
- * the provider already carries its own icon (GitHub/Linear).
+ * the provider already carries its own icon (GitHub/Linear). A folded card is
+ * this row alone, so folding keeps the card's width and header height; the
+ * whole row then expands it.
  */
 function PreviewCardHeader({
   icon,
   label,
   faviconUrl,
-  isCollapsed,
+  collapsed = false,
   onToggleCollapse,
   onDismiss,
 }: {
   icon: ReactNode
   label: string
   faviconUrl: string | null
-  isCollapsed?: boolean
+  collapsed?: boolean
   onToggleCollapse: (e: React.MouseEvent) => void
   onDismiss?: (e: React.MouseEvent) => void
 }) {
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b bg-muted/30">
-      <button
-        type="button"
-        onClick={onToggleCollapse}
-        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        aria-label={isCollapsed ? "Expand preview" : "Collapse preview"}
-      >
-        {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-      </button>
-      {icon}
-      {faviconUrl && (
-        <img
-          src={faviconUrl}
-          alt=""
-          className="h-3.5 w-3.5 rounded-sm"
-          loading="lazy"
-          onError={(e) => {
-            ;(e.target as HTMLImageElement).style.display = "none"
-          }}
-        />
+    <div className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-muted/30", !collapsed && "border-b")}>
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          aria-expanded={false}
+          title={label}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {icon}
+          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+          <span className="truncate">{label}</span>
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Collapse preview"
+            aria-expanded
+          >
+            <ChevronDown className="h-3 w-3" />
+          </button>
+          {icon}
+          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+          <span className="text-xs text-muted-foreground truncate">{label}</span>
+          <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
+        </>
       )}
-      <span className="text-xs text-muted-foreground truncate">{label}</span>
-      <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
       <div className="reveal-actions flex gap-1">
         {onDismiss && (
           <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">
@@ -773,6 +790,7 @@ function GitHubFileContent({ preview, data }: { preview: LinkPreviewSummary; dat
       <div className="mt-2 overflow-hidden rounded-md border bg-muted/20 px-2.5 py-1.5">
         <MarkdownContent
           content={data.markdownContent}
+          allowHtml
           className="text-xs leading-relaxed text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
         />
       </div>
@@ -896,6 +914,7 @@ function GitHubCommentContent({ data }: { data: GitHubCommentPreviewData }) {
               <div className="min-w-0 flex-1 rounded-r-lg bg-muted/25 py-1 pr-2">
                 <MarkdownContent
                   content={data.body}
+                  allowHtml
                   className="text-xs leading-relaxed text-foreground/90 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
                 />
               </div>
@@ -1128,4 +1147,18 @@ function formatLinearStatus(status: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ")
+}
+
+function PreviewFavicon({ src }: { src: string }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-3.5 w-3.5 shrink-0 rounded-sm"
+      loading="lazy"
+      onError={(e) => {
+        ;(e.target as HTMLImageElement).style.display = "none"
+      }}
+    />
+  )
 }

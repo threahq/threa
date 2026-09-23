@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
@@ -45,7 +45,7 @@ import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
-import { setStreamCustomSection } from "./sidebar-config"
+import { setStreamCustomSection, setSectionFilter, type SidebarSectionFilter } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
 import {
@@ -80,11 +80,14 @@ import {
   clearAxisSearch,
 } from "@/components/board/board-filter-params"
 import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
+import { isClearInboxShortcutEvent, resolveClearInboxTargetStreamId } from "./inbox-clear-shortcut"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
 import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
+import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
+const EMPTY_INBOX_ARRIVED_AT: Record<string, string> = {}
 
 interface SidebarProps {
   workspaceId: string
@@ -113,7 +116,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const labels = useWorkspaceLabels(workspaceId)
   const labelAssignments = useWorkspaceLabelAssignments(workspaceId)
   const { createScratchpad } = useDraftScratchpads(workspaceId)
-  const { getUnreadCount } = useUnreadCounts(workspaceId)
+  const { getUnreadCount, isInInbox, clearInbox } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
   const { draftCount, isLoading: draftsLoading, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
   const { openCreateChannel } = useCreateChannel()
@@ -154,6 +157,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return ids
   }, [idbStreamMemberships])
 
+  const joinedAtByStreamId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const m of idbStreamMemberships) map.set(m.streamId, m.joinedAt)
+    return map
+  }, [idbStreamMemberships])
+
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
   // Archiving a stream marks only that row; everything under it along the
@@ -169,6 +178,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   )
 
   const hiddenStreamIds = useMemo(() => collectHiddenStreamIds(idbStreams), [idbStreams])
+  const streamTypeById = useMemo(() => new Map(idbStreams.map((stream) => [stream.id, stream.type])), [idbStreams])
 
   // Streams the user stepped away from with an unsent (loaded, non-stashed)
   // draft, surfaced as a per-row hint. `loadedDraftStreamIdSignature` (from the
@@ -277,25 +287,19 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sidebarConfig.sections]
   )
 
-  // The Unread section's membership: the viewer's live unread streams (muted
-  // excluded). A stream shows only here while unread and returns to its home
-  // section the moment it's read — `resolveSections` reuses this set as the
-  // exclusion for every other section, so an unread stream never renders twice.
-  // Empty unless the layout actually has an Unread section.
+  // Inbox membership = isInInbox (unread + held), muted excluded; resolveSections
+  // excludes this set elsewhere.
   const unreadStreamIds = useMemo(() => {
     if (!hasUnreadSection) return EMPTY_UNREAD_IDS
     const ids = new Set<string>()
-    for (const stream of processedStreams) if (isUnreadStream(stream, getUnreadCount(stream.id))) ids.add(stream.id)
+    for (const stream of processedStreams) {
+      if (isInInbox(stream.id)) ids.add(stream.id)
+    }
     return ids
-  }, [hasUnreadSection, processedStreams, getUnreadCount])
+  }, [hasUnreadSection, processedStreams, isInInbox])
 
-  // The Unread affordance's badge: unread (unmuted) streams workspace-wide — the
-  // same predicate the Unread section's membership uses, ungated by the layout
-  // since the board row exists regardless of whether that section is configured.
-  // Workspace-wide deliberately: the board view it opens still applies the
-  // active lens/scope/saved-view filters, so a narrowed view can show fewer
-  // cards than the badge counts. Per-view counting would re-implement the
-  // board's filter resolution here; if the mismatch grates, that's the change.
+  // Unread badge count: plain unread predicate, NOT Inbox membership (held-but-read
+  // streams don't inflate it); workspace-wide — the board view re-applies its own filters.
   const unreadStreamCount = useMemo(
     () => processedStreams.filter((stream) => isUnreadStream(stream, getUnreadCount(stream.id))).length,
     [processedStreams, getUnreadCount]
@@ -319,6 +323,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [sidebarConfig.sections, labelsById, streamIdsByLabel])
 
+  const inboxOrder = preferencesContext?.preferences?.inboxOrder ?? "arrival"
+  const inboxArrivedAt = unreadState?.inboxArrivedAt ?? EMPTY_INBOX_ARRIVED_AT
+
   const resolvedSections = useMemo(
     () =>
       resolveSections(sidebarConfig, {
@@ -327,8 +334,23 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         getUnreadCount,
         streamIdsByLabel,
         unreadStreamIds,
+        inboxOrder,
+        inboxArrivedAt,
+        joinedAtByStreamId,
+        streamTypeById,
       }),
-    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel, unreadStreamIds]
+    [
+      sidebarConfig,
+      processedStreams,
+      virtualDmStreams,
+      getUnreadCount,
+      streamIdsByLabel,
+      unreadStreamIds,
+      inboxOrder,
+      inboxArrivedAt,
+      joinedAtByStreamId,
+      streamTypeById,
+    ]
   )
 
   // Board mode re-aims the stream rows: their verb changes from "open timeline"
@@ -452,6 +474,36 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     memberCount: workspaceUsers.length,
     onCreateScratchpad: handleCreateScratchpad,
   })
+
+  // Bare "e" fails `isSafeShortcutBinding`, so this bypasses
+  // `useKeyboardShortcuts` — see `CLEAR_INBOX_STREAM_ACTION_ID`.
+  const hoveredInboxStreamIdRef = useRef<string | null>(null)
+  const clearInboxBinding = getEffectiveKeyBinding(
+    CLEAR_INBOX_STREAM_ACTION_ID,
+    preferencesContext?.preferences?.keyboardShortcuts ?? {}
+  )
+  // Row tooltip hint: the effective binding, formatted for display — omitted
+  // (undefined) when the viewer disabled or unbound the shortcut.
+  const clearInboxKeyHint = clearInboxBinding ? formatKeyBinding(clearInboxBinding) : undefined
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const binding = getEffectiveKeyBinding(
+        CLEAR_INBOX_STREAM_ACTION_ID,
+        preferencesContext?.preferences?.keyboardShortcuts ?? {}
+      )
+      if (!isClearInboxShortcutEvent(event, binding)) return
+      const targetStreamId = resolveClearInboxTargetStreamId({
+        hoveredStreamId: hoveredInboxStreamIdRef.current,
+        activeStreamId,
+        isInInbox,
+      })
+      if (!targetStreamId) return
+      event.preventDefault()
+      clearInbox([targetStreamId])
+    }
+    document.addEventListener("keydown", handleKeyDown)
+    return () => document.removeEventListener("keydown", handleKeyDown)
+  }, [activeStreamId, isInInbox, clearInbox, preferencesContext])
 
   if (phase !== "ready") {
     return (
@@ -590,6 +642,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     )
   }
 
+  const handleToggleSectionFilter = (sectionId: string) => {
+    const current = sidebarConfig.sections.find((s) => s.id === sectionId)
+    const next: SidebarSectionFilter = (current?.filter ?? "all") === "unread" ? "all" : "unread"
+    setSidebarConfig(setSectionFilter(sidebarConfig, sectionId, next))
+  }
+
   const removeStreamLabel = (streamId: string, labelId: string) => {
     unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
   }
@@ -647,9 +705,22 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onFileStreamToSection={handleFileStreamToSection}
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
+            onToggleSectionFilter={handleToggleSectionFilter}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
             quickLinksSlot={quickLinksSlot}
             boardMode={boardMode}
+            onClearInbox={clearInbox}
+            clearInboxKeyHint={clearInboxKeyHint}
+            onInboxRowHoverChange={(streamId, hovering) => {
+              if (hovering) {
+                hoveredInboxStreamIdRef.current = streamId
+              } else if (hoveredInboxStreamIdRef.current === streamId) {
+                // Only clear when this row still owns the ref — a later row's
+                // enter must not be clobbered by a stale unmount/leave from a
+                // row that has since scrolled away or been removed.
+                hoveredInboxStreamIdRef.current = null
+              }
+            }}
           />
         }
         footer={

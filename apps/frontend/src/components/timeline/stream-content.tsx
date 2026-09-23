@@ -1,6 +1,7 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
-import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
+import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { useLocation, useNavigationType, useSearchParams } from "react-router-dom"
 import { type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
@@ -98,6 +99,8 @@ import {
   findEventItemIndex,
   findTimelineTargetIndex,
   getTimelineItemKey,
+  getTimelineItemArrivalKey,
+  isTimelineItemInFlight,
   filterVisibleItems,
   collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
@@ -135,6 +138,9 @@ import { StreamSearchBar } from "./stream-search-bar"
 import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
+import { getBlockCollapse, useBlockCollapseVersion } from "@/lib/markdown/collapse-cache"
+import { useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
+import { createRunFoldStore, foldAuthorRuns, type RunFoldStore } from "./run-fold"
 import { localStartOfDayMs } from "@/lib/dates"
 import { getPerfCapture } from "@/lib/perf/capture"
 import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch-selection-events"
@@ -1405,16 +1411,61 @@ export function StreamContent({
   // reads — so adding them changes the first item's key and useTimelineScroll
   // passes `shift` to virtua for that render, holding the viewport exactly
   // like a real older-page prepend (INV-21).
+  const runFoldRef = useRef<{ streamId: string; store: RunFoldStore } | null>(null)
+  if (runFoldRef.current?.streamId !== streamId) {
+    runFoldRef.current = { streamId, store: createRunFoldStore() }
+  }
+  const runFoldStore = runFoldRef.current.store
+  const runFoldVersion = useSyncExternalStore(runFoldStore.subscribe, runFoldStore.getVersion)
+  const blockCollapseVersion = useBlockCollapseVersion()
+  const messageCollapse = useMessageCollapseSettings()
+  // Selection and the conversation overlay act on individual messages, so every
+  // row stays on screen while either is up.
+  const foldRuns = useVirtualized && !batchMode && !activeConversationOverlay
+  const revealMessageId = streamSearch.activeMessageId ?? highlightMessageId
+  // The landing may restore to a row inside a run the viewer has since
+  // collapsed; that run opens so the anchor row is there to land on (INV-70).
+  const restoreAnchorId = useMemo(
+    () => (useVirtualized ? loadTimelineAnchor(streamId)?.targetId : undefined),
+    [streamId, useVirtualized]
+  )
+
   const visibleItems = useMemo(
     () =>
       timeDerive(() => {
         const filtered = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+        const folded = foldRuns
+          ? foldAuthorRuns(filtered, {
+              store: runFoldStore,
+              collapseAtHeight: messageCollapse.collapseAtHeight,
+              frontierSequence,
+              viewerId: currentWorkspaceUserId,
+              persisted: getBlockCollapse,
+              revealMessageIds: [revealMessageId, restoreAnchorId],
+            })
+          : filtered
         // Day dividers go on the post-filter list so a boundary lands above the
         // first *visible* row of a day (INV-42), then skeletons prepend above all.
-        const base = injectDayDividers(filtered)
+        const base = injectDayDividers(folded)
         return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
       }),
-    [timelineItems, useVirtualized, isChannel, showOlderSkeletons]
+    // runFoldVersion / blockCollapseVersion: the pass reads measured heights and
+    // persisted toggles out of those stores.
+    [
+      timelineItems,
+      useVirtualized,
+      isChannel,
+      showOlderSkeletons,
+      foldRuns,
+      runFoldStore,
+      runFoldVersion,
+      blockCollapseVersion,
+      messageCollapse.collapseAtHeight,
+      frontierSequence,
+      currentWorkspaceUserId,
+      revealMessageId,
+      restoreAnchorId,
+    ]
   )
 
   const visibleItemCount = visibleItems.length
@@ -1559,6 +1610,14 @@ export function StreamContent({
   const virtuosoScrollerRef = virtualScrollerRef
 
   // --- Plain scroll for threads (they load all events) ---
+  // Content box for the plain (thread) scroller — its height tracks scrollHeight,
+  // so observing it (not the fixed h-full scroller) catches embed/image growth.
+  const plainContentRef = useRef<HTMLDivElement>(null)
+  const [plainContentEl, setPlainContentEl] = useState<HTMLDivElement | null>(null)
+  const registerPlainContent = useCallback((node: HTMLDivElement | null) => {
+    plainContentRef.current = node
+    setPlainContentEl(node)
+  }, [])
   const {
     scrollContainerRef: plainScrollRef,
     handleScroll: plainHandleScroll,
@@ -1573,6 +1632,7 @@ export function StreamContent({
     isFetchingOlder,
     isFetchingNewer,
     resetKey: streamId,
+    content: plainContentEl,
     // Only treat the user as "at the bottom" when they are essentially flush.
     // A small scroll-up to reference older messages while typing should not be
     // snapped back when the composer grows.
@@ -1581,9 +1641,6 @@ export function StreamContent({
 
   // Unified API regardless of scroll mode
   const scrollContainerRef = useVirtualized ? virtuosoScrollerRef : plainScrollRef
-  // Content box for the plain (thread) scroller — its height tracks scrollHeight,
-  // so observing it (not the fixed h-full scroller) catches embed/image growth.
-  const plainContentRef = useRef<HTMLDivElement>(null)
   const isScrolledFarFromBottom = useVirtualized ? virtualIsScrolledFar : plainIsScrolledFar
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
@@ -2738,6 +2795,7 @@ export function StreamContent({
                       <>
                         <TimelineMessageList
                           visibleItems={visibleItems}
+                          runFoldStore={runFoldStore}
                           cancelledFollowUpIds={cancelledFollowUpIds}
                           delegationStatusPatches={delegationStatusPatches}
                           subagentStatusPatches={subagentStatusPatches}
@@ -2825,7 +2883,7 @@ export function StreamContent({
                         onScroll={plainHandleScroll}
                         {...batchPointerHandlers}
                       >
-                        <div ref={plainContentRef}>
+                        <div ref={registerPlainContent}>
                           {/* The plain scroller has no settle mask: hold the anchor until the
                               replies' first read lands so both paint in one frame. */}
                           {isResolved && !isLoading && isThread && anchorEvent && parentStreamId && (
@@ -2857,6 +2915,7 @@ export function StreamContent({
                             viewerIsMember={isMember}
                             batch={batchState}
                             conversationOverlay={activeConversationOverlay}
+                            animateArrivals={!isJumpMode}
                           />
                           {isFetchingNewer && (
                             <div className="flex justify-center py-2">
@@ -2905,7 +2964,9 @@ export function StreamContent({
                         onClick={scrollToFirstUnread}
                       >
                         <ArrowUp className="h-3.5 w-3.5" />
-                        {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+                        <span>
+                          <RollingNumber value={unreadCount} /> new message{unreadCount === 1 ? "" : "s"}
+                        </span>
                       </Button>
                       {/* Dismiss without scrolling up: mark all loaded read and tail
                   the live bottom — the touchable equivalent of Escape. */}
@@ -3018,6 +3079,7 @@ export function StreamContent({
 function TimelineMessageList({
   emptyState,
   visibleItems,
+  runFoldStore,
   cancelledFollowUpIds,
   delegationStatusPatches,
   subagentStatusPatches,
@@ -3123,6 +3185,7 @@ function TimelineMessageList({
   batch?: BatchTimelineState
   batchPointerHandlers?: React.HTMLAttributes<HTMLElement>
   conversationOverlay?: ConversationOverlayContext
+  runFoldStore: RunFoldStore
   /** Jump to the first message on or after a date (floating date header). */
   onJumpToDate: (date: Date) => void
   /** True while floating date/jump chrome must yield to the composer. */
@@ -3166,6 +3229,7 @@ function TimelineMessageList({
     () => ({
       workspaceId,
       streamId,
+      runFoldStore,
       highlightMessageId,
       firstUnreadEventId,
       isDividerDimmed,
@@ -3188,6 +3252,7 @@ function TimelineMessageList({
     [
       workspaceId,
       streamId,
+      runFoldStore,
       highlightMessageId,
       firstUnreadEventId,
       isDividerDimmed,
@@ -3369,6 +3434,61 @@ function TimelineMessageList({
     didInitialJumpRef.current = true
   }, [highlightMessageId, visibleItems, listRef])
 
+  // A run toggle unmounts the button that was pressed, so focus moves to what
+  // replaced it: the head's "Show more" after a fold, the first revealed row
+  // after an unfold. Folding from the tail also drops everything between the
+  // head and the Collapse button, which can leave the head above the viewport.
+  // Scrolling through virtua rather than the DOM: its resize compensation
+  // undoes a raw scrollIntoView once the head re-measures at its clamped height.
+  useLayoutEffect(() => {
+    const toggled = runFoldStore.toggledRun
+    if (!toggled) return
+    runFoldStore.toggledRun = null
+    const idx = findMessageItemIndex(visibleItems, toggled.headMessageId)
+    if (idx < 0) return
+    const scroller = scrollerRef.current
+    const rowOf = (messageId: string) =>
+      scroller?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
+    // Virtua keeps a freshly mounted row hidden until it has measured it, and a
+    // hidden element refuses focus, so retry for a few frames. A viewer who has
+    // moved focus elsewhere in the meantime keeps it.
+    const focusOnceShown = (find: () => HTMLElement | null | undefined, framesLeft = 5) => {
+      if (document.activeElement !== document.body && document.activeElement !== null) return
+      const target = find()
+      target?.focus({ preventScroll: true })
+      if (document.activeElement !== target && framesLeft > 0) {
+        requestAnimationFrame(() => focusOnceShown(find, framesLeft - 1))
+      }
+    }
+
+    if (!toggled.collapsed) {
+      const next = visibleItems[idx + 1]
+      const firstRevealedId =
+        next?.type === "event" ? (next.event.payload as { messageId?: string })?.messageId : undefined
+      if (!firstRevealedId) return
+      focusOnceShown(() => {
+        const row = rowOf(firstRevealedId)
+        // Rows aren't in the tab order; this one takes focus only until it loses it.
+        if (row && !row.hasAttribute("tabindex")) {
+          row.tabIndex = -1
+          row.addEventListener("blur", () => row.removeAttribute("tabindex"), { once: true })
+        }
+        return row
+      })
+      return
+    }
+
+    const head = rowOf(toggled.headMessageId)
+    if (!scroller || !head || head.getBoundingClientRect().top < scroller.getBoundingClientRect().top) {
+      try {
+        listRef.current?.scrollToIndex(idx, { align: "start" })
+      } catch {
+        // Not-yet-measured list can throw; the head stays folded either way.
+      }
+    }
+    focusOnceShown(() => rowOf(toggled.headMessageId)?.querySelector<HTMLElement>("[data-run-fold-toggle]"))
+  }, [visibleItems, runFoldStore, listRef, scrollerRef])
+
   // Reserve room at the top for the floating BatchSelectionBar / StreamSearchBar
   // when open (taller), otherwise a small spacer so the head row's hover toolbar
   // isn't clipped. It is a real element above the virtualizer, and the same
@@ -3425,6 +3545,8 @@ function TimelineMessageList({
   // hand back rows still marked deferred after the ref flips.
   const scrollerItems = visibleItems.map((item, index) => ({
     key: getTimelineItemKey(item),
+    arrivalKey: getTimelineItemArrivalKey(item),
+    inFlight: isTimelineItemInFlight(item),
     node: (
       <TimelineItemContent
         item={item}
@@ -3449,6 +3571,7 @@ function TimelineMessageList({
       contentRef={contentRef}
       shift={shift}
       isInitialSettling={isInitialSettling}
+      animateArrivals={!isJumpMode}
       onScroll={handleScroll}
       startMargin={{ heightPx: startMargin }}
       hasRenderedContent={hasRenderedContent}

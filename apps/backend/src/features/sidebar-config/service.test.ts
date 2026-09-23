@@ -109,6 +109,23 @@ describe("SidebarConfigService.updateConfig", () => {
     })
   })
 
+  it("keeps a section's unread filter through the update round-trip", async () => {
+    const service = setupService()
+    const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const next: SidebarConfig = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" }],
+      quickLinks: DEFAULT_QUICK_LINKS,
+    }
+    const result = await service.updateConfig(WORKSPACE_ID, USER_ID, next)
+
+    expect(result.sections[0]).toEqual({ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" })
+    expect(upsert).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, USER_ID, result)
+  })
+
   it("normalizes a config with an incomplete quick-link list before persisting", async () => {
     const service = setupService()
     const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
@@ -196,6 +213,22 @@ describe("updateSidebarConfigSchema", () => {
     const result = updateSidebarConfigSchema.safeParse({
       basePreset: "smart",
       sections: [{ id: "custom:x", spec: { kind: "custom", sectionId: "x", name: "   ", streamIds: [] } }],
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("keeps a section's unread filter through parsing", () => {
+    const parsed = updateSidebarConfigSchema.parse({
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" }],
+    })
+    expect(parsed.sections[0]).toMatchObject({ id: "recent", filter: "unread" })
+  })
+
+  it("rejects an unknown section filter value", () => {
+    const result = updateSidebarConfigSchema.safeParse({
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "starred" }],
     })
     expect(result.success).toBe(false)
   })

@@ -1,5 +1,5 @@
 import { useMemo, useRef, type ReactNode } from "react"
-import { Quote, ChevronDown, ChevronRight } from "lucide-react"
+import { Quote, ChevronDown, ChevronUp } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type AuthorType } from "@threahq/types"
 import { useActors } from "@/hooks"
@@ -100,9 +100,9 @@ export function QuoteReplyBlock({
           className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-foreground"
         >
           {collapsed ? (
-            <ChevronRight className="h-3 w-3" aria-hidden="true" />
-          ) : (
             <ChevronDown className="h-3 w-3" aria-hidden="true" />
+          ) : (
+            <ChevronUp className="h-3 w-3" aria-hidden="true" />
           )}
         </button>
       )}

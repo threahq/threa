@@ -19,6 +19,7 @@ interface ItemOverrides {
   slug?: string | null
   /** Minutes since epoch for the last message — controls activity ordering. */
   activity?: number
+  rootStreamId?: string
 }
 
 function makeItem(overrides: ItemOverrides): StreamItemData {
@@ -33,7 +34,7 @@ function makeItem(overrides: ItemOverrides): StreamItemData {
     description: null,
     visibility: Visibilities.PRIVATE,
     parentStreamId: null,
-    rootStreamId: null,
+    rootStreamId: overrides.rootStreamId ?? null,
     companionMode: "off",
     companionPersonaId: null,
     createdBy: "user_1",
@@ -55,6 +56,10 @@ function makeInput(
     getUnreadCount: () => 0,
     streamIdsByLabel: new Map(),
     unreadStreamIds: new Set(),
+    inboxOrder: "newest",
+    inboxArrivedAt: {},
+    joinedAtByStreamId: new Map(),
+    streamTypeById: new Map(),
     ...over,
   }
 }
@@ -90,7 +95,7 @@ describe("resolveSections — Smart preset", () => {
       { id: "important", items: ["imp_1"] },
       { id: "recent", items: ["rec_1"] },
       // virtual DMs carry section "other", so they join the Everything Else bucket,
-      // sorted by activity (vdm_1 @2 before oth_1 @1).
+      // ordered statically (no joinedAt map here, so createdAt fallback: vdm_1 @2 before oth_1 @1).
       { id: "other", items: ["vdm_1", "oth_1"] },
     ])
   })
@@ -162,6 +167,75 @@ describe("resolveSections — Smart preset", () => {
   })
 })
 
+describe("resolveSections — static order", () => {
+  it("does not reorder within a section when a stream receives new activity", () => {
+    const base = [
+      makeItem({ id: "s_old", section: "other", activity: 1 }),
+      makeItem({ id: "s_new", section: "other", activity: 2 }),
+    ]
+    const joinedAtByStreamId = new Map([
+      ["s_old", "2026-01-01T00:00:00.000Z"],
+      ["s_new", "2026-01-02T00:00:00.000Z"],
+    ])
+    const before = shape({ processedStreams: base, joinedAtByStreamId })
+
+    // s_old gets a brand-new message — the highest activity of the two — but its
+    // joinedAt (and everyone else's) is unchanged.
+    const afterActivity = base.map((item) =>
+      item.id === "s_old"
+        ? { ...item, lastMessagePreview: { ...item.lastMessagePreview!, createdAt: "2026-09-01T00:00:00.000Z" } }
+        : item
+    )
+    const after = shape({ processedStreams: afterActivity, joinedAtByStreamId })
+
+    expect(after).toEqual(before)
+    expect(before.find((r) => r.id === "other")?.items).toEqual(["s_new", "s_old"])
+  })
+
+  it("orders non-channels newest-joined first, falling back to createdAt with no membership row", () => {
+    const processedStreams = [
+      // Activity contradicts joinedAt here on purpose: s_a is more recently
+      // active but joined first, s_b is stale but joined most recently.
+      makeItem({ id: "s_a", section: "other", activity: 100 }),
+      makeItem({ id: "s_b", section: "other", activity: 1 }),
+      // No membership row — falls back to createdAt, which `makeItem` derives
+      // from `activity` minutes since epoch (1970), far older than either
+      // explicit 2026 joinedAt below regardless of the activity value.
+      makeItem({ id: "s_c", section: "other", activity: 50 }),
+    ]
+    const joinedAtByStreamId = new Map([
+      ["s_a", "2026-01-01T00:00:00.000Z"],
+      ["s_b", "2026-03-01T00:00:00.000Z"],
+    ])
+
+    expect(shape({ processedStreams, joinedAtByStreamId }).find((r) => r.id === "other")?.items).toEqual([
+      "s_b",
+      "s_a",
+      "s_c",
+    ])
+  })
+
+  it("keeps Important/Recent membership unchanged while ordering statically instead of by activity", () => {
+    const processedStreams = [
+      makeItem({ id: "imp_low_activity", section: "important", urgency: "mentions", activity: 1 }),
+      makeItem({ id: "imp_high_activity", section: "important", urgency: "mentions", activity: 100 }),
+    ]
+    // joinedAt reverses the activity order: the low-activity stream joined last.
+    const joinedAtByStreamId = new Map([
+      ["imp_low_activity", "2026-03-01T00:00:00.000Z"],
+      ["imp_high_activity", "2026-01-01T00:00:00.000Z"],
+    ])
+
+    const result = shape({ processedStreams, joinedAtByStreamId })
+    const important = result.find((r) => r.id === "important")
+
+    // Both still selected into Important (membership unchanged)...
+    expect(new Set(important?.items)).toEqual(new Set(["imp_low_activity", "imp_high_activity"]))
+    // ...but ordered by joinedAt, not activity: imp_low_activity (joined later) is first.
+    expect(important?.items).toEqual(["imp_low_activity", "imp_high_activity"])
+  })
+})
+
 describe("resolveSections — All preset", () => {
   it("partitions by stream type with DMs composed of real, system, then virtual", () => {
     const processedStreams = [
@@ -176,11 +250,11 @@ describe("resolveSections — All preset", () => {
     const virtualDmStreams = [makeItem({ id: "vdm_1", type: StreamTypes.DM, activity: 0 })]
 
     expect(shape({ processedStreams, virtualDmStreams, getUnreadCount: () => 0 }, ALL_SIDEBAR_CONFIG)).toEqual([
-      // Scratchpads by activity (most recent first).
+      // Scratchpads: no joinedAt map, so createdAt fallback (most recent first).
       { id: "scratchpads", items: ["sp_1", "sp_2"] },
-      // Channels alphabetically (no unreads to float).
+      // Channels alphabetically, always — irrespective of activity or join time.
       { id: "channels", items: ["ch_a", "ch_b"] },
-      // Real DMs (activity), then system streams, then synthetic drafts.
+      // Real DMs (createdAt fallback), then system streams, then synthetic drafts.
       { id: "dms", items: ["dm_new", "dm_old", "sys_1", "vdm_1"] },
     ])
   })
@@ -213,7 +287,7 @@ describe("resolveSections — label sections", () => {
     }))
 
     expect(result).toEqual([
-      // Label lens (topmost): both labeled streams, by activity.
+      // Label lens (topmost): both labeled streams, static order (createdAt fallback).
       { id: labelSectionId("lbl_1"), items: ["s_new", "s_other"] },
       // Recent no longer shows s_new — it was claimed by the label section above.
       { id: "recent", items: ["s_old"] },
@@ -246,7 +320,7 @@ describe("resolveSections — label sections", () => {
       // Recent loses s_new to the label lens even though it is ordered above —
       // a pinned label claims its streams out of the automatic buckets.
       { id: "recent", items: ["s_old"] },
-      // Label lens shows both labeled streams, by activity.
+      // Label lens shows both labeled streams, static order (createdAt fallback).
       { id: labelSectionId("lbl_1"), items: ["s_new", "s_other"] },
     ])
   })
@@ -349,7 +423,7 @@ describe("resolveSections — custom sections", () => {
     ])
   })
 
-  it("sorts custom members by activity and ignores ids with no matching stream", () => {
+  it("orders custom members statically and ignores ids with no matching stream", () => {
     const config = {
       version: SIDEBAR_CONFIG_VERSION,
       basePreset: "smart" as const,
@@ -363,7 +437,8 @@ describe("resolveSections — custom sections", () => {
     const custom = resolveSections(config, makeInput({ processedStreams })).find(
       (r) => r.section.id === customSectionId("sec_1")
     )
-    // b (activity 9) before a (activity 1); "ghost" has no stream and is dropped.
+    // Static order, createdAt fallback: b (createdAt from activity 9) before a
+    // (activity 1); "ghost" has no stream and is dropped.
     expect(custom?.items.map((i) => i.id)).toEqual(["b", "a"])
   })
 
@@ -548,6 +623,68 @@ describe("resolveSections — Unread section", () => {
       { id: "dms", items: ["dm_read"] },
     ])
   })
+
+  it("sorts Unread oldest-arrival-first when inboxOrder is arrival", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 2 }),
+      makeItem({ id: "u3", section: "recent", urgency: "activity", activity: 3 }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2", "u3"]),
+        inboxOrder: "arrival",
+        inboxArrivedAt: {
+          u1: "2026-01-03T00:00:00.000Z",
+          u2: "2026-01-01T00:00:00.000Z",
+          u3: "2026-01-02T00:00:00.000Z",
+        },
+      },
+      unreadFirst
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u3", "u1"])
+  })
+
+  it("sorts a stream with no recorded arrival after those with one, in arrival order", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 2 }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2"]),
+        inboxOrder: "arrival",
+        inboxArrivedAt: { u2: "2026-01-01T00:00:00.000Z" },
+      },
+      unreadFirst
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])
+  })
+
+  it("sorts Unread by activity (newest first) when inboxOrder is newest, ignoring arrival", () => {
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 9 }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2"]),
+        inboxOrder: "newest",
+        inboxArrivedAt: { u1: "2026-01-01T00:00:00.000Z" },
+      },
+      unreadFirst
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])
+  })
 })
 
 describe("findSourceLabelId", () => {
@@ -577,5 +714,118 @@ describe("findSourceLabelId", () => {
     const resolved = resolveSections(config, makeInput({ processedStreams }))
 
     expect(findSourceLabelId("s_plain", resolved)).toBeNull()
+  })
+})
+
+describe("resolveSections thread tree", () => {
+  const thread = (id: string, rootStreamId: string, section: SectionKey = "recent", activity = 5) =>
+    makeItem({ id, type: StreamTypes.THREAD, rootStreamId, section, activity })
+
+  function tree(over: Parameters<typeof makeInput>[0], preset = SMART_SIDEBAR_CONFIG) {
+    return resolveSections(preset, makeInput(over))
+      .filter((resolved) => resolved.section.spec.kind !== "quicklinks")
+      .map((resolved) => ({
+        id: resolved.section.id,
+        items: resolved.items.map((item) => (item.treeParentId ? `${item.treeParentId}>${item.id}` : item.id)),
+      }))
+  }
+
+  it("should nest a thread under its root's row when the root sits in another section", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_1", "c_1", "recent"),
+    ]
+
+    expect(tree({ processedStreams })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1", "c_1>t_1"] },
+    ])
+  })
+
+  it("should keep a thread as its own row when its root is in the Inbox", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "unread", spec: { kind: "unread" as const } },
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "recent", slug: "general" }),
+      thread("t_1", "c_1", "recent"),
+    ]
+
+    expect(
+      tree(
+        { processedStreams, unreadStreamIds: new Set(["c_1"]), getUnreadCount: unreadFrom(new Set(["c_1"])) },
+        config
+      )
+    ).toEqual([
+      { id: "unread", items: ["c_1"] },
+      { id: "recent", items: ["t_1"] },
+    ])
+  })
+
+  it("should drop quiet threads from home sections but keep their root", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_old", "c_1", "other"),
+    ]
+
+    expect(tree({ processedStreams })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1"] },
+    ])
+  })
+
+  it("should place a thread in its root's type section, nested when the root is listed", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      makeItem({ id: "sp_1", type: StreamTypes.SCRATCHPAD, section: "other" }),
+      thread("t_ch", "c_1"),
+      thread("t_sp", "sp_1"),
+      thread("t_dm", "dm_hidden"),
+    ]
+    const streamTypeById = new Map<string, StreamItemData["type"]>([
+      ["c_1", StreamTypes.CHANNEL],
+      ["sp_1", StreamTypes.SCRATCHPAD],
+      ["dm_hidden", StreamTypes.DM],
+    ])
+
+    expect(tree({ processedStreams, streamTypeById }, ALL_SIDEBAR_CONFIG)).toEqual([
+      { id: "scratchpads", items: ["sp_1", "sp_1>t_sp"] },
+      { id: "channels", items: ["c_1", "c_1>t_ch"] },
+      { id: "dms", items: ["t_dm"] },
+    ])
+  })
+
+  it("should keep a custom-filed thread in its section and nest it only under a root filed alongside", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        {
+          id: customSectionId("sec_1"),
+          spec: { kind: "custom" as const, sectionId: "sec_1", name: "Filed", streamIds: ["t_1", "c_2", "t_2"] },
+        },
+        { id: "other", spec: { kind: "smart" as const, bucket: "other" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "a" }),
+      makeItem({ id: "c_2", type: StreamTypes.CHANNEL, section: "other", slug: "b" }),
+      thread("t_1", "c_1"),
+      thread("t_2", "c_2"),
+    ]
+
+    expect(tree({ processedStreams }, config)).toEqual([
+      { id: customSectionId("sec_1"), items: ["t_1", "c_2", "c_2>t_2"] },
+      { id: "other", items: ["c_1"] },
+    ])
   })
 })

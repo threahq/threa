@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { ChevronDown } from "lucide-react"
 import {
@@ -20,10 +21,12 @@ export function ActionDropdownItems<Context>({
   items,
   context,
   onClose,
+  renderSubmenu,
 }: {
   items: GroupedAction<Context>[]
   context: Context
   onClose: () => void
+  renderSubmenu?: (action: ActionDefinition<Context>) => ReactNode
 }) {
   return (
     <>
@@ -33,6 +36,7 @@ export function ActionDropdownItems<Context>({
           item={item}
           context={context}
           onClose={onClose}
+          renderSubmenu={renderSubmenu}
         />
       ))}
     </>
@@ -43,13 +47,23 @@ function GroupedItem<Context>({
   item,
   context,
   onClose,
+  renderSubmenu,
 }: {
   item: GroupedAction<Context>
   context: Context
   onClose: () => void
+  renderSubmenu?: (action: ActionDefinition<Context>) => ReactNode
 }) {
   if (item.kind === "single") {
-    return <SingleAction action={item.action} context={context} onClose={onClose} showSeparatorBefore />
+    return (
+      <SingleAction
+        action={item.action}
+        context={context}
+        onClose={onClose}
+        renderSubmenu={renderSubmenu}
+        showSeparatorBefore
+      />
+    )
   }
 
   // Split-button group: render the primary as a normal item, then a chevron
@@ -119,16 +133,26 @@ function SingleAction<Context>({
   action,
   context,
   onClose,
+  renderSubmenu,
   showSeparatorBefore,
 }: {
   action: ActionDefinition<Context>
   context: Context
   onClose: () => void
+  renderSubmenu?: (action: ActionDefinition<Context>) => ReactNode
   showSeparatorBefore?: boolean
 }) {
   const Icon = action.icon
   const href = action.getHref?.(context)
   const separator = showSeparatorBefore && action.separatorBefore ? <DropdownMenuSeparator /> : null
+  const submenu = renderSubmenu?.(action)
+  if (submenu)
+    return (
+      <>
+        {separator}
+        {submenu}
+      </>
+    )
 
   if (href) {
     return (

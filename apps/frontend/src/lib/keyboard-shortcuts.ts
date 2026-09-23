@@ -27,6 +27,22 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     global: true,
   },
   {
+    id: "sidebarNextStream",
+    label: "Next Stream",
+    description: "Open the stream below the current one in the sidebar",
+    defaultKey: "alt+shift+arrowdown",
+    category: "navigation",
+    global: true,
+  },
+  {
+    id: "sidebarPreviousStream",
+    label: "Previous Stream",
+    description: "Open the stream above the current one in the sidebar",
+    defaultKey: "alt+shift+arrowup",
+    category: "navigation",
+    global: true,
+  },
+  {
     id: "historyBack",
     label: "Back",
     description: "Go back in stream history",
@@ -150,6 +166,13 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     description: "Stash the current composer content into the saved-drafts pile and clear the editor",
     defaultKey: "mod+s",
     category: "editing",
+  },
+  {
+    id: "clearInboxStream",
+    label: "Clear from Inbox",
+    description: "Clear the hovered Inbox row, or the open stream if it's in the Inbox",
+    defaultKey: "e",
+    category: "view",
   },
 ]
 
@@ -297,6 +320,12 @@ export function formatKeyBinding(binding: string): string {
     case "escape":
       formatted.push(mac ? "⎋" : "Esc")
       break
+    case "arrowup":
+      formatted.push("↑")
+      break
+    case "arrowdown":
+      formatted.push("↓")
+      break
     case ",":
       formatted.push(",")
       break
@@ -398,6 +427,10 @@ export function keyEventToBinding(event: KeyboardEvent): string | null {
  * (capture, matching, display) branches on this id.
  */
 export const QUICK_JUMP_ACTION_ID = "sidebarQuickJump"
+
+/** Bare "e" fails `isSafeShortcutBinding`, so this fires only via a bespoke
+ *  listener in `Sidebar`, not `useKeyboardShortcuts`. Listed here for display only. */
+export const CLEAR_INBOX_STREAM_ACTION_ID = "clearInboxStream"
 
 /** Sidebar rows the quick jump can reach. */
 export const QUICK_JUMP_SLOT_COUNT = 9

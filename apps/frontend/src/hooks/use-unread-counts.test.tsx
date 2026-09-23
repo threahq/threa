@@ -8,6 +8,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_WORKSPACE_SETTINGS,
   type Activity,
+  type ClearInboxResponse,
   type MarkAllAsReadResponse,
   type MarkAsReadResponse,
   type StreamMember,
@@ -39,6 +40,7 @@ type MarkUnreadResponse = { membership: StreamMember | null; readState: StreamRe
 const mockMarkUnread =
   vi.fn<(workspaceId: string, streamId: string, messageId: string) => Promise<MarkUnreadResponse>>()
 const mockMarkAllAsRead = vi.fn<(workspaceId: string) => Promise<MarkAllAsReadResponse>>()
+const mockClearInbox = vi.fn<(workspaceId: string, streamIds: string[]) => Promise<ClearInboxResponse>>()
 const mockPostMessage = vi.fn()
 const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
 
@@ -55,6 +57,7 @@ function createWrapper(queryClient: QueryClient) {
           } as unknown as StreamService,
           workspaces: {
             markAllAsRead: mockMarkAllAsRead,
+            clearInbox: mockClearInbox,
           } as unknown as WorkspaceService,
         },
         children,
@@ -115,6 +118,8 @@ function makeBootstrap(): WorkspaceBootstrap {
       linkPreviewDefault: "open",
       labelRemoveOnMove: "ask",
       unreadOpenPosition: "latest",
+      inboxClearMode: "interaction",
+      inboxOrder: "arrival",
       pushActions: ["mark_read", "remind"],
       pushReminderMinutes: 5,
       pushQuickReaction: "👍",
@@ -207,6 +212,7 @@ describe("useUnreadCounts", () => {
     mockMarkAsRead.mockReset()
     mockMarkUnread.mockReset()
     mockMarkAllAsRead.mockReset()
+    mockClearInbox.mockReset()
     mockPostMessage.mockReset()
     Object.defineProperty(navigator, "serviceWorker", {
       configurable: true,
@@ -592,6 +598,39 @@ describe("useUnreadCounts", () => {
       lastReadEventId: "event_mid",
       lastReadSequence: "33",
     })
+  })
+
+  it("holds a stream from markAsRead's own response — server-authoritative, no client heuristic", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 2 },
+      mentionCounts: { stream_1: 0 },
+      activityCounts: { stream_1: 0 },
+      unreadActivityCount: 0,
+      unreadActivities: [],
+      latestOrdinals: { stream_1: 10 },
+      mutedStreamIds: [],
+      inboxHeldStreamIds: [],
+      _cachedAt: Date.now(),
+    })
+
+    mockMarkAsRead.mockResolvedValue({
+      membership: memberRow(),
+      readState: { lastReadEventId: "event_mid", lastReadSequence: "33", lastReadAt: new Date().toISOString() },
+      lastReadOrdinal: 8,
+      readMessageIds: [],
+      inboxHeld: true,
+    })
+
+    const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+    act(() => {
+      result.current.markAsRead("stream_1", "event_mid")
+    })
+
+    await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
   })
 
   it("writes nothing when the server reports the read as a no-op", async () => {
@@ -1359,5 +1398,168 @@ describe("useUnreadCounts", () => {
     expect(state?.readMessageIds).toEqual({ stream_1: ["msg_a"], stream_2: ["msg_b"] })
     expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_1", "act_2"])
     putSpy.mockRestore()
+  })
+
+  describe("Inbox (held streams)", () => {
+    async function seedUnreadState(overrides: Partial<Parameters<typeof db.unreadState.put>[0]> = {}) {
+      await db.unreadState.put({
+        id: "ws_1",
+        workspaceId: "ws_1",
+        unreadCounts: { stream_1: 2, stream_2: 0 },
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        mutedStreamIds: [],
+        inboxHeldStreamIds: [],
+        _cachedAt: Date.now(),
+        ...overrides,
+      })
+    }
+
+    it("isInInbox is true for a stream with unread or held, false when muted", async () => {
+      await seedUnreadState({
+        unreadCounts: { stream_1: 2, stream_2: 0, stream_3: 0 },
+        inboxHeldStreamIds: ["stream_2"],
+        mutedStreamIds: ["stream_1"],
+      })
+      const queryClient = new QueryClient()
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+
+      await waitFor(() => expect(result.current.isInInbox("stream_2")).toBe(true)) // held, no unread
+      expect(result.current.isInInbox("stream_1")).toBe(false) // unread but muted
+      expect(result.current.isInInbox("stream_3")).toBe(false) // neither unread nor held
+    })
+
+    it("isInboxHeld reflects the held set", async () => {
+      await seedUnreadState({ inboxHeldStreamIds: ["stream_1"] })
+      const queryClient = new QueryClient()
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+
+      await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
+      expect(result.current.isInboxHeld("stream_2")).toBe(false)
+    })
+
+    it("clearInbox optimistically unholds the requested streams ahead of the response", async () => {
+      await seedUnreadState({ inboxHeldStreamIds: ["stream_1", "stream_2"] })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+      let resolveClear!: (response: ClearInboxResponse) => void
+      mockClearInbox.mockReturnValue(new Promise((resolve) => (resolveClear = resolve)))
+
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+      act(() => {
+        result.current.clearInbox(["stream_1"])
+      })
+
+      await waitFor(async () => {
+        expect((await db.unreadState.get("ws_1"))?.inboxHeldStreamIds).toEqual(["stream_2"])
+      })
+
+      resolveClear({ clearedStreamIds: ["stream_1"], frontiers: [] })
+    })
+
+    it("applies the response frontiers like mark-all-read, scoped only to the streams actually cleared", async () => {
+      // stream_1 and stream_2 both carry activity rows; only stream_1 is being
+      // cleared. clearInboxActivityFilter must drop stream_1's row and leave
+      // stream_2's alone — reusing markAllAsRead's whole-feed wipe here would be
+      // a real regression (clearInbox has no backend-side full-feed clear).
+      const bootstrap = makeBootstrap()
+      bootstrap.unreadCounts = { stream_1: 2, stream_2: 3 }
+      bootstrap.unreadActivities = [makeActivity("act_1", "stream_1"), makeActivity("act_2", "stream_2")]
+      bootstrap.activityCounts = { stream_1: 1, stream_2: 1 }
+      bootstrap.unreadActivityCount = 2
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+      await seedUnreadState({
+        unreadCounts: { stream_1: 2, stream_2: 3 },
+        unreadActivities: [makeActivity("act_1", "stream_1"), makeActivity("act_2", "stream_2")],
+        activityCounts: { stream_1: 1, stream_2: 1 },
+        unreadActivityCount: 2,
+        inboxHeldStreamIds: ["stream_1"],
+      })
+
+      mockClearInbox.mockResolvedValue({
+        clearedStreamIds: ["stream_1"],
+        frontiers: [
+          {
+            streamId: "stream_1",
+            lastReadEventId: "event_latest",
+            lastReadSequence: "100",
+            lastReadOrdinal: 2,
+            lastReadAt: "2024-01-01T00:00:00.000Z",
+          },
+        ],
+      })
+
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+      act(() => {
+        result.current.clearInbox(["stream_1"])
+      })
+
+      await waitFor(() => expect(mockClearInbox).toHaveBeenCalledWith("ws_1", ["stream_1"]))
+      await waitFor(async () => {
+        await expect(db.streamReadState.get("ws_1:stream_1")).resolves.toMatchObject({
+          lastReadEventId: "event_latest",
+          lastReadSequence: "100",
+        })
+      })
+
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(0)
+      expect(state?.unreadCounts.stream_2).toBe(3) // untouched by this clear
+      expect(state?.unreadActivities?.map((a) => a.id)).toEqual(["act_2"]) // only stream_1's row dropped
+      expect(state?.activityCounts).toEqual({ stream_2: 1 })
+
+      const updated = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+      expect(updated?.unreadActivities?.map((a) => a.id)).toEqual(["act_2"])
+    })
+
+    it("shows an error toast and rolls back the optimistic unhold on failure", async () => {
+      const { toast } = await import("sonner")
+      const toastError = vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
+      await seedUnreadState({ inboxHeldStreamIds: ["stream_1"] })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+      mockClearInbox.mockRejectedValue(new Error("network boom"))
+
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+      // The mutation's onMutate snapshots inboxHeldStreamIdsRef synchronously —
+      // it must reflect the seeded state before the clear fires, or the ref is
+      // still empty and previouslyHeldStreamIds comes back empty too.
+      await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
+      act(() => {
+        result.current.clearInbox(["stream_1"])
+      })
+
+      await waitFor(() => expect(toastError).toHaveBeenCalled())
+      // The failed clear re-holds exactly the stream this call actually unheld.
+      await waitFor(async () => {
+        expect((await db.unreadState.get("ws_1"))?.inboxHeldStreamIds).toEqual(["stream_1"])
+      })
+      toastError.mockRestore()
+    })
+
+    it("rolls back only the streams that were actually held before the failed clear", async () => {
+      // stream_2 wasn't held to begin with — a failed clear must not
+      // manufacture a hold for it.
+      await seedUnreadState({ inboxHeldStreamIds: ["stream_1"] })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+      mockClearInbox.mockRejectedValue(new Error("network boom"))
+
+      const { result } = renderHook(() => useUnreadCounts("ws_1"), { wrapper: createWrapper(queryClient) })
+      await waitFor(() => expect(result.current.isInboxHeld("stream_1")).toBe(true))
+      act(() => {
+        result.current.clearInbox(["stream_1", "stream_2"])
+      })
+
+      await waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.inboxHeldStreamIds).toEqual(["stream_1"])
+        expect(state?.inboxHeldStreamIds).not.toContain("stream_2")
+      })
+    })
   })
 })

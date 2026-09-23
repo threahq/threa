@@ -60,6 +60,7 @@ import { MemoPreviewList } from "./memo-preview-list"
 import { GiphyPreviewList } from "./giphy-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
 import { CollapsibleBody, useMessageCollapseSettings } from "@/lib/markdown/collapsible-body"
+import { useRunFoldBody } from "./run-fold-context"
 import { MarkdownBlockProvider } from "@/lib/markdown/markdown-block-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
@@ -107,6 +108,7 @@ import { useMessageConversationId } from "./conversation-overlay/message-convers
 import type { ConversationRevival } from "./conversation-overlay/model"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
+const NO_REACTIONS: Record<string, string[]> = {}
 
 interface MessagePayload {
   messageId: string
@@ -588,47 +590,58 @@ function MessageLayout({
   // anyway.
   const copyRef = useMessageMarkdownCopy(payload.contentMarkdown)
   const messageCollapse = useMessageCollapseSettings()
+  const runFold = useRunFoldBody(payload.messageId)
   const messageBody = children ?? (
     <LinkPreviewProvider>
       <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? []}>
-        <div ref={copyRef}>
-          <MarkdownBlockProvider messageId={payload.messageId}>
-            <CollapsibleBody
-              kind="message"
-              content={payload.contentMarkdown}
-              collapseAtHeight={messageCollapse.collapseAtHeight}
-              collapseToHeight={messageCollapse.collapseToHeight}
-              defaultCollapsed={messageCollapse.enabled}
-            >
+        <MarkdownBlockProvider messageId={payload.messageId}>
+          <CollapsibleBody
+            kind="message"
+            content={payload.contentMarkdown}
+            collapseAtHeight={messageCollapse.collapseAtHeight}
+            collapseToHeight={messageCollapse.collapseToHeight}
+            defaultCollapsed={messageCollapse.enabled}
+            group={runFold.group}
+            onHeight={runFold.onHeight}
+            trailing={
+              <>
+                {attachmentRefs && attachmentRefs.length > 0 ? (
+                  // E2E attachments: the server rows are opaque placeholders (no
+                  // thumbnails/metadata), so render from the decrypted refs — fetch the
+                  // ciphertext and decrypt on view — instead of the normal list.
+                  <E2eAttachmentList
+                    workspaceId={workspaceId}
+                    refs={attachmentRefs}
+                    attachments={payload.attachments}
+                  />
+                ) : (
+                  payload.attachments &&
+                  payload.attachments.length > 0 && (
+                    <AttachmentList
+                      attachments={payload.attachments}
+                      workspaceId={workspaceId}
+                      deferHydration={deferSecondaryHydration}
+                    />
+                  )
+                )}
+                {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
+                {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
+                <MessageLinkPreviews
+                  messageId={payload.messageId}
+                  workspaceId={workspaceId}
+                  previews={payload.linkPreviews}
+                  hydrateFromApi={!deferSecondaryHydration}
+                />
+                <MemoPreviewList contentMarkdown={payload.contentMarkdown} memoEmbeds={payload.memoEmbeds} />
+                <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
+              </>
+            }
+          >
+            <div ref={copyRef}>
               <MarkdownContent content={payload.contentMarkdown} className="text-sm leading-relaxed" />
-            </CollapsibleBody>
-          </MarkdownBlockProvider>
-        </div>
-        {attachmentRefs && attachmentRefs.length > 0 ? (
-          // E2E attachments: the server rows are opaque placeholders (no
-          // thumbnails/metadata), so render from the decrypted refs — fetch the
-          // ciphertext and decrypt on view — instead of the normal list.
-          <E2eAttachmentList workspaceId={workspaceId} refs={attachmentRefs} attachments={payload.attachments} />
-        ) : (
-          payload.attachments &&
-          payload.attachments.length > 0 && (
-            <AttachmentList
-              attachments={payload.attachments}
-              workspaceId={workspaceId}
-              deferHydration={deferSecondaryHydration}
-            />
-          )
-        )}
-        {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
-        {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
-        <MessageLinkPreviews
-          messageId={payload.messageId}
-          workspaceId={workspaceId}
-          previews={payload.linkPreviews}
-          hydrateFromApi={!deferSecondaryHydration}
-        />
-        <MemoPreviewList contentMarkdown={payload.contentMarkdown} memoEmbeds={payload.memoEmbeds} />
-        <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
+            </div>
+          </CollapsibleBody>
+        </MarkdownBlockProvider>
       </AttachmentProvider>
     </LinkPreviewProvider>
   )
@@ -1453,14 +1466,12 @@ function SentMessageEvent({
     footerContent = (
       <>
         {revival && <ConversationProvenanceChip revival={revival} workspaceId={workspaceId} />}
-        {payload.reactions && Object.keys(payload.reactions).length > 0 && (
-          <MessageReactions
-            reactions={payload.reactions}
-            workspaceId={workspaceId}
-            messageId={payload.messageId}
-            currentUserId={currentUserId}
-          />
-        )}
+        <MessageReactions
+          reactions={payload.reactions ?? NO_REACTIONS}
+          workspaceId={workspaceId}
+          messageId={payload.messageId}
+          currentUserId={currentUserId}
+        />
         {/* Grouped continuations have no header row, so their labels trail the
             footer; standalone rows render them in the header beside the time
             (see statusIndicator). Renders nothing until the message is labeled. */}
@@ -1574,7 +1585,7 @@ function SentMessageEvent({
                 </TooltipTrigger>
                 <TooltipContent>Reply in thread</TooltipContent>
               </Tooltip>
-              <MessageContextMenu context={actionContext} />
+              <MessageContextMenu context={actionContext} saved={savedForMessage ?? null} />
             </>
           )
         }

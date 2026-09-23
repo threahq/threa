@@ -125,7 +125,7 @@ describe("PendingMessagesContext", () => {
       })
 
       expect(mockUpdate).toHaveBeenCalledWith("temp_edit", { status: "editing", preEditStatus: "pending" })
-      expect(mockEventsUpdate).toHaveBeenCalledWith("temp_edit", { _status: "editing" })
+      expect(mockEventsUpdate).toHaveBeenCalledWith("temp_edit", { _status: "editing", _preEditStatus: "pending" })
       expect(result.current.getStatus("temp_edit")).toBe("editing")
     })
 

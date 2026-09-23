@@ -239,6 +239,8 @@ export interface CachedEvent {
   _sentAt?: number
   /** Persisted stream sequence visible when this optimistic row was created. */
   _anchorSequenceNum?: number
+  /** `_status` before the current edit; read only while `_status` is "editing". */
+  _preEditStatus?: "pending" | "failed"
   _cachedAt: number
   /**
    * Client wall-clock (ms) of the most recent socket-driven payload patch
@@ -630,6 +632,18 @@ export interface CachedUnreadState {
    * readers normalize with `?.`. See sync/unread-counters.ts.
    */
   readMessageIds?: Record<string, string[]>
+  /**
+   * Streams currently held in the sidebar Inbox — read but not yet explicitly
+   * cleared. Absent for rows cached before the field shipped (reads as none
+   * held). See sync/unread-counters.ts.
+   */
+  inboxHeldStreamIds?: string[]
+  /**
+   * First-arrival timestamp per stream currently in the Inbox. Absent for
+   * rows cached before the field shipped (reads as no known arrival). See
+   * sync/unread-counters.ts.
+   */
+  inboxArrivedAt?: Record<string, string>
   mutedStreamIds: string[]
   /**
    * Per-stream timestamp of the last local counter write (stamped by
@@ -678,7 +692,7 @@ export interface CachedMarkdownBlockCollapse {
   messageId: string
   /** Block kind — lets us clear collapse state scoped to a block type. Mirrors
    * `MarkdownBlockKind` (kept as a literal here to keep the db layer dependency-free). */
-  kind: "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card"
+  kind: "code" | "blockquote" | "quote-reply" | "description" | "message" | "board-card" | "run"
   collapsed: boolean
   updatedAt: number
 }

@@ -3,7 +3,7 @@ import type { StreamWithPreview, SidebarSectionKey } from "@threahq/types"
 export type UrgencyLevel = "mentions" | "ai" | "bot" | "activity" | "quiet"
 
 /** Sorting strategies for sidebar sections */
-export type SortType = "activity" | "importance" | "alphabetic_active_first"
+export type SortType = "activity" | "importance"
 
 /**
  * Smart-view bucket a stream is categorized into. The canonical list of keys
@@ -31,4 +31,10 @@ export interface StreamItemData extends StreamWithPreview {
    * `nameDecrypting`.
    */
   hasLoadedDraft?: boolean
+  /**
+   * Set by `resolveSections` when this thread row nests under its root stream's
+   * row: the root's id. Rows carrying it always directly follow their root (or a
+   * sibling) in a section's items.
+   */
+  treeParentId?: string
 }

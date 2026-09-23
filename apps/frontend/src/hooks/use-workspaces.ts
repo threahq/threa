@@ -9,6 +9,8 @@ import { db, getActiveDb } from "@/db"
 import { getAccountGeneration } from "@/db/event-writes"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
+import { syncLogCursorKey } from "@/sync/sync-log-cursor"
 import { useWorkspaceUsers, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import type { WorkspaceBootstrap, User } from "@threahq/types"
 import type { WorkspaceListResult } from "@/api/workspaces"
@@ -85,6 +87,7 @@ export function useWorkspaceBootstrap(workspaceId: string) {
   const workspaceService = useWorkspaceService()
   const queryClient = useQueryClient()
   const { activeWorkosUserId } = useAccountScope()
+  const syncEngine = useOptionalSyncEngine()
 
   // Check if this query has already errored - don't re-enable if so
   // This prevents continuous refetching when the server is down
@@ -103,15 +106,29 @@ export function useWorkspaceBootstrap(workspaceId: string) {
       signal.throwIfAborted()
       if (getAccountGeneration() !== account.generation) throw new DOMException("Account changed", "AbortError")
 
+      const swept = await (syncEngine?.claimWorkspaceBootstrap() ?? null)
+      if (swept) return swept
+      signal.throwIfAborted()
+
+      // The service worker's snapshot is keyed by owner, so an unnamed account
+      // never reads it. Same rule as the SyncEngine: it answers only a device
+      // with nothing local. A copy captured when the tab last hid can predate
+      // rows already here, and applying it stamps its rows as fresh, so they
+      // would outrank newer ones in every later local-wins merge.
+      const [cachedWorkspace, cursor] = await Promise.all([
+        account.database.workspaces.get(workspaceId),
+        account.database.syncCursors.get(syncLogCursorKey(workspaceId)),
+      ])
+      signal.throwIfAborted()
+      if (getAccountGeneration() !== account.generation) throw new DOMException("Account changed", "AbortError")
+
       // Capture timestamp BEFORE fetch — any socket writes during the fetch
       // will have _cachedAt > fetchStartedAt and survive stale cleanup.
       const fetchStartedAt = Date.now()
-
-      // The one bootstrap request the service worker's snapshot can answer (the
-      // SyncEngine's always asks fresh), and that snapshot is keyed by owner: an
-      // unnamed account goes to the network instead, stranding the prefetch and
-      // handing a cold open a second, later source of truth to paint.
-      const bootstrap = await workspaceService.bootstrap(workspaceId, { accountId: activeWorkosUserId })
+      const bootstrap = await workspaceService.bootstrap(workspaceId, {
+        fresh: cachedWorkspace !== undefined || cursor !== undefined,
+        accountId: activeWorkosUserId,
+      })
       signal.throwIfAborted()
       debugBootstrap("Workspace bootstrap fetch success", {
         workspaceId,

@@ -428,7 +428,12 @@ export function LedgerRow({
       {time}
       {!tombstone && (
         <div className={cn("reveal-actions-hover-only shrink-0", narrow ? "hidden" : "block")}>
-          <MessageContextMenu context={menuContext} open={menuOpen} onOpenChange={setMenuOpen} />
+          <MessageContextMenu
+            context={menuContext}
+            saved={savedForMessage ?? null}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+          />
         </div>
       )}
       {overlays}

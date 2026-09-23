@@ -2,12 +2,15 @@ import { memo, useMemo, type ReactNode } from "react"
 import Markdown, { type Options } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
+import rehypeRaw from "rehype-raw"
+import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from "rehype-sanitize"
 import "katex/dist/katex.min.css"
 import { extractMath, normalizeMarkdownTables, parseMentionPointerHref } from "@threahq/prosemirror"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { remarkThreaMath } from "@/lib/markdown/remark-math"
 import { remarkQuoteBreaks } from "@/lib/markdown/remark-quote-breaks"
+import { rehypeLinkedImages } from "@/lib/markdown/rehype-linked-images"
 import { KATEX_OPTIONS } from "@/lib/markdown/katex-options"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
 import { AttachmentProvider } from "@/lib/markdown/attachment-context"
@@ -17,7 +20,27 @@ import type { Mentionable } from "@/components/editor/triggers/types"
 export { AttachmentProvider }
 
 const remarkPlugins = [remarkGfm, remarkQuoteBreaks, remarkThreaMath]
-const rehypePlugins: Options["rehypePlugins"] = [[rehypeKatex, KATEX_OPTIONS]]
+const rehypePlugins: Options["rehypePlugins"] = [rehypeLinkedImages, [rehypeKatex, KATEX_OPTIONS]]
+
+// GitHub's own sanitize rules (the default schema), plus the math markers
+// rehype-katex reads. `<source>` goes because its srcset would load a remote
+// image, which the img renderer deliberately never does. `<style>` goes with
+// its text, which the default schema would otherwise leave behind as prose.
+const htmlSanitizeSchema: SanitizeSchema = {
+  ...defaultSchema,
+  strip: [...(defaultSchema.strip ?? []), "style"],
+  tagNames: defaultSchema.tagNames?.filter((tag) => tag !== "source"),
+  attributes: {
+    ...defaultSchema.attributes,
+    span: [...(defaultSchema.attributes?.span ?? []), ["className", "math", "math-inline", "math-display"]],
+  },
+}
+const htmlRehypePlugins: Options["rehypePlugins"] = [
+  rehypeRaw,
+  [rehypeSanitize, htmlSanitizeSchema],
+  rehypeLinkedImages,
+  [rehypeKatex, KATEX_OPTIONS],
+]
 
 interface MarkdownContentProps {
   content: string
@@ -29,6 +52,12 @@ interface MarkdownContentProps {
    * threshold preferences.
    */
   messageId?: string
+  /**
+   * Render embedded HTML, sanitized to GitHub's rules, instead of showing it as
+   * text. For third-party markdown that leans on HTML (GitHub READMEs and
+   * comments); anything a Threa user wrote keeps its HTML as text.
+   */
+  allowHtml?: boolean
 }
 
 /**
@@ -84,7 +113,12 @@ function urlTransform(url: string): string {
  * Basic markdown renderer without mention context.
  * Uses fallback mention styling (all mentions styled as users).
  */
-export const MarkdownContent = memo(function MarkdownContent({ content, className, messageId }: MarkdownContentProps) {
+export const MarkdownContent = memo(function MarkdownContent({
+  content,
+  className,
+  messageId,
+  allowHtml,
+}: MarkdownContentProps) {
   // remark-gfm rejects tables with blank lines between rows, which LLM output
   // and some pasted markdown contain. Collapsing those blanks lets the table
   // render instead of falling through to plain paragraphs.
@@ -99,7 +133,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
     <div className={cn("markdown-content min-w-0 break-words", className)}>
       <Markdown
         remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
+        rehypePlugins={allowHtml ? htmlRehypePlugins : rehypePlugins}
         components={markdownComponents}
         urlTransform={urlTransform}
       >

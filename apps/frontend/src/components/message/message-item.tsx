@@ -113,6 +113,9 @@ export interface RenderableMessage {
    * Resolved per row against the board post's `settlingMessageIds`; a tombstone
    * never carries it (deleted trumps settling). */
   settling?: boolean
+  /** On a server row: the optimistic row's id it replaced. Keeps the row's
+   *  identity across the swap so its arrival animation doesn't replay. */
+  clientMessageId?: string
 }
 
 interface MessageItemProps {
@@ -226,7 +229,6 @@ export function MessageItem({
     enabled: touchCapable && !isEditing,
     deferToNativeLinks: true,
   })
-  const hasReactions = Object.keys(message.reactions).length > 0
   const interactiveName = (message.authorType === "user" || message.authorType === "bot") && Boolean(message.authorId)
   // Per-actor colorization, shared with the timeline: the author-name color + inline
   // badge, plus the full-bleed `rowAccent` (tint + inset left stripe) on the row.
@@ -566,7 +568,7 @@ export function MessageItem({
             <TooltipContent>Quote reply</TooltipContent>
           </Tooltip>
         )}
-        <MessageContextMenu context={menuContext} />
+        <MessageContextMenu context={menuContext} saved={savedForMessage ?? null} />
       </div>
     </div>
   )
@@ -662,32 +664,34 @@ export function MessageItem({
   )
 
   const richBody = (
-    <>
-      <MarkdownBlockProvider messageId={message.id}>
-        <CollapsibleBody
-          kind="message"
-          content={message.contentMarkdown}
-          collapseAtHeight={messageCollapse.collapseAtHeight}
-          collapseToHeight={messageCollapse.collapseToHeight}
-          defaultCollapsed={messageCollapse.enabled}
-        >
-          <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
-        </CollapsibleBody>
-      </MarkdownBlockProvider>
-      {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
-      {linkPreviews.length > 0 && (
-        <LinkPreviewList
-          messageId={message.id}
-          workspaceId={workspaceId}
-          previews={linkPreviews}
-          hydrateFromApi={false}
-        />
-      )}
-      {/* Giphy embeds are parsed from the markdown; memo cards take their
-          content from the message the same way the timeline does. */}
-      <MemoPreviewList contentMarkdown={message.contentMarkdown} memoEmbeds={message.memoEmbeds} />
-      <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
-    </>
+    <MarkdownBlockProvider messageId={message.id}>
+      <CollapsibleBody
+        kind="message"
+        content={message.contentMarkdown}
+        collapseAtHeight={messageCollapse.collapseAtHeight}
+        collapseToHeight={messageCollapse.collapseToHeight}
+        defaultCollapsed={messageCollapse.enabled}
+        trailing={
+          <>
+            {attachments.length > 0 && <AttachmentList attachments={attachments} workspaceId={workspaceId} />}
+            {linkPreviews.length > 0 && (
+              <LinkPreviewList
+                messageId={message.id}
+                workspaceId={workspaceId}
+                previews={linkPreviews}
+                hydrateFromApi={false}
+              />
+            )}
+            {/* Giphy embeds are parsed from the markdown; memo cards take their
+                content from the message the same way the timeline does. */}
+            <MemoPreviewList contentMarkdown={message.contentMarkdown} memoEmbeds={message.memoEmbeds} />
+            <GiphyPreviewList contentMarkdown={message.contentMarkdown} />
+          </>
+        }
+      >
+        <MarkdownContent content={message.contentMarkdown} className="text-sm leading-relaxed" />
+      </CollapsibleBody>
+    </MarkdownBlockProvider>
   )
   // The body renders real message content (mentions, attachments, link previews),
   // so it gets the same markdown context wrappers the timeline uses. Attachments
@@ -703,14 +707,12 @@ export function MessageItem({
           richBody
         )}
       </LinkPreviewProvider>
-      {hasReactions && (
-        <MessageReactions
-          reactions={message.reactions}
-          workspaceId={workspaceId}
-          messageId={message.id}
-          currentUserId={currentUserId}
-        />
-      )}
+      <MessageReactions
+        reactions={message.reactions}
+        workspaceId={workspaceId}
+        messageId={message.id}
+        currentUserId={currentUserId}
+      />
     </>
   )
 

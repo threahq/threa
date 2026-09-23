@@ -3,12 +3,15 @@ import { Bell, BellOff, Archive, Check, Clock, Trash2, Undo2 } from "lucide-reac
 import { toast } from "sonner"
 import type { SavedMessageView, SavedStatus } from "@threahq/types"
 import { Button } from "@/components/ui/button"
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { useSaveMessage, useUpdateSaved, useDeleteSaved } from "@/hooks/use-saved"
 import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
+import { DateTimeField } from "@/components/forms/date-time-field"
+import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 
 interface ReminderPopoverContentProps {
   workspaceId: string
@@ -17,9 +20,18 @@ interface ReminderPopoverContentProps {
   /** Conversation origin for the save-new path; omitted on stream/label surfaces. */
   conversationId?: string
   saved: SavedMessageView | null
+  onReminderSet?: () => void
+  menu?: boolean
 }
 
-export function ReminderPopoverContent({ workspaceId, messageId, conversationId, saved }: ReminderPopoverContentProps) {
+export function ReminderPopoverContent({
+  workspaceId,
+  messageId,
+  conversationId,
+  saved,
+  onReminderSet,
+  menu = false,
+}: ReminderPopoverContentProps) {
   // Browser-local everywhere in the UI — never use `preferences.timezone`
   // here. Native pickers operate in device-local; any drift would silently
   // shift saved reminders by the device-vs-preference offset.
@@ -30,11 +42,9 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
   const deleteMutation = useDeleteSaved(workspaceId)
   const [customOpen, setCustomOpen] = useState(false)
   const [durationOpen, setDurationOpen] = useState(false)
-  const [customDateTime, setCustomDateTime] = useState("")
-  // Grey out past times in the native picker. Computed once per open so the
-  // boundary doesn't jitter as the minute rolls over mid-interaction; the
-  // server-side clamp catches the seconds-granularity edge case anyway.
-  const minDateTime = useMemo(() => (customOpen ? toDateTimeLocal(new Date()) : ""), [customOpen])
+  const [customDate, setCustomDate] = useState("")
+  const [customTime, setCustomTime] = useState("")
+  const minDate = useMemo(() => (customOpen ? toDateInputValue(new Date()) : ""), [customOpen])
 
   const openCustom = () => {
     if (customOpen) {
@@ -45,7 +55,8 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
     // Seed with the existing reminder when present, otherwise now + 15 minutes
     // — matches the mobile sheet so both entry points feel identical.
     const baseline = saved?.remindAt ? new Date(saved.remindAt) : new Date(Date.now() + 15 * 60_000)
-    setCustomDateTime(toDateTimeLocal(baseline))
+    setCustomDate(toDateInputValue(baseline))
+    setCustomTime(toTimeInputValue(baseline))
     setCustomOpen(true)
   }
 
@@ -57,49 +68,44 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
   const setReminder = (date: Date | null) => {
     if (!saved) {
       if (!messageId) return
-      saveMutation.mutate(
-        { messageId, conversationId, remindAt: date?.toISOString() ?? null },
-        {
-          onError: () => toast.error("Could not save"),
-        }
-      )
+      void saveMutation
+        .mutateAsync({ messageId, conversationId, remindAt: date?.toISOString() ?? null })
+        .then(() => onReminderSet?.())
+        .catch(() => toast.error("Could not save"))
       return
     }
-    updateMutation.mutate(
-      { savedId: saved.id, input: { remindAt: date?.toISOString() ?? null } },
-      {
-        onError: () => toast.error("Could not update reminder"),
-      }
-    )
+    void updateMutation
+      .mutateAsync({ savedId: saved.id, input: { remindAt: date?.toISOString() ?? null } })
+      .then(() => onReminderSet?.())
+      .catch(() => toast.error("Could not update reminder"))
   }
 
   const setStatus = (status: SavedStatus) => {
     if (!saved) return
-    updateMutation.mutate(
-      { savedId: saved.id, input: { status } },
-      {
-        onError: () => toast.error("Could not update"),
-      }
-    )
+    void updateMutation
+      .mutateAsync({ savedId: saved.id, input: { status } })
+      .then(() => onReminderSet?.())
+      .catch(() => toast.error("Could not update"))
   }
 
   const remove = () => {
     if (!saved) return
-    deleteMutation.mutate(saved.id, {
-      onError: () => toast.error("Could not remove"),
-    })
+    void deleteMutation
+      .mutateAsync(saved.id)
+      .then(() => onReminderSet?.())
+      .catch(() => toast.error("Could not remove"))
   }
 
   const handleCustom = () => {
-    if (!customDateTime) return
-    const parsed = new Date(customDateTime)
-    if (isNaN(parsed.getTime())) {
+    const parsed = parseLocalDateTime(customDate, customTime)
+    if (!parsed) {
       toast.error("Invalid date")
       return
     }
     setReminder(parsed)
     setCustomOpen(false)
-    setCustomDateTime("")
+    setCustomDate("")
+    setCustomTime("")
   }
 
   const status = saved?.status ?? null
@@ -124,13 +130,14 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
         {REMINDER_PRESETS.map((preset) => (
           <PopoverMenuButton
             key={preset.label}
+            menu={menu}
             onClick={() => setReminder(computeRemindAt(preset, new Date(), timezone, workSchedule))}
           >
             <Bell className="h-3.5 w-3.5" />
             {preset.label}
           </PopoverMenuButton>
         ))}
-        <PopoverMenuButton onClick={toggleDuration}>
+        <PopoverMenuButton menu={menu} onClick={toggleDuration}>
           <Clock className="h-3.5 w-3.5" />
           Custom duration…
         </PopoverMenuButton>
@@ -139,33 +146,38 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
             onSubmit={setReminder}
             disabled={saveMutation.isPending || updateMutation.isPending}
             submitLabel="Set reminder"
+            autoFocus={menu}
           />
         )}
-        <PopoverMenuButton onClick={openCustom}>
+        <PopoverMenuButton menu={menu} onClick={openCustom}>
           <Bell className="h-3.5 w-3.5" />
           Pick a time…
         </PopoverMenuButton>
         {customOpen && (
-          <div className="flex items-center gap-1.5 px-2 py-1">
-            <input
-              type="datetime-local"
-              value={customDateTime}
-              min={minDateTime}
-              onChange={(e) => setCustomDateTime(e.target.value)}
-              className="flex-1 text-xs rounded border bg-background px-1.5 py-1"
+          <div className="space-y-2 px-2 py-2">
+            <DateTimeField
+              date={customDate}
+              time={customTime}
+              onDateChange={setCustomDate}
+              onTimeChange={setCustomTime}
+              minDate={minDate}
+              autoFocusDate={menu}
+              density="compact"
+              gridClassName="grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] gap-2 [&_input]:min-w-0 [&_input]:px-1.5"
             />
-            <Button
-              size="sm"
-              className="h-7 text-xs"
-              onClick={handleCustom}
-              disabled={!customDateTime || saveMutation.isPending || updateMutation.isPending}
-            >
-              Set
-            </Button>
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={handleCustom}
+                disabled={!customDate || !customTime || saveMutation.isPending || updateMutation.isPending}
+              >
+                Set reminder
+              </Button>
+            </div>
           </div>
         )}
         {saved?.remindAt && (
-          <PopoverMenuButton onClick={() => setReminder(null)}>
+          <PopoverMenuButton menu={menu} onClick={() => setReminder(null)}>
             <BellOff className="h-3.5 w-3.5" />
             Clear reminder
           </PopoverMenuButton>
@@ -176,23 +188,24 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
         <div className="p-1">
           {status === "saved" && (
             <>
-              <PopoverMenuButton onClick={() => setStatus("done")}>
+              <PopoverMenuButton menu={menu} onClick={() => setStatus("done")}>
                 <Check className="h-3.5 w-3.5" />
                 Mark done
               </PopoverMenuButton>
-              <PopoverMenuButton onClick={() => setStatus("archived")}>
+              <PopoverMenuButton menu={menu} onClick={() => setStatus("archived")}>
                 <Archive className="h-3.5 w-3.5" />
                 Archive
               </PopoverMenuButton>
             </>
           )}
           {status !== "saved" && (
-            <PopoverMenuButton onClick={() => setStatus("saved")}>
+            <PopoverMenuButton menu={menu} onClick={() => setStatus("saved")}>
               <Undo2 className="h-3.5 w-3.5" />
               Move back to Saved
             </PopoverMenuButton>
           )}
           <PopoverMenuButton
+            menu={menu}
             onClick={remove}
             className="text-destructive hover:text-destructive hover:bg-destructive/10"
           >
@@ -205,20 +218,27 @@ export function ReminderPopoverContent({ workspaceId, messageId, conversationId,
   )
 }
 
-/** Format a Date as `YYYY-MM-DDTHH:mm` in local time — the shape `<input type="datetime-local">` expects. */
-function toDateTimeLocal(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
 interface PopoverMenuButtonProps {
   children: React.ReactNode
   onClick: () => void
   className?: string
+  menu?: boolean
 }
 
-function PopoverMenuButton({ children, onClick, className }: PopoverMenuButtonProps) {
-  // Shadcn Button with ghost variant (INV-14) — styled as a dense menu row.
+function PopoverMenuButton({ children, onClick, className, menu }: PopoverMenuButtonProps) {
+  if (menu) {
+    return (
+      <DropdownMenuItem
+        className={cn("gap-2 cursor-pointer", className)}
+        onSelect={(event) => {
+          event.preventDefault()
+          onClick()
+        }}
+      >
+        {children}
+      </DropdownMenuItem>
+    )
+  }
   return (
     <Button
       variant="ghost"

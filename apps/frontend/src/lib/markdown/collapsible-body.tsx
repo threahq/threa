@@ -1,5 +1,5 @@
-import { useRef, type ReactNode } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { useLayoutEffect, useRef, type MouseEvent, type ReactNode } from "react"
+import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
   DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
@@ -9,7 +9,15 @@ import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
-import { InsideCollapsibleBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
+import { InsideCollapsibleBlockProvider, MarkdownBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
+
+/** A fold spanning several bodies, owned by the caller. */
+export interface CollapsibleBodyGroup {
+  collapsed: boolean
+  /** The group's control renders under this body only when set. */
+  toggleLabel: string | null
+  onToggle: (event: MouseEvent<HTMLButtonElement>) => void
+}
 
 interface CollapsibleBodyProps {
   /** The block-collapse kind — its own `messageId`-scoped fold key + hash space. */
@@ -26,6 +34,20 @@ interface CollapsibleBodyProps {
   defaultCollapsed?: boolean
   /** The rendered body (a `MarkdownContent`) measured and clamped when folded. */
   children: ReactNode
+  /**
+   * Rendered under the body and folded with it (attachments, link previews), so
+   * a folded message hides them instead of leaving them below the fade. Kept out
+   * of the message's block scope: markdown inside a preview never gets fold
+   * chrome keyed to the host message.
+   */
+  trailing?: ReactNode
+  /**
+   * Hands the fold to a group: this body stops folding on its own, clamps while
+   * the group is collapsed, and renders the group's control instead of its own.
+   */
+  group?: CollapsibleBodyGroup
+  /** Receives the body's full height (trailing included) before paint. */
+  onHeight?: (heightPx: number) => void
 }
 
 // The collapsed body fades out its own bottom edge via a mask (the content goes
@@ -54,6 +76,9 @@ export function CollapsibleBody({
   collapseToHeight,
   defaultCollapsed = true,
   children,
+  trailing,
+  group,
+  onHeight,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const { lineCount, lineHeightPx, heightPx } = useMeasuredLineCount(bodyRef, [content])
@@ -61,16 +86,63 @@ export function CollapsibleBody({
   const heightCollapsible =
     collapseAtHeight !== undefined && heightPx !== null && heightPx !== undefined && heightPx > collapseAtHeight
   const collapsible = heightCollapsible || lineCollapsible
-  const { collapsed, canToggle, toggle } = useBlockCollapse({ kind, content, collapsible, defaultCollapsed })
+  const own = useBlockCollapse({ kind, content, collapsible: collapsible && !group, defaultCollapsed })
+
+  useLayoutEffect(() => {
+    if (heightPx !== null && heightPx !== undefined) onHeight?.(heightPx)
+  }, [heightPx, onHeight])
+
+  const collapsed = group
+    ? group.collapsed && collapseToHeight !== undefined && heightPx != null && heightPx > collapseToHeight
+    : own.collapsed
+  const expanded = group ? !group.collapsed : !own.collapsed
+  let toggleLabel: string | null = null
+  if (group) toggleLabel = group.toggleLabel
+  else if (own.canToggle) toggleLabel = own.collapsed ? "Show more" : "Collapse"
 
   const collapsedMaxHeight = collapsed
     ? (collapseToHeight ??
       (threshold !== undefined && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined))
     : undefined
 
+  const trailingRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const trailingRoot = trailingRef.current
+    if (collapsedMaxHeight === undefined || !body || !trailingRoot) return
+    let hidden: Element[] = []
+    const release = () => {
+      for (const el of hidden) el.removeAttribute("inert")
+      hidden = []
+    }
+    // Controls clipped below the clamp stay out of the tab order; anything
+    // straddling the edge is partly visible and keeps its focusable parts.
+    const markClipped = () => {
+      release()
+      const clampBottom = body.getBoundingClientRect().top + collapsedMaxHeight
+      const visit = (el: Element) => {
+        const rect = el.getBoundingClientRect()
+        if (rect.top >= clampBottom) {
+          el.setAttribute("inert", "")
+          hidden.push(el)
+        } else if (rect.bottom > clampBottom) {
+          for (const child of el.children) visit(child)
+        }
+      }
+      visit(trailingRoot)
+    }
+    markClipped()
+    const observer = new ResizeObserver(markClipped)
+    observer.observe(trailingRoot)
+    return () => {
+      observer.disconnect()
+      release()
+    }
+  }, [collapsedMaxHeight, heightPx])
+
   return (
     <div>
-      <InsideCollapsibleBlockProvider active={canToggle}>
+      <InsideCollapsibleBlockProvider active={group ? collapsible || collapsed : own.canToggle}>
         {/* Expansion lives only on the explicit Show more/less button below — the
             body itself is NOT click-to-toggle. A message body carries clickable
             mentions/links (their onClick would double-fire with the fold) and, on
@@ -88,13 +160,19 @@ export function CollapsibleBody({
           }
         >
           {children}
+          {trailing && (
+            <div ref={trailingRef}>
+              <MarkdownBlockProvider messageId={null}>{trailing}</MarkdownBlockProvider>
+            </div>
+          )}
         </div>
       </InsideCollapsibleBlockProvider>
-      {canToggle && (
+      {toggleLabel && (
         <button
           type="button"
-          onClick={toggle}
-          aria-expanded={!collapsed}
+          onClick={group ? group.onToggle : own.toggle}
+          aria-expanded={expanded}
+          data-run-fold-toggle={group ? "" : undefined}
           // When collapsed, lift the toggle up into the faded bottom band (the
           // clamp's half-line teaser + the mask fade read as empty space) so it
           // sits centered in that spacer rather than pinned below it. Expanded,
@@ -104,12 +182,12 @@ export function CollapsibleBody({
             collapsed ? "-mt-2" : "mt-1"
           )}
         >
-          {collapsed ? (
-            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {expanded ? (
+            <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
           ) : (
             <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
           )}
-          {collapsed ? "Show more" : "Collapse"}
+          {toggleLabel}
         </button>
       )}
     </div>

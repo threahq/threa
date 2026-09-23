@@ -8,6 +8,8 @@ export type { StreamBrief, BriefAuthorKind } from "./brief-repository"
 
 export { StreamService } from "./service"
 export { StreamReadService } from "./read-service"
+export { resolveInboxClearMode } from "./inbox-clear-mode"
+export { releaseInboxHold } from "./inbox-release"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
 // Which stream's memoryMode governs automatic capture here (INV-62 thread → root)
@@ -50,6 +52,7 @@ export { resolveNotificationLevelsForStream } from "./notification-resolver"
 export type { ResolvedNotification } from "./notification-resolver"
 
 export { StreamRepository } from "./repository"
+export { StreamDirectoryStatsRepository, DIRECTORY_ACTIVITY_DAYS } from "./directory-stats-repository"
 export type {
   Stream,
   InsertStreamParams,
