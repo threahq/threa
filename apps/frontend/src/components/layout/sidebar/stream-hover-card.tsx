@@ -35,9 +35,16 @@ import { cn } from "@/lib/utils"
 const OPEN_DELAY_MS = 450
 const CLOSE_DELAY_MS = 150
 const CARD_MESSAGE_LIMIT = 8
-const MESSAGE_EVENT_TYPES: EventType[] = ["message_created", "message_edited", "message_deleted"]
-/** Enough rows that edits and deletes of the last few messages still leave eight to show. */
-const FETCH_LIMIT = 40
+/** The paged events route carries no reaction enrichment, so reactions fold from their own events. */
+const CARD_EVENT_TYPES: EventType[] = [
+  "message_created",
+  "message_edited",
+  "message_deleted",
+  "reaction_added",
+  "reaction_removed",
+]
+/** Enough rows that edits, deletes and reactions on the last few messages still leave eight to show. */
+const FETCH_LIMIT = 60
 
 type Reactions = Record<string, string[]>
 
@@ -71,6 +78,14 @@ export function foldHoverMessages(events: StreamEvent[], limit = CARD_MESSAGE_LI
       }
     } else if (event.eventType === "message_deleted") {
       byId.delete(messageId)
+    } else if (event.eventType === "reaction_added" || event.eventType === "reaction_removed") {
+      const existing = byId.get(messageId)
+      const { emoji, userId } = payload as { emoji?: string; userId?: string }
+      if (existing && emoji && userId) {
+        const current = existing.event.payload as { reactions?: Reactions }
+        const reactions = applyReaction(current.reactions, emoji, userId, event.eventType === "reaction_added")
+        byId.set(messageId, { ...existing, event: { ...existing.event, payload: { ...current, reactions } } })
+      }
     }
   }
   return [...byId.values()].sort((a, b) => (a.sequence < b.sequence ? -1 : 1)).slice(-limit)
@@ -196,7 +211,7 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
   const readStates = useWorkspaceStreamReadStates(workspaceId)
   const { data: messages, isError } = useQuery({
     queryKey: hoverCardQueryKey(workspaceId, stream.id),
-    queryFn: () => streamService.getEvents(workspaceId, stream.id, { limit: FETCH_LIMIT, types: MESSAGE_EVENT_TYPES }),
+    queryFn: () => streamService.getEvents(workspaceId, stream.id, { limit: FETCH_LIMIT, types: CARD_EVENT_TYPES }),
     select: (response) => foldHoverMessages(response.events),
     staleTime: 15_000,
   })
@@ -440,8 +455,8 @@ interface HoverCardReactionsProps {
 }
 
 /**
- * Reacting from the card patches the card's own query so the pill flips at once;
- * the refetch afterwards reconciles with what the server stored.
+ * Reacting from the card appends a reaction event to the card's own query so the pill
+ * flips at once; the refetch afterwards reconciles with what the server stored.
  */
 function HoverCardReactions({ workspaceId, streamId, messageId, reactions, currentUserId }: HoverCardReactionsProps) {
   const queryClient = useQueryClient()
@@ -471,7 +486,9 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
     const reacted = reactions[key]?.includes(currentUserId) ?? false
     const queryKey = hoverCardQueryKey(workspaceId, streamId)
     queryClient.setQueryData<EventsListResponse>(queryKey, (data) =>
-      data ? { ...data, events: withReaction(data.events, messageId, key, currentUserId, !reacted) } : data
+      data
+        ? { ...data, events: [...data.events, optimisticReaction(streamId, messageId, key, currentUserId, !reacted)] }
+        : data
     )
     await (reacted ? removeReaction(emoji) : addReaction(emoji))
     void queryClient.invalidateQueries({ queryKey })
@@ -520,24 +537,32 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
   )
 }
 
-/** Add or remove one user's reaction on a message's `message_created` event. */
-export function withReaction(
-  events: StreamEvent[],
+function applyReaction(reactions: Reactions | undefined, key: string, userId: string, add: boolean): Reactions {
+  const next = { ...reactions }
+  const others = (next[key] ?? []).filter((id) => id !== userId)
+  if (add) next[key] = [...others, userId]
+  else if (others.length > 0) next[key] = others
+  else delete next[key]
+  return next
+}
+
+function optimisticReaction(
+  streamId: string,
   messageId: string,
   key: string,
   userId: string,
   add: boolean
-): StreamEvent[] {
-  return events.map((event) => {
-    const payload = event.payload as { messageId?: string; reactions?: Reactions }
-    if (event.eventType !== "message_created" || payload.messageId !== messageId) return event
-    const reactions = { ...payload.reactions }
-    const others = (reactions[key] ?? []).filter((id) => id !== userId)
-    if (add) reactions[key] = [...others, userId]
-    else if (others.length > 0) reactions[key] = others
-    else delete reactions[key]
-    return { ...event, payload: { ...payload, reactions } } as StreamEvent
-  })
+): StreamEvent {
+  return {
+    id: `optimistic_${messageId}_${key}`,
+    streamId,
+    sequence: "0",
+    eventType: add ? "reaction_added" : "reaction_removed",
+    payload: { messageId, emoji: key, userId },
+    actorId: userId,
+    actorType: "user",
+    createdAt: new Date().toISOString(),
+  }
 }
 
 function HoverCardSkeleton() {

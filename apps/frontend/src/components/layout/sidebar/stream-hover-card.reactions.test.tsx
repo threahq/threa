@@ -14,20 +14,25 @@ import { StreamHoverCard, type SidebarHoverIntent } from "./stream-hover-card"
 const WS = "ws_1"
 const STREAM = { id: "stream_general", type: "channel", slug: "general" } as StreamWithPreview
 
-let serverReactions: Record<string, string[]>
+let reactionLog: { eventType: "reaction_added" | "reaction_removed"; emoji: string; userId: string }[]
+
+function event(sequence: number, eventType: string, payload: Record<string, unknown>): StreamEvent {
+  return {
+    id: `evt_${sequence}`,
+    streamId: STREAM.id,
+    sequence: String(sequence),
+    eventType,
+    payload,
+    actorId: "usr_ana",
+    actorType: "user",
+    createdAt: "2026-09-23T09:00:00.000Z",
+  } as StreamEvent
+}
 
 function events(): StreamEvent[] {
   return [
-    {
-      id: "evt_1",
-      streamId: STREAM.id,
-      sequence: "1",
-      eventType: "message_created",
-      payload: { messageId: "msg_a", contentMarkdown: "Ship it?", reactions: serverReactions },
-      actorId: "usr_ana",
-      actorType: "user",
-      createdAt: "2026-09-23T09:00:00.000Z",
-    } as StreamEvent,
+    event(1, "message_created", { messageId: "msg_a", contentMarkdown: "Ship it?" }),
+    ...reactionLog.map((r, i) => event(i + 2, r.eventType, { messageId: "msg_a", emoji: r.emoji, userId: r.userId })),
   ]
 }
 
@@ -58,13 +63,12 @@ function setup() {
   vi.spyOn(contextsModule, "useStreamService").mockReturnValue({
     getEvents: vi.fn(async () => ({ events: events() })),
   } as unknown as ReturnType<typeof contextsModule.useStreamService>)
+  const shortcodes: Record<string, string> = { "👍": ":+1:", "🔥": ":fire:" }
   const addReaction = vi.spyOn(messagesApi, "addReaction").mockImplementation(async (_ws, _msg, emoji) => {
-    if (emoji === "👍") serverReactions = { ...serverReactions, ":+1:": [...(serverReactions[":+1:"] ?? []), "usr_me"] }
-    return undefined as never
+    reactionLog.push({ eventType: "reaction_added", emoji: shortcodes[emoji], userId: "usr_me" })
   })
-  const removeReaction = vi.spyOn(messagesApi, "removeReaction").mockImplementation(async () => {
-    serverReactions = {}
-    return undefined as never
+  const removeReaction = vi.spyOn(messagesApi, "removeReaction").mockImplementation(async (_ws, _msg, emoji) => {
+    reactionLog.push({ eventType: "reaction_removed", emoji: shortcodes[emoji], userId: "usr_me" })
   })
 
   const hover = { enabled: true, open: true, setOpen: vi.fn(), close: vi.fn() } as unknown as SidebarHoverIntent
@@ -86,7 +90,7 @@ describe("StreamHoverCard reactions", () => {
   })
 
   it("should count the viewer's reaction before the server answers when they click someone else's pill", async () => {
-    serverReactions = { ":+1:": ["usr_ana"] }
+    reactionLog = [{ eventType: "reaction_added", emoji: ":+1:", userId: "usr_ana" }]
     const { addReaction } = setup()
     let answer = () => {}
     addReaction.mockImplementationOnce(() => new Promise((resolve) => (answer = () => resolve(undefined as never))))
@@ -99,7 +103,11 @@ describe("StreamHoverCard reactions", () => {
   })
 
   it("should remove the pill when the viewer takes back the only reaction", async () => {
-    serverReactions = { ":fire:": ["usr_me"] }
+    reactionLog = [
+      { eventType: "reaction_added", emoji: ":fire:", userId: "usr_ana" },
+      { eventType: "reaction_removed", emoji: ":fire:", userId: "usr_ana" },
+      { eventType: "reaction_added", emoji: ":fire:", userId: "usr_me" },
+    ]
     const { removeReaction } = setup()
 
     await userEvent.click(await screen.findByRole("button", { name: /🔥\s*1/ }))

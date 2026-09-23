@@ -54,6 +54,23 @@ describe("foldHoverMessages", () => {
 
     expect(view(events)).toEqual([{ id: "msg_new", content: "new" }])
   })
+
+  it("should fold reaction events into the message they target", () => {
+    const events = [
+      event("message_created", { messageId: "msg_a", contentMarkdown: "a" }),
+      event("reaction_added", { messageId: "msg_a", emoji: ":+1:", userId: "usr_1" }),
+      event("reaction_added", { messageId: "msg_a", emoji: ":+1:", userId: "usr_2" }),
+      event("reaction_added", { messageId: "msg_a", emoji: ":fire:", userId: "usr_1" }),
+      event("message_edited", { messageId: "msg_a", contentMarkdown: "a edited" }),
+      event("reaction_removed", { messageId: "msg_a", emoji: ":fire:", userId: "usr_1" }),
+      event("reaction_removed", { messageId: "msg_a", emoji: ":+1:", userId: "usr_1" }),
+    ]
+
+    expect(foldHoverMessages(events)[0].event.payload).toMatchObject({
+      contentMarkdown: "a edited",
+      reactions: { ":+1:": ["usr_2"] },
+    })
+  })
 })
 
 function message(id: string, actorId: string, minute: number): HoverCardMessage {
