@@ -34,7 +34,7 @@ import { MessageEditForm } from "@/components/timeline/message-edit-form"
 import { DeleteMessageDialog } from "@/components/timeline/delete-message-dialog"
 import { EditedIndicator } from "@/components/timeline/edited-indicator"
 import { MessageHistoryDialog } from "@/components/timeline/message-history-dialog"
-import { ReminderPicker, reminderAnchorRect } from "@/components/timeline/reminder-picker"
+import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
 import { ShareMessageModal } from "@/components/share/share-message-modal"
 import type { MessageActionContext } from "@/components/timeline/message-actions"
 import { useConversationRowRead } from "@/components/message/conversation-read-context"
@@ -217,7 +217,6 @@ export function MessageItem({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
-  const reminderAnchor = useRef<DOMRect | null>(null)
   const [shareModalOpen, setShareModalOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   // Touch reaches the actions via long-press → the same `MessageActionDrawer`
@@ -369,10 +368,7 @@ export function MessageItem({
       onError: () => toast.error("Could not remove saved item"),
     })
   }, [savedForMessage, saveMessageMutation, unsaveMessageMutation, message.id, conversationId])
-  const handleRequestReminder = useCallback(() => {
-    reminderAnchor.current = reminderAnchorRect()
-    setReminderSheetOpen(true)
-  }, [])
+  const handleRequestReminder = useCallback(() => setReminderSheetOpen(true), [])
 
   // Board/conversation payloads carry only markdown (INV-58 wire format); parse
   // it back to the canonical contentJson the editor edits over. A no-op edit is
@@ -572,7 +568,7 @@ export function MessageItem({
             <TooltipContent>Quote reply</TooltipContent>
           </Tooltip>
         )}
-        <MessageContextMenu context={menuContext} />
+        <MessageContextMenu context={menuContext} saved={savedForMessage ?? null} />
       </div>
     </div>
   )
@@ -631,8 +627,7 @@ export function MessageItem({
         />
       )}
       {reminderSheetOpen && (
-        <ReminderPicker
-          anchorRect={reminderAnchor.current}
+        <ReminderPickerSheet
           open={reminderSheetOpen}
           onOpenChange={setReminderSheetOpen}
           workspaceId={workspaceId}
