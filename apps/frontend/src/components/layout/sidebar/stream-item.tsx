@@ -245,7 +245,8 @@ export function CallActivityDot() {
  * The preview-line takeover shown while an agent works: spinner + `{label}` in
  * the agent accent, replacing the last-message preview for the run's duration.
  * Same text size/height as {@link StreamItemPreview} so the swap shifts nothing
- * (INV-21). Title-only rows skip it: the avatar's working dot carries the signal. The spinning Loader2 is the app's one "working" glyph — the session
+ * (INV-21). Title-only rows skip it: the avatar's working dot carries the
+ * signal. The spinning Loader2 is the app's one "working" glyph — the session
  * card, header chip, and follow pill all use it.
  */
 export function AgentActivityPreviewLine({ label }: { label: string }) {
