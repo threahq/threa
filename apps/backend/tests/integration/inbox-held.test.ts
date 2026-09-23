@@ -71,8 +71,11 @@ describe("inbox hold", () => {
     return ids
   }
 
-  async function outboxFor(eventType: string): Promise<Array<Record<string, unknown>>> {
-    const result = await pool.query(`SELECT payload FROM outbox WHERE event_type = $1 ORDER BY id`, [eventType])
+  async function outboxFor(eventType: string, wid: string): Promise<Array<Record<string, unknown>>> {
+    const result = await pool.query(
+      `SELECT payload FROM outbox WHERE event_type = $1 AND payload->>'workspaceId' = $2 ORDER BY id`,
+      [eventType, wid]
+    )
     return result.rows.map((r) => r.payload)
   }
 
@@ -233,7 +236,7 @@ describe("inbox hold", () => {
       })
 
       expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(true)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
         {
           workspaceId: wid,
           authorId: author,
@@ -258,7 +261,7 @@ describe("inbox hold", () => {
       })
 
       expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
   })
 
@@ -445,7 +448,7 @@ describe("inbox hold", () => {
       const result = await streamService.clearInbox(wid, reader, [heldStream, alreadyCaughtUpStream])
 
       expect(result.clearedStreamIds).toEqual([heldStream])
-      const emitted = await outboxFor("stream:inbox_updated")
+      const emitted = await outboxFor("stream:inbox_updated", wid)
       expect(emitted).toEqual([
         {
           workspaceId: wid,
@@ -467,7 +470,7 @@ describe("inbox hold", () => {
       const result = await streamService.clearInbox(wid, reader, [sid])
 
       expect(result.clearedStreamIds).toEqual([])
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
 
     test("returns empty results without querying when no candidate stream is accessible", async () => {
@@ -491,7 +494,7 @@ describe("inbox hold", () => {
 
       expect(result.updatedStreamIds).toEqual([sid])
       expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
 
     test("never re-holds a stream the user already cleared from the Inbox", async () => {
@@ -518,7 +521,7 @@ describe("inbox hold", () => {
 
       expect(result.updatedStreamIds).toEqual([sid])
       expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
   })
 

@@ -558,6 +558,7 @@ describe("Unread Counts", () => {
         lastReadSequence: events[1].sequence.toString(),
         lastReadOrdinal: 2,
         readMessageIds: [],
+        inboxHeld: true,
       })
 
       // The derived unread matches the authoritative count: 3 - 2 = 1.
