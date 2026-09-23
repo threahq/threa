@@ -28,7 +28,7 @@ import { AttachmentRepository } from "../attachments"
 import { awaitAttachmentProcessing } from "../attachments"
 import type { TraceEmitter } from "./trace-emitter"
 import type { SessionAbortRegistry } from "./session-abort-registry"
-import type { AI, CostContext, WebSearchEngine } from "@threahq/agent-runtime"
+import type { AI, CostContext, PageBrowser, WebSearchEngine } from "@threahq/agent-runtime"
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
@@ -127,6 +127,7 @@ export interface PersonaAgentDeps {
   sandbox?: StreamSandboxDeps
   assertInitiatorWritable?: typeof assertStreamWritable
   webSearchEngines?: WebSearchEngine[]
+  pageBrowser?: PageBrowser
   stubResponse?: string
   createMessage: (params: {
     initiatingUserId: string
@@ -458,6 +459,7 @@ export class PersonaAgent {
       workspaceIntegrationService,
       sandbox,
       webSearchEngines,
+      pageBrowser,
       stubResponse,
       createMessage,
       editMessage,
@@ -1363,6 +1365,7 @@ export class PersonaAgent {
             tools: buildToolSet({
               enabledTools: researcherEnabledTools,
               webSearchEngines,
+              pageBrowser,
               currentTime: agentContext.streamContext.temporal?.currentTime,
               timezone: agentContext.streamContext.temporal?.timezone,
               workspace: workspaceDeps,
@@ -1406,6 +1409,7 @@ export class PersonaAgent {
           tools: buildToolSet({
             enabledTools: persona.enabledTools,
             webSearchEngines,
+            pageBrowser,
             currentTime: agentContext.streamContext.temporal?.currentTime,
             timezone: agentContext.streamContext.temporal?.timezone,
             runWorkspaceAgent,

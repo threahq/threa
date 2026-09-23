@@ -86,7 +86,8 @@ export {
   type WebSearchEngineKeys,
   type WebSearchEngineName,
 } from "./tools/web-search-engines"
-export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "./tools/read-url-tool"
+export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult, type ReadUrlVia } from "./tools/read-url-tool"
+export { createBrowserbasePageBrowser, type PageBrowser } from "./tools/page-browser"
 
 // Bounded research sub-agent (shared by backend personas + the enclave)
 export {

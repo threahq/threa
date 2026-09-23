@@ -274,7 +274,13 @@ import type { AuthorType, ConversationDirective } from "@threahq/types"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
-import { createAI, createModelRegistry, createWebSearchEngines, DecisionsAvailability } from "@threahq/agent-runtime"
+import {
+  createAI,
+  createBrowserbasePageBrowser,
+  createModelRegistry,
+  createWebSearchEngines,
+  DecisionsAvailability,
+} from "@threahq/agent-runtime"
 import { createStaticConfigResolver } from "./lib/ai/static-config-resolver"
 import {
   QueueManager,
@@ -1144,6 +1150,7 @@ export async function startServer(): Promise<ServerInstance> {
     workspaceIntegrationService,
     sandbox: sandboxService ? { service: sandboxService, workspaceSettings: workspaceSettingsService } : undefined,
     webSearchEngines: createWebSearchEngines(config.ai.webSearchKeys),
+    pageBrowser: config.ai.browserbaseApiKey ? createBrowserbasePageBrowser(config.ai.browserbaseApiKey) : undefined,
     stubResponse: config.useStubCompanion
       ? "This is a stub response from the companion. The real AI integration is disabled."
       : undefined,

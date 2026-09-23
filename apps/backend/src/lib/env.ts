@@ -9,6 +9,8 @@ export interface AIConfig {
   openRouterApiKey: string
   /** Keys for the `web_search` engines; each key set runs its engine in parallel with the other. */
   webSearchKeys: WebSearchEngineKeys
+  /** Browserbase key: `read_url` reads pages a plain request cannot in a real browser. Empty string disables it. */
+  browserbaseApiKey: string
   /** ElevenLabs API key for realtime speech-to-text (voice dictation). Empty string disables voice. */
   elevenLabsApiKey: string
   /** Deepgram API key for realtime speech-to-text. Empty string disables Deepgram as a voice provider. */
@@ -232,6 +234,7 @@ export function loadConfig(): Config {
         exa: process.env.EXA_API_KEY || undefined,
         serper: process.env.SERPER_API_KEY || undefined,
       },
+      browserbaseApiKey: process.env.BROWSERBASE_API_KEY || "",
       elevenLabsApiKey: process.env.ELEVENLABS_API_KEY || "",
       deepgramApiKey: process.env.DEEPGRAM_API_KEY || "",
       namingModel: process.env.AI_NAMING_MODEL || "openrouter:openai/gpt-6-luna",
