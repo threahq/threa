@@ -79,11 +79,6 @@ export const TOOL_TIERS_BY_NAME = {
   linear_list_projects: 1,
   linear_get_project: 1,
 
-  // Runs in a box bound to this stream that holds no credentials, so it never
-  // acts with the user's authority. With sandbox internet on it can reach any
-  // site, like read_url; its trace step says so.
-  run_command: 1,
-
   // A memo outlives the stream, but it is inert: knowledge the user can read
   // and delete, with no authority attached and nothing acting on it.
   save_memo: 1,
@@ -102,6 +97,11 @@ export const TOOL_TIERS_BY_NAME = {
   // counterpart `report_back` only closes the run it belongs to.
   start_subagent: 1,
   report_back: 1,
+
+  // Runs arbitrary code. The box holds no credentials, but with sandbox
+  // internet on a command can post the workspace files it was given to any
+  // site, so a guardian checks the user asked for what it does.
+  run_command: 2,
 
   // Changes the user's own account settings — durable state they see everywhere,
   // long after this conversation.
