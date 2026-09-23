@@ -364,12 +364,12 @@ test.describe("Infinite Scroll", () => {
 
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
 
-    // First and last messages should be visible
-    await expect(messageLocator(page, prefix, 1)).toBeVisible({ timeout: 20000 })
     await expect(messageLocator(page, prefix, 10)).toBeVisible({ timeout: 20000 })
 
-    // Scroll to top
+    // Ten rows may not fit on screen (each message can land in its own
+    // conversation and carry a full header), so the oldest is checked from the top.
     await scrollToTop(page)
+    await expect(messageLocator(page, prefix, 1)).toBeVisible({ timeout: 20000 })
 
     // Wait a moment to ensure no spurious requests fire
     await page.waitForTimeout(1000)
