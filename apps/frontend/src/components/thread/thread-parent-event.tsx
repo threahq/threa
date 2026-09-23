@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { Separator } from "@/components/ui/separator"
 import { EventItem } from "@/components/timeline"
 import type { StreamEvent, SubagentSummary } from "@threahq/types"
@@ -55,7 +56,7 @@ export function ThreadParentEvent({
       <Separator />
       <div className="py-2 bg-muted/30 text-xs text-muted-foreground">
         <div className="px-3 sm:px-6 mx-auto max-w-[800px] w-full min-w-0">
-          {replyCount} {replyCount === 1 ? "reply" : "replies"}
+          <RollingNumber value={replyCount} /> {replyCount === 1 ? "reply" : "replies"}
         </div>
       </div>
     </div>

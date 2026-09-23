@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { forwardRef, useMemo, useCallback } from "react"
 import { SmilePlus, X } from "lucide-react"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks"
@@ -123,7 +124,9 @@ const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.But
           <span>{emoji}</span>
           {hasReacted && <X className="reveal-actions-hover-only absolute inset-0 h-4 w-4 text-primary/70" />}
         </span>
-        <span className={cn("tabular-nums", hasReacted && "font-medium")}>{userIds.length}</span>
+        <span className={cn("tabular-nums", hasReacted && "font-medium")}>
+          <RollingNumber value={userIds.length} />
+        </span>
       </button>
     )
   }

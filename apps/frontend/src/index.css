@@ -685,6 +685,54 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 }
 
+/* RollingNumber: the counter is as wide as its new text from the first frame, so
+   a shrinking count reflows once with the value, not again when the roll ends.
+   The old text sits over it, centred and free to overhang sideways, clipped only
+   top and bottom so each slides through the line edge. clip-path rather than
+   overflow, which would move an inline box's baseline. The old text is generated
+   content so it never joins the counter's textContent. */
+.rolling-number {
+  display: inline-grid;
+  position: relative;
+  clip-path: inset(0 -100vmax);
+  --roll-shift: 100%;
+}
+.rolling-number[data-direction="down"] {
+  --roll-shift: -100%;
+}
+.rolling-number-out {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+  animation: rolling-number-out 300ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.rolling-number-in {
+  animation: rolling-number-in 300ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.rolling-number-out::before {
+  content: attr(data-text);
+}
+@keyframes rolling-number-in {
+  from {
+    transform: translateY(var(--roll-shift));
+  }
+}
+@keyframes rolling-number-out {
+  to {
+    transform: translateY(calc(var(--roll-shift) * -1));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rolling-number-in {
+    animation: none;
+  }
+  .rolling-number-out {
+    display: none;
+  }
+}
+
 /* Board card hover: the card holds still and its border warms to the primary
    (Ariadne thread) tint — a link-style highlight, no lift or float shadow, so
    nothing moves or reflows (INV-21). Per-message hover is a separate row-level

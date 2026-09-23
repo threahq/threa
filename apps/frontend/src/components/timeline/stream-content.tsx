@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
@@ -2962,7 +2963,9 @@ export function StreamContent({
                         onClick={scrollToFirstUnread}
                       >
                         <ArrowUp className="h-3.5 w-3.5" />
-                        {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+                        <span>
+                          <RollingNumber value={unreadCount} /> new message{unreadCount === 1 ? "" : "s"}
+                        </span>
                       </Button>
                       {/* Dismiss without scrolling up: mark all loaded read and tail
                   the live bottom — the touchable equivalent of Escape. */}

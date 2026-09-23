@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ActiveAgentSession } from "@threahq/types"
 import { useSearchParams } from "react-router-dom"
@@ -1273,7 +1274,9 @@ function ConversationPanelBody({
                 onClick={() => scrollToMarker()}
               >
                 <ArrowUp className="h-3.5 w-3.5" />
-                {unreadCount} new message{unreadCount === 1 ? "" : "s"}
+                <span>
+                  <RollingNumber value={unreadCount} /> new message{unreadCount === 1 ? "" : "s"}
+                </span>
               </Button>
               {/* Drop the marker and tail the live bottom without scrolling up.
                 Read state is not written here — the panel is read-only over it

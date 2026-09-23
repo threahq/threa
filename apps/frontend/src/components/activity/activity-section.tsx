@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import type { ReactNode } from "react"
 
 interface ActivitySectionProps {
@@ -16,7 +17,7 @@ export function ActivitySection({ label, count, children }: ActivitySectionProps
         <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
         {count !== undefined && count > 0 && (
           <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-semibold tabular-nums text-muted-foreground">
-            {count}
+            <RollingNumber value={count} />
           </span>
         )}
         <span className="h-px flex-1 bg-border" />

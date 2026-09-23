@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import type { RefObject } from "react"
 import { Link } from "react-router-dom"
@@ -1011,7 +1012,9 @@ export function BoardCard({
     <span data-mass-badge-slot className="flex shrink-0 items-center">
       {massBadgeMode !== "off" && unread.count > 0 && (
         <span className="inline-flex h-4 items-center rounded-full bg-destructive px-1.5 text-[10px] font-medium whitespace-nowrap text-destructive-foreground">
-          {unread.count} new
+          <span>
+            <RollingNumber value={unread.count} /> new
+          </span>
         </span>
       )}
     </span>
@@ -1202,8 +1205,15 @@ export function BoardCard({
                 onClick={toggleBodyCollapsed}
                 className="mt-2 flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
-                {messageCount} {messageCount === 1 ? "message" : "messages"}
-                {subtopicCount > 0 && ` · ${subtopicCount} ${subtopicCount === 1 ? "sub-topic" : "sub-topics"}`}
+                <span>
+                  <RollingNumber value={messageCount} /> {messageCount === 1 ? "message" : "messages"}
+                  {subtopicCount > 0 && (
+                    <>
+                      {" · "}
+                      <RollingNumber value={subtopicCount} /> {subtopicCount === 1 ? "sub-topic" : "sub-topics"}
+                    </>
+                  )}
+                </span>
               </button>
             )}
           </div>

@@ -1,3 +1,4 @@
+import { RollingNumber } from "@/components/rolling-number"
 import { Navigate, useParams } from "react-router-dom"
 import { Bookmark } from "lucide-react"
 import { toast } from "sonner"
@@ -78,7 +79,7 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
           badge:
             t.value === "suggested" && suggestedCount > 0 ? (
               <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-600 tabular-nums">
-                {suggestedCount}
+                <RollingNumber value={suggestedCount} />
               </span>
             ) : undefined,
         }))}
