@@ -20,6 +20,7 @@ export interface WorkspaceService {
   bootstrap: typeof workspacesApi.bootstrap
   create: typeof workspacesApi.create
   markAllAsRead: typeof workspacesApi.markAllAsRead
+  clearInbox: typeof workspacesApi.clearInbox
   acceptInvitation: typeof workspacesApi.acceptInvitation
   updateProfile: typeof workspacesApi.updateProfile
   setStatus: typeof workspacesApi.setStatus

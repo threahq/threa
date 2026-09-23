@@ -413,6 +413,17 @@ export function createWorkspaceHandlers({
 
       const { clearedStreamIds, frontiers } = await streamService.clearInbox(workspaceId, userId, streamIds)
 
+      // Only streams whose frontier actually advanced can carry an unread
+      // mention worth clearing — a stream that only lost its held flag (already
+      // at latest) has nothing left to mark.
+      if (frontiers.length > 0) {
+        await activityService?.markStreamsAsRead(
+          userId,
+          workspaceId,
+          frontiers.map((f) => f.streamId)
+        )
+      }
+
       res.json({ clearedStreamIds, frontiers })
     },
 

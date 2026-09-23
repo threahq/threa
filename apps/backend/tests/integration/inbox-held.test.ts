@@ -3,7 +3,9 @@ import { Pool } from "pg"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { StreamService, StreamEventRepository, StreamMemberRepository, ReadStateRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
+import { ActivityRepository, ActivityService } from "../../src/features/activity"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
+import { ActivityTypes } from "@threahq/types"
 
 /**
  * The sidebar Inbox hold against a real database: `stream_read_state.inbox_held`
@@ -15,11 +17,13 @@ describe("inbox hold", () => {
   let pool: Pool
   let streamService: StreamService
   let eventService: EventService
+  let activityService: ActivityService
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
     streamService = new StreamService(pool)
     eventService = new EventService(pool)
+    activityService = new ActivityService({ pool })
   })
 
   afterAll(async () => {
@@ -459,4 +463,69 @@ describe("inbox hold", () => {
     })
   })
 
+  describe("clearInbox + ActivityService.markStreamsAsRead composition (the workspace handler's pairing)", () => {
+    test("marks a stream's unread mention read when clearInbox advances its frontier", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      await ActivityRepository.insert(pool, {
+        workspaceId: wid,
+        userId: reader,
+        activityType: ActivityTypes.MENTION,
+        streamId: sid,
+        messageId: msgId,
+        actorId: author,
+        actorType: "user",
+      })
+
+      const { frontiers } = await streamService.clearInbox(wid, reader, [sid])
+      expect(frontiers).toEqual([expect.objectContaining({ streamId: sid })])
+
+      // Mirrors createWorkspaceHandlers().clearInbox: activity clears for every
+      // stream whose frontier actually advanced.
+      await activityService.markStreamsAsRead(
+        reader,
+        wid,
+        frontiers.map((f) => f.streamId)
+      )
+
+      const row = await pool.query<{ read_at: Date | null }>(
+        `SELECT read_at FROM user_activity WHERE workspace_id = $1 AND user_id = $2 AND stream_id = $3`,
+        [wid, reader, sid]
+      )
+      expect(row.rows[0]?.read_at).not.toBeNull()
+    })
+
+    test("leaves activity untouched for a stream whose frontier did not advance", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+      // Reader is already caught up before clearInbox runs — no advance.
+      await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: false })
+      const activity = await ActivityRepository.insert(pool, {
+        workspaceId: wid,
+        userId: reader,
+        activityType: ActivityTypes.MENTION,
+        streamId: sid,
+        messageId: msgId,
+        actorId: author,
+        actorType: "user",
+      })
+
+      const { frontiers } = await streamService.clearInbox(wid, reader, [sid])
+      expect(frontiers).toEqual([])
+
+      const row = await pool.query<{ read_at: Date | null }>(`SELECT read_at FROM user_activity WHERE id = $1`, [
+        activity?.id,
+      ])
+      expect(row.rows[0]?.read_at).toBeNull()
+    })
+  })
 })
