@@ -4,6 +4,7 @@ import { AgentToolNames, AgentStepTypes, type AgentToolEffect, type SourceItem }
 import type { AgentEvent } from "./agent-events"
 import { AgentRuntime } from "./agent-runtime"
 import { defineAgentTool } from "./agent-tool"
+import { AISpendDeniedError } from "../ai/ai"
 
 describe("AgentRuntime message counting", () => {
   it("bridges supersede reruns with a trailing user prompt when history ends with assistant", async () => {
@@ -1323,7 +1324,7 @@ describe("AgentRuntime untrusted tool output", () => {
       inputSchema: z.object({}),
       execute: async () => ({
         output: "a page",
-        injectionSuspected: true,
+        injectionScreen: "suspect" as const,
         multimodal: [{ type: "image" as const, url: "data:image/png;base64,AAAA" }],
       }),
       trace: { stepType: AgentStepTypes.VISIT_PAGE, formatContent: () => "" },
@@ -1367,5 +1368,47 @@ describe("AgentRuntime untrusted tool output", () => {
         { type: "image", image: "data:image/png;base64,AAAA" },
       ],
     })
+  })
+})
+
+describe("AgentRuntime spend denial", () => {
+  it("ends the turn when a tool's own model call is denied, instead of handing the model an error", async () => {
+    const denied = new AISpendDeniedError({ workspaceId: "ws_1", functionId: "web-search-judge" }, "workspace_limit")
+    const searchTool = defineAgentTool({
+      name: "search_tool",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => {
+        throw denied
+      },
+      trace: { stepType: AgentStepTypes.WEB_SEARCH, formatContent: () => "" },
+    })
+    let modelCalls = 0
+    const generateTextWithTools = async () => {
+      modelCalls++
+      return {
+        text: "",
+        toolCalls: [{ toolCallId: "tc_1", toolName: "search_tool", input: {} }],
+        response: { messages: [{ role: "assistant" as const, content: "searching" } as any] },
+      }
+    }
+
+    const run = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "look it up" }],
+      tools: [searchTool],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+    }).run()
+
+    expect(
+      await run.then(
+        () => "finished",
+        (error) => error
+      )
+    ).toBe(denied)
+    expect(modelCalls).toBe(1)
   })
 })

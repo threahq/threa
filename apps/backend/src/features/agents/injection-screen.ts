@@ -44,7 +44,14 @@ export class InjectionScreen {
   }
 
   async isSuspect(text: string, context: InjectionScreenContext, signal?: AbortSignal): Promise<boolean | null> {
-    if ((await this.residency.isPinned(context.workspaceId)) || !this.availability.isAvailable) return null
+    if (await this.residency.isPinned(context.workspaceId)) {
+      logger.debug({ workspaceId: context.workspaceId }, "Injection screen skipped: workspace AI residency is pinned")
+      return null
+    }
+    if (!this.availability.isAvailable) {
+      logger.info({ workspaceId: context.workspaceId }, "Injection screen skipped: decisions endpoint is backing off")
+      return null
+    }
 
     const timeout = new AbortController()
     const timer = setTimeout(
@@ -71,9 +78,10 @@ export class InjectionScreen {
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
       if (isAbortError(error)) {
-        logger.debug(
-          { workspaceId: context.workspaceId },
-          "Injection screen timed out or was aborted; tool output left unjudged"
+        if (signal?.aborted) return null
+        logger.warn(
+          { workspaceId: context.workspaceId, timeoutMs: INJECTION_SCREEN_TIMEOUT_MS },
+          "Injection screen timed out; tool output left unjudged"
         )
         return null
       }
