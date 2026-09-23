@@ -121,7 +121,7 @@ describe("run_command availability", () => {
     expect(toolNames({ workspace, sandbox })).toContain(AgentToolNames.RUN_COMMAND)
   })
 
-  test("is absent without a sandbox runner or on a sealed stream", () => {
+  test("is absent without a sandbox runner", () => {
     expect(toolNames({ workspace })).not.toContain(AgentToolNames.RUN_COMMAND)
   })
 

@@ -78,6 +78,9 @@ export const MUTATING_TOOLS = {
   // Opens a durable run + thread the user finds from the parent card, not from
   // the reply that created it.
   start_subagent: true,
+  // With sandbox internet on, a command can write to any site. Also keeps two
+  // calls from racing in the one box the stream has.
+  run_command: true,
 
   // Participation: durable, but rendered in place as itself.
   send_message: false,
@@ -97,8 +100,6 @@ export const MUTATING_TOOLS = {
   get_stream_messages: false,
   search_attachments: false,
   read_attachment: false,
-  // The box's files are gone within 10 idle minutes; nothing to go find.
-  run_command: false,
   describe_memo: false,
   github_repos: false,
   github_commits: false,

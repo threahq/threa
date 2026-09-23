@@ -29,9 +29,9 @@ export const TOOL_PRIVACY_CATEGORY_LABELS: Record<ToolPrivacyCategory, string> =
 export const ToolPrivacyCategories = {
   /** The agent's own reply tool (`send_message`). Always allowed. */
   MESSAGING: "messaging",
-  /** External web egress: web_search (Tavily), read_url (fetch), general_research. */
+  /** External web egress: web_search, read_url, general_research, and run_command's sandbox internet. */
   WEB: "web",
-  /** Threa workspace reads: message/stream/user search, attachments, memos. */
+  /** Threa workspace reads: message/stream/user search, attachments, memos, and the sandbox that gets attachments. */
   WORKSPACE: "workspace",
   /** GitHub integration reads. */
   GITHUB: "github",

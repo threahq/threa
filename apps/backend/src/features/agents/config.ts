@@ -73,7 +73,8 @@ export const PERSONA_ATTACHMENT_BLOCK_MAX_CHARS = 24_000
  *   `list_follow_ups` / `describe_memo` (reads); all web/search/attachment tools
  *   (`web_search`, `read_url`, `general_research`, `search_messages`,
  *   `search_streams`, `search_users`, `get_stream_messages`, `search_attachments`,
- *   `read_attachment`); all GitHub + Linear tools (read-only queries).
+ *   `read_attachment`); all GitHub + Linear tools (read-only queries);
+ *   `run_command` (its box belongs to the test stream).
  */
 export const DRAFT_TEST_EXCLUDED_TOOLS: ReadonlySet<AgentToolName> = new Set<AgentToolName>([
   AgentToolNames.SCHEDULE_FOLLOW_UP,

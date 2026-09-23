@@ -131,17 +131,6 @@ export interface UpdateStreamBriefToolDeps {
 }
 
 /**
- * Callback for the `update_user_settings` tool, bound to the invoking user by
- * the caller. The tool supplies only the patch — never a user id — so a
- * cross-user write cannot be expressed by the model at all. Returns the
- * preferences as stored, which is what the tool reports back (the stored value
- * can differ from the requested one, e.g. a cleared override).
- *
- * `before` is the snapshot read immediately ahead of the write: a key present in
- * the patch whose value already matched changed nothing, and the tool can only
- * tell the difference by comparing.
- */
-/**
  * The `run_command` tool's sandbox, bound by the caller to this stream and to
  * the internet access the workspace setting and stream policy allow together.
  */
@@ -154,6 +143,17 @@ export interface RunCommandToolDeps {
   }) => Promise<SandboxRunResult & { internet: boolean }>
 }
 
+/**
+ * Callback for the `update_user_settings` tool, bound to the invoking user by
+ * the caller. The tool supplies only the patch — never a user id — so a
+ * cross-user write cannot be expressed by the model at all. Returns the
+ * preferences as stored, which is what the tool reports back (the stored value
+ * can differ from the requested one, e.g. a cleared override).
+ *
+ * `before` is the snapshot read immediately ahead of the write: a key present in
+ * the patch whose value already matched changed nothing, and the tool can only
+ * tell the difference by comparing.
+ */
 export interface UpdateUserSettingsToolDeps {
   updateSettings: (patch: AgentSettablePreferences) => Promise<{ before: UserPreferences; after: UserPreferences }>
 }

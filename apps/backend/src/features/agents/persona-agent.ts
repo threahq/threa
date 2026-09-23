@@ -1293,12 +1293,14 @@ export class PersonaAgent {
               }
             : undefined
 
-        // Withheld on sealed streams, whose plaintext and files must not reach a
-        // server-side box.
-        const sandboxDeps =
-          sandbox && !stream.e2eEnabled
-            ? bindStreamSandbox(sandbox, { workspaceId, streamId: session.streamId, streamToolPolicy })
-            : undefined
+        const sandboxDeps = sandbox
+          ? bindStreamSandbox(sandbox, {
+              workspaceId,
+              streamId: session.streamId,
+              sealed: stream.e2eEnabled === true,
+              streamToolPolicy,
+            })
+          : undefined
 
         // Memo saving for the save_memo tool (roadmap 6.2), bound to this
         // persona's stream + session. The write scopes dedup and the capture
