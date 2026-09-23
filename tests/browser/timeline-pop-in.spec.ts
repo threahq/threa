@@ -14,6 +14,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  *   Chrome advance that clock, so it would measure growth nobody painted.
  * - detached: the rows the reader is looking at don't move at all.
  * - cold load and the viewer's own send: nothing animates.
+ * - the viewer's own send leaves the composer in the frame its row appears,
+ *   keeping whatever was typed while it was in flight.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -201,4 +203,34 @@ test("your own send lands at full height with nothing animating", async ({ page 
   await page.waitForTimeout(1500)
 
   expect(await sawAnimation(page)).toBe(false)
+})
+
+test("your own send leaves the composer in the frame its row appears", async ({ page }) => {
+  await openSeededChannel(page)
+  await waitForSettledTail(page)
+
+  const text = `own send ${generateTestId()}`
+  const editor = page.locator("[contenteditable='true']").first()
+  await editor.click()
+  await editor.pressSequentially(text)
+  await page.evaluate((text) => {
+    const probe = window as unknown as { __sendGap: boolean }
+    probe.__sendGap = false
+    const composer = document.querySelector("[contenteditable='true']")!
+    const tick = () => {
+      const inComposer = composer.textContent?.includes(text) ?? false
+      const inTimeline = [...document.querySelectorAll("[data-message-id]")].some((row) =>
+        row.textContent?.includes(text)
+      )
+      if (!inComposer && !inTimeline) probe.__sendGap = true
+      if (!inTimeline) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  }, text)
+  await page.keyboard.press("Enter")
+  await page.keyboard.type("still typing")
+
+  await expect(page.getByRole("main").getByText(text).first()).toBeVisible({ timeout: 10000 })
+  await expect(editor).toHaveText("still typing")
+  expect(await page.evaluate(() => (window as unknown as { __sendGap: boolean }).__sendGap)).toBe(false)
 })

@@ -1,5 +1,8 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
 import { flushSync } from "react-dom"
+import type { Editor } from "@tiptap/react"
+import { Selection, type Transaction } from "@tiptap/pm/state"
+import { Mapping } from "@tiptap/pm/transform"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import {
@@ -251,7 +254,7 @@ export function materializePendingAttachmentReferences(
 /** Resolves in the microtask after a row for `messageId` enters the document —
  *  before paint — or after `timeoutMs`, since a virtualized list scrolled away
  *  from its tail never renders the row. */
-function whenMessageRendered(messageId: string, timeoutMs = 400): Promise<void> {
+function whenMessageRendered(messageId: string, timeoutMs = 1000): Promise<void> {
   const selector = `[data-message-id="${CSS.escape(messageId)}"]`
   if (document.querySelector(selector)) return Promise.resolve()
   return new Promise((resolve) => {
@@ -266,6 +269,27 @@ function whenMessageRendered(messageId: string, timeoutMs = 400): Promise<void> 
     }
     observer.observe(document.body, { childList: true, subtree: true })
   })
+}
+
+/** Follows edits made while a send is in flight. `typed()` returns what the
+ *  author wrote past the sent body's end, so clearing the sent body keeps it. */
+function trackTypingDuringSend(editor: Editor | null | undefined) {
+  if (!editor || editor.isDestroyed) return { typed: () => null, stop: () => {} }
+  const sentEnd = Selection.atEnd(editor.state.doc).to
+  const mapping = new Mapping()
+  const onTransaction = ({ transaction }: { transaction: Transaction }) => {
+    if (transaction.docChanged) mapping.appendMapping(transaction.mapping)
+  }
+  editor.on("transaction", onTransaction)
+  return {
+    typed: (): JSONContent | null => {
+      if (editor.isDestroyed || mapping.maps.length === 0) return null
+      const rest = editor.state.doc.slice(mapping.map(sentEnd, -1)).content
+      if (rest.textBetween(0, rest.size, "\n", "\ufffc").trim() === "") return null
+      return { type: "doc", content: rest.toJSON() }
+    },
+    stop: () => editor.off("transaction", onTransaction),
+  }
 }
 
 // Memoized so trace/presence-driven re-renders of `StreamContent` (which fire
@@ -872,6 +896,7 @@ function MessageInputComponent({
       const attachments = extractUploadedAttachments(messageContent)
       const attachmentIds = attachments.map((attachment) => attachment.id)
 
+      const typing = trackTypingDuringSend(composerFocusRef.current?.getEditor?.())
       try {
         const result = await sendMessage({
           contentJson: messageContent,
@@ -890,7 +915,7 @@ function MessageInputComponent({
         // attachment bar and its padding never vanish ahead of the message.
         if (result.optimisticMessageId) await whenMessageRendered(result.optimisticMessageId)
         flushSync(() => {
-          composer.setContent(EMPTY_DOC)
+          composer.setContent(typing.typed() ?? EMPTY_DOC)
           composer.clearAttachments()
           setExpanded(false)
         })
@@ -906,6 +931,7 @@ function MessageInputComponent({
           setError("Failed to create stream. Please try again.")
         }
       } finally {
+        typing.stop()
         composer.setIsSending(false)
       }
     },
