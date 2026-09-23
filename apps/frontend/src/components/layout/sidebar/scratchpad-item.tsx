@@ -4,6 +4,7 @@ import {
   Ban,
   Bell,
   BellOff,
+  Check,
   FileEdit,
   FolderPlus,
   Link2,
@@ -47,6 +48,7 @@ import {
   BoardStatsLine,
   AgentActivityPreviewLine,
   agentActivityLabel,
+  InboxRowClearButton,
   type BoardTileState,
 } from "./stream-item"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
@@ -69,6 +71,12 @@ interface ScratchpadItemProps {
   homeHint?: string
   /** Board-mode descriptor when on `/board` (flag on); `null`/absent in chats mode. */
   boardMode?: SidebarBoardMode | null
+  /** True in the Inbox section (chats mode only — board mode never sets this). */
+  isInboxRow?: boolean
+  /** Clear this stream from the Inbox. Set only alongside `isInboxRow`. */
+  onClearFromInbox?: () => void
+  /** Pointer hover/leave on an Inbox row, for the `E` clear shortcut's hovered-row tracking. */
+  onInboxHoverChange?: (hovering: boolean) => void
 }
 
 export function ScratchpadItem({
@@ -81,6 +89,9 @@ export function ScratchpadItem({
   showPreviewOnHover = false,
   homeHint,
   boardMode,
+  isInboxRow,
+  onClearFromInbox,
+  onInboxHoverChange,
 }: ScratchpadItemProps) {
   const navigate = useNavigate()
   const archiveStream = useArchiveStream(workspaceId)
@@ -95,6 +106,8 @@ export function ScratchpadItem({
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const hasUnread = unreadCount > 0
+  // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
+  const isHeld = !!isInboxRow && !hasUnread
   const isDraft = isDraftId(streamWithPreview.id)
   const agentSessions = useAgentActivityForStream(workspaceId, streamWithPreview.id)
   const agentActive = agentSessions.length > 0
@@ -168,8 +181,15 @@ export function ScratchpadItem({
     return items
   }, [boardMode, boardScopable, boardIncluded, boardExcluded, boardMuted, streamWithPreview.id, workspaceId])
 
-  const actions = useMemo<SidebarActionItem[]>(
-    () => [
+  const actions = useMemo<SidebarActionItem[]>(() => {
+    // Inbox and board mode are mutually exclusive (isInboxRow is forced false
+    // whenever boardMode is set), so boardActions is always empty here.
+    const clearInbox: SidebarActionItem[] =
+      isInboxRow && onClearFromInbox
+        ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox }]
+        : []
+    return [
+      ...clearInbox,
       ...boardActions,
       ...(!isDraft
         ? [
@@ -178,7 +198,7 @@ export function ScratchpadItem({
               label: "Settings",
               icon: Settings,
               onSelect: () => openStreamSettings(streamWithPreview.id),
-              separatorBefore: boardActions.length > 0,
+              separatorBefore: boardActions.length > 0 || clearInbox.length > 0,
             } satisfies SidebarActionItem,
             {
               id: "labels",
@@ -220,18 +240,19 @@ export function ScratchpadItem({
         variant: "destructive",
         separatorBefore: !isDraft || boardActions.length > 0,
       },
-    ],
-    [
-      handleArchive,
-      isDraft,
-      openStreamSettings,
-      openExplorer,
-      openOutcomes,
-      streamWithPreview.id,
-      workspaceId,
-      boardActions,
     ]
-  )
+  }, [
+    handleArchive,
+    isDraft,
+    openStreamSettings,
+    openExplorer,
+    openOutcomes,
+    streamWithPreview.id,
+    workspaceId,
+    boardActions,
+    isInboxRow,
+    onClearFromInbox,
+  ])
 
   const drawerPreview: SidebarActionPreview | null =
     preview && preview.content
@@ -312,7 +333,11 @@ export function ScratchpadItem({
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
-        <div className="group reveal-host relative">
+        <div
+          className="group reveal-host relative"
+          onPointerEnter={isInboxRow ? () => onInboxHoverChange?.(true) : undefined}
+          onPointerLeave={isInboxRow ? () => onInboxHoverChange?.(false) : undefined}
+        >
           <Link
             ref={itemRef}
             to={rowTo}
@@ -333,7 +358,7 @@ export function ScratchpadItem({
               longPress.isPressed && "opacity-70 transition-opacity duration-100"
             )}
           >
-            <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
+            <div className={cn("flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2", isHeld && "opacity-60")}>
               <StreamItemAvatar
                 icon={<FileEdit className="h-3.5 w-3.5" />}
                 className="bg-primary/10 text-primary"
@@ -347,8 +372,9 @@ export function ScratchpadItem({
                   showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
                 )}
               >
-                {/* Right reserve for the hover "…" menu only — see StreamItem. */}
-                <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
+                {/* Right reserve for the hover "…" menu, widened on Inbox rows for the
+                    Clear button in its own slot — see StreamItem. */}
+                <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
                   {nameDecrypting ? (
                     <Skeleton className="h-4 w-28" />
                   ) : (
@@ -390,6 +416,7 @@ export function ScratchpadItem({
           ) : (
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
           )}
+          {isInboxRow && onClearFromInbox && !isTouchInput && <InboxRowClearButton onClear={onClearFromInbox} />}
         </div>
       </SidebarActionContextMenu>
       {labelPickerOpen && (

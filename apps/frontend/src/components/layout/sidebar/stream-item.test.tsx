@@ -29,7 +29,12 @@ const touchState = {
 
 function LocationSearchEcho() {
   const location = useLocation()
-  return <div data-testid="location-search">{location.search}</div>
+  return (
+    <>
+      <div data-testid="location-search">{location.search}</div>
+      <div data-testid="location-pathname">{location.pathname}</div>
+    </>
+  )
 }
 
 function renderWithRouter(ui: React.ReactElement) {
@@ -430,6 +435,182 @@ describe("StreamItem", () => {
     )
 
     expect(screen.getByRole("button", { name: "Stream actions" })).toBeInTheDocument()
+  })
+
+  it("dims an Inbox row that is held (read, no unread left)", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream()
+    const avatarRow = () => screen.getByText(/general/).parentElement!.parentElement!.parentElement!
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    expect(avatarRow()).toHaveClass("opacity-60")
+  })
+
+  it("does not dim an Inbox row that still has unread messages", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream()
+    const avatarRow = () => screen.getByText(/general/).parentElement!.parentElement!.parentElement!
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={2}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    expect(avatarRow()).not.toHaveClass("opacity-60")
+  })
+
+  it("widens the title's right-side reserve to make room for the row Clear button", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream()
+    const row = () => screen.getByText(/general/).parentElement
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={1}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    expect(row()).toHaveClass("pr-16")
+    expect(row()).not.toHaveClass("pr-8")
+  })
+
+  it("shows the row Clear button on an Inbox row under mouse input", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={1}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole("button", { name: "Clear from Inbox" })).toBeInTheDocument()
+  })
+
+  it("hides the row Clear button under touch input even for an Inbox row", () => {
+    touchState.inputMode = "touch"
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={1}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole("button", { name: "Clear from Inbox" })).not.toBeInTheDocument()
+  })
+
+  it("hides the row Clear button for a row outside the Inbox", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={1}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    expect(screen.queryByRole("button", { name: "Clear from Inbox" })).not.toBeInTheDocument()
+  })
+
+  it("clears the row and does not navigate when the Clear button is clicked", () => {
+    touchState.inputMode = "mouse"
+    const stream = createStream()
+    const onClearFromInbox = vi.fn()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={1}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={onClearFromInbox}
+      />
+    )
+
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/")
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear from Inbox" }))
+
+    expect(onClearFromInbox).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/")
+  })
+
+  it("offers a Clear action in the mobile action drawer for an Inbox row", async () => {
+    const stream = createStream()
+    const onClearFromInbox = vi.fn()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={onClearFromInbox}
+      />
+    )
+
+    const link = screen.getByRole("link", { name: /general/i })
+    fireEvent.touchStart(link, { touches: [{ clientX: 16, clientY: 16 }] })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }))
+
+    expect(onClearFromInbox).toHaveBeenCalledTimes(1)
   })
 })
 

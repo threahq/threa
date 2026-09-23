@@ -527,6 +527,10 @@ export function mergeReconnectWorkspaceBootstrap({
   // wins for it, exactly as messageCounts does.
   const readMessageIds = { ...workspaceBootstrap.readMessageIds }
   const mutedStreamIds = new Set(workspaceBootstrap.mutedStreamIds)
+  // Held membership rides the same touched-set as the counter triple, matching
+  // `mergeBootstrapUnreadFields`: a stream keeping its local unread also keeps
+  // its local hold, or a stale server snapshot would un-hold it.
+  const inboxHeldStreamIds = new Set(workspaceBootstrap.inboxHeldStreamIds ?? [])
   const localStreamById = new Map(localStreams.map((stream) => [stream.id, stream]))
   const localMembershipByStreamId = new Map(localMemberships.map((membership) => [membership.streamId, membership]))
 
@@ -549,6 +553,11 @@ export function mergeReconnectWorkspaceBootstrap({
       readMessageIds[streamId] = localOverlay
     } else {
       delete readMessageIds[streamId]
+    }
+    if (localUnreadState.inboxHeldStreamIds?.includes(streamId)) {
+      inboxHeldStreamIds.add(streamId)
+    } else {
+      inboxHeldStreamIds.delete(streamId)
     }
   }
   const applyLocalMuteOverride = (streamId: string): void => {
@@ -669,6 +678,7 @@ export function mergeReconnectWorkspaceBootstrap({
     delete messageCounts[streamId]
     delete readMessageIds[streamId]
     mutedStreamIds.delete(streamId)
+    inboxHeldStreamIds.delete(streamId)
   }
 
   return {
@@ -683,6 +693,7 @@ export function mergeReconnectWorkspaceBootstrap({
     ...bootstrapActivityCacheFields(workspaceBootstrap),
     messageCounts,
     readMessageIds,
+    inboxHeldStreamIds: Array.from(inboxHeldStreamIds),
     mutedStreamIds: Array.from(mutedStreamIds),
   }
 }
@@ -3287,6 +3298,7 @@ export async function applyReconnectBootstrapBatch(
     ...bootstrapActivityCacheFields(finalBootstrap),
     latestOrdinals: finalBootstrap.messageCounts,
     readMessageIds: finalBootstrap.readMessageIds,
+    inboxHeldStreamIds: finalBootstrap.inboxHeldStreamIds ?? [],
     mutedStreamIds: finalBootstrap.mutedStreamIds,
     counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
     mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
@@ -3594,6 +3606,7 @@ export async function applyReconnectBootstrapBatch(
         ...bootstrapActivityCacheFields(finalBootstrap),
         latestOrdinals: finalBootstrap.messageCounts,
         readMessageIds: finalBootstrap.readMessageIds,
+        inboxHeldStreamIds: finalBootstrap.inboxHeldStreamIds ?? [],
         mutedStreamIds: finalBootstrap.mutedStreamIds,
         counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
         mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
