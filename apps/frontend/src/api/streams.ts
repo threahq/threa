@@ -3,6 +3,7 @@ import type { SlotCarrier } from "@/lib/slots"
 import type {
   Stream,
   StreamEvent,
+  EventType,
   StreamMember,
   StreamType,
   StreamBootstrap,
@@ -123,9 +124,10 @@ export const streamsApi = {
   async getEvents(
     workspaceId: string,
     streamId: string,
-    params?: { before?: string; after?: string; limit?: number }
+    params?: { before?: string; after?: string; limit?: number; types?: EventType[] }
   ): Promise<EventsListResponse> {
     const searchParams = new URLSearchParams()
+    for (const type of params?.types ?? []) searchParams.append("type", type)
     if (params?.before) searchParams.set("before", params.before)
     if (params?.after) searchParams.set("after", params.after)
     if (params?.limit) searchParams.set("limit", params.limit.toString())

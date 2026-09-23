@@ -56,6 +56,7 @@ import { StreamLabelDots } from "./sidebar-labels"
 import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { useInboxRowHover } from "./use-inbox-row-hover"
+import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 import { truncateContent } from "./utils"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
@@ -280,6 +281,7 @@ export function ScratchpadItem({
 
   // Dense pointer rows: see StreamItem.
   const dense = compact && !isTouchInput && !boardMode
+  const hover = useSidebarHoverIntent(dense && !isDraft)
   const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
   // the first nine. It takes over the "…" menu's slot below.
@@ -305,6 +307,7 @@ export function ScratchpadItem({
       boardMode.applyInclude(streamWithPreview.id)
       return
     }
+    hover.close()
     handleClick(e)
   }
   // Mute-skip parity with StreamItem: an active `?in=` include overrides the
@@ -344,76 +347,90 @@ export function ScratchpadItem({
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div
           className="group reveal-host relative"
-          onPointerEnter={isInboxRow ? handleInboxHoverEnter : undefined}
-          onPointerLeave={isInboxRow ? handleInboxHoverLeave : undefined}
+          onPointerEnter={(event) => {
+            hover.onPointerEnter(event)
+            if (isInboxRow) handleInboxHoverEnter()
+          }}
+          onPointerLeave={(event) => {
+            hover.onPointerLeave(event)
+            if (isInboxRow) handleInboxHoverLeave()
+          }}
         >
-          <Link
-            ref={itemRef}
-            to={rowTo}
-            aria-keyshortcuts={quickJump?.keyshortcut}
-            onClick={handleRowClick}
-            onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
-            onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
-            onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
-            onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
-            className={cn(
-              "flex items-stretch rounded-lg text-sm transition-colors",
-              // The tinted background means exactly one thing: "you are here" — or,
-              // in board mode, "included in the scope". See StreamItem; unread
-              // keeps its own title weight and mentions keep their badge.
-              isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
-              boardDimmed && "opacity-50",
-              isTouchInput && actions.length > 0 && "select-none",
-              longPress.isPressed && "opacity-70 transition-opacity duration-100"
-            )}
+          <StreamHoverCard
+            hover={hover}
+            workspaceId={workspaceId}
+            stream={streamWithPreview}
+            unreadCount={unreadCount}
+            onClearFromInbox={isInboxRow ? onClearFromInbox : undefined}
           >
-            <div
+            <Link
+              ref={itemRef}
+              to={rowTo}
+              aria-keyshortcuts={quickJump?.keyshortcut}
+              onClick={handleRowClick}
+              onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
+              onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
+              onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
+              onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
               className={cn(
-                "flex items-center flex-1 min-w-0 px-2",
-                dense ? "gap-2 py-1.5" : "gap-2.5 py-2",
-                isHeld && "opacity-60"
+                "flex items-stretch rounded-lg text-sm transition-colors",
+                // The tinted background means exactly one thing: "you are here" — or,
+                // in board mode, "included in the scope". See StreamItem; unread
+                // keeps its own title weight and mentions keep their badge.
+                isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
+                boardDimmed && "opacity-50",
+                isTouchInput && actions.length > 0 && "select-none",
+                longPress.isPressed && "opacity-70 transition-opacity duration-100"
               )}
             >
-              <StreamItemAvatar
-                dense={dense}
-                icon={<FileEdit className="h-3.5 w-3.5" />}
-                className="bg-primary/10 text-primary"
-                decoration={decoration}
-                agentActive={agentActive}
-              />
-
               <div
                 className={cn(
-                  "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
-                  showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
+                  "flex items-center flex-1 min-w-0 px-2",
+                  dense ? "gap-2 py-1.5" : "gap-2.5 py-2",
+                  isHeld && "opacity-60"
                 )}
               >
-                {/* Right reserve for the hover "…" menu, widened on Inbox rows for the
+                <StreamItemAvatar
+                  dense={dense}
+                  icon={<FileEdit className="h-3.5 w-3.5" />}
+                  className="bg-primary/10 text-primary"
+                  decoration={decoration}
+                  agentActive={agentActive}
+                />
+
+                <div
+                  className={cn(
+                    "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
+                    showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
+                  )}
+                >
+                  {/* Right reserve for the hover "…" menu, widened on Inbox rows for the
                     Clear button in its own slot — see StreamItem. */}
-                <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
-                  {nameDecrypting ? (
-                    <Skeleton className="h-4 w-28" />
-                  ) : (
-                    <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
-                      {name}
-                      {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
-                      {homeHint && <span className="text-xs text-muted-foreground font-normal"> · {homeHint}</span>}
-                    </span>
-                  )}
-                  {boardMuted && (
-                    <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
-                  )}
-                  <div className="ml-auto flex items-center gap-1.5">
-                    <StreamLabelDots streamId={streamWithPreview.id} />
-                    {/* Suppressed on the active stream — its composer already shows the draft. */}
-                    {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
-                    <MentionIndicator count={mentionCount} />
+                  <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
+                    {nameDecrypting ? (
+                      <Skeleton className="h-4 w-28" />
+                    ) : (
+                      <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
+                        {name}
+                        {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
+                        {homeHint && <span className="text-xs text-muted-foreground font-normal"> · {homeHint}</span>}
+                      </span>
+                    )}
+                    {boardMuted && (
+                      <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
+                    )}
+                    <div className="ml-auto flex items-center gap-1.5">
+                      <StreamLabelDots streamId={streamWithPreview.id} />
+                      {/* Suppressed on the active stream — its composer already shows the draft. */}
+                      {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
+                      <MentionIndicator count={mentionCount} />
+                    </div>
                   </div>
+                  {previewNode}
                 </div>
-                {previewNode}
               </div>
-            </div>
-          </Link>
+            </Link>
+          </StreamHoverCard>
 
           {/* Sibling of the Link because a button inside an anchor is invalid. */}
           {boardScopable && (
