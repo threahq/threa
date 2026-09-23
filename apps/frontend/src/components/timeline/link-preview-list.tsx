@@ -10,9 +10,8 @@ import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
 import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threahq/types"
 
-const DEFAULT_VISIBLE_COUNT = 3
-/** From this many web previews on, web cards start folded to one-line chips. */
-const FOLD_BY_DEFAULT_AT_COUNT = 2
+/** Previews a message opens as cards; web previews past it start as one-line chips. */
+const MAX_OPEN_CARDS = 3
 
 interface LinkPreviewListProps {
   messageId: string
@@ -97,24 +96,24 @@ export function LinkPreviewList({
 
   if (visiblePreviews.length === 0) return null
 
-  const webPreviewCount = visiblePreviews.filter((p) => !isInAppLinkContentType(p.contentType)).length
-  const defaultCollapsed =
-    preferences?.linkPreviewDefault === "collapsed" || webPreviewCount >= FOLD_BY_DEFAULT_AT_COUNT
-  // Folded web chips share lines, so the cap only counts previews that render as cards.
-  let cardCount = 0
-  const displayedPreviews = isExpanded
-    ? visiblePreviews
-    : visiblePreviews.filter((p) => {
-        const rendersAsCard = isInAppLinkContentType(p.contentType) || !defaultCollapsed
-        if (!rendersAsCard) return true
-        cardCount++
-        return cardCount <= DEFAULT_VISIBLE_COUNT
-      })
+  // In-app previews have no chip form, so past the cap they hide behind "Show more"
+  // while web previews fold to chips, which share lines and never count.
+  const collapsedByPreference = preferences?.linkPreviewDefault === "collapsed"
+  let openCount = 0
+  const displayedPreviews = visiblePreviews.flatMap((preview) => {
+    if (isInAppLinkContentType(preview.contentType)) {
+      openCount++
+      return isExpanded || openCount <= MAX_OPEN_CARDS ? [{ preview, defaultOpen: true }] : []
+    }
+    const defaultOpen = !collapsedByPreference && openCount < MAX_OPEN_CARDS
+    if (defaultOpen) openCount++
+    return [{ preview, defaultOpen }]
+  })
   const hiddenCount = visiblePreviews.length - displayedPreviews.length
 
   return (
     <div className={cn("flex flex-wrap items-start gap-2 mt-2", className)}>
-      {displayedPreviews.map((preview) => {
+      {displayedPreviews.map(({ preview, defaultOpen }) => {
         // In-app links (message / stream / memo / conversation) use a specialized card with
         // permission-checked resolve instead of a network-fetched web card.
         if (isInAppLinkContentType(preview.contentType)) {
@@ -139,7 +138,7 @@ export function LinkPreviewList({
               messageId={messageId}
               workspaceId={workspaceId}
               isHighlighted={hoveredUrl ? normalizeForCompare(preview.url) === normalizeForCompare(hoveredUrl) : false}
-              defaultOpen={!defaultCollapsed}
+              defaultOpen={defaultOpen}
               onDismiss={handleDismiss}
             />
           </PreviewRenderBoundary>

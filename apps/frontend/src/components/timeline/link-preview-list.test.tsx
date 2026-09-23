@@ -87,13 +87,15 @@ describe("LinkPreviewList", () => {
     await waitFor(() => expect(screen.getByText("This message was deleted")).toBeInTheDocument())
   })
 
-  const second: LinkPreviewSummary = {
-    ...preview,
-    id: "preview_2",
-    url: "https://example.org/other",
-    title: "Second title",
-    description: "Second description",
-  }
+  const many = [0, 1, 2, 3, 4].map(
+    (i): LinkPreviewSummary => ({
+      ...preview,
+      id: `p_${i}`,
+      url: `https://example.com/${i}`,
+      title: `Title ${i}`,
+      description: `Description ${i}`,
+    })
+  )
 
   it("opens a lone preview as a full card", () => {
     renderList([preview])
@@ -102,13 +104,13 @@ describe("LinkPreviewList", () => {
     expect(screen.getByRole("button", { name: "Collapse preview" })).toBeInTheDocument()
   })
 
-  it("folds previews to one-line chips when a message has two or more", () => {
-    renderList([preview, second])
+  it("opens the first three previews and folds the rest to chips", () => {
+    renderList(many)
 
-    expect(screen.queryByText("Preview description")).not.toBeInTheDocument()
-    expect(screen.queryByText("Second description")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Preview title" })).toHaveAttribute("aria-expanded", "false")
-    expect(screen.getByRole("button", { name: "Second title" })).toHaveAttribute("aria-expanded", "false")
+    for (let i = 0; i < 3; i++) expect(screen.getByText(`Description ${i}`)).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Title 3" })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("button", { name: "Title 4" })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.queryByText(/more preview/)).not.toBeInTheDocument()
   })
 
   it("folds a lone preview when the preference says collapsed", () => {
@@ -123,17 +125,17 @@ describe("LinkPreviewList", () => {
 
   it("keeps an opened chip open across a remount", async () => {
     const user = userEvent.setup()
-    const { unmount } = renderList([preview, second])
+    const { unmount } = renderList(many)
 
-    await user.click(screen.getByRole("button", { name: "Preview title" }))
-    expect(screen.getByText("Preview description")).toBeInTheDocument()
-    expect(screen.queryByText("Second description")).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Title 3" }))
+    expect(screen.getByText("Description 3")).toBeInTheDocument()
+    expect(screen.queryByText("Description 4")).not.toBeInTheDocument()
 
     unmount()
-    renderList([preview, second])
+    renderList(many)
 
-    expect(screen.getByText("Preview description")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Second title" })).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByText("Description 3")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Title 4" })).toHaveAttribute("aria-expanded", "false")
   })
 
   it("keeps a lone web preview open next to an in-app card", async () => {
@@ -177,8 +179,10 @@ describe("LinkPreviewList", () => {
     expect(screen.getByRole("button", { name: "Show 1 more preview" })).toBeInTheDocument()
   })
 
-  it("shows every chip without the three-preview cap", () => {
-    const many = [0, 1, 2, 3, 4].map((i) => ({ ...preview, id: `p_${i}`, title: `Title ${i}` }))
+  it("shows every chip without the three-preview cap when the preference says collapsed", () => {
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: { linkPreviewDefault: "collapsed" },
+    } as ReturnType<typeof contextsModule.usePreferences>)
     const { container } = renderList(many)
 
     for (let i = 0; i < 5; i++) {
