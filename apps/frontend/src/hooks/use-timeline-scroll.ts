@@ -312,6 +312,13 @@ export function useTimelineScroll({
   // masked by reflow.
   const lastGestureScrollDirRef = useRef<"up" | "down" | null>(null)
 
+  // Set by a pin, cleared by the next scroll event. Virtua applies its
+  // above-viewport size compensation as an absolute write from the offset it
+  // last saw in a scroll event, so a pin and a compensation in the same frame
+  // let virtua restore the pre-pin offset. That lands as one height-stable,
+  // gesture-less drop, the same shape as a scrollbar drag.
+  const pinUnobservedRef = useRef(false)
+
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
   // effect would run a render too late and mis-detect the first window as a
@@ -326,6 +333,7 @@ export function useTimelineScroll({
     prevScrollHeightRef.current = 0
     didInitialScrollRef.current = false
     lastGestureScrollDirRef.current = null
+    pinUnobservedRef.current = false
     isFollowingTailRef.current = !skipInitialScroll
     deferredRevealRef.current = false
     if (deferFailsafeTimerRef.current) {
@@ -414,9 +422,12 @@ export function useTimelineScroll({
   const pinToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
+    const before = el.scrollTop
     el.scrollTop = el.scrollHeight
     prevScrollTopRef.current = el.scrollTop
     prevScrollHeightRef.current = el.scrollHeight
+    // A write that doesn't move scrollTop fires no scroll event to clear the flag.
+    if (el.scrollTop !== before) pinUnobservedRef.current = true
   }, [])
 
   // A smooth scrollToBottom animates over many frames the browser owns, so a
@@ -628,6 +639,15 @@ export function useTimelineScroll({
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+    const pinUnobserved = pinUnobservedRef.current
+    pinUnobservedRef.current = false
+    if (pinUnobserved && scrolledUp && !userGestured && isFollowingTailRef.current && !isJumpMode) {
+      pinToBottom()
+      // One retry: a scrollbar drag landing on every frame would otherwise
+      // re-arm this branch from its own pin and never disarm follow.
+      pinUnobservedRef.current = false
+      return
+    }
     // Keep the programmatic stamp fresh through a smooth-to-bottom animation:
     // its frames are browser-driven scroll events indistinguishable from a
     // fling, and the frontier sweep must not read the jumped range as read.
@@ -686,7 +706,7 @@ export function useTimelineScroll({
     // While following we're effectively at the tail (the observer re-pins), so
     // never surface jump-to-latest; only when the user has actually scrolled up.
     setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
-  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef, composerHeightVar])
+  }, [isJumpMode, userInteractedAtRef, programmaticScrollAtRef, composerHeightVar, pinToBottom])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
   // layout effect (pre-paint) against the owned scroller so there is no visible

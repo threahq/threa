@@ -267,8 +267,13 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * break a run — only a different real conversation does. This diverges from
  * `annotateConversationRows` (which resets its run on an unassigned row for
  * coloring): a lone unclustered aside between two members of the same topic is
- * not a topic switch, so it must not manufacture a chip. Pure and export-only
- * for isolated coverage.
+ * not a topic switch, so it must not manufacture a chip.
+ *
+ * The same pass splits same-author runs where the conversation changes, so each
+ * run reads as one conversation's block: a chip row always heads its own run,
+ * and a continuation whose known conversation differs from the run's starts a
+ * new one. Unassigned rows never split a run. Pure and export-only for isolated
+ * coverage.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
@@ -279,6 +284,7 @@ export function annotateConversationRevivals(
   const seen = new Set<string>()
   const lastActivityByConversation = new Map<string, string>()
   let previousConversationId: string | null = null
+  let runConversationId: string | null = null
   return items.map((item) => {
     if (item.type !== "event" || !isGroupableMessage(item.event)) return item
     const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
@@ -333,6 +339,11 @@ export function annotateConversationRevivals(
       // conversation between the prior member and now, not merely a gap.
       previousConversationId = conversationId
     }
+    const splits =
+      item.groupContinuation === true &&
+      (revival != null || (conversationId != null && runConversationId != null && conversationId !== runConversationId))
+    runConversationId = !item.groupContinuation || splits ? conversationId : (runConversationId ?? conversationId)
+    if (splits) return { ...item, revival, groupContinuation: false }
     return revival ? { ...item, revival } : item
   })
 }
