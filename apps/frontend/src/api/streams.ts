@@ -16,6 +16,7 @@ import type {
   ToolPrivacyPolicy,
   StreamReadFrontier,
   MarkAsReadResponse,
+  StreamDirectoryStats,
 } from "@threahq/types"
 
 /**
@@ -171,6 +172,11 @@ export const streamsApi = {
     return api.get<EventsAroundDateResponse>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?${searchParams.toString()}`
     )
+  },
+
+  async directoryStats(workspaceId: string): Promise<StreamDirectoryStats[]> {
+    const res = await api.get<{ stats: StreamDirectoryStats[] }>(`/api/workspaces/${workspaceId}/streams/directory-stats`)
+    return res.stats
   },
 
   async checkSlugAvailable(workspaceId: string, slug: string, excludeStreamId?: string): Promise<boolean> {

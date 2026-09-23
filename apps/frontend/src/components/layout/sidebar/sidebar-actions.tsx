@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react"
-import { Check, ChevronDown, MoreHorizontal } from "lucide-react"
+import { Check, ChevronDown, Compass, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -58,6 +58,23 @@ export interface SidebarActionItem {
    * dropdown on touch). Same grouping helper the message action menus use.
    */
   groupId?: string
+}
+
+const BROWSE_LABELS = { all: "Browse streams", scratchpads: "Browse scratchpads" } as const
+
+/** The stream explorer entry every sidebar menu carries, so the explorer is one right-click away. */
+export function browseStreamsAction(
+  workspaceId: string,
+  onSelect: () => void,
+  tab: keyof typeof BROWSE_LABELS = "all"
+): SidebarActionItem {
+  return {
+    id: "browse-streams",
+    label: BROWSE_LABELS[tab],
+    icon: Compass,
+    href: tab === "all" ? `/w/${workspaceId}/streams` : `/w/${workspaceId}/streams/${tab}`,
+    onSelect,
+  }
 }
 
 export interface SidebarActionPreview {

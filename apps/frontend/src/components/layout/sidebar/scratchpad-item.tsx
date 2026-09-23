@@ -38,6 +38,7 @@ import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
   SidebarActionMenu,
+  browseStreamsAction,
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
@@ -242,12 +243,16 @@ export function ScratchpadItem({
           ]
         : []),
       {
+        ...browseStreamsAction(workspaceId, collapseOnMobile),
+        separatorBefore: !isDraft || boardActions.length > 0 || clearInbox.length > 0,
+      },
+      {
         id: "archive",
         label: isDraft ? "Delete" : "Archive",
         icon: Archive,
         onSelect: handleArchive,
         variant: "destructive",
-        separatorBefore: !isDraft || boardActions.length > 0,
+        separatorBefore: true,
       },
     ]
   }, [
@@ -261,6 +266,7 @@ export function ScratchpadItem({
     boardActions,
     isInboxRow,
     onClearFromInbox,
+    collapseOnMobile,
   ])
 
   const drawerPreview: SidebarActionPreview | null =

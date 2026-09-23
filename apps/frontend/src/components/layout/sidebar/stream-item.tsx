@@ -43,6 +43,7 @@ import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
   SidebarActionMenu,
+  browseStreamsAction,
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
@@ -589,8 +590,12 @@ export function StreamItem({
             ...base,
           ]
         : base
-    if (boardActions.length === 0) return withClear
-    return [...boardActions, ...withClear.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a))]
+    const browse = {
+      ...browseStreamsAction(workspaceId, collapseOnMobile),
+      separatorBefore: withClear.length > 0 || boardActions.length > 0,
+    }
+    if (boardActions.length === 0) return [...withClear, browse]
+    return [...boardActions, ...withClear.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a)), browse]
   }, [
     isVirtualDraft,
     openStreamSettings,
@@ -601,6 +606,7 @@ export function StreamItem({
     boardActions,
     isInboxRow,
     onClearFromInbox,
+    collapseOnMobile,
   ])
 
   let drawerPreview: SidebarActionPreview | null = null

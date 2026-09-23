@@ -2,7 +2,6 @@ import {
   ArrowLeft,
   ArrowRight,
   Command,
-  Compass,
   FileText,
   History,
   Search as SearchIcon,
@@ -22,7 +21,7 @@ import { formatRelativeTime } from "@/lib/dates"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { useWorkspaceDmPeers, useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "@/lib/keyboard-shortcuts"
-import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
+import { SidebarActionMenu, browseStreamsAction, type SidebarActionItem } from "./sidebar-actions"
 
 interface SidebarHeaderProps {
   workspaceName: string
@@ -92,13 +91,7 @@ export function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps
       description: !isTouch && commandBinding ? formatKeyBinding(commandBinding) : null,
       onSelect: openSwitcherIn("command"),
     },
-    {
-      id: "browse-streams",
-      label: "Browse streams",
-      icon: Compass,
-      href: `/w/${workspaceId}/streams`,
-      onSelect: collapseOnMobile,
-    },
+    browseStreamsAction(workspaceId, collapseOnMobile),
   ]
 
   return (

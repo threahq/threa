@@ -47,6 +47,7 @@ export interface StreamService {
   markAsRead: typeof streamsApi.markAsRead
   markUnread: typeof streamsApi.markUnread
   checkSlugAvailable: typeof streamsApi.checkSlugAvailable
+  directoryStats: typeof streamsApi.directoryStats
   setNotificationLevel: typeof streamsApi.setNotificationLevel
   addMember: typeof streamsApi.addMember
   removeMember: typeof streamsApi.removeMember

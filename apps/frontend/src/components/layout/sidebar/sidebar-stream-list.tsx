@@ -24,7 +24,7 @@ import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
 import { SidebarStreamStepShortcuts } from "./stream-step"
-import type { SidebarActionItem } from "./sidebar-actions"
+import { browseStreamsAction, type SidebarActionItem } from "./sidebar-actions"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 
@@ -284,7 +284,10 @@ export function SidebarStreamList({
       return {
         onAdd: () => void onCreateScratchpad(),
         addTooltip: scratchpadAddMenuActions ? "New scratchpad…" : "+ New Scratchpad",
-        addMenuActions: scratchpadAddMenuActions,
+        addMenuActions: scratchpadAddMenuActions && [
+          ...scratchpadAddMenuActions,
+          { ...browseStreamsAction(workspaceId, collapseOnMobile, "scratchpads"), separatorBefore: true },
+        ],
       }
     }
     if (spec.streamType === "channel") {
