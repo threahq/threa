@@ -36,7 +36,7 @@ const threaDusk: ThemeRegistration = {
     { settings: { foreground: "#e6ded2" } },
     {
       scope: ["comment", "punctuation.definition.comment"],
-      settings: { foreground: "#8c8273", fontStyle: "italic" },
+      settings: { foreground: "#8c8273" },
     },
     {
       scope: ["string", "string.template", "punctuation.definition.string"],
@@ -85,7 +85,7 @@ const threaDawn: ThemeRegistration = {
     { settings: { foreground: "#2a241d" } },
     {
       scope: ["comment", "punctuation.definition.comment"],
-      settings: { foreground: "#736a5d", fontStyle: "italic" },
+      settings: { foreground: "#736a5d" },
     },
     {
       scope: ["string", "string.template", "punctuation.definition.string"],

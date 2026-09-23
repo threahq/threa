@@ -1,4 +1,4 @@
-export type SearchKind = "page" | "heading" | "operation" | "field"
+type SearchKind = "page" | "heading" | "operation" | "field"
 
 export interface SearchEntry {
   kind: SearchKind
@@ -16,7 +16,7 @@ export interface SearchEntry {
 
 export const MAX_RESULTS = 20
 
-export const TIER = {
+const TIER = {
   exact: 4,
   exactWords: 3,
   wordPrefix: 2,
@@ -39,7 +39,7 @@ const isAlnum = (c: string) => /[\p{L}\p{N}]/u.test(c)
 const isUpper = (c: string) => /\p{Lu}/u.test(c)
 const isLowerOrDigit = (c: string) => /[\p{Ll}\p{N}]/u.test(c)
 
-export function analyze(text: string): Analyzed {
+function analyze(text: string): Analyzed {
   const chars = Array.from(text)
   const out: Analyzed = { compact: "", starts: [], origin: [] }
   let offset = 0
@@ -106,7 +106,7 @@ const bestTier = (token: string, terms: Analyzed[]) =>
 /* The entry's tier for a query, or 0 when it doesn't match. Every token must
    match somewhere, and at least one in the entry's own names: a query that
    only hits the surrounding context would return every field of an endpoint. */
-export function scoreEntry(prepared: PreparedEntry, tokens: string[]): number {
+function scoreEntry(prepared: PreparedEntry, tokens: string[]): number {
   const joined = tokens.join("")
   if (prepared.terms.some((t) => t.compact === joined)) return TIER.exact
 

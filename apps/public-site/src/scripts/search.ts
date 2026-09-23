@@ -206,9 +206,14 @@ function bindSurface(s: Surface): { render: () => void } {
 
   s.input.addEventListener("input", render)
   s.input.addEventListener("keydown", (e) => {
+    if (e.isComposing) return
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       if (!hits.length) return
       e.preventDefault()
+      if (s.input.getAttribute("aria-expanded") === "false") {
+        void render()
+        return
+      }
       setActive(active + (e.key === "ArrowDown" ? 1 : -1))
     } else if (e.key === "Enter") {
       const hit = hits[active]
@@ -303,6 +308,7 @@ function boot(): void {
   const setInlineOpen = (open: boolean) => {
     inline.classList.toggle("is-open", open)
     inlineInput.setAttribute("aria-expanded", String(open))
+    if (!open) inlineInput.removeAttribute("aria-activedescendant")
   }
   const closeInline = () => setInlineOpen(false)
   const inlineSurface = bindSurface({
@@ -325,7 +331,7 @@ function boot(): void {
     e.preventDefault()
     // Wide screens search in the header field itself; the dialog is for when
     // that field is hidden.
-    if (inline.checkVisibility()) {
+    if (inline.getClientRects().length > 0) {
       inlineInput.focus()
       inlineInput.select()
     } else {
