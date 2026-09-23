@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Copy, Check, ChevronDown, ChevronRight, Maximize2 } from "lucide-react"
+import { Copy, Check, ChevronDown, ChevronUp, Maximize2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
@@ -133,9 +133,9 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
       >
         {canToggle &&
           (collapsed ? (
-            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          ) : (
             <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          ) : (
+            <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
           ))}
         <span className="truncate">{formatCodeLanguage(languageId)}</span>
         {collapsed && (

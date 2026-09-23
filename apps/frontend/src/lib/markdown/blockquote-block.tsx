@@ -1,5 +1,5 @@
 import { useMemo, useRef, type ReactNode } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronUp } from "lucide-react"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
@@ -94,9 +94,9 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
             className="flex w-full cursor-pointer items-center gap-1 px-3 py-1 text-left text-[11px] font-medium text-muted-foreground hover:text-foreground"
           >
             {collapsed ? (
-              <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-            ) : (
               <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+            ) : (
+              <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
             )}
             <span className="shrink-0">Quote</span>
             {collapsed && (
