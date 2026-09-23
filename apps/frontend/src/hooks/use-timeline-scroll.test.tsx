@@ -374,6 +374,23 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(false)
   })
 
+  it("disarms follow when a scrollbar drag keeps landing before the re-pin's scroll event", () => {
+    const harness = renderScrollHook(
+      opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef: { current: 0 } })
+    )
+    const metrics = { scrollHeight: 2303, clientHeight: 452, scrollTop: 1851 }
+    const el = makeScrollerDiv(metrics)
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    metrics.scrollHeight = 2362
+    act(() => harness.current.scrollToBottom())
+    el.scrollTop = 1827
+    act(() => harness.current.handleScroll())
+    el.scrollTop = 1700
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
   it("handleScroll shows Jump-to-latest when the user scrolls far from the bottom and hides it near it", () => {
     const userInteractedAtRef = { current: 0 }
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))

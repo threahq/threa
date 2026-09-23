@@ -643,6 +643,9 @@ export function useTimelineScroll({
     pinUnobservedRef.current = false
     if (pinUnobserved && scrolledUp && !userGestured && isFollowingTailRef.current && !isJumpMode) {
       pinToBottom()
+      // One retry: a scrollbar drag landing on every frame would otherwise
+      // re-arm this branch from its own pin and never disarm follow.
+      pinUnobservedRef.current = false
       return
     }
     // Keep the programmatic stamp fresh through a smooth-to-bottom animation:
