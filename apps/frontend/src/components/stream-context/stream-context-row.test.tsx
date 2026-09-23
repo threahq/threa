@@ -4,12 +4,15 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { StreamContextRow } from "./stream-context-row"
 import * as hooks from "@/hooks"
+import * as agentActivityStore from "@/stores/agent-activity-store"
+import * as workspaceStore from "@/stores/workspace-store"
 import type {
   ContextItem,
   DelegationContextItem,
   FileContextItem,
   LinkContextItem,
   MediaContextItem,
+  ThreadContextItem,
 } from "@/lib/stream-context/types"
 
 beforeEach(() => {
@@ -205,5 +208,74 @@ describe("StreamContextRow gallery open", () => {
     await userEvent.click(screen.getByRole("button", { name: /go to message with bundle\.zip/i }))
     expect(onJumpToMessage).toHaveBeenCalledWith("msg_1")
     expect(onOpenGallery).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamContextRow thread", () => {
+  const thread: ThreadContextItem = {
+    ...itemBase,
+    key: "thread:stream_t1",
+    category: "thread",
+    snippet: "Anchor text",
+    threadId: "stream_t1",
+    replyCount: 2,
+    lastReplyPreview: null,
+  }
+
+  function spyStore(streams: unknown[], unreadCounts: Record<string, number>, agentActive: boolean) {
+    vi.spyOn(workspaceStore, "useWorkspaceStreams").mockReturnValue(
+      streams as ReturnType<typeof workspaceStore.useWorkspaceStreams>
+    )
+    vi.spyOn(workspaceStore, "useWorkspaceUnreadState").mockReturnValue({
+      unreadCounts,
+    } as unknown as ReturnType<typeof workspaceStore.useWorkspaceUnreadState>)
+    vi.spyOn(agentActivityStore, "useAgentActivityForStream").mockReturnValue(
+      (agentActive ? [{ sessionId: "session_1" }] : []) as unknown as ReturnType<
+        typeof agentActivityStore.useAgentActivityForStream
+      >
+    )
+    vi.spyOn(hooks, "useActors").mockReturnValue({
+      getActorName: () => "Ana",
+    } as unknown as ReturnType<typeof hooks.useActors>)
+  }
+
+  it("should show the live name, reply count, latest reply, unread count and agent dot when the thread is in the store", () => {
+    spyStore(
+      [
+        {
+          id: "stream_t1",
+          type: "thread",
+          displayName: "Launch plan",
+          replyCount: 5,
+          lastMessagePreview: {
+            authorId: "usr_ana",
+            authorType: "user",
+            content: "**Ship** it",
+            createdAt: "2026-06-24T11:00:00.000Z",
+          },
+        },
+      ],
+      { stream_t1: 3 },
+      true
+    )
+    renderRow(thread)
+
+    expect({
+      name: screen.getByText("Launch plan").textContent,
+      secondary: screen.getByText(/5 replies/).textContent,
+      unread: screen.getByText("3").textContent,
+      agent: screen.queryByRole("img", { name: "Agent working" }) !== null,
+    }).toEqual({ name: "Launch plan", secondary: "5 replies · Ana: Ship it", unread: "3", agent: true })
+  })
+
+  it("should fall back to the feed snapshot when the thread is not in the store", () => {
+    spyStore([], {}, false)
+    renderRow(thread)
+
+    expect({
+      name: screen.getByText("Anchor text").textContent,
+      secondary: screen.getByText(/2 replies/).textContent,
+      agent: screen.queryByRole("img", { name: "Agent working" }) !== null,
+    }).toEqual({ name: "Anchor text", secondary: "2 replies", agent: false })
   })
 })

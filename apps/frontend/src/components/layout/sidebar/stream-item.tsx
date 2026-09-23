@@ -45,6 +45,7 @@ import {
   SidebarActionDrawer,
   SidebarActionMenu,
   browseStreamsAction,
+  streamThreadsAction,
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
@@ -585,6 +586,9 @@ export function StreamItem({
             icon: Paperclip,
             onSelect: () => openExplorer({ streamIds: [stream.id] }),
           },
+          ...(stream.type === StreamTypes.THREAD
+            ? []
+            : [streamThreadsAction(workspaceId, stream.id, collapseOnMobile)]),
           {
             id: "view-outcomes",
             label: "Agent agenda…",
@@ -616,6 +620,7 @@ export function StreamItem({
     openExplorer,
     openOutcomes,
     stream.id,
+    stream.type,
     workspaceId,
     boardActions,
     onClearRow,

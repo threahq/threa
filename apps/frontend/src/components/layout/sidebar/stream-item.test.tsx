@@ -275,6 +275,34 @@ describe("StreamItem", () => {
     expect(screen.getByTestId("location-pathname").textContent).toBe("/w/workspace_1/streams")
   })
 
+  it("should open the stream's threads in the explorer from the row menu", async () => {
+    const stream = createStream()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
+      touches: [{ clientX: 16, clientY: 16 }],
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(screen.getByRole("link", { name: "Threads" })).toHaveAttribute(
+      "href",
+      `/w/workspace_1/streams/threads?in=${stream.id}`
+    )
+  })
+
   it("keeps compact hover previews hidden on mobile", () => {
     const stream = createStream()
 

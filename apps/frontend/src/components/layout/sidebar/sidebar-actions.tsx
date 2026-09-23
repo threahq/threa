@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react"
-import { Check, ChevronDown, Compass, MoreHorizontal } from "lucide-react"
+import { Check, ChevronDown, Compass, MessagesSquare, MoreHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -35,6 +35,7 @@ import { Separator } from "@/components/ui/separator"
 import { useOptionalSidebar } from "@/contexts"
 import { groupVisibleActions } from "@/components/actions/action-model"
 import { cn } from "@/lib/utils"
+import { streamThreadsHref } from "@/components/stream-directory/directory"
 
 export interface SidebarActionItem {
   id: string
@@ -73,6 +74,17 @@ export function browseStreamsAction(
     label: BROWSE_LABELS[tab],
     icon: Compass,
     href: tab === "all" ? `/w/${workspaceId}/streams` : `/w/${workspaceId}/streams/${tab}`,
+    onSelect,
+  }
+}
+
+/** Opens the explorer's Threads tab narrowed to this stream's threads. */
+export function streamThreadsAction(workspaceId: string, streamId: string, onSelect: () => void): SidebarActionItem {
+  return {
+    id: "stream-threads",
+    label: "Threads",
+    icon: MessagesSquare,
+    href: streamThreadsHref(workspaceId, streamId),
     onSelect,
   }
 }
