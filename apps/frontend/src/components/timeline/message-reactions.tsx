@@ -76,7 +76,8 @@ function useReactionMotion(visible: readonly Reaction[]) {
       if (seen.size === 0) motion.rowAt ??= returnedAt(now, rowLeftAt)
       else
         for (const [shortcode] of added)
-          if (!motion.pillAt.has(shortcode)) motion.pillAt.set(shortcode, returnedAt(now, motion.pillLeftAt.get(shortcode)))
+          if (!motion.pillAt.has(shortcode))
+            motion.pillAt.set(shortcode, returnedAt(now, motion.pillLeftAt.get(shortcode)))
       for (const pill of motion.shown) {
         if (!pill.leaving && !current.has(pill.shortcode)) motion.pillLeftAt.set(pill.shortcode, now)
       }
@@ -231,34 +232,35 @@ interface ReactionPillProps {
 }
 
 // Forwards ref and spreads extra props so Radix HoverCardTrigger `asChild` can inject handlers.
-const ReactionPill = forwardRef<HTMLButtonElement, ReactionPillProps & React.ButtonHTMLAttributes<HTMLButtonElement>>(
-  ({ emoji, userIds, currentUserId, onToggle, ...rest }, ref) => {
-    const hasReacted = currentUserId ? userIds.includes(currentUserId) : false
+export const ReactionPill = forwardRef<
+  HTMLButtonElement,
+  ReactionPillProps & React.ButtonHTMLAttributes<HTMLButtonElement>
+>(({ emoji, userIds, currentUserId, onToggle, ...rest }, ref) => {
+  const hasReacted = currentUserId ? userIds.includes(currentUserId) : false
 
-    return (
-      <button
-        ref={ref}
-        type="button"
-        className={cn(
-          "reveal-host relative inline-flex min-h-[26px] items-center gap-1 rounded-full border pl-2 pr-2.5 text-xs transition-colors",
-          hasReacted
-            ? "border-primary/50 bg-primary/[0.14] text-primary hover:bg-primary/[0.2]"
-            : "border-transparent bg-primary/[0.05] text-muted-foreground hover:bg-primary/[0.1] hover:text-foreground"
-        )}
-        onClick={onToggle}
-        {...rest}
-      >
-        {/* Remove affordance: a mouse hover reveals the X over the emoji; touch
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className={cn(
+        "reveal-host relative inline-flex min-h-[26px] items-center gap-1 rounded-full border pl-2 pr-2.5 text-xs transition-colors",
+        hasReacted
+          ? "border-primary/50 bg-primary/[0.14] text-primary hover:bg-primary/[0.2]"
+          : "border-transparent bg-primary/[0.05] text-muted-foreground hover:bg-primary/[0.1] hover:text-foreground"
+      )}
+      onClick={onToggle}
+      {...rest}
+    >
+      {/* Remove affordance: a mouse hover reveals the X over the emoji; touch
             taps the pill to toggle, so the X stays hidden there. */}
-        <span className="relative text-sm leading-none w-4 h-4 flex items-center justify-center">
-          <span>{emoji}</span>
-          {hasReacted && <X className="reveal-actions-hover-only absolute inset-0 h-4 w-4 text-primary/70" />}
-        </span>
-        <span className={cn("tabular-nums", hasReacted && "font-medium")}>
-          <RollingNumber value={userIds.length} />
-        </span>
-      </button>
-    )
-  }
-)
+      <span className="relative text-sm leading-none w-4 h-4 flex items-center justify-center">
+        <span>{emoji}</span>
+        {hasReacted && <X className="reveal-actions-hover-only absolute inset-0 h-4 w-4 text-primary/70" />}
+      </span>
+      <span className={cn("tabular-nums", hasReacted && "font-medium")}>
+        <RollingNumber value={userIds.length} />
+      </span>
+    </button>
+  )
+})
 ReactionPill.displayName = "ReactionPill"

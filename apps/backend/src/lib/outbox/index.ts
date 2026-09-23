@@ -60,6 +60,7 @@ export {
   type AgentSessionFailedOutboxPayload,
   type StreamReadOutboxPayload,
   type StreamsReadAllOutboxPayload,
+  type StreamInboxUpdatedOutboxPayload,
   type UserPreferencesUpdatedOutboxPayload,
   type BotCreatedOutboxPayload,
   type BotUpdatedOutboxPayload,

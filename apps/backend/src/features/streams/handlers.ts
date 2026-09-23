@@ -989,14 +989,14 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const { membership, readState, lastReadOrdinal, readMessageIds } = await streamReadService.markAsRead(
+      const { membership, readState, lastReadOrdinal, readMessageIds, inboxHeld } = await streamReadService.markAsRead(
         workspaceId,
         streamId,
         userId,
         "lastEventId" in data ? { eventId: data.lastEventId } : { messageId: data.lastMessageId }
       )
 
-      res.json({ membership: membership ?? null, readState, lastReadOrdinal, readMessageIds })
+      res.json({ membership: membership ?? null, readState, lastReadOrdinal, readMessageIds, inboxHeld })
     },
 
     async markUnread(req: Request, res: Response) {
@@ -1242,6 +1242,11 @@ export function createStreamHandlers({
         configuredToolCategories,
         activeCall,
       })
+    },
+
+    async directoryStats(req: Request, res: Response) {
+      const stats = await streamService.listDirectoryStats(req.workspaceId!, req.user!.id)
+      res.json({ stats })
     },
 
     async checkSlugAvailable(req: Request, res: Response) {

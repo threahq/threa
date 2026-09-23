@@ -1,5 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
+import type { StreamReadFrontierSnapshot } from "@threahq/types"
 import type { MarkAsReadResult, StreamService } from "./service"
 import { StreamEventRepository } from "./event-repository"
 
@@ -9,6 +10,12 @@ interface ActivityReadService {
     userId: string,
     workspaceId: string,
     streamId: string
+  ): Promise<void>
+  markStreamsAsReadInTransaction(
+    client: PoolClient,
+    userId: string,
+    workspaceId: string,
+    streamIds: string[]
   ): Promise<void>
 }
 
@@ -44,6 +51,26 @@ export class StreamReadService {
       )
       await this.deps.activityService.markStreamActivityAsReadInTransaction(client, userId, workspaceId, streamId)
       return result
+    })
+  }
+
+  /**
+   * Clear streams from the user's Inbox: read each accessible one to latest,
+   * drop its hold, and mark its activity read, all in one transaction so a
+   * failure leaves no stream half-cleared. Activity covers every accessible
+   * stream, not just advanced ones: a caught-up stream can still carry an
+   * unread mention.
+   */
+  async clearInbox(
+    workspaceId: string,
+    userId: string,
+    streamIds: string[]
+  ): Promise<{ clearedStreamIds: string[]; frontiers: StreamReadFrontierSnapshot[] }> {
+    return withTransaction(this.deps.pool, async (client) => {
+      const { accessibleStreamIds, clearedStreamIds, frontiers } =
+        await this.deps.streamService.clearInboxInTransaction(client, workspaceId, userId, streamIds)
+      await this.deps.activityService.markStreamsAsReadInTransaction(client, userId, workspaceId, accessibleStreamIds)
+      return { clearedStreamIds, frontiers }
     })
   }
 }

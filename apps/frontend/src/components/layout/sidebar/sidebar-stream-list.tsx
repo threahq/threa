@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
+import { CheckCheck, Inbox, ListX } from "lucide-react"
 import { MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
 import { useSidebar, type CollapseState } from "@/contexts"
 import { useBoardSelection } from "@/hooks/use-board-selection"
@@ -11,17 +12,19 @@ import {
   BOARD_UNREAD_ON,
 } from "@/components/board/board-filter-params"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelChip } from "@/components/labels/label-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import type { CachedLabel } from "@/hooks"
-import { StreamSection, TieredStreamSection, tieredVisibleItems } from "./sections"
+import { StreamSection, TieredStreamSection, sectionVisibleItems } from "./sections"
 import { StreamDropZone } from "./sidebar-dnd"
-import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
+import { sectionPresentation, type SidebarSectionSpec, type SidebarSectionFilter } from "./sidebar-config"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
-import type { SidebarActionItem } from "./sidebar-actions"
+import { SidebarStreamStepShortcuts } from "./stream-step"
+import { browseStreamsAction, type SidebarActionItem } from "./sidebar-actions"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 
@@ -52,12 +55,10 @@ interface AddWiring {
   addMenuActions?: SidebarActionItem[]
 }
 
-/** Unread section header: a gold thread dot + the label, matching the section
- *  header's uppercase styling. Gold (not a colored emoji) keeps the palette
- *  (DESIGN.md §0). Top-level per INV-18. When `quiet` (no unread streams) both
- *  the dot and label drop to a muted tone so the caught-up header recedes
- *  instead of advertising itself — the gold dot is reserved for "there's unread
- *  here". */
+/** Inbox section header: the Inbox icon + label, matching the section header's
+ *  uppercase styling. Top-level per INV-18. When `quiet` (no rows held or
+ *  unread) both the icon and label drop to a muted tone so the caught-up
+ *  header recedes instead of advertising itself. */
 function UnreadSectionTitle({ label, quiet = false }: { label: string; quiet?: boolean }) {
   return (
     <span
@@ -66,12 +67,69 @@ function UnreadSectionTitle({ label, quiet = false }: { label: string; quiet?: b
         quiet ? "text-muted-foreground/50" : "text-muted-foreground"
       )}
     >
-      <span
-        className={cn("h-1.5 w-1.5 shrink-0 rounded-full", quiet ? "bg-muted-foreground/40" : "bg-primary")}
-        aria-hidden
-      />
+      <Inbox className={cn("h-3.5 w-3.5 shrink-0", quiet ? "text-muted-foreground/40" : "text-primary")} aria-hidden />
       {label}
     </span>
+  )
+}
+
+/** Inbox header actions: clear-read (held rows only) and clear-all. Unlike the
+ *  row-level Clear button, these are always visible when shown — a static
+ *  status control alongside "All caught up", not a hover reveal. */
+function InboxHeaderActions({
+  heldCount,
+  totalCount,
+  onClearRead,
+  onClearAll,
+}: {
+  heldCount: number
+  totalCount: number
+  onClearRead: () => void
+  onClearAll: () => void
+}) {
+  return (
+    <div className="flex items-center gap-0.5">
+      {heldCount > 0 && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                onClearRead()
+              }}
+              aria-label={`Clear ${heldCount} read`}
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">
+            Clear {heldCount} read
+          </TooltipContent>
+        </Tooltip>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onClearAll()
+            }}
+            aria-label={`Clear all ${totalCount}`}
+            className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ListX className="h-3.5 w-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          Clear all {totalCount}, marks them read
+        </TooltipContent>
+      </Tooltip>
+    </div>
   )
 }
 
@@ -121,11 +179,28 @@ interface SidebarStreamListProps {
    * when set to "ask".
    */
   onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
+  /**
+   * Toggle a section's stream filter between "all" and "unread". The parent
+   * owns the sidebar config, so the persisted write lives there; this component
+   * only decides which sections offer the control (never Inbox/Quick Links,
+   * never in board mode).
+   */
+  onToggleSectionFilter: (sectionId: string) => void
   /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
   homeHintFor: (streamId: string) => string | null
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. Every
    *  row's board branch is gated on it, so chats mode is untouched. */
   boardMode?: SidebarBoardMode | null
+  /** Clear one or more streams from the Inbox (row clear, header clear-read/clear-all). */
+  onClearInbox: (streamIds: string[]) => void
+  /** Track which Inbox row is pointer-hovered, for the clear-inbox shortcut. */
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  /**
+   * Formatted effective binding for the clear-inbox shortcut (e.g. "E"), shown
+   * as the row Clear button's tooltip hint. `undefined` when the viewer
+   * disabled or unbound it — the hint is omitted rather than shown stale.
+   */
+  clearInboxKeyHint?: string
 }
 
 export function SidebarStreamList({
@@ -147,8 +222,12 @@ export function SidebarStreamList({
   onFileStreamToSection,
   onAssignStreamLabel,
   onStreamMovedFromLabel,
+  onToggleSectionFilter,
   homeHintFor,
   boardMode,
+  onClearInbox,
+  onInboxRowHoverChange,
+  clearInboxKeyHint,
 }: SidebarStreamListProps) {
   // Drag-to-file is a mouse interaction; a finger does the same through the
   // action drawer's section picker. Keyed on the active input (not capability)
@@ -205,7 +284,10 @@ export function SidebarStreamList({
       return {
         onAdd: () => void onCreateScratchpad(),
         addTooltip: scratchpadAddMenuActions ? "New scratchpad…" : "+ New Scratchpad",
-        addMenuActions: scratchpadAddMenuActions,
+        addMenuActions: scratchpadAddMenuActions && [
+          ...scratchpadAddMenuActions,
+          { ...browseStreamsAction(workspaceId, collapseOnMobile, "scratchpads"), separatorBefore: true },
+        ],
       }
     }
     if (spec.streamType === "channel") {
@@ -235,6 +317,11 @@ export function SidebarStreamList({
     if (section.spec.kind === "label" && !label) return null
     const isUnread = section.spec.kind === "unread"
     const isEmptyUnread = isUnread && items.length === 0
+    const isInboxSection = isUnread
+    const inboxStreamIds = isInboxSection ? items.map((item) => item.id) : []
+    const inboxHeldStreamIds = isInboxSection
+      ? items.filter((item) => getUnreadCount(item.id) === 0).map((item) => item.id)
+      : []
     // Unread's header is a gold dot + label (a colored emoji would break the
     // gold-on-paper palette); label sections use their tinted chip. An empty
     // Unread section mutes the dot + label so the caught-up header recedes.
@@ -307,13 +394,23 @@ export function SidebarStreamList({
     const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
     const add = addWiringFor(section.spec)
     const moreState = getSectionState(moreKey(section.id), MORE_DEFAULT)
-    // Walk exactly what this section is about to render: a tiered section
-    // puts its active streams first and holds a quiet tail behind the "more"
-    // expander, so its raw items are not its rows.
+    // The stream filter is a chats-mode feature offered on every section except
+    // the Inbox (which has its own read/unread model) — Quick Links already
+    // returned above, it never reaches here. Never in board mode, whose
+    // sections filter the board instead via `filterAffordance`/`filterActive`.
+    const sectionFilterEnabled = !boardMode && section.spec.kind !== "unread"
+    const sectionFilter: SidebarSectionFilter | undefined = sectionFilterEnabled ? (section.filter ?? "all") : undefined
+    const onToggleFilter = sectionFilterEnabled ? () => onToggleSectionFilter(section.id) : undefined
+    // Walk exactly what this section is about to render: a tiered section or a
+    // filtered one holds a tail behind the "more" expander, so raw items are
+    // not its rows.
     if (state !== "collapsed") {
-      const rows = presentation.tiered
-        ? tieredVisibleItems(items, getUnreadCount, getMentionCount, moreState === "open").visible
-        : items
+      const { visible: rows } = sectionVisibleItems(items, {
+        tiered: presentation.tiered,
+        filter: sectionFilter ?? "all",
+        moreOpen: moreState === "open",
+        isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
+      })
       for (const row of rows) quickJump.add(row.id)
     }
     // The Unread section's status rides in its header (right side), not a
@@ -323,9 +420,19 @@ export function SidebarStreamList({
     // nothing to collapse, so the header reads as pure status, not a
     // toggle. The header is always present, so showing/hiding the accessory
     // never reflows the list (INV-21).
-    const unreadAccessory: ReactNode = isEmptyUnread ? (
-      <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
-    ) : undefined
+    let unreadAccessory: ReactNode = undefined
+    if (isEmptyUnread) {
+      unreadAccessory = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+    } else if (isInboxSection) {
+      unreadAccessory = (
+        <InboxHeaderActions
+          heldCount={inboxHeldStreamIds.length}
+          totalCount={inboxStreamIds.length}
+          onClearRead={() => onClearInbox(inboxHeldStreamIds)}
+          onClearAll={() => onClearInbox(inboxStreamIds)}
+        />
+      )
+    }
 
     const sectionEl = presentation.tiered ? (
       <TieredStreamSection
@@ -339,6 +446,8 @@ export function SidebarStreamList({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={!!boardMode}
         filterActive={filterActive}
+        sectionFilter={sectionFilter}
+        onToggleFilter={onToggleFilter}
         icon={presentation.icon}
         items={items}
         allStreams={processedStreams}
@@ -369,6 +478,8 @@ export function SidebarStreamList({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={!!boardMode}
         filterActive={filterActive}
+        sectionFilter={sectionFilter}
+        onToggleFilter={onToggleFilter}
         icon={presentation.icon}
         items={items}
         allStreams={processedStreams}
@@ -378,12 +489,18 @@ export function SidebarStreamList({
         getMentionCount={getMentionCount}
         state={isEmptyUnread ? undefined : state}
         onToggle={isEmptyUnread ? undefined : onToggle}
+        moreState={moreState}
+        onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
         headerAccessory={unreadAccessory}
         compact={presentation.compact}
         showPreviewOnHover={presentation.showPreviewOnHover}
         streamDragEnabled={streamDragEnabled}
         homeHintFor={isUnread ? homeHintFor : undefined}
         boardMode={boardMode}
+        isInboxSection={isInboxSection}
+        onClearInboxRow={isInboxSection ? (streamId: string) => onClearInbox([streamId]) : undefined}
+        onInboxRowHoverChange={isInboxSection ? onInboxRowHoverChange : undefined}
+        clearInboxKeyHint={isInboxSection ? clearInboxKeyHint : undefined}
       />
     )
 
@@ -422,6 +539,7 @@ export function SidebarStreamList({
   return (
     <SidebarLabelsProvider workspaceId={workspaceId}>
       <SidebarQuickJumpProvider workspaceId={workspaceId} order={quickJump.ids}>
+        <SidebarStreamStepShortcuts workspaceId={workspaceId} order={quickJump.order} activeStreamId={activeStreamId} />
         {/* A provided slot renders at its section's position below; when the user's
             layout has NO quicklinks section it renders first instead of vanishing.
             Chats mode never hits this (its slot is built only when the section

@@ -4,6 +4,7 @@ import {
   Ban,
   Bell,
   BellOff,
+  Check,
   FileEdit,
   FolderPlus,
   Link2,
@@ -37,6 +38,7 @@ import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
   SidebarActionMenu,
+  browseStreamsAction,
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
@@ -45,14 +47,18 @@ import {
   StreamItemPreview,
   BoardTileToggle,
   BoardStatsLine,
+  BoardTopicCount,
   AgentActivityPreviewLine,
   agentActivityLabel,
+  InboxRowClearButton,
   type BoardTileState,
 } from "./stream-item"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { StreamLabelDots } from "./sidebar-labels"
 import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
+import { useInboxRowHover } from "./use-inbox-row-hover"
+import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 import { truncateContent } from "./utils"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
@@ -69,6 +75,15 @@ interface ScratchpadItemProps {
   homeHint?: string
   /** Board-mode descriptor when on `/board` (flag on); `null`/absent in chats mode. */
   boardMode?: SidebarBoardMode | null
+  /** True in the Inbox section (chats mode only — board mode never sets this). */
+  isInboxRow?: boolean
+  /** Clear this stream from the Inbox. Set only alongside `isInboxRow`. */
+  onClearFromInbox?: () => void
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
+  onInboxHoverChange?: (hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxRow`. */
+  clearInboxKeyHint?: string
 }
 
 export function ScratchpadItem({
@@ -81,6 +96,10 @@ export function ScratchpadItem({
   showPreviewOnHover = false,
   homeHint,
   boardMode,
+  isInboxRow,
+  onClearFromInbox,
+  onInboxHoverChange,
+  clearInboxKeyHint,
 }: ScratchpadItemProps) {
   const navigate = useNavigate()
   const archiveStream = useArchiveStream(workspaceId)
@@ -94,7 +113,11 @@ export function ScratchpadItem({
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
+  const { handlePointerEnter: handleInboxHoverEnter, handlePointerLeave: handleInboxHoverLeave } =
+    useInboxRowHover(onInboxHoverChange)
   const hasUnread = unreadCount > 0
+  // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
+  const isHeld = !!isInboxRow && !hasUnread
   const isDraft = isDraftId(streamWithPreview.id)
   const agentSessions = useAgentActivityForStream(workspaceId, streamWithPreview.id)
   const agentActive = agentSessions.length > 0
@@ -168,8 +191,15 @@ export function ScratchpadItem({
     return items
   }, [boardMode, boardScopable, boardIncluded, boardExcluded, boardMuted, streamWithPreview.id, workspaceId])
 
-  const actions = useMemo<SidebarActionItem[]>(
-    () => [
+  const actions = useMemo<SidebarActionItem[]>(() => {
+    // Inbox and board mode are mutually exclusive (isInboxRow is forced false
+    // whenever boardMode is set), so boardActions is always empty here.
+    const clearInbox: SidebarActionItem[] =
+      isInboxRow && onClearFromInbox
+        ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox }]
+        : []
+    return [
+      ...clearInbox,
       ...boardActions,
       ...(!isDraft
         ? [
@@ -178,7 +208,7 @@ export function ScratchpadItem({
               label: "Settings",
               icon: Settings,
               onSelect: () => openStreamSettings(streamWithPreview.id),
-              separatorBefore: boardActions.length > 0,
+              separatorBefore: boardActions.length > 0 || clearInbox.length > 0,
             } satisfies SidebarActionItem,
             {
               id: "labels",
@@ -213,25 +243,31 @@ export function ScratchpadItem({
           ]
         : []),
       {
+        ...browseStreamsAction(workspaceId, collapseOnMobile),
+        separatorBefore: !isDraft || boardActions.length > 0 || clearInbox.length > 0,
+      },
+      {
         id: "archive",
         label: isDraft ? "Delete" : "Archive",
         icon: Archive,
         onSelect: handleArchive,
         variant: "destructive",
-        separatorBefore: !isDraft || boardActions.length > 0,
+        separatorBefore: true,
       },
-    ],
-    [
-      handleArchive,
-      isDraft,
-      openStreamSettings,
-      openExplorer,
-      openOutcomes,
-      streamWithPreview.id,
-      workspaceId,
-      boardActions,
     ]
-  )
+  }, [
+    handleArchive,
+    isDraft,
+    openStreamSettings,
+    openExplorer,
+    openOutcomes,
+    streamWithPreview.id,
+    workspaceId,
+    boardActions,
+    isInboxRow,
+    onClearFromInbox,
+    collapseOnMobile,
+  ])
 
   const drawerPreview: SidebarActionPreview | null =
     preview && preview.content
@@ -250,7 +286,10 @@ export function ScratchpadItem({
   // the active input; the long-press gesture follows touch capability above.
   const isTouchInput = useInputMode() === "touch"
 
-  const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
+  // Dense pointer rows: see StreamItem.
+  const dense = compact && !isTouchInput
+  const hover = useSidebarHoverIntent(dense && !isDraft)
+  const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
   // the first nine. It takes over the "…" menu's slot below.
   const quickJump = useQuickJumpSlot(streamWithPreview.id)
@@ -275,6 +314,7 @@ export function ScratchpadItem({
       boardMode.applyInclude(streamWithPreview.id)
       return
     }
+    hover.close()
     handleClick(e)
   }
   // Mute-skip parity with StreamItem: an active `?in=` include overrides the
@@ -287,7 +327,9 @@ export function ScratchpadItem({
   // Second line: board status (muted/E2E — precedence), else board topic stats,
   // else the chats-mode message preview. See {@link StreamItem}.
   let previewNode: ReactNode
-  if (boardStatusLine) {
+  if (dense && boardMode) {
+    previewNode = null
+  } else if (boardStatusLine) {
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(streamWithPreview.id)} />
@@ -302,7 +344,7 @@ export function ScratchpadItem({
         getActorName={getActorName}
         toEmoji={toEmoji}
         compact={compact}
-        showPreviewOnHover={showPreviewOnHover}
+        showPreviewOnHover={showPreviewOnHover && !dense}
         isTouch={isTouchInput}
         e2eEnabled={streamWithPreview.e2eEnabled}
       />
@@ -312,66 +354,93 @@ export function ScratchpadItem({
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
-        <div className="group reveal-host relative">
-          <Link
-            ref={itemRef}
-            to={rowTo}
-            aria-keyshortcuts={quickJump?.keyshortcut}
-            onClick={handleRowClick}
-            onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
-            onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
-            onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
-            onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
-            className={cn(
-              "flex items-stretch rounded-lg text-sm transition-colors",
-              // The tinted background means exactly one thing: "you are here" — or,
-              // in board mode, "included in the scope". See StreamItem; unread
-              // keeps its own title weight and mentions keep their badge.
-              isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
-              boardDimmed && "opacity-50",
-              isTouchInput && actions.length > 0 && "select-none",
-              longPress.isPressed && "opacity-70 transition-opacity duration-100"
-            )}
+        <div
+          className="group reveal-host relative"
+          onPointerEnter={(event) => {
+            hover.onPointerEnter(event)
+            if (isInboxRow) handleInboxHoverEnter()
+          }}
+          onPointerLeave={(event) => {
+            hover.onPointerLeave(event)
+            if (isInboxRow) handleInboxHoverLeave()
+          }}
+        >
+          <StreamHoverCard
+            hover={hover}
+            workspaceId={workspaceId}
+            stream={streamWithPreview}
+            unreadCount={unreadCount}
+            onClearFromInbox={isInboxRow ? onClearFromInbox : undefined}
           >
-            <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
-              <StreamItemAvatar
-                icon={<FileEdit className="h-3.5 w-3.5" />}
-                className="bg-primary/10 text-primary"
-                decoration={decoration}
-                agentActive={agentActive}
-              />
-
+            <Link
+              ref={itemRef}
+              to={rowTo}
+              aria-keyshortcuts={quickJump?.keyshortcut}
+              onClick={handleRowClick}
+              onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
+              onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
+              onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
+              onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
+              className={cn(
+                "flex items-stretch rounded-lg text-sm transition-colors",
+                // The tinted background means exactly one thing: "you are here" — or,
+                // in board mode, "included in the scope". See StreamItem; unread
+                // keeps its own title weight and mentions keep their badge.
+                isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
+                boardDimmed && "opacity-50",
+                isTouchInput && actions.length > 0 && "select-none",
+                longPress.isPressed && "opacity-70 transition-opacity duration-100"
+              )}
+            >
               <div
                 className={cn(
-                  "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
-                  showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
+                  "flex items-center flex-1 min-w-0 px-2",
+                  dense ? "gap-2 py-1.5" : "gap-2.5 py-2",
+                  isHeld && "opacity-60"
                 )}
               >
-                {/* Right reserve for the hover "…" menu only — see StreamItem. */}
-                <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
-                  {nameDecrypting ? (
-                    <Skeleton className="h-4 w-28" />
-                  ) : (
-                    <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
-                      {name}
-                      {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
-                      {homeHint && <span className="text-xs text-muted-foreground font-normal"> · {homeHint}</span>}
-                    </span>
+                <StreamItemAvatar
+                  dense={dense}
+                  icon={<FileEdit className="h-3.5 w-3.5" />}
+                  className="bg-primary/10 text-primary"
+                  decoration={decoration}
+                  agentActive={agentActive}
+                />
+
+                <div
+                  className={cn(
+                    "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
+                    showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
                   )}
-                  {boardMuted && (
-                    <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
-                  )}
-                  <div className="ml-auto flex items-center gap-1.5">
-                    <StreamLabelDots streamId={streamWithPreview.id} />
-                    {/* Suppressed on the active stream — its composer already shows the draft. */}
-                    {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
-                    <MentionIndicator count={mentionCount} />
+                >
+                  {/* Right reserve for the hover "…" menu, widened on Inbox rows for the
+                    Clear button in its own slot — see StreamItem. */}
+                  <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
+                    {nameDecrypting ? (
+                      <Skeleton className="h-4 w-28" />
+                    ) : (
+                      <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
+                        {name}
+                        {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
+                        {homeHint && <span className="text-xs text-muted-foreground font-normal"> · {homeHint}</span>}
+                      </span>
+                    )}
+                    {boardMuted && (
+                      <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
+                    )}
+                    <div className="ml-auto flex items-center gap-1.5">
+                      {dense && boardMode && <BoardTopicCount stats={boardMode.statsForStream(streamWithPreview.id)} />}
+                      <StreamLabelDots streamId={streamWithPreview.id} />
+                      {/* Suppressed on the active stream — its composer already shows the draft. */}
+                      {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
+                      <MentionIndicator count={mentionCount} />
+                    </div>
                   </div>
+                  {previewNode}
                 </div>
-                {previewNode}
               </div>
-            </div>
-          </Link>
+            </Link>
+          </StreamHoverCard>
 
           {/* Sibling of the Link because a button inside an anchor is invalid. */}
           {boardScopable && (
@@ -379,7 +448,7 @@ export function ScratchpadItem({
               state={boardTileState}
               streamName={name}
               onToggle={() => boardMode.applyInclude(streamWithPreview.id)}
-              className="left-7 top-[calc(50%+0.25rem)]"
+              className={dense ? "left-5 top-[calc(50%+0.125rem)]" : "left-7 top-[calc(50%+0.25rem)]"}
             />
           )}
 
@@ -389,6 +458,9 @@ export function ScratchpadItem({
             <QuickJumpCap slot={quickJump.slot} />
           ) : (
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+          )}
+          {isInboxRow && onClearFromInbox && !isTouchInput && (
+            <InboxRowClearButton onClear={onClearFromInbox} keyHint={clearInboxKeyHint} />
           )}
         </div>
       </SidebarActionContextMenu>

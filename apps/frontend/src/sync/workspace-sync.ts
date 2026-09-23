@@ -123,6 +123,7 @@ import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
+  applyInboxHeld,
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamReadSet,
@@ -216,6 +217,9 @@ interface StreamReadPayload {
    *  Absent = not carried (rollout) → leave the client set unchanged; `[]` =
    *  overlay now empty. */
   readMessageIds?: string[]
+  /** Post-write inbox_held, server-authoritative. Absent (older backend) →
+   *  leave held membership unchanged. */
+  inboxHeld?: boolean
 }
 
 // The absolute post-write read-state snapshot for one stream from a
@@ -244,6 +248,15 @@ interface StreamsReadAllPayload {
    * frontiers untouched and relies on the next bootstrap to reconcile.
    */
   frontiers?: StreamReadFrontierSnapshot[]
+}
+
+// Sidebar Inbox hold membership flip — from `clearInbox` or a read/unread that
+// crosses the server's inbox_held threshold, this or another session.
+interface StreamInboxUpdatedPayload {
+  workspaceId: string
+  authorId: string
+  streamIds: string[]
+  held: boolean
 }
 
 // Read-pointer SET from an explicit "mark as unread". Unlike stream:read, the
@@ -517,6 +530,13 @@ export function mergeReconnectWorkspaceBootstrap({
   // wins for it, exactly as messageCounts does.
   const readMessageIds = { ...workspaceBootstrap.readMessageIds }
   const mutedStreamIds = new Set(workspaceBootstrap.mutedStreamIds)
+  // Held membership rides the same touched-set as the counter triple, matching
+  // `mergeBootstrapUnreadFields`: a stream keeping its local unread also keeps
+  // its local hold, or a stale server snapshot would un-hold it.
+  const inboxHeldStreamIds = new Set(workspaceBootstrap.inboxHeldStreamIds ?? [])
+  // Arrival rides the same touched-set as the counter/held triple, for the
+  // same reason `inboxHeldStreamIds` does above.
+  const inboxArrivedAt = new Map(Object.entries(workspaceBootstrap.inboxArrivedAt ?? {}))
   const localStreamById = new Map(localStreams.map((stream) => [stream.id, stream]))
   const localMembershipByStreamId = new Map(localMemberships.map((membership) => [membership.streamId, membership]))
 
@@ -539,6 +559,17 @@ export function mergeReconnectWorkspaceBootstrap({
       readMessageIds[streamId] = localOverlay
     } else {
       delete readMessageIds[streamId]
+    }
+    if (localUnreadState.inboxHeldStreamIds?.includes(streamId)) {
+      inboxHeldStreamIds.add(streamId)
+    } else {
+      inboxHeldStreamIds.delete(streamId)
+    }
+    const localArrival = localUnreadState.inboxArrivedAt?.[streamId]
+    if (localArrival !== undefined) {
+      inboxArrivedAt.set(streamId, localArrival)
+    } else {
+      inboxArrivedAt.delete(streamId)
     }
   }
   const applyLocalMuteOverride = (streamId: string): void => {
@@ -659,6 +690,8 @@ export function mergeReconnectWorkspaceBootstrap({
     delete messageCounts[streamId]
     delete readMessageIds[streamId]
     mutedStreamIds.delete(streamId)
+    inboxHeldStreamIds.delete(streamId)
+    inboxArrivedAt.delete(streamId)
   }
 
   return {
@@ -673,6 +706,8 @@ export function mergeReconnectWorkspaceBootstrap({
     ...bootstrapActivityCacheFields(workspaceBootstrap),
     messageCounts,
     readMessageIds,
+    inboxHeldStreamIds: Array.from(inboxHeldStreamIds),
+    inboxArrivedAt: Object.fromEntries(inboxArrivedAt),
     mutedStreamIds: Array.from(mutedStreamIds),
   }
 }
@@ -1098,7 +1133,13 @@ export function registerWorkspaceSocketHandlers(
     const hadActivity = (current?.activityCounts[payload.streamId] ?? 0) > 0
 
     commitCounter((state) =>
-      applyStreamReadOrdinal(state, payload.streamId, payload.lastReadOrdinal, payload.readMessageIds)
+      applyStreamReadOrdinal(
+        state,
+        payload.streamId,
+        payload.lastReadOrdinal,
+        payload.readMessageIds,
+        payload.inboxHeld
+      )
     )
 
     // Read frontier (sole source): the payload carries the server's post-write
@@ -1265,6 +1306,16 @@ export function registerWorkspaceSocketHandlers(
     }
   }
 
+  // Handle a sidebar Inbox hold-membership flip (this or another session):
+  // `clearInbox`, or the server crossing its own inbox_held threshold on a
+  // read. Routes through the same commitCounter seam as every other counter
+  // event, so a catch-up replay folds it with the rest instead of writing
+  // per-entry.
+  const handleStreamInboxUpdated = (payload: StreamInboxUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    commitCounter((state) => applyInboxHeld(state, payload.streamIds, payload.held))
+  }
+
   // Handle a notification-level change made in another session of this user.
   // Keeps the mute/notify badge live across tabs/devices (the reconnect merge
   // in setMutedState otherwise leaves it stale until the next reconnect).
@@ -1380,7 +1431,10 @@ export function registerWorkspaceSocketHandlers(
       const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
 
       commitCounter((state) =>
-        applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, { isOwnMessage })
+        applyStreamActivityOrdinal(state, payload.streamId, payload.messageOrdinal, {
+          isOwnMessage,
+          createdAt: payload.lastMessagePreview.createdAt,
+        })
       )
     } finally {
       stopActivityApply()
@@ -2407,6 +2461,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:read_set", handleStreamReadSet)
   socket.on("stream:read_messages", handleStreamReadMessages)
   socket.on("stream:read_all", handleStreamReadAll)
+  socket.on("stream:inbox_updated", handleStreamInboxUpdated)
   socket.on("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
   socket.on("stream:activity", handleStreamActivity)
   socket.on("agent_session:started", handleAgentSessionStartedActivity)
@@ -2478,6 +2533,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:read_set", handleStreamReadSet)
     socket.off("stream:read_messages", handleStreamReadMessages)
     socket.off("stream:read_all", handleStreamReadAll)
+    socket.off("stream:inbox_updated", handleStreamInboxUpdated)
     socket.off("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
     socket.off("stream:activity", handleStreamActivity)
     socket.off("agent_session:started", handleAgentSessionStartedActivity)
@@ -2638,6 +2694,8 @@ const BOOTSTRAP_NON_ROW_FIELDS = [
   "mentionCounts",
   "messageCounts",
   "readMessageIds",
+  "inboxHeldStreamIds",
+  "inboxArrivedAt",
   "mutedStreamIds",
   "boardViews",
   "invitations",
@@ -3167,6 +3225,8 @@ export async function applyWorkspaceBootstrap(
       unreadActivityCount: effectiveUnread.unreadActivityCount,
       messageCounts: effectiveUnread.latestOrdinals,
       readMessageIds: effectiveUnread.readMessageIds,
+      inboxHeldStreamIds: effectiveUnread.inboxHeldStreamIds,
+      inboxArrivedAt: effectiveUnread.inboxArrivedAt,
       mutedStreamIds: effectiveUnread.mutedStreamIds,
     },
   }
@@ -3263,6 +3323,8 @@ export async function applyReconnectBootstrapBatch(
     ...bootstrapActivityCacheFields(finalBootstrap),
     latestOrdinals: finalBootstrap.messageCounts,
     readMessageIds: finalBootstrap.readMessageIds,
+    inboxHeldStreamIds: finalBootstrap.inboxHeldStreamIds ?? [],
+    inboxArrivedAt: finalBootstrap.inboxArrivedAt ?? {},
     mutedStreamIds: finalBootstrap.mutedStreamIds,
     counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
     mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),
@@ -3570,6 +3632,8 @@ export async function applyReconnectBootstrapBatch(
         ...bootstrapActivityCacheFields(finalBootstrap),
         latestOrdinals: finalBootstrap.messageCounts,
         readMessageIds: finalBootstrap.readMessageIds,
+        inboxHeldStreamIds: finalBootstrap.inboxHeldStreamIds ?? [],
+        inboxArrivedAt: finalBootstrap.inboxArrivedAt ?? {},
         mutedStreamIds: finalBootstrap.mutedStreamIds,
         counterTouchedAt: pruneCounterTouches(localUnreadState?.counterTouchedAt, fetchStartedAt),
         mutedTouchedAt: pruneCounterTouches(localUnreadState?.mutedTouchedAt, fetchStartedAt),

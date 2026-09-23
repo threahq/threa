@@ -17,6 +17,7 @@ import {
   Tag,
 } from "lucide-react"
 import { Link } from "react-router-dom"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
@@ -42,10 +43,12 @@ import {
   SidebarActionContextMenu,
   SidebarActionDrawer,
   SidebarActionMenu,
+  browseStreamsAction,
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
+import { useInboxRowHover } from "./use-inbox-row-hover"
 import { StreamLabelDots } from "./sidebar-labels"
 import { QuickJumpCap, useQuickJumpSlot } from "./quick-jump"
 import { truncateContent } from "./utils"
@@ -61,6 +64,7 @@ import type { StreamItemData } from "./types"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 import { ScratchpadItem } from "./scratchpad-item"
+import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 
 export type BoardTileState = "included" | "excluded" | "neutral"
 
@@ -108,6 +112,39 @@ export function BoardTileToggle({
 }
 
 /**
+ * Row-level Inbox clear control: own reveal slot left of the "…" menu so hover
+ * never shifts the row (INV-21). `keyHint` is the effective binding's
+ * formatted display string (see `getEffectiveKeyBinding`/`formatKeyBinding`);
+ * omitted when the viewer disabled or unbound the shortcut.
+ */
+export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void; keyHint?: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onClear()
+          }}
+          aria-label="Clear from Inbox"
+          className="reveal-actions-hover-only absolute right-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
+        >
+          <Check className="h-3.5 w-3.5" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">Clear</span>
+          {keyHint && <span className="text-muted-foreground">{keyHint}</span>}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+/**
  * The board-mode row preview line: the stream's topic tally in place of the last
  * message ("14 topics", "No topics yet" at zero). Same size/truncation as the
  * message preview it replaces so swapping in board mode shifts nothing (INV-21).
@@ -123,6 +160,17 @@ export function BoardStatsLine({ stats }: { stats: BoardStreamStats | null }) {
     <div className="truncate text-xs text-muted-foreground">
       {stats.topics} {stats.topics === 1 ? "topic" : "topics"}
     </div>
+  )
+}
+
+/** Dense board rows have no second line, so the topic tally rides beside the badges. */
+export function BoardTopicCount({ stats }: { stats: BoardStreamStats | null }) {
+  if (!stats || stats.topics === 0) return null
+  const label = `${stats.topics} ${stats.topics === 1 ? "topic" : "topics"}`
+  return (
+    <span className="text-[11px] tabular-nums text-muted-foreground/70" title={label} aria-label={label}>
+      {stats.topics}
+    </span>
   )
 }
 
@@ -152,6 +200,8 @@ interface StreamItemAvatarProps {
    * the call dot wins over the agent-working dot at this one contested slot.
    */
   callActive?: boolean
+  /** 20px tile for the dense pointer-device rows; the default 32px tile keeps touch targets tall. */
+  dense?: boolean
 }
 
 /**
@@ -222,7 +272,9 @@ export function StreamItemAvatar({
   decoration,
   agentActive,
   callActive,
+  dense = false,
 }: StreamItemAvatarProps) {
+  const tileSize = dense ? "w-5 h-5 rounded-md [&>svg]:h-3 [&>svg]:w-3" : "w-8 h-8 rounded-lg"
   // The one contested top-right slot: a live call wins over an agent-working
   // signal, which in turn wins over the static companion decoration (INV-21:
   // all three occupy the same absolute footprint, so swaps shift nothing).
@@ -233,7 +285,7 @@ export function StreamItemAvatar({
   // Thread-of-DM: thread icon as main content, avatar as small badge overlay
   if (badge && avatarUrl) {
     return (
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 relative bg-muted">
+      <div className={cn(tileSize, "flex items-center justify-center flex-shrink-0 relative bg-muted")}>
         <MessageSquareText className="h-3.5 w-3.5 text-muted-foreground" />
         <Avatar className="absolute -top-1 -left-1 h-3.5 w-3.5 rounded-full border border-border">
           <AvatarImage src={avatarUrl} alt={avatarAlt ?? "User avatar"} />
@@ -249,9 +301,9 @@ export function StreamItemAvatar({
   let content = icon
   if (avatarUrl) {
     content = (
-      <Avatar className="h-8 w-8 rounded-lg">
+      <Avatar className={dense ? "h-5 w-5 rounded-md" : "h-8 w-8 rounded-lg"}>
         <AvatarImage src={avatarUrl} alt={avatarAlt ?? "User avatar"} />
-        <AvatarFallback className="rounded-lg">{icon}</AvatarFallback>
+        <AvatarFallback className={dense ? "rounded-md" : "rounded-lg"}>{icon}</AvatarFallback>
       </Avatar>
     )
   } else if (badge) {
@@ -261,7 +313,8 @@ export function StreamItemAvatar({
   return (
     <div
       className={cn(
-        "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 relative",
+        tileSize,
+        "flex items-center justify-center flex-shrink-0 relative",
         badge ? "bg-muted" : className
       )}
     >
@@ -364,6 +417,15 @@ interface StreamItemProps {
   /** Board-mode descriptor when on `/board` (flag on); `null`/absent in chats
    *  mode, where every board branch below is skipped and the row is unchanged. */
   boardMode?: SidebarBoardMode | null
+  /** True in the Inbox section (chats mode only — board mode never sets this). */
+  isInboxRow?: boolean
+  /** Clear this stream from the Inbox. Set only alongside `isInboxRow`. */
+  onClearFromInbox?: () => void
+  /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
+  onInboxHoverChange?: (hovering: boolean) => void
+  /** Formatted effective binding for the clear-inbox shortcut, shown as the row
+   *  Clear button's tooltip hint. Set only alongside `isInboxRow`. */
+  clearInboxKeyHint?: string
 }
 
 export function StreamItem({
@@ -377,6 +439,10 @@ export function StreamItem({
   showPreviewOnHover = false,
   homeHint,
   boardMode,
+  isInboxRow,
+  onClearFromInbox,
+  onInboxHoverChange,
+  clearInboxKeyHint,
 }: StreamItemProps) {
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
@@ -387,7 +453,11 @@ export function StreamItem({
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)
+  const { handlePointerEnter: handleInboxHoverEnter, handlePointerLeave: handleInboxHoverLeave } =
+    useInboxRowHover(onInboxHoverChange)
   const hasUnread = unreadCount > 0
+  // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
+  const isHeld = !!isInboxRow && !hasUnread
   const preview = stream.lastMessagePreview
   const isVirtualDraft = isDraftId(stream.id)
   const agentSessions = useAgentActivityForStream(workspaceId, stream.id)
@@ -410,10 +480,14 @@ export function StreamItem({
 
   const dmPeerAvatar = stream.dmPeerUserId ? getActorAvatar(stream.dmPeerUserId, "user") : null
 
-  const threadRootContext = stream.type === StreamTypes.THREAD ? getThreadRootContext(stream, allStreams) : null
+  // A nested thread sits right under its root's row, so neither the "· #root"
+  // hint nor the root-type badge adds anything there.
+  const isTreeChild = !!stream.treeParentId
+  const threadRootContext =
+    stream.type === StreamTypes.THREAD && !isTreeChild ? getThreadRootContext(stream, allStreams) : null
 
   const threadBadge = (() => {
-    if (!threadRootStream?.type) return null
+    if (isTreeChild || !threadRootStream?.type) return null
     const config = BADGE_CONFIG[threadRootStream.type]
     return config ?? null
   })()
@@ -507,9 +581,33 @@ export function StreamItem({
             onSelect: () => setSectionPickerOpen(true),
           },
         ]
-    if (boardActions.length === 0) return base
-    return [...boardActions, ...base.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a))]
-  }, [isVirtualDraft, openStreamSettings, openExplorer, openOutcomes, stream.id, workspaceId, boardActions])
+    // Inbox and board mode are mutually exclusive (isInboxRow is forced false
+    // whenever boardMode is set), so this never collides with boardActions.
+    const withClear =
+      isInboxRow && onClearFromInbox
+        ? [
+            { id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox } satisfies SidebarActionItem,
+            ...base,
+          ]
+        : base
+    const browse = {
+      ...browseStreamsAction(workspaceId, collapseOnMobile),
+      separatorBefore: withClear.length > 0 || boardActions.length > 0,
+    }
+    if (boardActions.length === 0) return [...withClear, browse]
+    return [...boardActions, ...withClear.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a)), browse]
+  }, [
+    isVirtualDraft,
+    openStreamSettings,
+    openExplorer,
+    openOutcomes,
+    stream.id,
+    workspaceId,
+    boardActions,
+    isInboxRow,
+    onClearFromInbox,
+    collapseOnMobile,
+  ])
 
   let drawerPreview: SidebarActionPreview | null = null
   if (preview?.content) {
@@ -534,7 +632,11 @@ export function StreamItem({
   // the active input; the long-press gesture follows touch capability above.
   const isTouchInput = useInputMode() === "touch"
 
-  const showHoverPreview = compact && showPreviewOnHover && !isTouchInput && !!preview?.content
+  // Pointer devices get 32px single-line rows; the hover card carries the preview.
+  // Touch keeps tall rows. Board mode's topic tally moves inline (BoardTopicCount).
+  const dense = compact && !isTouchInput
+  const hover = useSidebarHoverIntent(dense && !isVirtualDraft)
+  const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
   // the first nine. It takes over the "…" menu's slot below.
   const quickJump = useQuickJumpSlot(stream.id)
@@ -551,6 +653,10 @@ export function StreamItem({
         showPreviewOnHover={showPreviewOnHover}
         homeHint={homeHint}
         boardMode={boardMode}
+        isInboxRow={isInboxRow}
+        onClearFromInbox={onClearFromInbox}
+        onInboxHoverChange={onInboxHoverChange}
+        clearInboxKeyHint={clearInboxKeyHint}
       />
     )
   }
@@ -569,6 +675,7 @@ export function StreamItem({
       boardMode.applyInclude(boardScopeId)
       return
     }
+    hover.close()
     handleClick(e)
   }
   // An explicit `?in=` scope overrides a board mute (the server's mute-skip
@@ -584,7 +691,9 @@ export function StreamItem({
   // else the board topic stats (board mode), else the agent-working takeover
   // (chats mode, while a session runs), else the chats-mode message preview.
   let previewNode: ReactNode
-  if (boardStatusLine) {
+  if (dense && boardMode) {
+    previewNode = null
+  } else if (boardStatusLine) {
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(boardScopeId)} />
@@ -599,7 +708,7 @@ export function StreamItem({
         getActorName={getActorName}
         toEmoji={toEmoji}
         compact={compact}
-        showPreviewOnHover={showPreviewOnHover}
+        showPreviewOnHover={showPreviewOnHover && !dense}
         isTouch={isTouchInput}
         e2eEnabled={stream.e2eEnabled}
       />
@@ -609,80 +718,107 @@ export function StreamItem({
   return (
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
-        <div className="group reveal-host relative">
-          <Link
-            ref={itemRef}
-            to={rowTo}
-            aria-keyshortcuts={quickJump?.keyshortcut}
-            onClick={handleRowClick}
-            onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
-            onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
-            onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
-            onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
-            className={cn(
-              "flex items-stretch rounded-lg text-sm transition-colors",
-              // The tinted background means exactly one thing: "you are here" — or,
-              // in board mode, "included in the scope". Unread keeps its own
-              // title weight; mentions keep their badge.
-              isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
-              boardDimmed && "opacity-50",
-              isTouchInput && canOpenDrawer && "select-none",
-              longPress.isPressed && "opacity-70 transition-opacity duration-100"
-            )}
+        <div
+          className="group reveal-host relative"
+          onPointerEnter={(event) => {
+            hover.onPointerEnter(event)
+            if (isInboxRow) handleInboxHoverEnter()
+          }}
+          onPointerLeave={(event) => {
+            hover.onPointerLeave(event)
+            if (isInboxRow) handleInboxHoverLeave()
+          }}
+        >
+          <StreamHoverCard
+            hover={hover}
+            workspaceId={workspaceId}
+            stream={stream}
+            unreadCount={unreadCount}
+            onClearFromInbox={isInboxRow ? onClearFromInbox : undefined}
           >
-            <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
-              <StreamItemAvatar
-                icon={avatar.icon}
-                className={avatar.className}
-                avatarUrl={dmPeerAvatar?.avatarUrl}
-                avatarAlt={name}
-                badge={threadBadge}
-                agentActive={agentActive}
-                callActive={callActive}
-              />
-
+            <Link
+              ref={itemRef}
+              to={rowTo}
+              aria-keyshortcuts={quickJump?.keyshortcut}
+              onClick={handleRowClick}
+              onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
+              onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
+              onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
+              onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
+              className={cn(
+                "flex items-stretch rounded-lg text-sm transition-colors",
+                // The tinted background means exactly one thing: "you are here" — or,
+                // in board mode, "included in the scope". Unread keeps its own
+                // title weight; mentions keep their badge.
+                isActive || boardIncluded ? "bg-primary/10" : "hover:bg-muted/50",
+                boardDimmed && "opacity-50",
+                isTouchInput && canOpenDrawer && "select-none",
+                longPress.isPressed && "opacity-70 transition-opacity duration-100"
+              )}
+            >
               <div
                 className={cn(
-                  "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
-                  showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
+                  "flex items-center flex-1 min-w-0 px-2",
+                  dense ? "gap-2 py-1.5" : "gap-2.5 py-2",
+                  isHeld && "opacity-60"
                 )}
               >
-                {/* The right reserve exists only for the hover "…" menu, which never
-                    appears under touch input (long-press opens the drawer instead) —
-                    so a phone spends it on the name. */}
-                <div className={cn("flex items-center gap-2", !isTouchInput && "pr-8")}>
-                  <span
-                    className={cn(
-                      "truncate text-sm",
-                      hasUnread ? "font-semibold" : "font-medium",
-                      // The truncation ellipsis inherits the color of this element. When a grey trailing
-                      // context (parent stream, or the Unread "· home" hint) trails the title it's the usual
-                      // cut point, so tint the container grey (and keep the title itself at foreground) so the
-                      // ellipsis matches the text it's shortening.
-                      (threadRootContext || homeHint) && "text-muted-foreground/60"
+                <StreamItemAvatar
+                  dense={dense}
+                  icon={avatar.icon}
+                  className={avatar.className}
+                  avatarUrl={isTreeChild ? undefined : dmPeerAvatar?.avatarUrl}
+                  avatarAlt={name}
+                  badge={threadBadge}
+                  agentActive={agentActive}
+                  callActive={callActive}
+                />
+
+                <div
+                  className={cn(
+                    "relative flex flex-col flex-1 min-w-0 gap-0.5 transition-transform duration-150",
+                    showHoverPreview && "group-hover:-translate-y-[0.3125rem]"
+                  )}
+                >
+                  {/* Right reserve for the "…" menu (+ Inbox Clear button when applicable); touch
+                    skips it — long-press opens the drawer instead, so a phone spends it on the name. */}
+                  <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
+                    <span
+                      className={cn(
+                        "truncate text-sm",
+                        hasUnread ? "font-semibold" : "font-medium",
+                        // The truncation ellipsis inherits the color of this element. When a grey trailing
+                        // context (parent stream, or the Unread "· home" hint) trails the title it's the usual
+                        // cut point, so tint the container grey (and keep the title itself at foreground) so the
+                        // ellipsis matches the text it's shortening.
+                        (threadRootContext || homeHint) && "text-muted-foreground/60"
+                      )}
+                    >
+                      {threadRootContext || homeHint ? <span className="text-foreground">{name}</span> : name}
+                      {threadRootContext && <span className="font-normal text-xs"> · {threadRootContext}</span>}
+                      {!threadRootContext && homeHint && <span className="font-normal text-xs"> · {homeHint}</span>}
+                    </span>
+                    {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
+                      <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
                     )}
-                  >
-                    {threadRootContext || homeHint ? <span className="text-foreground">{name}</span> : name}
-                    {threadRootContext && <span className="font-normal text-xs"> · {threadRootContext}</span>}
-                    {!threadRootContext && homeHint && <span className="font-normal text-xs"> · {homeHint}</span>}
-                  </span>
-                  {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
-                    <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                  )}
-                  {boardMuted && (
-                    <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
-                  )}
-                  <div className="ml-auto flex items-center gap-1.5">
-                    <StreamLabelDots streamId={stream.id} />
-                    {/* Suppressed on the active stream — its composer already shows the draft. */}
-                    {stream.hasLoadedDraft && !isActive && <DraftIndicator />}
-                    <MentionIndicator count={mentionCount} />
+                    {boardMuted && (
+                      <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
+                    )}
+                    <div className="ml-auto flex items-center gap-1.5">
+                      {dense && boardMode && boardScopeId === stream.id && (
+                        <BoardTopicCount stats={boardMode.statsForStream(boardScopeId)} />
+                      )}
+                      <StreamLabelDots streamId={stream.id} />
+                      {/* Suppressed on the active stream — its composer already shows the draft. */}
+                      {stream.hasLoadedDraft && !isActive && <DraftIndicator />}
+                      <MentionIndicator count={mentionCount} />
+                    </div>
                   </div>
+                  {previewNode}
                 </div>
-                {previewNode}
               </div>
-            </div>
-          </Link>
+            </Link>
+          </StreamHoverCard>
 
           {/* Sibling of the Link because a button inside an anchor is invalid. */}
           {boardScopable && (
@@ -690,7 +826,7 @@ export function StreamItem({
               state={boardTileState}
               streamName={name}
               onToggle={() => boardMode.applyInclude(boardScopeId)}
-              className="left-7 top-[calc(50%+0.25rem)]"
+              className={dense ? "left-5 top-[calc(50%+0.125rem)]" : "left-7 top-[calc(50%+0.25rem)]"}
             />
           )}
 
@@ -700,6 +836,9 @@ export function StreamItem({
             <QuickJumpCap slot={quickJump.slot} />
           ) : (
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
+          )}
+          {isInboxRow && onClearFromInbox && !isTouchInput && (
+            <InboxRowClearButton onClear={onClearFromInbox} keyHint={clearInboxKeyHint} />
           )}
         </div>
       </SidebarActionContextMenu>

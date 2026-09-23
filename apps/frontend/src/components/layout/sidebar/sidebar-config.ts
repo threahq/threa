@@ -3,6 +3,7 @@ import type {
   SidebarConfig,
   SidebarSection,
   SidebarSectionSpec,
+  SidebarSectionFilter,
   SidebarBasePreset,
   SidebarTypeSection,
   SidebarQuickLink,
@@ -25,7 +26,7 @@ import { SMART_SECTIONS } from "./config"
  * This module adds the purely-presentational layer on top: how each section's
  * `spec` maps to a label, icon, and collapse behavior at render time.
  */
-export type { SidebarConfig, SidebarSection, SidebarSectionSpec, SidebarBasePreset }
+export type { SidebarConfig, SidebarSection, SidebarSectionSpec, SidebarSectionFilter, SidebarBasePreset }
 
 /** Stable section id for the Unread section — doubles as its collapse-state key. */
 export const UNREAD_SECTION_ID = "unread"
@@ -240,6 +241,31 @@ export function renameCustomSection(config: SidebarConfig, sectionId: string, na
   return changed ? { ...config, sections } : config
 }
 
+/**
+ * Set a section's stream filter. Pure; no-op (same object) for an unknown
+ * section id or a filter that already matches. "all" is written as an absent
+ * field — the canonical persisted form (`normalizeSidebarConfig` does the same).
+ */
+export function setSectionFilter(
+  config: SidebarConfig,
+  sectionId: string,
+  filter: SidebarSectionFilter
+): SidebarConfig {
+  const current = config.sections.find((section) => section.id === sectionId)
+  if (!current) return config
+  if ((current.filter ?? "all") === filter) return config
+
+  const sections = config.sections.map((section) => {
+    if (section.id !== sectionId) return section
+    if (filter === "all") {
+      const { filter: _drop, ...rest } = section
+      return rest
+    }
+    return { ...section, filter }
+  })
+  return { ...config, sections }
+}
+
 /** The id of the custom section a stream is filed under, or `null` if none. */
 export function getStreamCustomSectionId(config: SidebarConfig, streamId: string): string | null {
   for (const s of config.sections) {
@@ -372,17 +398,17 @@ function customSectionPresentation(name: string): SectionPresentation {
 }
 
 /**
- * Presentation for the Unread section. A priority surface like Important — a
- * plain binary collapse (no tiered "N more" tail, since every row here is one the
- * viewer is working through). Unlike the smart buckets it is NOT hidden when
- * empty: once the viewer adds it, it stays put and shows an "all caught up"
- * placeholder, so catching up doesn't make the whole section (and everything
- * below it) jump. The header's gold-dot title is supplied as `titleContent` by
- * the stream list (a colored emoji would break the gold-on-paper palette); no
+ * Presentation for the Inbox section (spec kind stays "unread" — only the
+ * presentation changed). A priority surface like Important — a plain binary
+ * collapse (no tiered "N more" tail, since every row here is one the viewer is
+ * working through). Unlike the smart buckets it is NOT hidden when empty: once
+ * the viewer adds it, it stays put and shows an "all caught up" placeholder, so
+ * catching up doesn't make the whole section (and everything below it) jump.
+ * The header's icon title is supplied as `titleContent` by the stream list; no
  * icon string here.
  */
 const UNREAD_PRESENTATION: SectionPresentation = {
-  label: "Unread",
+  label: "Inbox",
   tiered: false,
   compact: true,
   showPreviewOnHover: true,

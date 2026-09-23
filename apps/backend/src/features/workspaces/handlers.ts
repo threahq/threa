@@ -4,7 +4,7 @@ import { setAuditSubjects } from "../access-log"
 import { isValidIanaTimezone } from "../../lib/temporal"
 import { sendBootstrapJson } from "../../lib/observability"
 import type { WorkspaceService } from "./service"
-import type { StreamService } from "../streams"
+import type { StreamReadService, StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceSettingsService } from "../workspace-settings"
 import type { FeatureFlagService } from "../feature-flags"
@@ -61,11 +61,16 @@ const checkSlugAvailableSchema = z.object({
   slug: z.string().min(1, "slug query parameter is required"),
 })
 
+const clearInboxSchema = z.object({
+  streamIds: z.array(z.string().min(1)).min(1).max(500),
+})
+
 export { createWorkspaceSchema }
 
 interface Dependencies {
   workspaceService: WorkspaceService
   streamService: StreamService
+  streamReadService: StreamReadService
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   featureFlagService: FeatureFlagService
@@ -88,6 +93,7 @@ interface Dependencies {
 export function createWorkspaceHandlers({
   workspaceService,
   streamService,
+  streamReadService,
   userPreferencesService,
   workspaceSettingsService,
   featureFlagService,
@@ -187,6 +193,7 @@ export function createWorkspaceHandlers({
         configuredToolCategories,
         runningSessions,
         archivedStreams,
+        inboxHeldStreamIds,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -212,6 +219,7 @@ export function createWorkspaceHandlers({
         // slim rows so archival survives reloads (drafts filters, saved/activity
         // name resolution).
         streamService.listArchivedStreams(workspaceId, userId),
+        streamService.listInboxHeldStreamIds(workspaceId, userId),
       ])
 
       if (!workspace) {
@@ -240,7 +248,10 @@ export function createWorkspaceHandlers({
       const membershipStreamIds = streamMemberships.map((m) => m.streamId)
       const effectiveReadState = await streamService.getEffectiveReadState(userId, membershipStreamIds)
 
-      const [unreadCountsMap, activityCounts, unreadActivities] = await Promise.all([
+      // Inbox arrival order: candidates are held streams plus every member
+      // stream (the arrival lookup itself drops streams with nothing unread).
+      const inboxArrivalCandidateIds = [...new Set([...membershipStreamIds, ...inboxHeldStreamIds])]
+      const [unreadCountsMap, activityCounts, unreadActivities, inboxArrivedAtDates] = await Promise.all([
         streamService.getUnreadCounts(
           streamMemberships.map((m) => ({
             streamId: m.streamId,
@@ -250,7 +261,12 @@ export function createWorkspaceHandlers({
         ),
         activityService?.getUnreadCounts(userId, workspaceId),
         activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
+        streamService.getInboxArrivedAt(workspaceId, userId, inboxArrivalCandidateIds),
       ])
+      const inboxArrivedAt: Record<string, string> = {}
+      for (const [streamId, arrivedAt] of Object.entries(inboxArrivedAtDates)) {
+        inboxArrivedAt[streamId] = arrivedAt.toISOString()
+      }
       const unreadCounts: Record<string, number> = {}
       const messageCounts: Record<string, number> = {}
       for (const [streamId, counts] of unreadCountsMap) {
@@ -357,6 +373,8 @@ export function createWorkspaceHandlers({
         streamMemberships,
         streamReadState,
         readMessageIds,
+        inboxHeldStreamIds,
+        inboxArrivedAt,
         personas,
         bots: bots.map(serializeBot),
         emojis: getEmojiList(),
@@ -397,6 +415,16 @@ export function createWorkspaceHandlers({
       await activityService?.markAllAsRead(userId, workspaceId)
 
       res.json({ updatedStreamIds, frontiers })
+    },
+
+    async clearInbox(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamIds } = validateRequest(clearInboxSchema, req.body)
+
+      const { clearedStreamIds, frontiers } = await streamReadService.clearInbox(workspaceId, userId, streamIds)
+
+      res.json({ clearedStreamIds, frontiers })
     },
 
     async completeUserSetup(req: Request, res: Response) {

@@ -86,7 +86,7 @@ test.describe("New Channel Socket Subscription", () => {
 
       // Verify the channel link is visible in sidebar (Recent or expanded Everything Else)
       const initialChannelLink = userA.page.locator(`a[href="/w/${workspaceId}/s/${streamId}"]`).first()
-      const everythingElseToggle = userA.page.getByRole("button", { name: /everything else/i })
+      const everythingElseToggle = userA.page.getByRole("button", { name: "Expand Everything Else" })
       if (!(await initialChannelLink.isVisible()) && (await everythingElseToggle.isVisible())) {
         await everythingElseToggle.click()
       }
@@ -233,7 +233,7 @@ test.describe("New Channel Socket Subscription", () => {
 
       const channelLink = userA.page.locator(`a[href="/w/${workspaceId}/s/${streamId}"]`).first()
 
-      const everythingElseToggle = userA.page.getByRole("button", { name: /everything else/i })
+      const everythingElseToggle = userA.page.getByRole("button", { name: "Expand Everything Else" })
       if (await everythingElseToggle.isVisible()) {
         await everythingElseToggle.click()
       }

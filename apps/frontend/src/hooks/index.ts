@@ -28,6 +28,7 @@ export {
   useUnarchiveStream,
   useSetNotificationLevel,
   useAddStreamMember,
+  useJoinStream,
   useRemoveStreamMember,
   streamKeys,
 } from "./use-streams"

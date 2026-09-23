@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   CalendarClock,
+  Compass,
   FileText,
   Hash,
   LayoutGrid,
@@ -263,6 +264,16 @@ export const commands: Command[] = [
     action: ({ workspaceId, navigate, closeDialog }) => {
       closeDialog()
       navigate(`/w/${workspaceId}/saved`)
+    },
+  },
+  {
+    id: "browse-streams",
+    label: "Browse Streams",
+    icon: Compass,
+    keywords: ["channels", "join", "explore", "directory", "archived", "threads"],
+    action: ({ workspaceId, navigate, closeDialog }) => {
+      closeDialog()
+      navigate(`/w/${workspaceId}/streams`)
     },
   },
   {

@@ -17,6 +17,8 @@ import {
   THEME_OPTIONS,
   MESSAGE_DISPLAY_OPTIONS,
   UNREAD_OPEN_POSITION_OPTIONS,
+  INBOX_CLEAR_MODE_OPTIONS,
+  INBOX_ORDER_OPTIONS,
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
@@ -57,6 +59,8 @@ import {
   type Theme,
   type MessageDisplay,
   type UnreadOpenPosition,
+  type InboxClearMode,
+  type InboxOrder,
   type LabelRemoveOnMove,
   type BoardLens,
 } from "@threahq/types"
@@ -92,6 +96,28 @@ const UNREAD_OPEN_LABELS: Record<UnreadOpenPosition, string> = {
 const UNREAD_OPEN_DESCRIPTIONS: Record<UnreadOpenPosition, string> = {
   latest: "Land at the bottom; a “N new messages” button jumps up to where you left off",
   marker: "Land where you left off; a “Jump to latest” button gets you back to the bottom",
+}
+
+const INBOX_CLEAR_MODE_LABELS: Record<InboxClearMode, string> = {
+  interaction: "When you reply or react",
+  manual: "Only when you clear it",
+  read: "When you read it",
+}
+
+const INBOX_CLEAR_MODE_DESCRIPTIONS: Record<InboxClearMode, string> = {
+  interaction: "Reading a stream keeps it in the Inbox; replying or reacting clears it",
+  manual: "Reading a stream keeps it in the Inbox until you clear it yourself",
+  read: "The Inbox is just your unread streams — nothing stays after you read it",
+}
+
+const INBOX_ORDER_LABELS: Record<InboxOrder, string> = {
+  arrival: "Oldest first",
+  newest: "Newest first",
+}
+
+const INBOX_ORDER_DESCRIPTIONS: Record<InboxOrder, string> = {
+  arrival: "Streams sort by when they first arrived in the Inbox",
+  newest: "Streams sort by their most recent activity",
 }
 
 const BOARD_MASS_BADGE_LABELS: Record<BoardMassBadge, string> = {
@@ -187,6 +213,8 @@ export function AppearanceSettings() {
   const messageDisplay = preferences?.messageDisplay ?? "comfortable"
   const labelRemoveOnMove = preferences?.labelRemoveOnMove ?? "ask"
   const unreadOpenPosition = preferences?.unreadOpenPosition ?? "latest"
+  const inboxClearMode = preferences?.inboxClearMode ?? "interaction"
+  const inboxOrder = preferences?.inboxOrder ?? "arrival"
   const codeBlockThreshold = preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
   const blockquoteThreshold = preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
   const codeBlockWrap = preferences?.codeBlockWrap ?? DEFAULT_CODE_BLOCK_WRAP
@@ -468,6 +496,58 @@ export function AppearanceSettings() {
                   {UNREAD_OPEN_LABELS[option]}
                 </Label>
                 <p className="text-sm text-muted-foreground">{UNREAD_OPEN_DESCRIPTIONS[option]}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Inbox clears</h3>
+          <p className="text-sm text-muted-foreground">Which actions remove a stream from the Inbox</p>
+        </div>
+        <RadioGroup
+          value={inboxClearMode}
+          onValueChange={(value) => updatePreference("inboxClearMode", value as InboxClearMode)}
+          className="space-y-3"
+        >
+          {INBOX_CLEAR_MODE_OPTIONS.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`inbox-clear-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`inbox-clear-${option}`} className="cursor-pointer">
+                  {INBOX_CLEAR_MODE_LABELS[option]}
+                </Label>
+                <p className="text-sm text-muted-foreground">{INBOX_CLEAR_MODE_DESCRIPTIONS[option]}</p>
+              </div>
+            </div>
+          ))}
+        </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Inbox order</h3>
+          <p className="text-sm text-muted-foreground">How streams in the Inbox are sorted</p>
+        </div>
+        <RadioGroup
+          value={inboxOrder}
+          onValueChange={(value) => updatePreference("inboxOrder", value as InboxOrder)}
+          className="space-y-3"
+        >
+          {INBOX_ORDER_OPTIONS.map((option) => (
+            <div key={option} className="flex items-start space-x-3">
+              <RadioGroupItem value={option} id={`inbox-order-${option}`} className="mt-1" />
+              <div className="grid gap-1">
+                <Label htmlFor={`inbox-order-${option}`} className="cursor-pointer">
+                  {INBOX_ORDER_LABELS[option]}
+                </Label>
+                <p className="text-sm text-muted-foreground">{INBOX_ORDER_DESCRIPTIONS[option]}</p>
               </div>
             </div>
           ))}

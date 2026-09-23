@@ -2,7 +2,12 @@ import { describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
-import { SectionHeader } from "./sections"
+import { SectionHeader, sectionVisibleItems } from "./sections"
+import type { StreamItemData } from "./types"
+
+function makeItem(id: string): StreamItemData {
+  return { id } as unknown as StreamItemData
+}
 
 function renderHeader(props: Partial<Parameters<typeof SectionHeader>[0]> = {}) {
   const onToggle = vi.fn()
@@ -13,6 +18,105 @@ function renderHeader(props: Partial<Parameters<typeof SectionHeader>[0]> = {}) 
   )
   return { onToggle }
 }
+
+describe("sectionVisibleItems", () => {
+  const items = ["a", "b", "c"].map(makeItem)
+  const noActive = () => false
+
+  it("shows every row and preserves order when the filter is all and the section is not tiered", () => {
+    const { visible, hiddenCount } = sectionVisibleItems(items, {
+      tiered: false,
+      filter: "all",
+      moreOpen: false,
+      isActive: noActive,
+    })
+    expect(visible.map((i) => i.id)).toEqual(["a", "b", "c"])
+    expect(hiddenCount).toBe(0)
+  })
+
+  it("caps a tiered section at the tier limit, keeping active rows past the cap", () => {
+    const many = Array.from({ length: 12 }, (_, i) => makeItem(`s${i}`))
+    const { visible, hiddenCount } = sectionVisibleItems(many, {
+      tiered: true,
+      filter: "all",
+      moreOpen: false,
+      isActive: (id) => id === "s11",
+    })
+    // First 10 by index, plus the active row past the cap — order preserved.
+    expect(visible.map((i) => i.id)).toEqual(["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s11"])
+    expect(hiddenCount).toBe(1)
+  })
+
+  it("hides quiet rows behind the more count when filtered to unread, preserving order", () => {
+    const { visible, hiddenCount } = sectionVisibleItems(items, {
+      tiered: false,
+      filter: "unread",
+      moreOpen: false,
+      isActive: (id) => id === "b",
+    })
+    expect(visible.map((i) => i.id)).toEqual(["b"])
+    expect(hiddenCount).toBe(2)
+  })
+
+  it("shows every row when moreOpen is true, regardless of filter or tier", () => {
+    const { visible, hiddenCount } = sectionVisibleItems(items, {
+      tiered: true,
+      filter: "unread",
+      moreOpen: true,
+      isActive: noActive,
+    })
+    expect(visible.map((i) => i.id)).toEqual(["a", "b", "c"])
+    expect(hiddenCount).toBe(0)
+  })
+
+  it("never reorders — an active row mid-list stays in place", () => {
+    const { visible } = sectionVisibleItems(items, {
+      tiered: false,
+      filter: "all",
+      moreOpen: false,
+      isActive: (id) => id === "a",
+    })
+    expect(visible.map((i) => i.id)).toEqual(["a", "b", "c"])
+  })
+
+  describe("thread tree groups", () => {
+    const kid = (id: string, parent: string) => ({ id, treeParentId: parent }) as unknown as StreamItemData
+    const tree = [makeItem("root"), kid("t_quiet", "root"), kid("t_live", "root"), makeItem("solo")]
+
+    it("should show only active threads and bring their quiet root along as context when filtered to unread", () => {
+      const result = sectionVisibleItems(tree, {
+        tiered: false,
+        filter: "unread",
+        moreOpen: false,
+        isActive: (id) => id === "t_live",
+      })
+      expect({
+        ids: result.visible.map((i) => i.id),
+        hiddenCount: result.hiddenCount,
+        context: [...result.contextIds],
+      }).toEqual({ ids: ["root", "t_live"], hiddenCount: 2, context: ["root"] })
+    })
+
+    it("should keep a root's whole group together when the root is within the tier limit", () => {
+      const result = sectionVisibleItems(tree, { tiered: true, filter: "all", moreOpen: false, isActive: () => false })
+      expect(result.visible.map((i) => i.id)).toEqual(["root", "t_quiet", "t_live", "solo"])
+    })
+
+    it("should surface an active thread past the tier limit with its root as context", () => {
+      const filler = Array.from({ length: 10 }, (_, i) => makeItem(`f${i}`))
+      const result = sectionVisibleItems([...filler, ...tree], {
+        tiered: true,
+        filter: "all",
+        moreOpen: false,
+        isActive: (id) => id === "t_live",
+      })
+      expect({ ids: result.visible.slice(10).map((i) => i.id), context: [...result.contextIds] }).toEqual({
+        ids: ["root", "t_live"],
+        context: ["root"],
+      })
+    })
+  })
+})
 
 describe("SectionHeader open navigation", () => {
   it("invokes onTitleNavigate (e.g. close the sidebar on mobile) without toggling", async () => {
@@ -150,6 +254,45 @@ describe("SectionHeader board-mode filter affordance", () => {
       "href",
       "/w/ws_1/board?in=a,b"
     )
+  })
+})
+
+describe("SectionHeader stream filter toggle", () => {
+  it("renders nothing when onToggleFilter is not provided", () => {
+    renderHeader({ label: "Channels" })
+    expect(screen.queryByRole("button", { name: /show (unread only|all) in channels/i })).not.toBeInTheDocument()
+  })
+
+  it("shows Show unread only when the filter is all (default)", () => {
+    renderHeader({ label: "Channels", onToggleFilter: vi.fn() })
+    const button = screen.getByRole("button", { name: "Show unread only in Channels" })
+    expect(button).toHaveAttribute("aria-pressed", "false")
+  })
+
+  it("shows Show all and reads pressed when the filter is unread", () => {
+    renderHeader({ label: "Channels", sectionFilter: "unread", onToggleFilter: vi.fn() })
+    const button = screen.getByRole("button", { name: "Show all in Channels" })
+    expect(button).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("calls onToggleFilter and not onToggle when clicked", async () => {
+    const onToggleFilter = vi.fn()
+    const { onToggle } = renderHeader({ label: "Channels", onToggleFilter })
+
+    await userEvent.click(screen.getByRole("button", { name: "Show unread only in Channels" }))
+
+    expect(onToggleFilter).toHaveBeenCalledTimes(1)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+
+  it("shows the unread aggregate badge while expanded once filtered to unread", () => {
+    renderHeader({ label: "Channels", sectionFilter: "unread", onToggleFilter: vi.fn(), unreadAggregate: 3 })
+    expect(screen.getByText("3")).toBeInTheDocument()
+  })
+
+  it("hides the unread aggregate badge while expanded and unfiltered", () => {
+    renderHeader({ label: "Channels", unreadAggregate: 3 })
+    expect(screen.queryByText("3")).not.toBeInTheDocument()
   })
 })
 

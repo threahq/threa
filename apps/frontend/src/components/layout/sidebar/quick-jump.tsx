@@ -157,19 +157,23 @@ export function QuickJumpCap({ slot }: { slot: number }) {
 }
 
 /**
- * Collects the sidebar's first {@link QUICK_JUMP_SLOT_COUNT} stream ids as the
- * list renders. A stream that appears in two sections (Unread and its home)
+ * Collects the sidebar's stream ids as the list renders; `ids` is the first
+ * {@link QUICK_JUMP_SLOT_COUNT}. A stream that appears in two sections (Unread and its home)
  * keeps the slot of its first row; both rows wear that number.
  */
 export function createQuickJumpCollector() {
-  const ids: string[] = []
+  const order: string[] = []
   const seen = new Set<string>()
   return {
-    ids,
+    get ids() {
+      return order.slice(0, QUICK_JUMP_SLOT_COUNT)
+    },
+    /** Every visible stream id in render order, deduplicated; what next/previous steps through. */
+    order,
     add(streamId: string) {
-      if (ids.length >= QUICK_JUMP_SLOT_COUNT || seen.has(streamId)) return
+      if (seen.has(streamId)) return
       seen.add(streamId)
-      ids.push(streamId)
+      order.push(streamId)
     },
   }
 }

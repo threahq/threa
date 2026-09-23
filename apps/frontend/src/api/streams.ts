@@ -3,6 +3,7 @@ import type { SlotCarrier } from "@/lib/slots"
 import type {
   Stream,
   StreamEvent,
+  EventType,
   StreamMember,
   StreamType,
   StreamBootstrap,
@@ -15,6 +16,7 @@ import type {
   ToolPrivacyPolicy,
   StreamReadFrontier,
   MarkAsReadResponse,
+  StreamDirectoryStats,
 } from "@threahq/types"
 
 /**
@@ -123,9 +125,10 @@ export const streamsApi = {
   async getEvents(
     workspaceId: string,
     streamId: string,
-    params?: { before?: string; after?: string; limit?: number }
+    params?: { before?: string; after?: string; limit?: number; types?: EventType[] }
   ): Promise<EventsListResponse> {
     const searchParams = new URLSearchParams()
+    for (const type of params?.types ?? []) searchParams.append("type", type)
     if (params?.before) searchParams.set("before", params.before)
     if (params?.after) searchParams.set("after", params.after)
     if (params?.limit) searchParams.set("limit", params.limit.toString())
@@ -169,6 +172,11 @@ export const streamsApi = {
     return api.get<EventsAroundDateResponse>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/events/around?${searchParams.toString()}`
     )
+  },
+
+  async directoryStats(workspaceId: string): Promise<StreamDirectoryStats[]> {
+    const res = await api.get<{ stats: StreamDirectoryStats[] }>(`/api/workspaces/${workspaceId}/streams/directory-stats`)
+    return res.stats
   },
 
   async checkSlugAvailable(workspaceId: string, slug: string, excludeStreamId?: string): Promise<boolean> {

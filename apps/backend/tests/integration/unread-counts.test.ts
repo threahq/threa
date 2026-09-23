@@ -459,7 +459,7 @@ describe("Unread Counts", () => {
       ])
 
       await withTransaction(pool, async (client) => {
-        await ReadStateRepository.batchAdvance(client, testUserId, updates)
+        await ReadStateRepository.batchAdvance(client, testUserId, updates, { holdInInbox: false })
       })
 
       // Verify all frontiers advanced
@@ -558,6 +558,7 @@ describe("Unread Counts", () => {
         lastReadSequence: events[1].sequence.toString(),
         lastReadOrdinal: 2,
         readMessageIds: [],
+        inboxHeld: true,
       })
 
       // The derived unread matches the authoritative count: 3 - 2 = 1.

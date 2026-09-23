@@ -1,0 +1,1078 @@
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
+import { Pool } from "pg"
+import { setupTestDatabase, testMessageContent, withTransaction } from "./setup"
+import {
+  StreamService,
+  StreamReadService,
+  StreamEventRepository,
+  StreamMemberRepository,
+  ReadStateRepository,
+  applySparseRead,
+} from "../../src/features/streams"
+import { EventService } from "../../src/features/messaging"
+import { ActivityRepository, ActivityService } from "../../src/features/activity"
+import { UserPreferencesRepository, UserPreferencesService } from "../../src/features/user-preferences"
+import { eventId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { ActivityTypes } from "@threahq/types"
+
+/**
+ * The sidebar Inbox hold against a real database: `stream_read_state.inbox_held`
+ * flips true only when a hold-eligible advance crosses another user's
+ * `message_created` event, and only `clearInbox`/`clearInboxHeld` unpin it
+ * (INV-62 access, INV-20 race-safe upserts).
+ */
+describe("inbox hold", () => {
+  let pool: Pool
+  let streamService: StreamService
+  let eventService: EventService
+  let activityService: ActivityService
+  let streamReadService: StreamReadService
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+    streamService = new StreamService(pool)
+    eventService = new EventService(pool)
+    activityService = new ActivityService({ pool })
+    streamReadService = new StreamReadService({ pool, streamService, activityService })
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  beforeEach(async () => {
+    await pool.query("DELETE FROM user_preference_overrides")
+    await pool.query("DELETE FROM stream_member_message_reads")
+    await pool.query("DELETE FROM stream_read_state")
+    await pool.query("DELETE FROM user_activity")
+    await pool.query("DELETE FROM messages")
+    await pool.query("DELETE FROM stream_events")
+    await pool.query("DELETE FROM stream_sequences")
+    await pool.query("DELETE FROM stream_members")
+    await pool.query("DELETE FROM streams")
+    await pool.query(
+      "DELETE FROM outbox WHERE id > (SELECT COALESCE(MAX(last_processed_id), 0) FROM outbox_listeners WHERE listener_id = 'broadcast')"
+    )
+  })
+
+  async function seedChannel(
+    wid: string,
+    sid: string,
+    createdBy: string,
+    visibility: "public" | "private" = "public"
+  ): Promise<void> {
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', $3, $4)`,
+      [sid, wid, visibility, createdBy]
+    )
+  }
+
+  async function sendMessages(wid: string, sid: string, authorId: string, count: number): Promise<string[]> {
+    const ids: string[] = []
+    for (let i = 1; i <= count; i++) {
+      const m = await eventService.createMessage({
+        workspaceId: wid,
+        streamId: sid,
+        authorId,
+        authorType: "user",
+        ...testMessageContent(`Message ${i}`),
+      })
+      ids.push(m.id)
+    }
+    return ids
+  }
+
+  async function outboxFor(eventType: string, wid: string): Promise<Array<Record<string, unknown>>> {
+    const result = await pool.query(
+      `SELECT payload FROM outbox WHERE event_type = $1 AND payload->>'workspaceId' = $2 ORDER BY id`,
+      [eventType, wid]
+    )
+    return result.rows.map((r) => r.payload)
+  }
+
+  describe("ReadStateRepository.advance", () => {
+    test("holds when the advance crosses another user's message with holdInInbox true", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+
+      const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
+        holdInInbox: true,
+      })
+
+      expect(held).toBe(true)
+      expect(state?.inboxHeld).toBe(true)
+    })
+
+    test("does not hold when the crossed events are the reader's own messages", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const reader = userId()
+      await seedChannel(wid, sid, reader)
+      await sendMessages(wid, sid, reader, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+
+      const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
+        holdInInbox: true,
+      })
+
+      expect(held).toBe(false)
+      expect(state?.inboxHeld).toBe(false)
+    })
+
+    test("does not hold when holdInInbox is false, even crossing another user's message", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+
+      const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
+        holdInInbox: false,
+      })
+
+      expect(held).toBe(false)
+      expect(state?.inboxHeld).toBe(false)
+    })
+
+    test("held is true again on a later advance that independently crosses another user's message, even though the row was already held", async () => {
+      // `held` is this call's own crossing rule, never a diff against the
+      // row's prior `inbox_held` — it re-reports true on every qualifying
+      // advance, not just the first one that flips the row.
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 2)
+      const [evt1, evt2] = await StreamEventRepository.list(pool, sid)
+
+      const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
+      expect(first.held).toBe(true)
+
+      const second = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
+      expect(second.held).toBe(true)
+      expect(second.state?.inboxHeld).toBe(true)
+    })
+
+    test("held is false on a self-authored advance even when the row is already held, and the existing hold is not cleared", async () => {
+      // A call whose own crossing rule doesn't hold never clears an existing
+      // hold — only `clearInboxHeld` unpins it.
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      await StreamMemberRepository.insert(pool, sid, reader)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
+      expect(first.held).toBe(true)
+
+      // The reader's own message doesn't cross anyone else's — this call's
+      // hold rule is false — but the row's existing hold must survive. Insert
+      // the event directly (not via EventService.createMessage) to isolate
+      // this repo-level assertion from the send-clears-hold behavior, which
+      // is covered separately.
+      const evt2 = await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: sid,
+        eventType: "message_created",
+        payload: { messageId: "msg_synthetic" },
+        actorId: reader,
+        actorType: "user",
+      })
+      const second = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
+      expect(second.held).toBe(false)
+
+      expect(await ReadStateRepository.get(pool, sid, reader)).toEqual(
+        expect.objectContaining({ lastReadEventId: evt2.id, inboxHeld: true })
+      )
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+  })
+
+  describe("ReadStateRepository.advance inbox floor", () => {
+    test("sets the floor to the prior watermark when this call newly holds", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 2)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+
+      // Reader's frontier before the hold begins.
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxFloorEventId).toBeNull()
+
+      await sendMessages(wid, sid, author, 1)
+      const [, , evt3] = await StreamEventRepository.list(pool, sid)
+      const { state } = await ReadStateRepository.advance(pool, sid, reader, evt3.id, { holdInInbox: true })
+
+      expect(state?.inboxHeld).toBe(true)
+      expect(state?.inboxFloorEventId).toBe(evt1.id)
+    })
+
+    test("keeps the existing floor when the row is already held (doesn't move on a later crossing advance)", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 3)
+      const [, evt2, evt3] = await StreamEventRepository.list(pool, sid)
+
+      const first = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
+      expect(first.state?.inboxFloorEventId).toBeNull() // never read before -> floor null (held from the start)
+
+      // A later advance that independently re-qualifies as a hold must not
+      // move the floor — it's frozen at the frontier just before the FIRST hold.
+      const second = await ReadStateRepository.advance(pool, sid, reader, evt3.id, { holdInInbox: true })
+      expect(second.state?.inboxHeld).toBe(true)
+      expect(second.state?.inboxFloorEventId).toBeNull()
+    })
+
+    test("clears the floor to null when the advance doesn't hold", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+
+      const { state } = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
+
+      expect(state?.inboxHeld).toBe(false)
+      expect(state?.inboxFloorEventId).toBeNull()
+    })
+  })
+
+  describe("ReadStateRepository.clearInboxHeld resets the floor", () => {
+    test("resets inbox_floor_event_id to null alongside inbox_held", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 2)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
+      await sendMessages(wid, sid, author, 1)
+      const [, , evt3] = await StreamEventRepository.list(pool, sid)
+      const held = await ReadStateRepository.advance(pool, sid, reader, evt3.id, { holdInInbox: true })
+      expect(held.state?.inboxFloorEventId).toBe(evt1.id)
+
+      await ReadStateRepository.clearInboxHeld(pool, wid, reader, [sid])
+
+      const row = await ReadStateRepository.get(pool, sid, reader)
+      expect(row?.inboxHeld).toBe(false)
+      expect(row?.inboxFloorEventId).toBeNull()
+    })
+  })
+
+  describe("ReadStateRepository.batchAdvance", () => {
+    test("never touches inbox_held — a held stream stays held and an unheld stream stays unheld", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const heldStream = streamId()
+      const unheldStream = streamId()
+      await seedChannel(wid, heldStream, author)
+      await seedChannel(wid, unheldStream, author)
+      await sendMessages(wid, heldStream, author, 1)
+      await sendMessages(wid, unheldStream, author, 2)
+      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
+      const unheldEvents = await StreamEventRepository.list(pool, unheldStream)
+
+      await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, unheldStream, reader, unheldEvents[0].id, { holdInInbox: false })
+
+      const { states } = await ReadStateRepository.batchAdvance(
+        pool,
+        reader,
+        new Map([[unheldStream, unheldEvents[1].id]])
+      )
+
+      expect(states).toEqual([expect.objectContaining({ streamId: unheldStream, inboxHeld: false })])
+      // Untouched by the batch call — still held from the earlier advance.
+      expect((await ReadStateRepository.get(pool, heldStream, reader))?.inboxHeld).toBe(true)
+    })
+
+    test("never holds a brand-new row even when the advance crosses another user's message", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+
+      const { states } = await ReadStateRepository.batchAdvance(pool, reader, new Map([[sid, evt.id]]))
+
+      expect(states).toEqual([expect.objectContaining({ streamId: sid, inboxHeld: false })])
+    })
+  })
+
+  describe("EventService.createMessage author-send hold", () => {
+    test("does not hold when the author is already caught up before sending", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      await seedChannel(wid, sid, author, "public")
+
+      await eventService.createMessage({
+        workspaceId: wid,
+        streamId: sid,
+        authorId: author,
+        authorType: "user",
+        ...testMessageContent("author's own first message"),
+      })
+
+      expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+
+    describe("default (interaction) mode: a send never creates a hold, and clears an existing one", () => {
+      test("does not hold even when the send's own advance crosses another user's unread message", async () => {
+        const wid = workspaceId()
+        const sid = streamId()
+        const other = userId()
+        const author = userId()
+        await seedChannel(wid, sid, other, "public")
+        await sendMessages(wid, sid, other, 1)
+
+        await eventService.createMessage({
+          workspaceId: wid,
+          streamId: sid,
+          authorId: author,
+          authorType: "user",
+          ...testMessageContent("author's reply"),
+        })
+
+        expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+      })
+
+      test("clears a pre-existing hold and emits stream:inbox_updated(held: false)", async () => {
+        const wid = workspaceId()
+        const sid = streamId()
+        const other = userId()
+        const author = userId()
+        await seedChannel(wid, sid, other, "public")
+        await sendMessages(wid, sid, other, 1)
+        const [evtFirst] = await StreamEventRepository.list(pool, sid)
+        // Simulate a prior read that held the stream (e.g. from before the
+        // author last sent), independent of the send path under test.
+        await ReadStateRepository.advance(pool, sid, author, evtFirst.id, { holdInInbox: true })
+        expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(true)
+
+        await eventService.createMessage({
+          workspaceId: wid,
+          streamId: sid,
+          authorId: author,
+          authorType: "user",
+          ...testMessageContent("author's reply"),
+        })
+
+        expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
+          {
+            workspaceId: wid,
+            authorId: author,
+            streamIds: [sid],
+            held: false,
+          },
+        ])
+      })
+    })
+
+    describe("manual mode: unchanged legacy behavior", () => {
+      test("holds when the send's own advance crosses another user's unread message", async () => {
+        const wid = workspaceId()
+        const sid = streamId()
+        const other = userId()
+        const author = userId()
+        await seedChannel(wid, sid, other, "public")
+        await sendMessages(wid, sid, other, 1)
+        await UserPreferencesRepository.setOverride(pool, author, "inboxClearMode", "manual")
+
+        await eventService.createMessage({
+          workspaceId: wid,
+          streamId: sid,
+          authorId: author,
+          authorType: "user",
+          ...testMessageContent("author's reply"),
+        })
+
+        expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(true)
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
+          {
+            workspaceId: wid,
+            authorId: author,
+            streamIds: [sid],
+            held: true,
+          },
+        ])
+      })
+    })
+
+    describe("read mode: never holds", () => {
+      test("does not hold even when the send's own advance crosses another user's unread message", async () => {
+        const wid = workspaceId()
+        const sid = streamId()
+        const other = userId()
+        const author = userId()
+        await seedChannel(wid, sid, other, "public")
+        await sendMessages(wid, sid, other, 1)
+        await UserPreferencesRepository.setOverride(pool, author, "inboxClearMode", "read")
+
+        await eventService.createMessage({
+          workspaceId: wid,
+          streamId: sid,
+          authorId: author,
+          authorType: "user",
+          ...testMessageContent("author's reply"),
+        })
+
+        expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+      })
+    })
+  })
+
+  describe("StreamService.markAsRead respects inboxClearMode", () => {
+    test("read mode: never holds even crossing another user's unread message", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "read")
+
+      await streamService.markAsRead(wid, sid, reader, evt.id)
+
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+
+    test("manual mode: holds", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "manual")
+
+      await streamService.markAsRead(wid, sid, reader, evt.id)
+
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(true)
+    })
+
+    test("default (interaction) mode: holds, same as manual for a plain read", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+
+      await streamService.markAsRead(wid, sid, reader, evt.id)
+
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(true)
+    })
+  })
+
+  describe("applySparseRead respects inboxClearMode", () => {
+    test("read mode: never holds even when compaction crosses another user's unread message", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await StreamMemberRepository.insert(pool, sid, reader)
+      const [msg1] = await sendMessages(wid, sid, author, 1)
+      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "read")
+
+      await withTransaction(pool, (client) =>
+        applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1] })
+      )
+
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+
+    test("manual mode: holds when compaction crosses another user's unread message", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await StreamMemberRepository.insert(pool, sid, reader)
+      const [msg1] = await sendMessages(wid, sid, author, 1)
+      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "manual")
+
+      await withTransaction(pool, (client) =>
+        applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1] })
+      )
+
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(true)
+    })
+  })
+
+  describe("EventService.addReactionInternal: interaction mode clears the hold on reacting", () => {
+    async function addReaction(wid: string, sid: string, messageId: string, userId: string): Promise<void> {
+      await eventService.addReactionInternal({
+        workspaceId: wid,
+        messageId,
+        streamId: sid,
+        emoji: "👍",
+        userId,
+      })
+    }
+
+    test("default (interaction) mode: clears the hold without advancing the read frontier", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reactor = userId()
+      await seedChannel(wid, sid, author, "public")
+      const [msg1] = await sendMessages(wid, sid, author, 2)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reactor, evt1.id, { holdInInbox: true })
+      expect((await ReadStateRepository.get(pool, sid, reactor))?.inboxHeld).toBe(true)
+
+      await addReaction(wid, sid, msg1, reactor)
+
+      const row = await ReadStateRepository.get(pool, sid, reactor)
+      expect(row?.inboxHeld).toBe(false)
+      // No read advance — reacting only clears the hold.
+      expect(row?.lastReadEventId).toBe(evt1.id)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
+        { workspaceId: wid, authorId: reactor, streamIds: [sid], held: false },
+      ])
+    })
+
+    test("manual mode: reacting leaves the hold untouched", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reactor = userId()
+      await seedChannel(wid, sid, author, "public")
+      const [msg1] = await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reactor, evt1.id, { holdInInbox: true })
+      await UserPreferencesRepository.setOverride(pool, reactor, "inboxClearMode", "manual")
+
+      await addReaction(wid, sid, msg1, reactor)
+
+      expect((await ReadStateRepository.get(pool, sid, reactor))?.inboxHeld).toBe(true)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+
+    test("read mode: reacting never creates or holds a read-state row", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reactor = userId()
+      await seedChannel(wid, sid, author, "public")
+      const [msg1] = await sendMessages(wid, sid, author, 1)
+      await UserPreferencesRepository.setOverride(pool, reactor, "inboxClearMode", "read")
+
+      await addReaction(wid, sid, msg1, reactor)
+
+      // Reacting under "read"/"manual" mode is a pure no-op on read state — no
+      // clear was attempted, so no row was ever created for this reactor.
+      expect(await ReadStateRepository.get(pool, sid, reactor)).toBeNull()
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+  })
+
+  describe("ReadStateRepository.listInboxArrivals", () => {
+    test("a held stream's arrival is the first other-author message above the frozen floor", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      // Frontier before the hold begins.
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
+
+      await sendMessages(wid, sid, author, 2)
+      const events = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reader, events[2].id, { holdInInbox: true })
+      // A further read-without-clearing must not move the floor or the arrival.
+      await sendMessages(wid, sid, author, 1)
+      const eventsAfter = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reader, eventsAfter[3].id, { holdInInbox: true })
+
+      const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+
+      expect(arrivals[sid]).toEqual(events[1].createdAt)
+    })
+
+    test("an unheld stream's arrival is the first other-author message above the last-read frontier", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
+
+      await sendMessages(wid, sid, author, 2)
+      const events = await StreamEventRepository.list(pool, sid)
+
+      const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+
+      expect(arrivals[sid]).toEqual(events[1].createdAt)
+    })
+
+    test("a fully-read unheld stream has no arrival", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
+
+      const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+
+      expect(arrivals[sid]).toBeUndefined()
+    })
+
+    test("a never-read stream's arrival is the earliest other-author message, not the latest", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      await sendMessages(wid, sid, author, 3)
+      const events = await StreamEventRepository.list(pool, sid)
+
+      const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+
+      expect(arrivals[sid]).toEqual(events[0].createdAt)
+    })
+
+    test("a deleted other-author message never counts toward arrival", async () => {
+      const wid = workspaceId()
+      const sid = streamId()
+      const author = userId()
+      const reader = userId()
+      await seedChannel(wid, sid, author)
+      const [msg1] = await sendMessages(wid, sid, author, 1)
+
+      await eventService.deleteMessageInternal({ workspaceId: wid, streamId: sid, messageId: msg1, actorId: author })
+
+      const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+      expect(arrivals[sid]).toBeUndefined()
+
+      // A later, undeleted message still counts.
+      const [msg2] = await sendMessages(wid, sid, author, 1)
+      const events = await StreamEventRepository.list(pool, sid)
+      const evt2 = events.find((e) => e.payload?.messageId === msg2)!
+
+      const arrivalsAfter = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
+      expect(arrivalsAfter[sid]).toEqual(evt2.createdAt)
+    })
+  })
+
+  describe("ReadStateRepository.clearInboxHeld", () => {
+    test("clears only the streams that were actually held, returning just those ids", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const heldStream = streamId()
+      const unheldStream = streamId()
+      await seedChannel(wid, heldStream, author)
+      await seedChannel(wid, unheldStream, reader)
+      await sendMessages(wid, heldStream, author, 1)
+      await sendMessages(wid, unheldStream, reader, 1)
+      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
+      const [evtUnheld] = await StreamEventRepository.list(pool, unheldStream)
+
+      await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, unheldStream, reader, evtUnheld.id, { holdInInbox: true })
+
+      const cleared = await ReadStateRepository.clearInboxHeld(pool, wid, reader, [heldStream, unheldStream])
+
+      expect(cleared).toEqual([heldStream])
+      expect((await ReadStateRepository.get(pool, heldStream, reader))?.inboxHeld).toBe(false)
+      expect((await ReadStateRepository.get(pool, unheldStream, reader))?.inboxHeld).toBe(false)
+    })
+
+    test("scopes to the given workspace — a same-id-shaped hold in another workspace is untouched", async () => {
+      const wid = workspaceId()
+      const otherWid = workspaceId()
+      const reader = userId()
+      const author = userId()
+      const sid = streamId()
+      const otherWorkspaceStream = streamId()
+      await seedChannel(wid, sid, author)
+      await seedChannel(otherWid, otherWorkspaceStream, author)
+      await sendMessages(wid, sid, author, 1)
+      await sendMessages(otherWid, otherWorkspaceStream, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evtOtherWs] = await StreamEventRepository.list(pool, otherWorkspaceStream)
+
+      await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, otherWorkspaceStream, reader, evtOtherWs.id, { holdInInbox: true })
+
+      // Scoped to `wid`, so the other workspace's held row for the same
+      // reader must survive even though its stream id was passed in.
+      const cleared = await ReadStateRepository.clearInboxHeld(pool, wid, reader, [sid, otherWorkspaceStream])
+
+      expect(cleared).toEqual([sid])
+      expect((await ReadStateRepository.get(pool, otherWorkspaceStream, reader))?.inboxHeld).toBe(true)
+    })
+  })
+
+  describe("ReadStateRepository.listInboxHeldStreamIds", () => {
+    test("lists exactly this user's held streams in this workspace", async () => {
+      const wid = workspaceId()
+      const otherWid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const otherUser = userId()
+      const held = streamId()
+      const notHeld = streamId()
+      const otherWorkspaceStream = streamId()
+      await seedChannel(wid, held, author)
+      await seedChannel(wid, notHeld, author)
+      await seedChannel(otherWid, otherWorkspaceStream, author)
+      await sendMessages(wid, held, author, 1)
+      await sendMessages(wid, notHeld, author, 1)
+      await sendMessages(otherWid, otherWorkspaceStream, author, 1)
+      const [evtHeld] = await StreamEventRepository.list(pool, held)
+      const [evtNotHeld] = await StreamEventRepository.list(pool, notHeld)
+      const [evtOtherWs] = await StreamEventRepository.list(pool, otherWorkspaceStream)
+
+      await ReadStateRepository.advance(pool, held, reader, evtHeld.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, notHeld, reader, evtNotHeld.id, { holdInInbox: false })
+      // A different user's hold in the same workspace must not leak in.
+      await ReadStateRepository.advance(pool, held, otherUser, evtHeld.id, { holdInInbox: true })
+      // A hold in a different workspace must not leak in either.
+      await ReadStateRepository.advance(pool, otherWorkspaceStream, reader, evtOtherWs.id, { holdInInbox: true })
+
+      const result = await ReadStateRepository.listInboxHeldStreamIds(pool, wid, reader)
+
+      expect(result).toEqual([held])
+    })
+  })
+
+  describe("StreamService.listInboxHeldStreamIds", () => {
+    test("should drop a hold on a stream the user can no longer access", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const readable = streamId()
+      const lostAccess = streamId()
+      await seedChannel(wid, readable, author, "public")
+      await seedChannel(wid, lostAccess, author, "private")
+      await sendMessages(wid, readable, author, 1)
+      await sendMessages(wid, lostAccess, author, 1)
+      const [evtReadable] = await StreamEventRepository.list(pool, readable)
+      const [evtLost] = await StreamEventRepository.list(pool, lostAccess)
+      await ReadStateRepository.advance(pool, readable, reader, evtReadable.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, lostAccess, reader, evtLost.id, { holdInInbox: true })
+
+      expect(await streamService.listInboxHeldStreamIds(wid, reader)).toEqual([readable])
+    })
+  })
+
+  describe("UserPreferencesService: switching to read mode", () => {
+    test("releases every existing hold and emits stream:inbox_updated(held: false)", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const held = streamId()
+      await seedChannel(wid, held, author)
+      await sendMessages(wid, held, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, held)
+      await ReadStateRepository.advance(pool, held, reader, evt.id, { holdInInbox: true })
+
+      await new UserPreferencesService(pool).updatePreferences(wid, reader, { inboxClearMode: "read" })
+
+      expect(await ReadStateRepository.listInboxHeldStreamIds(pool, wid, reader)).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
+        { workspaceId: wid, authorId: reader, streamIds: [held], held: false },
+      ])
+    })
+
+    test("switching to manual leaves holds in place", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const held = streamId()
+      await seedChannel(wid, held, author)
+      await sendMessages(wid, held, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, held)
+      await ReadStateRepository.advance(pool, held, reader, evt.id, { holdInInbox: true })
+
+      await new UserPreferencesService(pool).updatePreferences(wid, reader, { inboxClearMode: "manual" })
+
+      expect(await ReadStateRepository.listInboxHeldStreamIds(pool, wid, reader)).toEqual([held])
+    })
+  })
+
+  describe("StreamReadService.clearInbox", () => {
+    test("restricts to accessible streams — a private channel the user can't read is dropped", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const readableStream = streamId()
+      const privateStream = streamId()
+      await seedChannel(wid, readableStream, author, "public")
+      await seedChannel(wid, privateStream, author, "private")
+      await sendMessages(wid, readableStream, author, 1)
+      await sendMessages(wid, privateStream, author, 1)
+      const [evtReadable] = await StreamEventRepository.list(pool, readableStream)
+      const [evtPrivate] = await StreamEventRepository.list(pool, privateStream)
+
+      await ReadStateRepository.advance(pool, readableStream, reader, evtReadable.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, privateStream, reader, evtPrivate.id, { holdInInbox: true })
+
+      const result = await streamReadService.clearInbox(wid, reader, [readableStream, privateStream])
+
+      expect(result.clearedStreamIds).toEqual([readableStream])
+      expect((await ReadStateRepository.get(pool, readableStream, reader))?.inboxHeld).toBe(false)
+      // The private stream's hold is untouched — access was never granted.
+      expect((await ReadStateRepository.get(pool, privateStream, reader))?.inboxHeld).toBe(true)
+    })
+
+    test("clears a thread the reader isn't a member of, nested under a public channel (INV-62)", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const root = streamId()
+      const thread = streamId()
+      await seedChannel(wid, root, author, "public")
+      const [rootMsg] = await sendMessages(wid, root, author, 1)
+      // A thread's own visibility is irrelevant — access resolves through
+      // `root_stream_id` to the public root, so the reader needs no
+      // `stream_members` row on either stream.
+      await pool.query(
+        `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, root_stream_id)
+         VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
+        [thread, wid, author, root, rootMsg]
+      )
+      await sendMessages(wid, thread, author, 1)
+      const [evtThread] = await StreamEventRepository.list(pool, thread)
+
+      await ReadStateRepository.advance(pool, thread, reader, evtThread.id, { holdInInbox: true })
+      expect((await ReadStateRepository.get(pool, thread, reader))?.inboxHeld).toBe(true)
+
+      const result = await streamReadService.clearInbox(wid, reader, [thread])
+
+      expect(result.clearedStreamIds).toEqual([thread])
+      expect((await ReadStateRepository.get(pool, thread, reader))?.inboxHeld).toBe(false)
+    })
+
+    test("advances below-latest streams with holdInInbox false — clearing can't create a new hold", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      // reader never read this stream — clearInbox must catch it up to latest
+      // without pinning a new hold, even though the latest events are all
+      // authored by someone else.
+      await sendMessages(wid, sid, author, 2)
+      const events = await StreamEventRepository.list(pool, sid)
+
+      const result = await streamReadService.clearInbox(wid, reader, [sid])
+
+      expect(result.frontiers).toEqual([expect.objectContaining({ streamId: sid, lastReadEventId: events[1].id })])
+      const row = await ReadStateRepository.get(pool, sid, reader)
+      expect(row?.lastReadEventId).toBe(events[1].id)
+      expect(row?.inboxHeld).toBe(false)
+      // Nothing was held before the call, so nothing is reported cleared.
+      expect(result.clearedStreamIds).toEqual([])
+    })
+
+    test("clears inbox_held and emits stream:inbox_updated(held: false) only when something was actually cleared", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const heldStream = streamId()
+      const alreadyCaughtUpStream = streamId()
+      await seedChannel(wid, heldStream, author, "public")
+      await seedChannel(wid, alreadyCaughtUpStream, author, "public")
+      await sendMessages(wid, heldStream, author, 1)
+      await sendMessages(wid, alreadyCaughtUpStream, author, 1)
+      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
+      const [evtAlreadyCaughtUp] = await StreamEventRepository.list(pool, alreadyCaughtUpStream)
+
+      await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
+      // Already at the latest event and never held — clearInbox should be a
+      // true no-op for this stream.
+      await ReadStateRepository.advance(pool, alreadyCaughtUpStream, reader, evtAlreadyCaughtUp.id, {
+        holdInInbox: false,
+      })
+
+      const result = await streamReadService.clearInbox(wid, reader, [heldStream, alreadyCaughtUpStream])
+
+      expect(result.clearedStreamIds).toEqual([heldStream])
+      const emitted = await outboxFor("stream:inbox_updated", wid)
+      expect(emitted).toEqual([
+        {
+          workspaceId: wid,
+          authorId: reader,
+          streamIds: [heldStream],
+          held: false,
+        },
+      ])
+    })
+
+    test("emits nothing when no accessible stream was held", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      await sendMessages(wid, sid, author, 1)
+
+      const result = await streamReadService.clearInbox(wid, reader, [sid])
+
+      expect(result.clearedStreamIds).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+
+    test("returns empty results without querying when no candidate stream is accessible", async () => {
+      const wid = workspaceId()
+      const result = await streamReadService.clearInbox(wid, userId(), ["stream_does_not_exist"])
+      expect(result).toEqual({ clearedStreamIds: [], frontiers: [] })
+    })
+  })
+
+  describe("markAllAsRead never holds", () => {
+    test("catches a stream up to latest without setting inbox_held and without emitting stream:inbox_updated", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      await sendMessages(wid, sid, author, 1)
+      await StreamMemberRepository.insert(pool, sid, reader)
+
+      const result = await streamService.markAllAsRead(wid, reader)
+
+      expect(result.updatedStreamIds).toEqual([sid])
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+
+    test("never re-holds a stream the user already cleared from the Inbox", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      await StreamMemberRepository.insert(pool, sid, reader)
+      await sendMessages(wid, sid, author, 1)
+      const [evt1] = await StreamEventRepository.list(pool, sid)
+
+      // Hold, then clear — the row starts this call unheld with a real
+      // history of having been held once.
+      await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
+      await ReadStateRepository.clearInboxHeld(pool, wid, reader, [sid])
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+
+      // A fresh message from someone else, then mark-all: batchAdvance must
+      // not flip the cleared row back to held.
+      await sendMessages(wid, sid, author, 1)
+
+      const result = await streamService.markAllAsRead(wid, reader)
+
+      expect(result.updatedStreamIds).toEqual([sid])
+      expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
+    })
+  })
+
+  describe("StreamReadService.clearInbox marks activity read", () => {
+    async function insertMention(wid: string, reader: string, author: string, sid: string, msgId: string) {
+      return ActivityRepository.insert(pool, {
+        workspaceId: wid,
+        userId: reader,
+        activityType: ActivityTypes.MENTION,
+        streamId: sid,
+        messageId: msgId,
+        actorId: author,
+        actorType: "user",
+      })
+    }
+
+    async function readAt(activityId: string | undefined): Promise<Date | null | undefined> {
+      const row = await pool.query<{ read_at: Date | null }>(`SELECT read_at FROM user_activity WHERE id = $1`, [
+        activityId,
+      ])
+      return row.rows[0]?.read_at
+    }
+
+    test("marks a stream's unread mention read when clear advances its frontier", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      const activity = await insertMention(wid, reader, author, sid, msgId)
+
+      const { frontiers } = await streamReadService.clearInbox(wid, reader, [sid])
+
+      expect(frontiers).toEqual([expect.objectContaining({ streamId: sid })])
+      expect(await readAt(activity?.id)).not.toBeNull()
+    })
+
+    test("marks a caught-up stream's unread mention read even though its frontier did not move", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "public")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, sid)
+      await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: true })
+      const activity = await insertMention(wid, reader, author, sid, msgId)
+
+      const result = await streamReadService.clearInbox(wid, reader, [sid])
+
+      expect(result).toEqual({ clearedStreamIds: [sid], frontiers: [] })
+      expect(await readAt(activity?.id)).not.toBeNull()
+    })
+
+    test("leaves activity untouched in a stream the user can't access", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const sid = streamId()
+      await seedChannel(wid, sid, author, "private")
+      const [msgId] = await sendMessages(wid, sid, author, 1)
+      const activity = await insertMention(wid, reader, author, sid, msgId)
+
+      await streamReadService.clearInbox(wid, reader, [sid])
+
+      expect(await readAt(activity?.id)).toBeNull()
+    })
+  })
+})

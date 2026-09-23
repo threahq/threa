@@ -34,6 +34,8 @@ describe("getEffectiveReadState", () => {
         lastReadEventId: null,
         lastReadAt: new Date("2026-02-01T00:00:00.000Z"),
         updatedAt: new Date(),
+        inboxHeld: false,
+        inboxFloorEventId: null,
       },
       {
         workspaceId: "ws_1",
@@ -42,6 +44,8 @@ describe("getEffectiveReadState", () => {
         lastReadEventId: "evt_read_state",
         lastReadAt: new Date("2026-02-02T00:00:00.000Z"),
         updatedAt: new Date(),
+        inboxHeld: false,
+        inboxFloorEventId: null,
       },
     ])
 

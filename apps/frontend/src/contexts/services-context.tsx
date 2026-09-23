@@ -20,6 +20,7 @@ export interface WorkspaceService {
   bootstrap: typeof workspacesApi.bootstrap
   create: typeof workspacesApi.create
   markAllAsRead: typeof workspacesApi.markAllAsRead
+  clearInbox: typeof workspacesApi.clearInbox
   acceptInvitation: typeof workspacesApi.acceptInvitation
   updateProfile: typeof workspacesApi.updateProfile
   setStatus: typeof workspacesApi.setStatus
@@ -46,9 +47,11 @@ export interface StreamService {
   markAsRead: typeof streamsApi.markAsRead
   markUnread: typeof streamsApi.markUnread
   checkSlugAvailable: typeof streamsApi.checkSlugAvailable
+  directoryStats: typeof streamsApi.directoryStats
   setNotificationLevel: typeof streamsApi.setNotificationLevel
   addMember: typeof streamsApi.addMember
   removeMember: typeof streamsApi.removeMember
+  join: typeof streamsApi.join
 }
 
 export interface MessageService {
