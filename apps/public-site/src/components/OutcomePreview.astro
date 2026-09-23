@@ -1,0 +1,148 @@
+---
+/*
+ * One outcome on the overview's thread, as it looks in Threa: the recipe
+ * scenes cut down to the part that shows the result.
+ */
+import Message from "./Message.astro"
+import StreamPreview from "./StreamPreview.astro"
+
+interface Props {
+  id: "agent" | "deploy" | "alert" | "memo" | "search" | "delegation" | "sealed"
+}
+const { id } = Astro.props
+---
+
+{id === "agent" && (
+  <StreamPreview stream="platform">
+    <Message author="maya" time="09:15">
+      <div class="tl-text"><span class="mention">@my-agent</span> what changed in the billing module this week?</div>
+    </Message>
+    <Message author="my-agent" time="09:15">
+      <div class="tl-text">Two PRs: proration moved to the invoice service, and failed renewals now retry three times before emailing.</div>
+    </Message>
+  </StreamPreview>
+)}
+
+{id === "deploy" && (
+  <StreamPreview stream="deploys">
+    <Message author="deploy" time="16:40">
+      <div class="tl-text"><strong>Deploy:</strong> v2.4.1 shipped to production. 🚀</div>
+    </Message>
+    <Message author="jordan" time="16:44">
+      <div class="tl-text">Error rate is flat since 2.4.1 went out.</div>
+    </Message>
+  </StreamPreview>
+)}
+
+{id === "alert" && (
+  <StreamPreview stream="alerts">
+    <Message author="alerts" time="03:12">
+      <div class="tl-text"><strong class="sp-link">[FIRING:1] High error rate</strong></div>
+      <div class="tl-text">5xx on checkout-api above 2% for 5 minutes.</div>
+    </Message>
+    <Message author="sam" time="03:14">
+      <div class="tl-text">On it, rolling back.</div>
+    </Message>
+  </StreamPreview>
+)}
+
+{id === "memo" && (
+  <StreamPreview stream="Memory" icon="icon-bookopen">
+    <div class="scene-memo">
+      <div class="smo-top">
+        <span class="smo-title">Auth refactor held pending token-rotation review</span>
+        <span class="smo-date">Mar 12</span>
+      </div>
+      <div class="smo-tags">
+        <span class="kt-badge"><svg><use href="#icon-compass" /></svg>Decision</span>
+        <span class="smo-tag">#api-v3</span>
+      </div>
+      <div class="smo-source">
+        <svg><use href="#icon-msgquote" /></svg>
+        <span>2 messages in #api-v3</span>
+        <svg class="smo-chev"><use href="#icon-chevron" /></svg>
+      </div>
+      <ul class="smo-sources">
+        <li>
+          <p>hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</p>
+          <p class="smo-by"><span>Jordan Lee</span><span class="smo-at">Mar 12</span></p>
+        </li>
+        <li>
+          <p>Fair. Let's hold v3 until you've walked us through it.</p>
+          <p class="smo-by"><span>Maya Reyes</span><span class="smo-at">Mar 12</span></p>
+        </li>
+      </ul>
+    </div>
+  </StreamPreview>
+)}
+
+{id === "search" && (
+  <StreamPreview stream="rotation flow" icon="icon-search">
+    <div class="scene-search">
+      <section class="ss-group">
+        <div class="ss-head"><svg><use href="#icon-chevron" /></svg><span>#api-v3</span><span class="ss-count">2</span></div>
+        <ul>
+          <li>
+            <p class="ss-snip">a walkthrough of the <mark>rotation</mark>{" "}<mark>flow</mark> + how existing sessions migrate</p>
+            <p class="ss-by"><span>Jordan Lee</span><span class="ss-at">Mar 12</span></p>
+          </li>
+          <li>
+            <p class="ss-snip">not comfortable changing the auth boundary without working through the token-<mark>rotation</mark>{" "}<mark>flow</mark> first</p>
+            <p class="ss-by"><span>Jordan Lee</span><span class="ss-at">Mar 12</span></p>
+          </li>
+        </ul>
+      </section>
+    </div>
+  </StreamPreview>
+)}
+
+{id === "delegation" && (
+  <StreamPreview stream="billing">
+    <div class="scene-delegation">
+      <div class="sd-card">
+        <div class="sd-row">
+          <span class="sd-tile"><svg><use href="#icon-terminal" /></svg></span>
+          <div class="sd-main">
+            <p class="sd-title">Add backoff between failed-renewal retries</p>
+            <p class="sd-meta">Ariadne · Completed · build-box / my agent</p>
+          </div>
+        </div>
+      </div>
+      <div class="sd-thread">
+        <div class="sd-thread-line">
+          <span class="sd-av"><svg><use href="#icon-bot" /></svg></span>
+          <span class="sd-replies">1 reply</span>
+          <span class="sd-ago">4h</span>
+          <svg class="sd-chev"><use href="#icon-chevronright" /></svg>
+        </div>
+        <p class="sd-latest"><strong>my-agent</strong>: Shipped in PR #42. All acceptance criteria pass.</p>
+      </div>
+    </div>
+  </StreamPreview>
+)}
+
+{id === "sealed" && (
+  <StreamPreview stream="invoice-ref migration" scratchpad locked>
+    <Message author="maya" time="14:20">
+      <div class="tl-text">Backfill invoice_ref, then check with me before you touch prod.</div>
+    </Message>
+    <div class="scene-decision">
+      <div class="sq-card">
+        <div class="sq-row">
+          <svg class="sq-icon"><use href="#icon-circlehelp" /></svg>
+          <div class="sq-main">
+            <p class="sq-title">Run the migration now?</p>
+            <p class="sq-who"><strong>my-agent</strong> needs a decision</p>
+          </div>
+        </div>
+        <p class="sq-body">17 rows backfilled locally, none in prod.</p>
+        <div class="sq-actions">
+          <div class="sq-buttons">
+            <span class="sq-btn is-primary">Run it</span>
+            <span class="sq-btn">Hold for review</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </StreamPreview>
+)}

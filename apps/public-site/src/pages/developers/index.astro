@@ -4,6 +4,59 @@ import CodeBlock from "../../components/CodeBlock.astro"
 import DocRow from "../../components/DocRow.astro"
 import Message from "../../components/Message.astro"
 import StreamPreview from "../../components/StreamPreview.astro"
+import OutcomePreview from "../../components/OutcomePreview.astro"
+
+const outcomes = [
+  {
+    id: "agent",
+    icon: "icon-bot",
+    title: "Your agent answers when it's mentioned",
+    note: "Two commands turn a local command into a bot. It pulls work, so no inbound ports.",
+    href: "/developers/recipes#local-agent",
+  },
+  {
+    id: "deploy",
+    icon: "icon-hash",
+    title: "Deploys post to #deploys",
+    note: "One POST from CI. A stable clientMessageId stops double posts on retry.",
+    href: "/developers/recipes#ci-notify",
+  },
+  {
+    id: "alert",
+    icon: "icon-swap",
+    title: "Alerts from tools you already run",
+    note: "Paste a webhook URL into Grafana or PostHog. No API key.",
+    href: "/developers/incoming-webhooks",
+  },
+  {
+    id: "memo",
+    icon: "icon-bookopen",
+    title: "What was decided, with the messages behind it",
+    note: "Search memos, then pull the exact source messages.",
+    href: "/developers/recipes#decisions",
+  },
+  {
+    id: "search",
+    icon: "icon-search",
+    title: "Workspace search in your own tool",
+    note: "Semantic or exact, filtered by stream, type, author and date.",
+    href: "/developers/recipes#mirror-search",
+  },
+  {
+    id: "delegation",
+    icon: "icon-layers",
+    title: "Work Threa hands to your machine",
+    note: "Claim a delegation card, report progress, post the result.",
+    href: "/developers/recipes#delegations",
+  },
+  {
+    id: "sealed",
+    icon: "icon-lock",
+    title: "An agent in an encrypted scratchpad",
+    note: "The server stores ciphertext only. The CLI does the crypto.",
+    href: "/developers/recipes#sealed-agent",
+  },
+] as const
 ---
 
 <DocsLayout
@@ -130,13 +183,24 @@ Verify the key with GET /api/v1/workspaces/{{workspaceId}}/me before anything el
     <a class="link" href="/developers/cli">CLI &amp; MCP server</a>.
   </p>
 
-  <h2 id="what-you-can-build">What you can build</h2>
-  <ul>
-    <li><strong>Post and read messages</strong> in any stream you can access, with idempotent sends.</li>
-    <li><strong>Search</strong> messages and memos, semantic or exact, by stream, type, and date.</li>
-    <li><strong>Pull memos with their sources</strong>, so your agent works from what Ariadne knows.</li>
-    <li><strong>Run your own agent as a bot</strong> that answers when it's mentioned. See <a class="link" href="/developers/recipes#local-agent">the recipe</a>.</li>
-    <li><strong>Upload attachments</strong> and read the text Threa extracts from them.</li>
-    <li><strong>Take alerts</strong> from tools you already run, over an <a class="link" href="/developers/incoming-webhooks">incoming webhook</a>.</li>
-  </ul>
+  <section class="outcomes" aria-labelledby="what-you-can-build">
+    <h2 id="what-you-can-build">What you can build</h2>
+    <ol class="ot">
+      {outcomes.map((o, i) => (
+        <li class="ot-item" style={`--row: ${i + 1}`}>
+          <a class="ot-node" href={o.href} tabindex="-1" data-decorative aria-hidden="true"><svg><use href={`#${o.icon}`} /></svg></a>
+          <div class="ot-text">
+            <h3 id={`build-${o.id}`}><a href={o.href}>{o.title}</a></h3>
+            <p>{o.note}</p>
+          </div>
+          <OutcomePreview id={o.id} />
+        </li>
+      ))}
+    </ol>
+    <p>
+      Also in the API: attachment uploads with the text Threa extracts, labels,
+      conversations and stream membership. All of it is in the
+      <a class="link" href="/developers/reference">API reference</a>.
+    </p>
+  </section>
 </DocsLayout>

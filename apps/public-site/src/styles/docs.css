@@ -1121,6 +1121,164 @@ body.docs-resizing .api-op {
   }
 }
 
+/* ---------- OUTCOMES (overview) ----------
+   A thread down the middle of the column with outcomes hung off it. Outcome k
+   spans grid rows k and k+1 on alternating sides, so each side starts half an
+   outcome below the other and uneven heights never sit side by side. A column
+   too narrow for two previews gets a numbered rail instead. */
+.outcomes {
+  container-type: inline-size;
+}
+.docs-article .ot {
+  --ot-node: 32px;
+  position: relative;
+  list-style: none;
+  counter-reset: ot;
+  margin: 28px 0 8px;
+  padding: 0;
+}
+.ot::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--ot-node) / 2);
+  bottom: 0;
+  left: calc(var(--ot-node) / 2 - 1px);
+  width: 2px;
+  background: hsl(var(--gold) / 0.45);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 120px), transparent);
+}
+.docs-article .ot-item {
+  position: relative;
+  counter-increment: ot;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: none;
+  margin: 0;
+  padding: 0 0 40px calc(var(--ot-node) + 18px);
+}
+.ot-node {
+  position: absolute;
+  top: calc(12px - var(--ot-node) / 2);
+  left: 0;
+  z-index: 1;
+  width: var(--ot-node);
+  height: var(--ot-node);
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  border: 1.5px solid hsl(var(--gold) / 0.55);
+  background: hsl(var(--paper));
+  color: hsl(var(--gold-dim));
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 14px;
+  text-decoration: none;
+}
+.ot-node::before {
+  content: counter(ot);
+}
+.ot-node svg {
+  display: none;
+  width: 17px;
+  height: 17px;
+}
+.ot-text {
+  min-width: 0;
+}
+.docs-article .ot-text h3 {
+  margin: 0 0 4px;
+  line-height: 1.3;
+}
+.ot-text h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+/* The whole outcome is the link. */
+.ot-text h3 a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.ot-text h3 a:focus-visible,
+.ot-item:hover .ot-text h3 a {
+  text-decoration: underline;
+  text-decoration-color: hsl(var(--gold));
+  text-underline-offset: 3px;
+}
+.docs-article .ot-text p {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: hsl(var(--muted));
+}
+.ot-item .stream-preview {
+  margin: 0;
+}
+@media (hover: hover) {
+  .ot-item:hover .ot-node {
+    border-color: hsl(var(--gold));
+    background: hsl(var(--gold));
+    color: hsl(var(--paper));
+  }
+  .ot-item:hover .stream-preview {
+    border-color: hsl(var(--gold) / 0.6);
+  }
+}
+@container (min-width: 600px) {
+  .docs-article .ot {
+    --ot-node: 36px;
+    --ot-gutter: 64px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--ot-gutter);
+  }
+  .ot::before {
+    left: calc(50% - 1px);
+  }
+  .docs-article .ot-item {
+    grid-row: var(--row) / span 2;
+    padding: 0 0 48px;
+  }
+  .docs-article .ot-item:nth-child(odd) {
+    grid-column: 1;
+  }
+  .docs-article .ot-item:nth-child(even) {
+    grid-column: 2;
+  }
+  .ot-node::before {
+    content: none;
+  }
+  .ot-node svg {
+    display: block;
+  }
+  .ot-item:nth-child(odd) .ot-node {
+    left: auto;
+    right: calc((var(--ot-gutter) + var(--ot-node)) / -2);
+  }
+  .ot-item:nth-child(even) .ot-node {
+    left: calc((var(--ot-gutter) + var(--ot-node)) / -2);
+  }
+  /* The stub from the thread to the outcome's edge. */
+  .ot-item::before {
+    content: "";
+    position: absolute;
+    top: 11px;
+    width: calc((var(--ot-gutter) - var(--ot-node)) / 2);
+    height: 2px;
+    background: hsl(var(--gold) / 0.45);
+  }
+  .ot-item:nth-child(odd)::before {
+    right: calc((var(--ot-gutter) - var(--ot-node)) / -2);
+  }
+  .ot-item:nth-child(even)::before {
+    left: calc((var(--ot-gutter) - var(--ot-node)) / -2);
+  }
+  .docs-article .ot-item:nth-child(odd) .ot-text {
+    text-align: right;
+  }
+}
+
 /* ---------- CODE BLOCK + VARIABLE CHIPS ---------- */
 .pg-block {
   margin: 20px 0;
