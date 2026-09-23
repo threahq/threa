@@ -188,6 +188,8 @@ describe("inbox hold", () => {
         actorId: reader,
         actorType: "user",
       })
+      const second = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
+      expect(second.held).toBe(false)
 
       expect(await ReadStateRepository.get(pool, sid, reader)).toEqual(
         expect.objectContaining({ lastReadEventId: evt2.id, inboxHeld: true })
@@ -357,7 +359,7 @@ describe("inbox hold", () => {
         })
 
         expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
-        expect(await outboxFor("stream:inbox_updated")).toEqual([])
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
       })
 
       test("clears a pre-existing hold and emits stream:inbox_updated(held: false)", async () => {
@@ -382,7 +384,7 @@ describe("inbox hold", () => {
         })
 
         expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
-        expect(await outboxFor("stream:inbox_updated")).toEqual([
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
           {
             workspaceId: wid,
             authorId: author,
@@ -412,7 +414,7 @@ describe("inbox hold", () => {
         })
 
         expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(true)
-        expect(await outboxFor("stream:inbox_updated")).toEqual([
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
           {
             workspaceId: wid,
             authorId: author,
@@ -442,7 +444,7 @@ describe("inbox hold", () => {
         })
 
         expect((await ReadStateRepository.get(pool, sid, author))?.inboxHeld).toBe(false)
-        expect(await outboxFor("stream:inbox_updated")).toEqual([])
+        expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
       })
     })
   })
@@ -461,7 +463,7 @@ describe("inbox hold", () => {
       await streamService.markAsRead(wid, sid, reader, evt.id)
 
       expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
 
     test("manual mode: holds", async () => {
@@ -510,7 +512,7 @@ describe("inbox hold", () => {
       )
 
       expect((await ReadStateRepository.get(pool, sid, reader))?.inboxHeld).toBe(false)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
 
     test("manual mode: holds when compaction crosses another user's unread message", async () => {
@@ -559,7 +561,7 @@ describe("inbox hold", () => {
       expect(row?.inboxHeld).toBe(false)
       // No read advance — reacting only clears the hold.
       expect(row?.lastReadEventId).toBe(evt1.id)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
         { workspaceId: wid, authorId: reactor, streamIds: [sid], held: false },
       ])
     })
@@ -578,7 +580,7 @@ describe("inbox hold", () => {
       await addReaction(wid, sid, msg1, reactor)
 
       expect((await ReadStateRepository.get(pool, sid, reactor))?.inboxHeld).toBe(true)
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
 
     test("read mode: reacting never creates or holds a read-state row", async () => {
@@ -595,7 +597,7 @@ describe("inbox hold", () => {
       // Reacting under "read"/"manual" mode is a pure no-op on read state — no
       // clear was attempted, so no row was ever created for this reactor.
       expect(await ReadStateRepository.get(pool, sid, reactor)).toBeNull()
-      expect(await outboxFor("stream:inbox_updated")).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([])
     })
   })
 
