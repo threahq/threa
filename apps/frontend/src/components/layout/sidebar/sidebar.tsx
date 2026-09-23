@@ -30,7 +30,7 @@ import {
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
-import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
+import { useCoordinatedLoading, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -82,6 +82,9 @@ import {
 import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { isClearInboxShortcutEvent, resolveClearInboxTargetStreamId } from "./inbox-clear-shortcut"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
+import { useStreamWarmup } from "@/hooks/use-stream-warmup"
+import { useAgentActiveStreamIds } from "@/stores/agent-activity-store"
+import { holdSidebarThreads, useHeldSidebarThreads } from "@/stores/sidebar-held-threads-store"
 import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
 import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
 
@@ -101,6 +104,15 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const openLayoutEditor = useCallback(() => setIsEditorOpen(true), [])
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
+  const { panelId } = usePanel()
+  const agentActiveStreamIds = useAgentActiveStreamIds(workspaceId)
+  const keptThreadIds = useMemo(() => {
+    const ids = new Set(agentActiveStreamIds)
+    if (activeStreamId) ids.add(activeStreamId)
+    if (panelId) ids.add(panelId)
+    return ids
+  }, [agentActiveStreamIds, activeStreamId, panelId])
+  const heldThreadIds = useHeldSidebarThreads(workspaceId)
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
   const syncEngine = useSyncEngine()
@@ -338,6 +350,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         inboxArrivedAt,
         joinedAtByStreamId,
         streamTypeById,
+        keptThreadIds,
+        heldThreadIds,
       }),
     [
       sidebarConfig,
@@ -350,8 +364,30 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       inboxArrivedAt,
       joinedAtByStreamId,
       streamTypeById,
+      keptThreadIds,
+      heldThreadIds,
     ]
   )
+
+  // A thread shown while unread or while an agent works in it is held, so it
+  // keeps its row after it's read instead of vanishing under the viewer.
+  useEffect(() => {
+    const shown: string[] = []
+    for (const { section, items } of resolvedSections) {
+      if (section.spec.kind === "unread") continue
+      for (const item of items) {
+        if (item.type !== StreamTypes.THREAD) continue
+        if (isUnreadStream(item, getUnreadCount(item.id)) || agentActiveStreamIds.has(item.id)) shown.push(item.id)
+      }
+    }
+    holdSidebarThreads(workspaceId, shown)
+  }, [workspaceId, resolvedSections, getUnreadCount, agentActiveStreamIds])
+
+  const hoverCardStreamIds = useMemo(
+    () => (isMobile ? [] : resolvedSections.flatMap(({ items }) => items.map((item) => item.id))),
+    [isMobile, resolvedSections]
+  )
+  useStreamWarmup(hoverCardStreamIds)
 
   // Board mode re-aims the stream rows: their verb changes from "open timeline"
   // to "scope the board".

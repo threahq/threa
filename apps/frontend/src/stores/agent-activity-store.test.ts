@@ -16,6 +16,7 @@ import {
   useAgentSessionActivities,
   useAgentSessionActivity,
   resetAgentActivityStore,
+  useAgentActiveStreamIds,
 } from "./agent-activity-store"
 
 const WS = "ws_1"
@@ -47,6 +48,25 @@ describe("agent-activity-store", () => {
     seedAgentActivity(WS, [session({ sessionId: "s2", streamId: "stream_c" })])
     expect(getAgentActivityForStream(WS, "stream_a")).toEqual([])
     expect(getAgentActivityForStream(WS, "stream_c").map((s) => s.sessionId)).toEqual(["s2"])
+  })
+
+  it("should list the streams with a running session, re-rendering only when that set changes", () => {
+    let renders = 0
+    const { result } = renderHook(() => {
+      renders += 1
+      return useAgentActiveStreamIds(WS)
+    })
+    expect([...result.current]).toEqual([])
+
+    act(() => upsertAgentSession(WS, session({ sessionId: "s1", streamId: "stream_thread" })))
+    expect([...result.current]).toEqual(["stream_thread"])
+
+    const afterStart = renders
+    act(() => updateAgentSessionProgress(WS, "s1", { stepCount: 3 }))
+    expect(renders).toBe(afterStart)
+
+    act(() => clearAgentSession(WS, "s1"))
+    expect([...result.current]).toEqual([])
   })
 
   it("keeps thread activity separate from its parent stream", () => {

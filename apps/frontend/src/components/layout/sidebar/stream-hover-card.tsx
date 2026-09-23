@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Check, CheckCheck, ExternalLink, SmilePlus } from "lucide-react"
-import {
-  ENCRYPTED_MESSAGE_PREVIEW_LABEL,
-  type EventType,
-  type StreamEvent,
-  type StreamWithPreview,
-} from "@threahq/types"
+import { ENCRYPTED_MESSAGE_PREVIEW_LABEL, type StreamWithPreview } from "@threahq/types"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,8 +12,7 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ReactionPill } from "@/components/timeline/message-reactions"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
-import type { EventsListResponse } from "@/api/streams"
-import { useStreamService } from "@/contexts"
+import { useHoverCardMessages, type HoverCardMessage } from "@/hooks/use-hover-card-messages"
 import { reactionShortcodes, stripColons, useActors, useMessageReactions, useUnreadCounts } from "@/hooks"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useDecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
@@ -34,62 +27,7 @@ import { cn } from "@/lib/utils"
 
 const OPEN_DELAY_MS = 450
 const CLOSE_DELAY_MS = 150
-const CARD_MESSAGE_LIMIT = 8
-/** The paged events route carries no reaction enrichment, so reactions fold from their own events. */
-const CARD_EVENT_TYPES: EventType[] = [
-  "message_created",
-  "message_edited",
-  "message_deleted",
-  "reaction_added",
-  "reaction_removed",
-]
-/** Enough rows that edits, deletes and reactions on the last few messages still leave eight to show. */
-const FETCH_LIMIT = 60
-
 type Reactions = Record<string, string[]>
-
-function hoverCardQueryKey(workspaceId: string, streamId: string) {
-  return ["sidebar-hover-card", workspaceId, streamId] as const
-}
-
-export interface HoverCardMessage {
-  messageId: string
-  sequence: bigint
-  /** The `message_created` event with any later edit folded into its payload. */
-  event: StreamEvent
-}
-
-/** Fold a chronological run of message events into the latest live messages. */
-export function foldHoverMessages(events: StreamEvent[], limit = CARD_MESSAGE_LIMIT): HoverCardMessage[] {
-  const byId = new Map<string, HoverCardMessage>()
-  for (const event of events) {
-    const payload = event.payload as { messageId?: string } & Record<string, unknown>
-    const messageId = payload?.messageId
-    if (!messageId) continue
-    if (event.eventType === "message_created") {
-      byId.set(messageId, { messageId, sequence: BigInt(event.sequence), event })
-    } else if (event.eventType === "message_edited") {
-      const existing = byId.get(messageId)
-      if (existing) {
-        byId.set(messageId, {
-          ...existing,
-          event: { ...existing.event, payload: { ...(existing.event.payload as object), ...payload } },
-        })
-      }
-    } else if (event.eventType === "message_deleted") {
-      byId.delete(messageId)
-    } else if (event.eventType === "reaction_added" || event.eventType === "reaction_removed") {
-      const existing = byId.get(messageId)
-      const { emoji, userId } = payload as { emoji?: string; userId?: string }
-      if (existing && emoji && userId) {
-        const current = existing.event.payload as { reactions?: Reactions }
-        const reactions = applyReaction(current.reactions, emoji, userId, event.eventType === "reaction_added")
-        byId.set(messageId, { ...existing, event: { ...existing.event, payload: { ...current, reactions } } })
-      }
-    }
-  }
-  return [...byId.values()].sort((a, b) => (a.sequence < b.sequence ? -1 : 1)).slice(-limit)
-}
 
 /**
  * Pointer hover intent for a sidebar row: opens after a dwell, and stays open while
@@ -170,67 +108,83 @@ export function StreamHoverCard({
     <Popover open={hover.open} onOpenChange={(open) => !open && hover.close()}>
       <PopoverAnchor asChild>{children}</PopoverAnchor>
       {hover.open && (
-        <PopoverContent
+        <HoverCardContent
+          hover={hover}
           side={side}
-          align="start"
-          sideOffset={side === "right" ? 10 : 4}
-          collisionPadding={8}
-          className="w-80 p-0"
-          onOpenAutoFocus={(event) => event.preventDefault()}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          onPointerEnter={hover.onPointerEnter}
-          onPointerLeave={hover.onPointerLeave}
-        >
-          <HoverCardBody
-            workspaceId={workspaceId}
-            stream={stream}
-            title={title ?? streamLabel(stream, "sidebar")}
-            unreadCount={unreadCount}
-            onClearFromInbox={onClearFromInbox}
-            onNavigate={hover.close}
-          />
-        </PopoverContent>
+          workspaceId={workspaceId}
+          stream={stream}
+          title={title ?? streamLabel(stream, "sidebar")}
+          unreadCount={unreadCount}
+          onClearFromInbox={onClearFromInbox}
+        />
       )}
     </Popover>
   )
 }
 
-interface HoverCardBodyProps {
+interface HoverCardContentProps {
+  hover: SidebarHoverIntent
+  side: "right" | "bottom"
   workspaceId: string
   stream: StreamWithPreview
   title: string
   unreadCount: number
   onClearFromInbox?: () => void
+}
+
+/** Mounts the popover once the local read resolves (a few ms), so the card opens with its messages in place. */
+function HoverCardContent({ hover, side, ...props }: HoverCardContentProps) {
+  const messages = useHoverCardMessages(props.stream.id)
+  if (messages === undefined) return null
+  return (
+    <PopoverContent
+      side={side}
+      align="start"
+      sideOffset={side === "right" ? 10 : 4}
+      collisionPadding={8}
+      className="w-80 p-0"
+      onOpenAutoFocus={(event) => event.preventDefault()}
+      onCloseAutoFocus={(event) => event.preventDefault()}
+      onPointerEnter={hover.onPointerEnter}
+      onPointerLeave={hover.onPointerLeave}
+    >
+      <HoverCardBody {...props} messages={messages} onNavigate={hover.close} />
+    </PopoverContent>
+  )
+}
+
+interface HoverCardBodyProps extends Omit<HoverCardContentProps, "hover" | "side"> {
+  messages: HoverCardMessage[]
   onNavigate: () => void
 }
 
-function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInbox, onNavigate }: HoverCardBodyProps) {
-  const streamService = useStreamService()
+function HoverCardBody({
+  workspaceId,
+  stream,
+  title,
+  unreadCount,
+  onClearFromInbox,
+  messages,
+  onNavigate,
+}: HoverCardBodyProps) {
   const { getActorName } = useActors(workspaceId)
   const { markAsRead } = useUnreadCounts(workspaceId)
   const readStates = useWorkspaceStreamReadStates(workspaceId)
-  const { data: messages, isError } = useQuery({
-    queryKey: hoverCardQueryKey(workspaceId, stream.id),
-    queryFn: () => streamService.getEvents(workspaceId, stream.id, { limit: FETCH_LIMIT, types: CARD_EVENT_TYPES }),
-    select: (response) => foldHoverMessages(response.events),
-    staleTime: 15_000,
-  })
 
   const frontier = resolveFrontierSequence(readStates.find((row) => row.streamId === stream.id))
   const firstUnreadIndex = useMemo(() => {
-    if (!messages || unreadCount === 0 || frontier === undefined) return -1
+    if (unreadCount === 0 || frontier === undefined) return -1
     return messages.findIndex((message) => frontier === null || message.sequence > frontier)
   }, [messages, unreadCount, frontier])
 
-  const groups = useMemo(() => groupHoverMessages(messages ?? [], firstUnreadIndex), [messages, firstUnreadIndex])
-  const latest = messages?.at(-1)
+  const groups = useMemo(() => groupHoverMessages(messages, firstUnreadIndex), [messages, firstUnreadIndex])
+  const latest = messages.at(-1)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const pinnedToLatest = useRef(true)
-  const landed = messages !== undefined
 
   useLayoutEffect(() => {
     const scroller = scrollerRef.current
-    if (!scroller || !landed) return
+    if (!scroller) return
     scroller.scrollTop = scroller.scrollHeight
     // The card's height follows the space Radix measures beside the row, which can
     // shrink a frame after the content grows; stay on the newest message through it.
@@ -239,7 +193,7 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
     })
     observer.observe(scroller)
     return () => observer.disconnect()
-  }, [landed])
+  }, [])
   const streamHref = `/w/${workspaceId}/s/${stream.id}`
 
   return (
@@ -276,9 +230,9 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
           pinnedToLatest.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 4
         }}
       >
-        {messages === undefined && !isError && <HoverCardSkeleton />}
-        {isError && <p className="px-3 py-3 text-xs text-muted-foreground">Couldn't load messages</p>}
-        {messages?.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">No messages yet</p>}
+        {messages.length === 0 && !stream.lastMessagePreview && (
+          <p className="px-3 py-3 text-xs text-muted-foreground">No messages yet</p>
+        )}
         {groups.map((group) => (
           <div key={group.messages[0].messageId}>
             {group.startsUnread && (
@@ -291,7 +245,6 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
               <HoverCardMessageRow
                 key={message.messageId}
                 workspaceId={workspaceId}
-                streamId={stream.id}
                 message={message}
                 authorName={getActorName(message.event.actorId, message.event.actorType)}
                 head={index === 0}
@@ -356,7 +309,6 @@ function CardAction({ label, onClick, children }: { label: string; onClick: () =
 
 interface HoverCardMessageRowProps {
   workspaceId: string
-  streamId: string
   message: HoverCardMessage
   authorName: string
   /** First message of a same-author run: carries the avatar and name line. */
@@ -365,15 +317,7 @@ interface HoverCardMessageRowProps {
   onNavigate: () => void
 }
 
-function HoverCardMessageRow({
-  workspaceId,
-  streamId,
-  message,
-  authorName,
-  head,
-  href,
-  onNavigate,
-}: HoverCardMessageRowProps) {
+function HoverCardMessageRow({ workspaceId, message, authorName, head, href, onNavigate }: HoverCardMessageRowProps) {
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { formatTime, formatFull } = useFormattedDate()
@@ -460,7 +404,6 @@ function HoverCardMessageRow({
       )}
       <HoverCardReactions
         workspaceId={workspaceId}
-        streamId={streamId}
         messageId={message.messageId}
         reactions={(message.event.payload as { reactions?: Reactions }).reactions ?? {}}
         currentUserId={currentUserId}
@@ -471,18 +414,13 @@ function HoverCardMessageRow({
 
 interface HoverCardReactionsProps {
   workspaceId: string
-  streamId: string
   messageId: string
   reactions: Reactions
   currentUserId: string | null
 }
 
-/**
- * Reacting from the card appends a reaction event to the card's own query so the pill
- * flips at once; the refetch afterwards reconciles with what the server stored.
- */
-function HoverCardReactions({ workspaceId, streamId, messageId, reactions, currentUserId }: HoverCardReactionsProps) {
-  const queryClient = useQueryClient()
+/** Pills update when the reaction's socket echo patches the message row, as in the timeline. */
+function HoverCardReactions({ workspaceId, messageId, reactions, currentUserId }: HoverCardReactionsProps) {
   const { toEmoji, toShortcode } = useWorkspaceEmoji(workspaceId)
   const { addReaction, removeReaction } = useMessageReactions(workspaceId, messageId)
   const entries = Object.entries(reactions)
@@ -499,12 +437,15 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
   )
 
   const pillsRef = useRef<HTMLDivElement>(null)
-  const revealPills = useRef(false)
+  // The live read re-renders on any row write, so wait for the echo of this toggle itself.
+  const pendingReveal = useRef<{ key: string; reacted: boolean } | null>(null)
   useLayoutEffect(() => {
-    if (!revealPills.current) return
-    revealPills.current = false
+    const pending = pendingReveal.current
+    if (!pending || !currentUserId) return
+    if ((reactions[pending.key]?.includes(currentUserId) ?? false) !== pending.reacted) return
+    pendingReveal.current = null
     pillsRef.current?.scrollIntoView({ block: "nearest" })
-  }, [reactions])
+  }, [reactions, currentUserId])
 
   const toggle = async (shortcode: string) => {
     if (!currentUserId) return
@@ -515,15 +456,8 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
     }
     const key = `:${shortcode}:`
     const reacted = reactions[key]?.includes(currentUserId) ?? false
-    const queryKey = hoverCardQueryKey(workspaceId, streamId)
-    revealPills.current = true
-    queryClient.setQueryData<EventsListResponse>(queryKey, (data) =>
-      data
-        ? { ...data, events: [...data.events, optimisticReaction(streamId, messageId, key, currentUserId, !reacted)] }
-        : data
-    )
+    pendingReveal.current = { key, reacted: !reacted }
     await (reacted ? removeReaction(emoji) : addReaction(emoji))
-    void queryClient.invalidateQueries({ queryKey })
   }
 
   const onPick = (emoji: string) => {
@@ -569,49 +503,5 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
         />
       </div>
     </>
-  )
-}
-
-function applyReaction(reactions: Reactions | undefined, key: string, userId: string, add: boolean): Reactions {
-  const next = { ...reactions }
-  const others = (next[key] ?? []).filter((id) => id !== userId)
-  if (add) next[key] = [...others, userId]
-  else if (others.length > 0) next[key] = others
-  else delete next[key]
-  return next
-}
-
-function optimisticReaction(
-  streamId: string,
-  messageId: string,
-  key: string,
-  userId: string,
-  add: boolean
-): StreamEvent {
-  return {
-    id: `optimistic_${messageId}_${key}`,
-    streamId,
-    sequence: "0",
-    eventType: add ? "reaction_added" : "reaction_removed",
-    payload: { messageId, emoji: key, userId },
-    actorId: userId,
-    actorType: "user",
-    createdAt: new Date().toISOString(),
-  }
-}
-
-function HoverCardSkeleton() {
-  return (
-    <div className="space-y-3 px-3 py-2">
-      {[0, 1, 2].map((row) => (
-        <div key={row} className="flex gap-2">
-          <Skeleton className="h-7 w-7 rounded-[6px]" />
-          <div className="flex-1 space-y-1.5">
-            <Skeleton className="h-3 w-1/3" />
-            <Skeleton className="h-3.5 w-5/6" />
-          </div>
-        </div>
-      ))}
-    </div>
   )
 }

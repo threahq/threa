@@ -719,14 +719,16 @@ describe("findSourceLabelId", () => {
 
 describe("resolveSections thread tree", () => {
   const thread = (id: string, rootStreamId: string, section: SectionKey = "recent", activity = 5) =>
-    makeItem({ id, type: StreamTypes.THREAD, rootStreamId, section, activity })
+    makeItem({ id, type: StreamTypes.THREAD, rootStreamId, section, activity, urgency: "activity" })
 
   function tree(over: Parameters<typeof makeInput>[0], preset = SMART_SIDEBAR_CONFIG) {
     return resolveSections(preset, makeInput(over))
       .filter((resolved) => resolved.section.spec.kind !== "quicklinks")
       .map((resolved) => ({
         id: resolved.section.id,
-        items: resolved.items.map((item) => (item.treeParentId ? `${item.treeParentId}>${item.id}` : item.id)),
+        items: resolved.items.map(
+          (item) => `${item.treeParentId ? `${item.treeParentId}>` : ""}${item.id}${item.held ? " (held)" : ""}`
+        ),
       }))
   }
 
@@ -736,7 +738,7 @@ describe("resolveSections thread tree", () => {
       thread("t_1", "c_1", "recent"),
     ]
 
-    expect(tree({ processedStreams })).toEqual([
+    expect(tree({ processedStreams, getUnreadCount: unreadFrom(new Set(["t_1"])) })).toEqual([
       { id: "important", items: [] },
       { id: "recent", items: [] },
       { id: "other", items: ["c_1", "c_1>t_1"] },
@@ -760,7 +762,12 @@ describe("resolveSections thread tree", () => {
 
     expect(
       tree(
-        { processedStreams, unreadStreamIds: new Set(["c_1"]), getUnreadCount: unreadFrom(new Set(["c_1"])) },
+        {
+          processedStreams,
+          unreadStreamIds: new Set(["c_1"]),
+          getUnreadCount: unreadFrom(new Set(["c_1"])),
+          keptThreadIds: new Set(["t_1"]),
+        },
         config
       )
     ).toEqual([
@@ -769,9 +776,10 @@ describe("resolveSections thread tree", () => {
     ])
   })
 
-  it("should drop quiet threads from home sections but keep their root", () => {
+  it("should drop read threads from automatic sections but keep their root", () => {
     const processedStreams = [
       makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_read", "c_1", "recent"),
       thread("t_old", "c_1", "other"),
     ]
 
@@ -779,6 +787,88 @@ describe("resolveSections thread tree", () => {
       { id: "important", items: [] },
       { id: "recent", items: [] },
       { id: "other", items: ["c_1"] },
+    ])
+  })
+
+  it("should keep a muted thread out even while it has unreads", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      makeItem({ id: "t_muted", type: StreamTypes.THREAD, rootStreamId: "c_1", section: "recent", urgency: "quiet" }),
+    ]
+
+    expect(tree({ processedStreams, getUnreadCount: unreadFrom(new Set(["t_muted"])) })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1"] },
+    ])
+  })
+
+  it("should keep the open thread under its root after it's read", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_open", "c_1", "recent"),
+      thread("t_read", "c_1", "recent"),
+    ]
+
+    expect(tree({ processedStreams, keptThreadIds: new Set(["t_open"]) })).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1", "c_1>t_open"] },
+    ])
+  })
+
+  it("should keep a held thread after it's read, flagged held unless unread or kept", () => {
+    const processedStreams = [
+      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
+      thread("t_held", "c_1", "recent"),
+      thread("t_held_unread", "c_1", "recent"),
+      thread("t_held_agent", "c_1", "recent"),
+      thread("t_read", "c_1", "recent"),
+    ]
+
+    expect(
+      tree({
+        processedStreams,
+        getUnreadCount: unreadFrom(new Set(["t_held_unread"])),
+        heldThreadIds: new Set(["t_held", "t_held_unread", "t_held_agent"]),
+        keptThreadIds: new Set(["t_held_agent"]),
+      })
+    ).toEqual([
+      { id: "important", items: [] },
+      { id: "recent", items: [] },
+      { id: "other", items: ["c_1", "c_1>t_held (held)", "c_1>t_held_agent", "c_1>t_held_unread"] },
+    ])
+  })
+
+  it("should list only unread threads under a root in a label section, and labeled threads in their own", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: labelSectionId("starred"), spec: { kind: "label" as const, labelId: "starred" } },
+        { id: labelSectionId("cch"), spec: { kind: "label" as const, labelId: "cch" } },
+        { id: "other", spec: { kind: "smart" as const, bucket: "other" as const } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "sp_homer", type: StreamTypes.SCRATCHPAD, section: "other" }),
+      makeItem({ id: "sp_cch", type: StreamTypes.SCRATCHPAD, section: "other" }),
+      thread("t_stale", "sp_homer", "other"),
+      thread("t_unread", "sp_homer", "other"),
+      thread("t_labeled", "sp_cch", "other"),
+    ]
+    const streamIdsByLabel = new Map([
+      ["starred", new Set(["sp_homer"])],
+      ["cch", new Set(["sp_cch", "t_labeled"])],
+    ])
+
+    expect(
+      tree({ processedStreams, streamIdsByLabel, getUnreadCount: unreadFrom(new Set(["t_unread"])) }, config)
+    ).toEqual([
+      { id: labelSectionId("starred"), items: ["sp_homer", "sp_homer>t_unread"] },
+      { id: labelSectionId("cch"), items: ["sp_cch", "sp_cch>t_labeled"] },
+      { id: "other", items: [] },
     ])
   })
 
@@ -796,7 +886,8 @@ describe("resolveSections thread tree", () => {
       ["dm_hidden", StreamTypes.DM],
     ])
 
-    expect(tree({ processedStreams, streamTypeById }, ALL_SIDEBAR_CONFIG)).toEqual([
+    const getUnreadCount = unreadFrom(new Set(["t_ch", "t_sp", "t_dm"]))
+    expect(tree({ processedStreams, streamTypeById, getUnreadCount }, ALL_SIDEBAR_CONFIG)).toEqual([
       { id: "scratchpads", items: ["sp_1", "sp_1>t_sp"] },
       { id: "channels", items: ["c_1", "c_1>t_ch"] },
       { id: "dms", items: ["t_dm"] },

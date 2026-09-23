@@ -945,6 +945,89 @@ describe("SyncEngine.setBoardStreamIds", () => {
   })
 })
 
+describe("SyncEngine.warmStreams", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.events.clear(), db.streams.clear(), db.streamMemberships.clear()])
+  })
+
+  function memberBootstrap(deps: ReturnType<typeof makeDeps>, streamId: string) {
+    deps.workspaceService.bootstrap.mockResolvedValue({
+      ...makeWorkspaceBootstrap(),
+      streamMemberships: [
+        { streamId, memberId: "user_1", notificationLevel: null, joinedAt: new Date().toISOString() },
+      ],
+    })
+  }
+
+  async function persistMessage(streamId: string, sequence: number) {
+    await db.events.put({
+      id: `evt_${streamId}_${sequence}`,
+      workspaceId: "ws_1",
+      streamId,
+      sequence: String(sequence),
+      eventType: "message_created",
+      payload: { messageId: `msg_${streamId}_${sequence}`, contentMarkdown: "earlier load" },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _sequenceNum: sequence,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  it("should refresh a declared member stream whose window came from an earlier page load once the first connect lands", async () => {
+    const deps = makeDeps()
+    memberBootstrap(deps, "stream_member")
+    await persistMessage("stream_member", 3)
+    const engine = new SyncEngine(deps)
+
+    engine.warmStreams(["stream_member"])
+    await primeConnectedEngine(engine, new MockSocket())
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+    })
+  })
+
+  it("should refresh a warm stream once per connect and again after a reconnect", async () => {
+    const deps = makeDeps()
+    memberBootstrap(deps, "stream_member")
+    await persistMessage("stream_member", 3)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+
+    engine.warmStreams(["stream_member"])
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
+
+    engine.warmStreams(["stream_member"])
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(warmCalls()).toHaveLength(1)
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(2))
+  })
+
+  it("should retry a warm stream whose refresh failed on its next declaration", async () => {
+    const deps = makeDeps()
+    memberBootstrap(deps, "stream_member")
+    await persistMessage("stream_member", 3)
+    const engine = new SyncEngine(deps)
+    await primeConnectedEngine(engine, new MockSocket())
+    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+
+    deps.streamService.bootstrap.mockRejectedValueOnce(new Error("network"))
+    engine.warmStreams(["stream_member"])
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
+    await new Promise((resolve) => setTimeout(resolve, 25))
+
+    engine.warmStreams(["stream_member"])
+    await vi.waitFor(() => expect(warmCalls()).toHaveLength(2))
+  })
+})
+
 describe("SyncEngine.backfillStreamGap", () => {
   beforeEach(async () => {
     resetRevealGate()

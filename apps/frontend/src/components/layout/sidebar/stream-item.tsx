@@ -32,6 +32,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useSidebar } from "@/contexts"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
+import { releaseSidebarThread } from "@/stores/sidebar-held-threads-store"
 import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
@@ -117,7 +118,15 @@ export function BoardTileToggle({
  * formatted display string (see `getEffectiveKeyBinding`/`formatKeyBinding`);
  * omitted when the viewer disabled or unbound the shortcut.
  */
-export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void; keyHint?: string }) {
+export function InboxRowClearButton({
+  onClear,
+  keyHint,
+  ariaLabel = "Clear from Inbox",
+}: {
+  onClear: () => void
+  keyHint?: string
+  ariaLabel?: string
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -128,7 +137,7 @@ export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void;
             e.stopPropagation()
             onClear()
           }}
-          aria-label="Clear from Inbox"
+          aria-label={ariaLabel}
           className="reveal-actions-hover-only absolute right-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
         >
           <Check className="h-3.5 w-3.5" />
@@ -245,7 +254,8 @@ export function CallActivityDot() {
  * The preview-line takeover shown while an agent works: spinner + `{label}` in
  * the agent accent, replacing the last-message preview for the run's duration.
  * Same text size/height as {@link StreamItemPreview} so the swap shifts nothing
- * (INV-21). The spinning Loader2 is the app's one "working" glyph — the session
+ * (INV-21). Title-only rows skip it: the avatar's working dot carries the
+ * signal. The spinning Loader2 is the app's one "working" glyph — the session
  * card, header chip, and follow pill all use it.
  */
 export function AgentActivityPreviewLine({ label }: { label: string }) {
@@ -374,7 +384,8 @@ export function StreamItemPreview({
   isTouch,
   e2eEnabled,
 }: StreamItemPreviewProps) {
-  if (!preview?.content) return null
+  // A full row always keeps its second line so every row, and the agent-working takeover, is one height.
+  if (!preview?.content) return compact ? null : <div aria-hidden className="h-4" />
 
   const hoverPreview = compact && showPreviewOnHover && !isTouch
 
@@ -456,8 +467,14 @@ export function StreamItem({
   const { handlePointerEnter: handleInboxHoverEnter, handlePointerLeave: handleInboxHoverLeave } =
     useInboxRowHover(onInboxHoverChange)
   const hasUnread = unreadCount > 0
-  // Held: sitting in the Inbox with nothing new to read — dimmed until cleared.
-  const isHeld = !!isInboxRow && !hasUnread
+  const onClearHeldThread = useMemo(
+    () => (stream.held && !boardMode ? () => releaseSidebarThread(workspaceId, stream.id) : undefined),
+    [stream.held, boardMode, workspaceId, stream.id]
+  )
+  const onClearRow = isInboxRow ? onClearFromInbox : onClearHeldThread
+  // Held: sitting in the Inbox, or a read thread kept in its section, with
+  // nothing new to read — dimmed until cleared.
+  const isHeld = (!!isInboxRow && !hasUnread) || !!onClearHeldThread
   const preview = stream.lastMessagePreview
   const isVirtualDraft = isDraftId(stream.id)
   const agentSessions = useAgentActivityForStream(workspaceId, stream.id)
@@ -581,15 +598,12 @@ export function StreamItem({
             onSelect: () => setSectionPickerOpen(true),
           },
         ]
-    // Inbox and board mode are mutually exclusive (isInboxRow is forced false
-    // whenever boardMode is set), so this never collides with boardActions.
-    const withClear =
-      isInboxRow && onClearFromInbox
-        ? [
-            { id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox } satisfies SidebarActionItem,
-            ...base,
-          ]
-        : base
+    // Clear and board mode are mutually exclusive (isInboxRow is forced false and
+    // held threads skip Clear whenever boardMode is set), so this never collides
+    // with boardActions.
+    const withClear = onClearRow
+      ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearRow } satisfies SidebarActionItem, ...base]
+      : base
     const browse = {
       ...browseStreamsAction(workspaceId, collapseOnMobile),
       separatorBefore: withClear.length > 0 || boardActions.length > 0,
@@ -604,8 +618,7 @@ export function StreamItem({
     stream.id,
     workspaceId,
     boardActions,
-    isInboxRow,
-    onClearFromInbox,
+    onClearRow,
     collapseOnMobile,
   ])
 
@@ -697,7 +710,7 @@ export function StreamItem({
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(boardScopeId)} />
-  } else if (agentActive) {
+  } else if (agentActive && !compact) {
     previewNode = (
       <AgentActivityPreviewLine label={agentActivityLabel(agentSessions[0]?.personaName, agentSessions.length)} />
     )
@@ -782,7 +795,7 @@ export function StreamItem({
                 >
                   {/* Right reserve for the "…" menu (+ Inbox Clear button when applicable); touch
                     skips it — long-press opens the drawer instead, so a phone spends it on the name. */}
-                  <div className={cn("flex items-center gap-2", !isTouchInput && (isInboxRow ? "pr-16" : "pr-8"))}>
+                  <div className={cn("flex items-center gap-2", !isTouchInput && (onClearRow ? "pr-16" : "pr-8"))}>
                     <span
                       className={cn(
                         "truncate text-sm",
@@ -837,8 +850,12 @@ export function StreamItem({
           ) : (
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
           )}
-          {isInboxRow && onClearFromInbox && !isTouchInput && (
-            <InboxRowClearButton onClear={onClearFromInbox} keyHint={clearInboxKeyHint} />
+          {onClearRow && !isTouchInput && (
+            <InboxRowClearButton
+              onClear={onClearRow}
+              keyHint={isInboxRow ? clearInboxKeyHint : undefined}
+              ariaLabel={isInboxRow ? undefined : "Clear from sidebar"}
+            />
           )}
         </div>
       </SidebarActionContextMenu>
