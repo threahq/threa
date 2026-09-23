@@ -2770,7 +2770,8 @@ body.docs-resizing .api-op {
   /* The operation's height comes from its contract: size containment keeps
      the code out of the row's height, the cell stretches to the row, and the
      code rides sticky inside it at full length. Only code taller than the
-     whole operation scrolls, in a box the operation's height. A short
+     operation or the viewport scrolls, in a box the smaller of the two, and
+     a wheel past either end of it moves the page. A short
      contract still gives the code up to 360px, sized from the build-time
      line and block counts ApiEndpoint sets (12.5px x 1.6 lines, ~84px of
      block chrome and gap each), so a short DELETE gets no empty band. */
@@ -2787,9 +2788,8 @@ body.docs-resizing .api-op {
     top: 72px;
     display: flex;
     flex-direction: column;
-    max-height: 100%;
+    max-height: min(100%, calc(100dvh - 72px - 16px));
     overflow-y: auto;
-    overscroll-behavior-y: contain;
   }
   /* The example response gives up height first and scrolls inside its own
      block, so a clipped sample keeps its frame. */
@@ -2809,7 +2809,6 @@ body.docs-resizing .api-op {
   .is-split .api-op-code .pg-block .pg-pre {
     min-height: 0;
     overflow-y: auto;
-    overscroll-behavior-y: contain;
   }
 }
 
