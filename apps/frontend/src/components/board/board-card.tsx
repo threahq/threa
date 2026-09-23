@@ -235,6 +235,7 @@ export function BoardCard({
     openingMessage,
     replies: railReplies,
     totalReplies,
+    trailingUnseen,
     pendingReplies,
     source,
     events: railEvents,
@@ -662,8 +663,9 @@ export function BoardCard({
     )
   }, [conversation.id, firstFullTailId])
   // `totalReplies` counts tombstones as zero, so BOTH sides count non-deleted
-  // only — replies the rail hasn't synced at all are earlier mass too.
-  const unsyncedOlder = Math.max(0, totalReplies - displayedReplies.filter((m) => !m.deletedAt).length)
+  // only — replies the rail hasn't synced at all are earlier mass too, except
+  // the trailing ones, which will land at the tail.
+  const unsyncedOlder = Math.max(0, totalReplies - trailingUnseen - displayedReplies.filter((m) => !m.deletedAt).length)
   const earlierCount = hiddenOlder.filter((m) => !m.deletedAt).length + unsyncedOlder
   // The backfill can outrun the local rail while the head row stands for rows only
   // the server has; the wait and its retry take that same single row, so nothing

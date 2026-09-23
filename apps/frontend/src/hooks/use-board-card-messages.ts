@@ -575,6 +575,10 @@ export interface BoardCardMessages {
    *  reply can't inflate the gap); otherwise the server count, since older replies
    *  aren't in IDB yet. */
   totalReplies: number
+  /** Of `totalReplies`, the ones `conversation:updated` listed before their event
+   *  reached the rail and that are newer than every reply on hand — they will land
+   *  at the tail, so they are never "earlier" mass. */
+  trailingUnseen: number
   /** Replies known from the rail but not yet in the conversation's server
    *  `messageIds` — the optimistic row, and the swapped real row in the window
    *  before `conversation:updated` lands — chronological. The card appends these
@@ -897,6 +901,7 @@ export function useBoardCardMessages(
         openingMessage,
         replies: post.recentMessages as RenderableMessage[],
         totalReplies: serverTotal,
+        trailingUnseen: 0,
         pendingReplies,
         source: "projection" as const,
         events: rail.events,
@@ -958,6 +963,13 @@ export function useBoardCardMessages(
     const covered = Math.min(pendingReplies.length, episodeArrivals)
     const undeletedReplyCount = replies.reduce((n, m) => (m.deletedAt ? n : n + 1), 0)
     const totalReplies = fullySynced ? liveUndeletedCount : Math.max(serverTotal - covered, undeletedReplyCount)
+    // Message ids are ULIDs, so id order is creation order.
+    let newestKnownId = openingId ?? ""
+    for (const m of liveReplies) if (m.id > newestKnownId) newestKnownId = m.id
+    let unseenNewer = 0
+    for (const id of replyIds)
+      if (id > newestKnownId && !rail.seen.has(id) && backfillById?.has(id) !== true) unseenNewer++
+    const trailingUnseen = Math.max(0, unseenNewer - covered)
 
     // Retain a fresh pending row; keep the retained copy while it's still bridging;
     // forget it once the live rows cover it.
@@ -970,6 +982,7 @@ export function useBoardCardMessages(
       openingMessage,
       replies,
       totalReplies,
+      trailingUnseen,
       pendingReplies,
       source: conversationSeen ? ("events" as const) : ("backfill" as const),
       events: rail.events,

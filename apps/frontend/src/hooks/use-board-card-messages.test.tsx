@@ -796,6 +796,33 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     }
   })
 
+  it("should count a reply listed before its event arrives as trailing, not earlier, when it is newer than every known reply", async () => {
+    // Another participant's reply: `conversation:updated` lists its id a beat before
+    // the message event reaches the rail. That id is the newest in the
+    // conversation, so the card must not read it as older history above the tail.
+    await db.events.bulkPut([msgEvent("msg_01A", "the opening", 1), msgEvent("msg_01B", "first reply", 2)])
+    const before = makePost({ messageIds: ["msg_01A", "msg_01B", "msg_00OLD"], openingId: "msg_01A" })
+    const { result, rerender } = renderRecorded(before, "channel")
+    await waitFor(() => expect(result.current.source).toBe("events"))
+
+    rerender(makePost({ messageIds: ["msg_01A", "msg_01B", "msg_00OLD", "msg_01C"], openingId: "msg_01A" }))
+    await waitFor(() =>
+      expect({ totalReplies: result.current.totalReplies, trailingUnseen: result.current.trailingUnseen }).toEqual({
+        totalReplies: 3,
+        trailingUnseen: 1,
+      })
+    )
+
+    await db.events.put(msgEvent("msg_01C", "second reply", 3))
+    await waitFor(() =>
+      expect({
+        shown: shownBodies(result.current),
+        totalReplies: result.current.totalReplies,
+        trailingUnseen: result.current.trailingUnseen,
+      }).toEqual({ shown: ["first reply", "second reply"], totalReplies: 3, trailingUnseen: 0 })
+    )
+  })
+
   it("keeps counting unsynced older history while a send is in flight (discount only covers episode arrivals)", async () => {
     // The conversation has a real reply the device never synced (r_old): the card
     // honestly shows "1 more". Sending a new reply must NOT discount r_old — only
