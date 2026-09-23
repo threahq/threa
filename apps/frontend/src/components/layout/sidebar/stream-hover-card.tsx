@@ -224,6 +224,22 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
 
   const groups = useMemo(() => groupHoverMessages(messages ?? [], firstUnreadIndex), [messages, firstUnreadIndex])
   const latest = messages?.at(-1)
+  const scrollerRef = useRef<HTMLDivElement>(null)
+  const pinnedToLatest = useRef(true)
+  const landed = messages !== undefined
+
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current
+    if (!scroller || !landed) return
+    scroller.scrollTop = scroller.scrollHeight
+    // The card's height follows the space Radix measures beside the row, which can
+    // shrink a frame after the content grows; stay on the newest message through it.
+    const observer = new ResizeObserver(() => {
+      if (pinnedToLatest.current) scroller.scrollTop = scroller.scrollHeight
+    })
+    observer.observe(scroller)
+    return () => observer.disconnect()
+  }, [landed])
   const streamHref = `/w/${workspaceId}/s/${stream.id}`
 
   return (
@@ -252,7 +268,14 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
         </Tooltip>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto py-1">
+      <div
+        ref={scrollerRef}
+        className="min-h-0 flex-1 overflow-y-auto scroll-pb-2 pb-1 pt-3.5"
+        onScroll={(event) => {
+          const el = event.currentTarget
+          pinnedToLatest.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 4
+        }}
+      >
         {messages === undefined && !isError && <HoverCardSkeleton />}
         {isError && <p className="px-3 py-3 text-xs text-muted-foreground">Couldn't load messages</p>}
         {messages?.length === 0 && <p className="px-3 py-3 text-xs text-muted-foreground">No messages yet</p>}
@@ -475,6 +498,14 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
     [reactions, currentUserId]
   )
 
+  const pillsRef = useRef<HTMLDivElement>(null)
+  const revealPills = useRef(false)
+  useLayoutEffect(() => {
+    if (!revealPills.current) return
+    revealPills.current = false
+    pillsRef.current?.scrollIntoView({ block: "nearest" })
+  }, [reactions])
+
   const toggle = async (shortcode: string) => {
     if (!currentUserId) return
     const emoji = toEmoji(shortcode)
@@ -485,6 +516,7 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
     const key = `:${shortcode}:`
     const reacted = reactions[key]?.includes(currentUserId) ?? false
     const queryKey = hoverCardQueryKey(workspaceId, streamId)
+    revealPills.current = true
     queryClient.setQueryData<EventsListResponse>(queryKey, (data) =>
       data
         ? { ...data, events: [...data.events, optimisticReaction(streamId, messageId, key, currentUserId, !reacted)] }
@@ -506,7 +538,7 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
   return (
     <>
       {entries.length > 0 && (
-        <div className="ml-12 flex flex-wrap gap-1 pr-3 pt-1">
+        <div ref={pillsRef} className="ml-12 flex flex-wrap gap-1 pr-3 pt-1">
           {entries.map(([key, userIds]) => (
             <ReactionPill
               key={key}
@@ -518,21 +550,24 @@ function HoverCardReactions({ workspaceId, streamId, messageId, reactions, curre
           ))}
         </div>
       )}
-      <ReactionEmojiPicker
-        workspaceId={workspaceId}
-        onSelect={onPick}
-        activeShortcodes={activeShortcodes}
-        allReactionShortcodes={reactionShortcodes(reactions)}
-        trigger={
-          <button
-            type="button"
-            aria-label="Add reaction"
-            className="absolute right-2 top-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md border bg-popover text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
-          >
-            <SmilePlus className="h-3.5 w-3.5" />
-          </button>
-        }
-      />
+      <div className="pointer-events-none absolute bottom-[calc(100%-18px)] right-2 z-10 rounded-md border border-border/60 bg-popover/95 p-0.5 opacity-0 shadow-md backdrop-blur-sm transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/row:pointer-events-auto group-hover/row:opacity-100 has-[[data-state=open]]:pointer-events-auto has-[[data-state=open]]:opacity-100">
+        <ReactionEmojiPicker
+          workspaceId={workspaceId}
+          onSelect={onPick}
+          activeShortcodes={activeShortcodes}
+          allReactionShortcodes={reactionShortcodes(reactions)}
+          trigger={
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Add reaction"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
+            >
+              <SmilePlus className="h-3.5 w-3.5" />
+            </Button>
+          }
+        />
+      </div>
     </>
   )
 }
