@@ -1932,7 +1932,7 @@ a {
   }
 
   .docs-article.is-split {
-    --split: clamp(400px, 40%, 540px);
+    --split: max(40%, 430px);
     --gut: 52px;
     --pane-x: 32px;
     --row-y: 22px;
@@ -1955,7 +1955,7 @@ a {
 
   /* Anything between rows (headings, lone prose, notes) holds the prose
      column like row text does. */
-  .docs-article.is-split > :not(.dr, .steps, .api-group),
+  .docs-article.is-split > :not(.dr, .api-group),
   .is-split .api-group > :not(.dr) {
     box-sizing: border-box;
     width: var(--split);
@@ -1981,14 +1981,6 @@ a {
   .is-split .dr:has(> .dr-text > h3:first-child) {
     padding-top: 36px;
   }
-  .is-split .dr-intro {
-    padding-top: 0;
-  }
-  .is-split .dr-section {
-    position: relative;
-    padding-top: 80px;
-  }
-  .is-split .dr-section::before,
   .docs-article.is-split > h2::before,
   .is-split .api-group > h2::before {
     content: "";
@@ -1997,9 +1989,6 @@ a {
     left: 0;
     width: calc(100% - var(--gut));
     border-top: 1px solid hsl(var(--line));
-  }
-  .is-split .dr-section::before {
-    width: calc(var(--split) - var(--gut));
   }
   .is-split .dr-text {
     min-width: 0;
@@ -2010,9 +1999,6 @@ a {
   }
   .is-split .dr-text > :last-child {
     margin-bottom: 0;
-  }
-  .is-split .dr-text h2 {
-    margin-bottom: 12px;
   }
 
   .is-split .dr-code {
@@ -2069,75 +2055,12 @@ a {
     background: hsl(var(--pane-block));
     font-size: 12.5px;
   }
-  .is-split .dr-code .pg-pre.lang-text {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
   .is-split .dr-code .pg-output {
     background: hsl(var(--pane));
     border-top-color: hsl(var(--pane-line));
     color: hsl(var(--pane-ink-soft));
   }
 
-  /* The in-Threa result stays paper: a window onto the app beside its code. */
-  .is-split .dr-code .stream-preview {
-    margin: 0;
-    border-color: transparent;
-  }
-  .is-split .dr-code .pg-block + .stream-preview {
-    margin-top: 14px;
-    border-radius: 8px;
-  }
-  .is-split .dr-code .pg-block:has(+ .stream-preview) {
-    border-radius: 6px;
-  }
-  .is-split .dr-code .pg-block:has(+ .stream-preview) .pg-pre:last-child {
-    border-radius: 0 0 5px 5px;
-  }
-
-  /* Quickstart steps: each step is a row; the number and its rail stay on the
-     prose column so the pane edge stays straight. */
-  .is-split .steps {
-    margin: 0;
-    padding: 0;
-  }
-  .is-split .steps > li.dr {
-    margin: 0;
-    padding: var(--row-y) 0;
-  }
-  .is-split .steps > li.dr > .dr-text {
-    padding-left: 44px;
-  }
-  .is-split .steps > li.dr > .dr-code {
-    position: sticky;
-  }
-  .is-split .steps > li.dr::before {
-    top: calc(var(--row-y) - 2px);
-  }
-  .is-split .steps > li.dr:first-child::after {
-    top: var(--row-y);
-  }
-  .is-split .steps > li.dr:last-child::after {
-    display: block;
-    bottom: calc(100% - var(--row-y));
-  }
-
-  /* Too narrow for a value beside its label until the prose column grows. */
-  @media (max-width: 1439px) {
-    .is-split .facts {
-      grid-template-columns: minmax(0, 1fr);
-      row-gap: 2px;
-    }
-    .is-split .facts dd + dt {
-      margin-top: 10px;
-    }
-  }
-
-  /* API reference: schema rows are compact, request lines and JSON are not,
-     so the code gets more of the width here than on the prose pages. */
-  .docs-article.is-split:has(> .api-group) {
-    --split: max(40%, 430px);
-  }
   .is-split .api-op {
     position: relative;
     padding: 34px 0;
