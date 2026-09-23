@@ -53,6 +53,13 @@ const PAGES: Page[] = [
     blurb: "What the API covers, base URL, and a quickstart from key to first search.",
   },
   {
+    route: "/developers/quickstart",
+    html: "developers/quickstart/index.html",
+    md: "developers/quickstart.md",
+    title: "Quickstart",
+    blurb: "From an API key to your first memo search, one step at a time.",
+  },
+  {
     route: "/developers/authentication",
     html: "developers/authentication/index.html",
     md: "developers/authentication.md",

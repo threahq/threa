@@ -55,6 +55,18 @@ function writeCreds(creds: Creds): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(creds))
 }
 
+/* The quickstart page follows these to track the reader's progress. */
+function announceCreds(creds: Creds): void {
+  const ready = isSet(creds, "workspaceId") && isSet(creds, "apiKey")
+  document.dispatchEvent(new CustomEvent("threa:creds", { detail: { ready } }))
+}
+
+function announceRun(block: Element, status: number, body: unknown): void {
+  block.dispatchEvent(
+    new CustomEvent("threa:run", { bubbles: true, detail: { ok: status >= 200 && status < 300, status, body } })
+  )
+}
+
 function isSet(creds: Creds, name: VarName): boolean {
   return Boolean(creds[name] && creds[name].trim().length > 0)
 }
@@ -164,6 +176,7 @@ function bindCredentialsBar(): void {
     writeCreds(next)
     hydrateTokens(next)
     scheduleVerify(next)
+    announceCreds(next)
   }
   base.addEventListener("input", onChange)
   ws.addEventListener("input", onChange)
@@ -176,6 +189,7 @@ function bindCredentialsBar(): void {
     key.value = ""
     hydrateTokens(readCreds())
     setStatus("idle", "Not connected")
+    announceCreds(readCreds())
   })
 
   reveal?.addEventListener("click", () => {
@@ -319,7 +333,7 @@ function bindRun(): void {
     btn.addEventListener("click", async () => {
       const block = btn.closest(".pg-block")
       const out = block?.querySelector<HTMLElement>(".pg-output")
-      if (!out) return
+      if (!block || !out) return
       let cfg: RunConfig
       try {
         cfg = JSON.parse(btn.dataset.run || "{}")
@@ -329,6 +343,7 @@ function bindRun(): void {
       const creds = readCreds()
       if (!isSet(creds, "workspaceId") || !isSet(creds, "apiKey")) {
         renderOutput(out, "err", "Set your workspace ID and API key above to run this.")
+        announceRun(block, 0, null)
         return
       }
       const url = substitute(cfg.path, creds)
@@ -347,13 +362,16 @@ function bindRun(): void {
         const ms = Math.round(performance.now() - started)
         const text = await res.text()
         let pretty = text
+        let parsed: unknown = null
         try {
-          pretty = JSON.stringify(JSON.parse(text), null, 2)
+          parsed = JSON.parse(text)
+          pretty = JSON.stringify(parsed, null, 2)
         } catch {
           /* non-JSON (e.g. 204) — show as-is */
         }
         const head = `${cfg.method} ${res.status} ${res.statusText} · ${ms}ms\n\n`
         renderOutput(out, res.ok ? "ok" : "err", head + (pretty || "(empty body)"))
+        announceRun(block, res.status, parsed)
       } catch {
         renderOutput(
           out,
@@ -364,6 +382,7 @@ function bindRun(): void {
             `one env var that fixes it. The same call works from curl or your own ` +
             `server right now.`
         )
+        announceRun(block, 0, null)
       }
     })
   })
