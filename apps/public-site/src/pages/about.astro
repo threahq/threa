@@ -2,6 +2,7 @@
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
+import Message from "../components/Message.astro"
 import { loginUrl } from "../lib/config"
 
 const schema = [
@@ -57,9 +58,9 @@ const schema = [
       </div>
     </div>
 
-    <div class="frame warm">
+    <div class="frame warm ab-strands">
       <div class="memo-shell">
-        <div class="ab-grid">
+        <div class="ab-grid ab-intro">
           <h2>What I kept running into.</h2>
           <p class="ab-lede">
             Three of them stuck around long enough that I did something about them.
@@ -67,57 +68,115 @@ const schema = [
         </div>
 
         <div class="ab-grid ab-strand">
-          <h3>What did we say again?</h3>
-          <p>
-            Years of decisions and their reasoning pile up in workplace chat,
-            and I rarely find them again. My memory runs on gist: I'll remember
-            that we discussed something, sometimes why, rarely the exact wording
-            or where we said it, though I'll know it was Kate who said it. I
-            started wondering whether a chat app could do something more useful
-            with all that conversational data, keeping decisions and their
-            reasoning tied to the messages they came from. I assumed it would
-            cost too much. So far it hasn't.
-          </p>
+          <div class="ab-copy">
+            <h3>What did we say again?</h3>
+            <p>
+              Years of decisions and their reasoning pile up in workplace chat,
+              and I rarely find them again. My memory runs on gist: I'll remember
+              that we discussed something, sometimes why, rarely the exact wording
+              or where we said it, though I'll know it was Kate who said it. I
+              started wondering whether a chat app could do something more useful
+              with all that conversational data, keeping decisions and their
+              reasoning tied to the messages they came from. I assumed it would
+              cost too much. So far it hasn't.
+            </p>
+          </div>
+          <figure class="ab-scene ab-scene-kept" data-decorative aria-hidden="true">
+            <div class="recall-meta"><span class="hash">#api-v3</span><span>Mar 12</span></div>
+            <Message author="jordan" time="11:42">
+              <div class="tl-text">hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. can we pause this?</div>
+            </Message>
+            <Message author="maya" time="11:44">
+              <div class="tl-text">Fair. Let's hold v3 until you've walked us through it.</div>
+            </Message>
+            <p class="ab-kept">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /><path d="M20 3v4M22 5h-4M4 17v2M5 18H3" /></svg>
+              Saved to memory: <span class="ab-kept-title">Auth refactor held pending token-rotation review</span>
+            </p>
+          </figure>
         </div>
-        <div class="ab-grid ab-strand">
-          <h3>Tools are supposed to be yours.</h3>
-          <p>
-            Most tools want to become the platform you can't afford to leave, and
-            lately plenty of them insist on shipping their own AI agent. I rarely
-            want it. The agent I already use has my codebase, my tools, and the
-            context I've built around it. Another agent inside another app starts
-            without them. Threa has Ariadne too, and I want her to be genuinely
-            great, but she's at her best inside the room, where the shared context
-            lives. For my own work I'd rather bring the agent I already use, so
-            Threa connects to it through the bot runtime, public API, CLI, and MCP
-            server instead of trying to replace it.
-          </p>
+
+        <div class="ab-grid ab-strand is-flipped">
+          <div class="ab-copy">
+            <h3>Tools are supposed to be yours.</h3>
+            <p>
+              Most tools want to become the platform you can't afford to leave, and
+              lately plenty of them insist on shipping their own AI agent. I rarely
+              want it. The agent I already use has my codebase, my tools, and the
+              context I've built around it. Another agent inside another app starts
+              without them. Threa has Ariadne too, and I want her to be genuinely
+              great, but she's at her best inside the room, where the shared context
+              lives. For my own work I'd rather bring the agent I already use, so
+              Threa connects to it through the bot runtime, public API, CLI, and MCP
+              server instead of trying to replace it.
+            </p>
+          </div>
+          <figure class="ab-scene" data-decorative aria-hidden="true">
+            <div class="recall-meta"><span class="hash">#api-v3</span><span>Apr 20</span></div>
+            <Message author="alex" time="16:20">
+              <div class="tl-text"><span class="mention">@claude-code</span> does the rotation fix cover mobile sessions too?</div>
+            </Message>
+            <Message author="claude-code" time="16:21">
+              <div class="tl-text">Not yet. The migration in rotation.ts only moves web refresh tokens. I've started on mobile in <span class="ref-pill">auth-rotation</span>.</div>
+            </Message>
+          </figure>
         </div>
+
         <div class="ab-grid ab-strand">
-          <h3>Chat could be so much nicer.</h3>
-          <p>
-            Nested threading, quoting, replying to one message in a busy room,
-            formatting that behaves. None of it sells a platform, which is
-            probably why it keeps getting skipped, but it all adds up over a day
-            spent in chat. After years of putting up with the basics done badly,
-            I think we deserve nice things.
-          </p>
+          <div class="ab-copy">
+            <h3>Chat could be so much nicer.</h3>
+            <p>
+              Nested threading, quoting, replying to one message in a busy room,
+              formatting that behaves. None of it sells a platform, which is
+              probably why it keeps getting skipped, but it all adds up over a day
+              spent in chat. After years of putting up with the basics done badly,
+              I think we deserve nice things.
+            </p>
+          </div>
+          <figure class="ab-scene" data-decorative aria-hidden="true">
+            <div class="recall-meta"><span class="hash">#product</span><span>May 7</span></div>
+            <Message author="jordan" time="10:02" class="ab-noise">
+              <div class="tl-text">standup moved to 10:30 btw</div>
+            </Message>
+            <Message author="sam" time="10:03" class="ab-noise">
+              <div class="tl-text">pizza again on friday? taking orders</div>
+            </Message>
+            <Message author="maya" time="10:04">
+              <div class="quote-card">
+                <div class="qm"><svg><use href="#quote-icon" /></svg></div>
+                <div class="q-author">
+                  <div class="q-avatar tl-avatar av-sam">SP</div>
+                  <div class="q-name">Sam Patel</div>
+                  <div class="q-time">09:41</div>
+                </div>
+                <div class="q-body">empty states for the board are on staging now</div>
+              </div>
+              <div class="tl-text ab-after">These look great. Can they ship with v3 on Thursday?</div>
+              <div class="reactions"><span class="rxn"><span class="em">🙌</span><span class="num">2</span></span></div>
+            </Message>
+          </figure>
         </div>
       </div>
     </div>
 
     <div class="frame">
       <div class="memo-shell">
-        <div class="ab-grid">
-          <h2>I'm the team.</h2>
-          <div>
-            <p class="ab-lede">
+        <div class="ab-grid ab-team">
+          <div class="ab-letter">
+            <h2>I'm the team.</h2>
+            <p>
               Hi, I'm Kristoffer. People have paid me to build software for over ten
               years now. During parental leave I started tinkering on Threa to keep
               myself from going insane, and I'm not sure it worked: here I am, up late
               after my wife has gone to bed, talking to an agent about who I am and why
               I'm building this.
             </p>
+          </div>
+          <div class="ab-sig">
+            <div class="ab-sig-who" data-decorative aria-hidden="true">
+              <span class="ab-sig-mark">KR</span>
+              <span class="ab-sig-name">Kristoffer Remback</span>
+            </div>
             <div class="ab-links">
               <a href="https://github.com/kristofferremback" rel="me noopener" target="_blank">GitHub</a>
               <a href="https://www.linkedin.com/in/kristofferremback/" rel="me noopener" target="_blank">LinkedIn</a>
@@ -127,16 +186,18 @@ const schema = [
       </div>
     </div>
 
-    <div class="frame warm">
-      <div class="memo-shell">
-        <div class="ab-grid">
-          <h2>Built the way I want tools to work.</h2>
-          <div>
-            <p class="ab-lede">
+    <div class="frame">
+      <div class="memo-shell ab-principles-shell">
+        <div class="ab-grid ab-principles">
+          <div class="ab-stance">
+            <h2>Built the way I want tools to work.</h2>
+            <p>
               Good at its job, composable with everything else, and easy to step away
               from. Threa is built that way on purpose. The door stays open, so if you
               stay it's because you want to, not because leaving would cost you.
             </p>
+          </div>
+          <div class="ab-practice">
             <p class="ab-lede">
               It has also been my way into building with AI agents. Most of Threa is
               written by directing them, but the thinking stays mine, and that matters
@@ -184,71 +245,270 @@ const schema = [
     </footer>
   </div>
 
+  <script is:inline>
+    /* The page's one moment: when the first scene scrolls into view, the two
+       source messages glow and the memory line lands under them, the way the app
+       marks a capture. Without the observer, or with reduced motion, the scene
+       is simply shown finished. */
+    (function () {
+      const scene = document.querySelector(".ab-scene-kept")
+      if (!scene || !("IntersectionObserver" in window)) return
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
+      scene.classList.add("is-waiting")
+      const io = new IntersectionObserver((entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return
+        io.disconnect()
+        scene.classList.add("is-kept")
+      }, { threshold: 0.8 })
+      io.observe(scene)
+    })()
+  </script>
+
   <style>
-    /* Every section shares one grid: headings hang in the left column, prose
-       reads down the right one, so the page keeps the same two axes top to
-       bottom instead of switching between split, left and centred layouts. */
+    /* One knob for every display heading on this page, so the site-wide
+       weight can be tried here without touching global.css. */
+    .about {
+      --about-display-weight: 600;
+    }
+
+    /* A 12-column grid shared by every section. Headings and the left copy
+       start at column 1, the right copy at column 7, so sections change shape
+       without changing axes. */
     .ab-grid {
       display: grid;
-      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-      column-gap: clamp(40px, 5vw, 72px);
-      align-items: baseline;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      column-gap: clamp(20px, 2.4vw, 32px);
     }
-    .ab-grid > :first-child { grid-column: 1; }
-    .ab-grid > :last-child { grid-column: 2; }
 
     .hero-shell::before { display: none; }
     .ab-hero .h-display {
       grid-column: 1 / -1;
-      font-size: clamp(42px, 6.4vw, 92px);
+      font-weight: var(--about-display-weight);
+      font-size: clamp(42px, 6.6vw, 96px);
+      letter-spacing: -0.03em;
+      line-height: 1;
       text-wrap: balance;
-      margin: 0 0 40px;
+      margin: 0 0 44px;
     }
     .ab-lead {
+      grid-column: 7 / -1;
       margin: 0;
-      max-width: 34em;
+      max-width: 32em;
       font-size: 20px;
       line-height: 1.5;
       color: hsl(var(--ink));
     }
 
-    .memo-shell h2 {
-      margin: 0;
-      max-width: 9.5em;
+    .about .memo-shell h2 {
+      font-weight: var(--about-display-weight);
+      letter-spacing: -0.022em;
+      line-height: 1.06;
       text-wrap: balance;
+      margin: 0;
     }
     .ab-lede {
       margin: 0;
+      text-wrap: pretty;
       max-width: 36em;
       font-size: 18px;
       line-height: 1.6;
       color: hsl(var(--ink-soft));
     }
-    .ab-lede + .ab-lede { margin-top: 18px; }
 
+    .ab-intro { align-items: baseline; }
+    .ab-intro h2 { grid-column: 1 / span 5; }
+    .ab-intro .ab-lede { grid-column: 7 / -1; }
+
+    /* The three strands mirror each other: copy left and scene right, then
+       swapped, then back, around the same two axes. */
     .ab-strand {
-      margin-top: 44px;
-      padding-top: 28px;
-      border-top: 1px solid hsl(var(--line));
+      margin-top: clamp(72px, 9vw, 120px);
+      align-items: center;
     }
-    .ab-grid + .ab-strand { margin-top: 56px; }
-    .ab-strand h3 {
-      margin: 0;
+    .ab-intro + .ab-strand { margin-top: clamp(56px, 7vw, 96px); }
+    .ab-strand .ab-copy { grid-column: 1 / span 6; grid-row: 1; }
+    .ab-strand .ab-scene { grid-column: 8 / -1; grid-row: 1; }
+    .ab-strand.is-flipped .ab-copy { grid-column: 7 / -1; }
+    .ab-strand.is-flipped .ab-scene { grid-column: 1 / span 5; }
+
+    .ab-copy h3 {
+      margin: 0 0 14px;
       font-family: var(--font-display);
-      font-weight: 750;
-      font-size: 24px;
-      line-height: 1.15;
-      letter-spacing: -0.02em;
+      font-weight: var(--about-display-weight);
+      font-size: clamp(24px, 2.5vw, 32px);
+      line-height: 1.1;
+      letter-spacing: -0.018em;
       color: hsl(var(--ink));
       text-wrap: balance;
     }
-    .ab-strand p {
+    .ab-copy p {
       margin: 0;
-      max-width: 38em;
-      font-size: 16px;
-      line-height: 1.7;
+      text-wrap: pretty;
+      max-width: 34em;
+      font-size: 17px;
+      line-height: 1.65;
       color: hsl(var(--ink-soft));
     }
+
+    /* Each scene is a strip of the app sliding in from the page edge: a
+       paper panel that bleeds off the side it sits on, alternating with the
+       strands so the section swings instead of leaning. */
+    .about .ab-strands { overflow-x: clip; }
+    .about .ab-strands .memo-shell { overflow: visible; }
+    .ab-scene {
+      position: relative;
+      isolation: isolate;
+      margin: 0;
+      padding: 18px 0 22px;
+    }
+    .ab-scene::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 0 -100vw 0 -24px;
+      background: hsl(var(--paper));
+      border: 1px solid hsl(var(--line));
+      border-right: 0;
+      border-radius: 16px 0 0 16px;
+    }
+    .ab-strand.is-flipped .ab-scene::before {
+      inset: 0 -24px 0 -100vw;
+      border: 1px solid hsl(var(--line));
+      border-left: 0;
+      border-radius: 0 16px 16px 0;
+    }
+    .ab-scene .recall-meta { padding: 0 12px; margin-bottom: 2px; }
+    .ab-scene :global(.tl-row.ab-noise) { opacity: 0.42; }
+    .ab-scene .quote-card { margin: 6px 0 8px; }
+    .ab-after { margin-top: 2px; }
+
+    .ab-kept {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0 6px;
+      margin: 14px 0 0;
+      padding: 0 12px;
+      font-size: 13.5px;
+      line-height: 1.5;
+      text-align: center;
+      color: hsl(var(--muted));
+    }
+    .ab-kept svg {
+      flex: none;
+      width: 14px;
+      height: 14px;
+      align-self: center;
+      color: hsl(var(--gold));
+    }
+    .ab-kept-title {
+      font-weight: 500;
+      color: hsl(var(--ink) / 0.8);
+    }
+
+    .ab-scene-kept.is-waiting .ab-kept {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    .ab-scene-kept.is-kept .ab-kept {
+      opacity: 1;
+      transform: none;
+      transition: opacity 0.5s ease-out 1.1s, transform 0.5s ease-out 1.1s;
+    }
+    .ab-scene-kept.is-kept .ab-kept svg {
+      animation: kept-spark 0.7s ease-out 1.1s both;
+    }
+    .ab-scene-kept.is-kept :global(.tl-row) {
+      animation: kept-glow 2.4s ease-in-out 0.2s both;
+    }
+    @keyframes kept-glow {
+      0%, 100% { background-color: hsl(var(--gold) / 0); }
+      30%, 55% { background-color: hsl(var(--gold) / 0.12); }
+    }
+    @keyframes kept-spark {
+      from { transform: scale(0.4) rotate(-40deg); }
+      to { transform: none; }
+    }
+
+    /* The team section reads as a note: the heading runs into the paragraph
+       at reading size across most of the width, signed off in the margin. */
+    .ab-team { align-items: end; }
+    .ab-letter { grid-column: 1 / span 8; }
+    .about .ab-letter h2,
+    .ab-letter p {
+      display: inline;
+      font-size: clamp(22px, 2.3vw, 30px);
+      line-height: 1.45;
+    }
+    .about .ab-letter h2 {
+      margin-right: 0.15em;
+      letter-spacing: -0.012em;
+      color: hsl(var(--ink));
+    }
+    .ab-letter p {
+      margin: 0;
+      color: hsl(var(--ink-soft));
+    }
+    .ab-sig { grid-column: 10 / -1; }
+    .ab-sig-who {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .ab-sig-mark {
+      display: grid;
+      place-items: center;
+      flex: none;
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      background: hsl(var(--gold) / 0.16);
+      color: hsl(var(--ink));
+      font-family: var(--font-display);
+      font-weight: var(--about-display-weight);
+      font-size: 16px;
+      letter-spacing: -0.01em;
+    }
+    .ab-sig-name {
+      font-size: 15px;
+      font-weight: 500;
+      color: hsl(var(--ink));
+    }
+    .ab-sig .ab-links { margin-top: 20px; }
+
+    /* Principles share the page's plain paper with the team note; a rule and
+       a heading set at the page's second size mark the turn instead of a
+       tint. */
+    .about .ab-principles-shell { padding-top: 0; }
+    .ab-principles {
+      align-items: start;
+      padding-top: clamp(64px, 7vw, 96px);
+      border-top: 1px solid hsl(var(--line));
+    }
+    .ab-stance { display: contents; }
+    .about .ab-principles h2 {
+      grid-column: 1 / -1;
+      grid-row: 1;
+      max-width: none;
+      margin-bottom: clamp(32px, 4vw, 56px);
+      font-size: clamp(36px, 4.6vw, 64px);
+      letter-spacing: -0.028em;
+      line-height: 1.02;
+    }
+    .ab-stance p {
+      grid-column: 1 / span 5;
+      grid-row: 2;
+      margin: 0;
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: clamp(20px, 1.9vw, 24px);
+      line-height: 1.35;
+      letter-spacing: -0.01em;
+      color: hsl(var(--ink));
+    }
+    .ab-practice { grid-column: 7 / -1; grid-row: 2; }
+    .ab-practice .ab-lede { padding-top: 4px; }
 
     .ab-links {
       display: flex;
@@ -272,29 +532,74 @@ const schema = [
 
     /* The close takes the home page's night register, so both pages end on
        the same weight. */
-    .ab-close h2 { color: hsl(38 16% 94%); }
+    .ab-close .ab-grid { align-items: baseline; }
+    .ab-close .ab-grid > :first-child { grid-column: 1 / span 5; }
+    .ab-close .ab-grid > :last-child { grid-column: 7 / -1; }
+    .about .ab-close h2 { color: hsl(38 16% 94%); }
     .ab-close .ab-lede { color: hsl(35 12% 72%); margin-bottom: 28px; }
 
     @media (hover: hover) {
       .ab-links a:hover { text-decoration-color: hsl(var(--gold)); }
     }
 
+    @media (prefers-reduced-motion: reduce) {
+      .ab-scene-kept .ab-kept,
+      .ab-scene-kept .ab-kept svg,
+      .ab-scene-kept :global(.tl-row) {
+        opacity: 1;
+        transform: none;
+        animation: none;
+        transition: none;
+      }
+    }
+
     @media (max-width: 880px) {
       .ab-grid { grid-template-columns: minmax(0, 1fr); }
-      .ab-grid > :first-child,
-      .ab-grid > :last-child { grid-column: 1; }
-      .memo-shell h2 { margin-bottom: 18px; max-width: none; }
+      .ab-grid > *,
+      .ab-hero .h-display,
+      .ab-intro h2,
+      .ab-intro .ab-lede,
+      .ab-letter,
+      .ab-sig,
+      .ab-strand .ab-copy,
+      .ab-strand .ab-scene,
+      .ab-strand.is-flipped .ab-copy,
+      .ab-strand.is-flipped .ab-scene,
+      .ab-close .ab-grid > :first-child,
+      .ab-close .ab-grid > :last-child,
+      .about .ab-principles h2,
+      .ab-stance p,
+      .ab-practice {
+        grid-column: 1;
+        grid-row: auto;
+      }
       .ab-hero .h-display { margin-bottom: 24px; }
       .ab-lead { font-size: 18px; }
       .ab-lede { font-size: 17px; }
-      .ab-strand { margin-top: 36px; padding-top: 24px; }
-      .ab-grid + .ab-strand { margin-top: 40px; }
-      .ab-strand h3 { font-size: 21px; margin-bottom: 10px; }
-      .ab-strand p { font-size: 16px; }
+      .about .ab-intro h2,
+      .about .ab-close h2 { margin-bottom: 16px; }
+      .ab-strand { margin-top: 64px; }
+      .ab-intro + .ab-strand { margin-top: 48px; }
+      .ab-strand .ab-scene { margin-top: 28px; }
+      .ab-scene::before,
+      .ab-strand.is-flipped .ab-scene::before {
+        inset: 0 -100vw;
+        border-left: 0;
+        border-right: 0;
+        border-radius: 0;
+      }
+      .ab-copy h3 { margin-bottom: 10px; }
+      .ab-copy p { font-size: 16px; }
+      .ab-practice { margin-top: 28px; }
+      .ab-sig { margin-top: 36px; }
+      .ab-practice .ab-lede { padding-top: 0; }
     }
 
     @media (max-width: 560px) {
       .about .memo-shell { padding-top: 64px; padding-bottom: 64px; }
+      .ab-scene .recall-meta { padding: 0; }
+      .ab-scene :global(.tl-row) { padding-left: 0; padding-right: 0; }
+      .ab-scene :global(.tl-row.bot) { padding-left: 10px; }
     }
   </style>
 </Layout>
