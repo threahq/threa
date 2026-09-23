@@ -11,6 +11,7 @@ import {
   applyStreamReadMessages,
   applyStreamsReadAllOrdinals,
   applyMovedSourceOrdinal,
+  applyInboxHeld,
   deriveActivityCounts,
   upsertActivity,
   dropActivitiesById,
@@ -182,6 +183,46 @@ describe("applyStreamReadOrdinal", () => {
     expect(applyStreamReadOrdinal(state, "s1", 3).unreadActivityCount).toBe(1)
     // A read at the current position (the D5 caught-up heal) still clears it.
     expect(applyStreamReadOrdinal(state, "s1", 8).unreadActivityCount).toBe(0)
+  })
+
+  it("optimistically holds a stream in the Inbox when a read lowers its unread count", () => {
+    const next = applyStreamReadOrdinal(seeded, "s1", 6)
+    expect(next.unreadCounts.s1).toBe(2)
+    expect(next.inboxHeldStreamIds).toEqual(["s1"])
+  })
+
+  it("does not hold a stream whose unread count was already zero", () => {
+    const zero = makeState({ unreadCounts: { s1: 0 }, latestOrdinals: { s1: 8 } })
+    const next = applyStreamReadOrdinal(zero, "s1", 8)
+    expect(next.inboxHeldStreamIds ?? []).toEqual([])
+  })
+
+  it("does not hold a stream when the read does not lower its unread count (stale read)", () => {
+    const read = applyStreamReadOrdinal(seeded, "s1", 8)
+    const healed = { ...read, inboxHeldStreamIds: [] }
+    const stale = applyStreamReadOrdinal(healed, "s1", 5)
+    expect(stale.inboxHeldStreamIds ?? []).toEqual([])
+  })
+})
+
+describe("applyInboxHeld", () => {
+  it("adds streams to the held set", () => {
+    const state = makeState()
+    const next = applyInboxHeld(state, ["s1", "s2"], true)
+    expect(next.inboxHeldStreamIds).toEqual(expect.arrayContaining(["s1", "s2"]))
+    expect(next.inboxHeldStreamIds).toHaveLength(2)
+  })
+
+  it("removes streams from the held set", () => {
+    const state = makeState({ inboxHeldStreamIds: ["s1", "s2"] })
+    const next = applyInboxHeld(state, ["s1"], false)
+    expect(next.inboxHeldStreamIds).toEqual(["s2"])
+  })
+
+  it("returns the same reference when every stream's membership already matches", () => {
+    const state = makeState({ inboxHeldStreamIds: ["s1"] })
+    expect(applyInboxHeld(state, ["s1"], true)).toBe(state)
+    expect(applyInboxHeld(state, [], true)).toBe(state)
   })
 })
 
@@ -630,6 +671,12 @@ describe("diffCounterStreams", () => {
     const state = makeState({ unreadCounts: { s1: 1 }, unreadActivities: [act("a1", "s1")] })
     expect(diffCounterStreams(state, state)).toEqual(new Set())
   })
+
+  it("collects a stream whose held membership flipped", () => {
+    const prev = makeState({ inboxHeldStreamIds: ["s1"] })
+    const next = makeState({ inboxHeldStreamIds: ["s1", "s2"] })
+    expect(diffCounterStreams(prev, next)).toEqual(new Set(["s2"]))
+  })
 })
 
 describe("mergeBootstrapUnreadFields", () => {
@@ -731,6 +778,47 @@ describe("mergeBootstrapUnreadFields", () => {
     const merged = mergeBootstrapUnreadFields(bootstrap, undefined, undefined)
     expect(merged.unreadCounts).toEqual({ s1: 4, s2: 2 })
     expect(merged.mutedStreamIds).toEqual(["s9"])
+  })
+
+  it("held membership: a counter-touched stream keeps its local hold, an untouched stream takes the server's", () => {
+    const heldBootstrap = {
+      ...bootstrap,
+      inboxHeldStreamIds: ["s2"],
+    } as unknown as import("@threahq/types").WorkspaceBootstrap
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      heldBootstrap,
+      {
+        unreadCounts: { s1: 5 },
+        latestOrdinals: { s1: 11 },
+        mutedStreamIds: [],
+        inboxHeldStreamIds: ["s1"],
+        counterTouchedAt: { s1: fetchStartedAt + 500 },
+      },
+      fetchStartedAt
+    )
+    // s1 (touched): local hold wins over the server, which had no entry for it.
+    // s2 (untouched): server's hold stands even though it wasn't in local state.
+    expect(merged.inboxHeldStreamIds.sort()).toEqual(["s1", "s2"])
+  })
+
+  it("held membership: a touched stream that is locally unheld drops the server's hold for it", () => {
+    const heldBootstrap = {
+      ...bootstrap,
+      inboxHeldStreamIds: ["s1", "s2"],
+    } as unknown as import("@threahq/types").WorkspaceBootstrap
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeBootstrapUnreadFields(
+      heldBootstrap,
+      {
+        unreadCounts: { s1: 0 },
+        mutedStreamIds: [],
+        inboxHeldStreamIds: [],
+        counterTouchedAt: { s1: fetchStartedAt + 500 },
+      },
+      fetchStartedAt
+    )
+    expect(merged.inboxHeldStreamIds).toEqual(["s2"])
   })
 })
 

@@ -11,6 +11,7 @@ import type {
   CreateUserApiKeyResponse,
   WorkspacePermissionSlug,
   MarkAllAsReadResponse,
+  ClearInboxResponse,
 } from "@threahq/types"
 
 export type { WorkspaceBootstrap, CreateWorkspaceInput }
@@ -71,6 +72,10 @@ export const workspacesApi = {
 
   async markAllAsRead(workspaceId: string): Promise<MarkAllAsReadResponse> {
     return api.post<MarkAllAsReadResponse>(`/api/workspaces/${workspaceId}/streams/read-all`)
+  },
+
+  async clearInbox(workspaceId: string, streamIds: string[]): Promise<ClearInboxResponse> {
+    return api.post<ClearInboxResponse>(`/api/workspaces/${workspaceId}/streams/inbox/clear`, { streamIds })
   },
 
   async completeUserSetup(workspaceId: string, data: CompleteUserSetupInput): Promise<User> {

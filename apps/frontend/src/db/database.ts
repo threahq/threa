@@ -630,6 +630,12 @@ export interface CachedUnreadState {
    * readers normalize with `?.`. See sync/unread-counters.ts.
    */
   readMessageIds?: Record<string, string[]>
+  /**
+   * Streams currently held in the sidebar Inbox — read but not yet explicitly
+   * cleared. Absent for rows cached before the field shipped (reads as none
+   * held). See sync/unread-counters.ts.
+   */
+  inboxHeldStreamIds?: string[]
   mutedStreamIds: string[]
   /**
    * Per-stream timestamp of the last local counter write (stamped by

@@ -47,6 +47,14 @@ export interface UnreadCounterState {
    * under sync-log order); a `stream:read_all` clears it.
    */
   readMessageIds?: Record<string, string[]>
+  /**
+   * Streams currently held in the sidebar Inbox — read but not yet explicitly
+   * cleared (`POST .../inbox/clear`). Membership is `(unread > 0 || held) &&
+   * !muted`. Server confirmation arrives via `stream:inbox_updated`; a local
+   * read that lowers a positive unread count adds the stream here optimistically
+   * (see `applyStreamReadOrdinal`) ahead of that echo.
+   */
+  inboxHeldStreamIds?: string[]
 }
 
 /** Size of a stream's sparse read overlay (0 when absent). */
@@ -174,6 +182,28 @@ export function clearActivities(state: UnreadCounterState): UnreadCounterState {
 }
 
 /**
+ * Set/unset Inbox-hold membership for a set of streams. Same-reference no-op
+ * when every stream's membership already matches `held`.
+ */
+export function applyInboxHeld(
+  state: UnreadCounterState,
+  streamIds: readonly string[],
+  held: boolean
+): UnreadCounterState {
+  if (streamIds.length === 0) return state
+  const next = new Set(state.inboxHeldStreamIds ?? [])
+  let changed = false
+  for (const streamId of streamIds) {
+    if (held ? !next.has(streamId) : next.has(streamId)) {
+      held ? next.add(streamId) : next.delete(streamId)
+      changed = true
+    }
+  }
+  if (!changed) return state
+  return { ...state, inboxHeldStreamIds: Array.from(next) }
+}
+
+/**
  * Apply a `stream:activity` message ordinal. Latest max-merges; the implied
  * read position advances only for the author's own sends, which the server
  * also advances in the send transaction. Opening a route does not prove that
@@ -237,10 +267,16 @@ export function applyStreamReadOrdinal(
   // read (lastReadOrdinal < prevRead) must NOT wipe activity that arrived after
   // the real read.
   const next = lastReadOrdinal >= prevRead ? dropActivitiesForStream(withOverlay, streamId) : withOverlay
+  const prevUnread = state.unreadCounts[streamId] ?? 0
+  const unread = Math.max(0, latest - read - ov)
+  // Inbox hold (approximation of the server's inbox_held flip): a local read
+  // that lowers a positive unread count enters the Inbox hold immediately,
+  // ahead of the `stream:inbox_updated` echo that confirms/corrects it.
+  const held = prevUnread > 0 && unread < prevUnread ? applyInboxHeld(next, [streamId], true) : next
   return {
-    ...next,
-    latestOrdinals: { ...next.latestOrdinals, [streamId]: latest },
-    unreadCounts: { ...next.unreadCounts, [streamId]: Math.max(0, latest - read - ov) },
+    ...held,
+    latestOrdinals: { ...held.latestOrdinals, [streamId]: latest },
+    unreadCounts: { ...held.unreadCounts, [streamId]: unread },
   }
 }
 
@@ -424,6 +460,11 @@ export function diffCounterStreams(prev: UnreadCounterState, next: UnreadCounter
   for (const id of new Set([...prevSig.keys(), ...nextSig.keys()])) {
     if (prevSig.get(id) !== nextSig.get(id)) out.add(id)
   }
+  const prevHeld = new Set(prev.inboxHeldStreamIds ?? [])
+  const nextHeld = new Set(next.inboxHeldStreamIds ?? [])
+  for (const id of new Set([...prevHeld, ...nextHeld])) {
+    if (prevHeld.has(id) !== nextHeld.has(id)) out.add(id)
+  }
   return out
 }
 
@@ -450,6 +491,7 @@ export interface LocalCounterCache {
   unreadActivities?: Activity[]
   latestOrdinals?: Record<string, number>
   readMessageIds?: Record<string, string[]>
+  inboxHeldStreamIds?: string[]
   mutedStreamIds: string[]
   /** Per-stream timestamp of the last local counter write — see `diffCounterStreams` stamping in `putCountersIdb`. */
   counterTouchedAt?: Record<string, number>
@@ -477,6 +519,7 @@ export function mergeBootstrapUnreadFields(
   unreadActivityCount: number
   latestOrdinals: Record<string, number>
   readMessageIds: Record<string, string[]>
+  inboxHeldStreamIds: string[]
   mutedStreamIds: string[]
   counterTouchedAt: Record<string, number>
   mutedTouchedAt: Record<string, number>
@@ -491,6 +534,7 @@ export function mergeBootstrapUnreadFields(
       ...bootstrapActivityCacheFields(bootstrap),
       latestOrdinals: bootstrap.messageCounts ?? {},
       readMessageIds: bootstrap.readMessageIds ?? {},
+      inboxHeldStreamIds: bootstrap.inboxHeldStreamIds ?? [],
       mutedStreamIds: bootstrap.mutedStreamIds,
       counterTouchedAt,
       mutedTouchedAt,
@@ -499,6 +543,11 @@ export function mergeBootstrapUnreadFields(
   const unreadCounts = { ...bootstrap.unreadCounts }
   const latestOrdinals = { ...bootstrap.messageCounts }
   const readMessageIds = { ...bootstrap.readMessageIds }
+  // Held membership rides the same touched-set as the counter triple: a
+  // stream keeping its local unread also keeps its local hold, since a stale
+  // server snapshot would otherwise un-hold a stream the local device just
+  // (re)held.
+  const inboxHeldStreamIds = new Set(bootstrap.inboxHeldStreamIds ?? [])
   for (const streamId of touched) {
     unreadCounts[streamId] = local.unreadCounts[streamId] ?? 0
     // The triple stays paired: a stream keeping its local unread keeps its
@@ -509,6 +558,8 @@ export function mergeBootstrapUnreadFields(
     const localOverlay = local.readMessageIds?.[streamId]
     if (localOverlay !== undefined) readMessageIds[streamId] = localOverlay
     else delete readMessageIds[streamId]
+    if (local.inboxHeldStreamIds?.includes(streamId)) inboxHeldStreamIds.add(streamId)
+    else inboxHeldStreamIds.delete(streamId)
   }
   // Mute membership merges on its OWN freshness — a mute-only toggle must not
   // freeze the stream's counter triple, and counter writes must not carry a
@@ -529,6 +580,7 @@ export function mergeBootstrapUnreadFields(
     ...deriveActivityCounts(rows),
     latestOrdinals,
     readMessageIds,
+    inboxHeldStreamIds: Array.from(inboxHeldStreamIds),
     mutedStreamIds: Array.from(mutedStreamIds),
     counterTouchedAt,
     mutedTouchedAt,
@@ -547,6 +599,7 @@ export function toCounterState(bootstrap: WorkspaceBootstrap): UnreadCounterStat
     ...deriveActivityCounts(rows),
     latestOrdinals: bootstrap.messageCounts,
     readMessageIds: bootstrap.readMessageIds,
+    inboxHeldStreamIds: bootstrap.inboxHeldStreamIds,
   }
 }
 
@@ -561,5 +614,6 @@ export function withCounterState(bootstrap: WorkspaceBootstrap, state: UnreadCou
     unreadActivityCount: state.unreadActivityCount,
     messageCounts: state.latestOrdinals,
     readMessageIds: state.readMessageIds,
+    inboxHeldStreamIds: state.inboxHeldStreamIds,
   }
 }

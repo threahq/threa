@@ -689,6 +689,7 @@ export type {
   StreamReadFrontier,
   StreamReadFrontierSnapshot,
   MarkAllAsReadResponse,
+  ClearInboxResponse,
   MarkAsReadResponse,
   ActiveAgentSession,
   ActiveCall,

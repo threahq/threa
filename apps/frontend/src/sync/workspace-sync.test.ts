@@ -2335,6 +2335,83 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
   })
 
+  describe("stream:inbox_updated", () => {
+    function seedUnreadState(inboxHeldStreamIds?: string[]) {
+      return db.unreadState.put({
+        id: "ws_1",
+        workspaceId: "ws_1",
+        unreadCounts: {},
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        unreadActivities: [],
+        latestOrdinals: {},
+        mutedStreamIds: [],
+        inboxHeldStreamIds,
+        _cachedAt: Date.now(),
+      })
+    }
+
+    it("adds streams to the held set when held is true", async () => {
+      await seedUnreadState([])
+      const queryClient = new QueryClient()
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:inbox_updated", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1", "stream_2"],
+        held: true,
+      })
+
+      await vi.waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.inboxHeldStreamIds).toEqual(expect.arrayContaining(["stream_1", "stream_2"]))
+      })
+      cleanup()
+    })
+
+    it("removes streams from the held set when held is false", async () => {
+      await seedUnreadState(["stream_1", "stream_2"])
+      const queryClient = new QueryClient()
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:inbox_updated", {
+        workspaceId: "ws_1",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        held: false,
+      })
+
+      await vi.waitFor(async () => {
+        const state = await db.unreadState.get("ws_1")
+        expect(state?.inboxHeldStreamIds).toEqual(["stream_2"])
+      })
+      cleanup()
+    })
+
+    it("ignores a payload for another workspace", async () => {
+      await seedUnreadState([])
+      const queryClient = new QueryClient()
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit("stream:inbox_updated", {
+        workspaceId: "ws_other",
+        authorId: "member_1",
+        streamIds: ["stream_1"],
+        held: true,
+      })
+
+      await new Promise((r) => setTimeout(r, 20))
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.inboxHeldStreamIds).toEqual([])
+      cleanup()
+    })
+  })
+
   it("applies gate-dispatched saved/scheduled catch-up replays to IDB", async () => {
     // The coverage the engine-gated `refetchOnReconnect` is traded for: these
     // handlers register on the engine's event gate, so a catch-up replay

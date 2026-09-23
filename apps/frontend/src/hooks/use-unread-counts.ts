@@ -1,11 +1,12 @@
 import { useCallback, useRef } from "react"
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { useWorkspaceService, useStreamService } from "@/contexts"
 import { workspaceKeys } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db } from "@/db"
-import { applyStreamReadOrdinal, deriveActivityCounts } from "@/sync/unread-counters"
+import { applyInboxHeld, applyStreamReadOrdinal, deriveActivityCounts } from "@/sync/unread-counters"
 import { commitCounterMutation } from "@/sync/catch-up-batch"
 import {
   applyReadStateSnapshotsIdb,
@@ -20,7 +21,7 @@ import {
   type ResolvedReadAllFrontier,
 } from "@/sync/read-state"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
-import type { WorkspaceBootstrap } from "@threahq/types"
+import type { Activity, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threahq/types"
 
 export type { ReadStateSnapshot }
 
@@ -99,6 +100,111 @@ export function applyReadStateSnapshots(
   return applyReadStateSnapshotsIdb(workspaceId, snapshots, startedAt)
 }
 
+/**
+ * `markAllAsRead`'s activity handling: the backend's companion
+ * `activityService.markAllAsRead` clears the viewer's ENTIRE activity feed
+ * (not just rows for the updated streams), so the local mirror wipes
+ * everything except rows touched (written locally) after the request
+ * departed — a bounded per-stream drop would leave stale badges on streams
+ * outside `updatedStreamIds` that this response doesn't otherwise cover.
+ */
+function markAllReadActivityFilter(rows: Activity[], _effectiveStreamIds: string[], touched: Set<string>): Activity[] {
+  return rows.filter((a) => a.streamId !== null && touched.has(a.streamId))
+}
+
+/**
+ * `clearInbox`'s activity handling: unlike mark-all-read, there is no
+ * companion full-feed clear — only the listed streams advanced, so only
+ * their rows drop (mirrors `dropActivitiesForStream`). Reusing
+ * `markAllReadActivityFilter` here would erase badges for every OTHER
+ * stream in the workspace on every clear.
+ */
+function clearInboxActivityFilter(rows: Activity[], effectiveStreamIds: string[]): Activity[] {
+  const scope = new Set(effectiveStreamIds)
+  return rows.filter((a) => a.streamId === null || !scope.has(a.streamId))
+}
+
+/**
+ * Shared body of a "read to latest for these streams" response (mark-all-read,
+ * clear-inbox): per-stream touched-at guard, counter zeroing, overlay clear,
+ * activity adjustment (caller-supplied — the two callers' scope differs, see
+ * the filters above), and canonical frontier resolve/persist/publish. One
+ * query-cache patch and one IDB transaction, mirroring each other so cache and
+ * IDB never disagree (INV-35: the two mutations below both route through this
+ * instead of duplicating the fold).
+ */
+async function applyReadAdvance(
+  queryClient: QueryClient,
+  workspaceId: string,
+  streamIds: string[],
+  frontiers: StreamReadFrontierSnapshot[] | undefined,
+  startedAt: number,
+  filterActivities: (rows: Activity[], effectiveStreamIds: string[], touched: Set<string>) => Activity[]
+): Promise<void> {
+  const touched = new Set<string>()
+  for (const streamId of streamIds) {
+    if (await readStateTouchedSince(workspaceId, streamId, startedAt)) touched.add(streamId)
+  }
+  const effectiveStreamIds = streamIds.filter((streamId) => !touched.has(streamId))
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old) return old
+    const newUnread = { ...old.unreadCounts }
+    const newReadMessageIds = { ...old.readMessageIds }
+    for (const streamId of effectiveStreamIds) {
+      newUnread[streamId] = 0
+      delete newReadMessageIds[streamId]
+    }
+    const rows = filterActivities(old.unreadActivities ?? [], effectiveStreamIds, touched)
+    return {
+      ...old,
+      unreadCounts: newUnread,
+      readMessageIds: newReadMessageIds,
+      unreadActivities: rows,
+      ...deriveActivityCounts(rows),
+    }
+  })
+
+  const responseFrontiers = frontiers ?? []
+  let resolved: ResolvedReadAllFrontier[] = []
+  await db.transaction("rw", [db.unreadState, db.streamReadState], async () => {
+    const txTouched = new Set<string>()
+    for (const streamId of streamIds) {
+      if (await readStateTouchedSince(workspaceId, streamId, startedAt)) txTouched.add(streamId)
+    }
+    const txEffective = streamIds.filter((streamId) => !txTouched.has(streamId))
+    const state = await db.unreadState.get(workspaceId)
+    if (state) {
+      const now = Date.now()
+      const newUnread = { ...state.unreadCounts }
+      const newReadMessageIds = { ...state.readMessageIds }
+      const counterTouchedAt = { ...state.counterTouchedAt }
+      for (const streamId of txEffective) {
+        newUnread[streamId] = 0
+        delete newReadMessageIds[streamId]
+        counterTouchedAt[streamId] = now
+      }
+      const rows = filterActivities(state.unreadActivities ?? [], txEffective, txTouched)
+      await db.unreadState.put({
+        ...state,
+        unreadCounts: newUnread,
+        readMessageIds: newReadMessageIds,
+        unreadActivities: rows,
+        ...deriveActivityCounts(rows),
+        counterTouchedAt,
+        _cachedAt: now,
+      })
+    }
+    if (responseFrontiers.length > 0) {
+      const effectiveFrontiers = responseFrontiers.filter((snapshot) => !txTouched.has(snapshot.streamId))
+      resolved = await resolveReadAllFrontiers(queryClient, workspaceId, effectiveFrontiers)
+      await putReadAllFrontiersIdb(workspaceId, resolved)
+    }
+  })
+
+  publishReadAllFrontiersToCache(queryClient, workspaceId, resolved)
+}
+
 export function useUnreadCounts(workspaceId: string) {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
@@ -116,6 +222,21 @@ export function useUnreadCounts(workspaceId: string) {
 
   const getTotalUnreadCount = useCallback(
     (): number => Object.values(unreadCountsRef.current).reduce((sum, count) => sum + count, 0),
+    []
+  )
+
+  const mutedStreamIdsRef = useRef<ReadonlySet<string>>(EMPTY_READ_SET)
+  mutedStreamIdsRef.current = unreadState?.mutedStreamIds ? new Set(unreadState.mutedStreamIds) : EMPTY_READ_SET
+
+  const inboxHeldStreamIdsRef = useRef<ReadonlySet<string>>(EMPTY_READ_SET)
+  inboxHeldStreamIdsRef.current = unreadState?.inboxHeldStreamIds ? new Set(unreadState.inboxHeldStreamIds) : EMPTY_READ_SET
+
+  const isInboxHeld = useCallback((streamId: string): boolean => inboxHeldStreamIdsRef.current.has(streamId), [])
+
+  const isInInbox = useCallback(
+    (streamId: string): boolean =>
+      !mutedStreamIdsRef.current.has(streamId) &&
+      ((unreadCountsRef.current[streamId] ?? 0) > 0 || inboxHeldStreamIdsRef.current.has(streamId)),
     []
   )
 
@@ -311,96 +432,36 @@ export function useUnreadCounts(workspaceId: string) {
       return { updatedStreamIds, frontiers, startedAt }
     },
     onSuccess: async ({ updatedStreamIds, frontiers, startedAt }) => {
-      // Ordering guard (touched-at), per stream: a read-state write that landed
-      // after this request departed — its own stream:read_all socket echo, or a
-      // LATER action (an explicit unread this stale mark-all must not erase) —
-      // owns that stream. Skip every response effect there: counter zeroing,
-      // overlay clear, held-activity clear, frontier advance, cache
-      // publication. Untouched streams from the same response still apply in
-      // the same atomic transaction. Operation order (touched-at) decides — no
-      // max-merge over a later explicit unread.
-      const touched = new Set<string>()
-      for (const streamId of updatedStreamIds) {
-        if (await readStateTouchedSince(workspaceId, streamId, startedAt)) touched.add(streamId)
-      }
-      const effectiveStreamIds = updatedStreamIds.filter((streamId) => !touched.has(streamId))
+      await applyReadAdvance(queryClient, workspaceId, updatedStreamIds, frontiers, startedAt, markAllReadActivityFilter)
+    },
+  })
 
-      // Counter/overlay/activity publication precedes the IDB transaction, so a
-      // persistence failure still leaves the initiating device's cache cleared.
-      // Touched streams keep their later state: counters stay raised, held
-      // activity rows survive — the stale response must not erase them.
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-        if (!old) return old
-        const newUnread = { ...old.unreadCounts }
-        const newReadMessageIds = { ...old.readMessageIds }
-        for (const streamId of effectiveStreamIds) {
-          newUnread[streamId] = 0
-          delete newReadMessageIds[streamId]
-        }
-        const rows = (old.unreadActivities ?? []).filter((a) => a.streamId !== null && touched.has(a.streamId))
-        return {
-          ...old,
-          unreadCounts: newUnread,
-          readMessageIds: newReadMessageIds,
-          unreadActivities: rows,
-          ...deriveActivityCounts(rows),
-        }
-      })
-
-      // Persistence: ONE transaction over every table this read-all touches —
-      // the counter singleton (unread zeroing, overlay clearing, activity
-      // clearing) plus `db.streamReadState` (the guard re-check reads it too) —
-      // so a failure can never land the counter clear without the frontier rows
-      // or vice versa. The response's canonical post-write frontiers resolve
-      // INSIDE the transaction (max-merged over IDB + caches, touched streams
-      // excluded so a later explicit unread is never max-merged away) so the
-      // pick and the write see the same table state; a response from before the
-      // field shipped omits `frontiers` — legacy counter behavior, frontier
-      // rows untouched.
-      const responseFrontiers = frontiers ?? []
-      let resolved: ResolvedReadAllFrontier[] = []
-      await db.transaction("rw", [db.unreadState, db.streamReadState], async () => {
-        // INV-20 re-check: a touch landing between the guard above and this
-        // transaction still wins over the stale response. The rw lock holds the
-        // outcome stable for the rest of the transaction.
-        const txTouched = new Set<string>()
-        for (const streamId of updatedStreamIds) {
-          if (await readStateTouchedSince(workspaceId, streamId, startedAt)) txTouched.add(streamId)
-        }
-        const state = await db.unreadState.get(workspaceId)
-        if (state) {
-          const now = Date.now()
-          const newUnread = { ...state.unreadCounts }
-          const newReadMessageIds = { ...state.readMessageIds }
-          const counterTouchedAt = { ...state.counterTouchedAt }
-          for (const streamId of updatedStreamIds) {
-            if (txTouched.has(streamId)) continue
-            newUnread[streamId] = 0
-            delete newReadMessageIds[streamId]
-            counterTouchedAt[streamId] = now
-          }
-          const rows = (state.unreadActivities ?? []).filter((a) => a.streamId !== null && txTouched.has(a.streamId))
-          await db.unreadState.put({
-            ...state,
-            unreadCounts: newUnread,
-            readMessageIds: newReadMessageIds,
-            unreadActivities: rows,
-            ...deriveActivityCounts(rows),
-            counterTouchedAt,
-            _cachedAt: now,
-          })
-        }
-        if (responseFrontiers.length > 0) {
-          const effectiveFrontiers = responseFrontiers.filter((snapshot) => !txTouched.has(snapshot.streamId))
-          resolved = await resolveReadAllFrontiers(queryClient, workspaceId, effectiveFrontiers)
-          await putReadAllFrontiersIdb(workspaceId, resolved)
-        }
-      })
-
-      // Frontier publication only after persistence succeeded, so the divider
-      // tracks immediately on the initiating device — never publishing a state
-      // the IDB lacks.
-      publishReadAllFrontiersToCache(queryClient, workspaceId, resolved)
+  const clearInboxMutation = useMutation({
+    mutationFn: async ({ streamIds }: { streamIds: string[] }) => {
+      const startedAt = Date.now()
+      // Optimistic: unhold immediately, ahead of the response — the request's
+      // own `stream:inbox_updated` echo (or a bootstrap) reconciles/corrects it
+      // if the server disagrees (e.g. a stream re-held by a newer message since).
+      commitCounterMutation(queryClient, workspaceId, (state) => applyInboxHeld(state, streamIds, false))
+      const response = await workspaceService.clearInbox(workspaceId, streamIds)
+      return { ...response, startedAt }
+    },
+    onSuccess: async ({ frontiers, startedAt }) => {
+      // `frontiers` (not the response's `clearedStreamIds`) drives the read
+      // advance: only the streams that actually had unread and got caught up
+      // carry a counter/frontier effect. `clearedStreamIds` includes
+      // zero-unread streams that were only unheld — no read-advance to apply.
+      await applyReadAdvance(
+        queryClient,
+        workspaceId,
+        frontiers.map((f) => f.streamId),
+        frontiers,
+        startedAt,
+        clearInboxActivityFilter
+      )
+    },
+    onError: () => {
+      toast.error("Couldn't clear from Inbox")
     },
   })
 
@@ -442,6 +503,14 @@ export function useUnreadCounts(workspaceId: string) {
     [markUnreadMutation, workspaceId]
   )
 
+  const clearInbox = useCallback(
+    (streamIds: string[]) => {
+      if (streamIds.length === 0) return
+      clearInboxMutation.mutate({ streamIds })
+    },
+    [clearInboxMutation]
+  )
+
   return {
     unreadCounts,
     getUnreadCount,
@@ -449,7 +518,11 @@ export function useUnreadCounts(workspaceId: string) {
     markAsRead,
     markUnread,
     markAllAsRead,
+    isInInbox,
+    isInboxHeld,
+    clearInbox,
     isMarkingAsRead: markAsReadMutation.isPending,
     isMarkingAllAsRead: markAllAsReadMutation.isPending,
+    isClearingInbox: clearInboxMutation.isPending,
   }
 }

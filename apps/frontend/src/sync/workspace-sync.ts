@@ -123,6 +123,7 @@ import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
 import {
+  applyInboxHeld,
   applyStreamActivityOrdinal,
   applyStreamReadOrdinal,
   applyStreamReadSet,
@@ -244,6 +245,15 @@ interface StreamsReadAllPayload {
    * frontiers untouched and relies on the next bootstrap to reconcile.
    */
   frontiers?: StreamReadFrontierSnapshot[]
+}
+
+// Sidebar Inbox hold membership flip — from `clearInbox` or a read/unread that
+// crosses the server's inbox_held threshold, this or another session.
+interface StreamInboxUpdatedPayload {
+  workspaceId: string
+  authorId: string
+  streamIds: string[]
+  held: boolean
 }
 
 // Read-pointer SET from an explicit "mark as unread". Unlike stream:read, the
@@ -1263,6 +1273,16 @@ export function registerWorkspaceSocketHandlers(
         streamId,
       })
     }
+  }
+
+  // Handle a sidebar Inbox hold-membership flip (this or another session):
+  // `clearInbox`, or the server crossing its own inbox_held threshold on a
+  // read. Routes through the same commitCounter seam as every other counter
+  // event, so a catch-up replay folds it with the rest instead of writing
+  // per-entry.
+  const handleStreamInboxUpdated = (payload: StreamInboxUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    commitCounter((state) => applyInboxHeld(state, payload.streamIds, payload.held))
   }
 
   // Handle a notification-level change made in another session of this user.
@@ -2407,6 +2427,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:read_set", handleStreamReadSet)
   socket.on("stream:read_messages", handleStreamReadMessages)
   socket.on("stream:read_all", handleStreamReadAll)
+  socket.on("stream:inbox_updated", handleStreamInboxUpdated)
   socket.on("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
   socket.on("stream:activity", handleStreamActivity)
   socket.on("agent_session:started", handleAgentSessionStartedActivity)
@@ -2478,6 +2499,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:read_set", handleStreamReadSet)
     socket.off("stream:read_messages", handleStreamReadMessages)
     socket.off("stream:read_all", handleStreamReadAll)
+    socket.off("stream:inbox_updated", handleStreamInboxUpdated)
     socket.off("stream:notification_level_updated", handleStreamNotificationLevelUpdated)
     socket.off("stream:activity", handleStreamActivity)
     socket.off("agent_session:started", handleAgentSessionStartedActivity)
@@ -2638,6 +2660,7 @@ const BOOTSTRAP_NON_ROW_FIELDS = [
   "mentionCounts",
   "messageCounts",
   "readMessageIds",
+  "inboxHeldStreamIds",
   "mutedStreamIds",
   "boardViews",
   "invitations",
@@ -3167,6 +3190,7 @@ export async function applyWorkspaceBootstrap(
       unreadActivityCount: effectiveUnread.unreadActivityCount,
       messageCounts: effectiveUnread.latestOrdinals,
       readMessageIds: effectiveUnread.readMessageIds,
+      inboxHeldStreamIds: effectiveUnread.inboxHeldStreamIds,
       mutedStreamIds: effectiveUnread.mutedStreamIds,
     },
   }
