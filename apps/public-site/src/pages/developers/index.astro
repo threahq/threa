@@ -1,6 +1,7 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro"
 import CodeBlock from "../../components/CodeBlock.astro"
+import DocRow from "../../components/DocRow.astro"
 import Message from "../../components/Message.astro"
 import StreamPreview from "../../components/StreamPreview.astro"
 ---
@@ -9,41 +10,44 @@ import StreamPreview from "../../components/StreamPreview.astro"
   title="Overview · Threa Developers"
   description="The Threa public REST API: what it covers, the base URL, and a quickstart that goes from creating an API key to your first memo search."
   current="overview"
+  split
 >
-  <h1>Your workspace, over HTTP.</h1>
-  <p class="lead">
-    Messages, streams, members, attachments, and the memos Threa builds from
-    your conversations. Your own agent reads the same memory Ariadne does.
-  </p>
+  <DocRow class="dr-intro">
+    <h1>Your workspace, over HTTP.</h1>
+    <p class="lead">
+      Messages, streams, members, attachments, and the memos Threa builds from
+      your conversations. Your own agent reads the same memory Ariadne does.
+    </p>
 
-  <StreamPreview stream="platform">
-    <Message author="maya" time="14:02">
-      <div class="tl-text"><span class="mention">@my-agent</span> why did we pause the auth refactor?</div>
-    </Message>
-    <Message author="my-agent" time="14:02">
-      <div class="tl-text">It's on hold until Jordan's review of the token-rotation model.</div>
-      <div class="recall-memo-card">
-        <div class="rmc-icon"><svg><use href="#icon-compass" /></svg></div>
-        <div class="rmc-body">
-          <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
-          <div class="rmc-title">Auth refactor held pending token-rotation review</div>
+    <StreamPreview stream="platform" slot="code">
+      <Message author="maya" time="14:02">
+        <div class="tl-text"><span class="mention">@my-agent</span> why did we pause the auth refactor?</div>
+      </Message>
+      <Message author="my-agent" time="14:02">
+        <div class="tl-text">It's on hold until Jordan's review of the token-rotation model.</div>
+        <div class="recall-memo-card">
+          <div class="rmc-icon"><svg><use href="#icon-compass" /></svg></div>
+          <div class="rmc-body">
+            <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#product</span></div>
+            <div class="rmc-title">Auth refactor held pending token-rotation review</div>
+          </div>
+          <div class="rmc-meta">Mar 12</div>
         </div>
-        <div class="rmc-meta">Mar 12</div>
-      </div>
-    </Message>
-  </StreamPreview>
+      </Message>
+    </StreamPreview>
+  </DocRow>
 
   <h2 id="quickstart">Quickstart</h2>
   <ol class="steps">
-    <li>
+    <DocRow as="li">
       <h3 id="create-an-api-key">Create an API key</h3>
       <p>
         In the app, open <strong>Workspace Settings → API Keys</strong>, create a
         user key, pick the scopes you need, and copy it once. Full walkthrough in
         <a class="link" href="/developers/authentication">Authentication</a>.
       </p>
-    </li>
-    <li>
+    </DocRow>
+    <DocRow as="li">
       <h3 id="add-it-to-credentials">Add it to Credentials</h3>
       <p>
         Open <strong>Credentials</strong> (top right) and enter your workspace ID
@@ -51,25 +55,27 @@ import StreamPreview from "../../components/StreamPreview.astro"
         <strong>Run</strong> calls the API. They stay in your browser and go out
         only on requests you run.
       </p>
-    </li>
-    <li>
+    </DocRow>
+    <DocRow as="li">
       <h3 id="confirm-who-you-are">Confirm who you are</h3>
       <p><code>GET /me</code> needs no scope and returns the identity behind the key.</p>
       <CodeBlock
+        slot="code"
         lang="bash"
         label="Who am I"
         code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me \\
   -H "Authorization: Bearer {{apiKey}}"`}
         run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me" }}
       />
-    </li>
-    <li>
+    </DocRow>
+    <DocRow as="li">
       <h3 id="search-what-threa-remembers">Search what Threa remembers</h3>
       <p>
         With <code>memos:read</code>, search memos the way Ariadne does. Results
         link back to their source messages.
       </p>
       <CodeBlock
+        slot="code"
         lang="bash"
         label="Search memos"
         code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
@@ -82,7 +88,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
           body: `{ "query": "auth", "limit": 5 }`,
         }}
       />
-    </li>
+    </DocRow>
   </ol>
 
   <h2 id="base-url">Base URL</h2>
@@ -96,21 +102,24 @@ import StreamPreview from "../../components/StreamPreview.astro"
   </dl>
 
   <h2 id="working-with-an-ai-agent">Working with an AI agent</h2>
-  <p>
-    Every page has a markdown mirror at its URL plus <code>.md</code>.
-    <a class="link" href="/llms-full.txt">/llms-full.txt</a> is the whole set in
-    one fetch, and the <a class="link" href="/openapi.json">OpenAPI spec</a> is
-    the contract. Hand your agent this:
-  </p>
-  <CodeBlock
-    lang="text"
-    label="Prompt for your agent"
-    code={`Integrate with the Threa API. Read https://threa.io/llms-full.txt for the docs
+  <DocRow>
+    <p>
+      Every page has a markdown mirror at its URL plus <code>.md</code>.
+      <a class="link" href="/llms-full.txt">/llms-full.txt</a> is the whole set in
+      one fetch, and the <a class="link" href="/openapi.json">OpenAPI spec</a> is
+      the contract. Hand your agent this:
+    </p>
+    <CodeBlock
+      slot="code"
+      lang="text"
+      label="Prompt for your agent"
+      code={`Integrate with the Threa API. Read https://threa.io/llms-full.txt for the docs
 and https://threa.io/openapi.json for the exact contract. The base URL is
 {{baseUrl}}, my workspace ID is {{workspaceId}}, and my API key is in the
 THREA_API_KEY environment variable (send it as "Authorization: Bearer ...").
 Verify the key with GET /api/v1/workspaces/{{workspaceId}}/me before anything else.`}
-  />
+    />
+  </DocRow>
   <p>
     Keep the key in an environment variable, not in the prompt. Agents that
     speak MCP can use <code>threa mcp serve</code> instead; see

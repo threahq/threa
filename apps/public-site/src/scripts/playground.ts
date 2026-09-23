@@ -275,16 +275,27 @@ function bindTokenFocus(): void {
 }
 
 /* ---- copy ---- */
+function setCopied(btn: HTMLElement, copied: boolean): void {
+  const label = copied ? "Copied" : "Copy"
+  btn.toggleAttribute("data-copied", copied)
+  btn.setAttribute("aria-label", label)
+  btn.title = label
+}
+
 function bindCopy(): void {
+  const resets = new WeakMap<HTMLElement, number>()
   document.querySelectorAll<HTMLElement>("[data-copy]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const block = btn.closest(".pg-block")
       const tmpl = block?.querySelector<HTMLElement>("[data-template]")?.dataset.template
       if (!tmpl) return
       await navigator.clipboard.writeText(substitute(tmpl, readCreds()))
-      const prev = btn.textContent
-      btn.textContent = "Copied"
-      setTimeout(() => (btn.textContent = prev), 1200)
+      clearTimeout(resets.get(btn))
+      setCopied(btn, true)
+      resets.set(
+        btn,
+        window.setTimeout(() => setCopied(btn, false), 1500)
+      )
     })
   })
 }

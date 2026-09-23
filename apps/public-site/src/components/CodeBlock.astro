@@ -4,7 +4,8 @@
  * live-substituted with the reader's own credentials (see scripts/playground.ts).
  * Each token renders as a chip with an explain-on-hover tooltip. If `run` is
  * provided, a Run button fires the call against the reader's base URL and
- * prints the response under the block.
+ * prints the response under the block. Copy confirms by swapping its icon to a
+ * check; both icons are in the markup so the swap never moves anything.
  */
 import { highlightCode, type CodeLang } from "../lib/highlight"
 
@@ -32,11 +33,14 @@ const html = await highlightCode(code, lang)
     <span class="pg-lang">{label ?? lang}</span>
     <div class="pg-actions">
       {run && (
-        <button type="button" class="pg-btn pg-run" data-run={JSON.stringify(run)}>
-          Run
+        <button type="button" class="pg-btn pg-run" data-run={JSON.stringify(run)} aria-label="Run" title="Run">
+          <svg aria-hidden="true"><use href="#icon-play" /></svg>
         </button>
       )}
-      <button type="button" class="pg-btn pg-copy" data-copy>Copy</button>
+      <button type="button" class="pg-btn pg-copy" data-copy aria-label="Copy" title="Copy">
+        <svg class="pg-copy-idle" aria-hidden="true"><use href="#icon-copy" /></svg>
+        <svg class="pg-copy-done" aria-hidden="true"><use href="#check-icon" /></svg>
+      </button>
     </div>
   </div>
   <pre class={`pg-pre lang-${lang}`}><code set:html={html} /></pre>

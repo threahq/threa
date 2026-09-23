@@ -366,7 +366,7 @@ function extract(page: Page, html: string): { body: string; converter: TurndownS
     return { body, converter: createPageConverter() }
   }
   // The wrapper comes from DocsLayout.astro's <article class="docs-article">
-  // (plus variant classes like is-wide); this extraction is what breaks if
+  // (plus variant classes like is-split); this extraction is what breaks if
   // that layout renames or re-nests it.
   const article = html.match(/<article class="docs-article[^"]*">([\s\S]*?)<\/article>/)?.[1]
   if (!article) {

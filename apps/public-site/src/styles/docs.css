@@ -646,21 +646,36 @@ a {
   display: flex;
   gap: 6px;
 }
+/* Square icon buttons. Copy carries both icons and swaps them in place
+   (data-copied, scripts/playground.ts), so confirming never moves anything. */
 .pg-btn {
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.2;
-  padding: 4px 11px;
-  border-radius: 4px;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 5px;
   border: 1px solid hsl(var(--line));
   background: hsl(var(--paper));
   color: hsl(var(--ink-soft));
   cursor: pointer;
-  transition: all 0.15s;
+  transition:
+    color 0.15s,
+    background-color 0.15s,
+    border-color 0.15s;
+}
+.pg-btn svg {
+  grid-area: 1 / 1;
+  width: 15px;
+  height: 15px;
 }
 .pg-btn:hover {
   color: hsl(var(--ink));
   border-color: hsl(var(--muted));
+}
+.pg-btn:focus-visible {
+  outline: 2px solid hsl(var(--gold));
+  outline-offset: 1px;
 }
 .pg-run {
   background: hsl(var(--gold) / 0.12);
@@ -671,6 +686,26 @@ a {
   background: hsl(var(--gold) / 0.2);
   border-color: hsl(var(--gold));
   color: hsl(var(--gold-dim));
+}
+.pg-run svg {
+  width: 12px;
+  height: 12px;
+}
+.pg-copy-done,
+.pg-copy[data-copied] .pg-copy-idle {
+  visibility: hidden;
+}
+.pg-copy[data-copied] .pg-copy-done {
+  visibility: visible;
+}
+.pg-copy[data-copied] {
+  color: hsl(var(--emerald));
+}
+@media (pointer: coarse) {
+  .pg-btn {
+    width: 36px;
+    height: 36px;
+  }
 }
 /* Code goes night — the samples are the substance of these pages, so they
    carry the contrast. Light header above, dark body, light output below. */
@@ -685,6 +720,14 @@ a {
   color: hsl(38 14% 86%);
   white-space: pre;
   tab-size: 2;
+}
+/* Chrome breaks at <wbr> even under white-space: pre; only wrapping blocks
+   (the API reference) use the slash breaks highlight.ts emits. */
+.pg-pre wbr {
+  display: none;
+}
+.api-op-code .pg-pre wbr {
+  display: inline;
 }
 .pg-pre:last-child {
   border-radius: 0 0 5px 5px;
@@ -978,7 +1021,7 @@ a {
 }
 
 /* step list */
-.steps {
+.docs-article .steps {
   list-style: none;
   counter-reset: step;
   padding: 0;
@@ -1059,50 +1102,21 @@ a {
 }
 
 /* ---------- API REFERENCE (hand-rendered from the spec) ---------- */
-/* The reference runs full width: each operation is a two-column band — the
-   contract (params, body, response shape) on the left, the wire (example
-   request + example response) sticky on the right. Lead prose stays at
-   reading width. */
-.docs-article.is-wide {
-  max-width: none;
-}
-.docs-article.is-wide > p {
-  max-width: 760px;
-}
-.api-op-cols {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
-  gap: 36px;
-  align-items: start;
-  margin-top: 6px;
-}
-.api-op-main {
-  min-width: 0;
-}
-.api-op-side {
-  min-width: 0;
-  position: sticky;
-  top: 64px;
-}
-.api-op-side .pg-block {
-  margin: 0 0 14px;
-}
-/* The side column is narrow; wrap long request lines instead of clipping
-   them behind a scrollbar (copy still uses the raw template, so display
-   wrapping is safe), and cap very long response examples. */
-.api-op-side .pg-pre {
+/* Each operation is a DocRow (components/ApiEndpoint.astro): the contract as
+   prose, the example request and response as its code. Request lines and
+   example strings wrap instead of hiding behind a sideways scrollbar; Copy
+   uses the raw template, so display wrapping is safe. */
+.api-op-code .pg-pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 520px;
-  overflow-y: auto;
 }
-@media (max-width: 1120px) {
-  .api-op-cols {
-    grid-template-columns: 1fr;
-    gap: 8px;
+@media (max-width: 1199px) {
+  .api-op-code .pg-block {
+    margin: 14px 0 0;
   }
-  .api-op-side {
-    position: static;
+  .api-op-code .pg-pre {
+    max-height: 520px;
+    overflow-y: auto;
   }
 }
 
@@ -1835,6 +1849,351 @@ a {
 @media (max-width: 359px) {
   .docs-nav .brand svg {
     display: none;
+  }
+}
+
+/* ---------- SPLIT ROWS (DocsLayout `split`, components/DocRow.astro) ----------
+   Below 1200px a row is plain flow, prose then its code, and code takes the
+   article's full width. From 1200px each row is prose beside a dark pane that
+   runs the article's full height to the viewport edge, with the row's code
+   sticky inside it. */
+.docs-article.is-split {
+  --pane: 26 16% 11%;
+  --pane-block: 26 14% 14.5%;
+  --pane-head: 26 13% 17%;
+  --pane-line: 30 10% 22%;
+  --pane-ink: 38 16% 90%;
+  --pane-ink-soft: 35 10% 74%;
+  --pane-muted: 32 8% 60%;
+}
+:root[data-theme="dark"] .docs-article.is-split {
+  --pane: 26 16% 6%;
+  --pane-block: 26 13% 10.5%;
+  --pane-head: 26 12% 13%;
+  --pane-line: 26 8% 19%;
+}
+.docs-article li.dr {
+  max-width: none;
+}
+
+/* Steps whose code runs the full width: the number and prose keep their
+   indent, the rail runs behind the code. */
+.steps > li.dr {
+  padding-left: 0;
+  margin-left: 0;
+  border-left: 0;
+}
+.steps > li.dr > .dr-text {
+  padding-left: 58px;
+}
+.steps > li.dr::before {
+  left: 0;
+  z-index: 1;
+}
+.steps > li.dr::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid hsl(var(--line));
+}
+.steps > li.dr:last-child::after {
+  display: none;
+}
+.steps > li.dr > .dr-code {
+  position: relative;
+  z-index: 1;
+}
+@media (max-width: 880px) {
+  .steps > li.dr > .dr-text {
+    padding-left: 44px;
+  }
+}
+
+@media (min-width: 1200px) {
+  /* The shell spans the viewport: the sidebar lines up with the top bar's
+     brand (or centres on very wide screens) and the article runs to the right
+     edge, so the pane takes whatever width the screen has. */
+  body.docs-split .docs-shell {
+    max-width: none;
+    padding-left: max(clamp(20px, 4vw, 48px), calc((100% - 1560px) / 2));
+    padding-right: 0;
+    overflow-x: clip;
+  }
+  /* The pane would read through the translucent bar as a grey band. */
+  body.docs-split .docs-nav {
+    background: hsl(var(--paper));
+  }
+  body.docs-split .docs-main {
+    padding-top: 0;
+    padding-left: 44px;
+    padding-right: 0;
+  }
+
+  .docs-article.is-split {
+    --split: clamp(400px, 40%, 540px);
+    --gut: 52px;
+    --pane-x: 32px;
+    --row-y: 22px;
+    max-width: none;
+    position: relative;
+    isolation: isolate;
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+  .docs-article.is-split::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    top: 0;
+    bottom: 0;
+    left: var(--split);
+    right: -100vw;
+    background: hsl(var(--pane));
+  }
+
+  /* Anything between rows (headings, lone prose, notes) holds the prose
+     column like row text does. */
+  .docs-article.is-split > :not(.dr, .steps, .api-group),
+  .is-split .api-group > :not(.dr) {
+    box-sizing: border-box;
+    width: var(--split);
+    padding-right: var(--gut);
+  }
+  .docs-article.is-split > .note {
+    width: calc(var(--split) - var(--gut));
+    padding-right: 18px;
+  }
+  .docs-article.is-split > h2,
+  .is-split .api-group > h2 {
+    position: relative;
+    margin: 0;
+    padding-top: 80px;
+    padding-bottom: 6px;
+  }
+
+  .is-split .dr {
+    display: grid;
+    grid-template-columns: var(--split) minmax(0, 1fr);
+    padding: var(--row-y) 0;
+  }
+  .is-split .dr:has(> .dr-text > h3:first-child) {
+    padding-top: 36px;
+  }
+  .is-split .dr-intro {
+    padding-top: 0;
+  }
+  .is-split .dr-section {
+    position: relative;
+    padding-top: 80px;
+  }
+  .is-split .dr-section::before,
+  .docs-article.is-split > h2::before,
+  .is-split .api-group > h2::before {
+    content: "";
+    position: absolute;
+    top: 40px;
+    left: 0;
+    width: calc(100% - var(--gut));
+    border-top: 1px solid hsl(var(--line));
+  }
+  .is-split .dr-section::before {
+    width: calc(var(--split) - var(--gut));
+  }
+  .is-split .dr-text {
+    min-width: 0;
+    padding-right: var(--gut);
+  }
+  .is-split .dr-text > :first-child {
+    margin-top: 0;
+  }
+  .is-split .dr-text > :last-child {
+    margin-bottom: 0;
+  }
+  .is-split .dr-text h2 {
+    margin-bottom: 12px;
+  }
+
+  .is-split .dr-code {
+    position: sticky;
+    top: 72px;
+    align-self: start;
+    min-width: 0;
+    padding: 2px var(--pane-x) 0;
+    color: hsl(var(--pane-ink));
+  }
+  .is-split .dr-code > * {
+    max-width: 920px;
+  }
+  .is-split .dr-code > * + * {
+    margin-top: 14px;
+  }
+
+  /* Code on the pane: the block steps up one shade from the pane instead of
+     carrying the paper header it has in flow. */
+  .is-split .dr-code .pg-block {
+    margin: 0;
+    background: hsl(var(--pane-block));
+    border-color: hsl(var(--pane-line));
+  }
+  .is-split .dr-code .pg-block-head {
+    background: hsl(var(--pane-head));
+    border-bottom-color: hsl(var(--pane-line));
+  }
+  .is-split .dr-code .pg-lang {
+    color: hsl(var(--pane-muted));
+  }
+  .is-split .dr-code .pg-btn {
+    background: transparent;
+    border-color: hsl(var(--pane-line));
+    color: hsl(var(--pane-ink-soft));
+  }
+  .is-split .dr-code .pg-btn:hover {
+    color: hsl(var(--pane-ink));
+    border-color: hsl(var(--pane-muted));
+  }
+  .is-split .dr-code .pg-run {
+    background: hsl(var(--gold) / 0.16);
+    border-color: hsl(var(--gold) / 0.55);
+    color: hsl(var(--gold-soft));
+  }
+  .is-split .dr-code .pg-run:hover {
+    background: hsl(var(--gold) / 0.26);
+    border-color: hsl(var(--gold));
+  }
+  .is-split .dr-code .pg-copy[data-copied] {
+    color: hsl(142 45% 58%);
+  }
+  .is-split .dr-code .pg-pre {
+    background: hsl(var(--pane-block));
+    font-size: 12.5px;
+  }
+  .is-split .dr-code .pg-pre.lang-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .is-split .dr-code .pg-output {
+    background: hsl(var(--pane));
+    border-top-color: hsl(var(--pane-line));
+    color: hsl(var(--pane-ink-soft));
+  }
+
+  /* The in-Threa result stays paper: a window onto the app beside its code. */
+  .is-split .dr-code .stream-preview {
+    margin: 0;
+    border-color: transparent;
+  }
+  .is-split .dr-code .pg-block + .stream-preview {
+    margin-top: 14px;
+    border-radius: 8px;
+  }
+  .is-split .dr-code .pg-block:has(+ .stream-preview) {
+    border-radius: 6px;
+  }
+  .is-split .dr-code .pg-block:has(+ .stream-preview) .pg-pre:last-child {
+    border-radius: 0 0 5px 5px;
+  }
+
+  /* Quickstart steps: each step is a row; the number and its rail stay on the
+     prose column so the pane edge stays straight. */
+  .is-split .steps {
+    margin: 0;
+    padding: 0;
+  }
+  .is-split .steps > li.dr {
+    margin: 0;
+    padding: var(--row-y) 0;
+  }
+  .is-split .steps > li.dr > .dr-text {
+    padding-left: 44px;
+  }
+  .is-split .steps > li.dr > .dr-code {
+    position: sticky;
+  }
+  .is-split .steps > li.dr::before {
+    top: calc(var(--row-y) - 2px);
+  }
+  .is-split .steps > li.dr:first-child::after {
+    top: var(--row-y);
+  }
+  .is-split .steps > li.dr:last-child::after {
+    display: block;
+    bottom: calc(100% - var(--row-y));
+  }
+
+  /* Too narrow for a value beside its label until the prose column grows. */
+  @media (max-width: 1439px) {
+    .is-split .facts {
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 2px;
+    }
+    .is-split .facts dd + dt {
+      margin-top: 10px;
+    }
+  }
+
+  /* API reference: schema rows are compact, request lines and JSON are not,
+     so the code gets more of the width here than on the prose pages. */
+  .docs-article.is-split:has(> .api-group) {
+    --split: max(40%, 430px);
+  }
+  .is-split .api-op {
+    position: relative;
+    padding: 34px 0;
+    border-bottom: 0;
+  }
+  .is-split .api-op + .api-op::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(var(--split) - var(--gut));
+    border-top: 1px solid hsl(var(--line));
+  }
+  /* The operation's height comes from its contract: size containment keeps
+     the code out of the row's height, the cell stretches to the row, and the
+     code rides sticky inside it at full length. Only code taller than the
+     whole operation scrolls, in a box the operation's height. A short
+     contract still gives the code up to 360px, sized from the build-time
+     line and block counts ApiEndpoint sets (12.5px x 1.6 lines, ~84px of
+     block chrome and gap each), so a short DELETE gets no empty band. */
+  .is-split .api-op > .dr-code {
+    position: relative;
+    top: auto;
+    align-self: stretch;
+    contain: size;
+    min-height: min(360px, calc(var(--code-lines) * 20px + var(--code-blocks) * 84px));
+    padding-bottom: 2px;
+  }
+  .api-op-code {
+    position: sticky;
+    top: 72px;
+    display: flex;
+    flex-direction: column;
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  /* The example response gives up height first and scrolls inside its own
+     block, so a clipped sample keeps its frame. */
+  .is-split .api-op-code .pg-block {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    min-height: 0;
+  }
+  .is-split .api-op-code .pg-block + .pg-block {
+    flex-shrink: 1;
+    margin-top: 14px;
+  }
+  .is-split .api-op-code .pg-block-head {
+    flex-shrink: 0;
+  }
+  .is-split .api-op-code .pg-block .pg-pre {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
   }
 }
 

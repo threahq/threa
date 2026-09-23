@@ -111,9 +111,16 @@ export async function highlightCode(code: string, lang: CodeLang): Promise<strin
     theme: "threa-dusk",
   })
 
+  // <wbr> after each slash lets a block that wraps (the API reference) break a
+  // long URL at a path segment rather than mid-word. Copy and the markdown
+  // mirror read the raw template, so it never reaches copied text.
   const html = tokens
     .map((line) =>
-      line.map((t) => `<span style="color:${t.color ?? "#e6ded2"}">${escapeHtml(t.content)}</span>`).join("")
+      line
+        .map(
+          (t) => `<span style="color:${t.color ?? "#e6ded2"}">${escapeHtml(t.content).replaceAll("/", "/<wbr>")}</span>`
+        )
+        .join("")
     )
     .join("\n")
 

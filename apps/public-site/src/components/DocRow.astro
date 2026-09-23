@@ -1,0 +1,21 @@
+---
+/*
+ * One row of a split docs page (DocsLayout `split`): prose, and the code it
+ * illustrates in the `code` slot. From 1200px the code sits on the pane beside
+ * its prose; below that it follows the prose. Prose comes first in the markup
+ * so the markdown mirror reads in order.
+ */
+interface Props {
+  as?: "div" | "li" | "section"
+  id?: string
+  class?: string
+  style?: string
+}
+const { as: Tag = "div", id, class: className, style } = Astro.props
+const hasCode = Astro.slots.has("code")
+---
+
+<Tag class:list={["dr", !hasCode && "dr-solo", className]} id={id} style={style}>
+  <div class="dr-text"><slot /></div>
+  {hasCode && <div class="dr-code"><slot name="code" /></div>}
+</Tag>
