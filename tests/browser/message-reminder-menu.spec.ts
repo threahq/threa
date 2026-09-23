@@ -74,6 +74,9 @@ test("keeps the sent-message menu open beside its reminder choices", async ({ pa
     await page.keyboard.press("Tab")
   }
   await expect(setTimeButton).toBeFocused()
+  await rootMenu.getByRole("menuitem", { name: "Label message" }).focus()
+  await expect(reminderTrigger).toHaveAttribute("data-state", "closed")
+  await expect(rootMenu).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(rootMenu).not.toBeVisible()
   await expect(trigger).toBeFocused()

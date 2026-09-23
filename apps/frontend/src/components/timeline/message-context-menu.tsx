@@ -141,7 +141,10 @@ function ReminderActionSubmenu({
         sideOffset={-8}
         onEscapeKeyDown={onEscape}
         // Keep Radix's menu focus handling from dismissing the inline editor or blocking Tab between its controls.
-        onFocusOutside={(event) => event.preventDefault()}
+        onFocusOutside={(event) => {
+          if (event.target instanceof Element && event.target.closest('[role="menuitem"]')) return
+          event.preventDefault()
+        }}
         onKeyDownCapture={(event) => {
           if (event.key === "Tab" && (event.target as HTMLElement).closest('input, button, [role="combobox"]')) {
             event.stopPropagation()
