@@ -431,9 +431,6 @@ function bindSubnavCollapse(): void {
   })
 }
 
-/* Mobile navigation drawer. On narrow viewports the side nav is hidden off
-   canvas; the hamburger slides it in. Closing on backdrop tap, link tap, or
-   Escape keeps it out of the way once the reader has chosen where to go. */
 /* The open page's section list folds away under its nav row. */
 function bindPageCollapse(): void {
   const toggle = document.querySelector<HTMLButtonElement>(".dsp-toggle")
@@ -446,6 +443,9 @@ function bindPageCollapse(): void {
   })
 }
 
+/* Mobile navigation drawer. On narrow viewports the side nav is hidden off
+   canvas; the hamburger slides it in. Closing on backdrop tap, link tap, or
+   Escape keeps it out of the way once the reader has chosen where to go. */
 function bindMobileNav(): void {
   const toggle = document.getElementById("docs-menu-toggle")
   const side = document.getElementById("docs-side")
