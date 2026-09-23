@@ -251,11 +251,7 @@ export function createWorkspaceHandlers({
       // Inbox arrival order: candidates are held streams plus every member
       // stream (the arrival lookup itself drops streams with nothing unread).
       const inboxArrivalCandidateIds = [...new Set([...membershipStreamIds, ...inboxHeldStreamIds])]
-      const inboxArrivedAtDates = await streamService.getInboxArrivedAt(
-        workspaceId,
-        userId,
-        inboxArrivalCandidateIds
-      )
+      const inboxArrivedAtDates = await streamService.getInboxArrivedAt(workspaceId, userId, inboxArrivalCandidateIds)
       const inboxArrivedAt: Record<string, string> = {}
       for (const [streamId, arrivedAt] of Object.entries(inboxArrivedAtDates)) {
         inboxArrivedAt[streamId] = arrivedAt.toISOString()
