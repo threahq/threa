@@ -125,12 +125,18 @@ async function setUpSharedPointer(
   await composer.focus()
   await page.keyboard.press("Enter")
 
-  // Wait for the pointer card to land hydrated with the original source
-  // text. The follow-up edit/delete tests use this as the baseline before
-  // observing the pointer update.
-  await expect(
-    page.locator("[data-type='shared-message']").filter({ hasText: new RegExp(opts.threadText) })
-  ).toBeVisible({ timeout: 5000 })
+  // Wait for the pointer to land in the channel, hydrated with the original
+  // source text and confirmed by the server: the edit/delete tests mutate the
+  // source next, and a share still in the send queue would reference a
+  // version the mutation already replaced. The composer keeps its own card
+  // until the sent row renders, so scope to the timeline row.
+  const pointerRow = page
+    .getByRole("main")
+    .locator("[data-message-id]")
+    .filter({ has: page.locator("[data-type='shared-message']").filter({ hasText: new RegExp(opts.threadText) }) })
+    .first()
+  await expect(pointerRow).toBeVisible({ timeout: 5000 })
+  await expect(pointerRow).not.toHaveAttribute("data-message-id", /^temp_/)
 
   const match = page.url().match(/\/w\/([^/]+)\/s\/([^/?]+)/)
   expect(match).toBeTruthy()
