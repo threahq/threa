@@ -19,6 +19,7 @@ import {
   customSections,
   getStreamCustomSectionId,
   setStreamCustomSection,
+  setSectionFilter,
 } from "./sidebar-config"
 
 describe("toggleLabelSection", () => {
@@ -132,6 +133,38 @@ describe("custom sections", () => {
 
   it("makes the layout diverge from its preset (custom is never pristine)", () => {
     expect(isPristinePreset(createCustomSection(SMART_SIDEBAR_CONFIG, "sec_1", "Work"))).toBeNull()
+  })
+})
+
+describe("setSectionFilter", () => {
+  it("sets the filter to unread on a section that had none", () => {
+    const sectionId = SMART_SIDEBAR_CONFIG.sections[0].id
+    const next = setSectionFilter(SMART_SIDEBAR_CONFIG, sectionId, "unread")
+    expect(next.sections.find((s) => s.id === sectionId)?.filter).toBe("unread")
+  })
+
+  it("clears the filter back to absent when set to all", () => {
+    const sectionId = SMART_SIDEBAR_CONFIG.sections[0].id
+    const filtered = setSectionFilter(SMART_SIDEBAR_CONFIG, sectionId, "unread")
+    const cleared = setSectionFilter(filtered, sectionId, "all")
+    expect(cleared.sections.find((s) => s.id === sectionId)?.filter).toBeUndefined()
+  })
+
+  it("returns the same object for an unknown section id", () => {
+    expect(setSectionFilter(SMART_SIDEBAR_CONFIG, "ghost", "unread")).toBe(SMART_SIDEBAR_CONFIG)
+  })
+
+  it("returns the same object when the filter already matches (no-op)", () => {
+    const sectionId = SMART_SIDEBAR_CONFIG.sections[0].id
+    expect(setSectionFilter(SMART_SIDEBAR_CONFIG, sectionId, "all")).toBe(SMART_SIDEBAR_CONFIG)
+    const filtered = setSectionFilter(SMART_SIDEBAR_CONFIG, sectionId, "unread")
+    expect(setSectionFilter(filtered, sectionId, "unread")).toBe(filtered)
+  })
+
+  it("leaves other sections untouched", () => {
+    const sectionId = SMART_SIDEBAR_CONFIG.sections[0].id
+    const next = setSectionFilter(SMART_SIDEBAR_CONFIG, sectionId, "unread")
+    expect(next.sections.slice(1)).toEqual(SMART_SIDEBAR_CONFIG.sections.slice(1))
   })
 })
 

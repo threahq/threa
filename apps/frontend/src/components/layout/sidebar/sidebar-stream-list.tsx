@@ -17,9 +17,9 @@ import { LabelChip } from "@/components/labels/label-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { cn } from "@/lib/utils"
 import type { CachedLabel } from "@/hooks"
-import { StreamSection, TieredStreamSection, tieredVisibleItems } from "./sections"
+import { StreamSection, TieredStreamSection, sectionVisibleItems } from "./sections"
 import { StreamDropZone } from "./sidebar-dnd"
-import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
+import { sectionPresentation, type SidebarSectionSpec, type SidebarSectionFilter } from "./sidebar-config"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
@@ -178,6 +178,13 @@ interface SidebarStreamListProps {
    * when set to "ask".
    */
   onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
+  /**
+   * Toggle a section's stream filter between "all" and "unread". The parent
+   * owns the sidebar config, so the persisted write lives there; this component
+   * only decides which sections offer the control (never Inbox/Quick Links,
+   * never in board mode).
+   */
+  onToggleSectionFilter: (sectionId: string) => void
   /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
   homeHintFor: (streamId: string) => string | null
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. Every
@@ -214,6 +221,7 @@ export function SidebarStreamList({
   onFileStreamToSection,
   onAssignStreamLabel,
   onStreamMovedFromLabel,
+  onToggleSectionFilter,
   homeHintFor,
   boardMode,
   onClearInbox,
@@ -310,7 +318,9 @@ export function SidebarStreamList({
     // structurally off there, not just visually.
     const isInboxSection = isUnread && !boardMode
     const inboxStreamIds = isInboxSection ? items.map((item) => item.id) : []
-    const inboxHeldStreamIds = isInboxSection ? items.filter((item) => getUnreadCount(item.id) === 0).map((item) => item.id) : []
+    const inboxHeldStreamIds = isInboxSection
+      ? items.filter((item) => getUnreadCount(item.id) === 0).map((item) => item.id)
+      : []
     // Unread's header is a gold dot + label (a colored emoji would break the
     // gold-on-paper palette); label sections use their tinted chip. An empty
     // Unread section mutes the dot + label so the caught-up header recedes.
@@ -383,13 +393,23 @@ export function SidebarStreamList({
     const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
     const add = addWiringFor(section.spec)
     const moreState = getSectionState(moreKey(section.id), MORE_DEFAULT)
-    // Walk exactly what this section is about to render: a tiered section
-    // puts its active streams first and holds a quiet tail behind the "more"
-    // expander, so its raw items are not its rows.
+    // The stream filter is a chats-mode feature offered on every section except
+    // the Inbox (which has its own read/unread model) — Quick Links already
+    // returned above, it never reaches here. Never in board mode, whose
+    // sections filter the board instead via `filterAffordance`/`filterActive`.
+    const sectionFilterEnabled = !boardMode && section.spec.kind !== "unread"
+    const sectionFilter: SidebarSectionFilter | undefined = sectionFilterEnabled ? (section.filter ?? "all") : undefined
+    const onToggleFilter = sectionFilterEnabled ? () => onToggleSectionFilter(section.id) : undefined
+    // Walk exactly what this section is about to render: a tiered section or a
+    // filtered one holds a tail behind the "more" expander, so raw items are
+    // not its rows.
     if (state !== "collapsed") {
-      const rows = presentation.tiered
-        ? tieredVisibleItems(items, getUnreadCount, getMentionCount, moreState === "open").visible
-        : items
+      const { visible: rows } = sectionVisibleItems(items, {
+        tiered: presentation.tiered,
+        filter: sectionFilter ?? "all",
+        moreOpen: moreState === "open",
+        isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
+      })
       for (const row of rows) quickJump.add(row.id)
     }
     // The Unread section's status rides in its header (right side), not a
@@ -425,6 +445,8 @@ export function SidebarStreamList({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={!!boardMode}
         filterActive={filterActive}
+        sectionFilter={sectionFilter}
+        onToggleFilter={onToggleFilter}
         icon={presentation.icon}
         items={items}
         allStreams={processedStreams}
@@ -455,6 +477,8 @@ export function SidebarStreamList({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={!!boardMode}
         filterActive={filterActive}
+        sectionFilter={sectionFilter}
+        onToggleFilter={onToggleFilter}
         icon={presentation.icon}
         items={items}
         allStreams={processedStreams}
@@ -464,6 +488,8 @@ export function SidebarStreamList({
         getMentionCount={getMentionCount}
         state={isEmptyUnread ? undefined : state}
         onToggle={isEmptyUnread ? undefined : onToggle}
+        moreState={moreState}
+        onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
         headerAccessory={unreadAccessory}
         compact={presentation.compact}
         showPreviewOnHover={presentation.showPreviewOnHover}

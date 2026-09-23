@@ -45,7 +45,7 @@ import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
-import { setStreamCustomSection } from "./sidebar-config"
+import { setStreamCustomSection, setSectionFilter, type SidebarSectionFilter } from "./sidebar-config"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
 import {
@@ -643,6 +643,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     )
   }
 
+  const handleToggleSectionFilter = (sectionId: string) => {
+    const current = sidebarConfig.sections.find((s) => s.id === sectionId)
+    const next: SidebarSectionFilter = (current?.filter ?? "all") === "unread" ? "all" : "unread"
+    setSidebarConfig(setSectionFilter(sidebarConfig, sectionId, next))
+  }
+
   const removeStreamLabel = (streamId: string, labelId: string) => {
     unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
   }
@@ -700,6 +706,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onFileStreamToSection={handleFileStreamToSection}
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
+            onToggleSectionFilter={handleToggleSectionFilter}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
             quickLinksSlot={quickLinksSlot}
             boardMode={boardMode}
