@@ -82,6 +82,7 @@ import {
 import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { isClearInboxShortcutEvent, resolveClearInboxTargetStreamId } from "./inbox-clear-shortcut"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
+import { useStreamWarmup } from "@/hooks/use-stream-warmup"
 import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
 import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
 
@@ -338,6 +339,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         inboxArrivedAt,
         joinedAtByStreamId,
         streamTypeById,
+        activeStreamId,
       }),
     [
       sidebarConfig,
@@ -350,8 +352,15 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       inboxArrivedAt,
       joinedAtByStreamId,
       streamTypeById,
+      activeStreamId,
     ]
   )
+
+  const hoverCardStreamIds = useMemo(
+    () => (isMobile ? [] : resolvedSections.flatMap(({ items }) => items.map((item) => item.id))),
+    [isMobile, resolvedSections]
+  )
+  useStreamWarmup(hoverCardStreamIds)
 
   // Board mode re-aims the stream rows: their verb changes from "open timeline"
   // to "scope the board".

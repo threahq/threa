@@ -21,6 +21,7 @@ import { getActivityTime, truncateContent } from "@/components/layout/sidebar/ut
 import { useStreamService } from "@/contexts"
 import { actorTypeFromId, useActors, useJoinStream } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useStreamWarmup } from "@/hooks/use-stream-warmup"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import {
@@ -117,6 +118,7 @@ function StreamsPageInner({
   membership: DirectoryMembership
 }) {
   const [query, setQuery] = useState("")
+  const isMobile = useIsMobile()
   const streamService = useStreamService()
   const cachedStreams = useWorkspaceStreams(workspaceId)
   const streamIndex = useWorkspaceStreamIndex(workspaceId)
@@ -160,6 +162,12 @@ function StreamsPageInner({
       }),
     [streams, memberStreamIds, tab, archived, query, membership, sort, statsById, users, dmPeers]
   )
+
+  const hoverCardStreamIds = useMemo(
+    () => (isMobile ? [] : rows.filter((row) => !row.stream.archivedAt).map((row) => row.stream.id)),
+    [isMobile, rows]
+  )
+  useStreamWarmup(hoverCardStreamIds)
 
   const mostActive = useMemo(
     () =>

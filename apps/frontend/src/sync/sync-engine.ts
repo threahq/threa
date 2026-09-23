@@ -252,6 +252,16 @@ export class SyncEngine {
    *  the single board slot). Same lifecycle as board streams — caught up + joined
    *  here, re-asserted across reconnects, never torn down per-card. */
   private panelStreamIds = new Set<string>()
+  /** Streams whose hover cards read local history, declared by every surface
+   *  that shows one. Each is refreshed once per page load: a first connect starts
+   *  the workspace catch-up at the server head, so a window persisted by an
+   *  earlier load misses whatever arrived while the app was closed. After that
+   *  refresh the room join and the catch-up cursor keep it current. */
+  private warmStreamIds = new Set<string>()
+  private refreshedWarmStreamIds = new Set<string>()
+  /** Set once the first connect's bootstrap has run; a refresh before it is
+   *  deferred by the cold sweep and dropped. */
+  private warmStreamsOpen = false
   private currentUser: { id: string } | null = null
   /** Last workspace bootstrap error, if any. Consumers can check this for 404/403 handling. */
   lastWorkspaceError: unknown = null
@@ -360,6 +370,15 @@ export class SyncEngine {
     if (toSync.length > 0) void this.syncBoardStreams(toSync)
   }
 
+  /** Declare streams whose hover cards read local history. Additive and idempotent. */
+  warmStreams(ids: Iterable<string>): void {
+    for (const id of ids) if (isServerStreamId(id)) this.warmStreamIds.add(id)
+    if (!this.warmStreamsOpen) return
+    const toSync = [...this.warmStreamIds].filter((id) => !this.refreshedWarmStreamIds.has(id))
+    for (const id of toSync) this.refreshedWarmStreamIds.add(id)
+    if (toSync.length > 0) void this.syncBoardStreams(toSync, { refreshPersisted: true })
+  }
+
   /** Update the current auth user (called from React when auth state settles). */
   setCurrentUser(user: { id: string } | null): void {
     this.currentUser = user
@@ -444,6 +463,10 @@ export class SyncEngine {
         // the two, so warm streams cost one IDB probe and cold ones backfill.
         const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(isServerStreamId)
         if (pending.length > 0) void this.syncBoardStreams([...new Set(pending)])
+      }
+      if (!isReconnect) {
+        this.warmStreamsOpen = true
+        this.warmStreams([])
       }
 
       // Process pending offline operations (edits, deletes, reactions, drafts)
@@ -1269,7 +1292,7 @@ export class SyncEngine {
    * degrades to the display-only HTTP warm fetch (delta-only, so cards with no
    * persisted window skip instead of fetching).
    */
-  private async syncBoardStreams(streamIds: string[]): Promise<void> {
+  private async syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<void> {
     let cursor = 0
     const worker = async (): Promise<void> => {
       while (cursor < streamIds.length && !this.isDestroyed) {
@@ -1284,7 +1307,12 @@ export class SyncEngine {
         // Reading the sequence as an emptiness probe is safe outside
         // joinStreamForCatchUp's cursor-before-join rule: nothing is ordered
         // against a join, and the refresh below re-derives its own cursor.
-        if (this.subscribedStreams.has(streamId) && (await getLatestPersistedSequence(streamId)) !== null) continue
+        if (
+          !options?.refreshPersisted &&
+          this.subscribedStreams.has(streamId) &&
+          (await getLatestPersistedSequence(streamId)) !== null
+        )
+          continue
         await this.refreshStreamAfterNavigation(streamId)
       }
     }

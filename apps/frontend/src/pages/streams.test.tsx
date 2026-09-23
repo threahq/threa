@@ -7,6 +7,7 @@ import * as contextsModule from "@/contexts"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
+import * as syncEngineModule from "@/sync/sync-engine"
 import { StreamsPage } from "./streams"
 
 const WS = "ws_1"
@@ -61,6 +62,9 @@ const STATS = [
 ]
 
 function setup(path: string) {
+  vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
+    warmStreams: vi.fn(),
+  } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(
     STREAMS as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
   )
