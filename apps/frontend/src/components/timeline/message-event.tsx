@@ -1585,7 +1585,7 @@ function SentMessageEvent({
                 </TooltipTrigger>
                 <TooltipContent>Reply in thread</TooltipContent>
               </Tooltip>
-              <MessageContextMenu context={actionContext} />
+              <MessageContextMenu context={actionContext} saved={savedForMessage ?? null} />
             </>
           )
         }

@@ -568,7 +568,7 @@ export function MessageItem({
             <TooltipContent>Quote reply</TooltipContent>
           </Tooltip>
         )}
-        <MessageContextMenu context={menuContext} />
+        <MessageContextMenu context={menuContext} saved={savedForMessage ?? null} />
       </div>
     </div>
   )

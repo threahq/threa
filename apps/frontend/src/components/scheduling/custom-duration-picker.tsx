@@ -18,6 +18,7 @@ export function customDurationToDate(amount: number, unit: CustomDurationUnit, n
 interface CustomDurationPickerProps {
   onSubmit?: (date: Date) => void
   disabled?: boolean
+  autoFocus?: boolean
   submitLabel?: string
   showSubmit?: boolean
   className?: string
@@ -32,6 +33,7 @@ interface CustomDurationPickerProps {
 export function CustomDurationPicker({
   onSubmit,
   disabled = false,
+  autoFocus = false,
   submitLabel = "Set",
   showSubmit = true,
   className,
@@ -88,6 +90,7 @@ export function CustomDurationPicker({
         aria-invalid={!validDuration}
         className={cn("h-8 w-16 px-2", controlClassName)}
         disabled={disabled}
+        autoFocus={autoFocus}
       />
       <Select value={unit} onValueChange={handleUnitChange} disabled={disabled}>
         <SelectTrigger aria-label="Duration unit" className={cn("h-8 w-[104px] px-2 text-sm", controlClassName)}>
