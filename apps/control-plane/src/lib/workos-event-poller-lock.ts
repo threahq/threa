@@ -183,12 +183,13 @@ export class WorkosEventPollerLock {
   /** Release the lease. Idempotent — safe to call on shutdown even if nothing held. */
   async release(): Promise<void> {
     if (!this.runId) return
+    const runId = this.runId
+    this.runId = null
     await this.pool.query(sql`
       UPDATE workos_event_poller_state
       SET locked_until = NULL, lock_run_id = NULL, updated_at = NOW()
-      WHERE name = ${this.name} AND lock_run_id = ${this.runId}
+      WHERE name = ${this.name} AND lock_run_id = ${runId}
     `)
-    this.runId = null
   }
 
   /** Start the lease-refresh timer. Caller is responsible for calling {@link stopRefreshTimer}. */
@@ -222,6 +223,9 @@ export class WorkosEventPollerLock {
     // observe `runId === null` and stop writing, and surface the loss so
     // the poller can abort the in-flight tick.
     if (result.rowCount === 0) {
+      // A refresh already in flight when release() ran lands after it; the
+      // lease was given up, not lost.
+      if (this.runId !== runId) return
       this.runId = null
       this.stopRefreshTimer()
       throw new Error(`Lost WorkOS event poller lease for ${this.name}`)
