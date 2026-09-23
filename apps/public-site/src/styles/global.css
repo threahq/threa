@@ -128,6 +128,11 @@ body {
   margin: 0;
   padding: 0;
 }
+/* Inherited by every scroller, so code blocks and panes get a thumb in the
+   page's palette instead of the browser's grey. */
+html {
+  scrollbar-color: hsl(var(--muted) / 0.45) transparent;
+}
 body {
   background: hsl(var(--paper-warm));
   color: hsl(var(--ink));
@@ -1427,44 +1432,61 @@ body {
   max-width: 320px;
 }
 
-/* Terminal goes night — the one deep-ink surface in each band, so the
-   dev-credible artifacts (real commands, real output) carry the contrast
-   instead of another gray box. Prompt stays gold: the thread in the dark. */
+/* Shell surfaces follow the theme like the docs code blocks: paper in
+   light mode, night in dark. */
+.os-terminal,
+.patch-example .patch-run {
+  --sh-bg: var(--paper);
+  --sh-border: var(--line);
+  --sh-prompt: var(--gold-dim);
+  --sh-cmd: var(--ink);
+  --sh-arg: var(--ink-soft);
+  --sh-out: var(--muted);
+}
+[data-theme="dark"] .os-terminal,
+[data-theme="dark"] .patch-example .patch-run {
+  --sh-bg: var(--night);
+  --sh-border: 26 12% 20%;
+  --sh-prompt: var(--gold-soft);
+  --sh-cmd: 38 18% 92%;
+  --sh-arg: 35 12% 70%;
+  --sh-out: 35 8% 52%;
+}
 .os-terminal {
-  background: hsl(var(--night));
-  border: 1px solid hsl(26 12% 20%);
+  background: hsl(var(--sh-bg));
+  border: 1px solid hsl(var(--sh-border));
   border-radius: 6px;
   padding: 18px 22px;
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.8;
-  color: hsl(35 12% 72%);
+  color: hsl(var(--sh-arg));
   margin-top: 4px;
   overflow-x: auto;
-  box-shadow: 0 16px 44px -24px hsl(26 30% 6% / 0.55);
+  box-shadow: 0 16px 44px -24px hsl(26 30% 6% / 0.35);
 }
 .os-terminal .row {
   display: block;
   white-space: pre;
 }
 .os-terminal .prompt {
-  color: hsl(var(--gold-soft));
+  color: hsl(var(--sh-prompt));
   margin-right: 10px;
   user-select: none;
 }
 .os-terminal .cmd {
-  color: hsl(38 18% 92%);
+  color: hsl(var(--sh-cmd));
 }
 .os-terminal .arg {
-  color: hsl(35 12% 70%);
+  color: hsl(var(--sh-arg));
 }
 .os-terminal .out {
-  color: hsl(35 8% 52%);
+  color: hsl(var(--sh-out));
   padding-left: 20px;
   display: block;
 }
 .os-terminal .cmt {
-  color: hsl(35 8% 50%);
+  color: hsl(var(--sh-out));
   font-style: italic;
   padding-left: 4px;
 }
@@ -1519,26 +1541,25 @@ body {
 .patch-example .patch-body .md-li {
   color: hsl(var(--ink-soft));
 }
-/* The run line is a terminal, so it gets the night strip — the file above
-   stays paper (it's a document), the command below goes dark (it's a shell). */
 .patch-example .patch-run {
   padding: 11px 14px 13px;
-  background: hsl(var(--night));
+  background: hsl(var(--sh-bg));
+  border-top: 1px solid hsl(var(--sh-border));
   font-family: var(--font-mono);
   font-size: 12px;
-  color: hsl(35 12% 70%);
+  color: hsl(var(--sh-arg));
   white-space: pre;
   overflow-x: auto;
 }
 .patch-example .patch-run .prompt {
-  color: hsl(var(--gold-soft));
+  color: hsl(var(--sh-prompt));
   margin-right: 10px;
 }
 .patch-example .patch-run .cmd {
-  color: hsl(38 18% 92%);
+  color: hsl(var(--sh-cmd));
 }
 .patch-example .patch-run .arg {
-  color: hsl(35 10% 60%);
+  color: hsl(var(--sh-arg));
 }
 
 .os-cta {
