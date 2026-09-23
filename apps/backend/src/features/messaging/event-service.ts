@@ -2,7 +2,13 @@ import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
 import { StreamRepository, publishThreadUpdated, type Stream, type ThreadUpdatedSource } from "../streams"
-import { StreamMemberRepository, SparseReadRepository, ReadStateRepository, resolveInboxClearMode } from "../streams"
+import {
+  StreamMemberRepository,
+  SparseReadRepository,
+  ReadStateRepository,
+  resolveInboxClearMode,
+  releaseInboxHold,
+} from "../streams"
 import {
   assertStreamWritable,
   assertStreamsWritable,
@@ -954,17 +960,7 @@ export class EventService {
         // starts a new one (unlike a plain read, which can hold on interleaved
         // other-author messages up to this point).
         await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, { holdInInbox: false })
-        const cleared = await ReadStateRepository.clearInboxHeld(client, params.workspaceId, params.authorId, [
-          params.streamId,
-        ])
-        if (cleared.length > 0) {
-          await OutboxRepository.insert(client, "stream:inbox_updated", {
-            workspaceId: params.workspaceId,
-            authorId: params.authorId,
-            streamIds: [params.streamId],
-            held: false,
-          })
-        }
+        await releaseInboxHold(client, params.workspaceId, params.authorId, [params.streamId])
       } else {
         const { held } = await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, {
           holdInInbox: inboxClearMode === "manual",
@@ -2375,17 +2371,7 @@ export class EventService {
           // existing.streamId === streamId).
           const inboxClearMode = await resolveInboxClearMode(client, params.userId)
           if (inboxClearMode === "interaction") {
-            const cleared = await ReadStateRepository.clearInboxHeld(client, params.workspaceId, params.userId, [
-              streamId,
-            ])
-            if (cleared.length > 0) {
-              await OutboxRepository.insert(client, "stream:inbox_updated", {
-                workspaceId: params.workspaceId,
-                authorId: params.userId,
-                streamIds: [streamId],
-                held: false,
-              })
-            }
+            await releaseInboxHold(client, params.workspaceId, params.userId, [streamId])
           }
         }
 
