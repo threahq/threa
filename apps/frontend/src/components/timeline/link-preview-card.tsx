@@ -136,7 +136,7 @@ export function LinkPreviewCard({
   const visibilityRef = useReportPreviewVisible({
     workspaceId,
     previewId: preview.id,
-    enabled: githubPreview !== null,
+    enabled: githubPreview !== null && !isCollapsedProp,
   })
 
   const handleDismiss = useCallback(
@@ -157,6 +157,23 @@ export function LinkPreviewCard({
     [onToggleCollapse, preview.id]
   )
 
+  const headerIcon = resolveHeaderIcon(githubPreview, linearPreview, preview.contentType)
+  const headerLabel = resolveHeaderLabel(githubPreview, linearPreview, preview.siteName, domain)
+  const headerFavicon = !githubPreview && !linearPreview ? preview.faviconUrl : null
+
+  if (isCollapsedProp) {
+    return (
+      <CollapsedPreviewChip
+        icon={headerIcon}
+        faviconUrl={headerFavicon}
+        label={preview.title || headerLabel}
+        isHighlighted={isHighlighted}
+        onExpand={handleToggleCollapse}
+        onDismiss={onDismiss ? handleDismiss : undefined}
+      />
+    )
+  }
+
   if (preview.contentType === "image") {
     // data-native-context makes the row long-press hook defer to the browser's
     // native menu (via `deferToNativeLinks`), so long-pressing the image still
@@ -175,11 +192,10 @@ export function LinkPreviewCard({
           icon={<ContentTypeIcon contentType="image" />}
           label={preview.siteName ?? domain}
           faviconUrl={preview.faviconUrl}
-          isCollapsed={isCollapsedProp}
           onToggleCollapse={handleToggleCollapse}
           onDismiss={onDismiss ? handleDismiss : undefined}
         />
-        {!isCollapsedProp && <ImagePreviewContent preview={preview} workspaceId={workspaceId} />}
+        <ImagePreviewContent preview={preview} workspaceId={workspaceId} />
       </div>
     )
   }
@@ -198,17 +214,13 @@ export function LinkPreviewCard({
           icon={<ContentTypeIcon contentType="video" />}
           label={preview.siteName ?? domain}
           faviconUrl={preview.faviconUrl}
-          isCollapsed={isCollapsedProp}
           onToggleCollapse={handleToggleCollapse}
           onDismiss={onDismiss ? handleDismiss : undefined}
         />
-        {!isCollapsedProp && <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />}
+        <VideoPreviewContent video={videoPreview} workspaceId={workspaceId} />
       </div>
     )
   }
-
-  const headerIcon = resolveHeaderIcon(githubPreview, linearPreview, preview.contentType)
-  const headerLabel = resolveHeaderLabel(githubPreview, linearPreview, preview.siteName, domain)
 
   // data-native-context tells the message-level long-press hook to skip its
   // timer so long-pressing anywhere on the card gets the browser's native link
@@ -226,25 +238,73 @@ export function LinkPreviewCard({
       <PreviewCardHeader
         icon={headerIcon}
         label={headerLabel}
-        faviconUrl={!githubPreview && !linearPreview ? preview.faviconUrl : null}
-        isCollapsed={isCollapsedProp}
+        faviconUrl={headerFavicon}
         onToggleCollapse={handleToggleCollapse}
         onDismiss={onDismiss ? handleDismiss : undefined}
       />
 
       {/* Clamped to a shared body height so a message with mixed preview types
           (e.g. a PR + a diff) lines up. */}
-      {!isCollapsedProp && (
-        <LinkPreviewBody messageId={messageId} previewId={preview.id}>
-          <a
-            href={preview.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block hover:bg-muted/20 transition-colors"
-          >
-            <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
-          </a>
-        </LinkPreviewBody>
+      <LinkPreviewBody messageId={messageId} previewId={preview.id}>
+        <a
+          href={preview.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block hover:bg-muted/20 transition-colors"
+        >
+          <ProviderContent preview={preview} imageError={imageError} onImageError={() => setImageError(true)} />
+        </a>
+      </LinkPreviewBody>
+    </div>
+  )
+}
+
+/**
+ * A folded preview: one line with the provider icon and title, sized to its
+ * content so several folded previews share a line. Tapping it opens the card.
+ */
+function CollapsedPreviewChip({
+  icon,
+  faviconUrl,
+  label,
+  isHighlighted,
+  onExpand,
+  onDismiss,
+}: {
+  icon: ReactNode
+  faviconUrl: string | null
+  label: string
+  isHighlighted?: boolean
+  onExpand: (e: React.MouseEvent) => void
+  onDismiss?: (e: React.MouseEvent) => void
+}) {
+  return (
+    <div
+      className={cn(
+        "group/preview reveal-host inline-flex max-w-full items-center rounded-md border bg-card transition-colors",
+        "hover:border-primary/50",
+        isHighlighted && "ring-2 ring-primary border-primary"
+      )}
+    >
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onExpand}
+        aria-expanded={false}
+        title={label}
+        className="h-auto min-w-0 justify-start gap-1.5 rounded-md py-1 pl-1.5 pr-2 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground [&_svg]:size-3.5"
+      >
+        <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
+        {icon}
+        {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+        <span className="max-w-64 truncate">{label}</span>
+      </Button>
+      {onDismiss && (
+        <div className="reveal-actions pr-1">
+          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">
+            <X className="h-3 w-3" />
+          </Button>
+        </div>
       )}
     </div>
   )
@@ -259,14 +319,12 @@ function PreviewCardHeader({
   icon,
   label,
   faviconUrl,
-  isCollapsed,
   onToggleCollapse,
   onDismiss,
 }: {
   icon: ReactNode
   label: string
   faviconUrl: string | null
-  isCollapsed?: boolean
   onToggleCollapse: (e: React.MouseEvent) => void
   onDismiss?: (e: React.MouseEvent) => void
 }) {
@@ -276,22 +334,13 @@ function PreviewCardHeader({
         type="button"
         onClick={onToggleCollapse}
         className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-        aria-label={isCollapsed ? "Expand preview" : "Collapse preview"}
+        aria-label="Collapse preview"
+        aria-expanded
       >
-        {isCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        <ChevronDown className="h-3 w-3" />
       </button>
       {icon}
-      {faviconUrl && (
-        <img
-          src={faviconUrl}
-          alt=""
-          className="h-3.5 w-3.5 rounded-sm"
-          loading="lazy"
-          onError={(e) => {
-            ;(e.target as HTMLImageElement).style.display = "none"
-          }}
-        />
-      )}
+      {faviconUrl && <PreviewFavicon src={faviconUrl} />}
       <span className="text-xs text-muted-foreground truncate">{label}</span>
       <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
       <div className="reveal-actions flex gap-1">
@@ -1128,4 +1177,18 @@ function formatLinearStatus(status: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ")
+}
+
+function PreviewFavicon({ src }: { src: string }) {
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-3.5 w-3.5 shrink-0 rounded-sm"
+      loading="lazy"
+      onError={(e) => {
+        ;(e.target as HTMLImageElement).style.display = "none"
+      }}
+    />
+  )
 }

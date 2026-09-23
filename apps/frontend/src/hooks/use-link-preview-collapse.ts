@@ -39,3 +39,24 @@ export function useLinkPreviewCollapse(messageId: string | undefined, previewId:
     toggle,
   }
 }
+
+export interface LinkPreviewOpenState {
+  open: boolean
+  toggle: () => void
+}
+
+/**
+ * Whether a link preview is open as a card or folded to a chip, persisted per
+ * `(messageId, previewId)` through the same synchronous cache as
+ * {@link useLinkPreviewCollapse} so a remounted timeline row keeps its height.
+ */
+export function useLinkPreviewOpen(messageId: string, previewId: string, defaultOpen: boolean): LinkPreviewOpenState {
+  const id = `${messageId}:${previewId}:open`
+  const open = useLinkPreviewExpandStore(id) ?? defaultOpen
+
+  const toggle = useCallback(() => {
+    setLinkPreviewExpand(id, messageId, previewId, !open)
+  }, [id, messageId, previewId, open])
+
+  return { open, toggle }
+}

@@ -1,5 +1,5 @@
-import { useRef, type ReactNode } from "react"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { useLayoutEffect, useRef, type ReactNode } from "react"
+import { ChevronDown, ChevronUp } from "lucide-react"
 import {
   DEFAULT_MESSAGE_COLLAPSE_AT_HEIGHT,
   DEFAULT_MESSAGE_COLLAPSE_TO_HEIGHT,
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
-import { InsideCollapsibleBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
+import { InsideCollapsibleBlockProvider, MarkdownBlockProvider, type MarkdownBlockKind } from "./markdown-block-context"
 
 interface CollapsibleBodyProps {
   /** The block-collapse kind — its own `messageId`-scoped fold key + hash space. */
@@ -26,6 +26,13 @@ interface CollapsibleBodyProps {
   defaultCollapsed?: boolean
   /** The rendered body (a `MarkdownContent`) measured and clamped when folded. */
   children: ReactNode
+  /**
+   * Rendered under the body and folded with it (attachments, link previews), so
+   * a folded message hides them instead of leaving them below the fade. Kept out
+   * of the message's block scope: markdown inside a preview never gets fold
+   * chrome keyed to the host message.
+   */
+  trailing?: ReactNode
 }
 
 // The collapsed body fades out its own bottom edge via a mask (the content goes
@@ -54,6 +61,7 @@ export function CollapsibleBody({
   collapseToHeight,
   defaultCollapsed = true,
   children,
+  trailing,
 }: CollapsibleBodyProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const { lineCount, lineHeightPx, heightPx } = useMeasuredLineCount(bodyRef, [content])
@@ -67,6 +75,41 @@ export function CollapsibleBody({
     ? (collapseToHeight ??
       (threshold !== undefined && lineHeightPx !== null ? (threshold + 0.5) * lineHeightPx : undefined))
     : undefined
+
+  const trailingRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const trailingRoot = trailingRef.current
+    if (collapsedMaxHeight === undefined || !body || !trailingRoot) return
+    let hidden: Element[] = []
+    const release = () => {
+      for (const el of hidden) el.removeAttribute("inert")
+      hidden = []
+    }
+    // Controls clipped below the clamp stay out of the tab order; anything
+    // straddling the edge is partly visible and keeps its focusable parts.
+    const markClipped = () => {
+      release()
+      const clampBottom = body.getBoundingClientRect().top + collapsedMaxHeight
+      const visit = (el: Element) => {
+        const rect = el.getBoundingClientRect()
+        if (rect.top >= clampBottom) {
+          el.setAttribute("inert", "")
+          hidden.push(el)
+        } else if (rect.bottom > clampBottom) {
+          for (const child of el.children) visit(child)
+        }
+      }
+      visit(trailingRoot)
+    }
+    markClipped()
+    const observer = new ResizeObserver(markClipped)
+    observer.observe(trailingRoot)
+    return () => {
+      observer.disconnect()
+      release()
+    }
+  }, [collapsedMaxHeight, heightPx])
 
   return (
     <div>
@@ -88,6 +131,11 @@ export function CollapsibleBody({
           }
         >
           {children}
+          {trailing && (
+            <div ref={trailingRef}>
+              <MarkdownBlockProvider messageId={null}>{trailing}</MarkdownBlockProvider>
+            </div>
+          )}
         </div>
       </InsideCollapsibleBlockProvider>
       {canToggle && (
@@ -105,9 +153,9 @@ export function CollapsibleBody({
           )}
         >
           {collapsed ? (
-            <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          ) : (
             <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          ) : (
+            <ChevronUp className="h-3 w-3 shrink-0" aria-hidden="true" />
           )}
           {collapsed ? "Show more" : "Collapse"}
         </button>
