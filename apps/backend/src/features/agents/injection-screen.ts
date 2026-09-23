@@ -1,5 +1,6 @@
 import {
   AISpendDeniedError,
+  DecisionsRequestError,
   isAbortError,
   noulAnswer,
   type AI,
@@ -76,7 +77,9 @@ export class InjectionScreen {
         )
         return null
       }
-      this.availability.recordFailure()
+      // A web page is free to carry text an upstream filter refuses. Refusing that
+      // one page must not hold every other decisions caller off the endpoint.
+      if (!(error instanceof DecisionsRequestError && error.refusedContent)) this.availability.recordFailure()
       logger.warn({ error, workspaceId: context.workspaceId }, "Injection screen failed; tool output left unjudged")
       return null
     } finally {

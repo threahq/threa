@@ -1,5 +1,5 @@
 import { describe, test, expect, mock } from "bun:test"
-import { AISpendDeniedError, DecisionsAvailability, type AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, DecisionsAvailability, DecisionsRequestError, type AI } from "@threahq/agent-runtime"
 import { INJECTION_SCREEN_CHUNK_CHARS } from "./config"
 import { InjectionScreen } from "./injection-screen"
 
@@ -54,6 +54,18 @@ describe("InjectionScreen", () => {
 
   test("a decision-model failure leaves the output unjudged and trips the breaker", async () => {
     const { screen, availability } = createScreen({ throws: new Error("endpoint down") })
+    expect(await screen.isSuspect("text", CONTEXT)).toBeNull()
+    expect(availability.isAvailable).toBe(false)
+  })
+
+  test("a page the endpoint refuses leaves the output unjudged without tripping the breaker", async () => {
+    const { screen, availability } = createScreen({ throws: new DecisionsRequestError(403, "<html>blocked</html>") })
+    expect(await screen.isSuspect("SELECT * FROM users", CONTEXT)).toBeNull()
+    expect(availability.isAvailable).toBe(true)
+  })
+
+  test("an endpoint error status trips the breaker", async () => {
+    const { screen, availability } = createScreen({ throws: new DecisionsRequestError(502, "bad gateway") })
     expect(await screen.isSuspect("text", CONTEXT)).toBeNull()
     expect(availability.isAvailable).toBe(false)
   })

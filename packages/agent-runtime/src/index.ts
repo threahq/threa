@@ -163,6 +163,7 @@ export {
 export { DecisionsAvailability } from "./ai/decisions-availability"
 export {
   choiceAnswer,
+  DecisionsRequestError,
   noulAnswer,
   rescaleScore,
   isDecisionsModel,
