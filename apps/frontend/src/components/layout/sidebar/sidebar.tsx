@@ -319,7 +319,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [sidebarConfig.sections, labelsById, streamIdsByLabel])
 
-  const inboxOrder = preferencesContext?.preferences?.inboxOrder ?? "arrival"
+  // Board mode's Unread is plain unread membership, not the Inbox, so it keeps activity order.
+  const inboxOrder = isBoardPage ? "newest" : (preferencesContext?.preferences?.inboxOrder ?? "arrival")
   const inboxArrivedAt = unreadState?.inboxArrivedAt ?? EMPTY_INBOX_ARRIVED_AT
 
   const resolvedSections = useMemo(

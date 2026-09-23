@@ -251,13 +251,7 @@ export function createWorkspaceHandlers({
       // Inbox arrival order: candidates are held streams plus every member
       // stream (the arrival lookup itself drops streams with nothing unread).
       const inboxArrivalCandidateIds = [...new Set([...membershipStreamIds, ...inboxHeldStreamIds])]
-      const inboxArrivedAtDates = await streamService.getInboxArrivedAt(workspaceId, userId, inboxArrivalCandidateIds)
-      const inboxArrivedAt: Record<string, string> = {}
-      for (const [streamId, arrivedAt] of Object.entries(inboxArrivedAtDates)) {
-        inboxArrivedAt[streamId] = arrivedAt.toISOString()
-      }
-
-      const [unreadCountsMap, activityCounts, unreadActivities] = await Promise.all([
+      const [unreadCountsMap, activityCounts, unreadActivities, inboxArrivedAtDates] = await Promise.all([
         streamService.getUnreadCounts(
           streamMemberships.map((m) => ({
             streamId: m.streamId,
@@ -267,7 +261,12 @@ export function createWorkspaceHandlers({
         ),
         activityService?.getUnreadCounts(userId, workspaceId),
         activityService?.listFeed(userId, workspaceId, { unreadOnly: true, othersOnly: true, limit: 200 }),
+        streamService.getInboxArrivedAt(workspaceId, userId, inboxArrivalCandidateIds),
       ])
+      const inboxArrivedAt: Record<string, string> = {}
+      for (const [streamId, arrivedAt] of Object.entries(inboxArrivedAtDates)) {
+        inboxArrivedAt[streamId] = arrivedAt.toISOString()
+      }
       const unreadCounts: Record<string, number> = {}
       const messageCounts: Record<string, number> = {}
       for (const [streamId, counts] of unreadCountsMap) {
