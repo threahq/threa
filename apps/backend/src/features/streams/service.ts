@@ -2847,7 +2847,10 @@ export class StreamService {
 
   /** Streams currently held in this user's sidebar Inbox (bootstrap seed). */
   async listInboxHeldStreamIds(workspaceId: string, userId: string): Promise<string[]> {
-    return ReadStateRepository.listInboxHeldStreamIds(this.pool, workspaceId, userId)
+    const held = await ReadStateRepository.listInboxHeldStreamIds(this.pool, workspaceId, userId)
+    if (held.length === 0) return []
+    // A hold outlives access (removeMember leaves stream_read_state), so re-check before seeding bootstrap.
+    return [...(await listAccessibleStreamIds(this.pool, workspaceId, userId, held))]
   }
 
   /** Inbox arrival timestamps for the given candidate streams (bootstrap seed). */

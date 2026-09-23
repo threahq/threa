@@ -1,5 +1,5 @@
 import { StreamTypes, type StreamType } from "@threahq/types"
-import { hiddenStreamIds, isUtilityStream } from "@/lib/streams"
+import { collectSealedStreamIds, hiddenStreamIds, isUtilityStream } from "@/lib/streams"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
 
 export const DIRECTORY_TABS = ["all", "channels", "scratchpads", "dms", "threads"] as const
@@ -22,6 +22,7 @@ export interface DirectoryStream {
   id: string
   type: StreamType
   visibility: "public" | "private"
+  parentStreamId?: string | null
   rootStreamId: string | null
   purpose?: string | null
   archivedAt: string | null
@@ -40,7 +41,8 @@ export interface DirectoryRow<S extends DirectoryStream> {
 /**
  * The explorer's rows for one tab: every listable stream of the tab's type,
  * in the chosen order (newest activity by default). Asides and anything rooted in one never list, same as
- * the sidebar. Threads carry no member rows (INV-62), so they are never joinable.
+ * the sidebar. Threads carry no member rows (INV-62), so they are never joinable. A thread under an
+ * archived stream is sealed with it and never lists as active.
  */
 export function buildDirectoryRows<S extends DirectoryStream>({
   streams,
@@ -64,6 +66,7 @@ export function buildDirectoryRows<S extends DirectoryStream>({
   memberCountOf?: (streamId: string) => number
 }): DirectoryRow<S>[] {
   const hidden = hiddenStreamIds(streams)
+  const sealed = archived ? null : collectSealedStreamIds(streams)
   const type = tab === "all" ? null : TAB_TYPES[tab]
   const needle = query.trim().toLowerCase()
 
@@ -72,7 +75,7 @@ export function buildDirectoryRows<S extends DirectoryStream>({
     if (hidden.has(stream.id) || isUtilityStream(stream)) continue
     if (stream.type === StreamTypes.SYSTEM) continue
     if (type && stream.type !== type) continue
-    if (Boolean(stream.archivedAt) !== archived) continue
+    if (Boolean(stream.archivedAt) !== archived || sealed?.has(stream.id)) continue
     const name = nameOf(stream)
     if (needle && !name.toLowerCase().includes(needle)) continue
     const member = memberStreamIds.has(stream.id)

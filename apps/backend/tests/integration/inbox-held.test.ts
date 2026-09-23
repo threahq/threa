@@ -779,6 +779,26 @@ describe("inbox hold", () => {
     })
   })
 
+  describe("StreamService.listInboxHeldStreamIds", () => {
+    test("should drop a hold on a stream the user can no longer access", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const readable = streamId()
+      const lostAccess = streamId()
+      await seedChannel(wid, readable, author, "public")
+      await seedChannel(wid, lostAccess, author, "private")
+      await sendMessages(wid, readable, author, 1)
+      await sendMessages(wid, lostAccess, author, 1)
+      const [evtReadable] = await StreamEventRepository.list(pool, readable)
+      const [evtLost] = await StreamEventRepository.list(pool, lostAccess)
+      await ReadStateRepository.advance(pool, readable, reader, evtReadable.id, { holdInInbox: true })
+      await ReadStateRepository.advance(pool, lostAccess, reader, evtLost.id, { holdInInbox: true })
+
+      expect(await streamService.listInboxHeldStreamIds(wid, reader)).toEqual([readable])
+    })
+  })
+
   describe("UserPreferencesService: switching to read mode", () => {
     test("releases every existing hold and emits stream:inbox_updated(held: false)", async () => {
       const wid = workspaceId()

@@ -52,6 +52,16 @@ describe("buildDirectoryRows", () => {
     expect(rows).toEqual([{ id: "stream_joined", joinable: false }])
   })
 
+  it("should hide threads under an archived stream from the active listing", () => {
+    const rows = build([
+      stream("stream_old", { archivedAt: "2026-09-02T00:00:00.000Z" }),
+      stream("stream_thread", { type: "thread", parentStreamId: "stream_old", rootStreamId: "stream_old" }),
+      stream("stream_nested", { type: "thread", parentStreamId: "stream_thread", rootStreamId: "stream_old" }),
+      stream("stream_joined"),
+    ])
+    expect(rows).toEqual([{ id: "stream_joined", joinable: false }])
+  })
+
   it("should filter by tab, archive state and query when set", () => {
     const streams = [
       stream("stream_joined"),

@@ -604,12 +604,12 @@ describe("StreamItem", () => {
       />
     )
 
-    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/")
+    expect(screen.getByTestId("location-pathname").textContent).toBe("/")
 
     fireEvent.click(screen.getByRole("button", { name: "Clear from Inbox" }))
 
     expect(onClearFromInbox).toHaveBeenCalledTimes(1)
-    expect(screen.getByTestId("location-pathname")).toHaveTextContent("/")
+    expect(screen.getByTestId("location-pathname").textContent).toBe("/")
   })
 
   it("offers a Clear action in the mobile action drawer for an Inbox row", async () => {
