@@ -27,9 +27,9 @@ export function SandboxInternetSection({ workspaceId }: SandboxInternetSectionPr
           Sandbox internet access
         </Label>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Lets commands the assistant runs reach the internet. Attachments the assistant copies into its sandbox could
-          then leave the workspace. Changing this gives every conversation a fresh sandbox, so files made in the old one
-          are gone.
+          Lets commands the assistant runs reach the internet, in conversations that also allow web access. Attachments
+          the assistant copies into its sandbox could then leave the workspace. Changing this gives those conversations
+          a fresh sandbox, so files made in the old one are gone.
         </p>
       </div>
       {canManage ? (
