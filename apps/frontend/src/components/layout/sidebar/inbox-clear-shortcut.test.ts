@@ -90,9 +90,9 @@ describe("resolveClearInboxTargetStreamId", () => {
   })
 
   it("falls back to the open stream when it's in the Inbox", () => {
-    expect(
-      resolveClearInboxTargetStreamId({ hoveredStreamId: null, activeStreamId: "stream_inbox", isInInbox })
-    ).toBe("stream_inbox")
+    expect(resolveClearInboxTargetStreamId({ hoveredStreamId: null, activeStreamId: "stream_inbox", isInInbox })).toBe(
+      "stream_inbox"
+    )
   })
 
   it("returns null when the open stream isn't in the Inbox", () => {
