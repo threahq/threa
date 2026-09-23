@@ -20,10 +20,8 @@ export type RunFold =
 
 /**
  * Per-timeline memory the fold pass reads and writes. Heights outlive their row
- * so a hidden member still counts toward its run. A run's default is decided
- * once, the first time every member has been measured, and a message that was
- * ever shown in an open run never folds by default again this session — a run
- * the viewer has already seen open must not snap shut under them.
+ * so a hidden member still counts toward its run. A run folds only when the
+ * viewer collapses it, never by default.
  */
 export interface RunFoldStore {
   subscribe(listener: () => void): () => void
@@ -34,15 +32,6 @@ export interface RunFoldStore {
   setCollapsed(fold: RunFold, collapsed: boolean): void
   /** The run the viewer just toggled; the list restores scroll and focus once. */
   toggledRun: { headMessageId: string; collapsed: boolean } | null
-  /**
-   * Server time of the newest message known when the timeline first rendered,
-   * from the rendered events or the stream's last-message preview, whichever is
-   * newer. Server time rather than sequence so a stale event cache catching up
-   * does not pass off older messages as live arrivals.
-   */
-  baselineAtMs: number | null
-  decisions: Map<string, boolean>
-  openedMessageIds: Set<string>
   /** Run key → the reveal target that opened it. */
   revealedBy: Map<string, string>
   /** `key\nmessageId` reveals the viewer has since overridden with a toggle. */
@@ -82,9 +71,6 @@ export function createRunFoldStore(): RunFoldStore {
       setBlockCollapse(fold.key, fold.headMessageId, "run", collapsed)
     },
     toggledRun: null,
-    baselineAtMs: null,
-    decisions: new Map(),
-    openedMessageIds: new Set(),
     revealedBy: new Map(),
     spentReveals: new Set(),
     foldedThrough: new Map(),
@@ -98,15 +84,11 @@ export function composeRunFoldKey(headMessageId: string): string {
 
 export interface FoldAuthorRunsOptions {
   store: RunFoldStore
-  /** The viewer's collapse preference: runs start folded when true. */
-  defaultCollapsed: boolean
   collapseAtHeight: number
   /** Read watermark; `undefined` while read state is still resolving, `null` when never read. */
   frontierSequence: bigint | null | undefined
   /** The viewer's own messages are never unread. */
   viewerId: string | null | undefined
-  /** `createdAt` of the stream's newest message, as the workspace last knew it. */
-  latestKnownAt: string | null | undefined
   persisted: (key: string) => boolean | undefined
   /** Deep-link / search targets: a folded run containing one opens. */
   revealMessageIds: ReadonlyArray<string | null | undefined>
@@ -116,7 +98,6 @@ interface RunMember {
   index: number
   messageId: string
   sequence: bigint
-  createdAtMs: number
   own: boolean
 }
 
@@ -138,9 +119,8 @@ function parseSequence(sequence: string): bigint {
  * grouping passes) behind one control. Runs of a single message are left to the
  * message's own fold.
  *
- * Writes to `store` are first-write-wins memos (baseline, per-run decision,
- * opened messages, reveals), so re-running the pass over the same input is
- * idempotent.
+ * Writes to `store` are first-write-wins memos (fold boundary, reveals), so
+ * re-running the pass over the same input is idempotent.
  */
 export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOptions): TimelineItem[] {
   const { store } = options
@@ -157,7 +137,6 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
       index,
       messageId,
       sequence: parseSequence(item.event.sequence),
-      createdAtMs: Date.parse(item.event.createdAt),
       own: !!options.viewerId && item.event.actorId === options.viewerId,
     }
     if (item.groupContinuation === true && current) {
@@ -166,14 +145,6 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
       current = [member]
       runs.push(current)
     }
-  }
-
-  // An empty first pass (still loading) with no preview to go by knows nothing
-  // yet; latching it would count every message as a live arrival.
-  if (store.baselineAtMs === null && (runs.length > 0 || options.latestKnownAt)) {
-    let max = options.latestKnownAt ? Date.parse(options.latestKnownAt) : Number.NEGATIVE_INFINITY
-    for (const run of runs) for (const member of run) max = Math.max(max, member.createdAtMs)
-    store.baselineAtMs = max
   }
 
   const frontier = options.frontierSequence
@@ -191,31 +162,11 @@ export function foldAuthorRuns(items: TimelineItem[], options: FoldAuthorRunsOpt
     const key = composeRunFoldKey(head.messageId)
 
     let knownHeight = 0
-    let allMeasured = true
-    for (const member of run) {
-      const height = store.heightOf(member.messageId)
-      if (height === undefined) allMeasured = false
-      else knownHeight += height
-    }
+    for (const member of run) knownHeight += store.heightOf(member.messageId) ?? 0
     const persisted = options.persisted(key)
-    const foldable = persisted === true || knownHeight > options.collapseAtHeight
+    if (persisted !== true && knownHeight <= options.collapseAtHeight) continue
 
-    let decision = store.decisions.get(key)
-    // Settle as soon as the answer can't change: every member measured, or the
-    // measured part alone already crosses the threshold (a long run whose tail
-    // is still outside the rendered range).
-    if (decision === undefined && (allMeasured || foldable) && frontier !== undefined) {
-      const baseline = store.baselineAtMs ?? Number.NEGATIVE_INFINITY
-      const fresh = run.some((member) => member.createdAtMs > baseline || isUnread(member))
-      const opened = run.some((member) => store.openedMessageIds.has(member.messageId))
-      decision = options.defaultCollapsed && foldable && !fresh && !opened
-      store.decisions.set(key, decision)
-    }
-    if (decision === false) for (const member of run) store.openedMessageIds.add(member.messageId)
-
-    if (!foldable) continue
-
-    let collapsed = persisted ?? decision ?? false
+    let collapsed = persisted === true
     let end = run.length - 1
     if (collapsed) {
       const through = run.findIndex((member) => member.messageId === store.foldedThrough.get(key))

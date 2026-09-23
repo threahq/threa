@@ -23,16 +23,12 @@ async function send(page: Page, workspaceId: string, streamId: string, content: 
   )
 }
 
-/** One author, three tall messages in one conversation: a run that folds. */
+/** One author, three tall messages in one conversation: a run that can fold. */
 async function seedTallRun(page: Page) {
   await loginAndCreateWorkspace(page, "run-fold")
   await createChannel(page, `run-fold-${Date.now().toString(36)}`)
   const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
   const streamId = page.url().match(/\/s\/([^/?]+)/)![1]
-  await expectApiOk(
-    await page.request.patch(`/api/workspaces/${workspaceId}/preferences`, { data: { messageCollapseEnabled: true } }),
-    "enable collapse"
-  )
 
   const conversation = conversationId()
   await send(page, workspaceId, streamId, PARAGRAPHS("Alpha"), { intent: "new", conversationId: conversation })
@@ -43,12 +39,21 @@ async function seedTallRun(page: Page) {
   return { workspaceId, streamId }
 }
 
-test("a tall same-author run opens folded to its head and toggles as one", async ({ page }) => {
+test("a tall same-author run stays open until collapsed, then reopens folded as one", async ({ page }) => {
   await seedTallRun(page)
   const timeline = page.getByTestId("stream-timeline")
+  const collapse = timeline.getByRole("button", { name: "Collapse", exact: true })
+  await expect(collapse).toHaveCount(1)
+  await expect(timeline.getByRole("button", { name: /more messages/ })).toHaveCount(0)
+
+  // The pressed control unmounts on each toggle; focus moves to what replaced it.
+  await collapse.click()
+  const expand = timeline.getByRole("button", { name: "Show 2 more messages" })
+  await expect(expand).toBeFocused()
+  await expect(timeline.getByText("Charlie point 1")).toHaveCount(0)
 
   // Sample every frame of the reopen: the hidden members must never reach a
-  // painted frame, so the fold is decided before the first paint.
+  // painted frame, so the persisted fold applies before the first paint.
   await page.addInitScript(() => {
     const frames: number[] = []
     ;(window as unknown as { __runFoldFrames: number[] }).__runFoldFrames = frames
@@ -63,8 +68,7 @@ test("a tall same-author run opens folded to its head and toggles as one", async
   })
   await page.reload()
 
-  const expand = timeline.getByRole("button", { name: "Show 2 more messages" })
-  await expect(expand).toBeVisible()
+  await expect(expand).toBeVisible({ timeout: 15_000 })
   await expect(timeline.getByText("Alpha point 1")).toBeVisible()
   const frames = await page.evaluate(() => (window as unknown as { __runFoldFrames: number[] }).__runFoldFrames)
   expect({ sampled: frames.length > 0, maxHiddenRowsPainted: Math.max(0, ...frames) }).toEqual({
@@ -72,19 +76,13 @@ test("a tall same-author run opens folded to its head and toggles as one", async
     maxHiddenRowsPainted: 0,
   })
 
-  // The pressed control unmounts on each toggle; focus moves to what replaced it.
   await expand.click()
   await expect(timeline.getByText("Charlie point 5")).toBeVisible()
-  await expect(timeline.getByRole("button", { name: "Collapse", exact: true })).toHaveCount(1)
+  await expect(collapse).toHaveCount(1)
   await expect(page.locator("[data-message-id]:focus")).toContainText("Bravo point 1")
-
-  await timeline.getByRole("button", { name: "Collapse", exact: true }).click()
-  await expect(timeline.getByRole("button", { name: "Show 2 more messages" })).toBeFocused()
-  await expect(timeline.getByText("Charlie point 1")).toHaveCount(0)
 })
 
-test("reload restores to a row inside a run that now folds", async ({ page }) => {
-  // Sent while the channel is open, so the run arrives live and stays open.
+test("reload restores to a row inside a run collapsed since", async ({ page }) => {
   const { workspaceId, streamId } = await seedTallRun(page)
   for (const label of ["Delta", "Echo", "Foxtrot", "Golf"]) {
     await send(page, workspaceId, streamId, PARAGRAPHS(label), { intent: "new", conversationId: conversationId() })
@@ -102,13 +100,20 @@ test("reload restores to a row inside a run that now folds", async ({ page }) =>
       return bravo.count()
     })
     .toBeGreaterThan(0)
+  // Record what collapsing this run persists, then open it again: the next
+  // visit finds it collapsed, the way another visit would have left it.
+  const click = (button: HTMLElement) => button.click()
+  await timeline.getByRole("button", { name: "Collapse", exact: true }).evaluate(click)
+  const collapsed = await page.evaluate(() => localStorage.getItem("threa:blockCollapse:v1"))
+  await timeline.getByRole("button", { name: "Show 2 more messages" }).evaluate(click)
   await bravo.evaluate((row) => row.scrollIntoView({ block: "start" }))
   // Past the anchor-capture debounce.
   await page.waitForTimeout(500)
+  await page.evaluate((value) => localStorage.setItem("threa:blockCollapse:v1", value!), collapsed)
 
-  // Read and present at open now, so by default the run would fold Bravo away.
   await page.reload()
-  await expect(timeline.getByText("Bravo point 1")).toBeInViewport()
+  // A loaded box can take several seconds to refetch the stream after a reload.
+  await expect(timeline.getByText("Bravo point 1")).toBeInViewport({ timeout: 15_000 })
   await expect(timeline.getByRole("button", { name: "Show 2 more messages" })).toHaveCount(0)
 })
 
@@ -121,12 +126,9 @@ test.describe("on a phone", () => {
     for (const label of ["Delta", "Echo", "Foxtrot", "Golf"]) {
       await send(page, workspaceId, streamId, PARAGRAPHS(label), { intent: "new", conversationId: conversationId() })
     }
-    await page.reload()
     const timeline = page.getByTestId("stream-timeline")
+    await expect(timeline.getByText("Golf point 5")).toBeVisible()
 
-    const expand = timeline.getByRole("button", { name: "Show 2 more messages" })
-    await expand.scrollIntoViewIfNeeded()
-    await expand.click()
     const collapse = timeline.getByRole("button", { name: "Collapse", exact: true })
     await collapse.scrollIntoViewIfNeeded()
     await expect(timeline.getByText("Alpha point 1")).not.toBeInViewport()

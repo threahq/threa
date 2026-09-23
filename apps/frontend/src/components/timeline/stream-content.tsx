@@ -1413,7 +1413,6 @@ export function StreamContent({
     runFoldRef.current = { streamId, store: createRunFoldStore() }
   }
   const runFoldStore = runFoldRef.current.store
-  const latestKnownAt = idbStream?.lastMessagePreview?.createdAt
   const runFoldVersion = useSyncExternalStore(runFoldStore.subscribe, runFoldStore.getVersion)
   const blockCollapseVersion = useBlockCollapseVersion()
   const messageCollapse = useMessageCollapseSettings()
@@ -1421,8 +1420,8 @@ export function StreamContent({
   // row stays on screen while either is up.
   const foldRuns = useVirtualized && !batchMode && !activeConversationOverlay
   const revealMessageId = streamSearch.activeMessageId ?? highlightMessageId
-  // The landing may restore to a row inside a run that folds this time; that
-  // run opens so the anchor row is there to land on (INV-70).
+  // The landing may restore to a row inside a run the viewer has since
+  // collapsed; that run opens so the anchor row is there to land on (INV-70).
   const restoreAnchorId = useMemo(
     () => (useVirtualized ? loadTimelineAnchor(streamId)?.targetId : undefined),
     [streamId, useVirtualized]
@@ -1435,11 +1434,9 @@ export function StreamContent({
         const folded = foldRuns
           ? foldAuthorRuns(filtered, {
               store: runFoldStore,
-              defaultCollapsed: messageCollapse.enabled,
               collapseAtHeight: messageCollapse.collapseAtHeight,
               frontierSequence,
               viewerId: currentWorkspaceUserId,
-              latestKnownAt,
               persisted: getBlockCollapse,
               revealMessageIds: [revealMessageId, restoreAnchorId],
             })
@@ -1460,11 +1457,9 @@ export function StreamContent({
       runFoldStore,
       runFoldVersion,
       blockCollapseVersion,
-      messageCollapse.enabled,
       messageCollapse.collapseAtHeight,
       frontierSequence,
       currentWorkspaceUserId,
-      latestKnownAt,
       revealMessageId,
       restoreAnchorId,
     ]
