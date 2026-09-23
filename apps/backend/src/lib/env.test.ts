@@ -32,6 +32,9 @@ function setBaseEnv() {
   delete process.env.CLOUDFLARE_TURN_API_BASE
   delete process.env.POSTHOG_PROJECT_TOKEN
   delete process.env.POSTHOG_HOST
+  delete process.env.SANDBOX_RUNNER
+  delete process.env.SANDBOX_RAILWAY_TOKEN
+  delete process.env.SANDBOX_RAILWAY_ENVIRONMENT_ID
 }
 
 afterEach(() => {
@@ -54,6 +57,40 @@ describe("loadConfig Cloudflare TURN", () => {
     process.env.CLOUDFLARE_TURN_KEY_ID = "key"
     process.env.CLOUDFLARE_TURN_KEY_API_TOKEN = "token"
     expect(loadConfig().cloudflareTurn).toEqual({ keyId: "key", apiToken: "token", enabled: true })
+  })
+})
+
+describe("loadConfig sandbox runner", () => {
+  test("withholds the sandbox when SANDBOX_RUNNER is unset", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    expect(loadConfig().sandboxRunner).toBeNull()
+  })
+
+  test("railway needs its token and environment id", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    process.env.SANDBOX_RUNNER = "railway"
+    process.env.SANDBOX_RAILWAY_TOKEN = "token"
+    expect(() => loadConfig()).toThrow(
+      "SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN and SANDBOX_RAILWAY_ENVIRONMENT_ID"
+    )
+  })
+
+  test("railway carries its credentials", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    process.env.SANDBOX_RUNNER = "railway"
+    process.env.SANDBOX_RAILWAY_TOKEN = "token"
+    process.env.SANDBOX_RAILWAY_ENVIRONMENT_ID = "env"
+    expect(loadConfig().sandboxRunner).toEqual({ kind: "railway", token: "token", environmentId: "env" })
+  })
+
+  test("rejects an unknown runner", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    process.env.SANDBOX_RUNNER = "lambda"
+    expect(() => loadConfig()).toThrow('SANDBOX_RUNNER must be "docker", "railway" or unset, got "lambda"')
   })
 })
 
