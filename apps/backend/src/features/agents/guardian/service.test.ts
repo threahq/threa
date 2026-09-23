@@ -3,7 +3,11 @@ import type { ModelMessage } from "ai"
 import { AISpendDeniedError, DecisionsAvailability } from "@threahq/agent-runtime"
 import { DELEGATION_BRIEF_MAX_CHARS } from "@threahq/types"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
-import { TOOL_GUARDIAN_MESSAGE_CHARS, TOOL_GUARDIAN_HISTORY_MESSAGES } from "./config"
+import {
+  TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS,
+  TOOL_GUARDIAN_MESSAGE_CHARS,
+  TOOL_GUARDIAN_HISTORY_MESSAGES,
+} from "./config"
 import { ToolGuardianService, renderGuardianArguments, renderGuardianConversation } from "./service"
 
 const turn = {
@@ -252,12 +256,12 @@ describe("ToolGuardianService decision-model fast path", () => {
     messages: [{ role: "user" as const, content: "what is 2+2" }],
   }
 
-  function routedAI(decisions: () => Promise<unknown>) {
+  function routedAI(decisions: (params: { abortSignal: AbortSignal }) => Promise<unknown>) {
     const calls = { decisions: 0, inference: 0 }
     const ai = {
-      generateDecisions: async () => {
+      generateDecisions: async (params: { abortSignal: AbortSignal }) => {
         calls.decisions++
-        return decisions()
+        return decisions(params)
       },
       generateObject: async () => {
         calls.inference++
@@ -314,6 +318,29 @@ describe("ToolGuardianService decision-model fast path", () => {
       available: false,
     })
   })
+
+  test(
+    "the guardian's own budget running out falls to the inference review without holding other callers off",
+    async () => {
+      const availability = new DecisionsAvailability()
+      const { ai, calls } = routedAI(
+        ({ abortSignal }) =>
+          new Promise((_, reject) => abortSignal.addEventListener("abort", () => reject(abortSignal.reason)))
+      )
+
+      const verdict = await new ToolGuardianService(
+        { ai, configResolver, residency: unpinned, availability },
+        turn
+      ).review(request)
+
+      expect({ allowed: verdict.allowed, calls, available: availability.isAvailable }).toEqual({
+        allowed: false,
+        calls: { decisions: 1, inference: 1 },
+        available: true,
+      })
+    },
+    TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS + 5_000
+  )
 
   test("a pinned workspace never reaches the decision model", async () => {
     const { ai, calls } = routedAI(belief(0.99))

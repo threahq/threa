@@ -242,12 +242,14 @@ export class ToolGuardianService implements ToolGuardian {
     const { workspaceId, sessionId } = this.turn
     if ((await this.deps.residency.isPinned(workspaceId)) || !this.deps.availability.isAvailable) return false
 
+    const budget = AbortSignal.timeout(TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS)
     try {
       const belief = await requestAuthorizationBelief(this.deps.ai, {
         modelId: TOOL_GUARDIAN_DECISIONS_MODEL_ID,
         request,
         principal,
         turn: this.turn,
+        abortSignal: budget,
       })
       const allowed = belief >= TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR
       if (allowed) {
@@ -259,7 +261,9 @@ export class ToolGuardianService implements ToolGuardian {
       return allowed
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
-      this.deps.availability.recordFailure(error)
+      // The availability breaker is shared with callers on the endpoint's 20 s
+      // timeout, so this path's 5 s budget running out is not an outage for them.
+      if (!budget.aborted) this.deps.availability.recordFailure(error)
       logger.warn(
         { error, toolName: request.toolName, sessionId },
         "Decision-model guardian review failed, falling back to the inference review"
@@ -272,9 +276,15 @@ export class ToolGuardianService implements ToolGuardian {
 /** The decision model's belief, in [0, 1], that the bound user asked for this call. */
 async function requestAuthorizationBelief(
   ai: AI,
-  params: { modelId: string; request: ToolGuardianRequest; principal: string; turn: ToolGuardianTurn }
+  params: {
+    modelId: string
+    request: ToolGuardianRequest
+    principal: string
+    turn: ToolGuardianTurn
+    abortSignal: AbortSignal
+  }
 ): Promise<number> {
-  const { modelId, request, principal, turn } = params
+  const { modelId, request, principal, turn, abortSignal } = params
   const result = await ai.generateDecisions({
     model: modelId,
     state: {
@@ -287,7 +297,7 @@ async function requestAuthorizationBelief(
       conversation: renderGuardianConversation(request.messages),
     },
     questions: { authorized: { type: "noul", instructions: TOOL_GUARDIAN_DECISIONS_QUESTION } },
-    abortSignal: AbortSignal.timeout(TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS),
+    abortSignal,
     telemetry: {
       functionId: "tool-guardian-decisions",
       metadata: {
