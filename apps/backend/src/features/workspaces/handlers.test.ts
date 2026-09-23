@@ -28,6 +28,7 @@ function makeStreamService(archivedStreams: unknown[]) {
     getSequencesByEventIds: async () => new Map(),
     listArchivedStreams: async () => archivedStreams,
     listInboxHeldStreamIds: async () => [],
+    getInboxArrivedAt: async () => ({}),
   }
 }
 

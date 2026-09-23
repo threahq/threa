@@ -8,6 +8,7 @@ import { StreamEventRepository } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
+import { UserPreferencesRepository } from "../user-preferences"
 import { PersonaRepository } from "../agents"
 import { MessageRepository } from "../messaging"
 import { StreamContextRepository } from "../stream-context"
@@ -1840,9 +1841,11 @@ describe("StreamService.markAsRead", () => {
   let service: StreamService
   const mockGetMessageOrdinalForEvent = spyOn(StreamEventRepository, "getMessageOrdinalForEvent")
   const mockFindByStreamAndMember = spyOn(StreamMemberRepository, "findByStreamAndMember")
+  const mockFindOverride = spyOn(UserPreferencesRepository, "findOverride")
 
   beforeEach(() => {
     service = new StreamService({} as never)
+    mockFindOverride.mockResolvedValue(null)
     mockGetMessageOrdinalForEvent.mockReset()
     mockFindByStreamAndMember.mockReset()
     mockReadStateAdvance.mockClear()
@@ -1971,6 +1974,7 @@ describe("StreamService.markAsRead", () => {
         lastReadAt: null,
         updatedAt: new Date(),
         inboxHeld: true,
+        inboxFloorEventId: null,
       },
       held: true,
     })
