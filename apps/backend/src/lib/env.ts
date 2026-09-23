@@ -102,7 +102,10 @@ export type SandboxRunnerConfig = { kind: "docker" } | { kind: "railway"; token:
 function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null {
   const kind = env.SANDBOX_RUNNER
   if (!kind) return null
-  if (kind === "docker") return { kind }
+  if (kind === "docker") {
+    if (env.NODE_ENV === "production") throw new Error("SANDBOX_RUNNER=docker is for dev only")
+    return { kind }
+  }
   if (kind === "railway") {
     const token = env.SANDBOX_RAILWAY_TOKEN
     const environmentId = env.SANDBOX_RAILWAY_ENVIRONMENT_ID

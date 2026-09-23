@@ -86,6 +86,20 @@ describe("loadConfig sandbox runner", () => {
     expect(loadConfig().sandboxRunner).toEqual({ kind: "railway", token: "token", environmentId: "env" })
   })
 
+  test("docker is refused in production", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "production"
+    process.env.USE_STUB_AUTH = "false"
+    process.env.WORKOS_API_KEY = "key"
+    process.env.WORKOS_CLIENT_ID = "client"
+    process.env.WORKOS_REDIRECT_URI = "https://app.example.com/callback"
+    process.env.WORKOS_COOKIE_PASSWORD = "password"
+    process.env.CORS_ALLOWED_ORIGINS = "https://app.example.com"
+    process.env.S3_REGION = "eu-north-1"
+    process.env.SANDBOX_RUNNER = "docker"
+    expect(() => loadConfig()).toThrow("SANDBOX_RUNNER=docker is for dev only")
+  })
+
   test("rejects an unknown runner", () => {
     setBaseEnv()
     process.env.USE_STUB_AUTH = "true"
