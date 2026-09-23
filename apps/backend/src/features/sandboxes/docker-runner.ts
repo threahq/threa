@@ -177,11 +177,17 @@ export class DockerSandboxRunner implements SandboxRunner {
         clientKilled = true
         child.kill("SIGKILL")
       }
+      // Killing the client alone leaves the command running in the box until its deadline.
+      const abort = () => {
+        kill()
+        void docker(["exec", "--user", "sandbox", sandboxId, "sh", "-c", "kill -KILL -1"]).catch(() => {})
+      }
       const timer = setTimeout(kill, options.timeoutSec * 1000 + CLIENT_GRACE_MS)
-      options.signal?.addEventListener("abort", kill, { once: true })
+      options.signal?.addEventListener("abort", abort, { once: true })
+      if (options.signal?.aborted) abort()
       const cleanup = () => {
         clearTimeout(timer)
-        options.signal?.removeEventListener("abort", kill)
+        options.signal?.removeEventListener("abort", abort)
       }
 
       child.on("error", (error) => {

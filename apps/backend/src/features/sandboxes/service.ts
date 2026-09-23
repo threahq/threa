@@ -39,7 +39,9 @@ export class SandboxService {
     signal?: AbortSignal
   }): Promise<SandboxRunResult> {
     const { sandboxId, replaced } = await this.acquire(params)
+    params.signal?.throwIfAborted()
     if (params.files.length > 0) await this.runner.writeFiles(sandboxId, params.files)
+    params.signal?.throwIfAborted()
     const result = await this.runner.exec(sandboxId, params.command, {
       timeoutSec: params.timeoutSec,
       maxOutputBytes: SANDBOX_MAX_OUTPUT_BYTES,
@@ -53,25 +55,38 @@ export class SandboxService {
     streamId: string
     internet: boolean
   }): Promise<{ sandboxId: string; replaced: SandboxReplacedReason | null }> {
+    // A caller that lost a replace race still had its files in the box it read.
+    let lost: SandboxReplacedReason | null = null
     for (let attempt = 0; attempt < MAX_BIND_ATTEMPTS; attempt++) {
       const current = await StreamSandboxRepository.find(this.pool, params.workspaceId, params.streamId)
       const reusable = current?.runner === this.runner.kind && current.internet === params.internet
       if (current && reusable && (await this.runner.alive(current.sandboxId))) {
-        return { sandboxId: current.sandboxId, replaced: null }
+        return { sandboxId: current.sandboxId, replaced: lost }
       }
 
       const sandboxId = await this.runner.create(params)
+      logger.info(
+        { sandboxId, workspaceId: params.workspaceId, streamId: params.streamId, runner: this.runner.kind },
+        "Sandbox created"
+      )
       const binding = { ...params, sandboxId, runner: this.runner.kind }
-      const bound = current
-        ? await StreamSandboxRepository.replace(this.pool, { ...binding, expectedSandboxId: current.sandboxId })
-        : await StreamSandboxRepository.insertIfAbsent(this.pool, binding)
+      let bound: StreamSandboxRow | null
+      try {
+        bound = current
+          ? await StreamSandboxRepository.replace(this.pool, { ...binding, expectedSandboxId: current.sandboxId })
+          : await StreamSandboxRepository.insertIfAbsent(this.pool, binding)
+      } catch (error) {
+        await this.discard(sandboxId)
+        throw error
+      }
 
       if (!bound) {
         // Someone else bound a box first; theirs is as good as ours.
         await this.discard(sandboxId)
+        if (current) lost ??= replacedReason(current, params.internet, this.runner.kind)
         continue
       }
-      if (!current) return { sandboxId, replaced: null }
+      if (!current) return { sandboxId, replaced: lost }
       if (current.runner === this.runner.kind && !reusable) await this.discard(current.sandboxId)
       return { sandboxId, replaced: replacedReason(current, params.internet, this.runner.kind) }
     }

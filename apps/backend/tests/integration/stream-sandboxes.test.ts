@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
 import {
@@ -171,6 +171,62 @@ describe("SandboxService", () => {
       destroyed: ["fake-1"],
       ran: ["fake-2", "fake-2"],
     })
+  })
+
+  test("the loser of a replace race still hears its box was replaced", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const at = target()
+
+    await run(service, at)
+    runner.live.delete("fake-1")
+    // The other run replaces the dead box while this one is still creating its own.
+    runner.beforeCreateReturns = async () => {
+      await run(service, at)
+    }
+    const result = await run(service, at)
+
+    expect({ replaced: result.replaced, destroyed: runner.destroyed, ranIn: runner.ran.at(-1)?.sandboxId }).toEqual({
+      replaced: "expired",
+      destroyed: ["fake-2"],
+      ranIn: "fake-3",
+    })
+  })
+
+  test("a box that could not be bound is removed", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const bind = spyOn(StreamSandboxRepository, "insertIfAbsent").mockRejectedValueOnce(new Error("pool exhausted"))
+
+    try {
+      await expect(run(service, target())).rejects.toThrow("pool exhausted")
+    } finally {
+      bind.mockRestore()
+    }
+
+    expect({ created: runner.created.map((c) => c.id), destroyed: runner.destroyed }).toEqual({
+      created: ["fake-1"],
+      destroyed: ["fake-1"],
+    })
+  })
+
+  test("a run cancelled while its box is made never starts the command", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const controller = new AbortController()
+    runner.beforeCreateReturns = async () => controller.abort(new Error("cancelled"))
+
+    await expect(
+      service.run({
+        ...target(),
+        internet: false,
+        command: "echo ok",
+        files: [],
+        timeoutSec: 5,
+        signal: controller.signal,
+      })
+    ).rejects.toThrow("cancelled")
+    expect(runner.ran).toEqual([])
   })
 
   test("files are written into the box before the command runs", async () => {
