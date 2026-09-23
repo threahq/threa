@@ -59,7 +59,6 @@ function makeInput(
     inboxOrder: "newest",
     inboxArrivedAt: {},
     joinedAtByStreamId: new Map(),
-    threadTree: false,
     streamTypeById: new Map(),
     ...over,
   }
@@ -723,7 +722,7 @@ describe("resolveSections thread tree", () => {
     makeItem({ id, type: StreamTypes.THREAD, rootStreamId, section, activity })
 
   function tree(over: Parameters<typeof makeInput>[0], preset = SMART_SIDEBAR_CONFIG) {
-    return resolveSections(preset, makeInput({ threadTree: true, ...over }))
+    return resolveSections(preset, makeInput(over))
       .filter((resolved) => resolved.section.spec.kind !== "quicklinks")
       .map((resolved) => ({
         id: resolved.section.id,
@@ -826,19 +825,6 @@ describe("resolveSections thread tree", () => {
 
     expect(tree({ processedStreams }, config)).toEqual([
       { id: customSectionId("sec_1"), items: ["t_1", "c_2", "c_2>t_2"] },
-      { id: "other", items: ["c_1"] },
-    ])
-  })
-
-  it("should leave threads flat when the tree is off", () => {
-    const processedStreams = [
-      makeItem({ id: "c_1", type: StreamTypes.CHANNEL, section: "other", slug: "general" }),
-      thread("t_1", "c_1", "recent"),
-    ]
-
-    expect(shape({ processedStreams })).toEqual([
-      { id: "important", items: [] },
-      { id: "recent", items: ["t_1"] },
       { id: "other", items: ["c_1"] },
     ])
   })

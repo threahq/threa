@@ -162,6 +162,17 @@ export function BoardStatsLine({ stats }: { stats: BoardStreamStats | null }) {
   )
 }
 
+/** Dense board rows have no second line, so the topic tally rides beside the badges. */
+export function BoardTopicCount({ stats }: { stats: BoardStreamStats | null }) {
+  if (!stats || stats.topics === 0) return null
+  const label = `${stats.topics} ${stats.topics === 1 ? "topic" : "topics"}`
+  return (
+    <span className="text-[11px] tabular-nums text-muted-foreground/70" title={label} aria-label={label}>
+      {stats.topics}
+    </span>
+  )
+}
+
 interface StreamItemAvatarProps {
   icon: ReactNode
   className: string
@@ -616,8 +627,8 @@ export function StreamItem({
   const isTouchInput = useInputMode() === "touch"
 
   // Pointer devices get 32px single-line rows; the hover card carries the preview.
-  // Touch keeps tall rows, and board mode keeps its tile-anchored toggle layout.
-  const dense = compact && !isTouchInput && !boardMode
+  // Touch keeps tall rows. Board mode's topic tally moves inline (BoardTopicCount).
+  const dense = compact && !isTouchInput
   const hover = useSidebarHoverIntent(dense && !isVirtualDraft)
   const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
@@ -674,7 +685,9 @@ export function StreamItem({
   // else the board topic stats (board mode), else the agent-working takeover
   // (chats mode, while a session runs), else the chats-mode message preview.
   let previewNode: ReactNode
-  if (boardStatusLine) {
+  if (dense && boardMode) {
+    previewNode = null
+  } else if (boardStatusLine) {
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(boardScopeId)} />
@@ -786,6 +799,7 @@ export function StreamItem({
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
                     )}
                     <div className="ml-auto flex items-center gap-1.5">
+                      {dense && boardMode && <BoardTopicCount stats={boardMode.statsForStream(boardScopeId)} />}
                       <StreamLabelDots streamId={stream.id} />
                       {/* Suppressed on the active stream — its composer already shows the draft. */}
                       {stream.hasLoadedDraft && !isActive && <DraftIndicator />}
@@ -804,7 +818,7 @@ export function StreamItem({
               state={boardTileState}
               streamName={name}
               onToggle={() => boardMode.applyInclude(boardScopeId)}
-              className="left-7 top-[calc(50%+0.25rem)]"
+              className={dense ? "left-5 top-[calc(50%+0.125rem)]" : "left-7 top-[calc(50%+0.25rem)]"}
             />
           )}
 

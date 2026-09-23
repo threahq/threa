@@ -46,6 +46,7 @@ import {
   StreamItemPreview,
   BoardTileToggle,
   BoardStatsLine,
+  BoardTopicCount,
   AgentActivityPreviewLine,
   agentActivityLabel,
   InboxRowClearButton,
@@ -280,7 +281,7 @@ export function ScratchpadItem({
   const isTouchInput = useInputMode() === "touch"
 
   // Dense pointer rows: see StreamItem.
-  const dense = compact && !isTouchInput && !boardMode
+  const dense = compact && !isTouchInput
   const hover = useSidebarHoverIntent(dense && !isDraft)
   const showHoverPreview = compact && showPreviewOnHover && !dense && !isTouchInput && !!preview?.content
   // Non-null only while the quick-jump modifier is held and this row is one of
@@ -320,7 +321,9 @@ export function ScratchpadItem({
   // Second line: board status (muted/E2E — precedence), else board topic stats,
   // else the chats-mode message preview. See {@link StreamItem}.
   let previewNode: ReactNode
-  if (boardStatusLine) {
+  if (dense && boardMode) {
+    previewNode = null
+  } else if (boardStatusLine) {
     previewNode = <div className="text-xs text-muted-foreground">{boardStatusLine}</div>
   } else if (boardMode) {
     previewNode = <BoardStatsLine stats={boardMode.statsForStream(streamWithPreview.id)} />
@@ -420,6 +423,7 @@ export function ScratchpadItem({
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
                     )}
                     <div className="ml-auto flex items-center gap-1.5">
+                      {dense && boardMode && <BoardTopicCount stats={boardMode.statsForStream(streamWithPreview.id)} />}
                       <StreamLabelDots streamId={streamWithPreview.id} />
                       {/* Suppressed on the active stream — its composer already shows the draft. */}
                       {streamWithPreview.hasLoadedDraft && !isActive && <DraftIndicator />}
@@ -438,7 +442,7 @@ export function ScratchpadItem({
               state={boardTileState}
               streamName={name}
               onToggle={() => boardMode.applyInclude(streamWithPreview.id)}
-              className="left-7 top-[calc(50%+0.25rem)]"
+              className={dense ? "left-5 top-[calc(50%+0.125rem)]" : "left-7 top-[calc(50%+0.25rem)]"}
             />
           )}
 

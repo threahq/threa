@@ -314,10 +314,7 @@ export function SidebarStreamList({
     if (section.spec.kind === "label" && !label) return null
     const isUnread = section.spec.kind === "unread"
     const isEmptyUnread = isUnread && items.length === 0
-    // Board mode keeps the plain unread predicate (see Sidebar) — Inbox
-    // row/header behavior (dimming, row clear, header clear buttons) is
-    // structurally off there, not just visually.
-    const isInboxSection = isUnread && !boardMode
+    const isInboxSection = isUnread
     const inboxStreamIds = isInboxSection ? items.map((item) => item.id) : []
     const inboxHeldStreamIds = isInboxSection
       ? items.filter((item) => getUnreadCount(item.id) === 0).map((item) => item.id)

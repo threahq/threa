@@ -288,18 +288,15 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   )
 
   // Inbox membership = isInInbox (unread + held), muted excluded; resolveSections
-  // excludes this set elsewhere. Board mode has no Inbox clear controls, so a
-  // held-but-read stream must not count as a member there — fall back to the
-  // plain unread predicate.
+  // excludes this set elsewhere.
   const unreadStreamIds = useMemo(() => {
     if (!hasUnreadSection) return EMPTY_UNREAD_IDS
     const ids = new Set<string>()
     for (const stream of processedStreams) {
-      const isMember = isBoardPage ? isUnreadStream(stream, getUnreadCount(stream.id)) : isInInbox(stream.id)
-      if (isMember) ids.add(stream.id)
+      if (isInInbox(stream.id)) ids.add(stream.id)
     }
     return ids
-  }, [hasUnreadSection, processedStreams, isBoardPage, isInInbox, getUnreadCount])
+  }, [hasUnreadSection, processedStreams, isInInbox])
 
   // Unread badge count: plain unread predicate, NOT Inbox membership (held-but-read
   // streams don't inflate it); workspace-wide — the board view re-applies its own filters.
@@ -326,8 +323,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [sidebarConfig.sections, labelsById, streamIdsByLabel])
 
-  // Board mode's Unread is plain unread membership, not the Inbox, so it keeps activity order.
-  const inboxOrder = isBoardPage ? "newest" : (preferencesContext?.preferences?.inboxOrder ?? "arrival")
+  const inboxOrder = preferencesContext?.preferences?.inboxOrder ?? "arrival"
   const inboxArrivedAt = unreadState?.inboxArrivedAt ?? EMPTY_INBOX_ARRIVED_AT
 
   const resolvedSections = useMemo(
@@ -341,7 +337,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         inboxOrder,
         inboxArrivedAt,
         joinedAtByStreamId,
-        threadTree: !isBoardPage,
         streamTypeById,
       }),
     [
@@ -354,7 +349,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       inboxOrder,
       inboxArrivedAt,
       joinedAtByStreamId,
-      isBoardPage,
       streamTypeById,
     ]
   )

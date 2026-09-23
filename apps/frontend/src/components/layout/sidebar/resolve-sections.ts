@@ -52,11 +52,6 @@ export interface ResolveSectionsInput {
    * falls back to its `createdAt`.
    */
   joinedAtByStreamId: ReadonlyMap<string, string>
-  /**
-   * Nest threads under their root stream's row (chats mode). Off in board mode,
-   * where threads keep their flat bucket placement.
-   */
-  threadTree: boolean
   /** Type of every stream the viewer can see, visible in the sidebar or not; places a thread in its root's type section. */
   streamTypeById: ReadonlyMap<string, StreamType>
 }
@@ -109,7 +104,7 @@ export function findSourceLabelId(streamId: string, resolved: ResolvedSection[])
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
   const resolved = resolveFlat(config, input)
-  return input.threadTree ? nestThreads(resolved) : resolved
+  return nestThreads(resolved)
 }
 
 function resolveFlat(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
@@ -284,17 +279,15 @@ function resolveSmartBucket(
 
 function resolveTypeSection(
   streamType: TypeSectionStream,
-  { processedStreams, virtualDmStreams, joinedAtByStreamId, threadTree, streamTypeById }: ResolveSectionsInput,
+  { processedStreams, virtualDmStreams, joinedAtByStreamId, streamTypeById }: ResolveSectionsInput,
   exclude: ReadonlySet<string>
 ): StreamItemData[] {
   const streams = processedStreams.filter((stream) => !exclude.has(stream.id))
   // In the tree a thread lives in its root's type section; `nestThreads` then
   // moves it under the root's row wherever that row landed.
-  const threads = threadTree
-    ? streams.filter(
-        (stream) => stream.type === StreamTypes.THREAD && threadHomeType(stream, streamTypeById) === streamType
-      )
-    : []
+  const threads = streams.filter(
+    (stream) => stream.type === StreamTypes.THREAD && threadHomeType(stream, streamTypeById) === streamType
+  )
 
   if (streamType === "scratchpad") {
     const items = streams.filter((stream) => stream.type === StreamTypes.SCRATCHPAD)
@@ -331,8 +324,7 @@ function threadHomeType(
   return null
 }
 
-function quietThreadIds({ threadTree, processedStreams }: ResolveSectionsInput): ReadonlySet<string> {
-  if (!threadTree) return EMPTY_SET
+function quietThreadIds({ processedStreams }: ResolveSectionsInput): ReadonlySet<string> {
   const ids = new Set<string>()
   for (const stream of processedStreams) {
     if (stream.type === StreamTypes.THREAD && stream.section === "other") ids.add(stream.id)

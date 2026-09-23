@@ -331,7 +331,7 @@ describe("SidebarStreamList — Inbox section", () => {
     expect(onClearInbox).toHaveBeenCalledWith(["stream_a", "stream_b"])
   })
 
-  it("stays behaviorally untouched in board mode aside from the Inbox label rename", () => {
+  it("should show the Inbox clear controls in board mode", () => {
     const streams = [makeStream("stream_a")]
     render(
       <MemoryRouter initialEntries={["/w/workspace_1/board"]}>
@@ -359,12 +359,9 @@ describe("SidebarStreamList — Inbox section", () => {
       </MemoryRouter>
     )
 
-    // Label rename is the only visible change; a held (unreadCount 0) row in
-    // board mode gets none of the Inbox-only chrome.
     expect(screen.getByText("Inbox")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Clear all \d+/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Clear \d+ read/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Clear from Inbox" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear 1 read" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear all 1" })).toBeInTheDocument()
   })
 })
 
