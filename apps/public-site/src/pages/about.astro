@@ -256,7 +256,7 @@ const schema = [
       if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
       scene.classList.add("is-waiting")
       const io = new IntersectionObserver((entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return
+        if (!entries.some((e) => e.intersectionRatio >= 0.8)) return
         io.disconnect()
         scene.classList.add("is-kept")
       }, { threshold: 0.8 })

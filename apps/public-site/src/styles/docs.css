@@ -700,9 +700,6 @@ body.docs-resizing .api-op {
 .pg-block:has(+ .stream-preview) {
   border-radius: 6px 6px 0 0;
 }
-.pg-block:has(+ .stream-preview) .pg-pre:last-child {
-  border-radius: 0;
-}
 .sp-head .sp-lock {
   width: 12px;
   height: 12px;
@@ -1413,8 +1410,13 @@ body.docs-resizing .api-op {
 .api-op-code .pg-pre wbr {
   display: inline;
 }
-.pg-pre:last-child {
+/* The pre closes the block unless Run's output or a joined preview follows. */
+.pg-pre {
   border-radius: 0 0 5px 5px;
+}
+.pg-pre:has(~ .pg-output:not([hidden])),
+.pg-block:has(+ .stream-preview) .pg-pre {
+  border-radius: 0;
 }
 .pg-pre code {
   font-family: inherit;
