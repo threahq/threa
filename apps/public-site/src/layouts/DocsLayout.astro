@@ -186,10 +186,27 @@ const schema: Record<string, unknown>[] = [
             <h4>{g.group}</h4>
             {g.items.map((it) => (
               <>
-                <a href={it.href} class={it.slug === current ? "current" : ""}>{it.label}</a>
+                {it.slug === current && sections.length > 0 ? (
+                  <div class="docs-side-page">
+                    <a href={it.href} class="current">{it.label}</a>
+                    <button
+                      type="button"
+                      class="dsp-toggle"
+                      aria-expanded="true"
+                      aria-controls="docs-side-sub"
+                      aria-label={`${it.label} sections`}
+                    >
+                      <svg class="dss-chevron" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <a href={it.href} class={it.slug === current ? "current" : ""}>{it.label}</a>
+                )}
                 {it.slug === current && sections.length > 0 && (
                   subnavHasGroups ? (
-                    <div class="docs-side-sub" data-collapsible>
+                    <div class="docs-side-sub" id="docs-side-sub" data-collapsible>
                       {subnavGroups.map((g, gi) => (
                         <details class="dss-group" open={gi === 0}>
                           <summary class="dss-group-head">
@@ -207,7 +224,7 @@ const schema: Record<string, unknown>[] = [
                       ))}
                     </div>
                   ) : (
-                    <div class="docs-side-sub">
+                    <div class="docs-side-sub" id="docs-side-sub">
                       {sections.map((s) => (
                         <a href={`#${s.id}`} data-section={s.id}>{s.label}</a>
                       ))}

@@ -149,6 +149,41 @@ a {
   font-weight: 500;
 }
 
+/* The open page's row carries a toggle that folds its section list away. */
+.docs-side-page {
+  display: flex;
+  align-items: center;
+}
+.docs-side-page > a {
+  flex: 1;
+  min-width: 0;
+}
+.dsp-toggle {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: hsl(var(--muted));
+  cursor: pointer;
+}
+.dsp-toggle[aria-expanded="true"] .dss-chevron {
+  transform: rotate(0);
+}
+@media (hover: hover) {
+  .dsp-toggle:hover {
+    color: hsl(var(--ink));
+    background: hsl(var(--ink) / 0.06);
+  }
+}
+.docs-side-sub[hidden] {
+  display: none;
+}
+
 /* Per-page section anchors, nested under the active nav item. */
 .docs-side-sub {
   margin: 2px 0 8px;
