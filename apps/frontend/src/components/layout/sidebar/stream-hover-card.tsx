@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
-import { Check, CheckCheck, ExternalLink } from "lucide-react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
+import { Check, CheckCheck, ExternalLink, SmilePlus } from "lucide-react"
 import {
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
   type EventType,
@@ -15,8 +16,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
+import { ReactionPill } from "@/components/timeline/message-reactions"
+import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
+import type { EventsListResponse } from "@/api/streams"
 import { useStreamService } from "@/contexts"
-import { useActors, useUnreadCounts } from "@/hooks"
+import { reactionShortcodes, stripColons, useActors, useMessageReactions, useUnreadCounts } from "@/hooks"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useDecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -34,6 +38,12 @@ const CARD_MESSAGE_LIMIT = 8
 const MESSAGE_EVENT_TYPES: EventType[] = ["message_created", "message_edited", "message_deleted"]
 /** Enough rows that edits and deletes of the last few messages still leave eight to show. */
 const FETCH_LIMIT = 40
+
+type Reactions = Record<string, string[]>
+
+function hoverCardQueryKey(workspaceId: string, streamId: string) {
+  return ["sidebar-hover-card", workspaceId, streamId] as const
+}
 
 export interface HoverCardMessage {
   messageId: string
@@ -185,7 +195,7 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
   const { markAsRead } = useUnreadCounts(workspaceId)
   const readStates = useWorkspaceStreamReadStates(workspaceId)
   const { data: messages, isError } = useQuery({
-    queryKey: ["sidebar-hover-card", workspaceId, stream.id],
+    queryKey: hoverCardQueryKey(workspaceId, stream.id),
     queryFn: () => streamService.getEvents(workspaceId, stream.id, { limit: FETCH_LIMIT, types: MESSAGE_EVENT_TYPES }),
     select: (response) => foldHoverMessages(response.events),
     staleTime: 15_000,
@@ -243,6 +253,7 @@ function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInb
               <HoverCardMessageRow
                 key={message.messageId}
                 workspaceId={workspaceId}
+                streamId={stream.id}
                 message={message}
                 authorName={getActorName(message.event.actorId, message.event.actorType)}
                 head={index === 0}
@@ -307,6 +318,7 @@ function CardAction({ label, onClick, children }: { label: string; onClick: () =
 
 interface HoverCardMessageRowProps {
   workspaceId: string
+  streamId: string
   message: HoverCardMessage
   authorName: string
   /** First message of a same-author run: carries the avatar and name line. */
@@ -315,7 +327,15 @@ interface HoverCardMessageRowProps {
   onNavigate: () => void
 }
 
-function HoverCardMessageRow({ workspaceId, message, authorName, head, href, onNavigate }: HoverCardMessageRowProps) {
+function HoverCardMessageRow({
+  workspaceId,
+  streamId,
+  message,
+  authorName,
+  head,
+  href,
+  onNavigate,
+}: HoverCardMessageRowProps) {
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { formatTime, formatFull } = useFormattedDate()
@@ -343,7 +363,7 @@ function HoverCardMessageRow({ workspaceId, message, authorName, head, href, onN
   }, [text, expanded])
 
   return (
-    <div className={cn("message-hover-wash", theme.rowAccent, head ? "pt-2" : "pt-0.5", "pb-0.5")}>
+    <div className={cn("group/row relative message-hover-wash", theme.rowAccent, head ? "pt-2" : "pt-0.5", "pb-0.5")}>
       <Link
         to={href}
         onClick={onNavigate}
@@ -400,8 +420,124 @@ function HoverCardMessageRow({ workspaceId, message, authorName, head, href, onN
           {expanded ? "Show less" : "Show more"}
         </button>
       )}
+      <HoverCardReactions
+        workspaceId={workspaceId}
+        streamId={streamId}
+        messageId={message.messageId}
+        reactions={(message.event.payload as { reactions?: Reactions }).reactions ?? {}}
+        currentUserId={currentUserId}
+      />
     </div>
   )
+}
+
+interface HoverCardReactionsProps {
+  workspaceId: string
+  streamId: string
+  messageId: string
+  reactions: Reactions
+  currentUserId: string | null
+}
+
+/**
+ * Reacting from the card patches the card's own query so the pill flips at once;
+ * the refetch afterwards reconciles with what the server stored.
+ */
+function HoverCardReactions({ workspaceId, streamId, messageId, reactions, currentUserId }: HoverCardReactionsProps) {
+  const queryClient = useQueryClient()
+  const { toEmoji, toShortcode } = useWorkspaceEmoji(workspaceId)
+  const { addReaction, removeReaction } = useMessageReactions(workspaceId, messageId)
+  const entries = Object.entries(reactions)
+    .filter(([, userIds]) => userIds.length > 0)
+    .sort(([, a], [, b]) => b.length - a.length)
+  const activeShortcodes = useMemo(
+    () =>
+      new Set(
+        Object.entries(reactions)
+          .filter(([, userIds]) => currentUserId !== null && userIds.includes(currentUserId))
+          .map(([key]) => stripColons(key))
+      ),
+    [reactions, currentUserId]
+  )
+
+  const toggle = async (shortcode: string) => {
+    if (!currentUserId) return
+    const emoji = toEmoji(shortcode)
+    if (!emoji) {
+      toast.error("Could not resolve emoji")
+      return
+    }
+    const key = `:${shortcode}:`
+    const reacted = reactions[key]?.includes(currentUserId) ?? false
+    const queryKey = hoverCardQueryKey(workspaceId, streamId)
+    queryClient.setQueryData<EventsListResponse>(queryKey, (data) =>
+      data ? { ...data, events: withReaction(data.events, messageId, key, currentUserId, !reacted) } : data
+    )
+    await (reacted ? removeReaction(emoji) : addReaction(emoji))
+    void queryClient.invalidateQueries({ queryKey })
+  }
+
+  const onPick = (emoji: string) => {
+    const shortcode = toShortcode(emoji)
+    if (!shortcode) {
+      toast.error("Could not resolve emoji")
+      return
+    }
+    void toggle(shortcode)
+  }
+
+  return (
+    <>
+      {entries.length > 0 && (
+        <div className="ml-12 flex flex-wrap gap-1 pr-3 pt-1">
+          {entries.map(([key, userIds]) => (
+            <ReactionPill
+              key={key}
+              emoji={toEmoji(stripColons(key)) ?? key}
+              userIds={userIds}
+              currentUserId={currentUserId}
+              onToggle={() => void toggle(stripColons(key))}
+            />
+          ))}
+        </div>
+      )}
+      <ReactionEmojiPicker
+        workspaceId={workspaceId}
+        onSelect={onPick}
+        activeShortcodes={activeShortcodes}
+        allReactionShortcodes={reactionShortcodes(reactions)}
+        trigger={
+          <button
+            type="button"
+            aria-label="Add reaction"
+            className="absolute right-2 top-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md border bg-popover text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100 data-[state=open]:opacity-100"
+          >
+            <SmilePlus className="h-3.5 w-3.5" />
+          </button>
+        }
+      />
+    </>
+  )
+}
+
+/** Add or remove one user's reaction on a message's `message_created` event. */
+export function withReaction(
+  events: StreamEvent[],
+  messageId: string,
+  key: string,
+  userId: string,
+  add: boolean
+): StreamEvent[] {
+  return events.map((event) => {
+    const payload = event.payload as { messageId?: string; reactions?: Reactions }
+    if (event.eventType !== "message_created" || payload.messageId !== messageId) return event
+    const reactions = { ...payload.reactions }
+    const others = (reactions[key] ?? []).filter((id) => id !== userId)
+    if (add) reactions[key] = [...others, userId]
+    else if (others.length > 0) reactions[key] = others
+    else delete reactions[key]
+    return { ...event, payload: { ...payload, reactions } } as StreamEvent
+  })
 }
 
 function HoverCardSkeleton() {
