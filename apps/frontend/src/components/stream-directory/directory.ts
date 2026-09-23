@@ -12,6 +12,12 @@ const TAB_TYPES: Record<Exclude<DirectoryTab, "all">, StreamType> = {
   threads: StreamTypes.THREAD,
 }
 
+export const DIRECTORY_SORTS = ["activity", "name", "members"] as const
+export type DirectorySort = (typeof DIRECTORY_SORTS)[number]
+
+export const DIRECTORY_MEMBERSHIPS = ["any", "joined", "not-joined"] as const
+export type DirectoryMembership = (typeof DIRECTORY_MEMBERSHIPS)[number]
+
 export interface DirectoryStream {
   id: string
   type: StreamType
@@ -26,13 +32,14 @@ export interface DirectoryStream {
 export interface DirectoryRow<S extends DirectoryStream> {
   stream: S
   name: string
+  member: boolean
   /** A public channel the viewer can open but is not a member of. */
   joinable: boolean
 }
 
 /**
  * The explorer's rows for one tab: every listable stream of the tab's type,
- * newest activity first. Asides and anything rooted in one never list, same as
+ * in the chosen order (newest activity by default). Asides and anything rooted in one never list, same as
  * the sidebar. Threads carry no member rows (INV-62), so they are never joinable.
  */
 export function buildDirectoryRows<S extends DirectoryStream>({
@@ -42,6 +49,9 @@ export function buildDirectoryRows<S extends DirectoryStream>({
   archived,
   query,
   nameOf,
+  membership = "any",
+  sort = "activity",
+  memberCountOf = () => 0,
 }: {
   streams: readonly S[]
   memberStreamIds: ReadonlySet<string>
@@ -49,6 +59,9 @@ export function buildDirectoryRows<S extends DirectoryStream>({
   archived: boolean
   query: string
   nameOf: (stream: S) => string
+  membership?: DirectoryMembership
+  sort?: DirectorySort
+  memberCountOf?: (streamId: string) => number
 }): DirectoryRow<S>[] {
   const hidden = hiddenStreamIds(streams)
   const type = tab === "all" ? null : TAB_TYPES[tab]
@@ -62,12 +75,28 @@ export function buildDirectoryRows<S extends DirectoryStream>({
     if (Boolean(stream.archivedAt) !== archived) continue
     const name = nameOf(stream)
     if (needle && !name.toLowerCase().includes(needle)) continue
-    const joinable =
-      !archived &&
-      stream.type === StreamTypes.CHANNEL &&
-      stream.visibility === "public" &&
-      !memberStreamIds.has(stream.id)
-    rows.push({ stream, name, joinable })
+    const member = memberStreamIds.has(stream.id)
+    if (membership === "joined" && !member) continue
+    if (membership === "not-joined" && member) continue
+    const joinable = !archived && stream.type === StreamTypes.CHANNEL && stream.visibility === "public" && !member
+    rows.push({ stream, name, member, joinable })
   }
-  return rows.sort((a, b) => getActivityTime(b.stream) - getActivityTime(a.stream))
+  const byActivity = (a: DirectoryRow<S>, b: DirectoryRow<S>) => getActivityTime(b.stream) - getActivityTime(a.stream)
+  if (sort === "name") return rows.sort((a, b) => a.name.localeCompare(b.name) || byActivity(a, b))
+  if (sort === "members") {
+    return rows.sort((a, b) => memberCountOf(b.stream.id) - memberCountOf(a.stream.id) || byActivity(a, b))
+  }
+  return rows.sort(byActivity)
+}
+
+/** The busiest rows over the stats window, busiest first; idle streams never qualify. */
+export function pickMostActive<S extends DirectoryStream>(
+  rows: readonly DirectoryRow<S>[],
+  messageCountOf: (streamId: string) => number,
+  limit: number
+): DirectoryRow<S>[] {
+  return rows
+    .filter((row) => messageCountOf(row.stream.id) > 0)
+    .sort((a, b) => messageCountOf(b.stream.id) - messageCountOf(a.stream.id))
+    .slice(0, limit)
 }

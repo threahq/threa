@@ -2,7 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Check, CheckCheck, ExternalLink } from "lucide-react"
-import { ENCRYPTED_MESSAGE_PREVIEW_LABEL, type EventType, type StreamEvent } from "@threahq/types"
+import {
+  ENCRYPTED_MESSAGE_PREVIEW_LABEL,
+  type EventType,
+  type StreamEvent,
+  type StreamWithPreview,
+} from "@threahq/types"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -22,7 +27,6 @@ import { isSameAuthorRun } from "@/lib/message-grouping"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
-import type { StreamItemData } from "./types"
 
 const OPEN_DELAY_MS = 450
 const CLOSE_DELAY_MS = 150
@@ -115,10 +119,13 @@ export type SidebarHoverIntent = ReturnType<typeof useSidebarHoverIntent>
 interface StreamHoverCardProps {
   hover: SidebarHoverIntent
   workspaceId: string
-  stream: StreamItemData
+  stream: StreamWithPreview
+  /** Resolved name when the caller already holds one (DMs carry no `displayName`). */
+  title?: string
   unreadCount: number
   /** Clear this stream from the Inbox; set only on Inbox rows. */
   onClearFromInbox?: () => void
+  side?: "right" | "bottom"
   /** The row element the card anchors beside. */
   children: ReactNode
 }
@@ -127,8 +134,10 @@ export function StreamHoverCard({
   hover,
   workspaceId,
   stream,
+  title,
   unreadCount,
   onClearFromInbox,
+  side = "right",
   children,
 }: StreamHoverCardProps) {
   if (!hover.enabled) return <>{children}</>
@@ -137,9 +146,9 @@ export function StreamHoverCard({
       <PopoverAnchor asChild>{children}</PopoverAnchor>
       {hover.open && (
         <PopoverContent
-          side="right"
+          side={side}
           align="start"
-          sideOffset={10}
+          sideOffset={side === "right" ? 10 : 4}
           collisionPadding={8}
           className="w-80 p-0"
           onOpenAutoFocus={(event) => event.preventDefault()}
@@ -150,6 +159,7 @@ export function StreamHoverCard({
           <HoverCardBody
             workspaceId={workspaceId}
             stream={stream}
+            title={title ?? streamLabel(stream, "sidebar")}
             unreadCount={unreadCount}
             onClearFromInbox={onClearFromInbox}
             onNavigate={hover.close}
@@ -162,13 +172,14 @@ export function StreamHoverCard({
 
 interface HoverCardBodyProps {
   workspaceId: string
-  stream: StreamItemData
+  stream: StreamWithPreview
+  title: string
   unreadCount: number
   onClearFromInbox?: () => void
   onNavigate: () => void
 }
 
-function HoverCardBody({ workspaceId, stream, unreadCount, onClearFromInbox, onNavigate }: HoverCardBodyProps) {
+function HoverCardBody({ workspaceId, stream, title, unreadCount, onClearFromInbox, onNavigate }: HoverCardBodyProps) {
   const streamService = useStreamService()
   const { getActorName } = useActors(workspaceId)
   const { markAsRead } = useUnreadCounts(workspaceId)
@@ -193,7 +204,7 @@ function HoverCardBody({ workspaceId, stream, unreadCount, onClearFromInbox, onN
   return (
     <div className="flex max-h-[min(28rem,var(--radix-popover-content-available-height))] flex-col">
       <div className="flex items-center gap-1 border-b px-3 py-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{streamLabel(stream, "sidebar")}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{title}</span>
         {unreadCount > 0 && latest && (
           <CardAction label="Mark read" onClick={() => void markAsRead(stream.id, latest.event.id)}>
             <CheckCheck />
