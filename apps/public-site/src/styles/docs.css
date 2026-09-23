@@ -1529,73 +1529,6 @@ body.docs-resizing .api-op {
   color: hsl(8 55% 42%);
 }
 
-/* ---------- ENDPOINT REFERENCE ---------- */
-.ep {
-  margin: 14px 0;
-  border: 1px solid hsl(var(--line));
-  border-radius: 6px;
-  background: hsl(var(--paper));
-  overflow: hidden;
-}
-.ep-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 14px;
-  flex-wrap: wrap;
-}
-.ep-method {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  padding: 3px 9px;
-  border-radius: 4px;
-  text-transform: uppercase;
-}
-.ep-method.get {
-  background: hsl(205 60% 92%);
-  color: hsl(205 55% 34%);
-}
-.ep-method.post {
-  background: hsl(var(--emerald-soft));
-  color: hsl(var(--emerald));
-}
-.ep-method.patch {
-  background: hsl(38 70% 90%);
-  color: hsl(var(--gold-dim));
-}
-.ep-method.delete {
-  background: hsl(8 65% 92%);
-  color: hsl(8 60% 44%);
-}
-.ep-path {
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: hsl(var(--ink));
-  word-break: break-all;
-}
-.ep-scope {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  color: hsl(var(--muted));
-  border: 1px solid hsl(var(--line));
-  border-radius: 999px;
-  padding: 2px 9px;
-}
-.ep-scope.none {
-  color: hsl(var(--emerald));
-  border-color: hsl(var(--emerald) / 0.4);
-}
-.ep-desc {
-  padding: 0 14px 12px;
-  font-size: 14px;
-  color: hsl(var(--ink-soft));
-  line-height: 1.55;
-}
-
 /* parameter / scope tables */
 /* Cells hold unbreakable code strings, so a table wider than its column would
    push the page past the viewport. The wrapper clips that to a horizontal
@@ -2820,17 +2753,6 @@ body.docs-resizing .api-op {
 }
 [data-theme="dark"] .pg-var.is-unset {
   color: hsl(var(--gold-soft) / 0.9);
-}
-[data-theme="dark"] .ep-method.get {
-  background: hsl(205 35% 22%);
-  color: hsl(205 50% 72%);
-}
-[data-theme="dark"] .ep-method.patch {
-  background: hsl(38 40% 22%);
-}
-[data-theme="dark"] .ep-method.delete {
-  background: hsl(8 40% 22%);
-  color: hsl(8 60% 70%);
 }
 [data-theme="dark"] .api-method.m-patch {
   color: hsl(28 60% 65%);
