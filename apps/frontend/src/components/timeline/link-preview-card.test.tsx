@@ -454,7 +454,7 @@ describe("LinkPreviewCard", () => {
     render(<LinkPreviewCard preview={preview} onToggleCollapse={() => {}} />)
 
     expect(screen.getByText("Example")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /Collapse preview/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Example", expanded: true })).toBeInTheDocument()
     const img = screen.getByAltText("A nice photo") as HTMLImageElement
     expect(img.src).toContain("https://example.com/photo.png")
   })

@@ -101,7 +101,17 @@ describe("LinkPreviewList", () => {
     renderList([preview])
 
     expect(screen.getByText("Preview description")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Collapse preview" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { expanded: true })).toBeInTheDocument()
+  })
+
+  it("folds an open preview from its header title, not just the chevron", async () => {
+    const user = userEvent.setup()
+    renderList([preview])
+
+    await user.click(screen.getByRole("button", { name: "Example", expanded: true }))
+
+    expect(screen.queryByText("Preview description")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Preview title" })).toHaveAttribute("aria-expanded", "false")
   })
 
   it("opens the first three previews and folds the rest to chips", () => {

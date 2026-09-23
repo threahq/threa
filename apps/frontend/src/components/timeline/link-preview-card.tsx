@@ -261,8 +261,9 @@ function previewCardClassName(isHighlighted?: boolean): string {
  * Card chrome header shared by every preview family: collapse toggle, provider
  * icon, optional favicon, source label, and dismiss. `faviconUrl` is null when
  * the provider already carries its own icon (GitHub/Linear). A folded card is
- * this row alone, so folding keeps the card's width and header height; the
- * whole row then expands it.
+ * this row alone, so folding keeps the card's width and header height. The
+ * row up to the dismiss control is the fold toggle in both states: a bare
+ * chevron is too small to hit with a mouse, let alone a thumb.
  */
 function PreviewCardHeader({
   icon,
@@ -280,38 +281,25 @@ function PreviewCardHeader({
   onDismiss?: (e: React.MouseEvent) => void
 }) {
   return (
-    <div className={cn("flex items-center gap-1.5 px-3 py-1.5 bg-muted/30", !collapsed && "border-b")}>
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          aria-expanded={false}
-          title={label}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-          {icon}
-          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
-          <span className="truncate">{label}</span>
-        </button>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Collapse preview"
-            aria-expanded
-          >
-            <ChevronDown className="h-3 w-3" />
-          </button>
-          {icon}
-          {faviconUrl && <PreviewFavicon src={faviconUrl} />}
-          <span className="text-xs text-muted-foreground truncate">{label}</span>
-          <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 ml-auto" />
-        </>
-      )}
-      <div className="reveal-actions flex gap-1">
+    <div className={cn("flex items-stretch gap-1.5 pr-3 bg-muted/30", !collapsed && "border-b")}>
+      <button
+        type="button"
+        onClick={onToggleCollapse}
+        aria-expanded={!collapsed}
+        title={collapsed ? label : undefined}
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-3 text-left text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {collapsed ? (
+          <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        ) : (
+          <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        )}
+        {icon}
+        {faviconUrl && <PreviewFavicon src={faviconUrl} />}
+        <span className="truncate">{label}</span>
+      </button>
+      {!collapsed && <ExternalLink className="h-3 w-3 text-muted-foreground/50 shrink-0 self-center" />}
+      <div className="reveal-actions flex items-center gap-1 py-1.5">
         {onDismiss && (
           <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onDismiss} aria-label="Dismiss preview">
             <X className="h-3 w-3" />
