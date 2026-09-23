@@ -799,7 +799,9 @@ export function StreamItem({
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />
                     )}
                     <div className="ml-auto flex items-center gap-1.5">
-                      {dense && boardMode && <BoardTopicCount stats={boardMode.statsForStream(boardScopeId)} />}
+                      {dense && boardMode && boardScopeId === stream.id && (
+                        <BoardTopicCount stats={boardMode.statsForStream(boardScopeId)} />
+                      )}
                       <StreamLabelDots streamId={stream.id} />
                       {/* Suppressed on the active stream — its composer already shows the draft. */}
                       {stream.hasLoadedDraft && !isActive && <DraftIndicator />}
