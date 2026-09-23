@@ -7,10 +7,9 @@ export interface StreamSandboxRow {
   sandboxId: string
   runner: string
   internet: boolean
-  createdAt: Date
 }
 
-const SELECT_FIELDS = `workspace_id, stream_id, sandbox_id, runner, internet, created_at`
+const SELECT_FIELDS = `workspace_id, stream_id, sandbox_id, runner, internet`
 
 function mapRow(row: Record<string, unknown>): StreamSandboxRow {
   return {
@@ -19,7 +18,6 @@ function mapRow(row: Record<string, unknown>): StreamSandboxRow {
     sandboxId: row.sandbox_id as string,
     runner: row.runner as string,
     internet: row.internet as boolean,
-    createdAt: row.created_at as Date,
   }
 }
 
