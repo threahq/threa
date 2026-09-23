@@ -195,8 +195,4 @@ export {
 // Truncation helpers (used by enclave-side orchestrator + backend personas)
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./runtime/truncation"
 
-export {
-  protectToolOutputText,
-  protectToolOutputBlocks,
-  type MultimodalContentBlock,
-} from "./runtime/tool-trust-boundary"
+export { screenWebToolOutput, type ToolOutputScreen } from "./runtime/tool-trust-boundary"

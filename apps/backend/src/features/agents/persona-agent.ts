@@ -19,6 +19,7 @@ import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { assertStreamWritable, StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
+import type { InjectionScreen } from "./injection-screen"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
 import { PersonaRepository, resolveDraftTestPersona, type Persona } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
@@ -128,6 +129,7 @@ export interface PersonaAgentDeps {
   assertInitiatorWritable?: typeof assertStreamWritable
   webSearchEngines?: WebSearchEngine[]
   pageBrowser?: PageBrowser
+  injectionScreen?: InjectionScreen
   stubResponse?: string
   createMessage: (params: {
     initiatingUserId: string
@@ -460,6 +462,7 @@ export class PersonaAgent {
       sandbox,
       webSearchEngines,
       pageBrowser,
+      injectionScreen,
       stubResponse,
       createMessage,
       editMessage,
@@ -1333,6 +1336,12 @@ export class PersonaAgent {
             }
           : undefined
 
+        const screenOutput = injectionScreen?.forTurn({
+          workspaceId,
+          userId: agentContext.invokingUserId,
+          sessionId: session.id,
+        })
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -1366,6 +1375,7 @@ export class PersonaAgent {
               enabledTools: researcherEnabledTools,
               webSearchEngines,
               pageBrowser,
+              screenOutput,
               currentTime: agentContext.streamContext.temporal?.currentTime,
               timezone: agentContext.streamContext.temporal?.timezone,
               workspace: workspaceDeps,
@@ -1410,6 +1420,7 @@ export class PersonaAgent {
             enabledTools: persona.enabledTools,
             webSearchEngines,
             pageBrowser,
+            screenOutput,
             currentTime: agentContext.streamContext.temporal?.currentTime,
             timezone: agentContext.streamContext.temporal?.timezone,
             runWorkspaceAgent,

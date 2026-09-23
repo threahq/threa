@@ -237,11 +237,6 @@ export type {
   EnrichAttachmentsOptions,
 } from "./context-builder"
 
-// Tool trust boundary (lives in @threahq/agent-runtime; re-exported for backend
-// callers that still import from this barrel)
-export { protectToolOutputText, protectToolOutputBlocks } from "@threahq/agent-runtime"
-export type { MultimodalContentBlock } from "@threahq/agent-runtime"
-
 export { WorkspaceAgent } from "./researcher"
 export type { WorkspaceAgentResult, WorkspaceAgentInput, WorkspaceAgentDeps, WorkspaceSourceItem } from "./researcher"
 export { computeAgentAccessSpec } from "./researcher"
@@ -300,3 +295,4 @@ export {
   TOOL_GUARDIAN_PROMPT,
   toolGuardianResponseSchema,
 } from "./guardian/config"
+export { InjectionScreen } from "./injection-screen"

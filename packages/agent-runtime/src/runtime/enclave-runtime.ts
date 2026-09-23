@@ -30,7 +30,6 @@ export type {
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 export type { AgentObserver } from "./agent-observer"
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
-export { protectToolOutputText, protectToolOutputBlocks, type MultimodalContentBlock } from "./tool-trust-boundary"
 export { mergeSourceItems } from "./agent-runtime"
 // The shared AgentEvent → trace-step state machine — dependency-light (types
 // only), so the enclave projects the exact same trace lifecycle as the

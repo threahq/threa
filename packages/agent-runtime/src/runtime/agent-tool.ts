@@ -28,6 +28,8 @@ export interface AgentToolResult {
   sources?: SourceItem[]
   /** Injected into system prompt on next iteration (workspace research context) */
   systemContext?: string
+  /** Set by `screenWebToolOutput` when the output reads as written to steer the model. */
+  injectionSuspected?: boolean
 }
 
 /**

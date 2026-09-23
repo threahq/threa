@@ -2,8 +2,10 @@ import { AgentToolNames } from "@threahq/types"
 import {
   createWebSearchTool,
   createReadUrlTool,
+  screenWebToolOutput,
   type AgentTool,
   type PageBrowser,
+  type ToolOutputScreen,
   type WebSearchEngine,
 } from "@threahq/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
@@ -62,6 +64,8 @@ export interface ToolSetConfig {
   enabledTools: string[] | null
   webSearchEngines?: WebSearchEngine[]
   pageBrowser?: PageBrowser
+  /** Judges web tool output for text aimed at the agent. Absent on stub AI, where every output goes unjudged. */
+  screenOutput?: ToolOutputScreen
   /** Invocation time used to ground current/latest/recent web searches. */
   currentTime?: string
   timezone?: string
@@ -146,6 +150,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     enabledTools,
     webSearchEngines,
     pageBrowser,
+    screenOutput,
     currentTime,
     timezone,
     runWorkspaceAgent,
@@ -279,5 +284,6 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
   ]
 
-  return tools.filter((t): t is AgentTool => t !== null)
+  const built = tools.filter((t): t is AgentTool => t !== null)
+  return screenOutput ? screenWebToolOutput(built, screenOutput) : built
 }

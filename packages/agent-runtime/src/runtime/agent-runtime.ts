@@ -3,7 +3,7 @@ import type { SourceItem, TraceSource } from "@threahq/types"
 import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview, resolveToolEffects } from "@threahq/types"
 import type { AI, CostContext, TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
-import { protectToolOutputText } from "./tool-trust-boundary"
+import { protectToolOutputText, untrustedMediaNote } from "./tool-trust-boundary"
 import { stripEchoedPointerTag } from "./output-guard"
 import { sanitizeAssistantReplay } from "./reasoning-replay"
 import { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
@@ -936,23 +936,34 @@ export class AgentRuntime {
           },
         })
 
-        resultParts.push(makeToolResult(tc, protectToolOutputText(toolResult.output)))
+        if (toolResult.injectionSuspected) {
+          logger.warn({ toolName: tc.toolName }, "Tool output flagged as carrying text addressed to the model")
+        }
+        resultParts.push(
+          makeToolResult(
+            tc,
+            protectToolOutputText(toolResult.output, { injectionSuspected: toolResult.injectionSuspected })
+          )
+        )
 
         // Multimodal media → injected as user messages (tool results are
         // text-only on the wire; images/files must ride a user turn).
         if (toolResult.multimodal && toolResult.multimodal.length > 0) {
           extraMessages.push({
             role: "user",
-            content: toolResult.multimodal.map((m) =>
-              m.type === "image"
-                ? { type: "image" as const, image: m.url }
-                : {
-                    type: "file" as const,
-                    data: m.data,
-                    mediaType: m.mediaType,
-                    ...(m.filename ? { filename: m.filename } : {}),
-                  }
-            ),
+            content: [
+              { type: "text" as const, text: untrustedMediaNote(tc.toolName) },
+              ...toolResult.multimodal.map((m) =>
+                m.type === "image"
+                  ? { type: "image" as const, image: m.url }
+                  : {
+                      type: "file" as const,
+                      data: m.data,
+                      mediaType: m.mediaType,
+                      ...(m.filename ? { filename: m.filename } : {}),
+                    }
+              ),
+            ],
           })
         }
       } catch (error) {
