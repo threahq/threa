@@ -1,5 +1,5 @@
 import { RollingNumber } from "@/components/rolling-number"
-import { forwardRef, useMemo, useCallback } from "react"
+import { forwardRef, useMemo, useCallback, useLayoutEffect, useRef } from "react"
 import { SmilePlus, X } from "lucide-react"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { ReactionEmojiPicker } from "./reaction-emoji-picker"
 import { AllReactionsPopover } from "./all-reactions-popover"
 import { ReactionPillDetails } from "./reaction-details"
+import { GROW_MS, PopIn } from "./pop-in"
 
 const MAX_VISIBLE_REACTIONS = 5
 
@@ -17,7 +18,65 @@ interface MessageReactionsProps {
   currentUserId: string | null
 }
 
-export function MessageReactions({ reactions, workspaceId, messageId, currentUserId }: MessageReactionsProps) {
+interface AddedReactions {
+  seen: Set<string> | null
+  /** When the row appeared on a message that had no reactions. */
+  rowAt: number | undefined
+  /** When each pill joined a row that was already showing. */
+  pillAt: Map<string, number>
+}
+
+/**
+ * Reactions added while the message is on screen. The first render only seeds,
+ * so reactions the message already had paint in place.
+ */
+function useAddedReactions(shortcodes: readonly string[]): AddedReactions {
+  const ref = useRef<AddedReactions>({ seen: null, rowAt: undefined, pillAt: new Map() })
+  const added = ref.current
+  const { seen } = added
+
+  if (seen) {
+    const fresh = shortcodes.filter((shortcode) => !seen.has(shortcode))
+    if (fresh.length > 0) {
+      const now = performance.now()
+      if (seen.size === 0) added.rowAt ??= now
+      else for (const shortcode of fresh) if (!added.pillAt.has(shortcode)) added.pillAt.set(shortcode, now)
+    }
+  }
+
+  useLayoutEffect(() => {
+    added.seen = new Set(shortcodes)
+    const now = performance.now()
+    if (added.rowAt !== undefined && now - added.rowAt >= GROW_MS) added.rowAt = undefined
+    for (const [shortcode, at] of added.pillAt) if (now - at >= GROW_MS) added.pillAt.delete(shortcode)
+  })
+
+  return added
+}
+
+/** Mounted for every message, with or without reactions, so a first reaction
+ *  can tell itself apart from reactions the message loaded with. */
+export function MessageReactions(props: MessageReactionsProps) {
+  const shortcodes = Object.entries(props.reactions)
+    .filter(([, users]) => users.length > 0)
+    .map(([shortcode]) => stripColons(shortcode))
+  const added = useAddedReactions(shortcodes)
+
+  if (shortcodes.length === 0) return null
+  return (
+    <PopIn arrivedAt={added.rowAt}>
+      <ReactionRow {...props} pillAt={added.pillAt} />
+    </PopIn>
+  )
+}
+
+function ReactionRow({
+  reactions,
+  workspaceId,
+  messageId,
+  currentUserId,
+  pillAt,
+}: MessageReactionsProps & { pillAt: ReadonlyMap<string, number> }) {
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { toggleReaction, toggleByEmoji } = useMessageReactions(workspaceId, messageId)
 
@@ -48,19 +107,19 @@ export function MessageReactions({ reactions, workspaceId, messageId, currentUse
     [toggleReaction, reactions, currentUserId]
   )
 
-  if (sortedReactions.length === 0) return null
-
   return (
-    <div className="flex flex-wrap items-center gap-1 mt-1.5">
+    <div className="flex flex-wrap items-center gap-1 pt-1.5">
       {visibleReactions.map(([shortcode, userIds]) => (
-        <ReactionPillDetails key={shortcode} emoji={shortcode} reactions={reactions} workspaceId={workspaceId}>
-          <ReactionPill
-            emoji={toEmoji(shortcode) ?? shortcode}
-            userIds={userIds}
-            currentUserId={currentUserId}
-            onToggle={() => handleToggleReaction(shortcode)}
-          />
-        </ReactionPillDetails>
+        <PopIn key={shortcode} axis="x" arrivedAt={pillAt.get(stripColons(shortcode))}>
+          <ReactionPillDetails emoji={shortcode} reactions={reactions} workspaceId={workspaceId}>
+            <ReactionPill
+              emoji={toEmoji(shortcode) ?? shortcode}
+              userIds={userIds}
+              currentUserId={currentUserId}
+              onToggle={() => handleToggleReaction(shortcode)}
+            />
+          </ReactionPillDetails>
+        </PopIn>
       ))}
 
       {overflowCount > 0 && (

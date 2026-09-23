@@ -113,3 +113,41 @@ describe("MessageReactions", () => {
     expect(screen.getByText("+3")).toBeInTheDocument()
   })
 })
+
+describe("MessageReactions arrivals", () => {
+  function growth(container: HTMLElement) {
+    return {
+      rowGrowing: container.querySelector(".pop-in-grow") !== null,
+      pillsGrowing: [...container.querySelectorAll(".pop-in-grow-x")].map((pill) => pill.textContent),
+    }
+  }
+
+  function mount(reactions: Record<string, string[]>) {
+    const view = render(
+      <MessageReactions reactions={reactions} workspaceId="ws_1" messageId="msg_1" currentUserId={null} />
+    )
+    return {
+      ...view,
+      update: (next: Record<string, string[]>) =>
+        view.rerender(<MessageReactions reactions={next} workspaceId="ws_1" messageId="msg_1" currentUserId={null} />),
+    }
+  }
+
+  it("should paint the reactions a message loaded with in place", () => {
+    const { container, update } = mount({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
+    update({ ":tada:": ["user_a", "user_c"], ":fire:": ["user_b"] })
+    expect(growth(container)).toEqual({ rowGrowing: false, pillsGrowing: [] })
+  })
+
+  it("should grow the row in when a message gets its first reaction", () => {
+    const { container, update } = mount({})
+    update({ ":tada:": ["user_a"] })
+    expect(growth(container)).toEqual({ rowGrowing: true, pillsGrowing: [] })
+  })
+
+  it("should grow only the new pill in when a reaction joins a showing row", () => {
+    const { container, update } = mount({ ":tada:": ["user_a"] })
+    update({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
+    expect(growth(container)).toEqual({ rowGrowing: false, pillsGrowing: [":fire:1"] })
+  })
+})

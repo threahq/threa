@@ -2,7 +2,7 @@ import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useRef,
 import { cn } from "@/lib/utils"
 
 /** Height growth, which outlasts the content fade; matches `.pop-in-grow` in index.css. */
-const GROW_MS = 450
+export const GROW_MS = 450
 /** More new tail rows than this in one commit is a window load or a catch-up,
  *  not something arriving while the reader watches. */
 const MAX_ARRIVALS_PER_COMMIT = 3
@@ -57,6 +57,8 @@ export function useArrivals(
 interface PopInProps {
   /** From {@link useArrivals}; undefined for a row that was already there. */
   arrivedAt: number | undefined
+  /** `x` grows the width instead, for an item joining a row. */
+  axis?: "x" | "y"
   className?: string
   children: ReactNode
 }
@@ -73,7 +75,7 @@ interface PopInProps {
  * The inner element is always rendered so the row's DOM shape never changes when
  * the arrival ends — a shape change would remount the row's content.
  */
-export function PopIn({ arrivedAt, className, children }: PopInProps) {
+export function PopIn({ arrivedAt, axis = "y", className, children }: PopInProps) {
   const [elapsed] = useState(() => (arrivedAt === undefined ? GROW_MS : performance.now() - arrivedAt))
   const [growing, setGrowing] = useState(elapsed < GROW_MS)
 
@@ -85,7 +87,10 @@ export function PopIn({ arrivedAt, className, children }: PopInProps) {
 
   const style = growing ? ({ "--pop-in-elapsed": `${Math.round(elapsed)}ms` } as CSSProperties) : undefined
   return (
-    <div className={cn(className, growing && "pop-in-grow")} style={style}>
+    <div
+      className={cn(className, axis === "x" && "pop-in-x", growing && (axis === "x" ? "pop-in-grow-x" : "pop-in-grow"))}
+      style={style}
+    >
       <div className={growing ? "pop-in-fx" : undefined}>{children}</div>
     </div>
   )
