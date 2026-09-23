@@ -33,10 +33,10 @@ import StreamPreview from "../../components/StreamPreview.astro"
     </Message>
   </StreamPreview>
 
-  <h2>Quickstart</h2>
+  <h2 id="quickstart">Quickstart</h2>
   <ol class="steps">
     <li>
-      <h3>Create an API key</h3>
+      <h3 id="create-an-api-key">Create an API key</h3>
       <p>
         In the app, open <strong>Workspace Settings → API Keys</strong>, create a
         user key, pick the scopes you need, and copy it once. Full walkthrough in
@@ -44,7 +44,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
       </p>
     </li>
     <li>
-      <h3>Add it to Credentials</h3>
+      <h3 id="add-it-to-credentials">Add it to Credentials</h3>
       <p>
         Open <strong>Credentials</strong> (top right) and enter your workspace ID
         and key. Every sample on these pages then uses your values, and
@@ -53,7 +53,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
       </p>
     </li>
     <li>
-      <h3>Confirm who you are</h3>
+      <h3 id="confirm-who-you-are">Confirm who you are</h3>
       <p><code>GET /me</code> needs no scope and returns the identity behind the key.</p>
       <CodeBlock
         lang="bash"
@@ -64,7 +64,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
       />
     </li>
     <li>
-      <h3>Search what Threa remembers</h3>
+      <h3 id="search-what-threa-remembers">Search what Threa remembers</h3>
       <p>
         With <code>memos:read</code>, search memos the way Ariadne does. Results
         link back to their source messages.
@@ -85,7 +85,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
     </li>
   </ol>
 
-  <h2>Base URL</h2>
+  <h2 id="base-url">Base URL</h2>
   <dl class="facts">
     <dt>API</dt>
     <dd><code>https://app.threa.io/api/v1</code></dd>
@@ -95,7 +95,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
     <dd>In the app URL, after <code>/w/</code></dd>
   </dl>
 
-  <h2>Working with an AI agent</h2>
+  <h2 id="working-with-an-ai-agent">Working with an AI agent</h2>
   <p>
     Every page has a markdown mirror at its URL plus <code>.md</code>.
     <a class="link" href="/llms-full.txt">/llms-full.txt</a> is the whole set in
@@ -117,7 +117,7 @@ Verify the key with GET /api/v1/workspaces/{{workspaceId}}/me before anything el
     <a class="link" href="/developers/cli">CLI &amp; MCP server</a>.
   </p>
 
-  <h2>What you can build</h2>
+  <h2 id="what-you-can-build">What you can build</h2>
   <ul>
     <li><strong>Post and read messages</strong> in any stream you can access, with idempotent sends.</li>
     <li><strong>Search</strong> messages and memos, semantic or exact, by stream, type, and date.</li>

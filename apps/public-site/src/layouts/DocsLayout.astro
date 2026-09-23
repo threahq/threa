@@ -121,6 +121,30 @@ const schema: Record<string, unknown>[] = [
           <span class="tag">Developers</span>
         </a>
       </div>
+      <div class="ds-inline" id="ds-inline" data-decorative>
+        <svg class="ds-glass" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M10.5 10.5 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        <input
+          id="ds-inline-input"
+          class="ds-inline-input"
+          type="text"
+          role="combobox"
+          aria-label="Search docs"
+          aria-expanded="false"
+          aria-controls="ds-inline-list"
+          aria-autocomplete="list"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search docs"
+        />
+        <kbd class="ds-kbd" aria-hidden="true"></kbd>
+        <div class="ds-pop">
+          <ul class="ds-list" id="ds-inline-list" role="listbox" aria-label="Search results"></ul>
+          <p class="ds-status" id="ds-inline-status" role="status"></p>
+        </div>
+      </div>
       <div class="docs-nav-right">
         <nav class="docs-nav-links">
           <a href="/developers/reference">Reference</a>
@@ -129,6 +153,12 @@ const schema: Record<string, unknown>[] = [
           <a href="/llms.txt">llms.txt</a>
           <a class="home" href="/">↩ threa.io</a>
         </nav>
+        <button type="button" class="ds-icon-btn" data-search-open aria-label="Search docs" data-decorative>
+          <svg class="ds-glass" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M10.5 10.5 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
         <ThemeToggle />
         <button type="button" class="pg-toggle" id="pg-toggle" aria-expanded="false" aria-controls="pg-panel">
           <span class="pg-dot" id="pg-dot" data-state="idle"></span>
@@ -136,6 +166,36 @@ const schema: Record<string, unknown>[] = [
         </button>
       </div>
     </header>
+
+    <dialog class="ds-dialog" id="ds-dialog" aria-label="Search docs" data-decorative>
+      <div class="ds-dialog-bar">
+        <svg class="ds-glass" width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" stroke-width="1.6" />
+            <path d="M10.5 10.5 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        <input
+          id="ds-dialog-input"
+          class="ds-dialog-input"
+          type="text"
+          role="combobox"
+          aria-label="Search docs"
+          aria-expanded="true"
+          aria-controls="ds-dialog-list"
+          aria-autocomplete="list"
+          autocomplete="off"
+          spellcheck="false"
+          enterkeyhint="go"
+          placeholder="Search docs"
+        />
+        <button type="button" class="ds-dialog-close" id="ds-dialog-close" aria-label="Close search">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+      <ul class="ds-list" id="ds-dialog-list" role="listbox" aria-label="Search results"></ul>
+      <p class="ds-status" id="ds-dialog-status" role="status"></p>
+    </dialog>
 
     <!-- Credentials: set once, kept in this browser. Every code sample
          substitutes your real values into the {{tokens}}; runnable ones call
@@ -266,6 +326,7 @@ const schema: Record<string, unknown>[] = [
 
     <script>
       import "../scripts/playground.ts"
+      import "../scripts/search.ts"
     </script>
   </body>
 </html>

@@ -163,7 +163,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
   <p>
     Anything that posts a Slack-shaped payload works. Three common ones:
   </p>
-  <h3>PostHog</h3>
+  <h3 id="senders-posthog">PostHog</h3>
   <p>
     PostHog's own Slack destination connects through a Slack app and has no URL
     field, so use its HTTP webhook destination instead. Set the URL to the
@@ -171,13 +171,13 @@ import StreamPreview from "../../components/StreamPreview.astro"
     to a Slack payload such as <code>{`{"text": "..."}`}</code> built from the
     event fields you want in the message.
   </p>
-  <h3>Grafana</h3>
+  <h3 id="senders-grafana">Grafana</h3>
   <p>
     Create a contact point of type Slack and paste the <code>/slack</code> URL
     as its webhook URL, then point an alert notification policy at it. Grafana's
     Slack payload uses <code>attachments</code> with title, text and fields.
   </p>
-  <h3>GitHub</h3>
+  <h3 id="senders-github">GitHub</h3>
   <p>
     GitHub's own repository webhooks send GitHub's payload shape, not Slack's,
     so pointing one at the <code>/slack</code> URL does not work. There is no

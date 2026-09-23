@@ -159,28 +159,28 @@ const responseExample = successSchema?.properties
       {pathParams.length > 0 && (
         <>
           <h4 class="api-sub">Path parameters</h4>
-          <SchemaTable nodes={pathParams.map(paramNode)} />
+          <SchemaTable nodes={pathParams.map(paramNode)} idPrefix={`${anchor}.path`} />
         </>
       )}
 
       {queryParams.length > 0 && (
         <>
           <h4 class="api-sub">Query parameters</h4>
-          <SchemaTable nodes={queryParams.map(paramNode)} />
+          <SchemaTable nodes={queryParams.map(paramNode)} idPrefix={`${anchor}.query`} />
         </>
       )}
 
       {bodyNodes.length > 0 && (
         <>
           <h4 class="api-sub">Request body</h4>
-          <SchemaTable nodes={bodyNodes} />
+          <SchemaTable nodes={bodyNodes} idPrefix={`${anchor}.body`} />
         </>
       )}
 
       {successNodes.length > 0 && (
         <>
           <h4 class="api-sub">Response {successCode}</h4>
-          <SchemaTable nodes={successNodes} />
+          <SchemaTable nodes={successNodes} idPrefix={`${anchor}.response`} />
         </>
       )}
 

@@ -73,6 +73,7 @@ a {
 .docs-nav .brand svg {
   width: 26px;
   height: 26px;
+  flex-shrink: 0;
   color: hsl(var(--gold));
 }
 .docs-nav .brand .wordmark {
@@ -1386,6 +1387,332 @@ a {
   color: hsl(var(--ink));
 }
 
+/* ---------- SEARCH ---------- */
+.ds-inline {
+  position: relative;
+  flex: 0 1 320px;
+  min-width: 200px;
+  margin: 0 auto;
+}
+.ds-glass {
+  flex: none;
+  color: hsl(var(--muted));
+}
+.ds-inline .ds-glass {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.ds-inline-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 56px 0 33px;
+  font: inherit;
+  font-size: 13.5px;
+  color: hsl(var(--ink));
+  background: hsl(var(--paper-warm));
+  border: 1px solid hsl(var(--line));
+  border-radius: 9px;
+  outline: none;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    box-shadow 0.15s;
+}
+.ds-inline-input::placeholder,
+.ds-dialog-input::placeholder {
+  color: hsl(var(--muted));
+}
+.ds-inline-input:hover {
+  border-color: hsl(var(--muted) / 0.6);
+}
+.ds-inline-input:focus {
+  background: hsl(var(--paper));
+  border-color: hsl(var(--gold) / 0.7);
+  box-shadow: 0 0 0 3px hsl(var(--gold) / 0.18);
+}
+.ds-kbd {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 18px;
+  color: hsl(var(--muted));
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 5px;
+  padding: 0 6px;
+  pointer-events: none;
+}
+.ds-kbd:empty,
+.ds-inline:focus-within .ds-kbd {
+  display: none;
+}
+.ds-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(64vh, 540px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 12px;
+  box-shadow: 0 22px 60px -22px hsl(28 30% 12% / 0.5);
+}
+.ds-inline.is-open .ds-pop {
+  display: block;
+}
+
+.ds-icon-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: hsl(var(--muted));
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ds-icon-btn .ds-glass {
+  color: inherit;
+}
+.ds-icon-btn:hover {
+  color: hsl(var(--ink));
+  border-color: hsl(var(--line));
+}
+
+.ds-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ds-opt a {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+.ds-opt[aria-selected="true"] a {
+  background: hsl(var(--gold) / 0.13);
+}
+.ds-opt-icon {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  color: hsl(var(--muted));
+}
+.ds-opt[aria-selected="true"] .ds-opt-icon {
+  color: hsl(var(--gold-dim));
+}
+.ds-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ds-opt-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: hsl(var(--ink));
+  overflow-wrap: anywhere;
+}
+.ds-opt-title.is-code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+.ds-opt-where {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: hsl(var(--muted));
+  overflow-wrap: anywhere;
+}
+.ds-opt-path {
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: hsl(var(--ink-soft));
+  overflow-wrap: anywhere;
+}
+.ds-opt-path .api-method {
+  margin-right: 7px;
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+}
+.ds-opt-opid {
+  margin-left: 9px;
+  color: hsl(var(--muted));
+}
+.ds-list mark {
+  color: inherit;
+  background: hsl(var(--gold) / 0.3);
+  border-radius: 3px;
+}
+.ds-status {
+  margin: 0;
+  padding: 14px 12px;
+  font-size: 13.5px;
+  color: hsl(var(--muted));
+}
+.ds-status:empty {
+  display: none;
+}
+
+.ds-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-width: none;
+  max-height: min(72vh, 640px);
+  margin: 12vh auto auto;
+  padding: 0;
+  overflow: hidden;
+  color: hsl(var(--ink));
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 14px;
+  box-shadow: 0 30px 80px -24px hsl(28 30% 12% / 0.55);
+}
+.ds-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.ds-dialog::backdrop {
+  background: hsl(28 20% 10% / 0.38);
+}
+.ds-dialog-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid hsl(var(--line));
+}
+.ds-dialog-input {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  padding: 0;
+  font: inherit;
+  font-size: 16px;
+  color: hsl(var(--ink));
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.ds-dialog-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: hsl(var(--muted));
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.ds-dialog-close:hover {
+  color: hsl(var(--ink));
+  background: hsl(var(--paper-warm));
+}
+.ds-dialog .ds-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+.ds-dialog .ds-list:empty {
+  display: none;
+}
+
+@media (max-width: 1120px) {
+  .ds-inline {
+    display: none;
+  }
+  .ds-icon-btn {
+    display: inline-flex;
+  }
+}
+@media (max-width: 640px) {
+  .ds-dialog {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  html:has(.ds-dialog[open]) {
+    overflow: hidden;
+  }
+}
+
+/* Where a search result lands: a gold wash that fades out. A field row's
+   parts are washed separately (its nested fields stay clear), so they take an
+   opaque mix with the canvas: translucent washes would darken where they meet. */
+.api-prop[id] {
+  scroll-margin-top: 76px;
+}
+.docs-article {
+  --ds-hit: hsl(var(--gold) / 0.3);
+  --ds-hit-end: hsl(var(--gold) / 0);
+}
+.api-prop {
+  --ds-hit: color-mix(in srgb, hsl(var(--gold)) 30%, hsl(var(--paper-sunk)));
+  --ds-hit-end: hsl(var(--paper-sunk));
+}
+@keyframes ds-hit {
+  0%,
+  30% {
+    background-color: var(--ds-hit);
+    box-shadow: 0 0 0 6px var(--ds-hit);
+  }
+  100% {
+    background-color: var(--ds-hit-end);
+    box-shadow: 0 0 0 6px var(--ds-hit-end);
+  }
+}
+.docs-article :is(h1, h2, h3).search-hit,
+.api-op.search-hit > :is(.api-op-head, .api-op-title),
+.api-prop.search-hit > :not(.api-nest) {
+  border-radius: 4px;
+  animation: ds-hit 1.5s ease-out forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .docs-article :is(h1, h2, h3).search-hit,
+  .api-op.search-hit > :is(.api-op-head, .api-op-title),
+  .api-prop.search-hit > :not(.api-nest) {
+    animation: none;
+    background-color: var(--ds-hit);
+    box-shadow: 0 0 0 6px var(--ds-hit);
+  }
+}
+
 /* ---------- RESPONSIVE ---------- */
 @media (max-width: 880px) {
   .docs-shell {
@@ -1400,15 +1727,16 @@ a {
   .docs-nav-links {
     display: none;
   }
-  /* The top bar collapses to hamburger + brand + toggle + Credentials here.
-     The fixed-width theme toggle doesn't shrink, so on narrow phones the
-     brand's "Developers" tag would overflow into it — drop the tag and
-     tighten the gaps so the row fits down to ~320px. */
+  /* The top bar collapses to hamburger + brand + search + theme toggle +
+     Credentials here. None of the right-hand controls shrink, so on narrow
+     phones the brand's "Developers" tag would overflow into them — drop the
+     tag and tighten the gaps; below 360px the mark goes too, so the row fits
+     down to 320px. */
   .docs-nav {
-    gap: 12px;
+    gap: 8px;
   }
   .docs-nav-right {
-    gap: 12px;
+    gap: 8px;
   }
   .docs-nav .brand .tag {
     display: none;
@@ -1502,6 +1830,11 @@ a {
     flex-direction: column;
     align-items: flex-start;
     gap: 14px;
+  }
+}
+@media (max-width: 359px) {
+  .docs-nav .brand svg {
+    display: none;
   }
 }
 

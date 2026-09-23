@@ -122,7 +122,7 @@ import StreamPreview from "../../components/StreamPreview.astro"
     The Pi remote extension implements this in full.
   </p>
 
-  <h3>The short path: two commands</h3>
+  <h3 id="local-agent-two-commands">The short path: two commands</h3>
   <p>
     If your agent is a command that reads a prompt and prints an answer, you
     don't create anything by hand. <code>connect</code> prints a URL and a code.
@@ -158,13 +158,13 @@ npx @threahq/bot run -- my-agent`}
     the access back, archive the bot or revoke its key in Workspace settings.
   </p>
 
-  <h3>Writing your own runtime</h3>
+  <h3 id="local-agent-writing-your-own-runtime">Writing your own runtime</h3>
   <p>
     Write one when a command on stdin and stdout isn't enough. The rest of this
     recipe is the protocol those two commands speak.
   </p>
 
-  <h3>1 · Create a bot and a bot key</h3>
+  <h3 id="local-agent-create-a-bot-and-a-bot-key">1 · Create a bot and a bot key</h3>
   <p>
     In the app, create a bot (give it the <code>mentionable</code> trait so people
     can summon it), then mint a <code>threa_bk_</code> key on it with
@@ -175,7 +175,7 @@ npx @threahq/bot run -- my-agent`}
     credential below.
   </p>
 
-  <h3>2 · Heartbeat a presence</h3>
+  <h3 id="local-agent-heartbeat-a-presence">2 · Heartbeat a presence</h3>
   <p>
     Tell Threa your runtime is alive and accepting work. Repeat every 15–30s. The
     <code>instanceId</code> is any stable per-process string; <code>runtimeKind</code>
@@ -197,7 +197,7 @@ npx @threahq/bot run -- my-agent`}
   }'`}
   />
 
-  <h3>3 · Claim, work, reply</h3>
+  <h3 id="local-agent-claim-work-reply">3 · Claim, work, reply</h3>
   <p>
     Poll for a pending invocation. When you get one, it carries the prompt and a
     <code>claimToken</code>; do your work, then complete it with a reply (or renew
@@ -293,7 +293,7 @@ async function loop() {
     <code>delegations:write</code> scopes.
   </p>
 
-  <h3>1 · Find and inspect open work</h3>
+  <h3 id="delegations-find-and-inspect-open-work">1 · Find and inspect open work</h3>
   <p>
     The queue includes only open tasks in streams your key can access. For polling,
     pass <code>since</code>: it compares the cursor with <code>status_changed_at</code>,
@@ -319,7 +319,7 @@ async function loop() {
   -H "Authorization: Bearer {{apiKey}}"`}
   />
 
-  <h3>2 · Claim it</h3>
+  <h3 id="delegations-claim-it">2 · Claim it</h3>
   <p>
     Claim only after reviewing the brief. Only one claimer succeeds; a lost race
     returns <code>409 DELEGATION_NOT_OPEN</code>. The response carries the brief,
@@ -337,7 +337,7 @@ async function loop() {
   -d '{ "claimedByLabel": "build-box / my agent" }'`}
   />
 
-  <h3>3 · Report progress, keep the lease alive</h3>
+  <h3 id="delegations-report-progress-keep-the-lease-alive">3 · Report progress, keep the lease alive</h3>
   <p>
     Send the token as an <code>X-Threa-Callback-Token</code> header on every later
     call. <code>status</code> puts a note on the card and renews the lease;
@@ -371,7 +371,7 @@ async function loop() {
   -H "X-Threa-Callback-Token: CLAIM_TOKEN"`}
   />
 
-  <h3>4 · Complete with the result</h3>
+  <h3 id="delegations-complete-with-the-result">4 · Complete with the result</h3>
   <p>
     Completion posts the full result as a reply in the thread anchored on the
     delegation card, and the card flips in the same transaction. Optional
@@ -405,7 +405,7 @@ async function loop() {
     can send the command it actually ran, the whole diff, and real output. The loop
     is the one above with sealed bodies.
   </p>
-  <h3>The short path: the CLI</h3>
+  <h3 id="sealed-agent-the-cli">The short path: the CLI</h3>
   <p>
     None of what follows is needed to work inside a sealed scratchpad. If your
     agent has a shell, the CLI holds the key and does the crypto.
@@ -429,7 +429,7 @@ threa messages send stream_01H... "on it"   # sealed here, then sent`}
     <a class="link" href="/developers/cli#e2e">CLI page</a>.
   </p>
 
-  <h3>Writing your own runtime</h3>
+  <h3 id="sealed-agent-writing-your-own-runtime">Writing your own runtime</h3>
   <p>
     Write one when you want the sealed invocation loop itself: claims over the
     socket, trace steps as the work happens, decision cards.
@@ -441,7 +441,7 @@ threa messages send stream_01H... "on it"   # sealed here, then sent`}
     tells you.
   </p>
 
-  <h3>1 · Load a keyring</h3>
+  <h3 id="sealed-agent-load-a-keyring">1 · Load a keyring</h3>
   <p>
     One X25519 keypair per machine is the usual setup. <code>E2eKeyring</code> mints
     it the first time, keeps it in the OS keychain, and finds it again after a
@@ -501,7 +501,7 @@ await api("/bot-runtime/presence", {
     keys to disk.
   </p>
 
-  <h3>2 · Create an encrypted scratchpad</h3>
+  <h3 id="sealed-agent-create-an-encrypted-scratchpad">2 · Create an encrypted scratchpad</h3>
   <p>
     Two calls, because the key wrap binds to the stream id the server mints. Ask for
     the owner's public key, create the session encrypted, then mint a generation-0
@@ -541,7 +541,7 @@ await api(\u0060/streams/\${link.rootStreamId}/e2e/key-wraps\u0060, { keyGenerat
     hear.
   </p>
 
-  <h3>3 · Open a sealed claim</h3>
+  <h3 id="sealed-agent-open-a-sealed-claim">3 · Open a sealed claim</h3>
   <p>
     Claim as usual. On an encrypted stream the response carries a
     <code>sealedContext</code> where the plaintext prompt would be.
@@ -576,7 +576,7 @@ const answer = await runYourAgent(turn.promptMarkdown, turn.history)`}
     can quote decrypted content, so only the class name goes back to the server.
   </p>
 
-  <h3>4 · Seal every reply and step</h3>
+  <h3 id="sealed-agent-seal-every-reply-and-step">4 · Seal every reply and step</h3>
   <p>
     <code>sealStep</code> and <code>sealReply</code> return the wire bodies for the
     sealed endpoints, each bound to an id they mint. Send the callback token in the
@@ -616,7 +616,7 @@ await post(\u0060/bot-invocations/\${inv.id}/sealed-complete\u0060, {
     (<code>extensions/claude-code-remote/</code>) are complete implementations.
   </div>
 
-  <h3>5 · Ask a sealed decision</h3>
+  <h3 id="sealed-agent-ask-a-sealed-decision">5 · Ask a sealed decision</h3>
   <p>
     A decision card puts a question in the stream and blocks your turn until someone
     picks an option. Option ids and tones stay in the clear, because the server
@@ -680,7 +680,7 @@ await api(\u0060/streams/\${cardStream}/decisions\u0060, {
 })`}
   />
 
-  <h3>6 · When the grant is taken back</h3>
+  <h3 id="sealed-agent-when-the-grant-is-taken-back">6 · When the grant is taken back</h3>
   <p>
     The owner removing your bot from a sealed scratchpad deletes the wraps only your
     keys could open, and rolls the stream key forward. You keep what you have
