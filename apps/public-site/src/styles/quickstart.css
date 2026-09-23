@@ -37,15 +37,19 @@
   margin-top: 10px;
 }
 .gm-seg {
+  position: relative;
+  overflow: hidden;
   height: 4px;
   border-radius: 2px;
   background: hsl(var(--line));
 }
-.gm-seg[data-state="current"] {
-  background: hsl(var(--gold) / 0.4);
-}
-.gm-seg[data-state="done"] {
+.gm-seg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   background: hsl(var(--gold));
+  transform: scaleX(var(--fill, 0));
+  transform-origin: left;
 }
 .docs-article .rail h2[id],
 .docs-article .guide-next h2[id] {

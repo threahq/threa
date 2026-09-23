@@ -163,6 +163,43 @@ function boot(): void {
   let wasReady = credsReady(readCreds())
   let exampleFound = false
 
+  // The meter follows reading position: a step's segment fills as the page
+  // scrolls through it, so every segment is full at the bottom of the page.
+  // Completion shows on the rail itself.
+  const segs = STEPS.map((id) => guide.querySelector<HTMLElement>(`[data-seg="${id}"]`))
+  let readFrame = 0
+  const trackReading = () => {
+    if (readFrame) return
+    readFrame = requestAnimationFrame(() => {
+      readFrame = 0
+      const root = document.documentElement
+      const maxY = Math.max(0, root.scrollHeight - innerHeight)
+      const y = Math.min(scrollY, maxY)
+      const offset = parseFloat(getComputedStyle(guide).getPropertyValue("--guide-bar-h")) || 0
+      const navH = parseFloat(root.style.getPropertyValue("--docs-nav-h")) || 0
+      const starts = STEPS.map((id, i) => {
+        const li = steps.get(id)
+        if (i === 0 || !li) return 0
+        return Math.min(maxY, li.getBoundingClientRect().top + scrollY - navH - offset - 16)
+      })
+      let reading = 0
+      STEPS.forEach((_, i) => {
+        const start = starts[i]
+        const end = i + 1 < starts.length ? starts[i + 1] : maxY
+        const fill = end > start ? Math.min(1, Math.max(0, (y - start) / (end - start))) : y >= start ? 1 : 0
+        segs[i]?.style.setProperty("--fill", String(fill))
+        if (y >= start) reading = i
+      })
+      if (!status) return
+      const title = steps.get(STEPS[reading])?.querySelector("h2")?.textContent ?? ""
+      status.textContent = guide.hasAttribute("data-complete")
+        ? "All four steps done."
+        : `Step ${reading + 1} of ${STEPS.length}: ${title}`
+    })
+  }
+  addEventListener("scroll", trackReading, { passive: true })
+  new ResizeObserver(trackReading).observe(document.body)
+
   const render = () => {
     const creds = readCreds()
     const ready = credsReady(creds)
@@ -173,7 +210,7 @@ function boot(): void {
     const done = doneSteps(creds, state)
     const current = STEPS.find((s) => !done[s]) ?? null
 
-    STEPS.forEach((id, i) => {
+    STEPS.forEach((id) => {
       const li = steps.get(id)
       if (!li) return
       const st = done[id] ? "done" : id === current ? "current" : "todo"
@@ -209,14 +246,9 @@ function boot(): void {
           else expect.removeAttribute("hidden")
         }
       }
-      const seg = guide.querySelector<HTMLElement>(`[data-seg="${id}"]`)
-      if (seg) seg.dataset.state = st
-      if (id === current && status) {
-        status.textContent = `Step ${i + 1} of ${STEPS.length}: ${li.querySelector("h2")?.textContent ?? ""}`
-      }
     })
-    if (!current && status) status.textContent = "All four steps done."
     guide.toggleAttribute("data-complete", !current)
+    trackReading()
 
     if (credsLine) {
       credsLine.textContent = ready
