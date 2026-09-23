@@ -4,6 +4,7 @@ import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { assertAssignablePersona } from "../agents"
 import { toShortcode } from "../emoji"
+import { ReadStateRepository, releaseInboxHold } from "../streams"
 import { HttpError } from "../../lib/errors"
 import {
   type UserPreferences,
@@ -201,6 +202,11 @@ export class UserPreferencesService {
       }
       if (toDelete.length > 0) {
         await UserPreferencesRepository.bulkDeleteOverrides(client, userId, toDelete)
+      }
+
+      if (updates.inboxClearMode === "read") {
+        const held = await ReadStateRepository.listInboxHeldStreamIds(client, workspaceId, userId)
+        await releaseInboxHold(client, workspaceId, userId, held)
       }
 
       const overrides = await UserPreferencesRepository.findOverrides(client, userId)

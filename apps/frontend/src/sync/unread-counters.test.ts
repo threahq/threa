@@ -149,6 +149,33 @@ describe("applyStreamActivityOrdinal", () => {
     })
     expect(second.inboxArrivedAt).toEqual({ s1: "2026-01-02T00:00:00.000Z" })
   })
+
+  it("replaces a stale arrival when the stream had left the Inbox without dropping it", () => {
+    const settled = makeState({
+      unreadCounts: { s1: 0 },
+      latestOrdinals: { s1: 5 },
+      inboxArrivedAt: { s1: "2026-01-01T00:00:00.000Z" },
+    })
+    const next = applyStreamActivityOrdinal(settled, "s1", 6, {
+      isOwnMessage: false,
+      createdAt: "2026-01-03T00:00:00.000Z",
+    })
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-03T00:00:00.000Z" })
+  })
+
+  it("keeps a held stream's arrival when a new message lands on it", () => {
+    const held = makeState({
+      unreadCounts: { s1: 0 },
+      latestOrdinals: { s1: 5 },
+      inboxHeldStreamIds: ["s1"],
+      inboxArrivedAt: { s1: "2026-01-01T00:00:00.000Z" },
+    })
+    const next = applyStreamActivityOrdinal(held, "s1", 6, {
+      isOwnMessage: false,
+      createdAt: "2026-01-03T00:00:00.000Z",
+    })
+    expect(next.inboxArrivedAt).toEqual({ s1: "2026-01-01T00:00:00.000Z" })
+  })
 })
 
 describe("applyStreamReadOrdinal", () => {

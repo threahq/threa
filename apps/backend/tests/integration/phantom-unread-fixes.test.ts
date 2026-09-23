@@ -155,6 +155,58 @@ describe("Phantom-unread drift fixes", () => {
     expect(counts.get(source)).toEqual({ unreadCount: 0, totalCount: 2 })
   })
 
+  test("a held inbox floor on a moved event is repointed to the nearest surviving prior event", async () => {
+    const wid = workspaceId()
+    const source = streamId()
+    const actor = await addTestMember(pool, wid, userId())
+    const reader = await addTestMember(pool, wid, userId())
+    await StreamRepository.insert(pool, {
+      id: source,
+      workspaceId: wid,
+      type: "channel",
+      visibility: "private",
+      createdBy: actor.id,
+    })
+    await StreamMemberRepository.insert(pool, source, actor.id)
+    await StreamMemberRepository.insert(pool, source, reader.id)
+
+    const target = await send(wid, source, actor.id, "target")
+    const m1 = await send(wid, source, actor.id, "m1")
+    const m2 = await send(wid, source, actor.id, "m2")
+    const m3 = await send(wid, source, actor.id, "m3")
+    const events = await StreamEventRepository.list(pool, source)
+    const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
+
+    // Read through m2, then a holding read through m3 freezes the floor on m2.
+    await ReadStateRepository.advance(pool, source, reader.id, eventByMsg.get(m2)!.id, { holdInInbox: false })
+    await ReadStateRepository.advance(pool, source, reader.id, eventByMsg.get(m3)!.id, { holdInInbox: true })
+    expect((await ReadStateRepository.get(pool, source, reader.id))?.inboxFloorEventId).toBe(eventByMsg.get(m2)!.id)
+
+    const validation = await eventService.validateMoveMessagesToThread({
+      workspaceId: wid,
+      sourceStreamId: source,
+      targetMessageId: target,
+      messageIds: [m2, m3],
+      actorId: actor.id,
+    })
+    await eventService.moveMessagesToThreadInternal({
+      workspaceId: wid,
+      sourceStreamId: source,
+      targetMessageId: target,
+      messageIds: [m2, m3],
+      actorId: actor.id,
+      leaseKey: validation.leaseKey,
+    })
+
+    const after = await ReadStateRepository.get(pool, source, reader.id)
+    expect({ held: after?.inboxHeld, floor: after?.inboxFloorEventId }).toEqual({
+      held: true,
+      floor: eventByMsg.get(m1)!.id,
+    })
+    // Nothing from the actor survives above m1 in the source, so no arrival.
+    expect(await ReadStateRepository.listInboxArrivals(pool, wid, reader.id, [source])).toEqual({})
+  })
+
   test("A2: deleting a message marks its unread activity rows read in the same transaction", async () => {
     const wid = workspaceId()
     const source = streamId()

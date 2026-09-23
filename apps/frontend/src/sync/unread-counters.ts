@@ -260,10 +260,14 @@ export function applyStreamActivityOrdinal(
     latest = Math.max(prevLatest, messageOrdinal)
     read = opts.isOwnMessage ? Math.max(prevRead, messageOrdinal) : prevRead
   }
-  // First other-author arrival since the stream last left the Inbox: seed the
-  // arrival timestamp once. Never set for the viewer's own sends.
+  // First other-author arrival since the stream last left the Inbox sets the
+  // arrival timestamp. Re-seeding whenever the stream wasn't in the Inbox covers
+  // settle paths that never dropped the old arrival. Never set for own sends.
+  const wasInInbox = (state.unreadCounts[streamId] ?? 0) > 0 || (state.inboxHeldStreamIds?.includes(streamId) ?? false)
   const inboxArrivedAt =
-    !opts.isOwnMessage && opts.createdAt !== undefined && state.inboxArrivedAt?.[streamId] === undefined
+    !opts.isOwnMessage &&
+    opts.createdAt !== undefined &&
+    (!wasInInbox || state.inboxArrivedAt?.[streamId] === undefined)
       ? { ...state.inboxArrivedAt, [streamId]: opts.createdAt }
       : state.inboxArrivedAt
   return {

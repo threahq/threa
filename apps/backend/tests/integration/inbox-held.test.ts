@@ -11,7 +11,7 @@ import {
 } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
 import { ActivityRepository, ActivityService } from "../../src/features/activity"
-import { UserPreferencesRepository } from "../../src/features/user-preferences"
+import { UserPreferencesRepository, UserPreferencesService } from "../../src/features/user-preferences"
 import { eventId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { ActivityTypes } from "@threahq/types"
 
@@ -776,6 +776,41 @@ describe("inbox hold", () => {
       const result = await ReadStateRepository.listInboxHeldStreamIds(pool, wid, reader)
 
       expect(result).toEqual([held])
+    })
+  })
+
+  describe("UserPreferencesService: switching to read mode", () => {
+    test("releases every existing hold and emits stream:inbox_updated(held: false)", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const held = streamId()
+      await seedChannel(wid, held, author)
+      await sendMessages(wid, held, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, held)
+      await ReadStateRepository.advance(pool, held, reader, evt.id, { holdInInbox: true })
+
+      await new UserPreferencesService(pool).updatePreferences(wid, reader, { inboxClearMode: "read" })
+
+      expect(await ReadStateRepository.listInboxHeldStreamIds(pool, wid, reader)).toEqual([])
+      expect(await outboxFor("stream:inbox_updated", wid)).toEqual([
+        { workspaceId: wid, authorId: reader, streamIds: [held], held: false },
+      ])
+    })
+
+    test("switching to manual leaves holds in place", async () => {
+      const wid = workspaceId()
+      const author = userId()
+      const reader = userId()
+      const held = streamId()
+      await seedChannel(wid, held, author)
+      await sendMessages(wid, held, author, 1)
+      const [evt] = await StreamEventRepository.list(pool, held)
+      await ReadStateRepository.advance(pool, held, reader, evt.id, { holdInInbox: true })
+
+      await new UserPreferencesService(pool).updatePreferences(wid, reader, { inboxClearMode: "manual" })
+
+      expect(await ReadStateRepository.listInboxHeldStreamIds(pool, wid, reader)).toEqual([held])
     })
   })
 
