@@ -9,6 +9,7 @@ import type {
   ReportBackToolDeps,
   FollowUpToolDeps,
   ReactionToolDeps,
+  RunCommandToolDeps,
   SaveMemoToolDeps,
   UpdateStreamBriefToolDeps,
   UpdateUserSettingsToolDeps,
@@ -23,6 +24,7 @@ import {
   createGetStreamMessagesTool,
   createSearchAttachmentsTool,
   createReadAttachmentTool,
+  createRunCommandTool,
   createDescribeMemoTool,
   createReactToMessageTool,
   createScheduleFollowUpTool,
@@ -117,6 +119,11 @@ export interface ToolSetConfig {
    * and a turn with no human trigger has no user whose settings to change.
    */
   settings?: UpdateUserSettingsToolDeps
+  /**
+   * The stream's sandbox, gating `run_command`. Absent when the backend has no
+   * sandbox runner and on sealed streams, whose plaintext must not reach it.
+   */
+  sandbox?: RunCommandToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -145,6 +152,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     reportBack,
     saveMemo,
     settings,
+    sandbox,
     github,
     linear,
     supportsVision,
@@ -205,6 +213,9 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     // regardless, so this is gated on workspace access, not vision.
     workspace && isToolEnabled(enabledTools, AgentToolNames.READ_ATTACHMENT)
       ? createReadAttachmentTool(workspace, { supportsVision: Boolean(supportsVision) })
+      : null,
+    workspace && sandbox && isToolEnabled(enabledTools, AgentToolNames.RUN_COMMAND)
+      ? createRunCommandTool(workspace, sandbox)
       : null,
     workspace && isToolEnabled(enabledTools, AgentToolNames.DESCRIBE_MEMO) ? createDescribeMemoTool(workspace) : null,
     workspace && reactions && isToolEnabled(enabledTools, AgentToolNames.REACT_TO_MESSAGE)

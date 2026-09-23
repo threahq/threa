@@ -97,6 +97,15 @@ export interface MediaConvertConfig {
   enabled: boolean
 }
 
+const SANDBOX_RUNNER_KINDS = ["docker"] as const
+type SandboxRunnerKind = (typeof SANDBOX_RUNNER_KINDS)[number]
+
+function parseSandboxRunner(value: string | undefined): SandboxRunnerKind | null {
+  if (!value) return null
+  if ((SANDBOX_RUNNER_KINDS as readonly string[]).includes(value)) return value as SandboxRunnerKind
+  throw new Error(`SANDBOX_RUNNER must be one of ${SANDBOX_RUNNER_KINDS.join(", ")} or unset, got "${value}"`)
+}
+
 export interface Config {
   port: number
   databaseUrl: string
@@ -125,6 +134,8 @@ export interface Config {
   mediaConvert: MediaConvertConfig
   cloudflareRealtime: CloudflareRealtimeConfig
   cloudflareTurn: CloudflareTurnConfig
+  /** Where `run_command` sandboxes run (SANDBOX_RUNNER). `null` withholds the tool. */
+  sandboxRunner: SandboxRunnerKind | null
   /** Control-plane URL for inter-service communication (optional — only needed in multi-region) */
   controlPlaneUrl: string | null
   /** Shared secret for authenticating internal API calls from the control-plane */
@@ -192,6 +203,7 @@ export function loadConfig(): Config {
     useStubBoundaryExtraction,
     useStubAI,
     corsAllowedOrigins,
+    sandboxRunner: parseSandboxRunner(process.env.SANDBOX_RUNNER),
     rateLimits: {
       globalMax: Number(process.env.GLOBAL_RATE_LIMIT_MAX) || 300,
       authMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 20,

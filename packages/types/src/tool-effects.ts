@@ -97,6 +97,8 @@ export const MUTATING_TOOLS = {
   get_stream_messages: false,
   search_attachments: false,
   read_attachment: false,
+  // The box's files are gone within 10 idle minutes; nothing to go find.
+  run_command: false,
   describe_memo: false,
   github_repos: false,
   github_commits: false,

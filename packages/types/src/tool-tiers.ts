@@ -79,6 +79,11 @@ export const TOOL_TIERS_BY_NAME = {
   linear_list_projects: 1,
   linear_get_project: 1,
 
+  // Runs in a box bound to this stream that holds no credentials and is reaped
+  // after 10 idle minutes; nothing it does survives the conversation or acts
+  // with the user's authority.
+  run_command: 1,
+
   // A memo outlives the stream, but it is inert: knowledge the user can read
   // and delete, with no authority attached and nothing acting on it.
   save_memo: 1,

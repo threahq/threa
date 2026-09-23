@@ -105,6 +105,10 @@ export const TOOL_CATEGORIES_BY_NAME = {
   get_stream_messages: ["workspace"],
   search_attachments: ["workspace"],
   read_attachment: ["workspace"],
+  // The sandbox takes workspace attachments in, so it needs the `workspace`
+  // grant. Its internet access is not a category: the caller turns it off
+  // unless the workspace setting AND this stream's policy both allow `web`.
+  run_command: ["workspace"],
   describe_memo: ["workspace"],
   // Saving a memo is a write into the workspace knowledge layer — symmetric with
   // `describe_memo`'s read of it — so it takes the `workspace` grant: a scratchpad

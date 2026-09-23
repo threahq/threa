@@ -11,6 +11,7 @@ import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { StartSubagentOutcome, ReportBackOutcome } from "../../subagents"
+import type { SandboxFile, SandboxRunResult } from "../../sandboxes"
 
 export interface WorkspaceToolDeps {
   db: Pool
@@ -140,6 +141,19 @@ export interface UpdateStreamBriefToolDeps {
  * the patch whose value already matched changed nothing, and the tool can only
  * tell the difference by comparing.
  */
+/**
+ * The `run_command` tool's sandbox, bound by the caller to this stream and to
+ * the internet access the workspace setting and stream policy allow together.
+ */
+export interface RunCommandToolDeps {
+  run: (params: {
+    command: string
+    files: SandboxFile[]
+    timeoutSec: number
+    signal?: AbortSignal
+  }) => Promise<SandboxRunResult & { internet: boolean }>
+}
+
 export interface UpdateUserSettingsToolDeps {
   updateSettings: (patch: AgentSettablePreferences) => Promise<{ before: UserPreferences; after: UserPreferences }>
 }
