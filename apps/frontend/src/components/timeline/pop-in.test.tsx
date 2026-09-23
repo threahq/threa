@@ -14,11 +14,14 @@ interface Props {
   ids: string[]
   resetKey?: string
   enabled?: boolean
+  inFlight?: string[]
 }
 
 function mountArrivals(initial: Props) {
   return renderHook(
-    ({ ids, resetKey = "stream_a", enabled = true }: Props) => [...useArrivals(ids, resetKey, enabled).keys()],
+    ({ ids, resetKey = "stream_a", enabled = true, inFlight }: Props) => [
+      ...useArrivals(ids, resetKey, enabled, inFlight && new Set(inFlight)).keys(),
+    ],
     {
       initialProps: initial,
     }
@@ -69,6 +72,20 @@ describe("useArrivals", () => {
     rerender({ ids: ["a", "temp_1"] })
     rerender({ ids: ["a", "temp_1"] })
     expect(result.current).toEqual(["temp_1"])
+  })
+
+  it("should report a row landing just above the viewer's unsent sends", () => {
+    const { result, rerender } = mountArrivals({ ids: ["a", "temp_1"], inFlight: ["temp_1"] })
+    rerender({ ids: ["a", "b", "temp_1"], inFlight: ["temp_1"] })
+    expect(result.current).toEqual(["b"])
+    rerender({ ids: ["a", "b", "c", "temp_1", "temp_2"], inFlight: ["temp_1", "temp_2"] })
+    expect(result.current).toEqual(["b", "temp_2", "c"])
+  })
+
+  it("should report a row landing above the viewer's send in the commit that confirms it", () => {
+    const { result, rerender } = mountArrivals({ ids: ["a", "temp_1"], inFlight: ["temp_1"] })
+    rerender({ ids: ["a", "b", "temp_1"], inFlight: [] })
+    expect(result.current).toEqual(["b"])
   })
 
   it("should forget an arrival once its effect has run out", () => {

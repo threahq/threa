@@ -67,6 +67,10 @@ async function putRawEvent(event: CachedEvent): Promise<void> {
   }
 }
 
+function failed(event: CachedEvent): CachedEvent {
+  return { ...event, _status: "failed" }
+}
+
 function makeOptimisticEvent(
   streamId: string,
   clientId: string,
@@ -209,14 +213,16 @@ describe("loadStreamEvents", () => {
     ])
   })
 
-  it("merges optimistic events outside the count-capped window by createdAt", async () => {
+  it("merges failed optimistic events outside the count-capped window by createdAt", async () => {
     const streamId = "stream_fallback"
     const reals: CachedEvent[] = []
     for (let i = 1; i <= 200; i++) {
       reals.push(makeRealEvent(streamId, String(i)))
     }
-    const oldPending = makeOptimisticEvent(streamId, "temp_old", "10", new Date(2026, 0, 1, 0, 0, 10).toISOString(), 10)
-    await db.events.bulkPut([...reals, oldPending])
+    const oldFailed = failed(
+      makeOptimisticEvent(streamId, "temp_old", "10", new Date(2026, 0, 1, 0, 0, 10).toISOString(), 10)
+    )
+    await db.events.bulkPut([...reals, oldFailed])
 
     const events = await loadStreamEvents(streamId, null)
 
@@ -259,7 +265,7 @@ describe("loadStreamEvents", () => {
 
   it("places a legacy row older than all loaded history before that history", () => {
     const streamId = "stream_legacy_oldest"
-    const legacy = makeOptimisticEvent(streamId, "temp_legacy", "1000", "1990-01-01T00:00:00.000Z")
+    const legacy = failed(makeOptimisticEvent(streamId, "temp_legacy", "1000", "1990-01-01T00:00:00.000Z"))
 
     const events = orderStreamEvents([makeRealEvent(streamId, "1"), makeRealEvent(streamId, "2"), legacy])
 
@@ -270,9 +276,11 @@ describe("loadStreamEvents", () => {
     ])
   })
 
-  it("starts a clock-skewed optimistic row after its observed persisted tail", async () => {
+  it("starts a clock-skewed failed row after its observed persisted tail", async () => {
     const streamId = "stream_slow_clock"
-    const optimistic = makeOptimisticEvent(streamId, "temp_slow", "1714428000000", "1990-01-01T00:00:00.000Z", 2)
+    const optimistic = failed(
+      makeOptimisticEvent(streamId, "temp_slow", "1714428000000", "1990-01-01T00:00:00.000Z", 2)
+    )
     await db.events.bulkPut([
       makeRealEvent(streamId, "1"),
       makeRealEvent(streamId, "2"),
@@ -290,7 +298,7 @@ describe("loadStreamEvents", () => {
     ])
   })
 
-  it("preserves thread chronology while anchoring optimistic rows", () => {
+  it("preserves thread chronology while anchoring failed rows", () => {
     const streamId = "stream_thread"
     const first = makeRealEvent(streamId, "1")
     first.createdAt = "2026-01-02T00:00:00.000Z"
@@ -298,7 +306,7 @@ describe("loadStreamEvents", () => {
     movedOlder.createdAt = "2026-01-01T00:00:00.000Z"
     const future = makeRealEvent(streamId, "3")
     future.createdAt = "2026-01-03T00:00:00.000Z"
-    const optimistic = makeOptimisticEvent(streamId, "temp_thread", "1000", "1990-01-01T00:00:00.000Z", 1)
+    const optimistic = failed(makeOptimisticEvent(streamId, "temp_thread", "1000", "1990-01-01T00:00:00.000Z", 1))
 
     const events = orderStreamEvents([first, movedOlder, future, optimistic], (a, b) =>
       a.createdAt.localeCompare(b.createdAt)
@@ -708,15 +716,32 @@ describe("bounded timeline read — tail and prefix", () => {
     expect(unanchoredTail.filter((e) => e.id === "temp_low")).toHaveLength(1)
   })
 
-  it("an optimistic row anchored inside the prefix still orders at its anchor", async () => {
+  it("a failed row anchored inside the prefix still orders at its anchor", async () => {
     await seed(20)
     // Production optimistic rows carry a `Date.now()` sequence (so they sit in the
     // tail range) but anchor at the persisted row they were composed under.
-    await db.events.put(makeOptimisticEvent(STREAM, "temp_anchored", String(Date.now()), undefined, 5))
+    await db.events.put(failed(makeOptimisticEvent(STREAM, "temp_anchored", String(Date.now()), undefined, 5)))
 
     const union = await readUnion(STREAM, 1, 15)
 
     expect(union.map((e) => e.id).indexOf("temp_anchored")).toBe(5)
+  })
+
+  it("should keep an in-flight send at the tail and a failed one at its anchor when rows land during the send", async () => {
+    // Rows the socket delivers before a send's echo are sequenced before it, so
+    // the pending row stays below them; a failed send never gets an echo.
+    await seed(20)
+    await db.events.bulkPut([
+      makeOptimisticEvent(STREAM, "temp_pending", String(Date.now()), undefined, 10),
+      failed(makeOptimisticEvent(STREAM, "temp_failed", String(Date.now() + 1), undefined, 10)),
+    ])
+
+    const ids = (await readUnion(STREAM, 1, 1)).map((e) => e.id)
+
+    expect({ failed: ids.indexOf("temp_failed"), pending: ids.indexOf("temp_pending") }).toEqual({
+      failed: 10,
+      pending: 21,
+    })
   })
 
   it("a new message wakes the tail read and not the prefix read", async () => {

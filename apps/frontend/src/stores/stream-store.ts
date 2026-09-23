@@ -163,8 +163,16 @@ function eventSequence(event: OrderableStreamEvent): number {
   return event._sequenceNum ?? sequenceToNum(event.sequence)
 }
 
+/** Pending or sent, not yet echoed. */
+export function isInFlight(event: { _status?: string }): boolean {
+  return event._status === "pending" || event._status === "sent"
+}
+
 /**
- * Interleaves optimistic stream events at their persisted sequence anchors.
+ * Orders optimistic stream events among persisted ones. In-flight sends sit at
+ * the tail, where their echo will land: the server sequences them after
+ * everything the socket has already delivered, so a row arriving mid-send
+ * belongs above them. Failed and editing rows stay at their persisted anchors.
  *
  * @param events - Persisted and optimistic events to order.
  * @param persistedComparator - Optional chronology for persisted events, such as thread ordering.
@@ -187,7 +195,7 @@ export function orderStreamEvents<T extends OrderableStreamEvent>(
 
   const inferredAnchors = new Map<string, number>()
   for (const optimisticEvent of optimistic) {
-    if (optimisticEvent._anchorSequenceNum != null || persisted.length === 0) continue
+    if (isInFlight(optimisticEvent) || optimisticEvent._anchorSequenceNum != null || persisted.length === 0) continue
     const optimisticCreatedAt = Date.parse(optimisticEvent.createdAt)
     const inferred = persisted.reduce<number | null>((current, persistedEvent) => {
       if (Date.parse(persistedEvent.createdAt) > optimisticCreatedAt) return current
@@ -199,7 +207,9 @@ export function orderStreamEvents<T extends OrderableStreamEvent>(
     )
   }
   const anchor = (event: OrderableStreamEvent) =>
-    event._anchorSequenceNum ?? inferredAnchors.get(event.id) ?? Number.POSITIVE_INFINITY
+    isInFlight(event)
+      ? Number.POSITIVE_INFINITY
+      : (event._anchorSequenceNum ?? inferredAnchors.get(event.id) ?? Number.POSITIVE_INFINITY)
   persisted.sort(persistedComparator)
   optimistic.sort(
     (leftEvent, rightEvent) =>
@@ -230,13 +240,12 @@ export function orderStreamEvents<T extends OrderableStreamEvent>(
  * Union the two ranges into one rendered window. Both are ASC and disjoint
  * (`prefix < tailFloor <= tail`), so with no unsent rows present the union is a
  * concat — no Map, no dedupe, no re-sort. Only optimistic rows need
- * `orderStreamEvents`, which places them at their anchors rather than at their
+ * `orderStreamEvents`, which places them by status rather than at their
  * placeholder sequences; that is the same fast path `loadStreamEvents` takes.
+ * An empty prefix still orders, so a failed row keeps its anchor there too.
  */
 export function unionStreamRanges(prefix: CachedEvent[], tail: CachedEvent[]): CachedEvent[] {
-  if (prefix.length === 0) return tail
-  if (tail.length === 0) return prefix
-  const combined = prefix.concat(tail)
+  const combined = prefix.length === 0 ? tail : prefix.concat(tail)
   return combined.some((event) => event._status != null) ? orderStreamEvents(combined) : combined
 }
 

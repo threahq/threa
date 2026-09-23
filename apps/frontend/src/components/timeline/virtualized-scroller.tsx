@@ -9,6 +9,8 @@ interface VirtualizedScrollerItem {
   /** Identity for arrival animation when it outlives `key` — an optimistic
    *  row's client id, which its server row keeps. Defaults to `key`. */
   arrivalKey?: string
+  /** An unsent own row; see `useArrivals`. */
+  inFlight?: boolean
   node: ReactNode
 }
 
@@ -120,7 +122,8 @@ export function VirtualizedScroller({
   const arrivals = useArrivals(
     items.map((item) => item.arrivalKey ?? item.key),
     scrollKey,
-    animateArrivals && !isInitialSettling
+    animateArrivals && !isInitialSettling,
+    new Set(items.filter((item) => item.inFlight).map((item) => item.arrivalKey ?? item.key))
   )
 
   // Never mount the list empty: the initial landing and the settle mask in

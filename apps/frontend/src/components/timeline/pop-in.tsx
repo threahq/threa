@@ -12,6 +12,9 @@ const MAX_ARRIVALS_PER_COMMIT = 3
 interface ArrivalTracker {
   resetKey: string
   seen: Set<string> | null
+  /** `inFlight` as of the last commit, so a send confirming in the same commit a
+   *  row lands above it still counts as unsent. */
+  wasInFlight: ReadonlySet<string>
   arrivedAt: Map<string, number>
 }
 
@@ -23,25 +26,36 @@ interface ArrivalTracker {
  * replaced window) never count.
  *
  * An identity must survive an optimistic row's swap to its server row
- * (`clientMessageId`), or the swap replays the arrival.
+ * (`clientMessageId`), or the swap replays the arrival. Seen rows in `inFlight`
+ * (unsent sends, which sit at the tail) don't end the tail, so a row landing
+ * just above them still arrives.
  */
 export function useArrivals(
   identities: readonly string[],
   resetKey: string,
-  enabled: boolean
+  enabled: boolean,
+  inFlight?: ReadonlySet<string>
 ): ReadonlyMap<string, number> {
   const trackerRef = useRef<ArrivalTracker | null>(null)
   if (trackerRef.current?.resetKey !== resetKey) {
-    trackerRef.current = { resetKey, seen: null, arrivedAt: new Map() }
+    trackerRef.current = { resetKey, seen: null, wasInFlight: new Set(), arrivedAt: new Map() }
   }
   const tracker = trackerRef.current
   const { seen } = tracker
 
   if (enabled && seen) {
     const fresh: string[] = []
-    let i = identities.length - 1
-    while (i >= 0 && !seen.has(identities[i])) fresh.push(identities[i--])
-    if (i >= 0 && fresh.length > 0 && fresh.length <= MAX_ARRIVALS_PER_COMMIT) {
+    let sawSeen = false
+    for (let i = identities.length - 1; i >= 0; i--) {
+      const id = identities[i]
+      if (!seen.has(id)) {
+        fresh.push(id)
+        continue
+      }
+      sawSeen = true
+      if (!inFlight?.has(id) && !tracker.wasInFlight.has(id)) break
+    }
+    if (sawSeen && fresh.length > 0 && fresh.length <= MAX_ARRIVALS_PER_COMMIT) {
       const now = performance.now()
       for (const id of fresh) if (!tracker.arrivedAt.has(id)) tracker.arrivedAt.set(id, now)
     }
@@ -49,6 +63,7 @@ export function useArrivals(
 
   useLayoutEffect(() => {
     tracker.seen = new Set(identities)
+    tracker.wasInFlight = inFlight ?? new Set()
     const now = performance.now()
     for (const [id, at] of tracker.arrivedAt) if (now - at >= GROW_MS) tracker.arrivedAt.delete(id)
   })

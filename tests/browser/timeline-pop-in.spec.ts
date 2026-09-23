@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Page, type Route } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } from "./helpers"
 
 /**
@@ -16,6 +16,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } f
  * - cold load: nothing animates.
  * - the viewer's own send grows in like any arrival, and leaves the composer in
  *   the frame its row appears, keeping whatever was typed while it was in flight.
+ * - a message landing while that send is in flight grows in above it, and the
+ *   send keeps its place when it confirms.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -237,4 +239,62 @@ test("your own send leaves the composer in the frame its row appears", async ({ 
   await expect(page.getByRole("main").getByText(text).first()).toBeVisible({ timeout: 10000 })
   await expect(editor).toHaveText("still typing")
   expect(await page.evaluate(() => (window as unknown as { __sendGap: boolean }).__sendGap)).toBe(false)
+})
+
+/** Records every order `first`/`second` rows render in, and whether `first` ever grew. */
+function watchOrder({ first, second }: { first: string; second: string }) {
+  const state = { orders: [] as string[], firstGrew: false }
+  ;(window as unknown as { __order: typeof state }).__order = state
+  const check = () => {
+    const rows = [...document.querySelectorAll<HTMLElement>("main [data-event-id]")]
+    const a = rows.findIndex((row) => row.textContent?.includes(first))
+    const b = rows.findIndex((row) => row.textContent?.includes(second))
+    if (a >= 0 && rows[a].closest(".pop-in-grow")) state.firstGrew = true
+    if (a < 0 || b < 0) return
+    const order = a < b ? "first above second" : "second above first"
+    if (state.orders.at(-1) !== order) state.orders.push(order)
+  }
+  new MutationObserver(check).observe(document.querySelector("main")!, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["class"],
+  })
+}
+
+test("a message landing while your send is in flight grows in above it, and your send keeps its place", async ({
+  page,
+}) => {
+  const { workspaceId, streamId } = await openSeededChannel(page)
+  await page.reload()
+  await waitForSettledTail(page)
+
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  await page.route(/\/api\/workspaces\/[^/]+\/messages$/, async (route: Route) => {
+    if (route.request().method() === "POST") await held
+    await route.continue()
+  })
+
+  const mine = `mine ${generateTestId()}`
+  const theirs = `theirs ${generateTestId()}`
+  const editor = page.locator("[contenteditable='true']").first()
+  await editor.click()
+  await editor.pressSequentially(mine)
+  await page.evaluate(watchOrder, { first: theirs, second: mine })
+  await page.keyboard.press("Enter")
+  await expect(page.getByRole("main").getByText(mine)).toBeVisible({ timeout: 10000 })
+
+  await postMessage(page, workspaceId, streamId, theirs)
+  await expect(page.locator("main [data-event-id]", { hasText: theirs })).toBeVisible({ timeout: 10000 })
+  release()
+  await expect(
+    page.getByRole("main").locator(`[data-event-id]:not([data-event-id^="temp_"])`, { hasText: mine })
+  ).toBeVisible({ timeout: 10000 })
+  await page.waitForTimeout(500)
+
+  expect(await page.evaluate(() => (window as unknown as { __order: unknown }).__order)).toEqual({
+    orders: ["first above second"],
+    firstGrew: true,
+  })
 })
