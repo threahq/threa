@@ -119,6 +119,8 @@ export function useWorkspaceBootstrap(workspaceId: string) {
         account.database.workspaces.get(workspaceId),
         account.database.syncCursors.get(syncLogCursorKey(workspaceId)),
       ])
+      signal.throwIfAborted()
+      if (getAccountGeneration() !== account.generation) throw new DOMException("Account changed", "AbortError")
 
       // Capture timestamp BEFORE fetch — any socket writes during the fetch
       // will have _cachedAt > fetchStartedAt and survive stale cleanup.
