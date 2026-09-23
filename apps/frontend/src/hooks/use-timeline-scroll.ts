@@ -422,10 +422,12 @@ export function useTimelineScroll({
   const pinToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
+    const before = el.scrollTop
     el.scrollTop = el.scrollHeight
     prevScrollTopRef.current = el.scrollTop
     prevScrollHeightRef.current = el.scrollHeight
-    pinUnobservedRef.current = true
+    // A write that doesn't move scrollTop fires no scroll event to clear the flag.
+    if (el.scrollTop !== before) pinUnobservedRef.current = true
   }, [])
 
   // A smooth scrollToBottom animates over many frames the browser owns, so a

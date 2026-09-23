@@ -3,7 +3,6 @@ import type { ConversationWithStaleness, StreamEvent } from "@threahq/types"
 import {
   annotateAuthorGroups,
   annotateConversationRevivals,
-  splitAuthorRunsByConversation,
   collectCancelledFollowUpIds,
   collectDelegationStatusPatches,
   collectBotAccessStatusPatches,
@@ -615,7 +614,7 @@ describe("annotateConversationRevivals", () => {
   })
 })
 
-describe("splitAuthorRunsByConversation", () => {
+describe("annotateConversationRevivals run splits", () => {
   // One author, one minute apart: annotateAuthorGroups folds all of them into a
   // single run, so any head after the first comes from the conversation split.
   const run = (count: number): TimelineItem[] =>
@@ -627,8 +626,7 @@ describe("splitAuthorRunsByConversation", () => {
 
   const split = (items: TimelineItem[], membership: Record<string, string>) => {
     const conversationIds = new Map(Object.entries(membership))
-    const annotated = annotateConversationRevivals(items, conversationIds, new Map(), NO_SETTLING)
-    return continuationFlags(splitAuthorRunsByConversation(annotated, conversationIds, new Map(), NO_SETTLING))
+    return continuationFlags(annotateConversationRevivals(items, conversationIds, new Map(), NO_SETTLING))
   }
 
   it("keeps a run whose messages share a conversation", () => {
@@ -657,9 +655,7 @@ describe("splitAuthorRunsByConversation", () => {
         })
       ),
     ])
-    const annotated = annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING)
-
-    expect(continuationFlags(splitAuthorRunsByConversation(annotated, new Map(), new Map(), NO_SETTLING))).toEqual([
+    expect(continuationFlags(annotateConversationRevivals(items, new Map(), new Map(), NO_SETTLING))).toEqual([
       false,
       false,
     ])
@@ -676,9 +672,7 @@ describe("splitAuthorRunsByConversation", () => {
       ["msg_2", "conv_y"],
     ])
     const settling = new Set(["msg_2"])
-    const annotated = annotateConversationRevivals(items, membership, new Map(), settling)
-
-    expect(continuationFlags(splitAuthorRunsByConversation(annotated, membership, new Map(), settling))).toEqual([
+    expect(continuationFlags(annotateConversationRevivals(items, membership, new Map(), settling))).toEqual([
       false,
       true,
     ])

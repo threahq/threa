@@ -267,8 +267,13 @@ export function annotateConversationRows(items: TimelineItem[], model: Conversat
  * break a run — only a different real conversation does. This diverges from
  * `annotateConversationRows` (which resets its run on an unassigned row for
  * coloring): a lone unclustered aside between two members of the same topic is
- * not a topic switch, so it must not manufacture a chip. Pure and export-only
- * for isolated coverage.
+ * not a topic switch, so it must not manufacture a chip.
+ *
+ * The same pass splits same-author runs where the conversation changes, so each
+ * run reads as one conversation's block: a chip row always heads its own run,
+ * and a continuation whose known conversation differs from the run's starts a
+ * new one. Unassigned rows never split a run. Pure and export-only for isolated
+ * coverage.
  */
 export function annotateConversationRevivals(
   items: TimelineItem[],
@@ -279,18 +284,37 @@ export function annotateConversationRevivals(
   const seen = new Set<string>()
   const lastActivityByConversation = new Map<string, string>()
   let previousConversationId: string | null = null
+  let runConversationId: string | null = null
   return items.map((item) => {
     if (item.type !== "event" || !isGroupableMessage(item.event)) return item
     const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
     const messageId = payload?.messageId
     if (!messageId) return item
-    const { conversationId, isDeclared } = resolveRowConversation(
-      payload,
-      messageId,
-      membership,
-      conversationsById,
-      settlingMessageIds
-    )
+    // A message that DECLARED its conversation at send time carries the id on its
+    // payload (Mechanism C) — prefer it so the chip renders
+    // the instant the message lands, without waiting for the async membership
+    // list. Falls back to the async `membership` map for classifier-assigned
+    // messages (Mechanism A). The topic label still resolves from
+    // `conversationsById` (loaded per-stream); a declared-but-not-yet-listed
+    // conversation shows the generic label until the list catches up.
+    //
+    // Fallback exception: a later
+    // extraction pass can merge/retire the declared conversation into an empty
+    // `resolved` shell — still present in `conversationsById` (the read query
+    // returns it) but holding no messages. Deep-linking that shell points at a
+    // dead conversation, so fall back to the membership map, which after a merge
+    // resolves the message to its surviving home. A declared id merely not-yet-
+    // listed (absent from `conversationsById`) is NOT retired — keep it, so the
+    // flicker-free just-sent case still wins over a not-yet-loaded list. The
+    // `status` check runs before `.messageIds` so a row missing that field can't
+    // be misread as retired.
+    const declared = payload.declaredConversationId
+    const declaredRow = declared != null ? conversationsById.get(declared) : undefined
+    const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
+    const isDeclared = !declaredRetired && declared != null
+    const conversationId = settlingMessageIds.has(messageId)
+      ? null
+      : ((declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null)
     let revival: ConversationRevival | undefined
     if (conversationId != null) {
       const blockStart = conversationId !== previousConversationId
@@ -315,77 +339,12 @@ export function annotateConversationRevivals(
       // conversation between the prior member and now, not merely a gap.
       previousConversationId = conversationId
     }
-    return revival ? { ...item, revival } : item
-  })
-}
-
-function resolveRowConversation(
-  payload: { declaredConversationId?: string },
-  messageId: string,
-  membership: ReadonlyMap<string, string>,
-  conversationsById: ReadonlyMap<string, ConversationWithStaleness>,
-  settlingMessageIds: ReadonlySet<string>
-): { conversationId: string | null; isDeclared: boolean } {
-  // A message that DECLARED its conversation at send time carries the id on its
-  // payload (Mechanism C) — prefer it so the chip renders
-  // the instant the message lands, without waiting for the async membership
-  // list. Falls back to the async `membership` map for classifier-assigned
-  // messages (Mechanism A). The topic label still resolves from
-  // `conversationsById` (loaded per-stream); a declared-but-not-yet-listed
-  // conversation shows the generic label until the list catches up.
-  //
-  // Fallback exception: a later
-  // extraction pass can merge/retire the declared conversation into an empty
-  // `resolved` shell — still present in `conversationsById` (the read query
-  // returns it) but holding no messages. Deep-linking that shell points at a
-  // dead conversation, so fall back to the membership map, which after a merge
-  // resolves the message to its surviving home. A declared id merely not-yet-
-  // listed (absent from `conversationsById`) is NOT retired — keep it, so the
-  // flicker-free just-sent case still wins over a not-yet-loaded list. The
-  // `status` check runs before `.messageIds` so a row missing that field can't
-  // be misread as retired.
-  const declared = payload.declaredConversationId
-  const declaredRow = declared != null ? conversationsById.get(declared) : undefined
-  const declaredRetired = declaredRow?.status === ConversationStatuses.RESOLVED && declaredRow.messageIds.length === 0
-  const isDeclared = !declaredRetired && declared != null
-  const conversationId = settlingMessageIds.has(messageId)
-    ? null
-    : ((declaredRetired ? undefined : declared) ?? membership.get(messageId) ?? null)
-  return { conversationId, isDeclared }
-}
-
-/**
- * Splits same-author runs where the conversation changes, so each run reads as
- * one conversation's block: a row carrying a `revival` chip always heads its
- * own run, and a continuation whose known conversation differs from the run's
- * known conversation starts a new one. Unassigned rows (pending, settling,
- * unclustered) never split a run, matching the revival rule. Runs after
- * {@link annotateConversationRevivals}.
- */
-export function splitAuthorRunsByConversation(
-  items: TimelineItem[],
-  membership: ReadonlyMap<string, string>,
-  conversationsById: ReadonlyMap<string, ConversationWithStaleness>,
-  settlingMessageIds: ReadonlySet<string>
-): TimelineItem[] {
-  let runConversationId: string | null = null
-  return items.map((item) => {
-    if (item.type !== "event" || !isGroupableMessage(item.event)) return item
-    const payload = item.event.payload as { messageId?: string; declaredConversationId?: string }
-    const conversationId = payload?.messageId
-      ? resolveRowConversation(payload, payload.messageId, membership, conversationsById, settlingMessageIds)
-          .conversationId
-      : null
     const splits =
       item.groupContinuation === true &&
-      (item.revival != null ||
-        (conversationId != null && runConversationId != null && conversationId !== runConversationId))
-    if (!item.groupContinuation || splits) {
-      runConversationId = conversationId
-    } else {
-      runConversationId ??= conversationId
-    }
-    return splits ? { ...item, groupContinuation: false } : item
+      (revival != null || (conversationId != null && runConversationId != null && conversationId !== runConversationId))
+    runConversationId = !item.groupContinuation || splits ? conversationId : (runConversationId ?? conversationId)
+    if (splits) return { ...item, revival, groupContinuation: false }
+    return revival ? { ...item, revival } : item
   })
 }
 
