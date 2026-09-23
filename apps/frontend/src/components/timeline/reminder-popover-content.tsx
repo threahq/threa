@@ -20,8 +20,6 @@ interface ReminderPopoverContentProps {
   saved: SavedMessageView | null
   onReminderSet?: () => void
   menu?: boolean
-  onEdit?: (editor: "duration" | "time") => void
-  editor?: "duration" | "time"
 }
 
 export function ReminderPopoverContent({
@@ -31,8 +29,6 @@ export function ReminderPopoverContent({
   saved,
   onReminderSet,
   menu = false,
-  onEdit,
-  editor,
 }: ReminderPopoverContentProps) {
   // Browser-local everywhere in the UI — never use `preferences.timezone`
   // here. Native pickers operate in device-local; any drift would silently
@@ -42,13 +38,9 @@ export function ReminderPopoverContent({
   const saveMutation = useSaveMessage(workspaceId)
   const updateMutation = useUpdateSaved(workspaceId)
   const deleteMutation = useDeleteSaved(workspaceId)
-  const [customOpen, setCustomOpen] = useState(editor === "time")
-  const [durationOpen, setDurationOpen] = useState(editor === "duration")
-  const [customDateTime, setCustomDateTime] = useState(() =>
-    editor === "time"
-      ? toDateTimeLocal(saved?.remindAt ? new Date(saved.remindAt) : new Date(Date.now() + 15 * 60_000))
-      : ""
-  )
+  const [customOpen, setCustomOpen] = useState(false)
+  const [durationOpen, setDurationOpen] = useState(false)
+  const [customDateTime, setCustomDateTime] = useState("")
   // Grey out past times in the native picker. Computed once per open so the
   // boundary doesn't jitter as the minute rolls over mid-interaction; the
   // server-side clamp catches the seconds-granularity edge case anyway.
@@ -111,44 +103,11 @@ export function ReminderPopoverContent({
       return
     }
     setReminder(parsed)
-    if (!editor) {
-      setCustomOpen(false)
-      setCustomDateTime("")
-    }
+    setCustomOpen(false)
+    setCustomDateTime("")
   }
 
   const status = saved?.status ?? null
-
-  if (editor) {
-    return editor === "duration" ? (
-      <CustomDurationPicker
-        onSubmit={setReminder}
-        disabled={saveMutation.isPending || updateMutation.isPending}
-        submitLabel="Set reminder"
-      />
-    ) : (
-      <div className="flex flex-col gap-2">
-        <label htmlFor="reminder-custom-time" className="text-sm">
-          Date and time
-        </label>
-        <input
-          id="reminder-custom-time"
-          type="datetime-local"
-          value={customDateTime}
-          min={minDateTime}
-          onChange={(event) => setCustomDateTime(event.target.value)}
-          className="w-full rounded border bg-background px-2 py-1.5 text-sm"
-        />
-        <Button
-          size="sm"
-          onClick={handleCustom}
-          disabled={!customDateTime || saveMutation.isPending || updateMutation.isPending}
-        >
-          Set reminder
-        </Button>
-      </div>
-    )
-  }
 
   return (
     <div className="flex flex-col divide-y">
@@ -177,7 +136,7 @@ export function ReminderPopoverContent({
             {preset.label}
           </PopoverMenuButton>
         ))}
-        <PopoverMenuButton menu={menu} onClick={() => (onEdit ? onEdit("duration") : toggleDuration())}>
+        <PopoverMenuButton menu={menu} onClick={toggleDuration}>
           <Clock className="h-3.5 w-3.5" />
           Custom duration…
         </PopoverMenuButton>
@@ -186,9 +145,10 @@ export function ReminderPopoverContent({
             onSubmit={setReminder}
             disabled={saveMutation.isPending || updateMutation.isPending}
             submitLabel="Set reminder"
+            autoFocus={menu}
           />
         )}
-        <PopoverMenuButton menu={menu} onClick={() => (onEdit ? onEdit("time") : openCustom())}>
+        <PopoverMenuButton menu={menu} onClick={openCustom}>
           <Bell className="h-3.5 w-3.5" />
           Pick a time…
         </PopoverMenuButton>
@@ -196,6 +156,7 @@ export function ReminderPopoverContent({
           <div className="flex items-center gap-1.5 px-2 py-1">
             <input
               type="datetime-local"
+              autoFocus={menu}
               value={customDateTime}
               min={minDateTime}
               onChange={(e) => setCustomDateTime(e.target.value)}
