@@ -396,14 +396,27 @@ export function SidebarActionContextMenu({ actions, children, disabled, focusRef
     setOpen(false)
     setMountKey((key) => key + 1)
   })
+  // Linux and macOS fire contextmenu on mousedown, so the menu mounts under the held button and Radix
+  // would select whichever item the release lands on. The window listener runs after React's handlers.
+  const heldRef = useRef(false)
+  const onContextMenu = (event: MouseEvent) => {
+    if (event.buttons === 0 || heldRef.current) return
+    heldRef.current = true
+    window.addEventListener("pointerup", () => (heldRef.current = false), { once: true })
+  }
 
   if (disabled || actions.length === 0) return <>{children}</>
 
   return (
     <ContextMenu key={mountKey} onOpenChange={setOpen}>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild onContextMenu={onContextMenu}>
+        {children}
+      </ContextMenuTrigger>
       <ContextMenuContent
         className="w-40"
+        onPointerUpCapture={(event) => {
+          if (heldRef.current) event.stopPropagation()
+        }}
         onCloseAutoFocus={(event) => {
           const target = focusRef?.current
           if (!target) return

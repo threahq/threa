@@ -164,6 +164,26 @@ describe("sidebar-actions", () => {
       expect(registerOpenMenu).toHaveBeenCalled()
     })
 
+    it("should ignore the release of the right button that opened the menu when it lands on an item", async () => {
+      const user = userEvent.setup()
+      const onSelect = vi.fn()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect }]
+
+      renderWithRouter(
+        <SidebarActionContextMenu actions={actions}>
+          <div>Stream row</div>
+        </SidebarActionContextMenu>
+      )
+
+      fireEvent.contextMenu(screen.getByText("Stream row"), { buttons: 2 })
+      const item = await screen.findByRole("menuitem", { name: "Settings" })
+      fireEvent.pointerUp(item, { button: 2 })
+
+      expect(onSelect).not.toHaveBeenCalled()
+      await user.click(screen.getByRole("menuitem", { name: "Settings" }))
+      expect(onSelect).toHaveBeenCalled()
+    })
+
     it("closes when the sidebar dismisses its menus", async () => {
       const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
 
