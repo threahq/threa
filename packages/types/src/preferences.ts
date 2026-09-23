@@ -108,6 +108,33 @@ export const UnreadOpenPositions = {
   MARKER: "marker",
 } as const satisfies Record<string, UnreadOpenPosition>
 
+// Sidebar Inbox clear mode: which actions release a stream's hold.
+// "interaction" (default): reads hold as in "manual", but the user's own
+// message send or reaction in the stream also clears the hold — a send also
+// advances the read to latest (so the stream leaves the Inbox outright); a
+// reaction clears the hold only, leaving a still-unread stream in the Inbox.
+// "manual": reads hold; only the explicit clear route unpins.
+// "read": reads never hold — the Inbox is unread streams only.
+export const INBOX_CLEAR_MODE_OPTIONS = ["interaction", "manual", "read"] as const
+export type InboxClearMode = (typeof INBOX_CLEAR_MODE_OPTIONS)[number]
+
+export const InboxClearModes = {
+  INTERACTION: "interaction",
+  MANUAL: "manual",
+  READ: "read",
+} as const satisfies Record<string, InboxClearMode>
+
+// Sidebar Inbox sort order. Stored and returned only — the backend never
+// sorts the Inbox; ordering is a client-side concern over its own
+// arrival/latest-activity timestamps.
+export const INBOX_ORDER_OPTIONS = ["arrival", "newest"] as const
+export type InboxOrder = (typeof INBOX_ORDER_OPTIONS)[number]
+
+export const InboxOrders = {
+  ARRIVAL: "arrival",
+  NEWEST: "newest",
+} as const satisfies Record<string, InboxOrder>
+
 // Buttons on a push notification. Chrome caps a notification at two action
 // buttons, so the user fills up to two ordered slots from these.
 export const PUSH_ACTION_OPTIONS = ["mark_read", "remind", "react"] as const
@@ -363,6 +390,10 @@ export interface UserPreferences {
    * ("latest", the default) or at the first unread ("marker", Discord-style).
    */
   unreadOpenPosition: UnreadOpenPosition
+  /** Which actions release a stream's sidebar Inbox hold. */
+  inboxClearMode: InboxClearMode
+  /** Sidebar Inbox sort order. Stored/returned only; the backend doesn't sort. */
+  inboxOrder: InboxOrder
   /** Ordered push notification buttons, at most PUSH_ACTIONS_MAX, no repeats. */
   pushActions: PushAction[]
   /** How far ahead the "Remind me" push button schedules the saved reminder. */
@@ -508,6 +539,8 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   linkPreviewDefault: "open",
   labelRemoveOnMove: "ask",
   unreadOpenPosition: "latest",
+  inboxClearMode: "interaction",
+  inboxOrder: "arrival",
   pushActions: [...DEFAULT_PUSH_ACTIONS],
   pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
   pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
@@ -562,6 +595,8 @@ export interface UpdateUserPreferencesInput {
   linkPreviewDefault?: LinkPreviewDefault
   labelRemoveOnMove?: LabelRemoveOnMove
   unreadOpenPosition?: UnreadOpenPosition
+  inboxClearMode?: InboxClearMode
+  inboxOrder?: InboxOrder
   pushActions?: PushAction[]
   pushReminderMinutes?: number
   pushQuickReaction?: string

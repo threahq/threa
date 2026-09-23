@@ -28,6 +28,7 @@ import { StreamPersonaParticipantRepository } from "../agents"
 import { DraftsRepository } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamContextRepository } from "../stream-context"
+import { UserPreferencesRepository } from "../user-preferences"
 
 // The suites below drive the service with a bare `{}` client, so the
 // "In this stream" projection writes are stubbed globally; the suite that
@@ -37,6 +38,17 @@ beforeEach(() => {
   spyOn(StreamContextRepository, "replaceForMessage").mockResolvedValue(0)
   spyOn(StreamContextRepository, "deleteByMessageId").mockResolvedValue(0)
   spyOn(StreamContextRepository, "reparentMessages").mockResolvedValue(0)
+  // Default inboxClearMode ("interaction", no override) for every hold/clear
+  // site `resolveInboxClearMode` reaches on the shared `{}` fixture client.
+  spyOn(UserPreferencesRepository, "findOverride").mockResolvedValue(null)
+  spyOn(ReadStateRepository, "clearInboxHeld").mockResolvedValue([])
+})
+
+// The last describe in this file has no nested afterEach of its own, so
+// without this the two spies above leak past this file into whichever
+// suite runs next in the same process.
+afterEach(() => {
+  mock.restore()
 })
 
 describe("EventService attachment safety checks", () => {
@@ -1114,9 +1126,12 @@ describe("EventService.createMessage author born-read", () => {
     await service.createMessage(baseParams)
 
     // The born-read lands in stream_read_state on the same tx client with the
-    // same (stream, author, event) — the author's own message isn't counted unread.
+    // same (stream, author, event) — the author's own message isn't counted
+    // unread. Default (interaction) mode: a send never creates a new hold.
     const createdEventId = (StreamEventRepository.insert as any).mock.calls[0][1].id
-    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId, { holdInInbox: true })
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId, {
+      holdInInbox: false,
+    })
   })
 
   it("born-reads a non-member author too — read state is user-anchored, not membership-gated", async () => {
@@ -1126,7 +1141,9 @@ describe("EventService.createMessage author born-read", () => {
     await service.createMessage(baseParams)
 
     const createdEventId = (StreamEventRepository.insert as any).mock.calls[0][1].id
-    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId, { holdInInbox: true })
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId, {
+      holdInInbox: false,
+    })
   })
 })
 

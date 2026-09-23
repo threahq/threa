@@ -8,6 +8,7 @@ export type { StreamBrief, BriefAuthorKind } from "./brief-repository"
 
 export { StreamService } from "./service"
 export { StreamReadService } from "./read-service"
+export { resolveInboxClearMode } from "./inbox-clear-mode"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
 // Which stream's memoryMode governs automatic capture here (INV-62 thread → root)

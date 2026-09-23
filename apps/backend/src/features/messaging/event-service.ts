@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
 import { StreamRepository, publishThreadUpdated, type Stream, type ThreadUpdatedSource } from "../streams"
-import { StreamMemberRepository, SparseReadRepository, ReadStateRepository } from "../streams"
+import { StreamMemberRepository, SparseReadRepository, ReadStateRepository, resolveInboxClearMode } from "../streams"
 import {
   assertStreamWritable,
   assertStreamsWritable,
@@ -948,16 +948,35 @@ export class EventService {
     // Read state is user-anchored: the born-read lands whether or not the author
     // holds a membership row (membership ≠ access ≠ read state).
     if (params.authorType === "user") {
-      const { held } = await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, {
-        holdInInbox: true,
-      })
-      if (held) {
-        await OutboxRepository.insert(client, "stream:inbox_updated", {
-          workspaceId: params.workspaceId,
-          authorId: params.authorId,
-          streamIds: [params.streamId],
-          held: true,
+      const inboxClearMode = await resolveInboxClearMode(client, params.authorId)
+      if (inboxClearMode === "interaction") {
+        // A send is engagement: it always releases an existing hold, and never
+        // starts a new one (unlike a plain read, which can hold on interleaved
+        // other-author messages up to this point).
+        await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, { holdInInbox: false })
+        const cleared = await ReadStateRepository.clearInboxHeld(client, params.workspaceId, params.authorId, [
+          params.streamId,
+        ])
+        if (cleared.length > 0) {
+          await OutboxRepository.insert(client, "stream:inbox_updated", {
+            workspaceId: params.workspaceId,
+            authorId: params.authorId,
+            streamIds: [params.streamId],
+            held: false,
+          })
+        }
+      } else {
+        const { held } = await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, {
+          holdInInbox: inboxClearMode === "manual",
         })
+        if (held) {
+          await OutboxRepository.insert(client, "stream:inbox_updated", {
+            workspaceId: params.workspaceId,
+            authorId: params.authorId,
+            streamIds: [params.streamId],
+            held: true,
+          })
+        }
       }
     }
 
@@ -2349,6 +2368,25 @@ export class EventService {
           // reader just acknowledged stops being provisional (same transaction,
           // INV-4/7).
           await settleMessagesOnEngagement(client, params.workspaceId, [params.messageId])
+
+          // Interaction mode: reacting clears the hold (no read advance — the
+          // stream can stay in the Inbox if it's still unread). `streamId` here
+          // is the locked row's stream (the retry loop above guarantees
+          // existing.streamId === streamId).
+          const inboxClearMode = await resolveInboxClearMode(client, params.userId)
+          if (inboxClearMode === "interaction") {
+            const cleared = await ReadStateRepository.clearInboxHeld(client, params.workspaceId, params.userId, [
+              streamId,
+            ])
+            if (cleared.length > 0) {
+              await OutboxRepository.insert(client, "stream:inbox_updated", {
+                workspaceId: params.workspaceId,
+                authorId: params.userId,
+                streamIds: [streamId],
+                held: false,
+              })
+            }
+          }
         }
 
         if (message) {

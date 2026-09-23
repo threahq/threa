@@ -29,6 +29,7 @@ import {
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
 import { checkStreamAccess, listAccessibleStreamIds } from "./access"
+import { resolveInboxClearMode } from "./inbox-clear-mode"
 import {
   assertStreamWritable,
   assertViewerStreamWritable,
@@ -2587,8 +2588,9 @@ export class StreamService {
     // Source the payload from the post-write row: the store is monotonic, so a
     // stale-device advance is rejected and the post-write frontier — not the raw
     // event — is the read position this user's other sessions adopt.
+    const inboxClearMode = await resolveInboxClearMode(client, memberId)
     const { state: postWrite } = await ReadStateRepository.advance(client, streamId, memberId, eventId, {
-      holdInInbox: true,
+      holdInInbox: inboxClearMode !== "read",
     })
     let readEventId = eventId
     let readPosition = position
@@ -2848,6 +2850,15 @@ export class StreamService {
   /** Streams currently held in this user's sidebar Inbox (bootstrap seed). */
   async listInboxHeldStreamIds(workspaceId: string, userId: string): Promise<string[]> {
     return ReadStateRepository.listInboxHeldStreamIds(this.pool, workspaceId, userId)
+  }
+
+  /** Inbox arrival timestamps for the given candidate streams (bootstrap seed). */
+  async getInboxArrivedAt(
+    workspaceId: string,
+    userId: string,
+    candidateStreamIds: string[]
+  ): Promise<Record<string, Date>> {
+    return ReadStateRepository.listInboxArrivals(this.pool, workspaceId, userId, candidateStreamIds)
   }
 
   async getUnreadCounts(
