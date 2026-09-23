@@ -14,6 +14,15 @@ describe("docs search index", () => {
     expect(new Set(index.map((e) => e.kind))).toEqual(new Set(["page", "heading", "operation", "field"]))
   })
 
+  test("names the sidebar group a page sits in", () => {
+    expect(index.find((e) => e.url === "/developers/authentication")).toMatchObject({
+      kind: "page",
+      title: "Authentication",
+      where: "Page in Get started",
+      context: ["Get started"],
+    })
+  })
+
   test("links an operation to its anchor with its group and path", () => {
     expect(index.find((e) => e.url === "/developers/reference#sendMessage")).toMatchObject({
       kind: "operation",

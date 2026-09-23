@@ -12,13 +12,17 @@ const HIT_KEY = "threa:search-hit"
 const FLASH_MS = 1600
 
 let indexPromise: Promise<PreparedEntry[]> | null = null
+let indexReady = false
 function loadIndex(): Promise<PreparedEntry[]> {
   indexPromise ??= fetch(INDEX_URL)
     .then((res) => {
       if (!res.ok) throw new Error(`search index: HTTP ${res.status}`)
       return res.json() as Promise<SearchEntry[]>
     })
-    .then(prepareIndex)
+    .then((entries) => {
+      indexReady = true
+      return prepareIndex(entries)
+    })
     .catch((err) => {
       indexPromise = null
       throw err
@@ -179,6 +183,10 @@ function bindSurface(s: Surface): { render: () => void } {
       return
     }
     let index: PreparedEntry[]
+    if (!indexReady) {
+      s.status.textContent = "Loading…"
+      s.onResults?.(true)
+    }
     try {
       index = await loadIndex()
     } catch {
@@ -204,7 +212,7 @@ function bindSurface(s: Surface): { render: () => void } {
       setActive(active + (e.key === "ArrowDown" ? 1 : -1))
     } else if (e.key === "Enter") {
       const hit = hits[active]
-      if (!hit) return
+      if (!hit || s.input.getAttribute("aria-expanded") === "false") return
       e.preventDefault()
       s.onClose()
       go(hit.entry.url)

@@ -116,7 +116,7 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
 
   const rewriter = new HTMLRewriter()
     .on(
-      "aside.docs-side .docs-side-group-head span",
+      "aside.docs-side .docs-side-group > h4",
       captureText((text) => (navGroup = text))
     )
     .on(
@@ -226,6 +226,7 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
   await rewriter.transform(new Response(readFileSync(file, "utf8"))).text()
 
   if (!pageLabel) throw new Error(`${rel}: no current sidebar entry, so the page has no name to index`)
+  if (!pageGroup) throw new Error(`${rel}: the current sidebar entry has no group heading above it`)
   if (unlinked.length) {
     throw new Error(`${rel}: headings without an id can't be linked from search: ${unlinked.join(", ")}`)
   }
