@@ -5,15 +5,13 @@ import Message from "../../components/Message.astro"
 import RailStep from "../../components/RailStep.astro"
 import StreamPreview from "../../components/StreamPreview.astro"
 import { currentApiVersion } from "../../lib/api-versions"
-import progressModule from "../../scripts/guide-progress.js?raw"
 import "../../styles/quickstart.css"
 
 const currentVersion = currentApiVersion()
-const prepaint = `(() => {\n${progressModule.replace(/^export /gm, "")}\nfoldDoneSteps()\n})()`
 
 const steps = [
   { id: "key", title: "Create an API key" },
-  { id: "creds", title: "Add it to Credentials" },
+  { id: "env", title: "Put it in your shell" },
   { id: "me", title: "Confirm who you are" },
   { id: "search", title: "Search what Threa remembers" },
 ]
@@ -21,27 +19,27 @@ const steps = [
 
 <DocsLayout
   title="Quickstart · Threa Developers"
-  description="Four steps from a new Threa API key to your first memo search. The last two run from the page, against your own workspace."
+  description="Four steps from a new Threa API key to your first memo search, run from your own terminal."
   current="quickstart"
 >
   <h1 id="quickstart">Quickstart.</h1>
   <p class="lead">
-    Four steps from a new API key to searching what Threa remembers. The last
-    two run on this page, against your workspace.
+    Four steps from a new API key to searching what Threa remembers, run
+    from your own terminal.
   </p>
 
   <section class="guide" data-guide aria-labelledby="quickstart">
-    <div class="guide-bar" data-decorative>
-      <p class="guide-status" data-guide-status aria-live="polite">
-        From a new key to your first memo search.
+    <div class="guide-bar" aria-hidden="true">
+      <p class="guide-status" data-guide-status>
+        Step 1 of 4: {steps[0].title}
       </p>
-      <div class="guide-meter" aria-hidden="true">
-        {steps.map((s) => <a class="gm-seg" href={`#step-${s.id}`} data-seg={s.id} tabindex="-1"></a>)}
+      <div class="guide-meter">
+        {steps.map((s) => <a class="gm-seg" href={`#step-${s.id}`} data-seg tabindex="-1"></a>)}
       </div>
     </div>
 
-    <ol class="rail is-guided">
-      <RailStep step="key" id="step-key" title={steps[0].title} state="current">
+    <ol class="rail">
+      <RailStep id="step-key" title={steps[0].title}>
         <p>
           In the app, open <strong>Workspace Settings → API Keys</strong>, create a
           personal access key, pick its scopes, and copy the
@@ -53,26 +51,22 @@ const steps = [
           step 3 takes no scope. Bot keys and the other scopes are in
           <a class="link" href="/developers/authentication">Authentication</a>.
         </p>
-        <div class="guide-actions" data-decorative>
-          <button type="button" class="guide-btn" data-guide-ack>I have a key</button>
-        </div>
       </RailStep>
 
-      <RailStep step="creds" id="step-creds" title={steps[1].title}>
+      <RailStep id="step-env" title={steps[1].title}>
         <p>
-          Open <strong>Credentials</strong> (top right) and enter your
-          workspace ID and key. The workspace ID is in the app URL, after
-          <code>/w/</code>. Every sample in these docs then uses your values,
-          and <strong>Run</strong> calls the API. They stay in this browser and
-          go out only on requests you run.
+          Export the key and your workspace ID. The workspace ID is in the app
+          URL, after <code>/w/</code>.
         </p>
-        <div class="guide-actions" data-decorative>
-          <button type="button" class="guide-btn" data-guide-open-creds>Open Credentials</button>
-          <span class="guide-creds-state" data-guide-creds>Nothing set yet.</span>
-        </div>
+        <CodeBlock
+          lang="bash"
+          label="Shell"
+          code={`export THREA_API_KEY=threa_uk_...
+export THREA_WORKSPACE_ID=ws_...`}
+        />
       </RailStep>
 
-      <RailStep step="me" id="step-me" title={steps[2].title}>
+      <RailStep id="step-me" title={steps[2].title}>
         <p>
           <code>GET /me</code> returns the identity behind the key. It's the
           quickest way to confirm a key is live and pointed at the right
@@ -81,11 +75,9 @@ const steps = [
         <CodeBlock
           lang="bash"
           label="Who am I"
-          code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me \\
-  -H "Authorization: Bearer {{apiKey}}"`}
-          run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me" }}
+          code={`curl https://app.threa.io/api/v1/workspaces/$THREA_WORKSPACE_ID/me \\
+  -H "Authorization: Bearer $THREA_API_KEY"`}
         />
-        <div class="guide-result" data-guide-result hidden></div>
         <div class="expect">
           <p class="expect-lead">
             A working key comes back as a <code>user</code> or a
@@ -119,7 +111,7 @@ const steps = [
         </div>
       </RailStep>
 
-      <RailStep step="search" id="step-search" title={steps[3].title}>
+      <RailStep id="step-search" title={steps[3].title}>
         <p>
           With <code>memos:read</code>, search memos the way Ariadne does.
           Search is semantic by default.
@@ -127,17 +119,11 @@ const steps = [
         <CodeBlock
           lang="bash"
           label="Search memos"
-          code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
-  -H "Authorization: Bearer {{apiKey}}" \\
+          code={`curl -X POST https://app.threa.io/api/v1/workspaces/$THREA_WORKSPACE_ID/memos/search \\
+  -H "Authorization: Bearer $THREA_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{ "query": "auth", "limit": 5 }'`}
-          run={{
-            method: "POST",
-            path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search",
-            body: `{ "query": "auth", "limit": 5 }`,
-          }}
         />
-        <div class="guide-result" data-guide-result hidden></div>
         <div class="expect">
           <p class="expect-lead">
             Each result is a memo: a title, an abstract, its knowledge type
@@ -170,7 +156,6 @@ const steps = [
         </div>
       </RailStep>
     </ol>
-    <script is:inline set:html={prepaint} />
 
     <div class="guide-next">
       <h2 id="next">Then pick a recipe</h2>

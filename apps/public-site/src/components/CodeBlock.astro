@@ -33,8 +33,8 @@ const html = await highlightCode(code, lang)
     <span class="pg-lang">{label ?? lang}</span>
     <div class="pg-actions">
       {run && (
-        <button type="button" class="pg-btn pg-run" data-run={JSON.stringify(run)} aria-label="Run" title="Run">
-          <svg aria-hidden="true"><use href="#icon-play" /></svg>
+        <button type="button" class="pg-btn pg-run" data-run={JSON.stringify(run)}>
+          Run
         </button>
       )}
       <button type="button" class="pg-btn pg-copy" data-copy aria-label="Copy" title="Copy">

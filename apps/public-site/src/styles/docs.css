@@ -1322,23 +1322,23 @@ body.docs-resizing .api-op {
   display: flex;
   gap: 6px;
 }
-/* Square icon buttons. Copy carries both icons and swaps them in place
-   (data-copied, scripts/playground.ts), so confirming never moves anything. */
+/* Bare controls that wash in on hover. Copy carries both icons and swaps
+   them in place (data-copied, scripts/playground.ts), so confirming never
+   moves anything. */
 .pg-btn {
   display: inline-grid;
   place-items: center;
-  width: 28px;
+  min-width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 5px;
-  border: 1px solid hsl(var(--line));
-  background: hsl(var(--paper));
-  color: hsl(var(--ink-soft));
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: hsl(var(--muted));
   cursor: pointer;
   transition:
     color 0.15s,
-    background-color 0.15s,
-    border-color 0.15s;
+    background-color 0.15s;
 }
 .pg-btn svg {
   grid-area: 1 / 1;
@@ -1347,25 +1347,22 @@ body.docs-resizing .api-op {
 }
 .pg-btn:hover {
   color: hsl(var(--ink));
-  border-color: hsl(var(--muted));
+  background: hsl(var(--ink) / 0.07);
 }
 .pg-btn:focus-visible {
   outline: 2px solid hsl(var(--gold));
   outline-offset: 1px;
 }
 .pg-run {
-  background: hsl(var(--gold) / 0.12);
-  border-color: hsl(var(--gold) / 0.5);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
   color: hsl(var(--gold-dim));
 }
 .pg-run:hover {
-  background: hsl(var(--gold) / 0.2);
-  border-color: hsl(var(--gold));
   color: hsl(var(--gold-dim));
-}
-.pg-run svg {
-  width: 12px;
-  height: 12px;
+  background: hsl(var(--gold) / 0.14);
 }
 .pg-copy-done,
 .pg-copy[data-copied] .pg-copy-idle {
@@ -1379,7 +1376,7 @@ body.docs-resizing .api-op {
 }
 @media (pointer: coarse) {
   .pg-btn {
-    width: 36px;
+    min-width: 36px;
     height: 36px;
   }
 }
@@ -2731,23 +2728,18 @@ body.docs-resizing .api-op {
     color: hsl(var(--pane-muted));
   }
   .is-split .dr-code .pg-btn {
-    background: transparent;
-    border-color: hsl(var(--pane-line));
-    color: hsl(var(--pane-ink-soft));
+    color: hsl(var(--pane-muted));
   }
   .is-split .dr-code .pg-btn:hover {
     color: hsl(var(--pane-ink));
-    border-color: hsl(var(--pane-muted));
+    background: hsl(var(--pane-ink) / 0.08);
   }
-  .is-split .dr-code .pg-run {
-    background: hsl(var(--gold) / 0.16);
-    border-color: hsl(var(--gold) / 0.55);
+  .is-split .dr-code .pg-run,
+  .is-split .dr-code .pg-run:hover {
     color: hsl(var(--pane-run));
   }
   .is-split .dr-code .pg-run:hover {
-    background: hsl(var(--gold) / 0.26);
-    border-color: hsl(var(--gold));
-    color: hsl(var(--pane-run));
+    background: hsl(var(--gold) / 0.18);
   }
   .is-split .dr-code .pg-copy[data-copied] {
     color: hsl(var(--emerald));

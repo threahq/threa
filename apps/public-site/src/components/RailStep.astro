@@ -1,28 +1,19 @@
 ---
 /*
- * One guided step on the quickstart rail. The number comes from the parent
- * <ol class="rail">; scripts/guide.ts sets its state, fills the done note, and
- * compacts the body once the reader has finished it.
+ * One step on the quickstart rail. The number comes from the parent
+ * <ol class="rail">.
  */
 interface Props {
-  step: string
   id: string
   title: string
-  state?: "todo" | "current"
 }
-const { step, id, title, state = "todo" } = Astro.props
+const { id, title } = Astro.props
 ---
 
-<li class="rail-step" data-step={step} data-state={state}>
-  <span class="rail-node" data-decorative aria-hidden="true"></span>
+<li class="rail-step">
+  <span class="rail-node" aria-hidden="true"></span>
   <div class="rail-main">
-    <div class="rail-head">
-      <h2 id={id}>{title}</h2>
-      <span class="rail-done-note" data-done-note></span>
-      <button type="button" class="rail-toggle" data-step-toggle hidden>Show</button>
-    </div>
-    <div class="rail-body" data-step-body>
-      <slot />
-    </div>
+    <h2 id={id}>{title}</h2>
+    <slot />
   </div>
 </li>

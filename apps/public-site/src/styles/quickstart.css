@@ -1,8 +1,7 @@
 /*
- * The quickstart page's guided rail. scripts/guide.ts sets data-state on each
- * step from the reader's own progress, and --docs-nav-h from the top nav's
- * measured height. The rail line is the gold thread: it fills in behind
- * finished steps.
+ * The quickstart page's numbered rail under a pinned progress bar.
+ * scripts/guide.ts fills the bar from scroll position and sets --docs-nav-h
+ * from the top nav's measured height.
  */
 .guide {
   --guide-bar-h: 58px;
@@ -82,9 +81,6 @@
 .rail-step:last-child::before {
   display: none;
 }
-.rail-step[data-state="done"]::before {
-  background: hsl(var(--gold));
-}
 .rail-node {
   position: absolute;
   left: 0;
@@ -114,164 +110,11 @@
 .rail-main {
   min-width: 0;
 }
-.rail-main > :last-child,
-.rail-body > :last-child {
+.rail-main > :last-child {
   margin-bottom: 0;
 }
 
-/* Guided states */
-.rail.is-guided .rail-step[data-state="todo"] .rail-node {
-  border-color: hsl(var(--line));
-  color: hsl(var(--muted));
-}
-.rail.is-guided .rail-step[data-state="current"] .rail-node {
-  top: 16px;
-  border-color: hsl(var(--gold));
-  background: hsl(var(--gold));
-  color: hsl(var(--paper));
-  box-shadow: 0 0 0 5px hsl(var(--gold) / 0.16);
-}
-.rail.is-guided .rail-step[data-state="current"]::before {
-  top: 52px;
-}
-.rail.is-guided .rail-step[data-state="done"] .rail-node {
-  border-color: hsl(var(--gold));
-  background: hsl(var(--gold) / 0.14);
-  color: hsl(var(--gold-dim));
-}
-.rail.is-guided .rail-step[data-state="done"] .rail-node::before {
-  content: "✓";
-  font-size: 15px;
-}
-.rail.is-guided .rail-step[data-state="current"] .rail-main {
-  padding: 16px 22px 22px;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--gold) / 0.45);
-  border-radius: 10px;
-}
-.docs-article .rail.is-guided .rail-step[data-state="current"] h2 {
-  font-size: 22px;
-  margin: 2px 0 10px;
-}
-.rail-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 14px;
-}
-.rail-done-note {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  color: hsl(var(--muted));
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.rail-done-note:empty {
-  display: none;
-}
-.rail-toggle {
-  margin-left: auto;
-  padding: 2px 4px;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: 13px;
-  color: hsl(var(--gold-dim));
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-.rail-step[data-compact] {
-  padding-bottom: 18px;
-}
-.docs-article .rail-step[data-compact] h2 {
-  font-size: 16px;
-  color: hsl(var(--ink-soft));
-}
-
-.guide-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 16px;
-  margin: 16px 0 0;
-}
-.guide-btn {
-  padding: 9px 16px;
-  font-family: var(--font-body);
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1;
-  color: hsl(var(--paper));
-  background: hsl(var(--gold));
-  border: 0;
-  border-radius: 10px;
-  cursor: pointer;
-}
-@media (hover: hover) {
-  .guide-btn:hover {
-    background: hsl(var(--gold-soft));
-  }
-}
-.rail-step:not([data-state="current"]) .guide-btn {
-  color: hsl(var(--gold-dim));
-  background: none;
-  box-shadow: inset 0 0 0 1px hsl(var(--gold) / 0.5);
-}
-.rail-step[data-state="done"] [data-guide-ack] {
-  display: none;
-}
-.guide-creds-state {
-  font-size: 14px;
-  color: hsl(var(--muted));
-}
-.guide-creds-state[data-ready="true"] {
-  color: hsl(var(--ink));
-}
-
-/* A live result, read back in plain words under the Run output. */
-.guide-result {
-  margin: -6px 0 22px;
-  padding: 12px 16px;
-  background: hsl(var(--emerald-soft) / 0.6);
-  border-left: 3px solid hsl(var(--emerald));
-  border-radius: 0 8px 8px 0;
-}
-.guide-result[hidden] {
-  display: none;
-}
-.guide-result[data-kind="err"] {
-  background: hsl(8 60% 52% / 0.07);
-  border-left-color: hsl(8 60% 52%);
-}
-.docs-article .gr-line {
-  margin: 0;
-  font-size: 15px;
-  color: hsl(var(--ink));
-}
-.gr-facts {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 3px 18px;
-  margin: 10px 0 0;
-  font-size: 13.5px;
-}
-.gr-facts dt {
-  color: hsl(var(--muted));
-}
-.gr-facts dd {
-  margin: 0;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  overflow-wrap: anywhere;
-}
-.gr-card {
-  margin-top: 12px;
-  background: hsl(var(--paper));
-}
-
-/* What success looks like, before you've run anything. */
+/* What a working call returns. */
 .expect {
   margin: 4px 0 0;
 }
@@ -298,13 +141,6 @@
   padding-left: 18px;
   margin: 0;
 }
-.guide[data-complete] .guide-next {
-  padding: 16px 22px 18px;
-  background: hsl(var(--paper));
-  border: 1px solid hsl(var(--gold) / 0.45);
-  border-radius: 10px;
-}
-
 @media (max-width: 880px) {
   .docs-article .rail-step {
     padding-left: 40px;
@@ -318,27 +154,7 @@
     left: 13px;
     top: 32px;
   }
-  .rail.is-guided .rail-step[data-state="current"] .rail-node {
-    top: 12px;
-  }
-  .rail.is-guided .rail-step[data-state="current"]::before {
-    top: 44px;
-  }
-  .rail.is-guided .rail-step[data-state="current"] .rail-main {
-    padding: 12px 14px 16px;
-  }
-  .docs-article .rail.is-guided .rail-step[data-state="current"] h2 {
-    font-size: 19px;
-  }
   .guide-next {
     margin-left: 0;
   }
-}
-
-:root[data-theme="dark"] .guide-result {
-  background: hsl(var(--emerald-soft) / 0.5);
-}
-:root[data-theme="dark"] .guide-result[data-kind="err"] {
-  background: hsl(8 50% 50% / 0.1);
-  border-left-color: hsl(8 60% 60%);
 }
