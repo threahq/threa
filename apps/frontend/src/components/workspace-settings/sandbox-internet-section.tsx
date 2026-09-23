@@ -1,4 +1,4 @@
-import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
+import { DEFAULT_WORKSPACE_SETTINGS, WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useWorkspaceSettingMutation } from "@/hooks/use-workspace-setting-mutation"
 import { hasPermission } from "@/lib/permissions"
@@ -13,7 +13,7 @@ export function SandboxInternetSection({ workspaceId }: SandboxInternetSectionPr
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const settings = bootstrap?.workspaceSettings ?? null
-  const enabled = settings?.sandboxInternet ?? false
+  const enabled = settings?.sandboxInternet ?? DEFAULT_WORKSPACE_SETTINGS.sandboxInternet
   const mutation = useWorkspaceSettingMutation(
     workspaceId,
     "sandboxInternet",

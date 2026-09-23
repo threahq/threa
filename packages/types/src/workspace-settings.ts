@@ -193,9 +193,9 @@ export interface WorkspaceSettings {
    */
   subagentModels: string[]
   /**
-   * Whether an assistant's command sandbox can reach the internet. Off by
-   * default: a sandbox holds whatever attachments the assistant copied into it,
-   * so network access is an admin's call. Changing it replaces running
+   * Whether an assistant's command sandbox can reach the internet. On by
+   * default; an admin can turn it off, since a sandbox holds whatever
+   * attachments the assistant copied into it. Changing it replaces running
    * sandboxes on their next command.
    */
   sandboxInternet: boolean
@@ -213,7 +213,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   defaultCompanionPersonaId: null,
   billingTimezone: "UTC",
   subagentModels: DEFAULT_SUBAGENT_MODELS,
-  sandboxInternet: false,
+  sandboxInternet: true,
 }
 
 /** Partial update — only provided fields are changed. */

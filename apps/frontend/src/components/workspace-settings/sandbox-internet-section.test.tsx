@@ -30,17 +30,17 @@ describe("SandboxInternetSection", () => {
     vi.restoreAllMocks()
   })
 
-  it("an admin turns sandbox internet on", async () => {
+  it("an admin turns sandbox internet off", async () => {
     const update = vi
       .spyOn(workspaceSettingsApi, "update")
-      .mockResolvedValue({ sandboxInternet: true } as WorkspaceSettings)
-    renderSection([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], false)
+      .mockResolvedValue({ sandboxInternet: false } as WorkspaceSettings)
+    renderSection([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN], true)
 
     const toggle = screen.getByRole("switch", { name: "Sandbox internet access" })
     await userEvent.setup().click(toggle)
 
-    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { sandboxInternet: true }))
-    expect(toggle).toHaveAttribute("aria-checked", "true")
+    await waitFor(() => expect(update).toHaveBeenCalledWith("ws_1", { sandboxInternet: false }))
+    expect(toggle).toHaveAttribute("aria-checked", "false")
   })
 
   it("a member sees the setting but cannot change it", () => {
