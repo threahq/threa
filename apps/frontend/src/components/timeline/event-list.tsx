@@ -625,7 +625,7 @@ export function getTimelineItemArrivalKey(item: TimelineItem): string {
 /** An own send not yet echoed; it sits at the tail until its server row replaces it. */
 export function isTimelineItemInFlight(item: TimelineItem): boolean {
   // Unsent rows reach the timeline as their cached rows, `_status` included.
-  return item.type === "event" && isInFlight(item.event as { _status?: string })
+  return item.type === "event" && isInFlight(item.event as { _status?: string; _preEditStatus?: string })
 }
 
 /** Number of skeleton placeholder rows prepended while an older page is in flight. */

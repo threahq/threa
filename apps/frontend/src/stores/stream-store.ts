@@ -157,14 +157,15 @@ export async function loadStreamPrefix(
 }
 
 type OrderableStreamEvent = Pick<CachedEvent, "id" | "sequence" | "createdAt"> &
-  Partial<Pick<CachedEvent, "_sequenceNum" | "_anchorSequenceNum" | "_status">>
+  Partial<Pick<CachedEvent, "_sequenceNum" | "_anchorSequenceNum" | "_status" | "_preEditStatus">>
 
 function eventSequence(event: OrderableStreamEvent): number {
   return event._sequenceNum ?? sequenceToNum(event.sequence)
 }
 
-/** Pending or sent, not yet echoed. */
-export function isInFlight(event: { _status?: string }): boolean {
+/** Pending or sent, not yet echoed, including a pending send held for editing. */
+export function isInFlight(event: { _status?: string; _preEditStatus?: string }): boolean {
+  if (event._status === "editing") return event._preEditStatus === "pending"
   return event._status === "pending" || event._status === "sent"
 }
 
@@ -172,7 +173,8 @@ export function isInFlight(event: { _status?: string }): boolean {
  * Orders optimistic stream events among persisted ones. In-flight sends sit at
  * the tail, where their echo will land: the server sequences them after
  * everything the socket has already delivered, so a row arriving mid-send
- * belongs above them. Failed and editing rows stay at their persisted anchors.
+ * belongs above them. Failed rows, and failed rows being edited, stay at their
+ * persisted anchors.
  *
  * @param events - Persisted and optimistic events to order.
  * @param persistedComparator - Optional chronology for persisted events, such as thread ordering.

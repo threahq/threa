@@ -188,7 +188,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
 
       type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
       await (db.pendingMessages.update as unknown as UpdateFn)(id, { status: "editing", preEditStatus: status })
-      await db.events.update(id, { _status: "editing" })
+      await db.events.update(id, { _status: "editing", _preEditStatus: status })
       return status
     })
 

@@ -744,6 +744,29 @@ describe("bounded timeline read — tail and prefix", () => {
     })
   })
 
+  it("should keep a row in place when the viewer starts editing it", async () => {
+    await seed(20)
+    await db.events.bulkPut([
+      {
+        ...makeOptimisticEvent(STREAM, "temp_pending", String(Date.now()), undefined, 10),
+        _status: "editing",
+        _preEditStatus: "pending",
+      },
+      {
+        ...makeOptimisticEvent(STREAM, "temp_failed", String(Date.now() + 1), undefined, 10),
+        _status: "editing",
+        _preEditStatus: "failed",
+      },
+    ])
+
+    const ids = (await readUnion(STREAM, 1, 1)).map((e) => e.id)
+
+    expect({ failed: ids.indexOf("temp_failed"), pending: ids.indexOf("temp_pending") }).toEqual({
+      failed: 10,
+      pending: 21,
+    })
+  })
+
   it("a new message wakes the tail read and not the prefix read", async () => {
     await seed(20)
     const write = async () => {
