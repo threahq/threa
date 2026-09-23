@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils"
 
 /** Height growth, which outlasts the content fade; matches `.pop-in-grow` in index.css. */
 export const GROW_MS = 450
+/** Matches `.pop-out` in index.css. */
+export const SHRINK_MS = 300
 /** More new tail rows than this in one commit is a window load or a catch-up,
  *  not something arriving while the reader watches. */
 const MAX_ARRIVALS_PER_COMMIT = 3
@@ -59,6 +61,8 @@ interface PopInProps {
   arrivedAt: number | undefined
   /** `x` grows the width instead, for an item joining a row. */
   axis?: "x" | "y"
+  /** Plays the arrival backwards; the caller unmounts it after {@link SHRINK_MS}. */
+  leaving?: boolean
   className?: string
   children: ReactNode
 }
@@ -75,7 +79,7 @@ interface PopInProps {
  * The inner element is always rendered so the row's DOM shape never changes when
  * the arrival ends — a shape change would remount the row's content.
  */
-export function PopIn({ arrivedAt, axis = "y", className, children }: PopInProps) {
+export function PopIn({ arrivedAt, axis = "y", leaving = false, className, children }: PopInProps) {
   const [elapsed] = useState(() => (arrivedAt === undefined ? GROW_MS : performance.now() - arrivedAt))
   const [growing, setGrowing] = useState(elapsed < GROW_MS)
 
@@ -86,12 +90,18 @@ export function PopIn({ arrivedAt, axis = "y", className, children }: PopInProps
   }, [growing, elapsed])
 
   const style = growing ? ({ "--pop-in-elapsed": `${Math.round(elapsed)}ms` } as CSSProperties) : undefined
+  let motion: string | undefined
+  let fx: string | undefined
+  if (leaving) {
+    motion = axis === "x" ? "pop-out-x" : "pop-out"
+    fx = "pop-out-fx"
+  } else if (growing) {
+    motion = axis === "x" ? "pop-in-grow-x" : "pop-in-grow"
+    fx = "pop-in-fx"
+  }
   return (
-    <div
-      className={cn(className, axis === "x" && "pop-in-x", growing && (axis === "x" ? "pop-in-grow-x" : "pop-in-grow"))}
-      style={style}
-    >
-      <div className={growing ? "pop-in-fx" : undefined}>{children}</div>
+    <div className={cn(className, axis === "x" && "pop-in-x", motion)} style={leaving ? undefined : style}>
+      <div className={fx}>{children}</div>
     </div>
   )
 }

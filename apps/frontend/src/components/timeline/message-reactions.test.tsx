@@ -1,5 +1,5 @@
-import { beforeEach, describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
+import { act, render, screen } from "@testing-library/react"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as reactionPickerModule from "./reaction-emoji-picker"
@@ -114,11 +114,28 @@ describe("MessageReactions", () => {
   })
 })
 
-describe("MessageReactions arrivals", () => {
-  function growth(container: HTMLElement) {
+describe("MessageReactions motion", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function rowMotion(container: HTMLElement) {
+    if (container.querySelector(".pop-in-grow")) return "growing"
+    if (container.querySelector(".pop-out")) return "leaving"
+    return null
+  }
+
+  function motion(container: HTMLElement) {
     return {
-      rowGrowing: container.querySelector(".pop-in-grow") !== null,
-      pillsGrowing: [...container.querySelectorAll(".pop-in-grow-x")].map((pill) => pill.textContent),
+      row: rowMotion(container),
+      pills: [...container.querySelectorAll(".pop-in-x")].map(
+        (pill) =>
+          `${pill.textContent}${pill.classList.contains("pop-in-grow-x") ? " growing" : ""}${pill.classList.contains("pop-out-x") ? " leaving" : ""}`
+      ),
     }
   }
 
@@ -136,18 +153,42 @@ describe("MessageReactions arrivals", () => {
   it("should paint the reactions a message loaded with in place", () => {
     const { container, update } = mount({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
     update({ ":tada:": ["user_a", "user_c"], ":fire:": ["user_b"] })
-    expect(growth(container)).toEqual({ rowGrowing: false, pillsGrowing: [] })
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:2", ":fire:1"] })
   })
 
   it("should grow the row in when a message gets its first reaction", () => {
     const { container, update } = mount({})
     update({ ":tada:": ["user_a"] })
-    expect(growth(container)).toEqual({ rowGrowing: true, pillsGrowing: [] })
+    expect(motion(container)).toEqual({ row: "growing", pills: [":tada:1"] })
   })
 
   it("should grow only the new pill in when a reaction joins a showing row", () => {
     const { container, update } = mount({ ":tada:": ["user_a"] })
     update({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
-    expect(growth(container)).toEqual({ rowGrowing: false, pillsGrowing: [":fire:1"] })
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:1", ":fire:1 growing"] })
+  })
+
+  it("should shrink a removed pill out in its place, then drop it", () => {
+    const { container, update } = mount({ ":tada:": ["user_a", "user_b"], ":fire:": ["user_c"], ":eyes:": ["user_d"] })
+    update({ ":tada:": ["user_a", "user_b"], ":eyes:": ["user_d"] })
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:2", ":fire:1 leaving", ":eyes:1"] })
+    act(() => vi.advanceTimersByTime(300))
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:2", ":eyes:1"] })
+  })
+
+  it("should collapse the whole row when its last reaction is removed", () => {
+    const { container, update } = mount({ ":tada:": ["user_a"] })
+    update({})
+    expect(motion(container)).toEqual({ row: "leaving", pills: [":tada:1"] })
+    act(() => vi.advanceTimersByTime(300))
+    expect(container.innerHTML).toBe("")
+  })
+
+  it("should grow the row back in when a reaction lands after it collapsed", () => {
+    const { container, update } = mount({ ":tada:": ["user_a"] })
+    update({})
+    act(() => vi.advanceTimersByTime(300))
+    update({ ":fire:": ["user_b"] })
+    expect(motion(container)).toEqual({ row: "growing", pills: [":fire:1"] })
   })
 })
