@@ -90,7 +90,7 @@
    data-theme is resolved before first paint by the head bootstrap in
    BaseHead.astro: a stored choice wins, otherwise the system preference.
    Same warm hue family inverted — espresso canvas, parchment ink, gold
-   lifted for contrast. The always-dark surfaces (--night terminals/code)
+   lifted for contrast. The --night surfaces (terminals, dark-mode code)
    drop BELOW the canvas so they still read as sunk panels. */
 :root[data-theme="dark"] {
   --gold: 40 62% 56%;

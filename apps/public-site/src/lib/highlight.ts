@@ -1,9 +1,10 @@
 /*
  * Build-time syntax highlighting for docs code samples.
  *
- * Wraps Shiki with a custom theme on the site's palette — warm charcoal
- * surface, gold for keywords and JSON keys (the thread in the dark),
- * parchment strings, muted comments. The highlighter is a module singleton so
+ * Wraps Shiki with two custom themes on the site's palette, one per site theme:
+ * gold for keywords and JSON keys, warm strings, muted comments. Each token
+ * carries both colors as --shiki-light / --shiki-dark and CSS picks one, so the
+ * theme toggle needs no re-render. The highlighter is a module singleton so
  * the ~26 blocks on the reference page share one instance per build.
  *
  * The {{baseUrl}} / {{workspaceId}} / {{apiKey}} playground tokens must
@@ -23,8 +24,7 @@ const SHIKI_LANG: Record<Exclude<CodeLang, "text">, BundledLanguage> = {
   json: "json",
 }
 
-/* Warm-dark theme derived from the site tokens (see styles/global.css :root).
-   Background is owned by CSS (--code surface); only token colors live here. */
+/* Token colors only; the surface is owned by CSS (.pg-pre in styles/docs.css). */
 const threaDusk: ThemeRegistration = {
   name: "threa-dusk",
   type: "dark",
@@ -74,13 +74,61 @@ const threaDusk: ThemeRegistration = {
   ],
 }
 
+const threaDawn: ThemeRegistration = {
+  name: "threa-dawn",
+  type: "light",
+  colors: {
+    "editor.background": "#fbfaf7",
+    "editor.foreground": "#2a241d",
+  },
+  settings: [
+    { settings: { foreground: "#2a241d" } },
+    {
+      scope: ["comment", "punctuation.definition.comment"],
+      settings: { foreground: "#736a5d", fontStyle: "italic" },
+    },
+    {
+      scope: ["string", "string.template", "punctuation.definition.string"],
+      settings: { foreground: "#6a5a2c" },
+    },
+    {
+      scope: ["constant.numeric", "constant.language", "constant.other"],
+      settings: { foreground: "#a24e1c" },
+    },
+    {
+      scope: ["keyword", "storage.type", "storage.modifier", "keyword.control"],
+      settings: { foreground: "#94600f" },
+    },
+    {
+      scope: ["keyword.operator"],
+      settings: { foreground: "#62584b" },
+    },
+    {
+      scope: ["entity.name.function", "support.function", "meta.function-call.generic"],
+      settings: { foreground: "#1f1a14" },
+    },
+    {
+      scope: ["variable", "variable.other", "variable.parameter"],
+      settings: { foreground: "#2a241d" },
+    },
+    {
+      scope: ["support.type.property-name", "meta.object-literal.key"],
+      settings: { foreground: "#94600f" },
+    },
+    {
+      scope: ["punctuation", "meta.brace"],
+      settings: { foreground: "#7a7063" },
+    },
+  ],
+}
+
 const VAR_NAMES = ["baseUrl", "workspaceId", "apiKey"] as const
 const sentinel = (name: string) => `__PGVAR_${name}__`
 
 let highlighterPromise: Promise<Highlighter> | null = null
 function getHighlighter(): Promise<Highlighter> {
   highlighterPromise ??= createHighlighter({
-    themes: [threaDusk],
+    themes: [threaDawn, threaDusk],
     langs: Object.values(SHIKI_LANG),
   })
   return highlighterPromise
@@ -108,7 +156,8 @@ export async function highlightCode(code: string, lang: CodeLang): Promise<strin
   const hl = await getHighlighter()
   const { tokens } = hl.codeToTokens(prepared, {
     lang: SHIKI_LANG[lang],
-    theme: "threa-dusk",
+    themes: { light: "threa-dawn", dark: "threa-dusk" },
+    defaultColor: false,
   })
 
   // <wbr> after each slash lets a block that wraps (the API reference) break a
@@ -117,9 +166,10 @@ export async function highlightCode(code: string, lang: CodeLang): Promise<strin
   const html = tokens
     .map((line) =>
       line
-        .map(
-          (t) => `<span style="color:${t.color ?? "#e6ded2"}">${escapeHtml(t.content).replaceAll("/", "/<wbr>")}</span>`
-        )
+        .map((t) => {
+          const style = t.htmlStyle ?? {}
+          return `<span style="--shiki-light:${style["--shiki-light"]};--shiki-dark:${style["--shiki-dark"]}">${escapeHtml(t.content).replaceAll("/", "/<wbr>")}</span>`
+        })
         .join("")
     )
     .join("\n")

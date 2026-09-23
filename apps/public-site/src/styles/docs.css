@@ -1215,8 +1215,8 @@ body.docs-resizing .api-op {
     height: 36px;
   }
 }
-/* Code goes night — the samples are the substance of these pages, so they
-   carry the contrast. Light header above, dark body, light output below. */
+/* The code surface follows the theme: paper in light mode, night in dark.
+   Token colors come from lib/highlight.ts as --shiki-light / --shiki-dark. */
 .pg-pre {
   margin: 0;
   padding: 14px 16px;
@@ -1224,10 +1224,20 @@ body.docs-resizing .api-op {
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
-  background: hsl(var(--night));
-  color: hsl(38 14% 86%);
+  background: hsl(var(--paper));
+  color: hsl(var(--ink));
   white-space: pre;
   tab-size: 2;
+}
+.pg-pre code span[style] {
+  color: var(--shiki-light);
+}
+[data-theme="dark"] .pg-pre {
+  background: hsl(var(--night));
+  color: hsl(38 14% 86%);
+}
+[data-theme="dark"] .pg-pre code span[style] {
+  color: var(--shiki-dark);
 }
 /* Chrome breaks at <wbr> even under white-space: pre; only wrapping blocks
    (the API reference) use the slash breaks highlight.ts emits. */
@@ -1249,7 +1259,7 @@ body.docs-resizing .api-op {
 
 /* ---------- RENDERED MATH SAMPLE ---------- */
 /* The .pg-block frame with a light body: what's inside is the equation as a
-   reader sees it in Threa, not a code sample, so it doesn't go night. */
+   reader sees it in Threa, not a code sample. */
 .math-render {
   margin: 20px 0;
   border: 1px solid hsl(var(--line));
@@ -1293,15 +1303,15 @@ body.docs-resizing .api-op {
   position: relative;
   transition: background 0.15s;
 }
-/* Chip colors tuned for the night code surface: gold lifts instead of dims. */
+/* Gold dims on the light code surface and lifts on the night one. */
 .pg-var.is-set {
-  background: hsl(var(--gold) / 0.22);
-  color: hsl(var(--gold-soft));
+  background: hsl(var(--gold) / 0.16);
+  color: hsl(var(--gold-dim));
   box-shadow: inset 0 -1px 0 hsl(var(--gold) / 0.6);
 }
 .pg-var.is-unset {
   background: hsl(var(--gold) / 0.1);
-  color: hsl(var(--gold-soft) / 0.9);
+  color: hsl(var(--gold-dim));
   box-shadow: inset 0 0 0 1px hsl(var(--gold) / 0.45);
   cursor: pointer;
 }
@@ -2375,23 +2385,29 @@ body.docs-resizing .api-op {
 
 /* ---------- SPLIT ROWS (DocsLayout `split`, components/DocRow.astro) ----------
    Below 1200px a row is plain flow, prose then its code, and code takes the
-   article's full width. From 1200px each row is prose beside a dark pane that
-   runs the article's full height to the viewport edge, with the row's code
-   sticky inside it. */
+   article's full width. From 1200px each row is prose beside a pane that runs
+   the article's full height to the viewport edge, with the row's code sticky
+   inside it. The pane follows the theme: a shade below the page in light mode,
+   near-black in dark. */
 .docs-article.is-split {
-  --pane: 26 16% 11%;
-  --pane-block: 26 14% 14.5%;
-  --pane-head: 26 13% 17%;
-  --pane-line: 30 10% 22%;
-  --pane-ink: 38 16% 90%;
-  --pane-ink-soft: 35 10% 74%;
-  --pane-muted: 32 8% 60%;
+  --pane: 36 14% 90%;
+  --pane-block: var(--paper);
+  --pane-head: var(--paper-warm);
+  --pane-line: 35 13% 83%;
+  --pane-ink: var(--ink);
+  --pane-ink-soft: var(--ink-soft);
+  --pane-muted: var(--muted);
+  --pane-run: var(--gold-dim);
 }
 :root[data-theme="dark"] .docs-article.is-split {
   --pane: 26 16% 6%;
   --pane-block: 26 13% 10.5%;
   --pane-head: 26 12% 13%;
   --pane-line: 26 8% 19%;
+  --pane-ink: 38 16% 90%;
+  --pane-ink-soft: 35 10% 74%;
+  --pane-muted: 32 8% 60%;
+  --pane-run: var(--gold-soft);
 }
 .docs-article li.dr {
   max-width: none;
@@ -2558,14 +2574,15 @@ body.docs-resizing .api-op {
   .is-split .dr-code .pg-run {
     background: hsl(var(--gold) / 0.16);
     border-color: hsl(var(--gold) / 0.55);
-    color: hsl(var(--gold-soft));
+    color: hsl(var(--pane-run));
   }
   .is-split .dr-code .pg-run:hover {
     background: hsl(var(--gold) / 0.26);
     border-color: hsl(var(--gold));
+    color: hsl(var(--pane-run));
   }
   .is-split .dr-code .pg-copy[data-copied] {
-    color: hsl(142 45% 58%);
+    color: hsl(var(--emerald));
   }
   .is-split .dr-code .pg-pre {
     background: hsl(var(--pane-block));
@@ -2637,8 +2654,14 @@ body.docs-resizing .api-op {
 }
 
 /* ---------- DARK MODE OVERRIDES ----------
-   Tokens flip in global.css; these are the docs-local hardcoded values.
-   The code surfaces (.pg-pre) are always dark and need nothing here. */
+   Tokens flip in global.css; these are the docs-local hardcoded values. */
+[data-theme="dark"] .pg-var.is-set {
+  background: hsl(var(--gold) / 0.22);
+  color: hsl(var(--gold-soft));
+}
+[data-theme="dark"] .pg-var.is-unset {
+  color: hsl(var(--gold-soft) / 0.9);
+}
 [data-theme="dark"] .ep-method.get {
   background: hsl(205 35% 22%);
   color: hsl(205 50% 72%);
