@@ -36,6 +36,14 @@ interface ReactionMotion {
   pillLeftAt: Map<string, number>
 }
 
+/** An arrival time that makes something re-added mid-shrink grow back from
+ *  about the size it had shrunk to, rather than from nothing. */
+function returnedAt(now: number, leftAt: number | undefined) {
+  if (leftAt === undefined) return now
+  const shrunk = Math.min(1, (now - leftAt) / SHRINK_MS)
+  return now - (1 - shrunk) * GROW_MS
+}
+
 /**
  * The pills to render, with the ones added while the message is on screen
  * growing in and the ones removed still shrinking out. The first render only
@@ -63,9 +71,12 @@ function useReactionMotion(visible: readonly Reaction[]) {
     if (visible.length === 0) {
       if (motion.shown.length > 0) motion.rowLeftAt ??= now
     } else {
+      const rowLeftAt = motion.rowLeftAt
       motion.rowLeftAt = undefined
-      if (seen.size === 0) motion.rowAt ??= now
-      else for (const [shortcode] of added) if (!motion.pillAt.has(shortcode)) motion.pillAt.set(shortcode, now)
+      if (seen.size === 0) motion.rowAt ??= returnedAt(now, rowLeftAt)
+      else
+        for (const [shortcode] of added)
+          if (!motion.pillAt.has(shortcode)) motion.pillAt.set(shortcode, returnedAt(now, motion.pillLeftAt.get(shortcode)))
       for (const pill of motion.shown) {
         if (!pill.leaving && !current.has(pill.shortcode)) motion.pillLeftAt.set(pill.shortcode, now)
       }

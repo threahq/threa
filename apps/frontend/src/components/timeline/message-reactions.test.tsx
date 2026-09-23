@@ -184,6 +184,26 @@ describe("MessageReactions motion", () => {
     expect(container.innerHTML).toBe("")
   })
 
+  it("should grow a pill back in when it is re-added mid-shrink", () => {
+    const { container, update } = mount({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
+    update({ ":tada:": ["user_a"] })
+    act(() => vi.advanceTimersByTime(150))
+    update({ ":tada:": ["user_a"], ":fire:": ["user_b"] })
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:1", ":fire:1 growing"] })
+    act(() => vi.advanceTimersByTime(450))
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:1", ":fire:1"] })
+  })
+
+  it("should grow the row back in when a reaction lands mid-collapse", () => {
+    const { container, update } = mount({ ":tada:": ["user_a"] })
+    update({})
+    act(() => vi.advanceTimersByTime(150))
+    update({ ":tada:": ["user_a"] })
+    expect(motion(container)).toEqual({ row: "growing", pills: [":tada:1"] })
+    act(() => vi.advanceTimersByTime(450))
+    expect(motion(container)).toEqual({ row: null, pills: [":tada:1"] })
+  })
+
   it("should grow the row back in when a reaction lands after it collapsed", () => {
     const { container, update } = mount({ ":tada:": ["user_a"] })
     update({})

@@ -56,6 +56,11 @@ export function useArrivals(
   return tracker.arrivedAt
 }
 
+function startArrival(arrivedAt: number | undefined) {
+  const elapsed = arrivedAt === undefined ? GROW_MS : performance.now() - arrivedAt
+  return { arrivedAt, elapsed, growing: elapsed < GROW_MS }
+}
+
 interface PopInProps {
   /** From {@link useArrivals}; undefined for a row that was already there. */
   arrivedAt: number | undefined
@@ -80,14 +85,16 @@ interface PopInProps {
  * the arrival ends — a shape change would remount the row's content.
  */
 export function PopIn({ arrivedAt, axis = "y", leaving = false, className, children }: PopInProps) {
-  const [elapsed] = useState(() => (arrivedAt === undefined ? GROW_MS : performance.now() - arrivedAt))
-  const [growing, setGrowing] = useState(elapsed < GROW_MS)
+  const [arrival, setArrival] = useState(() => startArrival(arrivedAt))
+  // A new arrival on a mounted instance (a reaction re-added mid-shrink) restarts the growth.
+  if (arrivedAt !== undefined && arrivedAt !== arrival.arrivedAt) setArrival(startArrival(arrivedAt))
+  const { elapsed, growing } = arrival
 
   useEffect(() => {
-    if (!growing) return
-    const timer = window.setTimeout(() => setGrowing(false), GROW_MS - elapsed)
+    if (!arrival.growing) return
+    const timer = window.setTimeout(() => setArrival({ ...arrival, growing: false }), GROW_MS - arrival.elapsed)
     return () => window.clearTimeout(timer)
-  }, [growing, elapsed])
+  }, [arrival])
 
   const style = growing ? ({ "--pop-in-elapsed": `${Math.round(elapsed)}ms` } as CSSProperties) : undefined
   let motion: string | undefined
