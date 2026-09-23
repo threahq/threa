@@ -208,6 +208,7 @@ describe("read state — non-member unlock", () => {
           lastReadSequence: events[1].sequence.toString(),
           lastReadOrdinal: 2,
           readMessageIds: [],
+          inboxHeld: true,
         },
       ])
     })
@@ -287,6 +288,7 @@ describe("read state — non-member unlock", () => {
         },
         lastReadOrdinal: 2,
         readMessageIds: [],
+        inboxHeld: true,
       })
       expect(await outboxFor("stream:read", sid)).toEqual([
         {
@@ -297,6 +299,7 @@ describe("read state — non-member unlock", () => {
           lastReadSequence: events[1].sequence.toString(),
           lastReadOrdinal: 2,
           readMessageIds: [],
+          inboxHeld: true,
         },
       ])
     })
@@ -320,8 +323,8 @@ describe("read state — non-member unlock", () => {
       const unknown = await streamService.markAsRead(wid, sid, viewer, "event_does_not_exist")
       const crossStream = await streamService.markAsRead(wid, sid, viewer, foreign[0].id)
 
-      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
-      expect(crossStream).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null, inboxHeld: null })
+      expect(crossStream).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null, inboxHeld: null })
       const row = await ReadStateRepository.get(pool, sid, viewer)
       expect(row?.lastReadEventId).toBe(events[0].id)
       // Only the seeding read emitted — neither no-op did.
@@ -349,7 +352,7 @@ describe("read state — non-member unlock", () => {
       const unknown = await readService.markAsRead(wid, sid, viewer, { messageId: "msg_does_not_exist" })
 
       expect(byMessage.readState?.lastReadEventId).toBe(target.id)
-      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null })
+      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null, inboxHeld: null })
       expect((await ReadStateRepository.get(pool, sid, viewer))?.lastReadEventId).toBe(target.id)
     })
 
