@@ -846,9 +846,7 @@ describe("inbox hold", () => {
 
       const result = await streamReadService.clearInbox(wid, reader, [sid])
 
-      expect(result.frontiers).toEqual([
-        expect.objectContaining({ streamId: sid, lastReadEventId: events[1].id }),
-      ])
+      expect(result.frontiers).toEqual([expect.objectContaining({ streamId: sid, lastReadEventId: events[1].id })])
       const row = await ReadStateRepository.get(pool, sid, reader)
       expect(row?.lastReadEventId).toBe(events[1].id)
       expect(row?.inboxHeld).toBe(false)
