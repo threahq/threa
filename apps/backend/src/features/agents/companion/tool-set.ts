@@ -2,11 +2,13 @@ import { AgentToolNames } from "@threahq/types"
 import {
   createWebSearchTool,
   createReadUrlTool,
+  createWebPageOpener,
   screenWebToolOutput,
   type AgentTool,
   type PageBrowser,
   type ToolOutputScreen,
   type WebSearchEngine,
+  type WebSearchJudge,
 } from "@threahq/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
@@ -66,6 +68,8 @@ export interface ToolSetConfig {
   pageBrowser?: PageBrowser
   /** Judges web tool output for text aimed at the agent. Absent on stub AI, where every output goes unjudged. */
   screenOutput?: ToolOutputScreen
+  /** Judges web_search results against the query. Absent on stub AI, where results go unjudged. */
+  judgeSearch?: WebSearchJudge
   /** Invocation time used to ground current/latest/recent web searches. */
   currentTime?: string
   timezone?: string
@@ -151,6 +155,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     webSearchEngines,
     pageBrowser,
     screenOutput,
+    judgeSearch,
     currentTime,
     timezone,
     runWorkspaceAgent,
@@ -191,6 +196,10 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     }
   }
 
+  const readUrl = isToolEnabled(enabledTools, AgentToolNames.READ_URL)
+    ? createReadUrlTool({ supportsVision, pageBrowser })
+    : null
+
   const tools: Array<AgentTool | null> = [
     // Workspace research (available when agent has trigger context)
     runWorkspaceAgent
@@ -205,9 +214,15 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
 
     webSearchEngines && webSearchEngines.length > 0 && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
-      ? createWebSearchTool({ engines: webSearchEngines, currentTime, timezone })
+      ? createWebSearchTool({
+          engines: webSearchEngines,
+          currentTime,
+          timezone,
+          judge: judgeSearch,
+          openPage: readUrl ? createWebPageOpener(readUrl) : undefined,
+        })
       : null,
-    isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision, pageBrowser }) : null,
+    readUrl,
 
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_MESSAGES)
       ? createSearchMessagesTool(workspace)
