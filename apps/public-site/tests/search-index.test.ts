@@ -24,11 +24,18 @@ describe("docs search index", () => {
     })
   })
 
-  test("names the endpoint a field belongs to", () => {
-    expect(index.find((e) => e.url === "/developers/reference#sendMessage.body.content")).toMatchObject({
-      kind: "field",
-      title: "content",
-      where: "Field on Send a message request body",
+  test("names the resource or endpoint a field belongs to", () => {
+    const where = (url: string) => index.find((e) => e.url === `/developers/reference#${url}`)?.where
+    expect({
+      body: where("sendMessage.body.content"),
+      resource: where("sendMessage.response.data.content"),
+      nested: where("getMemo.response.data.memo.title"),
+      envelope: where("listLabels.response.data.labels"),
+    }).toEqual({
+      body: "Field in the Send a message request body",
+      resource: "Field on Message in Send a message",
+      nested: "Field on memo in the Get a memo response",
+      envelope: "Field in the List labels response",
     })
   })
 

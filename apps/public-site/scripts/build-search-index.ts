@@ -44,6 +44,28 @@ const FIELD_SECTIONS: Record<string, { param?: string; body?: string; word: stri
   response: { body: "response", word: "response" },
 }
 
+/* A response whose data is one of these resources (it carries an `id`) names
+   its fields after it: "Field on Message" rather than the endpoint's envelope.
+   The resource is the last of these segments in the operation's path. */
+const RESOURCES: Record<string, string> = {
+  messages: "Message",
+  attachments: "Attachment",
+  streams: "Stream",
+  conversations: "Conversation",
+  users: "User",
+  labels: "Label",
+  delegations: "Delegation",
+  decisions: "Decision",
+  bots: "Bot",
+}
+
+const resourceOf = (path: string) =>
+  path
+    .split("/")
+    .reverse()
+    .map((segment) => RESOURCES[segment])
+    .find(Boolean)
+
 interface Opened {
   tag: string
   id: string | null
@@ -85,7 +107,12 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
   let h1 = ""
   const sectionLabels = new Map<string, string>()
   let lastH2 = ""
-  let op: { id: string; method: string; summary: string } | null = null
+  let op: {
+    id: string
+    method: string
+    summary: string
+    fields: { id: string; entry: Omit<SearchEntry, "where">; where: (resource?: string) => string }[]
+  } | null = null
 
   const rewriter = new HTMLRewriter()
     .on(
@@ -131,11 +158,16 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
       element(el) {
         const id = el.getAttribute("id")
         if (!id) throw new Error(`${rel}: an operation section has no id to link to`)
-        op = { id, method: "", summary: "" }
+        op = { id, method: "", summary: "", fields: [] }
         el.onEndTag(() => {
           const current = op!
           const label = sectionLabels.get(current.id)
           if (!label) throw new Error(`${rel}: operation #${current.id} has no sidebar entry to name its path`)
+          const path = label.slice(label.indexOf(" ") + 1)
+          const resource = current.fields.some((f) => f.id === `${current.id}.response.data.id`)
+            ? resourceOf(path)
+            : undefined
+          for (const f of current.fields) entries.push({ ...f.entry, where: f.where(resource) })
           entries.push({
             kind: "operation",
             title: current.summary || label,
@@ -144,7 +176,7 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
             aliases: [current.id, label],
             context: [lastH2],
             method: current.method,
-            path: label.slice(label.indexOf(" ") + 1),
+            path,
           })
           op = null
         })
@@ -170,18 +202,23 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
         const name = path[path.length - 1]
         const parent = path.slice(0, -1).join(".")
         const summary = current.summary || current.id
-        const where = kind.param
-          ? `${kind.param} of ${summary}`
-          : parent
-            ? `Field on ${parent} in ${summary} ${kind.body}`
-            : `Field on ${summary} ${kind.body}`
-        entries.push({
-          kind: "field",
-          title: name,
-          url: `${route}#${id}`,
+        const owner = path.length > 1 ? path[path.length - 2] : ""
+        const where = (resource?: string) => {
+          if (kind.param) return `${kind.param} of ${summary}`
+          if (resource && parent === "data") return `Field on ${resource} in ${summary}`
+          if (owner && owner !== "data") return `Field on ${owner} in the ${summary} ${kind.body}`
+          return `Field in the ${summary} ${kind.body}`
+        }
+        current.fields.push({
+          id,
           where,
-          aliases: parent ? [path.join(".")] : undefined,
-          context: [lastH2, summary, current.id, kind.word, parent].filter(Boolean),
+          entry: {
+            kind: "field",
+            title: name,
+            url: `${route}#${id}`,
+            aliases: parent ? [path.join(".")] : undefined,
+            context: [lastH2, summary, current.id, kind.word, parent].filter(Boolean),
+          },
         })
       },
     })
