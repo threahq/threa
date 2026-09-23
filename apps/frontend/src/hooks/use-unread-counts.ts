@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react"
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { useWorkspaceService, useStreamService } from "@/contexts"
+import { useWorkspaceService, useStreamService, usePreferencesOptional } from "@/contexts"
 import { workspaceKeys } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
@@ -209,6 +209,9 @@ export function useUnreadCounts(workspaceId: string) {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
   const workspaceService = useWorkspaceService()
+  const preferencesCtx = usePreferencesOptional()
+  const inboxClearModeRef = useRef(preferencesCtx?.preferences?.inboxClearMode ?? "interaction")
+  inboxClearModeRef.current = preferencesCtx?.preferences?.inboxClearMode ?? "interaction"
 
   // Read from IDB via useLiveQuery — reactive and offline-capable.
   // Use refs so callback identity stays stable; the sidebar memos that
@@ -233,12 +236,13 @@ export function useUnreadCounts(workspaceId: string) {
 
   const isInboxHeld = useCallback((streamId: string): boolean => inboxHeldStreamIdsRef.current.has(streamId), [])
 
-  const isInInbox = useCallback(
-    (streamId: string): boolean =>
-      !mutedStreamIdsRef.current.has(streamId) &&
-      ((unreadCountsRef.current[streamId] ?? 0) > 0 || inboxHeldStreamIdsRef.current.has(streamId)),
-    []
-  )
+  const isInInbox = useCallback((streamId: string): boolean => {
+    if (mutedStreamIdsRef.current.has(streamId)) return false
+    if ((unreadCountsRef.current[streamId] ?? 0) > 0) return true
+    // "read" mode ignores the held set entirely — the Inbox is unread-only.
+    if (inboxClearModeRef.current === "read") return false
+    return inboxHeldStreamIdsRef.current.has(streamId)
+  }, [])
 
   const markAsReadMutation = useMutation({
     mutationFn: async ({ streamId, lastEventId }: { streamId: string; lastEventId: string; partial?: boolean }) => {

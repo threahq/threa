@@ -87,6 +87,7 @@ import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding 
 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
+const EMPTY_INBOX_ARRIVED_AT: Record<string, string> = {}
 
 interface SidebarProps {
   workspaceId: string
@@ -318,6 +319,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [sidebarConfig.sections, labelsById, streamIdsByLabel])
 
+  const inboxOrder = preferencesContext?.preferences?.inboxOrder ?? "arrival"
+  const inboxArrivedAt = unreadState?.inboxArrivedAt ?? EMPTY_INBOX_ARRIVED_AT
+
   const resolvedSections = useMemo(
     () =>
       resolveSections(sidebarConfig, {
@@ -326,8 +330,19 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         getUnreadCount,
         streamIdsByLabel,
         unreadStreamIds,
+        inboxOrder,
+        inboxArrivedAt,
       }),
-    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel, unreadStreamIds]
+    [
+      sidebarConfig,
+      processedStreams,
+      virtualDmStreams,
+      getUnreadCount,
+      streamIdsByLabel,
+      unreadStreamIds,
+      inboxOrder,
+      inboxArrivedAt,
+    ]
   )
 
   // Board mode re-aims the stream rows: their verb changes from "open timeline"
