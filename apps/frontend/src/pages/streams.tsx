@@ -123,13 +123,14 @@ function StreamsPageInner({
             to={archivedHref}
             replace
             aria-pressed={archived}
+            aria-label="Archived"
             className={cn(
               buttonVariants({ variant: archived ? "secondary" : "ghost", size: "sm" }),
               "h-8 gap-1.5 text-xs"
             )}
           >
             <Archive className="h-3.5 w-3.5" />
-            Archived
+            <span className="hidden sm:inline">Archived</span>
           </Link>
         }
       />
