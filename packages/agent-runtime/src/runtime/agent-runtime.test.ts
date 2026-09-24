@@ -378,6 +378,105 @@ describe("AgentRuntime message counting", () => {
   })
 })
 
+describe("AgentRuntime final iteration", () => {
+  it("offers only the terminal tool on the last iteration so a research-heavy turn still answers", async () => {
+    const lookupTool = defineAgentTool({
+      name: "lookup",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => ({ output: "{}" }),
+      trace: { stepType: AgentStepTypes.WORKSPACE_SEARCH, formatContent: () => "{}" },
+    })
+    const calls: Array<{ tools: string[]; lastMessage: unknown }> = []
+    const generateTextWithTools = async ({ tools, messages }: { tools: Record<string, unknown>; messages: any[] }) => {
+      calls.push({ tools: Object.keys(tools), lastMessage: messages.at(-1)?.content })
+      const toolName = "lookup" in tools ? "lookup" : AgentToolNames.SEND_MESSAGE
+      return {
+        text: "",
+        toolCalls: [
+          {
+            toolCallId: `tc_${calls.length}`,
+            toolName,
+            input: toolName === "lookup" ? {} : { content: "Best I have" },
+          },
+        ],
+        response: { messages: [{ role: "assistant" as const, content: "step" } as any] },
+      }
+    }
+    const commits: string[] = []
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "research this" }],
+      tools: [lookupTool],
+      maxIterations: 3,
+      sendMessage: async ({ content }) => {
+        commits.push(content)
+        return { messageId: "msg_1", operation: "created" }
+      },
+    })
+
+    const result = await runtime.run()
+
+    expect(calls.map((call) => call.tools)).toEqual([
+      ["lookup", AgentToolNames.SEND_MESSAGE],
+      ["lookup", AgentToolNames.SEND_MESSAGE],
+      [AgentToolNames.SEND_MESSAGE],
+    ])
+    expect(calls[2]?.lastMessage).toContain("No more lookups are available")
+    expect(commits).toEqual(["Best I have"])
+    expect(result.messagesSent).toBe(1)
+  })
+
+  it("keeps keep_response on the last iteration of a rerun that may leave its response", async () => {
+    const lookupTool = defineAgentTool({
+      name: "lookup",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => ({ output: "{}" }),
+      trace: { stepType: AgentStepTypes.WORKSPACE_SEARCH, formatContent: () => "{}" },
+    })
+    const calls: string[][] = []
+    const generateTextWithTools = async ({ tools }: { tools: Record<string, unknown> }) => {
+      calls.push(Object.keys(tools))
+      const call =
+        "lookup" in tools
+          ? { toolCallId: `tc_${calls.length}`, toolName: "lookup", input: {} }
+          : { toolCallId: `tc_${calls.length}`, toolName: "keep_response", input: { reason: "Still right." } }
+      return {
+        text: "",
+        toolCalls: [call],
+        response: { messages: [{ role: "assistant" as const, content: "step" } as any] },
+      }
+    }
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "research this" }],
+      tools: [lookupTool],
+      maxIterations: 2,
+      allowNoMessageOutput: true,
+      sendMessage: async () => ({ messageId: "msg_unused", operation: "created" }),
+    })
+
+    const result = await runtime.run()
+
+    expect({ calls, noMessageReason: result.noMessageReason }).toEqual({
+      calls: [
+        ["lookup", AgentToolNames.SEND_MESSAGE, "keep_response"],
+        [AgentToolNames.SEND_MESSAGE, "keep_response"],
+      ],
+      noMessageReason: "Still right.",
+    })
+  })
+})
+
 describe("AgentRuntime initial context", () => {
   const replyOnce = () => ({
     text: "",

@@ -21,6 +21,11 @@ const MAX_INVALID_DRAFTS = 3
 const MAX_REPEATED_INVALID_DRAFTS = 3
 const MAX_EMPTY_FINAL_DECISION_ATTEMPTS = 3
 
+const FINAL_ITERATION_PROMPT =
+  `[Last step]\n\n` +
+  `No more lookups are available this turn. End the turn now with the tool that ends it, answering from what ` +
+  `you already have, and say plainly what you could not find or check.`
+
 // Shared by all three mid-turn reconsideration prompts so the guidance can't
 // drift between the text-draft, pending-send, and keep-response paths.
 const SIDE_CONVERSATION_GUIDANCE =
@@ -246,12 +251,18 @@ export class AgentRuntime {
   private readonly observers: AgentObserver[]
   private readonly toolMap: Map<string, AgentTool>
   private readonly toolDefs: Record<string, Tool<any, any>>
+  private readonly terminalToolDefs: Record<string, Tool<any, any>>
 
   constructor(private readonly config: AgentRuntimeConfig) {
     this.maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS
     this.observers = config.observers ?? []
     this.toolMap = new Map(config.tools.map((t) => [t.name, t]))
     this.toolDefs = this.buildToolDefs()
+    this.terminalToolDefs = Object.fromEntries(
+      Object.entries(this.toolDefs).filter(
+        ([name]) => name === AgentToolNames.SEND_MESSAGE || name === KEEP_RESPONSE_TOOL_NAME
+      )
+    )
 
     if (!config.toolGuardian) {
       const guarded = config.tools.filter((tool) => requiresGuardianReview(tierOfBuiltTool(tool))).map((t) => t.name)
@@ -385,6 +396,11 @@ export class AgentRuntime {
         break
       }
 
+      // Offering tools on the last iteration lets the turn end mid-research with
+      // nothing sent, so the final call can only answer.
+      const isFinalIteration = iteration === this.maxIterations - 1
+      if (isFinalIteration) this.pushRuntimePrompt(conversation, FINAL_ITERATION_PROMPT)
+
       // Workspace-research context is retrieved mid-loop, so it joins the
       // volatile tail rather than the cached prefix.
       const volatileSystemPrompt = [this.config.volatileSystemPrompt, retrievedContext].filter(Boolean).join("\n\n")
@@ -400,7 +416,7 @@ export class AgentRuntime {
           system: systemPrompt,
           volatileSystem: volatileSystemPrompt || undefined,
           messages: truncatedMessages,
-          tools: this.toolDefs,
+          tools: isFinalIteration ? this.terminalToolDefs : this.toolDefs,
           maxTokens: this.config.maxTokens ?? undefined,
           temperature: this.config.temperature ?? undefined,
           telemetry: this.config.telemetry,
