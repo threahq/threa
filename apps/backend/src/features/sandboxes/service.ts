@@ -37,7 +37,7 @@ export class SandboxService {
     files: SandboxFile[]
     timeoutSec: number
     signal?: AbortSignal
-    api?: SandboxApiAccess
+    api?: () => Promise<SandboxApiAccess>
   }): Promise<SandboxRunResult> {
     const { sandboxId, replaced } = await this.acquire(params)
     params.signal?.throwIfAborted()

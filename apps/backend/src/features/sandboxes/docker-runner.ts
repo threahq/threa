@@ -5,6 +5,7 @@ import net from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { BOX_API_BASE_URL, BOX_API_KEY_PLACEHOLDER, BOX_DIR, CLI_WRAPPER, buildBoxFiles } from "./box-files"
+import { logger } from "../../lib/logger"
 import type { SandboxApiAccess, SandboxExecOptions, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
 
 const IMAGE_DIR = join(import.meta.dir, "image")
@@ -67,7 +68,7 @@ export class DockerSandboxRunner implements SandboxRunner {
   private readonly hostDir: string
   private imageReady: Promise<void> | null = null
   private hostReady: Promise<void> | null = null
-  /** Execs queue per box, so one never kills another's command. */
+  /** Execs and file writes queue per box, so one never kills or lands under another's command. */
   private readonly running = new Map<string, Promise<void>>()
 
   constructor(options: { apiPort: number }) {
@@ -176,11 +177,17 @@ export class DockerSandboxRunner implements SandboxRunner {
     )
   }
 
+  /** A box started before the CLI and broker mount existed is not reused. */
   async alive(sandboxId: string): Promise<boolean> {
-    return (await docker(["exec", "--user", "root", sandboxId, "touch", USE_MARKER])).code === 0
+    const check = `touch ${USE_MARKER} && test -f ${BOX_DIR}/broker.js`
+    return (await docker(["exec", "--user", "root", sandboxId, "sh", "-c", check])).code === 0
   }
 
-  async writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void> {
+  writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void> {
+    return this.queue(sandboxId, () => this.writeAlone(sandboxId, files))
+  }
+
+  private async writeAlone(sandboxId: string, files: SandboxFile[]): Promise<void> {
     for (const file of files) {
       await dockerOrThrow(
         [
@@ -202,8 +209,12 @@ export class DockerSandboxRunner implements SandboxRunner {
   }
 
   exec(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
+    return this.queue(sandboxId, () => this.execAlone(sandboxId, command, options))
+  }
+
+  private queue<T>(sandboxId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.running.get(sandboxId) ?? Promise.resolve()
-    const result = previous.then(() => this.execAlone(sandboxId, command, options))
+    const result = previous.then(task)
     const settled = result.then(
       () => {},
       () => {}
@@ -223,16 +234,25 @@ export class DockerSandboxRunner implements SandboxRunner {
     await this.killAll(sandboxId, "sandbox")
     await this.killAll(sandboxId, String(this.hostUid))
     try {
-      if (options.api) await this.startBroker(sandboxId, options.api)
-      return await this.run(sandboxId, command, options)
+      const api = options.api ? await options.api() : null
+      if (api) await this.startBroker(sandboxId, api)
+      return await this.run(sandboxId, command, options, api)
     } finally {
-      if (options.api) await this.killAll(sandboxId, String(this.hostUid))
-      await this.killAll(sandboxId, "sandbox")
+      await Promise.all([
+        options.api ? this.killAll(sandboxId, String(this.hostUid)) : null,
+        this.killAll(sandboxId, "sandbox"),
+      ]).catch((error) => logger.warn({ error, sandboxId }, "sandbox cleanup after exec failed"))
     }
   }
 
+  // `kill -1` signals every process of the uid except the shell, atomically
+  // with respect to fork, and exits non-zero when none are left, so only a
+  // failing `docker exec` counts as an error.
   private async killAll(sandboxId: string, user: string): Promise<void> {
-    await docker(["exec", "--user", user, sandboxId, "sh", "-c", "kill -KILL -1"])
+    await dockerOrThrow(
+      ["exec", "--user", user, sandboxId, "sh", "-c", "kill -KILL -1 2>/dev/null; exit 0"],
+      `sandbox processes of ${user} could not be killed`
+    )
   }
 
   // Resolves once the broker listens. The token reaches it through the docker
@@ -274,15 +294,20 @@ export class DockerSandboxRunner implements SandboxRunner {
     })
   }
 
-  private run(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
+  private run(
+    sandboxId: string,
+    command: string,
+    options: SandboxExecOptions,
+    api: SandboxApiAccess | null
+  ): Promise<SandboxExecResult> {
     return new Promise((resolve, reject) => {
       const startedAt = Date.now()
-      const apiEnv = options.api
+      const apiEnv = api
         ? [
             "--env",
             `THREA_API_KEY=${BOX_API_KEY_PLACEHOLDER}`,
             "--env",
-            `THREA_WORKSPACE_ID=${options.api.workspaceId}`,
+            `THREA_WORKSPACE_ID=${api.workspaceId}`,
             "--env",
             `THREA_BASE_URL=${BOX_API_BASE_URL}`,
           ]

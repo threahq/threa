@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { join } from "node:path"
 import { BROKER_PORT } from "./box/broker"
 
@@ -11,6 +12,8 @@ export const BOX_API_KEY_PLACEHOLDER = "sandbox"
 export interface BoxFiles {
   broker: Uint8Array
   cli: Uint8Array
+  /** Changes with either bundle, so a box installed by an older backend is recognized. */
+  version: string
 }
 
 const CLI_DIR = join(import.meta.dir, "../../../../../packages/cli")
@@ -26,5 +29,6 @@ async function bundle(entry: string): Promise<Uint8Array> {
 /** Single-file node bundles of the CLI and the broker, installed in every box. */
 export async function buildBoxFiles(): Promise<BoxFiles> {
   const [broker, cli] = await Promise.all([bundle(BROKER_ENTRY), bundle(CLI_ENTRY)])
-  return { broker, cli }
+  const version = createHash("sha256").update(broker).update(cli).digest("hex").slice(0, 16)
+  return { broker, cli, version }
 }

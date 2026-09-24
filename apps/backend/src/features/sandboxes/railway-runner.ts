@@ -23,6 +23,7 @@ const COMMAND_ENV = "THREA_COMMAND"
 const STOP_DIR = "/run/threa-stop"
 const EXEC_ID_ENV = "THREA_EXEC_ID"
 const KILL_USER = "pkill -KILL -u sandbox"
+const VERSION_FILE = `${BOX_DIR}/version`
 // Root's `node` is a mise shim that reads version files from its cwd: an absolute path, started from /, keeps /work out of it.
 const BROKER = `/usr/local/bin/node ${BOX_DIR}/broker.js`
 const USER_ENV = "PATH=/work/.local/bin:/usr/local/bin:/usr/bin:/bin HOME=/work LANG=C.UTF-8"
@@ -59,18 +60,21 @@ function setupScript(internet: boolean): string {
   return lines.join("\n")
 }
 
-// One command at a time: the lock, then every process the last command left
-// behind is killed, so nothing from an earlier turn runs alongside this one or
-// reaches the broker with this exec's token. The broker runs as root with the
-// token in its environment only, which the sandbox user cannot read.
+// One command at a time, under the lock. The command runs in its own PID
+// namespace, so when it returns the kernel kills everything it started:
+// nothing outlives the exec to run alongside a later one or reach the broker
+// with a later exec's token. `pkill -u sandbox` alone cannot promise that:
+// it misses a process that forks and exits faster than the scan, and `kill -1`
+// kills nothing on Railway. The pkill passes stay as a backstop. The broker
+// runs as root with the token in its environment only, which the sandbox user
+// cannot read.
 //
 // Root-side watchdog: past the deadline, or once the stop file for this exec
 // exists, it kills everything the user runs, every 200ms until the command
-// returns. `timeout` alone is not enough: the image's (uutils) kills only its
-// direct child, and anything else the command started keeps the output open.
-// Polling closes the race where a stop lands before the command has started.
-// Each stream is cut in the box and the rest drained, because the SDK buffers
-// all output in backend memory before returning.
+// returns. Killing the command's `timeout` ends the namespace; polling closes
+// the race where a stop lands before the command has started. Each stream is
+// cut in the box and the rest drained, because the SDK buffers all output in
+// backend memory before returning.
 function execScript(timeoutSec: number, maxOutputBytes: number, api: boolean): string {
   const lines = [
     `exec 9>${EXEC_LOCK}`,
@@ -92,7 +96,7 @@ function execScript(timeoutSec: number, maxOutputBytes: number, api: boolean): s
     `( while :; do if [ -e "$stop" ] || [ $(date +%s) -ge $deadline ]; then ${KILL_USER}; fi; sleep 0.2; done ) >/dev/null 2>&1 8<&- 9>&- &`,
     "watchdog=$!",
     `cap() { head -c ${maxOutputBytes + 1}; cat >/dev/null; }`,
-    `{ runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV}${api ? ` ${API_ENV}` : ""} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}" 2>&1 1>&3 3>&- 8<&- 9>&- | cap >&2; exit \${PIPESTATUS[0]}; } 3>&1 | cap`,
+    `{ unshare --pid --fork --kill-child -- runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV}${api ? ` ${API_ENV}` : ""} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}" 2>&1 1>&3 3>&- 8<&- 9>&- | cap >&2; exit \${PIPESTATUS[0]}; } 3>&1 | cap`,
     "status=${PIPESTATUS[0]}",
     `kill $watchdog; ${api ? "kill -KILL $broker; " : ""}${KILL_USER}; rm -f "$stop"`,
     "exit $status"
@@ -159,6 +163,7 @@ export class RailwaySandboxRunner implements SandboxRunner {
       }
       await sandbox.files.write(`${BOX_DIR}/threa.js`, files.cli, { mode: 0o644 })
       await sandbox.files.write(`${BOX_DIR}/broker.js`, files.broker, { mode: 0o600 })
+      await sandbox.files.write(VERSION_FILE, new TextEncoder().encode(files.version), { mode: 0o644 })
     } catch (error) {
       await sandbox
         .destroy()
@@ -168,12 +173,20 @@ export class RailwaySandboxRunner implements SandboxRunner {
     return sandbox.id
   }
 
-  /** Runs a no-op command, because Railway counts only commands as use. */
+  /**
+   * Runs a command, because Railway counts only commands as use. A box whose
+   * CLI and broker another backend version installed is not reused.
+   */
   async alive(sandboxId: string): Promise<boolean> {
+    const { version } = await this.files()
     try {
       const sandbox = await this.connect(sandboxId)
       if (sandbox.status !== "RUNNING") return false
-      return (await sandbox.exec("true", { timeoutSec: 30 })).exitCode === 0
+      const check = await sandbox.exec(`grep -qxF "$VERSION" ${VERSION_FILE}`, {
+        timeoutSec: 30,
+        env: { VERSION: version },
+      })
+      return check.exitCode === 0
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return false
       throw error
@@ -182,14 +195,20 @@ export class RailwaySandboxRunner implements SandboxRunner {
 
   // The upload lands as root in a staging dir only root can list, then
   // `sandbox` copies it into place, so a symlink the command left under /work
-  // cannot redirect a root write.
+  // cannot redirect a root write. The copy takes the exec lock, so it neither
+  // lands under a running command nor dies to that command's cleanup.
   async writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void> {
     const sandbox = await this.connect(sandboxId)
     for (const file of files) {
       const staged = `${STAGING_DIR}/${randomUUID()}`
       await sandbox.files.write(staged, file.data, { mode: 0o644 })
       const copy = await sandbox.exec(
-        `runuser -u sandbox -- sh -c 'mkdir -p "$(dirname "$2")" && cp "$1" "$2"' sh "$STAGED" "$TARGET"; status=$?; rm -f "$STAGED"; exit $status`,
+        [
+          `exec 9>${EXEC_LOCK}`,
+          `flock -w ${LOCK_WAIT_SEC} 9 || { rm -f "$STAGED"; echo "another command is still running in this sandbox" >&2; exit 125; }`,
+          `runuser -u sandbox -- sh -c 'mkdir -p "$(dirname "$2")" && cp "$1" "$2"' sh "$STAGED" "$TARGET" 9>&-; status=$?`,
+          `rm -f "$STAGED"; exit $status`,
+        ].join("\n"),
         { timeoutSec: 60, env: { STAGED: staged, TARGET: file.path } }
       )
       if (copy.exitCode !== 0) {
@@ -202,14 +221,15 @@ export class RailwaySandboxRunner implements SandboxRunner {
     const sandbox = await this.connect(sandboxId)
     const startedAt = Date.now()
     const execId = randomUUID()
-    const apiEnv: Record<string, string> = options.api
+    const api = options.api ? await options.api() : null
+    const apiEnv: Record<string, string> = api
       ? {
-          THREA_SANDBOX_TOKEN: options.api.token,
-          THREA_WORKSPACE_ID: options.api.workspaceId,
+          THREA_SANDBOX_TOKEN: api.token,
+          THREA_WORKSPACE_ID: api.workspaceId,
           THREA_API_UPSTREAM: this.apiUrl,
         }
       : {}
-    const handle = sandbox.exec(execScript(options.timeoutSec, options.maxOutputBytes, Boolean(options.api)), {
+    const handle = sandbox.exec(execScript(options.timeoutSec, options.maxOutputBytes, api !== null), {
       cwd: "/work",
       timeoutSec: options.timeoutSec + CLIENT_GRACE_SEC,
       env: { [COMMAND_ENV]: command, [EXEC_ID_ENV]: execId, ...apiEnv },

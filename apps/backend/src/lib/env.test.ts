@@ -93,6 +93,31 @@ describe("loadConfig sandbox runner", () => {
     })
   })
 
+  test("railway refuses an API URL that is not an https origin", () => {
+    setBaseEnv()
+    process.env.USE_STUB_AUTH = "true"
+    process.env.SANDBOX_RUNNER = "railway"
+    process.env.SANDBOX_RAILWAY_TOKEN = "token"
+    process.env.SANDBOX_RAILWAY_ENVIRONMENT_ID = "env"
+    const errors = ["app.threa.io", "http://app.threa.io", "https://app.threa.io/api", "https://u:p@app.threa.io"].map(
+      (url) => {
+        process.env.SANDBOX_API_URL = url
+        try {
+          loadConfig()
+          return null
+        } catch (error) {
+          return (error as Error).message
+        }
+      }
+    )
+    expect(errors).toEqual([
+      'SANDBOX_API_URL is not a URL: "app.threa.io"',
+      "SANDBOX_API_URL must be https",
+      "SANDBOX_API_URL must be an origin, like https://app.threa.io",
+      "SANDBOX_API_URL must be an origin, like https://app.threa.io",
+    ])
+  })
+
   test("docker is refused in production", () => {
     setBaseEnv()
     process.env.NODE_ENV = "production"

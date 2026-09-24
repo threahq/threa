@@ -160,6 +160,7 @@ describe("sandbox API broker", () => {
       `/api/v1/workspaces/${WS}/./streams`,
       `/api/v1/workspaces/${WS}/..`,
       `/api/v1/workspaces/${WS}/a\\..\\b`,
+      `/api/v1/workspaces/${WS}/..#`,
     ]
     const statuses = await Promise.all(paths.map((path) => rawStatus(tcpBase, path)))
     expect({ statuses, upstreamCalls: seen.length }).toEqual({ statuses: paths.map(() => 404), upstreamCalls: 0 })

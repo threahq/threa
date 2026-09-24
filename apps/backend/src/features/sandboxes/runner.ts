@@ -15,7 +15,8 @@ export interface SandboxExecOptions {
   timeoutSec: number
   maxOutputBytes: number
   signal?: AbortSignal
-  api?: SandboxApiAccess
+  /** Called once per exec when the command is about to start, so a token's lifetime covers the command, not a queue. */
+  api?: () => Promise<SandboxApiAccess>
 }
 
 export interface SandboxExecResult {

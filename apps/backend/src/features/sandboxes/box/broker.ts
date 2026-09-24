@@ -23,9 +23,9 @@ const RESPONSE_HEADERS = [
   "x-content-type-options",
 ]
 
-// Any dot segment, encoded dot, or backslash could step out of the workspace
-// prefix once the upstream normalizes the path.
-const UNSAFE_PATH = /(^|\/)\.\.?(\/|\?|$)|%2e|\\/i
+// Any dot segment, encoded dot, backslash, or fragment (which ends the path
+// early) could step out of the workspace prefix once the upstream normalizes it.
+const UNSAFE_PATH = /(^|\/)\.\.?(\/|\?|$)|%2e|\\|#/i
 
 function pick(headers: http.IncomingHttpHeaders, names: string[]): Record<string, string | string[]> {
   const out: Record<string, string | string[]> = {}
