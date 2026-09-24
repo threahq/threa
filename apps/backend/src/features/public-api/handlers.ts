@@ -2981,6 +2981,9 @@ export function createPublicApiHandlers({
       res.on("close", () => object.stream.destroy())
       object.stream.on("error", (err) => {
         if (!res.headersSent) {
+          // A Content-Length left on an empty 500 keeps the client waiting for the file's bytes.
+          res.removeHeader("Content-Length")
+          res.removeHeader("Content-Disposition")
           res.status(500).end()
         } else {
           // Content-Length is already on the wire: abort so the client sees a
