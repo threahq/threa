@@ -1,4 +1,5 @@
 import { logger } from "../logger"
+import { DecisionsRequestError } from "./decisions"
 
 /**
  * Shared "is the decisions endpoint answering" flag for the callers that route
@@ -23,7 +24,14 @@ export class DecisionsAvailability {
     return Date.now() >= this.downUntil
   }
 
-  recordFailure(): void {
+  /**
+   * A refused request is the endpoint turning away this one payload, not the
+   * endpoint being down, so it holds nobody else off. Measured: its upstream
+   * WAF answers 403 to payloads like `cat /etc/passwd`, which is ordinary input
+   * for the sandbox guardian.
+   */
+  recordFailure(error: unknown): void {
+    if (error instanceof DecisionsRequestError && error.refusedContent) return
     const wasAvailable = this.isAvailable
     this.downUntil = Date.now() + this.cooldownMs
     if (wasAvailable) {

@@ -162,6 +162,7 @@ export {
   type DecisionAnswer,
   type DecisionQuestion,
   type DecisionsResult,
+  DecisionsRequestError,
   type NoulAnswer,
   type NoulQuestion,
   type ScoreAnswer,

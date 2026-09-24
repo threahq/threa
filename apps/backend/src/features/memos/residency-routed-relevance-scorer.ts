@@ -36,7 +36,7 @@ export class ResidencyRoutedRelevanceScorer implements RelevanceScorerLike {
       return await this.decisions.score(query, candidates, context)
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
-      this.availability.recordFailure()
+      this.availability.recordFailure(error)
       logger.warn({ error, workspaceId: context.workspaceId }, "Decision-model relevance scoring failed")
       return null
     }

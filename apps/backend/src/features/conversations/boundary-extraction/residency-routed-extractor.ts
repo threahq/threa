@@ -45,7 +45,7 @@ export class ResidencyRoutedBoundaryExtractor implements BoundaryExtractor {
       return await this.decisions.extract(context)
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
-      this.availability.recordFailure()
+      this.availability.recordFailure(error)
       logger.warn(
         { error, workspaceId: context.workspaceId, streamType: context.streamType },
         "Decision-model boundary extraction failed, falling back to the inference path"

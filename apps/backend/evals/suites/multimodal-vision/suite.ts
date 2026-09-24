@@ -62,7 +62,8 @@ import {
   AttachmentService,
   createMalwareScanner,
 } from "../../../src/features/attachments"
-import { createModelRegistry, type ModelRegistry } from "@threahq/agent-runtime"
+import { createModelRegistry, DecisionsAvailability, type ModelRegistry } from "@threahq/agent-runtime"
+import { WorkspaceAIResidencyPolicy } from "../../../src/features/ai-usage"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threahq/prosemirror"
@@ -401,6 +402,8 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
     })
     const personaAgent = new PersonaAgent({
       configResolver: ctx.configResolver,
+      aiResidency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
+      decisionsAvailability: new DecisionsAvailability(),
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

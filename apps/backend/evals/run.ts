@@ -23,6 +23,7 @@ import { memorizerSuite } from "./suites/memorizer/suite"
 import { briefCorrectionSuite } from "./suites/brief-correction/suite"
 import { personaStyleSuite } from "./suites/persona-style/suite"
 import { voicePolishSuite } from "./suites/voice-polish/suite"
+import { toolGuardianSuite } from "./suites/tool-guardian/suite"
 import { qualifyVoicePolishPermutation } from "./suites/voice-polish/evaluators"
 import { decideVoicePolishComparison } from "./suites/voice-polish/reporting"
 import { isConfigFilePath } from "./framework/config-loader"
@@ -39,6 +40,7 @@ const allSuites = [
   briefCorrectionSuite,
   personaStyleSuite,
   voicePolishSuite,
+  toolGuardianSuite,
 ]
 
 function printHelp(): void {

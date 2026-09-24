@@ -55,7 +55,8 @@ import { UserPreferencesService } from "../../../src/features/user-preferences"
 import { DecisionsRelevanceScorer, EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { EventService, MessageRepository } from "../../../src/features/messaging"
-import { createModelRegistry } from "@threahq/agent-runtime"
+import { createModelRegistry, DecisionsAvailability } from "@threahq/agent-runtime"
+import { WorkspaceAIResidencyPolicy } from "../../../src/features/ai-usage"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threahq/prosemirror"
@@ -227,6 +228,8 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
 
     const personaAgent = new PersonaAgent({
       configResolver: ctx.configResolver,
+      aiResidency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
+      decisionsAvailability: new DecisionsAvailability(),
       pool: ctx.pool,
       ai: ctx.ai,
       traceEmitter,

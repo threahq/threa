@@ -53,7 +53,7 @@ export class ResidencyRoutedMemoClassifier implements ConversationClassifier {
       return await this.decisions.classifyConversation(conversation, formattedMessages, existingMemos, context)
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
-      this.availability.recordFailure()
+      this.availability.recordFailure(error)
       logger.warn(
         { error, workspaceId: context.workspaceId, conversationId: conversation.id },
         "Decision-model memo classification failed, falling back to the inference path"
