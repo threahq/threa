@@ -90,4 +90,5 @@ export {
   callEndpointId,
   perfCaptureId,
   searchQueryLogId,
+  sandboxSessionTokenId,
 } from "@threahq/backend-common"

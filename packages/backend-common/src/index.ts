@@ -149,6 +149,7 @@ export {
   callEndpointId,
   perfCaptureId,
   searchQueryLogId,
+  sandboxSessionTokenId,
 } from "./id"
 export {
   parseCookies,
