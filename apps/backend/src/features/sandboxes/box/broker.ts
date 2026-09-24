@@ -1,5 +1,6 @@
 import http from "node:http"
 import https from "node:https"
+import { pipeline } from "node:stream"
 
 export interface BrokerOptions {
   /** The exec's sandbox token. Only the broker holds it; the command never sees it. */
@@ -69,7 +70,8 @@ export function startBroker(options: BrokerOptions): http.Server {
         })
     upstreamRequest.on("response", (upstreamResponse) => {
       res.writeHead(upstreamResponse.statusCode ?? 502, pick(upstreamResponse.headers, RESPONSE_HEADERS))
-      upstreamResponse.pipe(res)
+      // pipe() would leave the caller waiting on a body the upstream dropped.
+      pipeline(upstreamResponse, res, () => {})
     })
     upstreamRequest.on("error", () => {
       if (res.headersSent) {
@@ -78,6 +80,9 @@ export function startBroker(options: BrokerOptions): http.Server {
       }
       res.writeHead(502, { "content-type": "application/json" })
       res.end(JSON.stringify({ error: "Threa API unreachable", code: "UPSTREAM_UNREACHABLE" }))
+    })
+    req.on("close", () => {
+      if (!req.complete) upstreamRequest.destroy()
     })
     req.pipe(upstreamRequest)
   })

@@ -17,6 +17,7 @@ const IDLE_TIMEOUT_MINUTES = 10
 const CLIENT_GRACE_SEC = 10
 const EXEC_LOCK = "/run/threa-exec.lock"
 const LOCK_WAIT_SEC = 5
+const COPY_TIMEOUT_SEC = 30
 const BROKER_START_SEC = 3
 const STAGING_DIR = "/run/threa-in"
 const COMMAND_ENV = "THREA_COMMAND"
@@ -196,7 +197,9 @@ export class RailwaySandboxRunner implements SandboxRunner {
   // The upload lands as root in a staging dir only root can list, then
   // `sandbox` copies it into place, so a symlink the command left under /work
   // cannot redirect a root write. The copy takes the exec lock, so it neither
-  // lands under a running command nor dies to that command's cleanup.
+  // lands under a running command nor dies to that command's cleanup. A FIFO
+  // left at the target would block cp with the lock held, so the target is
+  // removed first and the copy has its own deadline.
   async writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void> {
     const sandbox = await this.connect(sandboxId)
     for (const file of files) {
@@ -206,7 +209,7 @@ export class RailwaySandboxRunner implements SandboxRunner {
         [
           `exec 9>${EXEC_LOCK}`,
           `flock -w ${LOCK_WAIT_SEC} 9 || { rm -f "$STAGED"; echo "another command is still running in this sandbox" >&2; exit 125; }`,
-          `runuser -u sandbox -- sh -c 'mkdir -p "$(dirname "$2")" && cp "$1" "$2"' sh "$STAGED" "$TARGET" 9>&-; status=$?`,
+          `runuser -u sandbox -- timeout -s KILL ${COPY_TIMEOUT_SEC} sh -c 'mkdir -p "$(dirname "$2")" && rm -f -- "$2" && cp "$1" "$2"' sh "$STAGED" "$TARGET" 9>&-; status=$?`,
           `rm -f "$STAGED"; exit $status`,
         ].join("\n"),
         { timeoutSec: 60, env: { STAGED: staged, TARGET: file.path } }

@@ -46,7 +46,19 @@ describe("sandbox API broker", () => {
   const seen: Seen[] = []
   const socketDir = mkdtempSync(join(tmpdir(), "broker-test-"))
   const socketPath = join(socketDir, "api.sock")
+  let upstreamSawAbort: (complete: boolean) => void = () => {}
   const upstream = http.createServer(async (req, res) => {
+    if (req.url!.endsWith("/hold")) {
+      req.on("close", () => upstreamSawAbort(req.complete))
+      req.resume()
+      return
+    }
+    if (req.url!.endsWith("/truncated")) {
+      res.writeHead(200, { "content-length": "100" })
+      res.write("partial")
+      setTimeout(() => res.socket!.destroy(), 20)
+      return
+    }
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk as Buffer)
     seen.push({ method: req.method!, path: req.url!, headers: req.headers, body: Buffer.concat(chunks).toString() })
@@ -174,6 +186,28 @@ describe("sandbox API broker", () => {
       body: "via socket",
       auth: `Bearer ${TOKEN}`,
     })
+  })
+
+  test("should fail the caller's response when upstream drops it mid-body", async () => {
+    const outcome = await fetch(`${tcpBase}/api/v1/workspaces/${WS}/truncated`, { signal: AbortSignal.timeout(3000) })
+      .then((res) => res.text())
+      .then(
+        () => "completed",
+        (error: Error) => (error.name === "TimeoutError" ? "hung" : "failed")
+      )
+    expect(outcome).toBe("failed")
+  })
+
+  test("should drop the upstream request when the caller goes away mid-upload", async () => {
+    const sawAbort = new Promise<boolean>((resolve) => (upstreamSawAbort = resolve))
+    const req = http.request(`${tcpBase}/api/v1/workspaces/${WS}/hold`, { method: "POST" })
+    req.on("error", () => {})
+    req.write("first chunk")
+    await Bun.sleep(100)
+    req.destroy()
+
+    const complete = await Promise.race([sawAbort, Bun.sleep(3000).then(() => "hung")])
+    expect(complete).toBe(false)
   })
 
   test("should answer 502 when upstream is unreachable", async () => {
