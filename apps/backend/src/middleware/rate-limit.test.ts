@@ -152,6 +152,25 @@ describe("createRateLimiters public API key limiters", () => {
   })
 })
 
+describe("createRateLimiters upload", () => {
+  test("should give each bearer token on one IP its own upload budget", () => {
+    const { upload } = createRateLimiters({ globalMax: 300, authMax: 30 })
+    const first = createReq({ headers: { authorization: "Bearer threa_sk_first" } as Request["headers"] })
+    const second = createReq({ headers: { authorization: "Bearer threa_sk_second" } as Request["headers"] })
+
+    for (let i = 0; i < 60; i++) run(upload, first, createRes())
+    const results = [first, second].map((req) => {
+      const res = createRes()
+      return { nextCalled: run(upload, req, res).nextCalled, statusCode: res.statusCode }
+    })
+
+    expect(results).toEqual([
+      { nextCalled: false, statusCode: 429 },
+      { nextCalled: true, statusCode: 200 },
+    ])
+  })
+})
+
 interface TextResponse extends MockResponse {
   sentType: string | null
 }

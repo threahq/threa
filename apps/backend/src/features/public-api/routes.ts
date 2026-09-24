@@ -915,6 +915,7 @@ export type OperationId =
   | "searchAttachments"
   | "getAttachment"
   | "getAttachmentDownloadUrl"
+  | "downloadAttachment"
   | "upsertBotRuntimePresence"
   | "createBotRuntimeSession"
   | "getBotOwnerE2eKey"
@@ -993,6 +994,8 @@ export interface PublicApiRoute {
   requestIn?: "query" | "body" | "multipart"
   /** Zod schema for successful response body */
   responseSchema: z.ZodType
+  /** Set for a raw body instead of JSON; `responseSchema` is then `z.string()` */
+  responseContentType?: string
   /** HTTP status code for successful response */
   successStatus?: number
   /** Whether the endpoint can return 404 (resource not found) */
@@ -1090,6 +1093,19 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ],
     parameters: [workspaceIdParam, attachmentIdParam],
     responseSchema: dataEnvelope(attachmentUrlSchema),
+    canReturn404: true,
+  },
+  {
+    method: "get",
+    path: "/api/v1/workspaces/{workspaceId}/attachments/{attachmentId}/content",
+    operationId: "downloadAttachment",
+    summary: "Download an attachment",
+    description: "Stream the bytes of an accessible attachment, with its stored content type and filename.",
+    tags: ["Attachments"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ],
+    parameters: [workspaceIdParam, attachmentIdParam],
+    responseSchema: z.string(),
+    responseContentType: "*/*",
     canReturn404: true,
   },
 

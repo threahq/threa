@@ -6,7 +6,7 @@ import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentUploadRepository } from "./upload-repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
-import type { StorageProvider } from "../../lib/storage/s3-client"
+import type { ObjectContent, StorageProvider } from "../../lib/storage/s3-client"
 import {
   AttachmentSafetyStatuses,
   AttachmentUploadStatuses,
@@ -40,6 +40,8 @@ export interface CreateAttachmentParams {
   mimeType: string
   sizeBytes: number
   storagePath: string
+  /** Binds the file to a stream before any message references it (sandbox output). */
+  streamId?: string
   /**
    * The bytes in S3 are client-side ciphertext. Skips the malware scan (it can't
    * read ciphertext) and emits no processor work; the row is marked
@@ -571,6 +573,7 @@ export class AttachmentService {
       return AttachmentRepository.insert(client, {
         id: params.id,
         workspaceId: params.workspaceId,
+        streamId: params.streamId,
         uploadedBy: params.uploadedBy,
         filename: params.filename,
         mimeType: params.mimeType,
@@ -809,6 +812,10 @@ export class AttachmentService {
 
   async getByMessageIds(messageIds: string[]): Promise<Map<string, Attachment[]>> {
     return AttachmentRepository.findByMessageIds(this.pool, messageIds)
+  }
+
+  getContent(attachment: Attachment): Promise<ObjectContent> {
+    return this.storage.getObjectContent(attachment.storagePath)
   }
 
   async getDownloadUrl(attachment: Attachment, options?: { download?: boolean }): Promise<string> {
