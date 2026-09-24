@@ -12,6 +12,7 @@ export {
   type FollowUpSummary,
   type UpdateStreamBriefToolDeps,
   type UpdateUserSettingsToolDeps,
+  type RunCommandToolDeps,
   type UpdateStreamBriefToolResult,
   type SaveMemoToolDeps,
   type SaveMemoToolResult,
@@ -50,6 +51,7 @@ export {
   type AttachmentSearchResult,
 } from "./search-attachments-tool"
 export { createReadAttachmentTool, type ReadAttachmentInput } from "./read-attachment-tool"
+export { createRunCommandTool, bindStreamSandbox, type StreamSandboxDeps } from "./run-command-tool"
 export { createDescribeMemoTool, type DescribeMemoInput } from "./describe-memo-tool"
 export { createReactToMessageTool, type ReactToMessageInput } from "./react-to-message-tool"
 export { createScheduleFollowUpTool, type ScheduleFollowUpInput } from "./schedule-follow-up-tool"

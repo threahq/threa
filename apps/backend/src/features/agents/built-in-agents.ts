@@ -64,6 +64,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.UPDATE_USER_SETTINGS,
       AgentToolNames.SEARCH_ATTACHMENTS,
       AgentToolNames.READ_ATTACHMENT,
+      AgentToolNames.RUN_COMMAND,
       AgentToolNames.GITHUB_REPOS,
       AgentToolNames.GITHUB_COMMITS,
       AgentToolNames.GITHUB_PULLS,

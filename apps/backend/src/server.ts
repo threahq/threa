@@ -148,6 +148,7 @@ import {
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
 import { WorkspaceSettingsService } from "./features/workspace-settings"
+import { SandboxService, DockerSandboxRunner } from "./features/sandboxes"
 import { FeatureFlagService } from "./features/feature-flags"
 import { PlatformAdminService } from "./features/platform-admin"
 import { SidebarConfigService } from "./features/sidebar-config"
@@ -1113,6 +1114,12 @@ export async function startServer(): Promise<ServerInstance> {
   // write) via memoService — a second caller, not a second pipeline (roadmap 6.3).
   const reflectiveCaptureService = new ReflectiveCaptureService({ pool, memoService })
 
+  const sandboxService = config.sandboxRunner ? new SandboxService({ pool, runner: new DockerSandboxRunner() }) : null
+  logger.info(
+    { sandboxRunner: config.sandboxRunner },
+    sandboxService ? "run_command sandboxes enabled" : "run_command withheld: SANDBOX_RUNNER unset"
+  )
+
   const personaAgent = new PersonaAgent({
     configResolver,
     aiResidency,
@@ -1132,6 +1139,7 @@ export async function startServer(): Promise<ServerInstance> {
     storage,
     modelRegistry,
     workspaceIntegrationService,
+    sandbox: sandboxService ? { service: sandboxService, workspaceSettings: workspaceSettingsService } : undefined,
     tavilyApiKey: config.ai.tavilyApiKey || undefined,
     stubResponse: config.useStubCompanion
       ? "This is a stub response from the companion. The real AI integration is disabled."

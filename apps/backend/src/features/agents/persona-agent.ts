@@ -49,9 +49,11 @@ import { renderAsideDrafts } from "./aside-drafts-context"
 import {
   canOfferSubagentDelegation,
   canOfferUserSettings,
+  bindStreamSandbox,
   createMemoizedGithubClient,
   createMemoizedLinearClient,
   type RunGeneralResearchOptions,
+  type StreamSandboxDeps,
 } from "./tools"
 import { createSessionTraceProjector, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
 import { ToolGuardianService } from "./guardian/service"
@@ -121,6 +123,8 @@ export interface PersonaAgentDeps {
   storage: StorageProvider
   modelRegistry: ModelRegistry
   workspaceIntegrationService?: WorkspaceIntegrationService
+  /** Stream sandboxes for `run_command`; absent when the backend has no sandbox runner, which withholds the tool. */
+  sandbox?: StreamSandboxDeps
   assertInitiatorWritable?: typeof assertStreamWritable
   tavilyApiKey?: string
   stubResponse?: string
@@ -452,6 +456,7 @@ export class PersonaAgent {
       storage,
       modelRegistry,
       workspaceIntegrationService,
+      sandbox,
       tavilyApiKey,
       stubResponse,
       createMessage,
@@ -1292,6 +1297,15 @@ export class PersonaAgent {
               }
             : undefined
 
+        const sandboxDeps = sandbox
+          ? bindStreamSandbox(sandbox, {
+              workspaceId,
+              streamId: session.streamId,
+              sealed: stream.e2eEnabled === true,
+              streamToolPolicy,
+            })
+          : undefined
+
         // Memo saving for the save_memo tool (roadmap 6.2), bound to this
         // persona's stream + session. The write scopes dedup and the capture
         // event to the addressed stream, and records the session as provenance.
@@ -1406,6 +1420,7 @@ export class PersonaAgent {
             reportBack: reportBackDeps,
             saveMemo: saveMemoDeps,
             settings: settingsDeps,
+            sandbox: sandboxDeps,
             github: githubDeps,
             linear: linearDeps,
             supportsVision: modelRegistry.supportsVision(turnModel.model),

@@ -9,6 +9,10 @@ import {
   type SandboxRunner,
 } from "../../src/features/sandboxes"
 import { streamId, workspaceId } from "../../src/lib/id"
+import { createModelRegistry } from "@threahq/agent-runtime"
+import type { ToolPrivacyPolicy } from "@threahq/types"
+import { WorkspaceSettingsService } from "../../src/features/workspace-settings"
+import { bindStreamSandbox, createRunCommandTool, type WorkspaceToolDeps } from "../../src/features/agents/tools"
 
 class FakeRunner implements SandboxRunner {
   readonly live = new Set<string>()
@@ -52,16 +56,16 @@ class FakeRunner implements SandboxRunner {
   }
 }
 
+function target() {
+  return { workspaceId: workspaceId(), streamId: streamId() }
+}
+
 describe("SandboxService", () => {
   let pool: Pool
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
   })
-
-  function target() {
-    return { workspaceId: workspaceId(), streamId: streamId() }
-  }
 
   function run(service: SandboxService, at: { workspaceId: string; streamId: string }, internet = false) {
     return service.run({ ...at, internet, command: "echo ok", files: [], timeoutSec: 5 })
@@ -243,5 +247,68 @@ describe("SandboxService", () => {
     })
 
     expect(runner.written).toEqual([{ sandboxId: "fake-1", path: "/work/attachments/a.txt" }])
+  })
+})
+
+describe("run_command", () => {
+  let pool: Pool
+  let workspaceSettings: WorkspaceSettingsService
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+    workspaceSettings = new WorkspaceSettingsService(pool, createModelRegistry())
+  })
+
+  function commandTool(runner: FakeRunner, at: { workspaceId: string; streamId: string }, policy: ToolPrivacyPolicy) {
+    const service = new SandboxService({ pool, runner })
+    const workspace = { workspaceId: at.workspaceId, accessibleStreamIds: [at.streamId] } as WorkspaceToolDeps
+    return createRunCommandTool(
+      workspace,
+      bindStreamSandbox({ service, workspaceSettings }, { ...at, sealed: false, streamToolPolicy: policy })!
+    )
+  }
+
+  async function runCommand(tool: ReturnType<typeof commandTool>) {
+    const input = { command: "echo ok" }
+    const result = await tool.config.execute(input, { toolCallId: "tc_1" })
+    return {
+      output: JSON.parse(result.output) as Record<string, unknown>,
+      trace: JSON.parse(tool.config.trace.formatContent(input, result)) as { headline: string },
+    }
+  }
+
+  test("internet needs the workspace setting and the stream's web grant", async () => {
+    const off = target()
+    const on = target()
+    const onWithoutWeb = { workspaceId: on.workspaceId, streamId: streamId() }
+    await workspaceSettings.updateSettings(off.workspaceId, { sandboxInternet: false })
+    await workspaceSettings.updateSettings(on.workspaceId, { sandboxInternet: true })
+    const runner = new FakeRunner()
+
+    const results = [
+      await runCommand(commandTool(runner, off, null)),
+      await runCommand(commandTool(runner, on, null)),
+      await runCommand(commandTool(runner, onWithoutWeb, ["workspace"])),
+    ]
+
+    expect({
+      reported: results.map((r) => r.output.internet),
+      created: runner.created.map((c) => c.internet),
+    }).toEqual({ reported: [false, true, false], created: [false, true, false] })
+  })
+
+  test("a replaced sandbox is reported to the model and on the trace step", async () => {
+    const at = target()
+    const runner = new FakeRunner()
+    const tool = commandTool(runner, at, null)
+
+    await runCommand(tool)
+    runner.live.clear()
+    const { output, trace } = await runCommand(tool)
+
+    expect({ replaced: output.sandboxReplaced, headline: trace.headline }).toEqual({
+      replaced: "New sandbox: the previous one expired and its files are gone",
+      headline: "$ echo ok · exit 0 · New sandbox: the previous one expired and its files are gone",
+    })
   })
 })

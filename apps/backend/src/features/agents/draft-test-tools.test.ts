@@ -13,6 +13,7 @@ describe("DRAFT_TEST_EXCLUDED_TOOLS", () => {
         AgentToolNames.DELEGATE_TASK,
         AgentToolNames.START_SUBAGENT,
         AgentToolNames.SAVE_MEMO,
+        AgentToolNames.RUN_COMMAND,
         AgentToolNames.UPDATE_USER_SETTINGS,
       ].sort()
     )

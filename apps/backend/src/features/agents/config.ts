@@ -88,6 +88,8 @@ export const DRAFT_TEST_EXCLUDED_TOOLS: ReadonlySet<AgentToolName> = new Set<Age
   // same, which is what this set is about.
   AgentToolNames.START_SUBAGENT,
   AgentToolNames.SAVE_MEMO,
+  // With sandbox internet on, a command can write to any site.
+  AgentToolNames.RUN_COMMAND,
   // Writes the tester's REAL preferences, which outlive the ephemeral test
   // stream — the same reason every other entry is here. Every tier-2 tool
   // belongs in this set by definition (tier 2 means durable state outside the

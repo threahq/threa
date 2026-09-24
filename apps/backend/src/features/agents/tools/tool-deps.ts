@@ -11,6 +11,7 @@ import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { StartSubagentOutcome, ReportBackOutcome } from "../../subagents"
+import type { SandboxFile, SandboxRunResult } from "../../sandboxes"
 
 export interface WorkspaceToolDeps {
   db: Pool
@@ -127,6 +128,21 @@ export interface UpdateStreamBriefToolDeps {
     reason: string
     expectedVersion: number
   }) => Promise<UpdateStreamBriefToolResult>
+}
+
+/**
+ * The `run_command` tool's sandbox, bound by the caller to this stream and to
+ * the internet access the workspace setting and stream policy allow together.
+ */
+export interface RunCommandToolDeps {
+  internet: () => Promise<boolean>
+  run: (params: {
+    internet: boolean
+    command: string
+    files: SandboxFile[]
+    timeoutSec: number
+    signal?: AbortSignal
+  }) => Promise<SandboxRunResult>
 }
 
 /**

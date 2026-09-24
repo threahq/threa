@@ -113,3 +113,19 @@ describe("workspace_research prompt guidance", () => {
     expect(tool?.config.promptBlock).not.toContain(DIRECTION_GUIDANCE)
   })
 })
+
+describe("run_command availability", () => {
+  const sandbox = { internet: async () => false, run: async () => ({}) as never }
+
+  test("is built with workspace and sandbox deps", () => {
+    expect(toolNames({ workspace, sandbox })).toContain(AgentToolNames.RUN_COMMAND)
+  })
+
+  test("is absent without a sandbox runner", () => {
+    expect(toolNames({ workspace })).not.toContain(AgentToolNames.RUN_COMMAND)
+  })
+
+  test("is absent without workspace deps", () => {
+    expect(toolNames({ sandbox })).not.toContain(AgentToolNames.RUN_COMMAND)
+  })
+})

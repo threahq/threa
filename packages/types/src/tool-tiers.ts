@@ -98,6 +98,11 @@ export const TOOL_TIERS_BY_NAME = {
   start_subagent: 1,
   report_back: 1,
 
+  // Runs arbitrary code. The box holds no credentials, but with sandbox
+  // internet on a command can post the workspace files it was given to any
+  // site, so a guardian checks the user asked for what it does.
+  run_command: 2,
+
   // Changes the user's own account settings — durable state they see everywhere,
   // long after this conversation.
   update_user_settings: 2,

@@ -78,6 +78,9 @@ export const MUTATING_TOOLS = {
   // Opens a durable run + thread the user finds from the parent card, not from
   // the reply that created it.
   start_subagent: true,
+  // With sandbox internet on, a command can write to any site. Also keeps two
+  // calls from racing in the one box the stream has.
+  run_command: true,
 
   // Participation: durable, but rendered in place as itself.
   send_message: false,

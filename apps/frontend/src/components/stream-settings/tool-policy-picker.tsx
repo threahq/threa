@@ -16,8 +16,8 @@ import { TOOL_PRIVACY_CATEGORY_LABELS, type ToolPrivacyCategory, type ToolPrivac
 type GateableCategory = Exclude<ToolPrivacyCategory, "messaging">
 
 const CATEGORY_META: Record<GateableCategory, { description: string }> = {
-  web: { description: "Web search and fetching public URLs." },
-  workspace: { description: "Search this workspace's messages, streams, and memos." },
+  web: { description: "Web search, fetching public URLs, and internet in the sandbox." },
+  workspace: { description: "Search this workspace's messages, streams, and memos, and run commands in a sandbox." },
   github: { description: "Read from connected GitHub." },
   linear: { description: "Read from connected Linear." },
 }
