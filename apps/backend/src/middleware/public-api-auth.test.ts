@@ -330,7 +330,7 @@ describe("sandbox tokens", () => {
 
     expect({ error, sandboxSession: req.sandboxSession, user: req.user, userApiKey: req.userApiKey }).toEqual({
       error: null,
-      sandboxSession: session,
+      sandboxSession: { ...session, scopes: new Set(["messages:read"]) },
       user: undefined,
       userApiKey: undefined,
     })
@@ -356,7 +356,7 @@ describe("sandbox tokens", () => {
       ] as const
     ).map(([operationId, sandboxed]) => {
       const req = createReq()
-      if (sandboxed) req.sandboxSession = session
+      if (sandboxed) req.sandboxSession = { ...session, scopes: new Set() }
       let outcome: unknown = "unset"
       requireSandboxOperation(operationId)(req, {} as Response, (err?: any) => {
         outcome = err ? err.status : "next"
@@ -367,15 +367,20 @@ describe("sandbox tokens", () => {
     expect(outcomes).toEqual([404, 404, "next", "next"])
   })
 
-  test("should skip the key scope check for a sandbox session", () => {
-    const req = createReq()
-    req.sandboxSession = session
-    let outcome: unknown = "unset"
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH)(req, {} as Response, (err?: any) => {
-      outcome = err ?? "next"
-    })
+  test("should hold a sandbox session to the invoker's current permissions", () => {
+    const outcomes = [WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH, WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE].map(
+      (scope) => {
+        const req = createReq()
+        req.sandboxSession = { ...session, scopes: new Set([WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH]) }
+        let outcome: unknown = "unset"
+        requireApiKeyScope(scope)(req, {} as Response, (err?: any) => {
+          outcome = err ? err.status : "next"
+        })
+        return outcome
+      }
+    )
 
-    expect(outcome).toBe("next")
+    expect(outcomes).toEqual(["next", 404])
   })
 })
 

@@ -19,9 +19,10 @@ declare global {
       /**
        * Set when authenticated via a sandbox token. Never paired with
        * `req.user`, so no handler branch meant for user keys runs with the
-       * invoking user's full reach.
+       * invoking user's full reach. `scopes` is the invoker's current
+       * workspace permissions.
        */
-      sandboxSession?: SandboxSession
+      sandboxSession?: SandboxSession & { scopes: ReadonlySet<string> }
     }
   }
 }
@@ -149,7 +150,7 @@ export function createPublicApiAuthMiddleware({
         return
       }
 
-      req.sandboxSession = session
+      req.sandboxSession = { ...session, scopes: new Set(invokerPermissions) }
       req.workspaceId = workspaceId
       next()
       return
@@ -210,8 +211,13 @@ export function requireApiKeyScope(...scopes: WorkspacePermissionSlug[]) {
       return
     }
 
-    // Sandbox tokens carry no scopes; `requireSandboxOperation` gates them.
     if (req.sandboxSession) {
+      for (const scope of scopes) {
+        if (!req.sandboxSession.scopes.has(scope)) {
+          next(new HttpError(`Missing required permission: ${scope}`, { status: 404, code: "NOT_FOUND" }))
+          return
+        }
+      }
       next()
       return
     }
