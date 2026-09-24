@@ -325,8 +325,8 @@ describe("run_command", () => {
     const runner = new FakeRunner()
     const during: Array<{ token: string; session: Awaited<ReturnType<typeof sessionTokens.validate>> }> = []
     runner.duringExec = async (options) => {
-      if (options.api)
-        during.push({ token: options.api.token, session: await sessionTokens.validate(options.api.token) })
+      const api = await options.api?.()
+      if (api) during.push({ token: api.token, session: await sessionTokens.validate(api.token) })
     }
 
     await runCommand(commandTool(runner, at, null, "usr_invoker"))

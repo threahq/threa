@@ -75,7 +75,8 @@ export interface StreamSandboxDeps {
  * is read per call so an admin's toggle applies to the next command.
  *
  * Each command gets its own API token, reading what this turn could read
- * (`capturedStreamIds`) as the invoking user, revoked once the command ends.
+ * (`capturedStreamIds`) as the invoking user, minted when the command is about
+ * to start and revoked once it ends.
  * A turn with no invoking user has nobody to read as, so its commands get none.
  */
 export function bindStreamSandbox(
@@ -101,21 +102,28 @@ export function bindStreamSandbox(
     },
     run: async (params) => {
       if (!invokingUserId) return sandbox.service.run({ workspaceId, streamId, ...params })
-      const { session, value } = await sandbox.sessionTokens.mint({
-        workspaceId,
-        invokingUserId,
-        personaId: target.personaId,
-        sessionId: target.sessionId,
-        streamId,
-        capturedStreamIds: target.capturedStreamIds,
-        ttlSec: params.timeoutSec + SANDBOX_TOKEN_GRACE_SEC,
-      })
-      try {
-        return await sandbox.service.run({ workspaceId, streamId, ...params, api: { token: value, workspaceId } })
-      } finally {
-        await sandbox.sessionTokens.revoke(workspaceId, session.id).catch((err) => {
-          logger.warn({ err, workspaceId, tokenId: session.id }, "Sandbox token not revoked; it expires with its TTL")
+      let tokenId = null as string | null
+      const api = async () => {
+        const { session, value } = await sandbox.sessionTokens.mint({
+          workspaceId,
+          invokingUserId,
+          personaId: target.personaId,
+          sessionId: target.sessionId,
+          streamId,
+          capturedStreamIds: target.capturedStreamIds,
+          ttlSec: params.timeoutSec + SANDBOX_TOKEN_GRACE_SEC,
         })
+        tokenId = session.id
+        return { token: value, workspaceId }
+      }
+      try {
+        return await sandbox.service.run({ workspaceId, streamId, ...params, api })
+      } finally {
+        if (tokenId) {
+          await sandbox.sessionTokens.revoke(workspaceId, tokenId).catch((err) => {
+            logger.warn({ err, workspaceId, tokenId }, "Sandbox token not revoked; it expires with its TTL")
+          })
+        }
       }
     },
   }

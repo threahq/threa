@@ -108,13 +108,11 @@ describe("bindStreamSandbox", () => {
     run?: SandboxService["run"]
   }) {
     const calls: string[] = []
-    const runs: Parameters<SandboxService["run"]>[0][] = []
     const deps = bindStreamSandbox(
       {
         service: {
           run: async (p: Parameters<SandboxService["run"]>[0]) => {
             calls.push("run")
-            runs.push(p)
             return (params.run ?? (async () => ok))(p)
           },
         } as SandboxService,
@@ -138,7 +136,7 @@ describe("bindStreamSandbox", () => {
         capturedStreamIds: ["stream_1", "stream_2"],
       }
     )
-    return { deps, calls, runs }
+    return { deps, calls }
   }
 
   const params = { internet: false, command: "true", files: [], timeoutSec: 60 }
@@ -162,29 +160,50 @@ describe("bindStreamSandbox", () => {
     expect(internet).toEqual([true, false, false])
   })
 
-  test("mints a token for the command's lifetime and revokes it when the command fails", async () => {
-    const { deps, calls, runs } = bind({
+  test("mints a token when the command starts and revokes it when the command fails", async () => {
+    const apis: unknown[] = []
+    const { deps, calls } = bind({
+      sealed: false,
+      run: async (p) => {
+        apis.push(await p.api!())
+        throw new Error("command failed")
+      },
+    })
+
+    await expect(deps!.run(params)).rejects.toThrow("command failed")
+    expect({ calls, apis }).toEqual({
+      calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
+      apis: [{ token: "threa_sk_1", workspaceId: "ws_1" }],
+    })
+  })
+
+  test("mints nothing when the run fails before the command starts", async () => {
+    const { deps, calls } = bind({
       sealed: false,
       run: async () => {
         throw new Error("box gone")
       },
     })
-
     await expect(deps!.run(params)).rejects.toThrow("box gone")
-    expect({ calls, api: runs[0]!.api }).toEqual({
-      calls: ["mint ttl=240 captured=stream_1,stream_2", "run", "revoke sbx_1"],
-      api: { token: "threa_sk_1", workspaceId: "ws_1" },
-    })
+    expect(calls).toEqual(["run"])
   })
 
   test("runs without a token when the turn has no invoking user", async () => {
-    const { deps, calls, runs } = bind({ sealed: false, invokingUserId: null })
+    const apis: unknown[] = []
+    const { deps, calls } = bind({
+      sealed: false,
+      invokingUserId: null,
+      run: async (p) => {
+        apis.push(p.api)
+        return ok
+      },
+    })
 
     await deps!.run(params)
-    expect({ threaApi: deps!.threaApi, calls, api: runs[0]!.api }).toEqual({
+    expect({ threaApi: deps!.threaApi, calls, apis }).toEqual({
       threaApi: false,
       calls: ["run"],
-      api: undefined,
+      apis: [undefined],
     })
   })
 })
