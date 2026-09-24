@@ -1875,7 +1875,7 @@ export interface WorkspaceBootstrap {
   inboxHeldStreamIds?: string[]
   /**
    * ISO timestamp of the first other-author message that put each stream into
-   * the Inbox (arrival order for `inboxOrder: "arrival"`) — held streams and
+   * the Inbox (the Inbox section's `arrival` order) — held streams and
    * unheld streams with an unread other-author message. Optional: payloads
    * cached before this field shipped lack it.
    */

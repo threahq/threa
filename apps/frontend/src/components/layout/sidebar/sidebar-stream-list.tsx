@@ -19,7 +19,9 @@ import { cn } from "@/lib/utils"
 import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection, sectionVisibleItems } from "./sections"
 import { StreamDropZone } from "./sidebar-dnd"
-import { sectionPresentation, type SidebarSectionSpec, type SidebarSectionFilter } from "./sidebar-config"
+import { defaultSectionOrder, sectionOrderOptions } from "@threahq/types"
+import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
+import type { SectionViewChange, SectionViewOptions } from "./section-view-options"
 import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
 import { SidebarLabelsProvider } from "./sidebar-labels"
 import { SidebarQuickJumpProvider, createQuickJumpCollector } from "./quick-jump"
@@ -180,12 +182,11 @@ interface SidebarStreamListProps {
    */
   onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
   /**
-   * Toggle a section's stream filter between "all" and "unread". The parent
-   * owns the sidebar config, so the persisted write lives there; this component
-   * only decides which sections offer the control (never Inbox/Quick Links,
-   * never in board mode).
+   * Change a section's view options (filter, order, reverse). The parent owns
+   * the sidebar config, so the persisted write lives there; this component only
+   * decides which sections offer which options (never in board mode).
    */
-  onToggleSectionFilter: (sectionId: string) => void
+  onSectionViewChange: (sectionId: string, change: SectionViewChange) => void
   /** Resolve a stream's "· home" hint (custom section / pinned label) for Unread rows. */
   homeHintFor: (streamId: string) => string | null
   /** Board-mode descriptor when on `/board` (flag on); `null` in chats mode. Every
@@ -222,7 +223,7 @@ export function SidebarStreamList({
   onFileStreamToSection,
   onAssignStreamLabel,
   onStreamMovedFromLabel,
-  onToggleSectionFilter,
+  onSectionViewChange,
   homeHintFor,
   boardMode,
   onClearInbox,
@@ -394,20 +395,29 @@ export function SidebarStreamList({
     const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
     const add = addWiringFor(section.spec)
     const moreState = getSectionState(moreKey(section.id), MORE_DEFAULT)
-    // The stream filter is a chats-mode feature offered on every section except
-    // the Inbox (which has its own read/unread model) — Quick Links already
-    // returned above, it never reaches here. Never in board mode, whose
-    // sections filter the board instead via `filterAffordance`/`filterActive`.
-    const sectionFilterEnabled = !boardMode && section.spec.kind !== "unread"
-    const sectionFilter: SidebarSectionFilter | undefined = sectionFilterEnabled ? (section.filter ?? "all") : undefined
-    const onToggleFilter = sectionFilterEnabled ? () => onToggleSectionFilter(section.id) : undefined
+    // View options are chats-mode only: board-mode sections filter the board
+    // instead via `filterAffordance`/`filterActive`. The Inbox has its own
+    // read/unread model, so it offers order and reverse but no filter.
+    const defaultOrder = defaultSectionOrder(section.spec)
+    const viewOptions: SectionViewOptions | undefined = boardMode
+      ? undefined
+      : {
+          filter: section.spec.kind === "unread" ? undefined : (section.filter ?? "all"),
+          order: section.order ?? defaultOrder,
+          orderOptions: sectionOrderOptions(section.spec),
+          defaultOrder,
+          reverse: section.reverse ?? false,
+          onFilterChange: (filter) => onSectionViewChange(section.id, { filter }),
+          onOrderChange: (order) => onSectionViewChange(section.id, { order }),
+          onReverseChange: (reverse) => onSectionViewChange(section.id, { reverse }),
+        }
     // Walk exactly what this section is about to render: a tiered section or a
     // filtered one holds a tail behind the "more" expander, so raw items are
     // not its rows.
     if (state !== "collapsed") {
       const { visible: rows } = sectionVisibleItems(items, {
         tiered: presentation.tiered,
-        filter: sectionFilter ?? "all",
+        filter: viewOptions?.filter ?? "all",
         moreOpen: moreState === "open",
         isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
       })
@@ -446,8 +456,7 @@ export function SidebarStreamList({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={!!boardMode}
         filterActive={filterActive}
-        sectionFilter={sectionFilter}
-        onToggleFilter={onToggleFilter}
+        viewOptions={viewOptions}
         icon={presentation.icon}
         items={items}
         allStreams={processedStreams}
@@ -478,8 +487,7 @@ export function SidebarStreamList({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={!!boardMode}
         filterActive={filterActive}
-        sectionFilter={sectionFilter}
-        onToggleFilter={onToggleFilter}
+        viewOptions={viewOptions}
         icon={presentation.icon}
         items={items}
         allStreams={processedStreams}

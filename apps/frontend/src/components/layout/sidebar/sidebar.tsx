@@ -45,7 +45,8 @@ import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
-import { setStreamCustomSection, setSectionFilter, type SidebarSectionFilter } from "./sidebar-config"
+import { setStreamCustomSection, setSectionFilter, setSectionOrder, setSectionReverse } from "./sidebar-config"
+import type { SectionViewChange } from "./section-view-options"
 import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
 import {
@@ -336,7 +337,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return map
   }, [sidebarConfig.sections, labelsById, streamIdsByLabel])
 
-  const inboxOrder = preferencesContext?.preferences?.inboxOrder ?? "arrival"
   const inboxArrivedAt = unreadState?.inboxArrivedAt ?? EMPTY_INBOX_ARRIVED_AT
 
   const resolvedSections = useMemo(
@@ -347,7 +347,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         getUnreadCount,
         streamIdsByLabel,
         unreadStreamIds,
-        inboxOrder,
         inboxArrivedAt,
         joinedAtByStreamId,
         streamTypeById,
@@ -361,7 +360,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       getUnreadCount,
       streamIdsByLabel,
       unreadStreamIds,
-      inboxOrder,
       inboxArrivedAt,
       joinedAtByStreamId,
       streamTypeById,
@@ -680,10 +678,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     )
   }
 
-  const handleToggleSectionFilter = (sectionId: string) => {
-    const current = sidebarConfig.sections.find((s) => s.id === sectionId)
-    const next: SidebarSectionFilter = (current?.filter ?? "all") === "unread" ? "all" : "unread"
-    setSidebarConfig(setSectionFilter(sidebarConfig, sectionId, next))
+  const handleSectionViewChange = (sectionId: string, change: SectionViewChange) => {
+    let next = sidebarConfig
+    if (change.filter !== undefined) next = setSectionFilter(next, sectionId, change.filter)
+    if (change.order !== undefined) next = setSectionOrder(next, sectionId, change.order)
+    if (change.reverse !== undefined) next = setSectionReverse(next, sectionId, change.reverse)
+    if (next !== sidebarConfig) setSidebarConfig(next)
   }
 
   const removeStreamLabel = (streamId: string, labelId: string) => {
@@ -743,7 +743,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onFileStreamToSection={handleFileStreamToSection}
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
-            onToggleSectionFilter={handleToggleSectionFilter}
+            onSectionViewChange={handleSectionViewChange}
             homeHintFor={(id) => homeHintById.get(id) ?? null}
             quickLinksSlot={quickLinksSlot}
             boardMode={boardMode}

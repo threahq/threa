@@ -188,7 +188,7 @@ export function truncateContent(
 }
 
 /** Get display name for sorting (handles channels, scratchpads, DMs) */
-function getStreamSortName(stream: StreamWithPreview): string {
+export function getStreamSortName(stream: StreamWithPreview): string {
   return (getStreamName(stream) ?? "").toLowerCase()
 }
 

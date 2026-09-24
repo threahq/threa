@@ -126,6 +126,27 @@ describe("SidebarConfigService.updateConfig", () => {
     expect(upsert).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, USER_ID, result)
   })
 
+  it("should keep a section's order and reverse through the update round-trip", async () => {
+    const service = setupService()
+    spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.updateConfig(WORKSPACE_ID, USER_ID, {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "all",
+      sections: [
+        { id: "channels", spec: { kind: "type", streamType: "channel" }, order: "activity", reverse: true },
+        { id: "dms", spec: { kind: "type", streamType: "dm" }, order: "name", reverse: false },
+      ],
+      quickLinks: DEFAULT_QUICK_LINKS,
+    })
+
+    expect(result.sections.filter((s) => s.spec.kind === "type")).toEqual([
+      { id: "channels", spec: { kind: "type", streamType: "channel" }, order: "activity", reverse: true },
+      { id: "dms", spec: { kind: "type", streamType: "dm" } },
+    ])
+  })
+
   it("normalizes a config with an incomplete quick-link list before persisting", async () => {
     const service = setupService()
     const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
@@ -223,6 +244,14 @@ describe("updateSidebarConfigSchema", () => {
       sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" }, filter: "unread" }],
     })
     expect(parsed.sections[0]).toMatchObject({ id: "recent", filter: "unread" })
+  })
+
+  it("should keep a section's order and reverse through parsing", () => {
+    const parsed = updateSidebarConfigSchema.parse({
+      basePreset: "all",
+      sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" }, order: "activity", reverse: true }],
+    })
+    expect(parsed.sections[0]).toMatchObject({ id: "channels", order: "activity", reverse: true })
   })
 
   it("rejects an unknown section filter value", () => {

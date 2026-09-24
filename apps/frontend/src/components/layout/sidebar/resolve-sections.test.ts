@@ -56,7 +56,6 @@ function makeInput(
     getUnreadCount: () => 0,
     streamIdsByLabel: new Map(),
     unreadStreamIds: new Set(),
-    inboxOrder: "newest",
     inboxArrivedAt: {},
     joinedAtByStreamId: new Map(),
     streamTypeById: new Map(),
@@ -237,25 +236,103 @@ describe("resolveSections — static order", () => {
 })
 
 describe("resolveSections — All preset", () => {
-  it("partitions by stream type with DMs composed of real, system, then virtual", () => {
+  it("should sort scratchpads by activity and channels and DMs by name, with system then virtual DMs last", () => {
     const processedStreams = [
-      makeItem({ id: "sp_2", type: StreamTypes.SCRATCHPAD, activity: 5 }),
-      makeItem({ id: "sp_1", type: StreamTypes.SCRATCHPAD, activity: 10 }),
-      makeItem({ id: "ch_b", type: StreamTypes.CHANNEL, slug: "beta" }),
-      makeItem({ id: "ch_a", type: StreamTypes.CHANNEL, slug: "alpha" }),
-      makeItem({ id: "dm_old", type: StreamTypes.DM, activity: 1 }),
-      makeItem({ id: "dm_new", type: StreamTypes.DM, activity: 9 }),
+      makeItem({ id: "sp_a", type: StreamTypes.SCRATCHPAD, displayName: "Alpha", activity: 5 }),
+      makeItem({ id: "sp_z", type: StreamTypes.SCRATCHPAD, displayName: "Zulu", activity: 10 }),
+      makeItem({ id: "ch_b", type: StreamTypes.CHANNEL, slug: "beta", activity: 9 }),
+      makeItem({ id: "ch_a", type: StreamTypes.CHANNEL, slug: "alpha", activity: 1 }),
+      makeItem({ id: "dm_z", type: StreamTypes.DM, displayName: "Zed", activity: 9 }),
+      makeItem({ id: "dm_a", type: StreamTypes.DM, displayName: "Ann", activity: 1 }),
       makeItem({ id: "sys_1", type: StreamTypes.SYSTEM, displayName: "System" }),
     ]
-    const virtualDmStreams = [makeItem({ id: "vdm_1", type: StreamTypes.DM, activity: 0 })]
+    const virtualDmStreams = [makeItem({ id: "vdm_1", type: StreamTypes.DM, displayName: "Aaron", activity: 0 })]
 
     expect(shape({ processedStreams, virtualDmStreams, getUnreadCount: () => 0 }, ALL_SIDEBAR_CONFIG)).toEqual([
-      // Scratchpads: no joinedAt map, so createdAt fallback (most recent first).
-      { id: "scratchpads", items: ["sp_1", "sp_2"] },
-      // Channels alphabetically, always — irrespective of activity or join time.
+      { id: "scratchpads", items: ["sp_z", "sp_a"] },
       { id: "channels", items: ["ch_a", "ch_b"] },
-      // Real DMs (createdAt fallback), then system streams, then synthetic drafts.
-      { id: "dms", items: ["dm_new", "dm_old", "sys_1", "vdm_1"] },
+      { id: "dms", items: ["dm_a", "dm_z", "sys_1", "vdm_1"] },
+    ])
+  })
+
+  it("should apply a stored order and reverse within each DM group, keeping virtual DM drafts last and A–Z", () => {
+    const config = {
+      ...ALL_SIDEBAR_CONFIG,
+      sections: [
+        {
+          id: "scratchpads",
+          spec: { kind: "type" as const, streamType: "scratchpad" as const },
+          order: "name" as const,
+        },
+        { id: "dms", spec: { kind: "type" as const, streamType: "dm" as const }, reverse: true },
+      ],
+    }
+    const processedStreams = [
+      makeItem({ id: "sp_a", type: StreamTypes.SCRATCHPAD, displayName: "Alpha", activity: 5 }),
+      makeItem({ id: "sp_z", type: StreamTypes.SCRATCHPAD, displayName: "Zulu", activity: 10 }),
+      makeItem({ id: "dm_a", type: StreamTypes.DM, displayName: "Ann" }),
+      makeItem({ id: "dm_z", type: StreamTypes.DM, displayName: "Zed" }),
+    ]
+    const virtualDmStreams = [
+      makeItem({ id: "vdm_a", type: StreamTypes.DM, displayName: "Aaron" }),
+      makeItem({ id: "vdm_z", type: StreamTypes.DM, displayName: "Zoe" }),
+    ]
+
+    expect(shape({ processedStreams, virtualDmStreams }, config)).toEqual([
+      { id: "scratchpads", items: ["sp_a", "sp_z"] },
+      { id: "dms", items: ["dm_z", "dm_a", "vdm_a", "vdm_z"] },
+    ])
+  })
+})
+
+describe("resolveSections — section order", () => {
+  it("should order Recent by latest activity, newest first", () => {
+    const processedStreams = [
+      makeItem({ id: "r_old", section: "recent", activity: 10 }),
+      makeItem({ id: "r_new", section: "recent", activity: 30 }),
+      makeItem({ id: "r_mid", section: "recent", activity: 20 }),
+    ]
+    // joinedAt contradicts activity, so a static re-sort would show r_old first.
+    const joinedAtByStreamId = new Map([
+      ["r_old", "2026-03-01T00:00:00.000Z"],
+      ["r_mid", "2026-02-01T00:00:00.000Z"],
+      ["r_new", "2026-01-01T00:00:00.000Z"],
+    ])
+
+    expect(shape({ processedStreams, joinedAtByStreamId }).find((r) => r.id === "recent")?.items).toEqual([
+      "r_new",
+      "r_mid",
+      "r_old",
+    ])
+  })
+
+  it("should apply a stored order and reverse to a smart bucket", () => {
+    const config = {
+      ...SMART_SIDEBAR_CONFIG,
+      sections: [
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const }, reverse: true },
+        {
+          id: "other",
+          spec: { kind: "smart" as const, bucket: "other" as const },
+          order: "joined" as const,
+          reverse: true,
+        },
+      ],
+    }
+    const processedStreams = [
+      makeItem({ id: "r_old", section: "recent", activity: 10 }),
+      makeItem({ id: "r_new", section: "recent", activity: 30 }),
+      makeItem({ id: "o_early", section: "other" }),
+      makeItem({ id: "o_late", section: "other" }),
+    ]
+    const joinedAtByStreamId = new Map([
+      ["o_early", "2026-01-01T00:00:00.000Z"],
+      ["o_late", "2026-02-01T00:00:00.000Z"],
+    ])
+
+    expect(shape({ processedStreams, joinedAtByStreamId }, config)).toEqual([
+      { id: "recent", items: ["r_old", "r_new"] },
+      { id: "other", items: ["o_early", "o_late"] },
     ])
   })
 })
@@ -624,7 +701,7 @@ describe("resolveSections — Unread section", () => {
     ])
   })
 
-  it("sorts Unread oldest-arrival-first when inboxOrder is arrival", () => {
+  it("should sort Unread oldest arrival first by default", () => {
     const processedStreams = [
       makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
       makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 2 }),
@@ -635,7 +712,6 @@ describe("resolveSections — Unread section", () => {
       {
         processedStreams,
         unreadStreamIds: new Set(["u1", "u2", "u3"]),
-        inboxOrder: "arrival",
         inboxArrivedAt: {
           u1: "2026-01-03T00:00:00.000Z",
           u2: "2026-01-01T00:00:00.000Z",
@@ -648,7 +724,7 @@ describe("resolveSections — Unread section", () => {
     expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u3", "u1"])
   })
 
-  it("sorts a stream with no recorded arrival after those with one, in arrival order", () => {
+  it("should sort a stream with no recorded arrival after those with one", () => {
     const processedStreams = [
       makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
       makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 2 }),
@@ -658,7 +734,6 @@ describe("resolveSections — Unread section", () => {
       {
         processedStreams,
         unreadStreamIds: new Set(["u1", "u2"]),
-        inboxOrder: "arrival",
         inboxArrivedAt: { u2: "2026-01-01T00:00:00.000Z" },
       },
       unreadFirst
@@ -667,7 +742,11 @@ describe("resolveSections — Unread section", () => {
     expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])
   })
 
-  it("sorts Unread by activity (newest first) when inboxOrder is newest, ignoring arrival", () => {
+  it("should sort Unread by activity when the section's order is activity, ignoring arrival", () => {
+    const config = {
+      ...unreadFirst,
+      sections: [{ id: "unread", spec: { kind: "unread" as const }, order: "activity" as const }],
+    }
     const processedStreams = [
       makeItem({ id: "u1", section: "recent", urgency: "activity", activity: 1 }),
       makeItem({ id: "u2", section: "recent", urgency: "activity", activity: 9 }),
@@ -677,10 +756,31 @@ describe("resolveSections — Unread section", () => {
       {
         processedStreams,
         unreadStreamIds: new Set(["u1", "u2"]),
-        inboxOrder: "newest",
         inboxArrivedAt: { u1: "2026-01-01T00:00:00.000Z" },
       },
-      unreadFirst
+      config
+    )
+
+    expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])
+  })
+
+  it("should reverse the arrival order to newest arrival first", () => {
+    const config = {
+      ...unreadFirst,
+      sections: [{ id: "unread", spec: { kind: "unread" as const }, reverse: true }],
+    }
+    const processedStreams = [
+      makeItem({ id: "u1", section: "recent", urgency: "activity" }),
+      makeItem({ id: "u2", section: "recent", urgency: "activity" }),
+    ]
+
+    const result = shape(
+      {
+        processedStreams,
+        unreadStreamIds: new Set(["u1", "u2"]),
+        inboxArrivedAt: { u1: "2026-01-01T00:00:00.000Z", u2: "2026-01-02T00:00:00.000Z" },
+      },
+      config
     )
 
     expect(result.find((r) => r.id === "unread")?.items).toEqual(["u2", "u1"])

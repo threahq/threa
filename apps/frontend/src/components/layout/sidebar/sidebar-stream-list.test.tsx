@@ -7,6 +7,7 @@ import { SidebarStreamList } from "./sidebar-stream-list"
 import type { StreamItemData } from "./types"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { ResolvedSection } from "./resolve-sections"
+import type { SectionViewChange } from "./section-view-options"
 import * as contextsModule from "@/contexts"
 import type { CollapseState } from "@/contexts"
 
@@ -91,7 +92,7 @@ function renderList(streams: StreamItemData[], search: string) {
         onFileStreamToSection={vi.fn()}
         onAssignStreamLabel={vi.fn()}
         onStreamMovedFromLabel={vi.fn()}
-        onToggleSectionFilter={vi.fn()}
+        onSectionViewChange={vi.fn()}
         homeHintFor={() => null}
         boardMode={makeBoardMode()}
         onClearInbox={vi.fn()}
@@ -165,7 +166,7 @@ describe("SidebarStreamList — quick-jump numbering", () => {
       unread?: (streamId: string) => number
       sectionState?: (section: string) => string
       boardMode?: SidebarBoardMode | null
-      onToggleSectionFilter?: (sectionId: string) => void
+      onSectionViewChange?: (sectionId: string, change: SectionViewChange) => void
     } = {}
   ) {
     const streams = sections.flatMap((s) => s.items)
@@ -192,7 +193,7 @@ describe("SidebarStreamList — quick-jump numbering", () => {
           onFileStreamToSection={vi.fn()}
           onAssignStreamLabel={vi.fn()}
           onStreamMovedFromLabel={vi.fn()}
-          onToggleSectionFilter={over.onToggleSectionFilter ?? vi.fn()}
+          onSectionViewChange={over.onSectionViewChange ?? vi.fn()}
           homeHintFor={() => null}
           boardMode={over.boardMode ?? null}
           onClearInbox={vi.fn()}
@@ -281,7 +282,7 @@ describe("SidebarStreamList — Inbox section", () => {
           onFileStreamToSection={vi.fn()}
           onAssignStreamLabel={vi.fn()}
           onStreamMovedFromLabel={vi.fn()}
-          onToggleSectionFilter={vi.fn()}
+          onSectionViewChange={vi.fn()}
           homeHintFor={() => null}
           boardMode={null}
           onClearInbox={onClearInbox}
@@ -351,7 +352,7 @@ describe("SidebarStreamList — Inbox section", () => {
           onFileStreamToSection={vi.fn()}
           onAssignStreamLabel={vi.fn()}
           onStreamMovedFromLabel={vi.fn()}
-          onToggleSectionFilter={vi.fn()}
+          onSectionViewChange={vi.fn()}
           homeHintFor={() => null}
           boardMode={makeBoardMode()}
           onClearInbox={vi.fn()}
@@ -365,7 +366,7 @@ describe("SidebarStreamList — Inbox section", () => {
   })
 })
 
-describe("SidebarStreamList — section filter toggle", () => {
+describe("SidebarStreamList — section view options", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     stubSidebarContexts()
@@ -424,7 +425,7 @@ describe("SidebarStreamList — section filter toggle", () => {
           onFileStreamToSection={vi.fn()}
           onAssignStreamLabel={vi.fn()}
           onStreamMovedFromLabel={vi.fn()}
-          onToggleSectionFilter={vi.fn()}
+          onSectionViewChange={vi.fn()}
           homeHintFor={() => null}
           boardMode={null}
           onClearInbox={vi.fn()}
@@ -444,7 +445,7 @@ describe("SidebarStreamList — section filter toggle", () => {
     over: {
       unread?: (streamId: string) => number
       boardMode?: SidebarBoardMode | null
-      onToggleSectionFilter?: (sectionId: string) => void
+      onSectionViewChange?: (sectionId: string, change: SectionViewChange) => void
     } = {}
   ) {
     const streams = sections.flatMap((s) => s.items)
@@ -466,7 +467,7 @@ describe("SidebarStreamList — section filter toggle", () => {
           onFileStreamToSection={vi.fn()}
           onAssignStreamLabel={vi.fn()}
           onStreamMovedFromLabel={vi.fn()}
-          onToggleSectionFilter={over.onToggleSectionFilter ?? vi.fn()}
+          onSectionViewChange={over.onSectionViewChange ?? vi.fn()}
           homeHintFor={() => null}
           boardMode={over.boardMode ?? null}
           onClearInbox={vi.fn()}
@@ -475,31 +476,33 @@ describe("SidebarStreamList — section filter toggle", () => {
     )
   }
 
-  it("shows the filter toggle on a home section in chats mode", () => {
+  it("shows the view options on a home section in chats mode", () => {
     renderFor([filterableSection("sec_1", [makeStream("stream_a")])])
-    expect(screen.getByRole("button", { name: "Show unread only in sec_1" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "sec_1 view options" })).toBeInTheDocument()
   })
 
-  it("does not show the filter toggle in board mode", () => {
+  it("does not show the view options in board mode", () => {
     renderFor([filterableSection("sec_1", [makeStream("stream_a")])], { boardMode: makeBoardMode() })
-    expect(screen.queryByRole("button", { name: /Show (unread only|all) in sec_1/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "sec_1 view options" })).not.toBeInTheDocument()
   })
 
-  it("does not show the filter toggle on the Inbox section", () => {
+  it("offers order but no filter on the Inbox section", () => {
     renderFor([unreadSection([makeStream("stream_a")])])
-    expect(screen.queryByRole("button", { name: /Show (unread only|all) in Inbox/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "Inbox view options" }))
+    expect(screen.queryByRole("group", { name: "Show" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Arrival" })).toHaveAttribute("aria-pressed", "true")
   })
 
-  it("calls onToggleSectionFilter with the section id when clicked", () => {
-    const onToggleSectionFilter = vi.fn()
-    renderFor([filterableSection("sec_1", [makeStream("stream_a")])], { onToggleSectionFilter })
-    fireEvent.click(screen.getByRole("button", { name: "Show unread only in sec_1" }))
-    expect(onToggleSectionFilter).toHaveBeenCalledWith("custom:sec_1")
-  })
-
-  it("reflects an already-unread-filtered section as pressed", () => {
-    renderFor([filterableSection("sec_1", [makeStream("stream_a")], "unread")])
-    expect(screen.getByRole("button", { name: "Show all in sec_1" })).toHaveAttribute("aria-pressed", "true")
+  it("reports a view change with the section id", () => {
+    const onSectionViewChange = vi.fn()
+    renderFor([filterableSection("sec_1", [makeStream("stream_a")])], { onSectionViewChange })
+    fireEvent.click(screen.getByRole("button", { name: "sec_1 view options" }))
+    fireEvent.click(screen.getByRole("button", { name: "Unread" }))
+    fireEvent.click(screen.getByRole("button", { name: "A–Z" }))
+    expect(onSectionViewChange.mock.calls).toEqual([
+      ["custom:sec_1", { filter: "unread" }],
+      ["custom:sec_1", { order: "name" }],
+    ])
   })
 
   it("hides quiet rows behind a more divider when filtered to unread, keeping the header", () => {
@@ -530,6 +533,6 @@ describe("SidebarStreamList — section filter toggle", () => {
 
     expect(screen.getByText("sec_1")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "2 more" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Show all in sec_1" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "sec_1 view options" }).className).toContain("bg-primary/10")
   })
 })

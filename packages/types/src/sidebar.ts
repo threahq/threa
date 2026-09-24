@@ -70,6 +70,14 @@ export type SidebarSectionSpec =
 export const SIDEBAR_SECTION_FILTERS = ["all", "unread"] as const
 export type SidebarSectionFilter = (typeof SIDEBAR_SECTION_FILTERS)[number]
 
+/**
+ * Per-section row order. `arrival` (when a stream entered the Inbox) exists only
+ * on the Inbox. Which orders a section offers, and its default, come from
+ * {@link sectionOrderOptions} / {@link defaultSectionOrder}.
+ */
+export const SIDEBAR_SECTION_ORDERS = ["name", "activity", "joined", "arrival"] as const
+export type SidebarSectionOrder = (typeof SIDEBAR_SECTION_ORDERS)[number]
+
 export interface SidebarSection {
   /** Stable key — also the collapse-state persistence key on the frontend. */
   id: string
@@ -81,6 +89,47 @@ export interface SidebarSection {
    * quick links, which carry no filter and never persist one.
    */
   filter?: SidebarSectionFilter
+  /**
+   * Row order. Absent means the section's default ({@link defaultSectionOrder});
+   * `normalizeSidebarConfig` drops the default and any order the section
+   * doesn't offer back to absent.
+   */
+  order?: SidebarSectionOrder
+  /** Reverse the section's order. Only `true` persists. Not applicable to quick links. */
+  reverse?: boolean
+}
+
+/**
+ * The orders a section offers, default first. Empty means the order is fixed:
+ * Recent is by definition the latest activity, and quick links hold no streams.
+ * Sections whose default is the mixed static order (non-channels newest joined,
+ * channels A–Z) list `null` first for it.
+ */
+export function sectionOrderOptions(spec: SidebarSectionSpec): readonly (SidebarSectionOrder | null)[] {
+  switch (spec.kind) {
+    case "unread":
+      return ["arrival", "activity", "name"]
+    case "quicklinks":
+      return []
+    case "smart":
+      return spec.bucket === "recent" ? [] : [null, "name", "activity", "joined"]
+    case "type":
+      return spec.streamType === "scratchpad" ? ["activity", "name", "joined"] : ["name", "activity", "joined"]
+    case "label":
+    case "custom":
+      return [null, "name", "activity", "joined"]
+  }
+}
+
+/** The order a section uses when none is stored; `null` is the mixed static order. */
+export function defaultSectionOrder(spec: SidebarSectionSpec): SidebarSectionOrder | null {
+  if (spec.kind === "smart" && spec.bucket === "recent") return "activity"
+  return sectionOrderOptions(spec)[0] ?? null
+}
+
+/** Whether a section can be reversed. Every stream section can; quick links hold no rows. */
+export function sectionCanReverse(spec: SidebarSectionSpec): boolean {
+  return spec.kind !== "quicklinks"
 }
 
 export const SIDEBAR_BASE_PRESETS = ["smart", "all"] as const
@@ -260,6 +309,13 @@ function normalizeSectionFilter(spec: SidebarSectionSpec, rawFilter: unknown): S
   return rawFilter === "unread" ? "unread" : undefined
 }
 
+/** Keep a stored order only when the section offers it and it isn't the default. */
+function normalizeSectionOrder(spec: SidebarSectionSpec, rawOrder: unknown): SidebarSectionOrder | undefined {
+  const options = sectionOrderOptions(spec)
+  const order = options.find((option) => option !== null && option === rawOrder)
+  return order && order !== defaultSectionOrder(spec) ? order : undefined
+}
+
 /** Resolve a stored link's visibility, migrating the pre-v2 boolean and coercing invalid `active`. */
 function normalizeQuickLinkVisibility(link: StoredQuickLink, key: SidebarQuickLinkKey): SidebarQuickLinkVisibility {
   const stored = link.visibility
@@ -339,13 +395,20 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
       : section
   )
 
-  // Section filter: keep a valid "unread", drop anything else (including the
-  // default "all") to the canonical absent form, and drop it outright on
-  // Inbox/quick-links sections, which have no filter concept.
+  // View options: keep only non-default values the section supports, so the
+  // canonical form of every default is absent.
   sections = sections.map((section) => {
     const filter = normalizeSectionFilter(section.spec, section.filter)
-    if (filter === section.filter) return section
-    return filter === undefined ? { id: section.id, spec: section.spec } : { ...section, filter }
+    const order = normalizeSectionOrder(section.spec, section.order)
+    const reverse = section.reverse === true && sectionCanReverse(section.spec) ? true : undefined
+    if (filter === section.filter && order === section.order && reverse === section.reverse) return section
+    return {
+      id: section.id,
+      spec: section.spec,
+      ...(filter && { filter }),
+      ...(order && { order }),
+      ...(reverse && { reverse }),
+    }
   })
 
   // v1 → v2: existing users had quick links rendered above their sections, not

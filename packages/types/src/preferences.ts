@@ -124,17 +124,6 @@ export const InboxClearModes = {
   READ: "read",
 } as const satisfies Record<string, InboxClearMode>
 
-// Sidebar Inbox sort order. Stored and returned only — the backend never
-// sorts the Inbox; ordering is a client-side concern over its own
-// arrival/latest-activity timestamps.
-export const INBOX_ORDER_OPTIONS = ["arrival", "newest"] as const
-export type InboxOrder = (typeof INBOX_ORDER_OPTIONS)[number]
-
-export const InboxOrders = {
-  ARRIVAL: "arrival",
-  NEWEST: "newest",
-} as const satisfies Record<string, InboxOrder>
-
 // Buttons on a push notification. Chrome caps a notification at two action
 // buttons, so the user fills up to two ordered slots from these.
 export const PUSH_ACTION_OPTIONS = ["mark_read", "remind", "react"] as const
@@ -392,8 +381,6 @@ export interface UserPreferences {
   unreadOpenPosition: UnreadOpenPosition
   /** Which actions release a stream's sidebar Inbox hold. */
   inboxClearMode: InboxClearMode
-  /** Sidebar Inbox sort order. Stored/returned only; the backend doesn't sort. */
-  inboxOrder: InboxOrder
   /** Ordered push notification buttons, at most PUSH_ACTIONS_MAX, no repeats. */
   pushActions: PushAction[]
   /** How far ahead the "Remind me" push button schedules the saved reminder. */
@@ -540,7 +527,6 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   labelRemoveOnMove: "ask",
   unreadOpenPosition: "latest",
   inboxClearMode: "interaction",
-  inboxOrder: "arrival",
   pushActions: [...DEFAULT_PUSH_ACTIONS],
   pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
   pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
@@ -596,7 +582,6 @@ export interface UpdateUserPreferencesInput {
   labelRemoveOnMove?: LabelRemoveOnMove
   unreadOpenPosition?: UnreadOpenPosition
   inboxClearMode?: InboxClearMode
-  inboxOrder?: InboxOrder
   pushActions?: PushAction[]
   pushReminderMinutes?: number
   pushQuickReaction?: string

@@ -20,6 +20,8 @@ import {
   getStreamCustomSectionId,
   setStreamCustomSection,
   setSectionFilter,
+  setSectionOrder,
+  setSectionReverse,
 } from "./sidebar-config"
 
 describe("toggleLabelSection", () => {
@@ -165,6 +167,45 @@ describe("setSectionFilter", () => {
     const sectionId = SMART_SIDEBAR_CONFIG.sections[0].id
     const next = setSectionFilter(SMART_SIDEBAR_CONFIG, sectionId, "unread")
     expect(next.sections.slice(1)).toEqual(SMART_SIDEBAR_CONFIG.sections.slice(1))
+  })
+})
+
+describe("setSectionOrder", () => {
+  it("should store a non-default order", () => {
+    const next = setSectionOrder(ALL_SIDEBAR_CONFIG, "channels", "activity")
+    expect(next.sections.find((s) => s.id === "channels")).toEqual({
+      id: "channels",
+      spec: { kind: "type", streamType: "channel" },
+      order: "activity",
+    })
+  })
+
+  it("should write the section's default order as absent", () => {
+    const sorted = setSectionOrder(ALL_SIDEBAR_CONFIG, "channels", "activity")
+    const reset = setSectionOrder(sorted, "channels", "name")
+    expect(reset.sections).toEqual(ALL_SIDEBAR_CONFIG.sections)
+  })
+
+  it("should write null as absent on sections whose default is the mixed order", () => {
+    const sorted = setSectionOrder(SMART_SIDEBAR_CONFIG, "other", "name")
+    expect(setSectionOrder(sorted, "other", null).sections).toEqual(SMART_SIDEBAR_CONFIG.sections)
+  })
+
+  it("should return the same object when the order already applies", () => {
+    expect(setSectionOrder(ALL_SIDEBAR_CONFIG, "channels", "name")).toBe(ALL_SIDEBAR_CONFIG)
+    expect(setSectionOrder(ALL_SIDEBAR_CONFIG, "ghost", "name")).toBe(ALL_SIDEBAR_CONFIG)
+  })
+})
+
+describe("setSectionReverse", () => {
+  it("should store reverse only while it is on", () => {
+    const reversed = setSectionReverse(ALL_SIDEBAR_CONFIG, "dms", true)
+    expect(reversed.sections.find((s) => s.id === "dms")?.reverse).toBe(true)
+    expect(setSectionReverse(reversed, "dms", false).sections).toEqual(ALL_SIDEBAR_CONFIG.sections)
+  })
+
+  it("should return the same object when nothing changes", () => {
+    expect(setSectionReverse(ALL_SIDEBAR_CONFIG, "dms", false)).toBe(ALL_SIDEBAR_CONFIG)
   })
 })
 

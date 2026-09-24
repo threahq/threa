@@ -1,8 +1,10 @@
-import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { afterEach, describe, it, expect, vi } from "vitest"
+import { fireEvent, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
+import * as useMobileModule from "@/hooks/use-mobile"
 import { SectionHeader, sectionVisibleItems } from "./sections"
+import type { SectionViewOptions } from "./section-view-options"
 import type { StreamItemData } from "./types"
 
 function makeItem(id: string): StreamItemData {
@@ -257,40 +259,154 @@ describe("SectionHeader board-mode filter affordance", () => {
   })
 })
 
-describe("SectionHeader stream filter toggle", () => {
-  it("renders nothing when onToggleFilter is not provided", () => {
+function makeViewOptions(over: Partial<SectionViewOptions> = {}): SectionViewOptions {
+  return {
+    filter: "all",
+    order: "name",
+    orderOptions: ["name", "activity", "joined"],
+    defaultOrder: "name",
+    reverse: false,
+    onFilterChange: vi.fn(),
+    onOrderChange: vi.fn(),
+    onReverseChange: vi.fn(),
+    ...over,
+  }
+}
+
+describe("SectionHeader view options", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should render no options button when the section has no view options", () => {
     renderHeader({ label: "Channels" })
-    expect(screen.queryByRole("button", { name: /show (unread only|all) in channels/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Channels view options" })).not.toBeInTheDocument()
   })
 
-  it("shows Show unread only when the filter is all (default)", () => {
-    renderHeader({ label: "Channels", onToggleFilter: vi.fn() })
-    const button = screen.getByRole("button", { name: "Show unread only in Channels" })
-    expect(button).toHaveAttribute("aria-pressed", "false")
-  })
+  it("should open the inline strip on desktop without toggling the section", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    const { onToggle } = renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
+    const opener = screen.getByRole("button", { name: "Channels view options" })
+    expect(opener).toHaveAttribute("aria-expanded", "false")
 
-  it("shows Show all and reads pressed when the filter is unread", () => {
-    renderHeader({ label: "Channels", sectionFilter: "unread", onToggleFilter: vi.fn() })
-    const button = screen.getByRole("button", { name: "Show all in Channels" })
-    expect(button).toHaveAttribute("aria-pressed", "true")
-  })
+    await userEvent.click(opener)
 
-  it("calls onToggleFilter and not onToggle when clicked", async () => {
-    const onToggleFilter = vi.fn()
-    const { onToggle } = renderHeader({ label: "Channels", onToggleFilter })
-
-    await userEvent.click(screen.getByRole("button", { name: "Show unread only in Channels" }))
-
-    expect(onToggleFilter).toHaveBeenCalledTimes(1)
+    expect(opener).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("group", { name: "Channels view options" })).toBeInTheDocument()
     expect(onToggle).not.toHaveBeenCalled()
   })
 
-  it("shows the unread aggregate badge while expanded once filtered to unread", () => {
-    renderHeader({ label: "Channels", sectionFilter: "unread", onToggleFilter: vi.fn(), unreadAggregate: 3 })
+  it("should report each option change when picked in the strip", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    const viewOptions = makeViewOptions()
+    renderHeader({ label: "Channels", viewOptions })
+    await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
+
+    await userEvent.click(screen.getByRole("button", { name: "Unread" }))
+    await userEvent.click(screen.getByRole("button", { name: "Activity" }))
+    await userEvent.click(screen.getByRole("button", { name: "Reverse order" }))
+
+    expect(viewOptions.onFilterChange).toHaveBeenCalledWith("unread")
+    expect(viewOptions.onOrderChange).toHaveBeenCalledWith("activity")
+    expect(viewOptions.onReverseChange).toHaveBeenCalledWith(true)
+  })
+
+  it("should mark the current choices pressed", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    renderHeader({
+      label: "Channels",
+      viewOptions: makeViewOptions({ filter: "unread", order: "joined", reverse: true }),
+    })
+    await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
+
+    const pressed = screen
+      .getAllByRole("button")
+      .filter((button) => button.getAttribute("aria-pressed") === "true")
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent)
+    expect(pressed).toEqual(["Unread", "Joined", "Reverse order"])
+  })
+
+  it("should offer no Show group when the section has no filter", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    renderHeader({
+      label: "Inbox",
+      viewOptions: makeViewOptions({
+        filter: undefined,
+        order: "arrival",
+        orderOptions: ["arrival", "activity", "name"],
+        defaultOrder: "arrival",
+      }),
+    })
+    await userEvent.click(screen.getByRole("button", { name: "Inbox view options" }))
+
+    expect(screen.queryByRole("group", { name: "Show" })).not.toBeInTheDocument()
+    expect(screen.getByRole("group", { name: "Order" })).toBeInTheDocument()
+  })
+
+  it("should offer no Order group when the order is fixed", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    renderHeader({
+      label: "Recent",
+      viewOptions: makeViewOptions({ order: "activity", orderOptions: [], defaultOrder: "activity" }),
+    })
+    await userEvent.click(screen.getByRole("button", { name: "Recent view options" }))
+
+    expect(screen.queryByRole("group", { name: "Order" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Reverse" })).toBeInTheDocument()
+  })
+
+  it("should close the strip on Escape from the opener", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
+    const opener = screen.getByRole("button", { name: "Channels view options" })
+    await userEvent.click(opener)
+
+    await userEvent.keyboard("{Escape}")
+
+    expect(screen.queryByRole("group", { name: "Channels view options" })).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+  })
+
+  it("should close the strip on Escape from inside it and return focus to the opener", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
+    const opener = screen.getByRole("button", { name: "Channels view options" })
+    await userEvent.click(opener)
+    await userEvent.click(screen.getByRole("button", { name: "Unread" }))
+
+    await userEvent.keyboard("{Escape}")
+
+    expect(screen.queryByRole("group", { name: "Channels view options" })).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+  })
+
+  it("should open a sheet of radio rows on mobile", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const viewOptions = makeViewOptions({ order: "activity" })
+    renderHeader({ label: "Channels", viewOptions })
+    await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
+
+    expect(screen.getByRole("radio", { name: "Latest activity" })).toHaveAttribute("aria-checked", "true")
+    // fireEvent, not userEvent: a real pointer sequence reaches vaul's drag
+    // handling, which reads a computed transform jsdom does not produce.
+    fireEvent.click(screen.getByRole("radio", { name: "A–Z" }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Reverse order" }))
+
+    expect(viewOptions.onOrderChange).toHaveBeenCalledWith("name")
+    expect(viewOptions.onReverseChange).toHaveBeenCalledWith(true)
+  })
+
+  it("should tint the opener when any option is off its default", () => {
+    renderHeader({ label: "Channels", viewOptions: makeViewOptions({ reverse: true }) })
+    expect(screen.getByRole("button", { name: "Channels view options" }).className).toContain("bg-primary/10")
+  })
+
+  it("should show the unread aggregate badge while expanded once filtered to unread", () => {
+    renderHeader({ label: "Channels", viewOptions: makeViewOptions({ filter: "unread" }), unreadAggregate: 3 })
     expect(screen.getByText("3")).toBeInTheDocument()
   })
 
-  it("hides the unread aggregate badge while expanded and unfiltered", () => {
+  it("should hide the unread aggregate badge while expanded and unfiltered", () => {
     renderHeader({ label: "Channels", unreadAggregate: 3 })
     expect(screen.queryByText("3")).not.toBeInTheDocument()
   })

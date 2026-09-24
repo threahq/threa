@@ -4,6 +4,7 @@ import type {
   SidebarSection,
   SidebarSectionSpec,
   SidebarSectionFilter,
+  SidebarSectionOrder,
   SidebarBasePreset,
   SidebarTypeSection,
   SidebarQuickLink,
@@ -16,6 +17,7 @@ import {
   DEFAULT_QUICK_LINKS,
   QUICK_LINKS_SECTION_ID,
   quickLinkHasActiveState,
+  defaultSectionOrder,
 } from "@threahq/types"
 import type { CollapseState } from "@/contexts"
 import { SMART_SECTIONS } from "./config"
@@ -262,6 +264,39 @@ export function setSectionFilter(
       return rest
     }
     return { ...section, filter }
+  })
+  return { ...config, sections }
+}
+
+/** Set a section's row order. The section's default is written as absent. */
+export function setSectionOrder(
+  config: SidebarConfig,
+  sectionId: string,
+  order: SidebarSectionOrder | null
+): SidebarConfig {
+  const current = config.sections.find((section) => section.id === sectionId)
+  if (!current) return config
+  const defaultOrder = defaultSectionOrder(current.spec)
+  if ((current.order ?? defaultOrder) === order) return config
+
+  const sections = config.sections.map((section) => {
+    if (section.id !== sectionId) return section
+    const { order: _drop, ...rest } = section
+    return order === null || order === defaultOrder ? rest : { ...rest, order }
+  })
+  return { ...config, sections }
+}
+
+/** Reverse a section's row order. Only `true` is written. */
+export function setSectionReverse(config: SidebarConfig, sectionId: string, reverse: boolean): SidebarConfig {
+  const current = config.sections.find((section) => section.id === sectionId)
+  if (!current) return config
+  if ((current.reverse ?? false) === reverse) return config
+
+  const sections = config.sections.map((section) => {
+    if (section.id !== sectionId) return section
+    const { reverse: _drop, ...rest } = section
+    return reverse ? { ...rest, reverse } : rest
   })
   return { ...config, sections }
 }
