@@ -1,18 +1,34 @@
 import { randomUUID } from "node:crypto"
 import { Sandbox, SandboxNotFoundError } from "railway"
 import { logger } from "../../lib/logger"
-import type { SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
+import {
+  BOX_API_BASE_URL,
+  BOX_API_KEY_PLACEHOLDER,
+  BOX_DIR,
+  CLI_WRAPPER,
+  buildBoxFiles,
+  type BoxFiles,
+} from "./box-files"
+import type { SandboxExecOptions, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
 
 /** Railway destroys a box nobody has run a command in for this long. */
 const IDLE_TIMEOUT_MINUTES = 10
-/** How long past the in-box deadline the client waits before giving up on the exec itself. */
+/** How long past the in-box deadline the client waits: covers the lock wait and the broker start. */
 const CLIENT_GRACE_SEC = 10
+const EXEC_LOCK = "/run/threa-exec.lock"
+const LOCK_WAIT_SEC = 5
+const COPY_TIMEOUT_SEC = 30
+const BROKER_START_SEC = 3
 const STAGING_DIR = "/run/threa-in"
 const COMMAND_ENV = "THREA_COMMAND"
 const STOP_DIR = "/run/threa-stop"
 const EXEC_ID_ENV = "THREA_EXEC_ID"
 const KILL_USER = "pkill -KILL -u sandbox"
+const VERSION_FILE = `${BOX_DIR}/version`
+// Root's `node` is a mise shim that reads version files from its cwd: an absolute path, started from /, keeps /work out of it.
+const BROKER = `/usr/local/bin/node ${BOX_DIR}/broker.js`
 const USER_ENV = "PATH=/work/.local/bin:/usr/local/bin:/usr/bin:/bin HOME=/work LANG=C.UTF-8"
+const API_ENV = `THREA_API_KEY=${BOX_API_KEY_PLACEHOLDER} THREA_WORKSPACE_ID="$THREA_WORKSPACE_ID" THREA_BASE_URL=${BOX_API_BASE_URL}`
 
 // Runs as root once per box. The image keeps python and node under root's
 // home, so their installs are bind-mounted out rather than opening /root.
@@ -28,6 +44,10 @@ function setupScript(internet: boolean): string {
     "chown sandbox:sandbox /work",
     `install -d -m 711 ${STAGING_DIR}`,
     `install -d -m 700 ${STOP_DIR}`,
+    `install -m 600 /dev/null ${EXEC_LOCK}`,
+    `install -d -m 755 ${BOX_DIR}`,
+    `printf '%s' '${CLI_WRAPPER}' > /usr/local/bin/threa`,
+    "chmod 755 /usr/local/bin/threa",
     "mount --bind /root/.local/share/mise/installs /opt/runtimes",
     'for b in python3 python pip3 node npm npx; do p=$(mise which "$b"); ln -sf "/opt/runtimes/${p#/root/.local/share/mise/installs/}" "/usr/local/bin/$b"; done',
   ]
@@ -41,25 +61,48 @@ function setupScript(internet: boolean): string {
   return lines.join("\n")
 }
 
+// One command at a time, under the lock. The command runs in its own PID
+// namespace, so when it returns the kernel kills everything it started:
+// nothing outlives the exec to run alongside a later one or reach the broker
+// with a later exec's token. `pkill -u sandbox` alone cannot promise that:
+// it misses a process that forks and exits faster than the scan, and `kill -1`
+// kills nothing on Railway. The pkill passes stay as a backstop. The broker
+// runs as root with the token in its environment only, which the sandbox user
+// cannot read.
+//
 // Root-side watchdog: past the deadline, or once the stop file for this exec
 // exists, it kills everything the user runs, every 200ms until the command
-// returns. `timeout` alone is not enough: the image's (uutils) kills only its
-// direct child, and anything else the command started keeps the output open.
-// Polling closes the race where a stop lands before the command has started.
-// Each stream is cut in the box and the rest drained, because the SDK buffers
-// all output in backend memory before returning.
-function asSandboxUser(timeoutSec: number, maxOutputBytes: number): string {
-  return [
+// returns. Killing the command's `timeout` ends the namespace; polling closes
+// the race where a stop lands before the command has started. Each stream is
+// cut in the box and the rest drained, because the SDK buffers all output in
+// backend memory before returning.
+function execScript(timeoutSec: number, maxOutputBytes: number, api: boolean): string {
+  const lines = [
+    `exec 9>${EXEC_LOCK}`,
+    `flock -w ${LOCK_WAIT_SEC} 9 || { echo "another command is still running in this sandbox" >&2; exit 125; }`,
+    KILL_USER,
+    `pkill -KILL -f "^${BROKER}"`,
+  ]
+  if (api) {
+    lines.push(
+      `exec 8< <(cd / && exec ${BROKER} 9>&- 2>/dev/null)`,
+      "broker=$!",
+      `read -t ${BROKER_START_SEC} -u 8 ready || { echo "the Threa API is unavailable in this sandbox" >&2; kill -KILL $broker; exit 125; }`,
+      "unset THREA_SANDBOX_TOKEN"
+    )
+  }
+  lines.push(
     `stop="${STOP_DIR}/$${EXEC_ID_ENV}"`,
     `deadline=$(( $(date +%s) + ${timeoutSec} ))`,
-    `( while :; do if [ -e "$stop" ] || [ $(date +%s) -ge $deadline ]; then ${KILL_USER}; fi; sleep 0.2; done ) >/dev/null 2>&1 &`,
+    `( while :; do if [ -e "$stop" ] || [ $(date +%s) -ge $deadline ]; then ${KILL_USER}; fi; sleep 0.2; done ) >/dev/null 2>&1 8<&- 9>&- &`,
     "watchdog=$!",
     `cap() { head -c ${maxOutputBytes + 1}; cat >/dev/null; }`,
-    `{ runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}" 2>&1 1>&3 3>&- | cap >&2; exit \${PIPESTATUS[0]}; } 3>&1 | cap`,
+    `{ unshare --pid --fork --kill-child -- runuser -u sandbox -- setpriv --no-new-privs env -i ${USER_ENV}${api ? ` ${API_ENV}` : ""} timeout -s KILL ${timeoutSec} sh -c "$${COMMAND_ENV}" 2>&1 1>&3 3>&- 8<&- 9>&- | cap >&2; exit \${PIPESTATUS[0]}; } 3>&1 | cap`,
     "status=${PIPESTATUS[0]}",
-    'kill $watchdog; rm -f "$stop"',
-    "exit $status",
-  ].join("\n")
+    `kill $watchdog; ${api ? "kill -KILL $broker; " : ""}${KILL_USER}; rm -f "$stop"`,
+    "exit $status"
+  )
+  return lines.join("\n")
 }
 
 function capOutput(stdout: string, stderr: string, maxBytes: number): { stdout: string; stderr: string; cut: boolean } {
@@ -75,6 +118,8 @@ export interface RailwaySandboxRunnerOptions {
   /** A project token scoped to the environment the boxes live in. */
   token: string
   environmentId: string
+  /** Threa's public origin, which the broker in each box calls. */
+  apiUrl: string
 }
 
 /**
@@ -85,9 +130,20 @@ export interface RailwaySandboxRunnerOptions {
 export class RailwaySandboxRunner implements SandboxRunner {
   readonly kind = "railway"
   private readonly auth: { token: string; authType: "project-token"; environmentId: string }
+  private readonly apiUrl: string
+  private boxFiles: Promise<BoxFiles> | null = null
 
   constructor(options: RailwaySandboxRunnerOptions) {
     this.auth = { token: options.token, authType: "project-token", environmentId: options.environmentId }
+    this.apiUrl = options.apiUrl
+  }
+
+  private files(): Promise<BoxFiles> {
+    this.boxFiles ??= buildBoxFiles().catch((error) => {
+      this.boxFiles = null
+      throw error
+    })
+    return this.boxFiles
   }
 
   private connect(sandboxId: string): Promise<Sandbox> {
@@ -95,6 +151,7 @@ export class RailwaySandboxRunner implements SandboxRunner {
   }
 
   async create(params: { internet: boolean; workspaceId: string; streamId: string }): Promise<string> {
+    const files = await this.files()
     const sandbox = await Sandbox.create({
       ...this.auth,
       idleTimeoutMinutes: IDLE_TIMEOUT_MINUTES,
@@ -105,6 +162,9 @@ export class RailwaySandboxRunner implements SandboxRunner {
       if (setup.exitCode !== 0) {
         throw new Error(`sandbox setup failed: ${(setup.stderr || setup.stdout).trim().slice(0, 400)}`)
       }
+      await sandbox.files.write(`${BOX_DIR}/threa.js`, files.cli, { mode: 0o644 })
+      await sandbox.files.write(`${BOX_DIR}/broker.js`, files.broker, { mode: 0o600 })
+      await sandbox.files.write(VERSION_FILE, new TextEncoder().encode(files.version), { mode: 0o644 })
     } catch (error) {
       await sandbox
         .destroy()
@@ -114,12 +174,20 @@ export class RailwaySandboxRunner implements SandboxRunner {
     return sandbox.id
   }
 
-  /** Runs a no-op command, because Railway counts only commands as use. */
+  /**
+   * Runs a command, because Railway counts only commands as use. A box whose
+   * CLI and broker another backend version installed is not reused.
+   */
   async alive(sandboxId: string): Promise<boolean> {
+    const { version } = await this.files()
     try {
       const sandbox = await this.connect(sandboxId)
       if (sandbox.status !== "RUNNING") return false
-      return (await sandbox.exec("true", { timeoutSec: 30 })).exitCode === 0
+      const check = await sandbox.exec(`grep -qxF "$VERSION" ${VERSION_FILE}`, {
+        timeoutSec: 30,
+        env: { VERSION: version },
+      })
+      return check.exitCode === 0
     } catch (error) {
       if (error instanceof SandboxNotFoundError) return false
       throw error
@@ -128,14 +196,22 @@ export class RailwaySandboxRunner implements SandboxRunner {
 
   // The upload lands as root in a staging dir only root can list, then
   // `sandbox` copies it into place, so a symlink the command left under /work
-  // cannot redirect a root write.
+  // cannot redirect a root write. The copy takes the exec lock, so it neither
+  // lands under a running command nor dies to that command's cleanup. A FIFO
+  // left at the target would block cp with the lock held, so the target is
+  // removed first and the copy has its own deadline.
   async writeFiles(sandboxId: string, files: SandboxFile[]): Promise<void> {
     const sandbox = await this.connect(sandboxId)
     for (const file of files) {
       const staged = `${STAGING_DIR}/${randomUUID()}`
       await sandbox.files.write(staged, file.data, { mode: 0o644 })
       const copy = await sandbox.exec(
-        `runuser -u sandbox -- sh -c 'mkdir -p "$(dirname "$2")" && cp "$1" "$2"' sh "$STAGED" "$TARGET"; status=$?; rm -f "$STAGED"; exit $status`,
+        [
+          `exec 9>${EXEC_LOCK}`,
+          `flock -w ${LOCK_WAIT_SEC} 9 || { rm -f "$STAGED"; echo "another command is still running in this sandbox" >&2; exit 125; }`,
+          `runuser -u sandbox -- timeout -s KILL ${COPY_TIMEOUT_SEC} sh -c 'mkdir -p "$(dirname "$2")" && rm -f -- "$2" && cp "$1" "$2"' sh "$STAGED" "$TARGET" 9>&-; status=$?`,
+          `rm -f "$STAGED"; exit $status`,
+        ].join("\n"),
         { timeoutSec: 60, env: { STAGED: staged, TARGET: file.path } }
       )
       if (copy.exitCode !== 0) {
@@ -144,18 +220,22 @@ export class RailwaySandboxRunner implements SandboxRunner {
     }
   }
 
-  async exec(
-    sandboxId: string,
-    command: string,
-    options: { timeoutSec: number; maxOutputBytes: number; signal?: AbortSignal }
-  ): Promise<SandboxExecResult> {
+  async exec(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
     const sandbox = await this.connect(sandboxId)
     const startedAt = Date.now()
     const execId = randomUUID()
-    const handle = sandbox.exec(asSandboxUser(options.timeoutSec, options.maxOutputBytes), {
+    const api = options.api ? await options.api() : null
+    const apiEnv: Record<string, string> = api
+      ? {
+          THREA_SANDBOX_TOKEN: api.token,
+          THREA_WORKSPACE_ID: api.workspaceId,
+          THREA_API_UPSTREAM: this.apiUrl,
+        }
+      : {}
+    const handle = sandbox.exec(execScript(options.timeoutSec, options.maxOutputBytes, api !== null), {
       cwd: "/work",
       timeoutSec: options.timeoutSec + CLIENT_GRACE_SEC,
-      env: { [COMMAND_ENV]: command, [EXEC_ID_ENV]: execId },
+      env: { [COMMAND_ENV]: command, [EXEC_ID_ENV]: execId, ...apiEnv },
     })
     // Neither closing the exec session nor `handle.kill` reaches the command:
     // `timeout` puts it in its own process group. The watchdog kills by user.

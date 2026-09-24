@@ -100,7 +100,25 @@ export interface MediaConvertConfig {
   enabled: boolean
 }
 
-export type SandboxRunnerConfig = { kind: "docker" } | { kind: "railway"; token: string; environmentId: string }
+export type SandboxRunnerConfig =
+  | { kind: "docker" }
+  | { kind: "railway"; token: string; environmentId: string; apiUrl: string }
+
+// The broker joins request paths onto this origin, so a path, query or
+// credentials here would change where every sandbox call lands.
+function parseSandboxApiUrl(value: string): string {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`SANDBOX_API_URL is not a URL: "${value}"`)
+  }
+  if (url.protocol !== "https:") throw new Error("SANDBOX_API_URL must be https")
+  if (url.pathname !== "/" || url.search || url.hash || url.username || url.password) {
+    throw new Error("SANDBOX_API_URL must be an origin, like https://app.threa.io")
+  }
+  return url.origin
+}
 
 function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null {
   const kind = env.SANDBOX_RUNNER
@@ -112,10 +130,14 @@ function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null 
   if (kind === "railway") {
     const token = env.SANDBOX_RAILWAY_TOKEN
     const environmentId = env.SANDBOX_RAILWAY_ENVIRONMENT_ID
-    if (!token || !environmentId) {
-      throw new Error("SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN and SANDBOX_RAILWAY_ENVIRONMENT_ID")
+    // Boxes are outside Threa's network: their API calls go to the public origin.
+    const apiUrl = env.SANDBOX_API_URL
+    if (!token || !environmentId || !apiUrl) {
+      throw new Error(
+        "SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN, SANDBOX_RAILWAY_ENVIRONMENT_ID and SANDBOX_API_URL"
+      )
     }
-    return { kind, token, environmentId }
+    return { kind, token, environmentId, apiUrl: parseSandboxApiUrl(apiUrl) }
   }
   throw new Error(`SANDBOX_RUNNER must be "docker", "railway" or unset, got "${kind}"`)
 }
