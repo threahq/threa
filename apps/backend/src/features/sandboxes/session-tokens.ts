@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "crypto"
 import type { Pool } from "pg"
+import type { Querier } from "../../db"
 import { sandboxSessionTokenId } from "../../lib/id"
 import { listAccessibleStreamIds } from "../streams"
 import { resolveUserAccessibleStreamIds, type SearchFilters } from "../search"
@@ -17,13 +18,7 @@ function hashToken(value: string): string {
   return createHash("sha256").update(value).digest("hex")
 }
 
-/**
- * Tokens for code in an agent's sandbox. A token reads what the agent could
- * read in the turn that minted it (`capturedStreamIds`), and only while the
- * invoking user still can: every read re-runs the canonical access predicate
- * for that user (INV-62), then drops E2EE-rooted streams, whose plaintext the
- * server never holds.
- */
+/** Tokens for code in an agent's sandbox, one per `run_command` exec. */
 export class SandboxSessionTokenService {
   private readonly pool: Pool
 
@@ -65,32 +60,42 @@ export class SandboxSessionTokenService {
   async revoke(workspaceId: string, id: string): Promise<void> {
     await SandboxSessionTokenRepository.revoke(this.pool, workspaceId, id)
   }
+}
 
-  async readableStreamIds(session: SandboxSession, filters: SearchFilters = {}): Promise<string[]> {
-    const captured = new Set(session.capturedStreamIds)
-    const userReadable = await resolveUserAccessibleStreamIds(
-      this.pool,
-      session.workspaceId,
-      session.invokingUserId,
-      filters
-    )
-    return this.withoutE2e(
-      session.workspaceId,
-      userReadable.filter((id) => captured.has(id))
-    )
-  }
+/**
+ * A sandbox token reads what the agent could read in the turn that minted it
+ * (`capturedStreamIds`), and only while the invoking user still can: every read
+ * re-runs the canonical access predicate for that user (INV-62), then drops
+ * E2EE-rooted streams, whose plaintext the server never holds.
+ */
+export async function sandboxReadableStreamIds(
+  db: Querier,
+  session: SandboxSession,
+  filters: SearchFilters = {}
+): Promise<string[]> {
+  const captured = new Set(session.capturedStreamIds)
+  const userReadable = await resolveUserAccessibleStreamIds(db, session.workspaceId, session.invokingUserId, filters)
+  return withoutE2e(
+    db,
+    session.workspaceId,
+    userReadable.filter((id) => captured.has(id))
+  )
+}
 
-  async isStreamReadable(session: SandboxSession, streamId: string): Promise<boolean> {
-    if (!session.capturedStreamIds.includes(streamId)) return false
-    const accessible = await listAccessibleStreamIds(this.pool, session.workspaceId, session.invokingUserId, [streamId])
-    if (!accessible.has(streamId)) return false
-    return (await this.withoutE2e(session.workspaceId, [streamId])).length === 1
-  }
+export async function isSandboxStreamReadable(
+  db: Querier,
+  session: SandboxSession,
+  streamId: string
+): Promise<boolean> {
+  if (!session.capturedStreamIds.includes(streamId)) return false
+  const accessible = await listAccessibleStreamIds(db, session.workspaceId, session.invokingUserId, [streamId])
+  if (!accessible.has(streamId)) return false
+  return (await withoutE2e(db, session.workspaceId, [streamId])).length === 1
+}
 
-  private withoutE2e(workspaceId: string, streamIds: string[]): Promise<string[]> {
-    return E2eStreamsRepository.excludeE2eRootedStreamIds(
-      this.pool,
-      streamIds.map((streamId) => ({ workspaceId, streamId }))
-    )
-  }
+function withoutE2e(db: Querier, workspaceId: string, streamIds: string[]): Promise<string[]> {
+  return E2eStreamsRepository.excludeE2eRootedStreamIds(
+    db,
+    streamIds.map((streamId) => ({ workspaceId, streamId }))
+  )
 }

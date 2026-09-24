@@ -17,7 +17,12 @@ import { addTestMember, setupTestDatabase, withTransaction } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
-import { SandboxSessionTokenService, type SandboxSession } from "../../src/features/sandboxes"
+import {
+  SandboxSessionTokenService,
+  isSandboxStreamReadable,
+  sandboxReadableStreamIds,
+  type SandboxSession,
+} from "../../src/features/sandboxes"
 import { messageId, personaId, sessionId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 describe("sandbox session tokens", () => {
@@ -107,23 +112,25 @@ describe("sandbox session tokens", () => {
     const validated = (await service.validate(value)) as SandboxSession
     expect(validated).toEqual(session)
 
-    expect(new Set(await service.readableStreamIds(validated))).toEqual(new Set([channel, nonMemberThread, revocable]))
-    expect(await service.isStreamReadable(validated, nonMemberThread)).toBe(true)
-    expect(await service.isStreamReadable(validated, otherDm)).toBe(false)
-    expect(await service.isStreamReadable(validated, uncaptured)).toBe(false)
-    expect(await service.isStreamReadable(validated, e2eRoot)).toBe(false)
-    expect(await service.isStreamReadable(validated, e2eThread)).toBe(false)
+    expect(new Set(await sandboxReadableStreamIds(pool, validated))).toEqual(
+      new Set([channel, nonMemberThread, revocable])
+    )
+    expect(await isSandboxStreamReadable(pool, validated, nonMemberThread)).toBe(true)
+    expect(await isSandboxStreamReadable(pool, validated, otherDm)).toBe(false)
+    expect(await isSandboxStreamReadable(pool, validated, uncaptured)).toBe(false)
+    expect(await isSandboxStreamReadable(pool, validated, e2eRoot)).toBe(false)
+    expect(await isSandboxStreamReadable(pool, validated, e2eThread)).toBe(false)
   })
 
   test("should drop a stream on the next call once the invoker loses access", async () => {
     const { value } = await mint([channel, revocable])
     const session = (await service.validate(value)) as SandboxSession
-    expect(await service.isStreamReadable(session, revocable)).toBe(true)
+    expect(await isSandboxStreamReadable(pool, session, revocable)).toBe(true)
 
     await StreamMemberRepository.delete(pool, revocable, invokerId)
 
-    expect(await service.isStreamReadable(session, revocable)).toBe(false)
-    expect(await service.readableStreamIds(session)).toEqual([channel])
+    expect(await isSandboxStreamReadable(pool, session, revocable)).toBe(false)
+    expect(await sandboxReadableStreamIds(pool, session)).toEqual([channel])
   })
 
   test("should stop validating once revoked or expired", async () => {
