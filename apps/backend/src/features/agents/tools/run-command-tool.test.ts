@@ -14,7 +14,7 @@ const attachment = {
   e2eOnly: false,
 }
 
-function setup(getAccessible: AttachmentService["getAccessible"], run?: RunCommandToolDeps["run"]) {
+function setup(getAccessible: AttachmentService["getAccessible"], run?: RunCommandToolDeps["run"], threaApi = false) {
   const sent: SandboxFile[][] = []
   const workspace = {
     workspaceId: "ws_1",
@@ -23,6 +23,7 @@ function setup(getAccessible: AttachmentService["getAccessible"], run?: RunComma
     attachmentService: { getAccessible },
   } as unknown as WorkspaceToolDeps
   const deps: RunCommandToolDeps = {
+    threaApi,
     internet: async () => run !== undefined,
     run:
       run ??
@@ -97,20 +98,50 @@ describe("run_command attachments", () => {
 })
 
 describe("bindStreamSandbox", () => {
+  const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
+
   function bind(params: {
     sealed: boolean
-    sandboxInternet: boolean
-    streamToolPolicy: ("web" | "workspace")[] | null
+    sandboxInternet?: boolean
+    streamToolPolicy?: ("web" | "workspace")[] | null
+    invokingUserId?: string | null
+    run?: SandboxService["run"]
   }) {
+    const calls: string[] = []
+    const runs: Parameters<SandboxService["run"]>[0][] = []
     const deps = bindStreamSandbox(
       {
-        service: {} as SandboxService,
-        workspaceSettings: { getSettings: async () => ({ sandboxInternet: params.sandboxInternet }) as never },
+        service: {
+          run: async (p: Parameters<SandboxService["run"]>[0]) => {
+            calls.push("run")
+            runs.push(p)
+            return (params.run ?? (async () => ok))(p)
+          },
+        } as SandboxService,
+        workspaceSettings: { getSettings: async () => ({ sandboxInternet: params.sandboxInternet ?? false }) as never },
+        sessionTokens: {
+          mint: async (p) => {
+            calls.push(`mint ttl=${p.ttlSec} captured=${p.capturedStreamIds.join(",")}`)
+            return { session: { id: "sbx_1" } as never, value: "threa_sk_1" }
+          },
+          revoke: async (_ws, id) => void calls.push(`revoke ${id}`),
+        },
       },
-      { workspaceId: "ws_1", streamId: "stream_1", sealed: params.sealed, streamToolPolicy: params.streamToolPolicy }
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        sealed: params.sealed,
+        streamToolPolicy: params.streamToolPolicy ?? null,
+        personaId: "persona_1",
+        sessionId: "session_1",
+        invokingUserId: params.invokingUserId === undefined ? "usr_1" : params.invokingUserId,
+        capturedStreamIds: ["stream_1", "stream_2"],
+      }
     )
-    return { deps }
+    return { deps, calls, runs }
   }
+
+  const params = { internet: false, command: "true", files: [], timeoutSec: 60 }
 
   test("withholds the sandbox on a sealed stream", () => {
     expect(bind({ sealed: true, sandboxInternet: true, streamToolPolicy: null }).deps).toBeUndefined()
@@ -129,6 +160,41 @@ describe("bindStreamSandbox", () => {
     }
 
     expect(internet).toEqual([true, false, false])
+  })
+
+  test("mints a token for the command's lifetime and revokes it when the command fails", async () => {
+    const { deps, calls, runs } = bind({
+      sealed: false,
+      run: async () => {
+        throw new Error("box gone")
+      },
+    })
+
+    await expect(deps!.run(params)).rejects.toThrow("box gone")
+    expect({ calls, api: runs[0]!.api }).toEqual({
+      calls: ["mint ttl=240 captured=stream_1,stream_2", "run", "revoke sbx_1"],
+      api: { token: "threa_sk_1", workspaceId: "ws_1" },
+    })
+  })
+
+  test("runs without a token when the turn has no invoking user", async () => {
+    const { deps, calls, runs } = bind({ sealed: false, invokingUserId: null })
+
+    await deps!.run(params)
+    expect({ threaApi: deps!.threaApi, calls, api: runs[0]!.api }).toEqual({
+      threaApi: false,
+      calls: ["run"],
+      api: undefined,
+    })
+  })
+})
+
+describe("run_command prompt", () => {
+  test("teaches the threa CLI only when commands can reach Threa", () => {
+    const teaches = (threaApi: boolean) =>
+      setup(async () => null, undefined, threaApi).tool.config.promptBlock!.includes("threa attachments upload")
+
+    expect([teaches(true), teaches(false)]).toEqual([true, false])
   })
 })
 
