@@ -205,6 +205,54 @@ describe("WorkosEventPollerLock", () => {
     expect(state!.locked_until).toBeNull()
   })
 
+  // refreshLock is timer-driven in production; calling it directly pins the interleaving.
+  function refresh(lock: WorkosEventPollerLock): Promise<void> {
+    return (lock as unknown as { refreshLock(): Promise<void> }).refreshLock()
+  }
+
+  test("a refresh landing after release does not report the lease lost", async () => {
+    let openGate!: () => void
+    const gate = new Promise<void>((resolve) => (openGate = resolve))
+    let holdNextQuery = false
+    const gatedPool = {
+      query: async (...args: Parameters<Pool["query"]>) => {
+        if (holdNextQuery) {
+          holdNextQuery = false
+          await gate
+        }
+        return pool.query(...args)
+      },
+    } as unknown as Pool
+    const lock = makeLock({ pool: gatedPool })
+    await lock.ensureRow()
+    expect(await lock.tryAcquire()).not.toBeNull()
+
+    holdNextQuery = true
+    const inFlight = refresh(lock)
+    await lock.release()
+    openGate()
+
+    await expect(inFlight).resolves.toBeUndefined()
+    const state = await getState()
+    expect({ lockRunId: state!.lock_run_id, lockedUntil: state!.locked_until }).toEqual({
+      lockRunId: null,
+      lockedUntil: null,
+    })
+  })
+
+  test("a refresh after another instance took the lease reports it lost", async () => {
+    const lock = makeLock()
+    await lock.ensureRow()
+    expect(await lock.tryAcquire()).not.toBeNull()
+
+    await pool.query(
+      "UPDATE workos_event_poller_state SET lock_run_id = 'other-run-id', locked_until = NOW() + INTERVAL '1 minute' WHERE name = $1",
+      [lockName]
+    )
+
+    await expect(refresh(lock)).rejects.toThrow(`Lost WorkOS event poller lease for ${lockName}`)
+  })
+
   test("release without holding the lock is a no-op", async () => {
     const lock = makeLock()
     await lock.ensureRow()
