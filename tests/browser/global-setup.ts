@@ -1,9 +1,10 @@
 /**
  * Global setup for browser E2E tests.
  *
- * Creates the test database (worktree-specific) and MinIO bucket before servers start.
+ * Creates the test database (worktree-specific) before servers start. The S3 bucket
+ * comes from the storage container's -bucket flag (docker-compose.test.yml).
  * Port allocation is handled in playwright.config.ts.
- * Uses docker exec to avoid needing pg/s3 modules at root level.
+ * Uses docker exec to avoid needing a pg module at root level.
  *
  * Local: Uses docker-compose.test.yml (ports 5455/9002) to avoid dev conflicts
  * CI: Uses GitHub Actions services (ports 5454/9000)
@@ -13,7 +14,6 @@ import * as path from "path"
 
 const isCI = !!process.env.CI
 
-const MINIO_BUCKET = "threa-browser-test"
 const DB_PORT = isCI ? 5454 : 5455
 const MINIO_PORT = isCI ? 9000 : 9002
 
@@ -175,34 +175,6 @@ async function ensureTestDatabase(dbName: string, container: string): Promise<vo
   }
 }
 
-async function ensureMinioBucket(container: string): Promise<void> {
-  try {
-    // Set up mc alias to point to the local minio server (inside the container, localhost:9000 is where minio listens)
-    execSync(`docker exec ${container} mc alias set local http://localhost:9000 minioadmin minioadmin`, {
-      encoding: "utf-8",
-    })
-
-    // Check if bucket exists using mc (MinIO client) inside the container
-    const result = execSync(`docker exec ${container} mc ls local/${MINIO_BUCKET} 2>&1 || true`, {
-      encoding: "utf-8",
-    })
-
-    if (result.includes("does not exist")) {
-      console.log(`Creating MinIO bucket: ${MINIO_BUCKET}`)
-      execSync(`docker exec ${container} mc mb local/${MINIO_BUCKET}`, { encoding: "utf-8" })
-    } else {
-      console.log(`MinIO bucket exists: ${MINIO_BUCKET}`)
-    }
-  } catch (error) {
-    // Bucket might already exist
-    if (String(error).includes("already") || String(error).includes("exists")) {
-      console.log(`MinIO bucket already exists: ${MINIO_BUCKET}`)
-    } else {
-      throw error
-    }
-  }
-}
-
 export default async function globalSetup(): Promise<void> {
   console.log("\n=== Browser E2E Global Setup ===\n")
 
@@ -229,7 +201,6 @@ export default async function globalSetup(): Promise<void> {
     await waitForPostgresReady(containers.postgres)
     await ensureTestDatabase(dbName, containers.postgres)
     await ensureTestDatabase(`${dbName}_cp`, containers.postgres)
-    await ensureMinioBucket(containers.minio)
   }
 
   console.log("=== Setup Complete ===\n")

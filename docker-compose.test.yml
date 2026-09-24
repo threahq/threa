@@ -3,8 +3,8 @@
 #
 # Ports are intentionally different from docker-compose.yml to allow parallel execution:
 # - Postgres: 5455 (dev uses 5454)
-# - MinIO API: 9002 (dev uses 9000)
-# - MinIO Console: 9003 (dev uses 9001)
+# - S3 (SeaweedFS): 9002 (dev uses 9099)
+# - SeaweedFS admin UI: 9003 (dev uses 9001)
 
 services:
   postgres-test:
@@ -31,22 +31,22 @@ services:
       retries: 10
 
   minio-test:
-    image: quay.io/minio/minio:latest
+    image: chrislusf/seaweedfs:4.47
     ports:
       - "9002:9000"
       - "9003:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    command: server /data --console-address ":9001"
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    command: mini -dir=/data -s3.port=9000 -admin.port=9001 -bucket=threa-test-uploads,threa-browser-test
     volumes:
-      - minio_test_data:/data
+      - seaweedfs_test_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:9000/healthz"]
       interval: 5s
       timeout: 5s
       retries: 5
 
 volumes:
   postgres_test_data:
-  minio_test_data:
+  seaweedfs_test_data:
