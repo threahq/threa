@@ -1105,7 +1105,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ],
     parameters: [workspaceIdParam, attachmentIdParam],
     responseSchema: z.string(),
-    responseContentType: "application/octet-stream",
+    responseContentType: "*/*",
     canReturn404: true,
   },
 

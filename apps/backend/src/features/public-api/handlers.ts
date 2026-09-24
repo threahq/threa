@@ -2973,9 +2973,12 @@ export function createPublicApiHandlers({
       res.set("Content-Type", attachment.mimeType)
       res.set("Content-Disposition", buildContentDisposition(attachment.filename))
       res.set("X-Content-Type-Options", "nosniff")
+      res.set("Content-Security-Policy", "sandbox")
       res.set("Cache-Control", "private, no-store")
       if (object.contentLength !== undefined) res.set("Content-Length", String(object.contentLength))
 
+      // pipe() leaves the storage stream open when the client goes away, holding a storage socket.
+      res.on("close", () => object.stream.destroy())
       object.stream.on("error", (err) => {
         if (!res.headersSent) {
           res.status(500).end()

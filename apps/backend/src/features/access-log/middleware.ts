@@ -33,6 +33,8 @@ interface Identity {
   actorType: ActorType
   actorId: string
   authRef: string | null
+  onBehalfOfUserId?: string
+  detail?: Record<string, unknown>
 }
 
 function resolveIdentity(req: Request): Identity | null {
@@ -43,7 +45,14 @@ function resolveIdentity(req: Request): Identity | null {
     return { actorType: "bot", actorId: req.botApiKey.botId, authRef: req.botApiKey.id }
   }
   if (req.sandboxSession) {
-    return { actorType: "persona", actorId: req.sandboxSession.personaId, authRef: req.sandboxSession.id }
+    // The token row is deleted a day after expiry; the row itself must say whose access was used.
+    return {
+      actorType: "persona",
+      actorId: req.sandboxSession.personaId,
+      authRef: req.sandboxSession.id,
+      onBehalfOfUserId: req.sandboxSession.invokingUserId,
+      detail: { sessionId: req.sandboxSession.sessionId },
+    }
   }
   if (req.userApiKey) {
     return { actorType: "user", actorId: req.userApiKey.userId, authRef: req.userApiKey.id }
@@ -77,8 +86,13 @@ function outcomeFromStatus(status: number): AccessOutcome {
  * to tell). A status code is content-free, so the design's no-content rule
  * (§5) is untouched.
  */
-function buildDetail(aborted: boolean, outcome: AccessOutcome, status: number): Record<string, unknown> | null {
-  const detail: Record<string, unknown> = {}
+function buildDetail(
+  aborted: boolean,
+  outcome: AccessOutcome,
+  status: number,
+  identity: Identity | null
+): Record<string, unknown> | null {
+  const detail: Record<string, unknown> = { ...identity?.detail }
   if (aborted) detail.aborted = true
   if (outcome !== "success") detail.status = status
   return Object.keys(detail).length > 0 ? detail : null
@@ -134,13 +148,14 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
           actorType: identity?.actorType ?? "user",
           actorId: identity?.actorId ?? "unknown",
           authRef: identity?.authRef ?? null,
+          onBehalfOfUserId: identity?.onBehalfOfUserId ?? null,
           operation,
           accessKind: kind,
           outcome,
           subjects:
             readAuditSubjects(res) ??
             (outcome === "denied" && routeParamRefs.length > 0 ? capSubjects(routeParamRefs) : null),
-          detail: buildDetail(aborted, outcome, res.statusCode),
+          detail: buildDetail(aborted, outcome, res.statusCode, identity),
           ip: req.ip ?? null,
           userAgent: req.headers["user-agent"] ?? null,
           requestId: (req as Request & { id?: string }).id ?? null,
@@ -176,11 +191,12 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
         actorType: identity?.actorType ?? "user",
         actorId: identity?.actorId ?? "unknown",
         authRef: identity?.authRef ?? null,
+        onBehalfOfUserId: identity?.onBehalfOfUserId ?? null,
         operation: "auth.boundary_denied",
         accessKind: req.method === "GET" ? "read" : "write",
         outcome,
         subjects: workspaceId ? [{ type: "workspace", id: workspaceId }] : null,
-        detail: buildDetail(aborted, outcome, res.statusCode),
+        detail: buildDetail(aborted, outcome, res.statusCode, identity),
         ip: req.ip ?? null,
         userAgent: req.headers["user-agent"] ?? null,
         requestId: (req as Request & { id?: string }).id ?? null,

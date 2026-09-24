@@ -10,7 +10,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { SandboxSessionTokenService } from "../../src/features/sandboxes"
 import { personaId, sessionId } from "../../src/lib/id"
-import { TestClient, createChannel, createWorkspace, loginAs, sendMessage } from "../client"
+import {
+  TestClient,
+  createChannel,
+  createWorkspace,
+  loginAs,
+  sendMessage,
+  sendMessageWithAttachments,
+  uploadAttachment,
+} from "../client"
 import { createTestPool } from "../integration/setup"
 
 const testRunId = Math.random().toString(36).slice(2)
@@ -37,6 +45,7 @@ describe("Public API v1 — sandbox tokens", () => {
   let workspaceId: string
   let capturedId: string
   let uncapturedId: string
+  let uncapturedAttachmentId: string
   let persona: string
   let token: string
   let tokenId: string
@@ -62,6 +71,13 @@ describe("Public API v1 — sandbox tokens", () => {
     uncapturedId = uncaptured.id
     await sendMessage(client, workspaceId, capturedId, `captured ${testRunId}`)
     await sendMessage(client, workspaceId, uncapturedId, `uncaptured ${testRunId}`)
+    const outside = await uploadAttachment(client, workspaceId, {
+      content: `secret,${testRunId}`,
+      filename: `outside-${testRunId}.csv`,
+      mimeType: "text/csv",
+    })
+    await sendMessageWithAttachments(client, workspaceId, uncapturedId, `attached ${testRunId}`, [outside.id])
+    uncapturedAttachmentId = outside.id
 
     const { data } = await client.get<{ data: { users: Array<{ id: string; workosUserId: string }> } }>(
       `/api/workspaces/${workspaceId}/bootstrap`
@@ -130,19 +146,31 @@ describe("Public API v1 — sandbox tokens", () => {
       signedUrl: signedUrl.status,
       download: download.status,
       contentType: download.headers.get("content-type"),
+      csp: download.headers.get("content-security-policy"),
       body: await download.text(),
     }).toEqual({
       row: { stream_id: capturedId, uploaded_by: persona, message_id: null },
       signedUrl: 404,
       download: 200,
       contentType: expect.stringContaining("text/csv"),
+      csp: "sandbox",
       body: content,
     })
   })
 
+  test("should 404 an attachment in a stream the turn did not capture", async () => {
+    const base = `/api/v1/workspaces/${workspaceId}/attachments/${uncapturedAttachmentId}`
+    const [metadata, content] = await Promise.all([api(base, token), api(`${base}/content`, token)])
+
+    expect([metadata.status, content.status]).toEqual([404, 404])
+  })
+
   test("should refuse an e2e upload", async () => {
     const res = await upload(workspaceId, token, "ciphertext", { e2e: "true" })
-    expect(res.status).toBe(400)
+    expect({ status: res.status, code: ((await res.json()) as { code: string }).code }).toEqual({
+      status: 400,
+      code: "E2E_UPLOAD_UNSUPPORTED",
+    })
   })
 
   test("should stop answering once the token is revoked", async () => {

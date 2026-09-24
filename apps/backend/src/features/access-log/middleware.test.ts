@@ -83,6 +83,38 @@ describe("audit() denied-row forensics", () => {
   })
 })
 
+describe("audit() sandbox rows", () => {
+  it("names the persona, the user whose access it used, and the agent session", async () => {
+    const { service, rows } = recordingService()
+    const audit = createAuditMiddleware(service)
+    const app = express()
+    app.post(
+      "/api/workspaces/:workspaceId/streams",
+      (req, _res, next) => {
+        req.sandboxSession = {
+          id: "sst_1",
+          personaId: "persona_1",
+          invokingUserId: "usr_1",
+          sessionId: "session_1",
+        } as NonNullable<express.Request["sandboxSession"]>
+        next()
+      },
+      audit("public_api.listStreams", "read"),
+      (_req, res) => void res.status(200).json({ ok: true })
+    )
+
+    await requestAndAwaitRow(app, "/api/workspaces/ws_1/streams", rows)
+
+    expect(rows[0]).toMatchObject({
+      actorType: "persona",
+      actorId: "persona_1",
+      authRef: "sst_1",
+      onBehalfOfUserId: "usr_1",
+      detail: { sessionId: "session_1" },
+    })
+  })
+})
+
 describe("audit() handler-declared no-op skip", () => {
   it("skips the row when a 2xx handler sets auditSkip (empty poll)", async () => {
     const { service, rows } = recordingService()

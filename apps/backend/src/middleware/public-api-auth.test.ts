@@ -303,7 +303,9 @@ describe("sandbox tokens", () => {
     expiresAt: new Date(Date.now() + 60_000),
   }
 
-  function sandboxMiddleware(permissions: string[] | null) {
+  const invokerRow = { id: "user_1", workspace_id: "ws_1", workos_user_id: "wos_1", role: "member" }
+
+  function sandboxMiddleware(permissions: string[] | null, userRows: unknown[] = [invokerRow]) {
     return createPublicApiAuthMiddleware({
       userApiKeyService: { validateKey: async () => null } as any,
       botApiKeyService: { validateKey: async () => null } as any,
@@ -312,10 +314,7 @@ describe("sandbox tokens", () => {
       } as any,
       workspaceAuthzService: { resolveActivePermissions: async () => permissions } as any,
       pool: {
-        query: async () => ({
-          rows: [{ id: "user_1", workspace_id: "ws_1", workos_user_id: "wos_1", role: "member" }],
-          rowCount: 1,
-        }),
+        query: async () => ({ rows: userRows, rowCount: userRows.length }),
       } as any,
     })
   }
@@ -336,14 +335,20 @@ describe("sandbox tokens", () => {
     })
   })
 
-  test("should reject an unknown token, another workspace, and an inactive invoker", async () => {
+  test("should reject an unknown token, another workspace, an inactive invoker, and a removed one", async () => {
     const results = await Promise.all([
       runMiddleware(sandboxMiddleware(["messages:read"]), sandboxReq("threa_sk_revoked")),
       runMiddleware(sandboxMiddleware(["messages:read"]), sandboxReq("threa_sk_live", "ws_2")),
       runMiddleware(sandboxMiddleware(null), sandboxReq("threa_sk_live")),
+      runMiddleware(sandboxMiddleware(["messages:read"], []), sandboxReq("threa_sk_live")),
     ])
 
-    expect(results.map((r) => r.error?.status)).toEqual([401, 403, 401])
+    expect(results.map((r) => ({ status: r.error?.status, code: r.error?.code }))).toEqual([
+      { status: 401, code: "UNAUTHORIZED" },
+      { status: 403, code: "FORBIDDEN" },
+      { status: 401, code: "OWNER_INACTIVE" },
+      { status: 401, code: "OWNER_INACTIVE" },
+    ])
   })
 
   test("should 404 operations outside the sandbox allowlist and pass everything else through", () => {

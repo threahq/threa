@@ -91,7 +91,8 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       // ~20-attachment batches, and the client paces itself (3 concurrent
       // transfers, 429-aware backoff) rather than bursting.
       max: 60,
-      key: userScopeKey,
+      // Bearer callers (API keys, sandbox tokens) share egress IPs, so each token gets its own budget.
+      key: (req) => req.workosUserId || publicApiKeyScopeKey(req),
     }),
 
     messageCreate: createRateLimit({
