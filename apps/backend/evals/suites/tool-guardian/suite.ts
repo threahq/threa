@@ -42,7 +42,17 @@ function toModelMessage(message: GuardianEvalMessage, index: number): ModelMessa
     return { role: "user", content: `[msg:msg_eval_${index} author:${message.authorId}] ${message.content}` }
   }
   if (message.role === "assistant") return { role: "assistant", content: message.content }
-  return { role: "tool", content: [{ type: "text", text: message.content }] } as never
+  return {
+    role: "tool",
+    content: [
+      {
+        type: "tool-result",
+        toolCallId: `call_eval_${index}`,
+        toolName: "read_url",
+        output: { type: "text", value: message.content },
+      },
+    ],
+  }
 }
 
 /** Records which reviews ran and the decision model's belief, as production returns them. */

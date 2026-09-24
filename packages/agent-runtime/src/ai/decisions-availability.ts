@@ -25,19 +25,13 @@ export class DecisionsAvailability {
   }
 
   /**
-   * A 4xx other than a timeout or rate limit is the endpoint refusing this one
-   * request, not the endpoint being down, so it holds nobody else off.
-   * Measured: its upstream WAF answers 403 to payloads like `cat /etc/passwd`,
-   * which is ordinary input for the sandbox guardian.
+   * A refused request is the endpoint turning away this one payload, not the
+   * endpoint being down, so it holds nobody else off. Measured: its upstream
+   * WAF answers 403 to payloads like `cat /etc/passwd`, which is ordinary input
+   * for the sandbox guardian.
    */
   recordFailure(error: unknown): void {
-    const requestRejected =
-      error instanceof DecisionsRequestError &&
-      error.status >= 400 &&
-      error.status < 500 &&
-      error.status !== 408 &&
-      error.status !== 429
-    if (requestRejected) return
+    if (error instanceof DecisionsRequestError && error.refusedContent) return
     const wasAvailable = this.isAvailable
     this.downUntil = Date.now() + this.cooldownMs
     if (wasAvailable) {

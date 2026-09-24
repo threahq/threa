@@ -73,7 +73,7 @@ const scoreAnswerSchema = z.object({
  */
 const noulAnswerSchema = z.object({
   type: z.literal("noul"),
-  noul: z.number(),
+  noul: z.number().min(0).max(1),
 })
 
 const answerSchema = z.discriminatedUnion("type", [choiceAnswerSchema, scoreAnswerSchema, noulAnswerSchema])
@@ -154,7 +154,10 @@ function parseJson(raw: string): unknown {
  */
 export const DECISIONS_TIMEOUT_MS = 20_000
 
-/** A non-2xx from the decisions endpoint; the status says whether the endpoint or the request is at fault. */
+// Statuses that turn away this request's content (a filter upstream of the
+// model, an oversized or malformed body) while the endpoint stays up.
+const CONTENT_REFUSALS = new Set([400, 403, 413, 422])
+
 export class DecisionsRequestError extends Error {
   constructor(
     readonly status: number,
@@ -162,6 +165,10 @@ export class DecisionsRequestError extends Error {
   ) {
     super(`Decisions request failed (${status}): ${body.slice(0, 500)}`)
     this.name = "DecisionsRequestError"
+  }
+
+  get refusedContent(): boolean {
+    return CONTENT_REFUSALS.has(this.status)
   }
 }
 

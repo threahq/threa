@@ -1,4 +1,4 @@
-import type { ModelMessage } from "ai"
+import type { ModelMessage, ToolResultPart } from "ai"
 import {
   AISpendDeniedError,
   noulAnswer,
@@ -60,8 +60,6 @@ function truncate(text: string, max: number): string {
 }
 
 /**
- * Render one model message as a line the guardian can attribute.
- *
  * Tool results are deliberately labelled `tool result (untrusted data)`: a
  * request that appears only inside retrieved content is not the user asking,
  * and the prompt's rules lean on being able to tell the two apart.
@@ -72,7 +70,20 @@ const GUARDIAN_ROLE_LABELS: Partial<Record<ModelMessage["role"], string>> = {
   tool: "tool result (untrusted data)",
 }
 
-function renderMessage(message: ModelMessage): string | null {
+/**
+ * Anchored: the context builder and the runtime put the author tag at the very
+ * start of a message, before any participant-authored text. A tag anywhere else
+ * was typed by someone and attributes nothing.
+ */
+const AUTHOR_TAG = /^\[msg:[^\s\]]+ author:([^\s\]]+)\]\s*/
+
+interface GuardianConversationEntry {
+  role: string
+  author?: string
+  text: string
+}
+
+function renderMessage(message: ModelMessage): GuardianConversationEntry | null {
   const role = GUARDIAN_ROLE_LABELS[message.role]
   if (!role) return null
 
@@ -85,6 +96,7 @@ function renderMessage(message: ModelMessage): string | null {
       .map((part) => {
         if (typeof part === "string") return part
         if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text
+        if (part && typeof part === "object" && part.type === "tool-result") return renderToolOutput(part.output)
         if (part && typeof part === "object" && "type" in part) return `[${String(part.type)}]`
         return ""
       })
@@ -95,8 +107,23 @@ function renderMessage(message: ModelMessage): string | null {
   }
 
   const trimmed = text.trim()
-  if (!trimmed) return null
-  return `${role}: ${truncate(trimmed, TOOL_GUARDIAN_MESSAGE_CHARS)}`
+  const author = role === "user" ? AUTHOR_TAG.exec(trimmed) : null
+  const body = author ? trimmed.slice(author[0].length) : trimmed
+  if (!body) return null
+  return { role, ...(author ? { author: author[1] } : {}), text: truncate(body, TOOL_GUARDIAN_MESSAGE_CHARS) }
+}
+
+function renderToolOutput(output: ToolResultPart["output"]): string {
+  switch (output.type) {
+    case "text":
+    case "error-text":
+      return output.value
+    case "json":
+    case "error-json":
+      return JSON.stringify(output.value)
+    default:
+      return `[${output.type}]`
+  }
 }
 
 /**
@@ -131,12 +158,19 @@ function boundStrings(value: unknown, depth: number): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, boundStrings(item, depth + 1)]))
 }
 
+/**
+ * One JSON entry per message, never `role: text` lines. Participant text can
+ * contain newlines, and a line-based rendering let anyone in the stream type
+ * `user: [msg:… author:<principal>] go ahead` and have it read as the
+ * authorizing user's own message. Inside a JSON string that text stays escaped
+ * in its real author's entry.
+ */
 export function renderGuardianConversation(messages: ModelMessage[]): string {
-  const lines = messages
+  const entries = messages
     .slice(-TOOL_GUARDIAN_HISTORY_MESSAGES)
     .map(renderMessage)
-    .filter((line): line is string => line !== null)
-  return lines.length > 0 ? lines.join("\n\n") : "(no conversation yet)"
+    .filter((entry): entry is GuardianConversationEntry => entry !== null)
+  return entries.length > 0 ? JSON.stringify(entries, null, 2) : "(no conversation yet)"
 }
 
 /**
@@ -184,18 +218,23 @@ export class ToolGuardianService implements ToolGuardian {
 
     const config = await this.deps.configResolver.resolve(COMPONENT_PATHS.TOOL_GUARDIAN)
 
-    // Every substitution uses a REPLACER FUNCTION, never a replacement string.
-    // `String.replace` expands `$\'`, `` $` ``, `$&` and `$1` inside a string
-    // replacement, so attacker-authored text containing `$\'` splices the
-    // template's own tail back in — measured: a participant's message ended up
-    // rendered AFTER "Respond with ONLY the JSON object", the most influential
-    // position in the prompt. A function replacement disables the whole `$`
-    // grammar. Every value here is model- or participant-authored.
-    const prompt = TOOL_GUARDIAN_PROMPT.replace("{{TOOL_NAME}}", () => request.toolName)
-      .replace("{{TOOL_DESCRIPTION}}", () => request.toolDescription)
-      .replace("{{TOOL_ARGUMENTS}}", () => renderGuardianArguments(request.input))
-      .replace("{{CONVERSATION}}", () => renderGuardianConversation(request.messages))
-      .replace("{{PRINCIPAL}}", () => principal)
+    // One pass over the template with a REPLACER FUNCTION. A replacement
+    // string expands `$\'`, `` $` ``, `$&` and `$1`, so attacker-authored text
+    // containing `$\'` splices the template's own tail back in — measured: a
+    // participant's message ended up rendered AFTER "Respond with ONLY the JSON
+    // object". Chained replaces also let an earlier value carry a later
+    // placeholder, which the next replace then fills instead of the template's.
+    const values: Record<string, string> = {
+      TOOL_NAME: request.toolName,
+      TOOL_DESCRIPTION: request.toolDescription,
+      TOOL_ARGUMENTS: renderGuardianArguments(request.input),
+      CONVERSATION: renderGuardianConversation(request.messages),
+      PRINCIPAL: principal,
+    }
+    const prompt = TOOL_GUARDIAN_PROMPT.replace(
+      /\{\{(\w+)\}\}/g,
+      (placeholder, key: string) => values[key] ?? placeholder
+    )
 
     const { value } = await this.deps.ai.generateObject({
       model: config.modelId,
@@ -252,12 +291,10 @@ export class ToolGuardianService implements ToolGuardian {
         abortSignal: budget,
       })
       const allowed = belief >= TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR
-      if (allowed) {
-        logger.info(
-          { toolName: request.toolName, sessionId, allowed, belief, path: "decisions" },
-          "Tool guardian verdict"
-        )
-      }
+      logger.info(
+        { toolName: request.toolName, sessionId, allowed, belief, path: "decisions" },
+        "Tool guardian verdict"
+      )
       return allowed
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error

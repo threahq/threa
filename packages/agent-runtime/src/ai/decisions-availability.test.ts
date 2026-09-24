@@ -30,4 +30,12 @@ describe("DecisionsAvailability", () => {
       afterRateLimit: false,
     })
   })
+
+  it("holds callers off when every request would fail, like a revoked key", () => {
+    const availability = new DecisionsAvailability()
+
+    availability.recordFailure(new DecisionsRequestError(401, "unauthorized"))
+
+    expect(availability.isAvailable).toBe(false)
+  })
 })
