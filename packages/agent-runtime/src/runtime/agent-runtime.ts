@@ -1,6 +1,16 @@
 import type { LanguageModel, ModelMessage, Tool, ToolResultPart } from "ai"
 import type { SourceItem, TraceSource } from "@threahq/types"
-import { AgentToolNames, ToolVerificationStatuses, requiresGuardianReview, resolveToolEffects } from "@threahq/types"
+import {
+  AGENT_TOOL_NAMES,
+  AgentToolNames,
+  TOOL_CATEGORIES_BY_NAME,
+  ToolPrivacyCategories,
+  ToolVerificationStatuses,
+  requiresGuardianReview,
+  resolveToolEffects,
+  toolMutates,
+  type AgentToolName,
+} from "@threahq/types"
 import { AISpendDeniedError, type AI, type CostContext, type TelemetryMetadataValue } from "../ai/ai"
 import { logger } from "../logger"
 import { protectToolOutputText, untrustedMediaNote } from "./tool-trust-boundary"
@@ -243,6 +253,26 @@ function denialResult(toolName: string, reason: string): Record<string, unknown>
     whatToDoNext:
       "Do NOT call this tool again in this turn. Tell the user plainly what you were about to do, with the specific values, say why you wanted to do it, and ask them to confirm. If they confirm, you may act on their answer.",
   }
+}
+
+const MAX_PARALLEL_READS = 4
+
+interface ToolCallOutcome {
+  resultPart: ToolResultPart
+  extraMessage?: ModelMessage
+  sources?: SourceItem[]
+  systemContext?: string
+}
+
+/**
+ * A registered tool that writes nothing and posts nothing, so it can run
+ * alongside others. Host-local tools are left out: nothing registers what
+ * they touch.
+ */
+function readsOnly(toolName: string): boolean {
+  if (!(AGENT_TOOL_NAMES as readonly string[]).includes(toolName)) return false
+  const categories: readonly string[] = TOOL_CATEGORIES_BY_NAME[toolName as AgentToolName]
+  return !toolMutates(toolName) && !categories.includes(ToolPrivacyCategories.MESSAGING)
 }
 
 function makeToolResult(tc: { toolCallId: string; toolName: string }, value: string): ToolResultPart {
@@ -851,160 +881,31 @@ export class AgentRuntime {
     const earlyCalls = agentToolCalls.filter((tc) => this.toolMap.get(tc.toolName)?.config.executionPhase === "early")
     const normalCalls = agentToolCalls.filter((tc) => this.toolMap.get(tc.toolName)?.config.executionPhase !== "early")
 
-    for (const tc of [...earlyCalls, ...normalCalls]) {
-      const agentTool = this.toolMap.get(tc.toolName)
-      if (!agentTool) {
-        await this.emit({
-          type: "tool:error",
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          error: `Unknown tool: ${tc.toolName}`,
-          durationMs: 0,
-        })
-        resultParts.push(makeToolResult(tc, JSON.stringify({ error: `Unknown tool: ${tc.toolName}` })))
-        continue
+    // Reads next to each other run at once; anything that writes or posts runs
+    // alone, so it still sees every call the model placed before it.
+    const ordered = [...earlyCalls, ...normalCalls]
+    const outcomes: ToolCallOutcome[] = []
+    for (let from = 0; from < ordered.length; ) {
+      let to = from + 1
+      if (readsOnly(ordered[from]!.toolName)) {
+        while (to < ordered.length && to - from < MAX_PARALLEL_READS && readsOnly(ordered[to]!.toolName)) to++
       }
-
-      // Validate against the tool's OWN schema before anything else runs.
-      //
-      // `generateTextWithTools` hands back whatever the provider produced as the
-      // call's arguments (`input: tc.input`, typed `unknown`); nothing between
-      // the model and here re-checks it. Every tool was therefore trusting an
-      // upstream validator it cannot see — and for a guarded tool that means
-      // the guardian reviews one object while `execute` receives another, and a
-      // write tool's allowlist is enforced by hope. Doing it here fixes every
-      // tool at once instead of leaving each one to remember.
-      const validated = agentTool.config.inputSchema.safeParse(tc.input)
-      if (!validated.success) {
-        const detail = validated.error.issues
-          .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-          .join("; ")
-        await this.emit({
-          type: "tool:error",
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          error: `Invalid arguments: ${detail}`,
-          durationMs: 0,
-        })
-        resultParts.push(
-          makeToolResult(
-            tc,
-            JSON.stringify({
-              error: `Those arguments don't match ${tc.toolName}'s schema: ${detail}. Fix them and call it again.`,
-            })
-          )
-        )
-        continue
+      // Every call in the batch finishes, and closes its trace step, before a
+      // failure ends the turn.
+      const settled = await Promise.allSettled(ordered.slice(from, to).map((tc) => this.runToolCall(tc, conversation)))
+      for (const result of settled) {
+        if (result.status === "rejected") throw result.reason
+        outcomes.push(result.value)
       }
-      const toolInput = validated.data
+      from = to
+    }
 
-      const stepType = agentTool.config.trace.stepType
-      await this.emit({
-        type: "tool:start",
-        toolCallId: tc.toolCallId,
-        toolName: tc.toolName,
-        stepType,
-        input: tc.input,
-        hidden: agentTool.config.trace.hidden,
-      })
-      const startTime = Date.now()
-
-      if (requiresGuardianReview(tierOfBuiltTool(agentTool))) {
-        const verdict = await this.reviewGuardedCall(agentTool, { ...tc, input: toolInput }, conversation)
-        if (!verdict.allowed) {
-          resultParts.push(makeToolResult(tc, JSON.stringify(denialResult(tc.toolName, verdict.reason))))
-          continue
-        }
-      }
-
-      try {
-        const onProgress = (substep: string) => {
-          // Fire-and-forget: don't back-pressure the tool with observer latency.
-          void this.emit({
-            type: "tool:progress",
-            toolCallId: tc.toolCallId,
-            toolName: tc.toolName,
-            stepType,
-            substep,
-          })
-        }
-        const signal = this.config.toolSignalProvider?.(tc.toolCallId, tc.toolName)
-
-        const toolResult = await agentTool.config.execute(toolInput as any, {
-          toolCallId: tc.toolCallId,
-          onProgress,
-          signal,
-        })
-        const durationMs = Date.now() - startTime
-
-        if (toolResult.sources && toolResult.sources.length > 0) {
-          sources = mergeSourceItems(sources, toolResult.sources)
-        }
-
-        if (toolResult.systemContext?.trim()) {
-          const newCtx = toolResult.systemContext.trim()
-          retrievedContext = retrievedContext ? `${retrievedContext}\n\n${newCtx}` : newCtx
-        }
-
-        const traceContent = agentTool.config.trace.formatContent(toolInput, toolResult)
-        const traceSources = agentTool.config.trace.extractSources?.(toolInput, toolResult)
-        const traceEffects = resolveToolEffects(tc.toolName, agentTool.config.trace.effects?.(toolInput, toolResult))
-
-        await this.emit({
-          type: "tool:complete",
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          input: tc.input,
-          output: toolResult.output,
-          durationMs,
-          trace: {
-            stepType: agentTool.config.trace.stepType,
-            content: traceContent,
-            sources: traceSources,
-            ...(traceEffects.length > 0 ? { effects: traceEffects } : {}),
-          },
-        })
-
-        if (toolResult.injectionScreen === "suspect") {
-          logger.warn({ toolName: tc.toolName }, "Tool output flagged as carrying text addressed to the model")
-        }
-        resultParts.push(
-          makeToolResult(tc, protectToolOutputText(toolResult.output, { injectionScreen: toolResult.injectionScreen }))
-        )
-
-        // Multimodal media → injected as user messages (tool results are
-        // text-only on the wire; images/files must ride a user turn).
-        if (toolResult.multimodal && toolResult.multimodal.length > 0) {
-          extraMessages.push({
-            role: "user",
-            content: [
-              { type: "text" as const, text: untrustedMediaNote(tc.toolName) },
-              ...toolResult.multimodal.map((m) =>
-                m.type === "image"
-                  ? { type: "image" as const, image: m.url }
-                  : {
-                      type: "file" as const,
-                      data: m.data,
-                      mediaType: m.mediaType,
-                      ...(m.filename ? { filename: m.filename } : {}),
-                    }
-              ),
-            ],
-          })
-        }
-      } catch (error) {
-        const durationMs = Date.now() - startTime
-        await this.emit({
-          type: "tool:error",
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          error: String(error),
-          durationMs,
-        })
-        // The workspace is out of budget: another model step would be denied too.
-        if (error instanceof AISpendDeniedError) throw error
-        resultParts.push(makeToolResult(tc, JSON.stringify({ error: String(error) })))
-      }
+    for (const outcome of outcomes) {
+      resultParts.push(outcome.resultPart)
+      if (outcome.extraMessage) extraMessages.push(outcome.extraMessage)
+      if (outcome.sources && outcome.sources.length > 0) sources = mergeSourceItems(sources, outcome.sources)
+      const newCtx = outcome.systemContext?.trim()
+      if (newCtx) retrievedContext = retrievedContext ? `${retrievedContext}\n\n${newCtx}` : newCtx
     }
 
     // Stage send_message calls (prep-then-send)
@@ -1040,6 +941,159 @@ export class AgentRuntime {
     }
 
     return { resultParts, extraMessages, pendingMessages, keepResponseReason, sources, retrievedContext }
+  }
+
+  private async runToolCall(
+    tc: { toolCallId: string; toolName: string; input: unknown },
+    conversation: ModelMessage[]
+  ): Promise<ToolCallOutcome> {
+    const agentTool = this.toolMap.get(tc.toolName)
+    if (!agentTool) {
+      await this.emit({
+        type: "tool:error",
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        error: `Unknown tool: ${tc.toolName}`,
+        durationMs: 0,
+      })
+      return { resultPart: makeToolResult(tc, JSON.stringify({ error: `Unknown tool: ${tc.toolName}` })) }
+    }
+
+    // Validate against the tool's OWN schema before anything else runs.
+    //
+    // `generateTextWithTools` hands back whatever the provider produced as the
+    // call's arguments (`input: tc.input`, typed `unknown`); nothing between
+    // the model and here re-checks it. Every tool was therefore trusting an
+    // upstream validator it cannot see — and for a guarded tool that means
+    // the guardian reviews one object while `execute` receives another, and a
+    // write tool's allowlist is enforced by hope. Doing it here fixes every
+    // tool at once instead of leaving each one to remember.
+    const validated = agentTool.config.inputSchema.safeParse(tc.input)
+    if (!validated.success) {
+      const detail = validated.error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ")
+      await this.emit({
+        type: "tool:error",
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        error: `Invalid arguments: ${detail}`,
+        durationMs: 0,
+      })
+      return {
+        resultPart: makeToolResult(
+          tc,
+          JSON.stringify({
+            error: `Those arguments don't match ${tc.toolName}'s schema: ${detail}. Fix them and call it again.`,
+          })
+        ),
+      }
+    }
+    const toolInput = validated.data
+
+    const stepType = agentTool.config.trace.stepType
+    await this.emit({
+      type: "tool:start",
+      toolCallId: tc.toolCallId,
+      toolName: tc.toolName,
+      stepType,
+      input: tc.input,
+      hidden: agentTool.config.trace.hidden,
+    })
+    const startTime = Date.now()
+
+    if (requiresGuardianReview(tierOfBuiltTool(agentTool))) {
+      const verdict = await this.reviewGuardedCall(agentTool, { ...tc, input: toolInput }, conversation)
+      if (!verdict.allowed) {
+        return { resultPart: makeToolResult(tc, JSON.stringify(denialResult(tc.toolName, verdict.reason))) }
+      }
+    }
+
+    try {
+      const onProgress = (substep: string) => {
+        // Fire-and-forget: don't back-pressure the tool with observer latency.
+        void this.emit({
+          type: "tool:progress",
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          stepType,
+          substep,
+        })
+      }
+      const signal = this.config.toolSignalProvider?.(tc.toolCallId, tc.toolName)
+
+      const toolResult = await agentTool.config.execute(toolInput as any, {
+        toolCallId: tc.toolCallId,
+        onProgress,
+        signal,
+      })
+      const durationMs = Date.now() - startTime
+
+      const traceContent = agentTool.config.trace.formatContent(toolInput, toolResult)
+      const traceSources = agentTool.config.trace.extractSources?.(toolInput, toolResult)
+      const traceEffects = resolveToolEffects(tc.toolName, agentTool.config.trace.effects?.(toolInput, toolResult))
+
+      await this.emit({
+        type: "tool:complete",
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        input: tc.input,
+        output: toolResult.output,
+        durationMs,
+        trace: {
+          stepType: agentTool.config.trace.stepType,
+          content: traceContent,
+          sources: traceSources,
+          ...(traceEffects.length > 0 ? { effects: traceEffects } : {}),
+        },
+      })
+
+      if (toolResult.injectionScreen === "suspect") {
+        logger.warn({ toolName: tc.toolName }, "Tool output flagged as carrying text addressed to the model")
+      }
+
+      return {
+        resultPart: makeToolResult(
+          tc,
+          protectToolOutputText(toolResult.output, { injectionScreen: toolResult.injectionScreen })
+        ),
+        sources: toolResult.sources,
+        systemContext: toolResult.systemContext,
+        // Multimodal media → injected as user messages (tool results are
+        // text-only on the wire; images/files must ride a user turn).
+        extraMessage:
+          toolResult.multimodal && toolResult.multimodal.length > 0
+            ? {
+                role: "user",
+                content: [
+                  { type: "text" as const, text: untrustedMediaNote(tc.toolName) },
+                  ...toolResult.multimodal.map((m) =>
+                    m.type === "image"
+                      ? { type: "image" as const, image: m.url }
+                      : {
+                          type: "file" as const,
+                          data: m.data,
+                          mediaType: m.mediaType,
+                          ...(m.filename ? { filename: m.filename } : {}),
+                        }
+                  ),
+                ],
+              }
+            : undefined,
+      }
+    } catch (error) {
+      const durationMs = Date.now() - startTime
+      await this.emit({
+        type: "tool:error",
+        toolCallId: tc.toolCallId,
+        toolName: tc.toolName,
+        error: String(error),
+        durationMs,
+      })
+      // The workspace is out of budget: another model step would be denied too.
+      if (error instanceof AISpendDeniedError) throw error
+      return { resultPart: makeToolResult(tc, JSON.stringify({ error: String(error) })) }
+    }
   }
 
   private async commitMessage(
