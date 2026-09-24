@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { Sandbox, SandboxNotFoundError } from "railway"
 import { logger } from "../../lib/logger"
 import {
@@ -10,6 +10,7 @@ import {
   type BoxFiles,
 } from "./box-files"
 import type { SandboxExecOptions, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
+import { SANDBOX_APT_PACKAGES, SANDBOX_PYTHON_PACKAGES } from "./config"
 
 /** Railway destroys a box nobody has run a command in for this long. */
 const IDLE_TIMEOUT_MINUTES = 10
@@ -29,6 +30,14 @@ const VERSION_FILE = `${BOX_DIR}/version`
 const BROKER = `/usr/local/bin/node ${BOX_DIR}/broker.js`
 const USER_ENV = "PATH=/work/.local/bin:/usr/local/bin:/usr/bin:/bin HOME=/work LANG=C.UTF-8"
 const API_ENV = `THREA_API_KEY=${BOX_API_KEY_PLACEHOLDER} THREA_WORKSPACE_ID="$THREA_WORKSPACE_ID" THREA_BASE_URL=${BOX_API_BASE_URL}`
+
+// Railway builds the template once per environment and caches it by these
+// steps; creating a box from a template it has not built waits for the build.
+const TEMPLATE_STEPS = [
+  `apt-get update && apt-get install -y --no-install-recommends ${SANDBOX_APT_PACKAGES.join(" ")} && rm -rf /var/lib/apt/lists/*`,
+  `pip install --no-cache-dir ${SANDBOX_PYTHON_PACKAGES.join(" ")}`,
+]
+const TEMPLATE = TEMPLATE_STEPS.reduce((template, step) => template.run(step), Sandbox.template())
 
 // Runs as root once per box. The image keeps python and node under root's
 // home, so their installs are bind-mounted out rather than opening /root.
@@ -146,13 +155,19 @@ export class RailwaySandboxRunner implements SandboxRunner {
     return this.boxFiles
   }
 
+  /** Changes with the CLI, the broker or the template, so a box missing any of them is replaced. */
+  private async version(): Promise<string> {
+    const { version } = await this.files()
+    return createHash("sha256").update(version).update(TEMPLATE_STEPS.join("\n")).digest("hex").slice(0, 16)
+  }
+
   private connect(sandboxId: string): Promise<Sandbox> {
     return Sandbox.connect(sandboxId, this.auth)
   }
 
   async create(params: { internet: boolean; workspaceId: string; streamId: string }): Promise<string> {
-    const files = await this.files()
-    const sandbox = await Sandbox.create({
+    const [files, version] = await Promise.all([this.files(), this.version()])
+    const sandbox = await Sandbox.create(TEMPLATE, {
       ...this.auth,
       idleTimeoutMinutes: IDLE_TIMEOUT_MINUTES,
       networkIsolation: "ISOLATED",
@@ -164,7 +179,7 @@ export class RailwaySandboxRunner implements SandboxRunner {
       }
       await sandbox.files.write(`${BOX_DIR}/threa.js`, files.cli, { mode: 0o644 })
       await sandbox.files.write(`${BOX_DIR}/broker.js`, files.broker, { mode: 0o600 })
-      await sandbox.files.write(VERSION_FILE, new TextEncoder().encode(files.version), { mode: 0o644 })
+      await sandbox.files.write(VERSION_FILE, new TextEncoder().encode(version), { mode: 0o644 })
     } catch (error) {
       await sandbox
         .destroy()
@@ -175,11 +190,11 @@ export class RailwaySandboxRunner implements SandboxRunner {
   }
 
   /**
-   * Runs a command, because Railway counts only commands as use. A box whose
-   * CLI and broker another backend version installed is not reused.
+   * Runs a command, because Railway counts only commands as use. A box another
+   * backend version made is not reused.
    */
   async alive(sandboxId: string): Promise<boolean> {
-    const { version } = await this.files()
+    const version = await this.version()
     try {
       const sandbox = await this.connect(sandboxId)
       if (sandbox.status !== "RUNNING") return false

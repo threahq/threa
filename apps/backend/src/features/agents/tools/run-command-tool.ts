@@ -144,6 +144,7 @@ export function createRunCommandTool(workspace: WorkspaceToolDeps, deps: RunComm
 
 You have a \`run_command\` tool: a shell in a Linux box that belongs to this conversation, with python3, node, curl and jq. Use it to calculate, transform data, or inspect files rather than doing it in your head.
 
+- Installed for python3: numpy, pandas, scipy, matplotlib, openpyxl (xlsx), pypdf and pdfplumber (read PDFs), reportlab (write PDFs), python-docx and python-pptx. Also pdftotext and the other poppler tools, and LibreOffice: \`soffice --headless --convert-to pdf <file>\` converts docx, xlsx and pptx.
 - Pass \`attachmentIds\` to copy workspace files in; each lands at /work/attachments/<attachmentId>/<filename>.
 - Files you write persist between calls until the sandbox is replaced. When the result says it was replaced, tell the user that earlier files are gone. Attachments are still in the workspace: pass their ids again rather than asking the user to re-upload.
 - The result says whether the sandbox has internet. When it does not, don't try to install packages or fetch URLs.${
