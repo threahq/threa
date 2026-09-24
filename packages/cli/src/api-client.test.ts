@@ -119,3 +119,29 @@ test("a hung request aborts at the timeout and maps to a TIMEOUT ThreaApiError",
   expect(error.code).toBe("TIMEOUT")
   expect(error.message).toContain("timed out after 20ms")
 })
+
+test("an upload's deadline grows with its size", async () => {
+  const answerAfter50ms = ((_url: unknown, init?: RequestInit) =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve(Response.json({ data: { id: "att_1" } }, { status: 201 })), 50)
+      init?.signal?.addEventListener("abort", () => {
+        clearTimeout(timer)
+        reject(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }))
+      })
+    })) as unknown as typeof fetch
+  fetchSpy.mockImplementation(answerAfter50ms)
+  const client = new ThreaApiClient({
+    baseUrl: "https://app.threa.io",
+    workspaceId: "ws_1",
+    apiKey: "threa_uk_secret",
+    timeoutMs: 20,
+  })
+  const form = () => new FormData()
+
+  const [small, large] = await Promise.all([
+    client.postForm("/attachments", form(), 1).catch((e: ThreaApiError) => e.code),
+    client.postForm("/attachments", form(), 1024 * 1024),
+  ])
+
+  expect({ small, large }).toEqual({ small: "TIMEOUT", large: { data: { id: "att_1" } } })
+})

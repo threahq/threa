@@ -1,6 +1,6 @@
 # @threahq/cli
 
-`threa` is a command-line client for one Threa workspace. It wraps Threa's public REST API so any local agent or script gets workspace access with one API key: read and search streams, users, messages, conversations, memos, and attachments; send, edit, and delete messages; manage labels; and run the delegation lifecycle end to end.
+`threa` is a command-line client for one Threa workspace. It wraps Threa's public REST API so any local agent or script gets workspace access with one API key: read and search streams, users, messages, conversations, memos, and attachments; send, edit, and delete messages; upload attachments; manage labels; and run the delegation lifecycle end to end.
 
 It is one package with two heads. The command-line interface is the primary head. The same core is also served over the Model Context Protocol with `threa mcp serve`, so an MCP client such as Claude Code can call the same operations as tools. Both heads bind to one workspace and one API key from config, so no command and no tool takes a workspace id. There are no WebSockets; every call goes to `<baseUrl>/api/v1/workspaces/{workspaceId}/…`.
 
@@ -76,6 +76,7 @@ threa memos get memo_123
 threa attachments list --stream #eng                # browse recent attachments, newest first
 threa attachments get att_123 --url                 # --url returns a short-lived signed download URL
 threa attachments download att_123 ./               # download bytes; dir dest names it after the file
+threa attachments upload ./report.csv               # upload a file; reference it as [report.csv](attachment:<id>)
 threa skill print                                   # print the threa-cli agent skill to stdout
 
 # writes
@@ -186,6 +187,7 @@ The scopes on the key decide which areas work. A key without a scope does not ge
 | `messages:write`    | `messages send`, `messages edit`, `messages delete`                                                                  |
 | `memos:read`        | `search --what memos`, `memos list`, `memos get`                                                                     |
 | `attachments:read`  | `search --what attachments`, `attachments list`, `attachments get`, `attachments download`                           |
+| `attachments:write` | `attachments upload`                                                                                                 |
 | `labels:read`       | `labels list`                                                                                                        |
 | `labels:write`      | `labels add`, `labels remove`                                                                                        |
 | `delegations:read`  | `delegations list`, `delegations get`                                                                                |

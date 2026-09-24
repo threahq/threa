@@ -229,6 +229,16 @@ export function getAttachmentDownloadUrl(client: ThreaApiClient, attachmentId: s
   return client.get(`/attachments/${encodeURIComponent(attachmentId)}/url`)
 }
 
+export function getAttachmentContent(client: ThreaApiClient, attachmentId: string): Promise<Response> {
+  return client.getRaw(`/attachments/${encodeURIComponent(attachmentId)}/content`)
+}
+
+export function uploadAttachment(client: ThreaApiClient, file: Blob, filename: string): Promise<unknown> {
+  const form = new FormData()
+  form.append("file", file, filename)
+  return client.postForm("/attachments", form, file.size)
+}
+
 export const SEARCH_WHATS = ["messages", "memos", "attachments"] as const
 export type SearchWhat = (typeof SEARCH_WHATS)[number]
 
