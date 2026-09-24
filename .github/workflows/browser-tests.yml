@@ -91,7 +91,7 @@ jobs:
           # transiently, and the shards pull concurrently which makes a blip on
           # any one of them abort the whole shard before tests even start.
           for attempt in 1 2 3 4 5; do
-            if docker pull cgr.dev/chainguard/minio:latest; then
+            if docker pull chrislusf/seaweedfs:4.47; then
               break
             fi
             echo "docker pull minio failed (attempt $attempt/5) — retrying in $((attempt * 5))s"
@@ -99,22 +99,18 @@ jobs:
           done
           docker run -d --name minio \
             -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            cgr.dev/chainguard/minio:latest server /data
+            -e AWS_ACCESS_KEY_ID=minioadmin \
+            -e AWS_SECRET_ACCESS_KEY=minioadmin \
+            chrislusf/seaweedfs:4.47 mini -dir=/data -s3.port=9000 -bucket=threa-browser-test
           # Wait for MinIO to be ready
           for i in {1..30}; do
-            if curl -sf http://localhost:9000/minio/health/live; then
+            if curl -sf http://localhost:9000/healthz; then
               echo "MinIO is ready"
               break
             fi
             echo "Waiting for MinIO... ($i/30)"
             sleep 1
           done
-          # Create the test bucket using mc client
-          docker exec minio mc alias set local http://localhost:9000 minioadmin minioadmin
-          docker exec minio mc mb local/threa-browser-test
-          echo "Created bucket: threa-browser-test"
 
       - uses: oven-sh/setup-bun@v2
         with:
