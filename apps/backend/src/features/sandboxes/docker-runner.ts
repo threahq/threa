@@ -1,8 +1,11 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { readFileSync } from "node:fs"
+import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import net from "node:net"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
+import { BOX_API_BASE_URL, BOX_API_KEY_PLACEHOLDER, BOX_DIR, CLI_WRAPPER, buildBoxFiles } from "./box-files"
+import type { SandboxApiAccess, SandboxExecOptions, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
 
 const IMAGE_DIR = join(import.meta.dir, "image")
 const USE_MARKER = "/run/threa-used"
@@ -10,6 +13,10 @@ const USE_MARKER = "/run/threa-used"
 const IDLE_SECONDS = 10 * 60
 /** How long past the in-box deadline the client waits before giving up on `docker exec` itself. */
 const CLIENT_GRACE_MS = 10_000
+const BROKER_START_MS = 5_000
+/** Matches `useradd --uid` in image/Dockerfile. */
+const SANDBOX_UID = 10001
+const API_SOCKET_DIR = "/run/threa-api"
 
 // PID 1 is a root shell polling the use marker's mtime. The reaping lives in
 // the box, so it works whichever replica created it and survives a backend
@@ -47,15 +54,76 @@ async function dockerOrThrow(args: string[], what: string, stdin?: Uint8Array): 
 /**
  * Sandboxes as local Docker containers. For development: it needs a Docker
  * daemon next to the backend, which the hosted backend does not have.
+ *
+ * A box reaches the backend through a unix socket in a host directory only the
+ * backend's uid can enter, relayed to the API port. The broker runs in the box
+ * as that uid; commands run as `sandbox`, a different uid, and cannot open it.
  */
 export class DockerSandboxRunner implements SandboxRunner {
   readonly kind = "docker"
   private readonly image: string
+  private readonly apiPort: number
+  private readonly hostUid: number
+  private readonly hostDir: string
   private imageReady: Promise<void> | null = null
+  private hostReady: Promise<void> | null = null
+  /** Execs queue per box, so one never kills another's command. */
+  private readonly running = new Map<string, Promise<void>>()
 
-  constructor() {
+  constructor(options: { apiPort: number }) {
     const dockerfile = readFileSync(join(IMAGE_DIR, "Dockerfile"))
     this.image = `threa-sandbox:${createHash("sha256").update(dockerfile).digest("hex").slice(0, 12)}`
+    this.apiPort = options.apiPort
+    this.hostUid = process.getuid!()
+    // As root the broker's cleanup would kill the box's idle timer; as the sandbox uid the command could reach the socket.
+    if (this.hostUid === 0 || this.hostUid === SANDBOX_UID) {
+      throw new Error(`the Docker sandbox runner cannot run as uid ${this.hostUid}`)
+    }
+    // Stable per backend, so boxes survive a backend restart with their mounts intact.
+    this.hostDir = join(tmpdir(), `threa-sandbox-${this.hostUid}-${this.apiPort}`)
+  }
+
+  private ensureHost(): Promise<void> {
+    this.hostReady ??= this.prepareHost().catch((error) => {
+      this.hostReady = null
+      throw error
+    })
+    return this.hostReady
+  }
+
+  // `box/` is mounted read-only at BOX_DIR; `api/` holds the relay socket and
+  // is closed to every other uid.
+  private async prepareHost(): Promise<void> {
+    mkdirSync(this.hostDir, { recursive: true, mode: 0o711 })
+    const owner = lstatSync(this.hostDir)
+    if (!owner.isDirectory() || owner.uid !== this.hostUid) {
+      throw new Error(`${this.hostDir} is not a directory this backend owns`)
+    }
+    chmodSync(this.hostDir, 0o711)
+    const boxDir = join(this.hostDir, "box")
+    const apiDir = join(this.hostDir, "api")
+    mkdirSync(boxDir, { recursive: true, mode: 0o755 })
+    mkdirSync(apiDir, { recursive: true, mode: 0o700 })
+    chmodSync(apiDir, 0o700)
+
+    const files = await buildBoxFiles()
+    writeFileSync(join(boxDir, "threa.js"), files.cli, { mode: 0o644 })
+    writeFileSync(join(boxDir, "broker.js"), files.broker, { mode: 0o644 })
+    writeFileSync(join(boxDir, "threa"), CLI_WRAPPER, { mode: 0o755 })
+
+    const socketPath = join(apiDir, "api.sock")
+    rmSync(socketPath, { force: true })
+    const relay = net.createServer((box) => {
+      const backend = net.connect(this.apiPort, "127.0.0.1")
+      box.pipe(backend).pipe(box)
+      box.on("error", () => backend.destroy())
+      backend.on("error", () => box.destroy())
+    })
+    await new Promise<void>((resolve, reject) => {
+      relay.once("error", reject)
+      relay.listen(socketPath, () => resolve())
+    })
+    relay.unref()
   }
 
   private ensureImage(): Promise<void> {
@@ -70,7 +138,7 @@ export class DockerSandboxRunner implements SandboxRunner {
   }
 
   async create(params: { internet: boolean; workspaceId: string; streamId: string }): Promise<string> {
-    await this.ensureImage()
+    await Promise.all([this.ensureImage(), this.ensureHost()])
     return dockerOrThrow(
       [
         "run",
@@ -95,6 +163,10 @@ export class DockerSandboxRunner implements SandboxRunner {
         "1",
         "--pids-limit",
         "256",
+        "--volume",
+        `${join(this.hostDir, "box")}:${BOX_DIR}:ro`,
+        "--volume",
+        `${join(this.hostDir, "api")}:${API_SOCKET_DIR}:ro`,
         this.image,
         "sh",
         "-c",
@@ -129,13 +201,92 @@ export class DockerSandboxRunner implements SandboxRunner {
     }
   }
 
-  exec(
-    sandboxId: string,
-    command: string,
-    options: { timeoutSec: number; maxOutputBytes: number; signal?: AbortSignal }
-  ): Promise<SandboxExecResult> {
+  exec(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
+    const previous = this.running.get(sandboxId) ?? Promise.resolve()
+    const result = previous.then(() => this.execAlone(sandboxId, command, options))
+    const settled = result.then(
+      () => {},
+      () => {}
+    )
+    this.running.set(sandboxId, settled)
+    void settled.then(() => {
+      if (this.running.get(sandboxId) === settled) this.running.delete(sandboxId)
+    })
+    return result
+  }
+
+  // Whatever the last command left running dies first, and whatever this one
+  // leaves dies after, so nothing outlives the exec that holds the token.
+  private async execAlone(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
+    options.signal?.throwIfAborted()
+    await this.ensureHost()
+    await this.killAll(sandboxId, "sandbox")
+    await this.killAll(sandboxId, String(this.hostUid))
+    try {
+      if (options.api) await this.startBroker(sandboxId, options.api)
+      return await this.run(sandboxId, command, options)
+    } finally {
+      if (options.api) await this.killAll(sandboxId, String(this.hostUid))
+      await this.killAll(sandboxId, "sandbox")
+    }
+  }
+
+  private async killAll(sandboxId: string, user: string): Promise<void> {
+    await docker(["exec", "--user", user, sandboxId, "sh", "-c", "kill -KILL -1"])
+  }
+
+  // Resolves once the broker listens. The token reaches it through the docker
+  // client's environment, never an argument another process could list.
+  private startBroker(sandboxId: string, api: SandboxApiAccess): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(
+        "docker",
+        [
+          "exec",
+          "--user",
+          String(this.hostUid),
+          "--env",
+          "THREA_SANDBOX_TOKEN",
+          "--env",
+          `THREA_WORKSPACE_ID=${api.workspaceId}`,
+          "--env",
+          `THREA_API_UPSTREAM=unix:${API_SOCKET_DIR}/api.sock`,
+          sandboxId,
+          "node",
+          `${BOX_DIR}/broker.js`,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, THREA_SANDBOX_TOKEN: api.token } }
+      )
+      const stderr: Buffer[] = []
+      child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk))
+      const fail = (reason: string) => {
+        clearTimeout(timer)
+        child.kill("SIGKILL")
+        reject(new Error(`the Threa API broker did not start: ${reason}`))
+      }
+      const timer = setTimeout(() => fail("timed out"), BROKER_START_MS)
+      child.stdout.once("data", () => {
+        clearTimeout(timer)
+        resolve()
+      })
+      child.on("error", (error) => fail(error.message))
+      child.on("close", () => fail(Buffer.concat(stderr).toString().trim().slice(0, 400) || "exited"))
+    })
+  }
+
+  private run(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
     return new Promise((resolve, reject) => {
       const startedAt = Date.now()
+      const apiEnv = options.api
+        ? [
+            "--env",
+            `THREA_API_KEY=${BOX_API_KEY_PLACEHOLDER}`,
+            "--env",
+            `THREA_WORKSPACE_ID=${options.api.workspaceId}`,
+            "--env",
+            `THREA_BASE_URL=${BOX_API_BASE_URL}`,
+          ]
+        : []
       // `timeout` runs inside the box, so the command dies at the deadline.
       // Killing only the `docker exec` client would leave it running.
       const child = spawn(
@@ -146,6 +297,7 @@ export class DockerSandboxRunner implements SandboxRunner {
           "sandbox",
           "--workdir",
           "/work",
+          ...apiEnv,
           sandboxId,
           "timeout",
           "-s",
@@ -180,7 +332,7 @@ export class DockerSandboxRunner implements SandboxRunner {
       // Killing the client alone leaves the command running in the box until its deadline.
       const abort = () => {
         kill()
-        void docker(["exec", "--user", "sandbox", sandboxId, "sh", "-c", "kill -KILL -1"]).catch(() => {})
+        void this.killAll(sandboxId, "sandbox").catch(() => {})
       }
       const timer = setTimeout(kill, options.timeoutSec * 1000 + CLIENT_GRACE_MS)
       options.signal?.addEventListener("abort", abort, { once: true })

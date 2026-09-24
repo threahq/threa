@@ -35,6 +35,7 @@ function setBaseEnv() {
   delete process.env.SANDBOX_RUNNER
   delete process.env.SANDBOX_RAILWAY_TOKEN
   delete process.env.SANDBOX_RAILWAY_ENVIRONMENT_ID
+  delete process.env.SANDBOX_API_URL
 }
 
 afterEach(() => {
@@ -67,13 +68,13 @@ describe("loadConfig sandbox runner", () => {
     expect(loadConfig().sandboxRunner).toBeNull()
   })
 
-  test("railway needs its token and environment id", () => {
+  test("railway needs its token, environment id and API origin", () => {
     setBaseEnv()
     process.env.USE_STUB_AUTH = "true"
     process.env.SANDBOX_RUNNER = "railway"
     process.env.SANDBOX_RAILWAY_TOKEN = "token"
     expect(() => loadConfig()).toThrow(
-      "SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN and SANDBOX_RAILWAY_ENVIRONMENT_ID"
+      "SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN, SANDBOX_RAILWAY_ENVIRONMENT_ID and SANDBOX_API_URL"
     )
   })
 
@@ -83,7 +84,13 @@ describe("loadConfig sandbox runner", () => {
     process.env.SANDBOX_RUNNER = "railway"
     process.env.SANDBOX_RAILWAY_TOKEN = "token"
     process.env.SANDBOX_RAILWAY_ENVIRONMENT_ID = "env"
-    expect(loadConfig().sandboxRunner).toEqual({ kind: "railway", token: "token", environmentId: "env" })
+    process.env.SANDBOX_API_URL = "https://app.threa.io"
+    expect(loadConfig().sandboxRunner).toEqual({
+      kind: "railway",
+      token: "token",
+      environmentId: "env",
+      apiUrl: "https://app.threa.io",
+    })
   })
 
   test("docker is refused in production", () => {

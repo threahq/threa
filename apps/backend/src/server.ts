@@ -1131,7 +1131,7 @@ export async function startServer(): Promise<ServerInstance> {
   const reflectiveCaptureService = new ReflectiveCaptureService({ pool, memoService })
 
   let sandboxRunner: SandboxRunner | null = null
-  if (config.sandboxRunner?.kind === "docker") sandboxRunner = new DockerSandboxRunner()
+  if (config.sandboxRunner?.kind === "docker") sandboxRunner = new DockerSandboxRunner({ apiPort: config.port })
   if (config.sandboxRunner?.kind === "railway") sandboxRunner = new RailwaySandboxRunner(config.sandboxRunner)
   const sandboxService = sandboxRunner ? new SandboxService({ pool, runner: sandboxRunner }) : null
   logger.info(

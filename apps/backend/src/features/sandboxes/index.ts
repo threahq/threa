@@ -1,6 +1,6 @@
 export { SandboxService, SandboxReplacedReasons } from "./service"
 export type { SandboxReplacedReason, SandboxRunResult } from "./service"
-export type { SandboxRunner, SandboxFile, SandboxExecResult } from "./runner"
+export type { SandboxRunner, SandboxFile, SandboxExecResult, SandboxApiAccess } from "./runner"
 export { DockerSandboxRunner } from "./docker-runner"
 export { RailwaySandboxRunner } from "./railway-runner"
 export { StreamSandboxRepository } from "./repository"

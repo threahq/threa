@@ -100,7 +100,9 @@ export interface MediaConvertConfig {
   enabled: boolean
 }
 
-export type SandboxRunnerConfig = { kind: "docker" } | { kind: "railway"; token: string; environmentId: string }
+export type SandboxRunnerConfig =
+  | { kind: "docker" }
+  | { kind: "railway"; token: string; environmentId: string; apiUrl: string }
 
 function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null {
   const kind = env.SANDBOX_RUNNER
@@ -112,10 +114,15 @@ function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null 
   if (kind === "railway") {
     const token = env.SANDBOX_RAILWAY_TOKEN
     const environmentId = env.SANDBOX_RAILWAY_ENVIRONMENT_ID
-    if (!token || !environmentId) {
-      throw new Error("SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN and SANDBOX_RAILWAY_ENVIRONMENT_ID")
+    // Boxes are outside Threa's network: their API calls go to the public origin.
+    const apiUrl = env.SANDBOX_API_URL
+    if (!token || !environmentId || !apiUrl) {
+      throw new Error(
+        "SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN, SANDBOX_RAILWAY_ENVIRONMENT_ID and SANDBOX_API_URL"
+      )
     }
-    return { kind, token, environmentId }
+    if (new URL(apiUrl).protocol !== "https:") throw new Error("SANDBOX_API_URL must be https")
+    return { kind, token, environmentId, apiUrl }
   }
   throw new Error(`SANDBOX_RUNNER must be "docker", "railway" or unset, got "${kind}"`)
 }

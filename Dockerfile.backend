@@ -28,7 +28,14 @@ COPY packages/prosemirror/ packages/prosemirror/
 COPY packages/crypto/ packages/crypto/
 COPY packages/agent-runtime/ packages/agent-runtime/
 COPY packages/backend-common/ packages/backend-common/
+COPY packages/cli/ packages/cli/
+# The CLI imports these sources, which resolve their packages from the CLI's.
+COPY extensions/bot-runtime-client/src/ extensions/bot-runtime-client/src/
+RUN ln -s ../../packages/cli/node_modules extensions/bot-runtime-client/node_modules
 COPY apps/backend/ apps/backend/
+# Sandboxes get the CLI bundled at runtime: fail the image, not the first box.
+RUN bun -e 'const f = await (await import("./apps/backend/src/features/sandboxes/box-files.ts")).buildBoxFiles(); await Bun.write("/tmp/threa.js", f.cli)' \
+  && bun /tmp/threa.js --help > /dev/null && rm /tmp/threa.js
 
 ENV NODE_ENV=production
 EXPOSE 3001

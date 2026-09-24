@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import { logger } from "../../lib/logger"
 import { StreamSandboxRepository, type StreamSandboxRow } from "./repository"
-import type { SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
+import type { SandboxApiAccess, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
 import { SANDBOX_MAX_OUTPUT_BYTES } from "./config"
 
 /** Why a stream got a new sandbox in place of the one it had. Files from before are gone either way. */
@@ -37,6 +37,7 @@ export class SandboxService {
     files: SandboxFile[]
     timeoutSec: number
     signal?: AbortSignal
+    api?: SandboxApiAccess
   }): Promise<SandboxRunResult> {
     const { sandboxId, replaced } = await this.acquire(params)
     params.signal?.throwIfAborted()
@@ -46,6 +47,7 @@ export class SandboxService {
       timeoutSec: params.timeoutSec,
       maxOutputBytes: SANDBOX_MAX_OUTPUT_BYTES,
       signal: params.signal,
+      api: params.api,
     })
     return { ...result, replaced }
   }
