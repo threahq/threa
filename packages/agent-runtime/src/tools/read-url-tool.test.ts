@@ -494,6 +494,186 @@ describe("read-url-tool", () => {
     expect(parsed.error).toContain("timed out")
   })
 
+  describe("markdown ladder and browser", () => {
+    const LONG_TEXT = "Plenty of readable text on this page. ".repeat(20)
+    type Route = { status?: number; type: string; body: string }
+
+    function routeFetch(routes: Record<string, Route>): string[] {
+      const requested: string[] = []
+      globalThis.fetch = mock((url: string) => {
+        requested.push(url)
+        const route = routes[url] ?? { status: 404, type: "text/html", body: "not found" }
+        const status = route.status ?? 200
+        return Promise.resolve(
+          new Response(route.body, {
+            status,
+            statusText: status === 403 ? "Forbidden" : "",
+            headers: { "content-type": route.type },
+          })
+        )
+      }) as unknown as typeof fetch
+      return requested
+    }
+
+    function fakeBrowser(read: (url: string) => Promise<string>) {
+      const reads: string[] = []
+      return {
+        reads,
+        pageBrowser: {
+          read: (url: string) => {
+            reads.push(url)
+            return read(url)
+          },
+        },
+      }
+    }
+
+    async function read(url: string, params: Parameters<typeof createReadUrlTool>[0] = {}) {
+      const { output } = await createReadUrlTool(params).config.execute({ url }, toolOpts)
+      return JSON.parse(output)
+    }
+
+    it("reads a page that answers with markdown as it is", async () => {
+      routeFetch({ "https://example.com/doc": { type: "text/markdown; charset=utf-8", body: "# The Doc\n\nBody." } })
+
+      expect(await read("https://example.com/doc")).toEqual({
+        url: "https://example.com/doc",
+        title: "The Doc",
+        content: "# The Doc\n\nBody.",
+        via: "markdown",
+      })
+    })
+
+    it("reads the markdown alternate the HTML names", async () => {
+      const requested = routeFetch({
+        "https://example.com/post": {
+          type: "text/html",
+          body: `<html><head><title>Post</title><link rel="alternate" type="text/markdown" href="/post.md"></head><body>${LONG_TEXT}</body></html>`,
+        },
+        "https://example.com/post.md": { type: "text/markdown", body: "Post as markdown." },
+      })
+
+      expect(await read("https://example.com/post")).toEqual({
+        url: "https://example.com/post",
+        title: "Post",
+        content: "Post as markdown.",
+        via: "alternate",
+      })
+      expect(requested).toEqual(["https://example.com/post", "https://example.com/post.md"])
+    })
+
+    it("reads the copy the site's llms.txt lists for the page", async () => {
+      routeFetch({
+        "https://example.com/recipes/x": { type: "text/html", body: `<html><body>${LONG_TEXT}</body></html>` },
+        "https://example.com/llms.txt": {
+          type: "text/plain",
+          body: "# Site\n\n- [Y](https://cdn.example.org/ai/recipes/y.md)\n- [X](https://cdn.example.org/ai/recipes/x.md)",
+        },
+        "https://cdn.example.org/ai/recipes/x.md": { type: "text/markdown", body: "---\ntitle: Recipe X\n---\nSteps." },
+      })
+
+      expect(await read("https://example.com/recipes/x")).toEqual({
+        url: "https://example.com/recipes/x",
+        title: "Recipe X",
+        content: "---\ntitle: Recipe X\n---\nSteps.",
+        via: "llms.txt",
+      })
+    })
+
+    it("never takes a one-segment page for a deeper llms.txt entry that ends the same", async () => {
+      const requested = routeFetch({
+        "https://example.com/docs": { type: "text/html", body: `<html><body>${LONG_TEXT}</body></html>` },
+        "https://example.com/llms.txt": {
+          type: "text/plain",
+          body: "# Site\n\n- [API](https://example.com/api/docs.md)",
+        },
+      })
+
+      const parsed = await read("https://example.com/docs")
+
+      expect({ via: parsed.via, requested }).toEqual({
+        via: "html",
+        requested: ["https://example.com/docs", "https://example.com/llms.txt"],
+      })
+    })
+
+    it("never fetches a markdown copy at a private address", async () => {
+      const requested = routeFetch({
+        "https://example.com/post": {
+          type: "text/html",
+          body: `<html><head><title>Post</title><link rel="alternate" type="text/markdown" href="http://127.0.0.1/secret.md"></head><body>${LONG_TEXT}</body></html>`,
+        },
+      })
+
+      const parsed = await read("https://example.com/post")
+
+      expect({ via: parsed.via, requested }).toEqual({
+        via: "html",
+        requested: ["https://example.com/post", "https://example.com/llms.txt"],
+      })
+    })
+
+    it("reads a page whose HTML holds no text in a browser", async () => {
+      routeFetch({
+        "https://app.example.com/": { type: "text/html", body: '<html><body><div id="root"></div></body></html>' },
+      })
+      const browser = fakeBrowser(async () => "# Rendered App\n\nDrawn by scripts.")
+
+      expect(await read("https://app.example.com/", { pageBrowser: browser.pageBrowser })).toEqual({
+        url: "https://app.example.com/",
+        title: "Rendered App",
+        content: "# Rendered App\n\nDrawn by scripts.",
+        via: "browser",
+      })
+      expect(browser.reads).toEqual(["https://app.example.com/"])
+    })
+
+    it("keeps the thin HTML when the browser cannot read the page either", async () => {
+      routeFetch({ "https://app.example.com/": { type: "text/html", body: "<html><body>Loading</body></html>" } })
+      const browser = fakeBrowser(async () => {
+        throw new Error("Browserbase 500: boom")
+      })
+
+      const parsed = await read("https://app.example.com/", { pageBrowser: browser.pageBrowser })
+
+      expect({ via: parsed.via, content: parsed.content }).toEqual({ via: "html", content: "Loading" })
+    })
+
+    it("reads a page that refuses a plain request in a browser", async () => {
+      routeFetch({ "https://example.com/walled": { status: 403, type: "text/html", body: "Forbidden" } })
+      const browser = fakeBrowser(async () => "# Walled\n\nThe article.")
+
+      const parsed = await read("https://example.com/walled", { pageBrowser: browser.pageBrowser })
+
+      expect({ via: parsed.via, title: parsed.title }).toEqual({ via: "browser", title: "Walled" })
+    })
+
+    it("reports both failures when the browser is refused too", async () => {
+      routeFetch({ "https://example.com/walled": { status: 403, type: "text/html", body: "Forbidden" } })
+      const browser = fakeBrowser(async () => {
+        throw new Error("the page answered 403 in a browser too")
+      })
+
+      expect(await read("https://example.com/walled", { pageBrowser: browser.pageBrowser })).toEqual({
+        error:
+          "Failed to fetch URL: 403 Forbidden. Reading it in a browser failed too: the page answered 403 in a browser too",
+        url: "https://example.com/walled",
+      })
+    })
+
+    it("does not take a missing page to the browser", async () => {
+      routeFetch({})
+      const browser = fakeBrowser(async () => "never")
+
+      const parsed = await read("https://example.com/gone", { pageBrowser: browser.pageBrowser })
+
+      expect({ error: parsed.error, reads: browser.reads }).toEqual({
+        error: "Failed to fetch URL: 404 ",
+        reads: [],
+      })
+    })
+  })
+
   describe("SSRF protection", () => {
     it("should block localhost", async () => {
       const tool = createReadUrlTool()
@@ -649,10 +829,10 @@ describe("read-url-tool", () => {
     })
 
     it("should follow safe redirects", async () => {
-      let callCount = 0
-      globalThis.fetch = mock(() => {
-        callCount++
-        if (callCount === 1) {
+      const requested: string[] = []
+      globalThis.fetch = mock((url: string) => {
+        requested.push(url)
+        if (requested.length === 1) {
           return Promise.resolve({
             ok: false,
             status: 302,
@@ -673,7 +853,11 @@ describe("read-url-tool", () => {
       const parsed = JSON.parse(output)
 
       expect(parsed.title).toBe("Final")
-      expect(callCount).toBe(2)
+      expect(requested).toEqual([
+        "https://example.com/start",
+        "https://example.com/final",
+        "https://example.com/llms.txt",
+      ])
     })
 
     it("should limit redirect count", async () => {

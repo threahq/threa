@@ -7,6 +7,7 @@ import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { composeAbortSignal } from "../research/research-support"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
+import type { PageBrowser } from "./page-browser"
 
 const ReadUrlSchema = z.object({
   url: z.string().url().describe("The URL of the web page or JSON resource to read"),
@@ -21,10 +22,18 @@ const ReadUrlSchema = z.object({
 
 export type ReadUrlInput = z.infer<typeof ReadUrlSchema>
 
+/**
+ * How a page was read. A site's own markdown (`markdown`, a markdown
+ * `alternate` its HTML names, or a copy its `llms.txt` lists) beats converted
+ * HTML; `browser` is a real browser, for pages a plain request cannot read.
+ */
+export type ReadUrlVia = "markdown" | "alternate" | "llms.txt" | "html" | "text" | "browser"
+
 export interface ReadUrlResult {
   url: string
   title: string
   content: string
+  via: ReadUrlVia
   /** Absolute URLs of images embedded in the page, surfaced for vision-capable
    * callers to view via a follow-up read_url. Omitted when none/not applicable. */
   images?: string[]
@@ -33,6 +42,21 @@ export interface ReadUrlResult {
 const MAX_CONTENT_LENGTH = 50000
 const FETCH_TIMEOUT_MS = 30000
 const MAX_REDIRECTS = 5
+const MARKDOWN_COPY_TIMEOUT_MS = 3000
+// A markdown copy or llms.txt index is read no further than this. The model sees
+// MAX_CONTENT_LENGTH of a copy anyway, and an index this long is a full-text dump.
+const MAX_MARKDOWN_COPY_BYTES = 1024 * 1024
+const BROWSER_TIMEOUT_MS = 20000
+// Less text than this after conversion means a script draws the page.
+const THIN_PAGE_CHARS = 300
+// Statuses a site gives a plain request it takes for a bot. A real browser often gets through.
+const REFUSED_STATUSES = new Set([401, 403, 429, 503])
+
+const PAGE_ACCEPT =
+  "text/markdown, text/html;q=0.9, application/xhtml+xml;q=0.9, application/json;q=0.9, text/plain;q=0.8, */*;q=0.5"
+const MARKDOWN_ACCEPT = "text/markdown, text/plain;q=0.9"
+const MARKDOWN_TYPE = /^text\/(x-)?markdown/
+const MAX_LLMS_TXT_CANDIDATES = 3
 
 // Image types Anthropic/OpenAI vision models accept natively.
 const SUPPORTED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"]
@@ -49,6 +73,11 @@ export interface CreateReadUrlToolParams {
    * model can choose to view one. When false, images are reported as unreadable.
    */
   supportsVision?: boolean
+  /**
+   * Reads a page that refuses a plain request or has no text without its
+   * scripts. Absent, such a page is reported as it came back.
+   */
+  pageBrowser?: PageBrowser
 }
 
 const nhm = new NodeHtmlMarkdown()
@@ -202,8 +231,9 @@ async function validateUrlWithDns(urlString: string): Promise<string | null> {
 async function fetchWithRedirectValidation(
   url: string,
   signal: AbortSignal,
+  accept: string,
   redirectCount = 0
-): Promise<Response | { error: string }> {
+): Promise<{ response: Response; url: string } | { error: string }> {
   if (redirectCount > MAX_REDIRECTS) {
     return { error: `Too many redirects (max ${MAX_REDIRECTS})` }
   }
@@ -215,7 +245,7 @@ async function fetchWithRedirectValidation(
       // recognized crawler token for Reddit hosts. Resolved per-request so a redirect into Reddit
       // (e.g. redd.it → reddit.com) is covered too.
       "User-Agent": resolveFetchUserAgent("Agent Reader", url),
-      Accept: "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.8",
+      Accept: accept,
     },
     redirect: "manual", // Don't follow redirects automatically
   })
@@ -237,14 +267,14 @@ async function fetchWithRedirectValidation(
     }
 
     // Follow the redirect
-    return fetchWithRedirectValidation(redirectUrl, signal, redirectCount + 1)
+    return fetchWithRedirectValidation(redirectUrl, signal, accept, redirectCount + 1)
   }
 
-  return response
+  return { response, url }
 }
 
 export function createReadUrlTool(params: CreateReadUrlToolParams = {}) {
-  const { supportsVision = false } = params
+  const { supportsVision = false, pageBrowser } = params
 
   // Vision-only guidance: only advertise image viewing to models that can see.
   const imageDescription = supportsVision
@@ -290,29 +320,31 @@ When to use read_url:
       })
 
       try {
-        const result = await fetchWithRedirectValidation(input.url, fetchSignal)
+        const result = await fetchWithRedirectValidation(input.url, fetchSignal, PAGE_ACCEPT)
 
         if ("error" in result) {
           logger.warn({ url: input.url, error: result.error }, "Fetch failed")
           return { output: JSON.stringify({ error: result.error, url: input.url }) }
         }
 
-        const response = result
+        const { response, url: pageUrl } = result
 
         if (!response.ok) {
           logger.warn({ url: input.url, status: response.status }, "Failed to fetch URL")
-          return {
-            output: JSON.stringify({
-              error: `Failed to fetch URL: ${response.status} ${response.statusText}`,
-              url: input.url,
-            }),
+          const failure = `Failed to fetch URL: ${response.status} ${response.statusText}`
+          if (pageBrowser && REFUSED_STATUSES.has(response.status)) {
+            const seen = await readInBrowser(pageBrowser, input.url, signal, failure)
+            if ("error" in seen) return { output: JSON.stringify({ error: seen.error, url: input.url }) }
+            return pageOutput(seen)
           }
+          return { output: JSON.stringify({ error: failure, url: input.url }) }
         }
 
         // Media types are case-insensitive (RFC 9110), so normalize before matching.
         const contentType = (response.headers.get("content-type") || "").toLowerCase()
         const isHtml = contentType.includes("text/html")
         const isPlain = contentType.includes("text/plain")
+        const isMarkdown = MARKDOWN_TYPE.test(contentType)
         const isImage = contentType.startsWith("image/")
         const declaresJson = /\bjson\b/.test(contentType) || contentType.includes("+json")
 
@@ -322,10 +354,10 @@ When to use read_url:
           return await readImageContent(response, input.url, contentType, supportsVision)
         }
 
-        if (!isHtml && !isPlain && !declaresJson) {
+        if (!isHtml && !isPlain && !isMarkdown && !declaresJson) {
           return {
             output: JSON.stringify({
-              error: `Unsupported content type: ${contentType}. Only HTML, plain text, and JSON are supported.`,
+              error: `Unsupported content type: ${contentType}. Only HTML, markdown, plain text, and JSON are supported.`,
               url: input.url,
             }),
           }
@@ -349,30 +381,21 @@ When to use read_url:
           return buildJsonOutput(input.url, input.select, json.value)
         }
 
-        // HTML / plain-text handling
-        const title = extractTitle(body)
-        let content = isPlain ? body : nhm.translate(body)
-
-        if (content.length > MAX_CONTENT_LENGTH) {
-          content = content.slice(0, MAX_CONTENT_LENGTH) + "\n\n[Content truncated...]"
+        if (isMarkdown) {
+          return pageOutput({ url: input.url, title: markdownTitle(body), content: body, via: "markdown" })
+        }
+        if (!isHtml) {
+          return pageOutput({ url: input.url, title: extractTitle(body), content: body, via: "text" })
         }
 
-        const readResult: ReadUrlResult = { url: input.url, title, content }
+        const page = await readHtmlPage(body, { pageUrl, requestedUrl: input.url, fetchSignal, signal, pageBrowser })
         // Surface embedded image URLs only to vision-capable callers — they are
         // useless noise to a model that can't then view them.
-        if (supportsVision && isHtml) {
+        if (supportsVision) {
           const images = extractImageUrls(body, input.url)
-          if (images.length > 0) readResult.images = images
+          if (images.length > 0) page.images = images
         }
-        logger.debug({ url: input.url, contentLength: content.length }, "URL read completed")
-
-        const output = JSON.stringify(readResult)
-
-        // Extract source if page has a meaningful title
-        const sources =
-          title && title !== "Untitled" ? [{ title, url: input.url, domain: new URL(input.url).hostname }] : undefined
-
-        return { output, sources }
+        return pageOutput(page)
       } catch (error) {
         // A user Stop (the parent session signal) takes precedence: report the
         // cancellation, not a spurious timeout.
@@ -431,6 +454,189 @@ When to use read_url:
       },
     },
   })
+}
+
+/** A page's result, truncated to what the model gets, with the page as a source when it has a title. */
+function pageOutput(page: ReadUrlResult): AgentToolResult {
+  const content =
+    page.content.length > MAX_CONTENT_LENGTH
+      ? page.content.slice(0, MAX_CONTENT_LENGTH) + "\n\n[Content truncated...]"
+      : page.content
+  logger.debug({ url: page.url, via: page.via, contentLength: content.length }, "URL read completed")
+  const sources =
+    page.title && page.title !== "Untitled"
+      ? [{ title: page.title, url: page.url, domain: new URL(page.url).hostname }]
+      : undefined
+  return { output: JSON.stringify({ ...page, content }), sources }
+}
+
+/**
+ * The site's own markdown for the page when it offers one, the HTML converted
+ * otherwise, and a real browser when the HTML holds no text without its scripts.
+ */
+async function readHtmlPage(
+  html: string,
+  opts: {
+    pageUrl: string
+    requestedUrl: string
+    fetchSignal: AbortSignal
+    signal: AbortSignal | undefined
+    pageBrowser: PageBrowser | undefined
+  }
+): Promise<ReadUrlResult> {
+  const title = extractTitle(html)
+  const copy = await findMarkdownCopy(html, opts.pageUrl, opts.fetchSignal)
+  if (copy) {
+    const copyTitle = title === "Untitled" ? markdownTitle(copy.content) : title
+    return { url: opts.requestedUrl, title: copyTitle, content: copy.content, via: copy.via }
+  }
+
+  const content = nhm.translate(html)
+  const textLength = content.trim().length
+  if (opts.pageBrowser && textLength < THIN_PAGE_CHARS) {
+    const seen = await readInBrowser(
+      opts.pageBrowser,
+      opts.requestedUrl,
+      opts.signal,
+      `only ${textLength} characters of text without its scripts`
+    )
+    if (!("error" in seen)) return title === "Untitled" ? seen : { ...seen, title }
+  }
+  return { url: opts.requestedUrl, title, content, via: "html" }
+}
+
+async function findMarkdownCopy(
+  html: string,
+  pageUrl: string,
+  signal: AbortSignal
+): Promise<{ content: string; via: "alternate" | "llms.txt" } | null> {
+  const alternate = markdownAlternate(html, pageUrl)
+  if (alternate) {
+    const content = await readMarkdownCopy(alternate, signal)
+    if (content) return { content, via: "alternate" }
+  }
+  const listed = await readLlmsTxtCopy(pageUrl, signal)
+  return listed ? { content: listed, via: "llms.txt" } : null
+}
+
+/** The copy the site's /llms.txt lists for this page, or the index itself for its home page. */
+async function readLlmsTxtCopy(pageUrl: string, signal: AbortSignal): Promise<string | null> {
+  const page = new URL(pageUrl)
+  const index = await readMarkdownCopy(`${page.origin}/llms.txt`, signal)
+  if (!index) return null
+  const path = barePath(page.pathname)
+  if (!path) return index
+  // A one-segment path like /docs would also end /api/docs, a different page.
+  const matchesSuffix = path.lastIndexOf("/") > 0
+
+  let tried = 0
+  for (const match of index.matchAll(/\]\((\S+?)\)/g)) {
+    let target: URL
+    try {
+      target = new URL(match[1]!, page.origin)
+    } catch {
+      continue
+    }
+    // A copy may live under a prefix or on another host, so the page's path only has to end the link's.
+    const candidate = barePath(target.pathname)
+    if (candidate !== path && !(matchesSuffix && candidate.endsWith(path))) continue
+    const copy = await readMarkdownCopy(target.href, signal)
+    if (copy) return copy
+    if (++tried >= MAX_LLMS_TXT_CANDIDATES) break
+  }
+  return null
+}
+
+/** A path without the parts that differ between a page and its markdown copy. */
+function barePath(path: string): string {
+  return path
+    .replace(/\/index(\.html?|\.md)?$/i, "")
+    .replace(/\.(md|html?)$/i, "")
+    .replace(/\/+$/, "")
+}
+
+/** Markdown at `url`, or null when it is missing, HTML, empty, or unsafe to fetch. */
+async function readMarkdownCopy(url: string, parent: AbortSignal): Promise<string | null> {
+  if (await validateUrlWithDns(url)) return null
+  const { signal, cleanup } = composeAbortSignal({
+    parent,
+    timeoutMs: MARKDOWN_COPY_TIMEOUT_MS,
+    timeoutReason: "read_url markdown copy timeout",
+  })
+  try {
+    const result = await fetchWithRedirectValidation(url, signal, MARKDOWN_ACCEPT)
+    if ("error" in result || !result.response.ok) return null
+    const contentType = (result.response.headers.get("content-type") || "").toLowerCase()
+    if (!MARKDOWN_TYPE.test(contentType) && !contentType.includes("text/plain")) return null
+    const body = await readTextUpTo(result.response, MAX_MARKDOWN_COPY_BYTES)
+    return body.trim() ? body : null
+  } catch (error) {
+    if (parent.aborted) throw error
+    logger.debug({ url, error }, "Markdown copy unreadable")
+    return null
+  } finally {
+    cleanup()
+  }
+}
+
+async function readTextUpTo(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ""
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (total < maxBytes) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+    total += value.byteLength
+  }
+  await reader.cancel()
+  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, maxBytes))
+}
+
+function markdownAlternate(html: string, baseUrl: string): string | null {
+  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
+    if (!/rel=["']?alternate/i.test(tag) || !/type=["']?text\/(x-)?markdown/i.test(tag)) continue
+    const href = tag.match(/href=["']([^"']+)["']/i)?.[1]
+    if (!href) continue
+    try {
+      return new URL(href.replace(/&amp;/g, "&"), baseUrl).href
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function markdownTitle(markdown: string): string {
+  const title = markdown.match(/^---\n[\s\S]*?^title:\s*(.+)$[\s\S]*?^---$/m)?.[1] ?? markdown.match(/^#\s+(.+)$/m)?.[1]
+  return title?.trim().replace(/^["']|["']$/g, "") || "Untitled"
+}
+
+async function readInBrowser(
+  pageBrowser: PageBrowser,
+  url: string,
+  parent: AbortSignal | undefined,
+  failure: string
+): Promise<ReadUrlResult | { error: string }> {
+  const { signal, cleanup } = composeAbortSignal({
+    parent,
+    timeoutMs: BROWSER_TIMEOUT_MS,
+    timeoutReason: "read_url browser timeout",
+  })
+  try {
+    const content = await pageBrowser.read(url, signal)
+    logger.info({ url, failure }, "Page read in a browser")
+    return { url, title: markdownTitle(content), content, via: "browser" }
+  } catch (error) {
+    if (parent?.aborted) throw error
+    let reason = error instanceof Error ? error.message : String(error)
+    if (signal.aborted) reason = `timed out after ${BROWSER_TIMEOUT_MS / 1000}s`
+    logger.warn({ url, failure, reason }, "Page unreadable in a browser too")
+    return { error: `${failure}. Reading it in a browser failed too: ${reason}` }
+  } finally {
+    cleanup()
+  }
 }
 
 function extractTitle(html: string): string {

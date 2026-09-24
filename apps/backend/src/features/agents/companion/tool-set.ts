@@ -1,5 +1,11 @@
 import { AgentToolNames } from "@threahq/types"
-import { createWebSearchTool, createReadUrlTool, type AgentTool, type WebSearchEngine } from "@threahq/agent-runtime"
+import {
+  createWebSearchTool,
+  createReadUrlTool,
+  type AgentTool,
+  type PageBrowser,
+  type WebSearchEngine,
+} from "@threahq/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
@@ -55,6 +61,7 @@ import {
 export interface ToolSetConfig {
   enabledTools: string[] | null
   webSearchEngines?: WebSearchEngine[]
+  pageBrowser?: PageBrowser
   /** Invocation time used to ground current/latest/recent web searches. */
   currentTime?: string
   timezone?: string
@@ -138,6 +145,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
   const {
     enabledTools,
     webSearchEngines,
+    pageBrowser,
     currentTime,
     timezone,
     runWorkspaceAgent,
@@ -194,7 +202,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     webSearchEngines && webSearchEngines.length > 0 && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)
       ? createWebSearchTool({ engines: webSearchEngines, currentTime, timezone })
       : null,
-    isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision }) : null,
+    isToolEnabled(enabledTools, AgentToolNames.READ_URL) ? createReadUrlTool({ supportsVision, pageBrowser }) : null,
 
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_MESSAGES)
       ? createSearchMessagesTool(workspace)
