@@ -55,7 +55,11 @@ describe("sandbox API broker", () => {
       res.end("moved")
       return
     }
-    res.writeHead(200, { "content-type": "text/csv", "content-disposition": 'attachment; filename="out.csv"', "x-internal": "1" })
+    res.writeHead(200, {
+      "content-type": "text/csv",
+      "content-disposition": 'attachment; filename="out.csv"',
+      "x-internal": "1",
+    })
     res.end("x,y\n1,2\n")
   })
   const socketUpstream = http.createServer((req, res) => {
@@ -90,7 +94,12 @@ describe("sandbox API broker", () => {
     seen.length = 0
     const res = await fetch(`${tcpBase}/api/v1/workspaces/${WS}/attachments?x=1`, {
       method: "POST",
-      headers: { authorization: "Bearer sandbox", cookie: "session=1", "x-forwarded-for": "1.2.3.4", "content-type": "text/plain" },
+      headers: {
+        authorization: "Bearer sandbox",
+        cookie: "session=1",
+        "x-forwarded-for": "1.2.3.4",
+        "content-type": "text/plain",
+      },
       body: "payload",
     })
 
@@ -98,11 +107,22 @@ describe("sandbox API broker", () => {
       status: res.status,
       body: await res.text(),
       headers: Object.fromEntries(res.headers),
-      upstream: seen.map((s) => ({ ...s, headers: { authorization: s.headers.authorization, cookie: s.headers.cookie, xff: s.headers["x-forwarded-for"], type: s.headers["content-type"] } })),
+      upstream: seen.map((s) => ({
+        ...s,
+        headers: {
+          authorization: s.headers.authorization,
+          cookie: s.headers.cookie,
+          xff: s.headers["x-forwarded-for"],
+          type: s.headers["content-type"],
+        },
+      })),
     }).toEqual({
       status: 200,
       body: "x,y\n1,2\n",
-      headers: expect.objectContaining({ "content-type": "text/csv", "content-disposition": 'attachment; filename="out.csv"' }),
+      headers: expect.objectContaining({
+        "content-type": "text/csv",
+        "content-disposition": 'attachment; filename="out.csv"',
+      }),
       upstream: [
         {
           method: "POST",
@@ -117,7 +137,11 @@ describe("sandbox API broker", () => {
 
   test("should pass a redirect through without its location or cookies", async () => {
     const res = await fetch(`${tcpBase}/api/v1/workspaces/${WS}/redirect`, { redirect: "manual" })
-    expect({ status: res.status, location: res.headers.get("location"), cookie: res.headers.get("set-cookie") }).toEqual({
+    expect({
+      status: res.status,
+      location: res.headers.get("location"),
+      cookie: res.headers.get("set-cookie"),
+    }).toEqual({
       status: 302,
       location: null,
       cookie: null,
