@@ -236,7 +236,7 @@ export function getAttachmentContent(client: ThreaApiClient, attachmentId: strin
 export function uploadAttachment(client: ThreaApiClient, file: Blob, filename: string): Promise<unknown> {
   const form = new FormData()
   form.append("file", file, filename)
-  return client.postForm("/attachments", form)
+  return client.postForm("/attachments", form, file.size)
 }
 
 export const SEARCH_WHATS = ["messages", "memos", "attachments"] as const

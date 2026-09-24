@@ -1,4 +1,7 @@
 const FETCH_TIMEOUT_MS = 30_000
+// An upload's deadline grows with its size: the server stores and scans the file
+// before answering, so a flat deadline fails large files it has already kept.
+const UPLOAD_MIN_BYTES_PER_MS = 256
 const RETRY_DELAYS_MS = [2_000, 4_000, 8_000] as const
 
 function deriveHint(status: number): string | undefined {
@@ -61,8 +64,10 @@ export class ThreaApiClient {
     return this.request<T>("POST", path, body === undefined ? undefined : { json: body }, headers)
   }
 
-  postForm<T>(path: string, form: FormData): Promise<T> {
-    return this.request<T>("POST", path, { form })
+  postForm<T>(path: string, form: FormData, bodyBytes: number): Promise<T> {
+    return this.request<T>("POST", path, { form }, undefined, {
+      timeoutMs: this.timeoutMs + Math.ceil(bodyBytes / UPLOAD_MIN_BYTES_PER_MS),
+    })
   }
 
   patch<T>(path: string, body?: unknown): Promise<T> {
@@ -75,7 +80,7 @@ export class ThreaApiClient {
 
   /** The timeout covers the response headers only: the caller streams the body, which may be large. */
   getRaw(path: string): Promise<Response> {
-    return this.request<Response>("GET", path, undefined, undefined, true)
+    return this.request<Response>("GET", path, undefined, undefined, { raw: true })
   }
 
   private workspacePath(path: string): string {
@@ -87,7 +92,7 @@ export class ThreaApiClient {
     path: string,
     payload?: Payload,
     extraHeaders?: Record<string, string>,
-    raw = false
+    { raw = false, timeoutMs = this.timeoutMs }: { raw?: boolean; timeoutMs?: number } = {}
   ): Promise<T> {
     const url = this.workspacePath(path)
     // 429 is safe to retry for any method: the request never executed server-side.
@@ -96,7 +101,7 @@ export class ThreaApiClient {
       // The timer must stay armed across the body read: fetch resolves at headers,
       // and response.json()/text() stream the body — clearing earlier would leave a
       // stalled body with no timeout at all.
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+      const timeout = setTimeout(() => controller.abort(), timeoutMs)
       let retryAfter429 = false
       try {
         const response = await fetch(url, {
@@ -124,7 +129,7 @@ export class ThreaApiClient {
           throw new ThreaApiError({
             status: 0,
             code: "TIMEOUT",
-            message: `Threa API ${method} ${path} timed out after ${this.timeoutMs}ms`,
+            message: `Threa API ${method} ${path} timed out after ${timeoutMs}ms`,
           })
         }
         throw error
