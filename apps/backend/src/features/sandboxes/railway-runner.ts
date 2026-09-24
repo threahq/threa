@@ -23,6 +23,8 @@ const COMMAND_ENV = "THREA_COMMAND"
 const STOP_DIR = "/run/threa-stop"
 const EXEC_ID_ENV = "THREA_EXEC_ID"
 const KILL_USER = "pkill -KILL -u sandbox"
+// Root's `node` is a mise shim that reads version files from its cwd: an absolute path, started from /, keeps /work out of it.
+const BROKER = `/usr/local/bin/node ${BOX_DIR}/broker.js`
 const USER_ENV = "PATH=/work/.local/bin:/usr/local/bin:/usr/bin:/bin HOME=/work LANG=C.UTF-8"
 const API_ENV = `THREA_API_KEY=${BOX_API_KEY_PLACEHOLDER} THREA_WORKSPACE_ID="$THREA_WORKSPACE_ID" THREA_BASE_URL=${BOX_API_BASE_URL}`
 
@@ -40,6 +42,7 @@ function setupScript(internet: boolean): string {
     "chown sandbox:sandbox /work",
     `install -d -m 711 ${STAGING_DIR}`,
     `install -d -m 700 ${STOP_DIR}`,
+    `install -m 600 /dev/null ${EXEC_LOCK}`,
     `install -d -m 755 ${BOX_DIR}`,
     `printf '%s' '${CLI_WRAPPER}' > /usr/local/bin/threa`,
     "chmod 755 /usr/local/bin/threa",
@@ -73,13 +76,14 @@ function execScript(timeoutSec: number, maxOutputBytes: number, api: boolean): s
     `exec 9>${EXEC_LOCK}`,
     `flock -w ${LOCK_WAIT_SEC} 9 || { echo "another command is still running in this sandbox" >&2; exit 125; }`,
     KILL_USER,
-    `pkill -KILL -f "^node ${BOX_DIR}/broker.js"`,
+    `pkill -KILL -f "^${BROKER}"`,
   ]
   if (api) {
     lines.push(
-      `exec 8< <(exec node ${BOX_DIR}/broker.js 9>&- 2>/dev/null)`,
+      `exec 8< <(cd / && exec ${BROKER} 9>&- 2>/dev/null)`,
       "broker=$!",
-      `read -t ${BROKER_START_SEC} -u 8 ready || { echo "the Threa API is unavailable in this sandbox" >&2; kill -KILL $broker; exit 125; }`
+      `read -t ${BROKER_START_SEC} -u 8 ready || { echo "the Threa API is unavailable in this sandbox" >&2; kill -KILL $broker; exit 125; }`,
+      "unset THREA_SANDBOX_TOKEN"
     )
   }
   lines.push(
