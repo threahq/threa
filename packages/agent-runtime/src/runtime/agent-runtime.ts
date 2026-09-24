@@ -134,6 +134,14 @@ export interface AgentRuntimeConfig {
   toolGuardian?: ToolGuardian
 
   /**
+   * Calls run before the model's first step, as if it had made them: what the
+   * turn is plainly about, such as the pages behind the trigger message's
+   * links. Their results reach the model in a user message, because a replayed
+   * tool call carries no reasoning and providers that require it refuse one.
+   */
+  openingCalls?: Array<{ toolName: string; input: unknown }>
+
+  /**
    * Optional run-level graceful stop signal (a user Stop). When it aborts, the
    * loop finishes the current step and returns whatever it holds — a reply
    * already committed, or no message — instead of throwing. It is threaded into
@@ -244,6 +252,14 @@ function makeToolResult(tc: { toolCallId: string; toolName: string }, value: str
     toolName: tc.toolName,
     output: { type: "text", value },
   }
+}
+
+function openingCallsPrompt(parts: ToolResultPart[]): string {
+  return parts
+    .map(
+      (part) => `[${part.toolName} ran before your first step]\n${part.output.type === "text" ? part.output.value : ""}`
+    )
+    .join("\n\n")
 }
 
 export class AgentRuntime {
@@ -379,6 +395,19 @@ export class AgentRuntime {
       if (invalidDraftCount < MAX_INVALID_DRAFTS) return false
       invalidDraftTerminal = true
       return true
+    }
+
+    if (this.config.openingCalls?.length && !this.config.runAbortSignal?.aborted) {
+      const opened = await this.executeToolCalls(
+        this.config.openingCalls.map((call, index) => ({ ...call, toolCallId: `opening_${index}` })),
+        sources,
+        retrievedContext,
+        conversation
+      )
+      sources = opened.sources
+      retrievedContext = opened.retrievedContext
+      this.pushRuntimePrompt(conversation, openingCallsPrompt(opened.resultParts))
+      conversation.push(...opened.extraMessages)
     }
 
     let iterationsRun = 0

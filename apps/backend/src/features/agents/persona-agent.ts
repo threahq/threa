@@ -22,6 +22,7 @@ import { UserRepository } from "../workspaces"
 import type { InjectionScreen } from "./injection-screen"
 import type { WebSearchJudge } from "./web-search-judge"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
+import { messageLinkCalls } from "./companion/message-links"
 import { PersonaRepository, resolveDraftTestPersona, type Persona } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
@@ -1534,6 +1535,12 @@ export class PersonaAgent {
             : agentContext.messages,
           initialContext,
           tools,
+          // A follow-up or a kickoff answers something other than the message
+          // whose links these would be.
+          openingCalls:
+            effectivePurpose.kind === "follow_up" || effectivePurpose.kind === "subagent_kickoff"
+              ? undefined
+              : messageLinkCalls(agentContext.triggerMessage, tools),
           maxTokens: persona.maxTokens,
           temperature: persona.temperature,
           // Supersede reruns and fired follow-ups may legitimately conclude
