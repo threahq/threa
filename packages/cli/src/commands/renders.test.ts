@@ -173,15 +173,13 @@ test("attachments list browses query-less and renders filename, mime, and stream
   expect(summary).toBe("  Q2 numbers")
 })
 
-test("attachments download writes the signed-URL bytes under the attachment's filename", async () => {
+test("attachments download streams the content route's bytes under the attachment's filename", async () => {
   const dir = mkdtempSync(join(tmpdir(), "threa-dl-"))
   fetchSpy.mockImplementation(
     fetchByPath((path) => {
       if (path.endsWith("/attachments/att_1"))
         return jsonResponse(200, { data: { id: "att_1", filename: "notes.txt" } })
-      if (path.endsWith("/attachments/att_1/url"))
-        return jsonResponse(200, { data: { url: "https://files.example/signed/notes.txt", expiresIn: 900 } })
-      if (path.startsWith("/signed/")) return new Response("hello bytes")
+      if (path.endsWith("/attachments/att_1/content")) return new Response("hello bytes")
       return jsonResponse(404, { error: "unexpected", code: "NOT_FOUND" })
     })
   )
@@ -191,6 +189,49 @@ test("attachments download writes the signed-URL bytes under the attachment's fi
   expect(result.exitCode).toBe(0)
   expect(result.stdout).toContain(`downloaded att_1 → ${join(dir, "notes.txt")}`)
   expect(await Bun.file(join(dir, "notes.txt")).text()).toBe("hello bytes")
+})
+
+test("attachments download fails with the API error when the content route refuses", async () => {
+  fetchSpy.mockImplementation(
+    fetchByPath((path) =>
+      path.endsWith("/content")
+        ? jsonResponse(404, { error: "Attachment not found", code: "NOT_FOUND" })
+        : jsonResponse(200, { data: { id: "att_1", filename: "notes.txt" } })
+    )
+  )
+
+  const result = await run(["attachments", "download", "att_1"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr).toContain("Attachment not found")
+})
+
+test("attachments upload posts the file as multipart with a type guessed from the extension", async () => {
+  const path = join(mkdtempSync(join(tmpdir(), "threa-ul-")), "out.csv")
+  writeFileSync(path, "x,y\n1,2\n")
+  let sent: { path: string; file: File } | undefined
+  fetchSpy.mockImplementation((async (input: RequestInfo | URL, init?: RequestInit) => {
+    sent = { path: new URL(String(input)).pathname, file: (init!.body as FormData).get("file") as File }
+    return jsonResponse(201, { data: { id: "att_2", filename: "out.csv", sizeBytes: 8 } })
+  }) as unknown as typeof fetch)
+
+  const result = await run(["attachments", "upload", path], { config: TEST_CONFIG })
+
+  expect({
+    exitCode: result.exitCode,
+    stdout: result.stdout.trim(),
+    path: sent?.path,
+    name: sent?.file.name,
+    type: sent?.file.type,
+    body: await sent?.file.text(),
+  }).toEqual({
+    exitCode: 0,
+    stdout: "uploaded out.csv → att_2 (8 bytes)",
+    path: "/api/v1/workspaces/ws_1/attachments",
+    name: "out.csv",
+    type: "text/csv",
+    body: "x,y\n1,2\n",
+  })
 })
 
 test("resolveDownloadTarget picks Chrome-style ` (n)` names on conflict, but honors explicit file paths", () => {

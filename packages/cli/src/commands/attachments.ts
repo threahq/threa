@@ -1,8 +1,9 @@
 import { createWriteStream, existsSync, statSync } from "node:fs"
+import { readFile } from "node:fs/promises"
 import { pipeline } from "node:stream/promises"
 import { basename, extname, join } from "node:path"
-import { getAttachment, getAttachmentDownloadUrl, search } from "../ops"
-import { arrayFlag, boolFlag, intFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
+import { getAttachment, getAttachmentContent, getAttachmentDownloadUrl, search, uploadAttachment } from "../ops"
+import { arrayFlag, boolFlag, intFlag, stringFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
 import { renderSearchResult } from "./search"
 
 const listVerb: VerbSpec = {
@@ -79,7 +80,7 @@ const downloadVerb: VerbSpec = {
   usage: "threa attachments download <id> [destination]",
   help:
     "threa attachments download <id> [destination] [flags]\n\n" +
-    "Download the attachment's raw bytes via its signed URL. destination defaults to the current directory. " +
+    "Download the attachment's raw bytes. destination defaults to the current directory. " +
     "A directory destination names the file after the attachment and picks `name (1).ext` on conflict; an " +
     "explicit file path is written as given (overwriting).\n\n" +
     "Flags:\n" +
@@ -89,15 +90,12 @@ const downloadVerb: VerbSpec = {
   run: async (ctx, positionals) => {
     const id = positionals[0]
     if (!id) throw new UsageError("attachments download requires a <id> (an att_ id)")
-    const [meta, urlResp] = await Promise.all([
+    const [meta, response] = await Promise.all([
       getAttachment(ctx.client, id) as Promise<{ data?: { filename?: string } }>,
-      getAttachmentDownloadUrl(ctx.client, id) as Promise<{ data?: { url?: string } }>,
+      getAttachmentContent(ctx.client, id),
     ])
-    const url = urlResp.data?.url
-    if (!url) throw new Error(`no download URL returned for ${id}`)
+    if (!response.body) throw new Error(`download failed: empty body for ${id}`)
     const target = resolveDownloadTarget(positionals[1] ?? ".", meta.data?.filename ?? id)
-    const response = await fetch(url)
-    if (!response.ok || !response.body) throw new Error(`download failed: HTTP ${response.status}`)
     await pipeline(response.body, createWriteStream(target))
     return { downloaded: true, id, path: target, sizeBytes: statSync(target).size }
   },
@@ -107,8 +105,56 @@ const downloadVerb: VerbSpec = {
   },
 }
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  ".csv": "text/csv",
+  ".tsv": "text/tab-separated-values",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".html": "text/html",
+  ".json": "application/json",
+  ".pdf": "application/pdf",
+  ".zip": "application/zip",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+}
+
+const uploadVerb: VerbSpec = {
+  name: "upload",
+  summary: "Upload a local file as an attachment",
+  usage: "threa attachments upload <path> [--name filename] [--type mime]",
+  help:
+    "threa attachments upload <path> [flags]\n\n" +
+    "Upload a file and print its attachment id. Reference it in message markdown as `[name](attachment:<id>)` " +
+    "to attach it. The content type is guessed from the extension, else application/octet-stream.\n\n" +
+    "Flags:\n" +
+    "  --name filename   filename to store (default: the file's basename)\n" +
+    "  --type mime       content type to store, overriding the guess\n" +
+    "  --json            force JSON output\n" +
+    "  --help            show this help",
+  options: {
+    name: { type: "string" },
+    type: { type: "string" },
+  },
+  run: async (ctx, positionals, values) => {
+    const path = positionals[0]
+    if (!path) throw new UsageError("attachments upload requires a <path>")
+    const filename = stringFlag(values, "name") ?? basename(path)
+    const type =
+      stringFlag(values, "type") ?? MIME_BY_EXTENSION[extname(filename).toLowerCase()] ?? "application/octet-stream"
+    return uploadAttachment(ctx.client, new Blob([await readFile(path)], { type }), filename)
+  },
+  render: (payload) => {
+    const a = (payload as { data?: { id?: string; filename?: string; sizeBytes?: number } }).data ?? {}
+    return `uploaded ${a.filename ?? "?"} → ${a.id ?? "?"} (${a.sizeBytes ?? 0} bytes)`
+  },
+}
+
 export const attachmentsNoun: NounSpec = {
   name: "attachments",
-  summary: "List attachments, get one's text or URL, or download its bytes",
-  verbs: [listVerb, getVerb, downloadVerb],
+  summary: "List attachments, get one's text or URL, download its bytes, or upload a file",
+  verbs: [listVerb, getVerb, downloadVerb, uploadVerb],
 }

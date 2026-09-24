@@ -36,6 +36,7 @@ export interface ThreaApiClientOptions {
 }
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE"
+type Payload = { json: unknown } | { form: FormData }
 
 export class ThreaApiClient {
   private readonly baseUrl: string
@@ -57,15 +58,24 @@ export class ThreaApiClient {
   }
 
   post<T>(path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
-    return this.request<T>("POST", path, body, headers)
+    return this.request<T>("POST", path, body === undefined ? undefined : { json: body }, headers)
+  }
+
+  postForm<T>(path: string, form: FormData): Promise<T> {
+    return this.request<T>("POST", path, { form })
   }
 
   patch<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>("PATCH", path, body)
+    return this.request<T>("PATCH", path, body === undefined ? undefined : { json: body })
   }
 
   delete<T>(path: string): Promise<T> {
     return this.request<T>("DELETE", path)
+  }
+
+  /** The timeout covers the response headers only: the caller streams the body, which may be large. */
+  getRaw(path: string): Promise<Response> {
+    return this.request<Response>("GET", path, undefined, undefined, true)
   }
 
   private workspacePath(path: string): string {
@@ -75,11 +85,11 @@ export class ThreaApiClient {
   private async request<T>(
     method: Method,
     path: string,
-    body?: unknown,
-    extraHeaders?: Record<string, string>
+    payload?: Payload,
+    extraHeaders?: Record<string, string>,
+    raw = false
   ): Promise<T> {
     const url = this.workspacePath(path)
-    const hasBody = body !== undefined
     // 429 is safe to retry for any method: the request never executed server-side.
     for (let attempt = 0; ; attempt++) {
       const controller = new AbortController()
@@ -94,10 +104,10 @@ export class ThreaApiClient {
           signal: controller.signal,
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
-            ...(hasBody ? { "Content-Type": "application/json" } : {}),
+            ...(payload && "json" in payload ? { "Content-Type": "application/json" } : {}),
             ...(extraHeaders ?? {}),
           },
-          ...(hasBody ? { body: JSON.stringify(body) } : {}),
+          ...(payload ? { body: "json" in payload ? JSON.stringify(payload.json) : payload.form } : {}),
         })
         if (response.status === 429 && attempt < RETRY_DELAYS_MS.length) {
           retryAfter429 = true
@@ -105,6 +115,7 @@ export class ThreaApiClient {
           if (!response.ok) {
             throw await this.toError(response)
           }
+          if (raw) return response as T
           if (response.status === 204) return undefined as T
           return (await response.json()) as T
         }
