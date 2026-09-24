@@ -237,6 +237,7 @@ describe("moveQuickLink", () => {
       "activity",
       "drafts",
       "saved",
+      "streams",
       "files",
       "scheduled",
       "agenda",

@@ -4,6 +4,7 @@ import {
   Bookmark,
   Brain,
   CalendarClock,
+  Compass,
   FileEdit,
   ListChecks,
   Paperclip,
@@ -27,6 +28,7 @@ import { MoreDivider, SectionHeader } from "./sections"
 export const QUICK_LINK_META: Record<SidebarQuickLinkKey, { label: string; icon: LucideIcon }> = {
   drafts: { label: "Drafts", icon: FileEdit },
   saved: { label: "Saved", icon: Bookmark },
+  streams: { label: "Streams", icon: Compass },
   files: { label: "Files", icon: Paperclip },
   scheduled: { label: "Scheduled", icon: CalendarClock },
   agenda: { label: "Agent agenda", icon: ListChecks },
@@ -50,6 +52,7 @@ interface SidebarQuickLinksProps {
   isFilesPage: boolean
   isAgendaPage: boolean
   isLabelsPage: boolean
+  isStreamsPage: boolean
   unreadActivityCount: number
 }
 
@@ -93,6 +96,7 @@ export function SidebarQuickLinks({
   isFilesPage,
   isAgendaPage,
   isLabelsPage,
+  isStreamsPage,
   unreadActivityCount,
 }: SidebarQuickLinksProps) {
   const { collapseOnMobile, getSectionState, toggleSectionState } = useSidebar()
@@ -114,6 +118,7 @@ export function SidebarQuickLinks({
       unreadCount: savedCount,
       signalSlot: countSlot(savedCount),
     },
+    streams: { to: `/w/${workspaceId}/streams`, isActive: isStreamsPage, unreadCount: 0, signalSlot: null },
     files: { to: `/w/${workspaceId}/files`, isActive: isFilesPage, unreadCount: 0, signalSlot: null },
     agenda: { to: `/w/${workspaceId}/agenda`, isActive: isAgendaPage, unreadCount: 0, signalSlot: null },
     scheduled: {
@@ -165,6 +170,7 @@ export function SidebarQuickLinks({
         key={key}
         to={to}
         onClick={collapseOnMobile}
+        aria-current={isActive ? "page" : undefined}
         className={cn(
           "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
           isActive ? "bg-primary/10" : "hover:bg-muted/50",
