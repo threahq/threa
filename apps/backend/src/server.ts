@@ -180,6 +180,7 @@ import {
   WorkspaceAgent,
   GeneralResearcher,
   PersonaAgent,
+  InjectionScreen,
   TraceEmitter,
   SessionAbortRegistry,
   AgentSessionRepository,
@@ -1151,6 +1152,9 @@ export async function startServer(): Promise<ServerInstance> {
     sandbox: sandboxService ? { service: sandboxService, workspaceSettings: workspaceSettingsService } : undefined,
     webSearchEngines: createWebSearchEngines(config.ai.webSearchKeys),
     pageBrowser: config.ai.browserbaseApiKey ? createBrowserbasePageBrowser(config.ai.browserbaseApiKey) : undefined,
+    injectionScreen: config.useStubAI
+      ? undefined
+      : new InjectionScreen({ ai, residency: aiResidency, availability: decisionsAvailability }),
     stubResponse: config.useStubCompanion
       ? "This is a stub response from the companion. The real AI integration is disabled."
       : undefined,

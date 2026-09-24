@@ -12,6 +12,8 @@ import {
   type SourceItem,
 } from "@threahq/types"
 
+export type InjectionScreenVerdict = "suspect" | "clean" | "unjudged"
+
 export interface AgentToolResult {
   /** What the LLM sees as the tool result */
   output: string
@@ -28,6 +30,8 @@ export interface AgentToolResult {
   sources?: SourceItem[]
   /** Injected into system prompt on next iteration (workspace research context) */
   systemContext?: string
+  /** Set by `screenWebToolOutput`: whether the output reads as written to steer the model, or went unjudged. */
+  injectionScreen?: InjectionScreenVerdict
 }
 
 /**
