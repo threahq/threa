@@ -148,7 +148,7 @@ import {
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
 import { WorkspaceSettingsService } from "./features/workspace-settings"
-import { SandboxService, DockerSandboxRunner } from "./features/sandboxes"
+import { DockerSandboxRunner, RailwaySandboxRunner, SandboxService, type SandboxRunner } from "./features/sandboxes"
 import { FeatureFlagService } from "./features/feature-flags"
 import { PlatformAdminService } from "./features/platform-admin"
 import { SidebarConfigService } from "./features/sidebar-config"
@@ -1114,9 +1114,12 @@ export async function startServer(): Promise<ServerInstance> {
   // write) via memoService — a second caller, not a second pipeline (roadmap 6.3).
   const reflectiveCaptureService = new ReflectiveCaptureService({ pool, memoService })
 
-  const sandboxService = config.sandboxRunner ? new SandboxService({ pool, runner: new DockerSandboxRunner() }) : null
+  let sandboxRunner: SandboxRunner | null = null
+  if (config.sandboxRunner?.kind === "docker") sandboxRunner = new DockerSandboxRunner()
+  if (config.sandboxRunner?.kind === "railway") sandboxRunner = new RailwaySandboxRunner(config.sandboxRunner)
+  const sandboxService = sandboxRunner ? new SandboxService({ pool, runner: sandboxRunner }) : null
   logger.info(
-    { sandboxRunner: config.sandboxRunner },
+    { sandboxRunner: config.sandboxRunner?.kind ?? null },
     sandboxService ? "run_command sandboxes enabled" : "run_command withheld: SANDBOX_RUNNER unset"
   )
 

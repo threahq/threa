@@ -97,13 +97,24 @@ export interface MediaConvertConfig {
   enabled: boolean
 }
 
-const SANDBOX_RUNNER_KINDS = ["docker"] as const
-type SandboxRunnerKind = (typeof SANDBOX_RUNNER_KINDS)[number]
+export type SandboxRunnerConfig = { kind: "docker" } | { kind: "railway"; token: string; environmentId: string }
 
-function parseSandboxRunner(value: string | undefined): SandboxRunnerKind | null {
-  if (!value) return null
-  if ((SANDBOX_RUNNER_KINDS as readonly string[]).includes(value)) return value as SandboxRunnerKind
-  throw new Error(`SANDBOX_RUNNER must be one of ${SANDBOX_RUNNER_KINDS.join(", ")} or unset, got "${value}"`)
+function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null {
+  const kind = env.SANDBOX_RUNNER
+  if (!kind) return null
+  if (kind === "docker") {
+    if (env.NODE_ENV === "production") throw new Error("SANDBOX_RUNNER=docker is for dev only")
+    return { kind }
+  }
+  if (kind === "railway") {
+    const token = env.SANDBOX_RAILWAY_TOKEN
+    const environmentId = env.SANDBOX_RAILWAY_ENVIRONMENT_ID
+    if (!token || !environmentId) {
+      throw new Error("SANDBOX_RUNNER=railway requires SANDBOX_RAILWAY_TOKEN and SANDBOX_RAILWAY_ENVIRONMENT_ID")
+    }
+    return { kind, token, environmentId }
+  }
+  throw new Error(`SANDBOX_RUNNER must be "docker", "railway" or unset, got "${kind}"`)
 }
 
 export interface Config {
@@ -135,7 +146,7 @@ export interface Config {
   cloudflareRealtime: CloudflareRealtimeConfig
   cloudflareTurn: CloudflareTurnConfig
   /** Where `run_command` sandboxes run (SANDBOX_RUNNER). `null` withholds the tool. */
-  sandboxRunner: SandboxRunnerKind | null
+  sandboxRunner: SandboxRunnerConfig | null
   /** Control-plane URL for inter-service communication (optional — only needed in multi-region) */
   controlPlaneUrl: string | null
   /** Shared secret for authenticating internal API calls from the control-plane */
@@ -203,7 +214,7 @@ export function loadConfig(): Config {
     useStubBoundaryExtraction,
     useStubAI,
     corsAllowedOrigins,
-    sandboxRunner: parseSandboxRunner(process.env.SANDBOX_RUNNER),
+    sandboxRunner: parseSandboxRunner(process.env),
     rateLimits: {
       globalMax: Number(process.env.GLOBAL_RATE_LIMIT_MAX) || 300,
       authMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 20,
