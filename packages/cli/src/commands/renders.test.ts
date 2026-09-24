@@ -1,10 +1,10 @@
 import { afterEach, expect, spyOn, test } from "bun:test"
-import { mkdtempSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { run } from "../cli"
 import { fetchByPath, jsonResponse, TEST_CONFIG } from "../test-support"
-import { resolveDownloadTarget } from "./attachments"
+import { resolveDownloadTarget, saveDownload } from "./attachments"
 
 const fetchSpy = spyOn(globalThis, "fetch")
 
@@ -231,6 +231,22 @@ test("attachments upload posts the file as multipart with a type guessed from th
     name: "out.csv",
     type: "text/csv",
     body: "x,y\n1,2\n",
+  })
+})
+
+test("saveDownload fails and removes the partial file when the body stalls", async () => {
+  const target = join(mkdtempSync(join(tmpdir(), "threa-dl-stall-")), "stalled.bin")
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("partial"))
+    },
+  })
+
+  const error = await saveDownload(body, target, 20).catch((err: Error) => err)
+
+  expect({ message: (error as Error).message, exists: existsSync(target) }).toEqual({
+    message: "download stalled: no bytes for 20ms",
+    exists: false,
   })
 })
 

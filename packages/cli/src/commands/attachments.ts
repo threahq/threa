@@ -1,6 +1,7 @@
-import { createWriteStream, existsSync, statSync } from "node:fs"
+import { createWriteStream, existsSync, rmSync, statSync } from "node:fs"
 import { readFile } from "node:fs/promises"
-import { pipeline } from "node:stream/promises"
+import { once } from "node:events"
+import { finished } from "node:stream/promises"
 import { basename, extname, join } from "node:path"
 import { getAttachment, getAttachmentContent, getAttachmentDownloadUrl, search, uploadAttachment } from "../ops"
 import { arrayFlag, boolFlag, intFlag, stringFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
@@ -74,6 +75,33 @@ export function resolveDownloadTarget(destination: string, filename: string): st
   return candidate
 }
 
+const DOWNLOAD_IDLE_MS = 30_000
+
+/** Writes the body to target, failing and removing the partial file once no bytes arrive for idleMs. */
+export async function saveDownload(body: ReadableStream<Uint8Array>, target: string, idleMs = DOWNLOAD_IDLE_MS) {
+  // A read loop, not stream.pipeline: Bun's pipeline never settles when a web-stream source stalls, even once destroyed.
+  const reader = body.getReader()
+  const out = createWriteStream(target)
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const stalled = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`download stalled: no bytes for ${idleMs}ms`)), idleMs)
+      })
+      const chunk = await Promise.race([reader.read(), stalled]).finally(() => clearTimeout(timer))
+      if (chunk.done) break
+      if (!out.write(chunk.value)) await once(out, "drain")
+    }
+    out.end()
+    await finished(out)
+  } catch (error) {
+    void reader.cancel().catch(() => {})
+    out.destroy()
+    rmSync(target, { force: true })
+    throw error
+  }
+}
+
 const downloadVerb: VerbSpec = {
   name: "download",
   summary: "Download an attachment's raw bytes to a local file",
@@ -96,7 +124,7 @@ const downloadVerb: VerbSpec = {
     ])
     if (!response.body) throw new Error(`download failed: empty body for ${id}`)
     const target = resolveDownloadTarget(positionals[1] ?? ".", meta.data?.filename ?? id)
-    await pipeline(response.body, createWriteStream(target))
+    await saveDownload(response.body, target)
     return { downloaded: true, id, path: target, sizeBytes: statSync(target).size }
   },
   render: (payload) => {
