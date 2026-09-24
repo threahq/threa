@@ -8,6 +8,7 @@
  * - losing access mid-run removes the stream on the next call
  * - E2EE-rooted streams and their threads are never readable
  * - revoked and expired tokens stop validating
+ * - expired rows are kept a day, then deleted
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
@@ -144,5 +145,17 @@ describe("sandbox session tokens", () => {
 
     expect(await service.validate("threa_sk_not-a-token")).toBeNull()
     expect(await service.validate(`threa_uk_${live.value.slice(9)}`)).toBeNull()
+  })
+
+  test("should delete rows a day past expiry at the next mint and keep recently expired ones", async () => {
+    const stale = await mint([channel], -(24 * 60 * 60 + 60))
+    const recent = await mint([channel], -60)
+
+    await mint([channel])
+
+    const left = await pool.query<{ id: string }>(`SELECT id FROM sandbox_session_tokens WHERE id = ANY($1)`, [
+      [stale.session.id, recent.session.id],
+    ])
+    expect(left.rows.map((row) => row.id)).toEqual([recent.session.id])
   })
 })
