@@ -7,8 +7,13 @@ import { join } from "node:path"
 import { BOX_API_BASE_URL, BOX_API_KEY_PLACEHOLDER, BOX_DIR, CLI_WRAPPER, buildBoxFiles } from "./box-files"
 import { logger } from "../../lib/logger"
 import type { SandboxApiAccess, SandboxExecOptions, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
+import { SANDBOX_APT_PACKAGES, SANDBOX_PYTHON_PACKAGES } from "./config"
 
 const IMAGE_DIR = join(import.meta.dir, "image")
+const BUILD_ARGS = [
+  `APT_PACKAGES=${SANDBOX_APT_PACKAGES.join(" ")}`,
+  `PYTHON_PACKAGES=${SANDBOX_PYTHON_PACKAGES.join(" ")}`,
+]
 const USE_MARKER = "/run/threa-used"
 /** A box nobody has touched for this long exits, and `--rm` removes it. */
 const IDLE_SECONDS = 10 * 60
@@ -73,7 +78,8 @@ export class DockerSandboxRunner implements SandboxRunner {
 
   constructor(options: { apiPort: number }) {
     const dockerfile = readFileSync(join(IMAGE_DIR, "Dockerfile"))
-    this.image = `threa-sandbox:${createHash("sha256").update(dockerfile).digest("hex").slice(0, 12)}`
+    const hash = createHash("sha256").update(dockerfile).update(BUILD_ARGS.join("\n")).digest("hex")
+    this.image = `threa-sandbox:${hash.slice(0, 12)}`
     this.apiPort = options.apiPort
     this.hostUid = process.getuid!()
     // As root the broker's cleanup would kill the box's idle timer; as the sandbox uid the command could reach the socket.
@@ -130,7 +136,8 @@ export class DockerSandboxRunner implements SandboxRunner {
   private ensureImage(): Promise<void> {
     this.imageReady ??= (async () => {
       if ((await docker(["image", "inspect", this.image])).code === 0) return
-      await dockerOrThrow(["build", "-t", this.image, IMAGE_DIR], "sandbox image build failed")
+      const args = BUILD_ARGS.flatMap((arg) => ["--build-arg", arg])
+      await dockerOrThrow(["build", ...args, "-t", this.image, IMAGE_DIR], "sandbox image build failed")
     })().catch((error) => {
       this.imageReady = null
       throw error
@@ -177,8 +184,10 @@ export class DockerSandboxRunner implements SandboxRunner {
     )
   }
 
-  /** A box started before the CLI and broker mount existed is not reused. */
+  /** A box from another image, or started before the CLI and broker mount existed, is not reused. */
   async alive(sandboxId: string): Promise<boolean> {
+    const image = await docker(["inspect", "--format", "{{.Config.Image}}", sandboxId])
+    if (image.code !== 0 || image.stdout.toString().trim() !== this.image) return false
     const check = `touch ${USE_MARKER} && test -f ${BOX_DIR}/broker.js`
     return (await docker(["exec", "--user", "root", sandboxId, "sh", "-c", check])).code === 0
   }

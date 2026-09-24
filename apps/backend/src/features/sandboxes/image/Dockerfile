@@ -1,7 +1,11 @@
 FROM node:24-bookworm-slim
 
+# The runner passes these from config.ts, the lists Railway boxes install too.
+ARG APT_PACKAGES
+ARG PYTHON_PACKAGES
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl python3 jq \
+  && apt-get install -y --no-install-recommends ca-certificates curl python3 python3-pip jq $APT_PACKAGES \
+  && pip install --no-cache-dir --break-system-packages $PYTHON_PACKAGES \
   && rm -rf /var/lib/apt/lists/*
 
 # Commands run as a plain user in a directory it owns. PID 1 stays root, so a
