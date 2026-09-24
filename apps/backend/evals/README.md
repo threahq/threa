@@ -188,7 +188,7 @@ suites:
 
 `-s` filters a config file's runs to one suite (`-r`, `--min-pass-rate` and
 `--json` already applied in config mode). A comparison config often pairs suites
-with different prerequisites — the `companion` half needs `TAVILY_API_KEY`, the
+with different prerequisites — the `companion` half needs a web search key, the
 `persona-style` half does not — so running one half must not mean editing the
 file that documents the comparison. An `-s` naming a suite the config has no
 runs for is an error, not an empty run.
@@ -322,10 +322,11 @@ Results are displayed in the terminal with:
 
 ## Environment Variables
 
-| Variable             | Required | Description                                 |
-| -------------------- | -------- | ------------------------------------------- |
-| `OPENROUTER_API_KEY` | Yes      | API key for model calls                     |
-| `TAVILY_API_KEY`     | Yes\*    | Tavily key for companion `web_search` evals |
-| `DATABASE_URL`       | Yes      | PostgreSQL connection                       |
+| Variable             | Required | Description                                  |
+| -------------------- | -------- | -------------------------------------------- |
+| `OPENROUTER_API_KEY` | Yes      | API key for model calls                      |
+| `EXA_API_KEY`        | Yes\*    | Exa key for `web_search`                     |
+| `SERPER_API_KEY`     | Yes\*    | Serper (Google results) key for `web_search` |
+| `DATABASE_URL`       | Yes      | PostgreSQL connection                        |
 
-\* Required when running the `companion` suite, which now uses the real `web_search` tool path.
+\* The `companion` suite uses the real `web_search` tool path and needs at least one of the two keys.

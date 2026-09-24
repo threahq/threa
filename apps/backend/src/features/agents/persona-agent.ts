@@ -28,7 +28,7 @@ import { AttachmentRepository } from "../attachments"
 import { awaitAttachmentProcessing } from "../attachments"
 import type { TraceEmitter } from "./trace-emitter"
 import type { SessionAbortRegistry } from "./session-abort-registry"
-import type { AI, CostContext } from "@threahq/agent-runtime"
+import type { AI, CostContext, WebSearchEngine } from "@threahq/agent-runtime"
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
@@ -126,7 +126,7 @@ export interface PersonaAgentDeps {
   /** Stream sandboxes for `run_command`; absent when the backend has no sandbox runner, which withholds the tool. */
   sandbox?: StreamSandboxDeps
   assertInitiatorWritable?: typeof assertStreamWritable
-  tavilyApiKey?: string
+  webSearchEngines?: WebSearchEngine[]
   stubResponse?: string
   createMessage: (params: {
     initiatingUserId: string
@@ -457,7 +457,7 @@ export class PersonaAgent {
       modelRegistry,
       workspaceIntegrationService,
       sandbox,
-      tavilyApiKey,
+      webSearchEngines,
       stubResponse,
       createMessage,
       editMessage,
@@ -1362,7 +1362,7 @@ export class PersonaAgent {
             streamPolicy: streamToolPolicy,
             tools: buildToolSet({
               enabledTools: researcherEnabledTools,
-              tavilyApiKey,
+              webSearchEngines,
               currentTime: agentContext.streamContext.temporal?.currentTime,
               timezone: agentContext.streamContext.temporal?.timezone,
               workspace: workspaceDeps,
@@ -1405,7 +1405,7 @@ export class PersonaAgent {
           streamPolicy: streamToolPolicy,
           tools: buildToolSet({
             enabledTools: persona.enabledTools,
-            tavilyApiKey,
+            webSearchEngines,
             currentTime: agentContext.streamContext.temporal?.currentTime,
             timezone: agentContext.streamContext.temporal?.timezone,
             runWorkspaceAgent,

@@ -1,4 +1,5 @@
 import { logger as baseLogger } from "@threahq/agent-runtime/logger"
+import type { WebSearchEngine } from "@threahq/agent-runtime/runtime"
 import type { EnclaveSessionAssignment } from "@threahq/types"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
@@ -21,8 +22,8 @@ export interface SessionRunnerDeps {
   keyPair: EnclaveKeyPair
   rawChat: RawChatFn
   callbacks: BackendCallbacks
-  /** Web-tool config for the turn loop (Tavily key). Absent → research/read_url only. */
-  toolConfig?: { tavilyApiKey?: string }
+  /** Web-tool config for the turn loop (search engines). Absent → research/read_url only. */
+  toolConfig?: { webSearchEngines: WebSearchEngine[] }
 }
 
 /**
@@ -78,7 +79,7 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         // that land while it runs, so a follow-up reaches the turn in flight
         // rather than only via post-completion catch-up.
         pollNewMessages: (afterSequence) => deps.callbacks.pollMessages(sessionId, afterSequence),
-        tools: deps.toolConfig ? { tavilyApiKey: deps.toolConfig.tavilyApiKey } : undefined,
+        tools: deps.toolConfig ? { webSearchEngines: deps.toolConfig.webSearchEngines } : undefined,
         abortSignal: abortController.signal,
         usage,
       },

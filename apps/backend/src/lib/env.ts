@@ -1,13 +1,14 @@
 import { logger } from "./logger"
 import { loadPostHogConfig } from "@threahq/backend-common"
 import type { PostHogConfig, WorkosConfig } from "@threahq/backend-common"
+import type { WebSearchEngineKeys } from "@threahq/agent-runtime"
 
 export type { WorkosConfig } from "@threahq/backend-common"
 
 export interface AIConfig {
   openRouterApiKey: string
-  /** Tavily API key for web search */
-  tavilyApiKey: string
+  /** Keys for the `web_search` engines; each key set runs its engine in parallel with the other. */
+  webSearchKeys: WebSearchEngineKeys
   /** ElevenLabs API key for realtime speech-to-text (voice dictation). Empty string disables voice. */
   elevenLabsApiKey: string
   /** Deepgram API key for realtime speech-to-text. Empty string disables Deepgram as a voice provider. */
@@ -227,7 +228,10 @@ export function loadConfig(): Config {
     },
     ai: {
       openRouterApiKey: process.env.OPENROUTER_API_KEY || "",
-      tavilyApiKey: process.env.TAVILY_API_KEY || "",
+      webSearchKeys: {
+        exa: process.env.EXA_API_KEY || undefined,
+        serper: process.env.SERPER_API_KEY || undefined,
+      },
       elevenLabsApiKey: process.env.ELEVENLABS_API_KEY || "",
       deepgramApiKey: process.env.DEEPGRAM_API_KEY || "",
       namingModel: process.env.AI_NAMING_MODEL || "openrouter:openai/gpt-6-luna",

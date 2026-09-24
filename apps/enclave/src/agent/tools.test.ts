@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
+import { createWebSearchEngines, type AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
 import type { ToolPrivacyCategory } from "@threahq/types"
 import type { LanguageModel } from "ai"
 import { buildEnclaveTools } from "./tools"
@@ -9,34 +9,34 @@ const ai = {
 } as AgentRuntimeAI
 const model = {} as LanguageModel
 
-function toolNames(tavilyApiKey?: string, allowedCategories?: ToolPrivacyCategory[]): string[] {
+function toolNames(exaApiKey?: string, allowedCategories?: ToolPrivacyCategory[]): string[] {
   return buildEnclaveTools({
     ai,
     model,
     modelString: "anthropic/claude-sonnet-4.6",
-    tavilyApiKey,
+    webSearchEngines: createWebSearchEngines({ exa: exaApiKey }),
     allowedCategories,
   }).map((t) => t.name)
 }
 
 describe("buildEnclaveTools", () => {
-  it("exposes web_search, read_url, and general_research when a Tavily key is present", () => {
-    expect(new Set(toolNames("tvly-test"))).toEqual(new Set(["web_search", "read_url", "general_research"]))
+  it("exposes web_search, read_url, and general_research when a search key is present", () => {
+    expect(new Set(toolNames("exa-test"))).toEqual(new Set(["web_search", "read_url", "general_research"]))
   })
 
-  it("omits web_search but keeps read_url + general_research without a Tavily key", () => {
+  it("omits web_search but keeps read_url + general_research without a search key", () => {
     expect(new Set(toolNames(undefined))).toEqual(new Set(["read_url", "general_research"]))
   })
 
   it("builds the full web surface when the policy allows web", () => {
-    expect(new Set(toolNames("tvly-test", ["web"]))).toEqual(new Set(["web_search", "read_url", "general_research"]))
+    expect(new Set(toolNames("exa-test", ["web"]))).toEqual(new Set(["web_search", "read_url", "general_research"]))
   })
 
   it("builds no tools when the policy forbids web (every enclave tool is web egress)", () => {
     // Empty policy → no tools at all; a workspace-only policy → still no tools,
     // since the enclave has no workspace tools to offer yet.
-    expect(toolNames("tvly-test", [])).toEqual([])
-    expect(toolNames("tvly-test", ["workspace"])).toEqual([])
+    expect(toolNames("exa-test", [])).toEqual([])
+    expect(toolNames("exa-test", ["workspace"])).toEqual([])
   })
 
   it("keeps the conversation-local read_attachment under a no-web policy (empty categories)", () => {
@@ -44,7 +44,7 @@ describe("buildEnclaveTools", () => {
       ai,
       model,
       modelString: "anthropic/claude-sonnet-4.6",
-      tavilyApiKey: "tvly-test",
+      webSearchEngines: createWebSearchEngines({ exa: "exa-test" }),
       allowedCategories: [],
       attachments: { refsById: new Map(), ciphertextById: new Map() },
     })

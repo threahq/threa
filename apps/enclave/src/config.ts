@@ -1,3 +1,4 @@
+import type { WebSearchEngineKeys } from "@threahq/agent-runtime/runtime"
 export interface EnclaveConfig {
   port: number
   /** Backend base URL — target for register/heartbeat/revoke/claims and the session callbacks. */
@@ -48,11 +49,11 @@ export interface EnclaveConfig {
   /** OpenRouter base URL (override for self-host; tests inject their own client). */
   openRouterBaseUrl: string
   /**
-   * Tavily key for the `web_search` tool. Optional: without it the enclave runs
-   * the loop with `read_url` + research only (a degraded but functional surface,
-   * not a failure), so it is not in the required-vars list.
+   * Keys for the `web_search` engines. Optional: with none the enclave runs
+   * `read_url` + research only (a degraded but functional surface, not a
+   * failure), so no key is in the required-vars list.
    */
-  tavilyApiKey?: string
+  webSearchKeys: WebSearchEngineKeys
 }
 
 /**
@@ -95,6 +96,9 @@ export function loadEnclaveConfig(): EnclaveConfig {
     buildHash: process.env.BUILD_HASH || "unknown",
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,
     openRouterBaseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
-    tavilyApiKey: process.env.TAVILY_API_KEY || undefined,
+    webSearchKeys: {
+      exa: process.env.EXA_API_KEY || undefined,
+      serper: process.env.SERPER_API_KEY || undefined,
+    },
   }
 }

@@ -3,6 +3,7 @@ import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threah
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { composeAbortSignal } from "../research/research-support"
+import { describeWebPageAge, searchWebEngines, type WebSearchEngine } from "./web-search-engines"
 
 const WebSearchSchema = z.object({
   query: z.string().describe("The search query to find information on the web"),
@@ -14,7 +15,7 @@ export interface WebSearchResultItem {
   title: string
   url: string
   content: string
-  score: number
+  age: string
 }
 
 export interface WebSearchResult {
@@ -22,23 +23,10 @@ export interface WebSearchResult {
   searchedAt?: string
   timezone?: string
   results: WebSearchResultItem[]
-  answer?: string
-}
-
-interface TavilySearchResponse {
-  query: string
-  answer?: string
-  results: Array<{
-    title: string
-    url: string
-    content: string
-    score: number
-  }>
-  response_time: number
 }
 
 export interface CreateWebSearchToolParams {
-  tavilyApiKey: string
+  engines: WebSearchEngine[]
   maxResults?: number
   /** Invocation time from the agent context, used to ground recency-sensitive searches. */
   currentTime?: string
@@ -63,7 +51,7 @@ function redactQuery(query: string): string {
 }
 
 export function createWebSearchTool(params: CreateWebSearchToolParams) {
-  const { tavilyApiKey, maxResults = 5, currentTime, timezone } = params
+  const { engines, maxResults = 5, currentTime, timezone } = params
   // The invocation time is deliberately NOT interpolated into this string.
   // Tool definitions render ahead of the system prompt in the prompt-cache
   // prefix, so a per-request value here changes that prefix on every call and
@@ -93,7 +81,8 @@ When using web search:
 - Search for facts, current events, or specific details you're uncertain about
 ${recencyGroundingBullet}
 - Cite sources in your responses using markdown links: [Title](URL)
-- Use the snippets to answer accurately`,
+- Use the snippets to answer accurately
+- Each result's \`age\` says how current its text is. Where a listing's title and older text disagree, the title is current`,
     inputSchema: WebSearchSchema,
 
     execute: async (input, { signal }): Promise<AgentToolResult> => {
@@ -107,43 +96,18 @@ ${recencyGroundingBullet}
       const sanitizedQuery = redactQuery(input.query)
 
       try {
-        const response = await fetch("https://api.tavily.com/search", {
-          method: "POST",
-          signal: fetchSignal,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${tavilyApiKey}`,
-          },
-          body: JSON.stringify({
-            query: sanitizedQuery,
-            max_results: maxResults,
-            include_answer: true,
-            search_depth: "basic",
-          }),
-        })
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          logger.error({ status: response.status, error: errorText }, "Tavily API error")
-          const output = JSON.stringify({ error: `Search failed: ${response.status}`, query: input.query })
-          return { output }
-        }
-
-        const data = (await response.json()) as TavilySearchResponse
+        const pages = await searchWebEngines(engines, sanitizedQuery, { maxResults, signal: fetchSignal })
+        const searchedAt = currentTime ? new Date(currentTime) : new Date()
 
         const result: WebSearchResult = {
-          query: data.query,
-          ...(currentTime && {
-            searchedAt: new Date(currentTime).toISOString(),
-            timezone,
-          }),
-          results: data.results.map((r) => ({
-            title: r.title,
-            url: r.url,
-            content: r.content,
-            score: r.score,
+          query: sanitizedQuery,
+          ...(currentTime && { searchedAt: searchedAt.toISOString(), timezone }),
+          results: pages.map((page) => ({
+            title: page.title,
+            url: page.url,
+            content: page.content,
+            age: describeWebPageAge(page, searchedAt),
           })),
-          answer: data.answer,
         }
 
         logger.debug({ query: input.query, resultCount: result.results.length }, "Web search completed")

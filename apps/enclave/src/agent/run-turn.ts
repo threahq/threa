@@ -1,6 +1,7 @@
 import type { LanguageModel, ModelMessage } from "ai"
 import { ulid } from "ulid"
 import { logger as baseLogger } from "@threahq/agent-runtime/logger"
+import type { WebSearchEngine } from "@threahq/agent-runtime/runtime"
 import { repairMessageReferences } from "@threahq/prosemirror/message-reference-repair"
 import {
   base64ToBytes,
@@ -148,12 +149,12 @@ export interface EnclaveTurnDeps {
    */
   pollNewMessages?: (afterSequence: bigint) => Promise<EnclaveMidTurnMessage[]>
   /**
-   * Web-tool configuration. Absent or keyless degrades gracefully: no Tavily key
-   * means no `web_search` (URL reads + research still work). Omitting `tools`
+   * Web-tool configuration. Absent or engineless degrades gracefully: no search
+   * engine means no `web_search` (URL reads + research still work). Omitting `tools`
    * entirely runs the loop with `read_url` + research only.
    */
   tools?: {
-    tavilyApiKey?: string
+    webSearchEngines?: WebSearchEngine[]
     currentTime?: string
     timezone?: string
   }
@@ -333,11 +334,11 @@ export async function runEnclaveTurn(
     ai,
     model,
     modelString: request.model,
-    tavilyApiKey: tools?.tavilyApiKey,
+    webSearchEngines: tools?.webSearchEngines,
     currentTime: tools?.currentTime,
     timezone: tools?.timezone,
     // Per-stream policy travels on the assignment, not in `deps.tools` (which
-    // is the enclave's own capability config, e.g. whether it has a Tavily key).
+    // is the enclave's own capability config, e.g. which search engines it has).
     allowedCategories: request.allowedToolCategories,
     // Conversation-local file access for `read_attachment` (carries empty
     // categories, so the policy filter never drops it; the refs already ride
@@ -346,7 +347,7 @@ export async function runEnclaveTurn(
   })
 
   // The backend ships the prompt WITHOUT tool sections — only the enclave
-  // knows which tools it actually wires (its own Tavily key, the per-stream
+  // knows which tools it actually wires (its own search engines, the per-stream
   // policy above). Advertise exactly the built toolset, then fold in prior
   // turns' digests.
   const toolSections = buildToolPromptSections(turnTools)

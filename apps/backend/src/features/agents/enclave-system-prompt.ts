@@ -17,7 +17,7 @@ import type { BuiltInAgentConfig } from "./built-in-agents"
  * is encrypted and the toolset is reduced.
  *
  * Tool sections are deliberately NOT built here: only the enclave knows which
- * tools it actually wires for a turn (its own Tavily key, the per-stream
+ * tools it actually wires for a turn (its own search engines, the per-stream
  * tool-privacy policy on the assignment), so run-turn appends
  * `buildToolPromptSections` over the REAL toolset — the prompt then advertises
  * exactly what's available, never a server-side guess.

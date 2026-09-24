@@ -274,7 +274,7 @@ import type { AuthorType, ConversationDirective } from "@threahq/types"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
-import { createAI, createModelRegistry, DecisionsAvailability } from "@threahq/agent-runtime"
+import { createAI, createModelRegistry, createWebSearchEngines, DecisionsAvailability } from "@threahq/agent-runtime"
 import { createStaticConfigResolver } from "./lib/ai/static-config-resolver"
 import {
   QueueManager,
@@ -1143,7 +1143,7 @@ export async function startServer(): Promise<ServerInstance> {
     modelRegistry,
     workspaceIntegrationService,
     sandbox: sandboxService ? { service: sandboxService, workspaceSettings: workspaceSettingsService } : undefined,
-    tavilyApiKey: config.ai.tavilyApiKey || undefined,
+    webSearchEngines: createWebSearchEngines(config.ai.webSearchKeys),
     stubResponse: config.useStubCompanion
       ? "This is a stub response from the companion. The real AI integration is disabled."
       : undefined,

@@ -101,7 +101,7 @@ export async function rescoreReport(
         userId: "rescore",
         permutation: { model: storedPerm.model, temperature: storedPerm.temperature ?? undefined },
         usage,
-        credentials: {},
+        credentials: { webSearchEngines: [] },
         judgeModel: options.judgeModel,
         configResolver: { resolve: async () => ({ modelId: storedPerm.model }) as never },
       }
