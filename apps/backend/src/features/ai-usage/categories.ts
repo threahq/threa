@@ -20,6 +20,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "tool-guardian": { category: "agents", stage: "agents" },
   "tool-guardian-decisions": { category: "agents", stage: "agents" },
   "tool-injection-screen": { category: "agents", stage: "agents" },
+  "web-search-judge": { category: "agents", stage: "agents" },
   "turn-digest": { category: "agents", stage: "agents" },
   "summary-update": { category: "agents", stage: "agents" },
   "agent.episode-summary": { category: "agents", stage: "agents" },

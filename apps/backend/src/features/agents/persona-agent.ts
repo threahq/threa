@@ -20,6 +20,7 @@ import { assertStreamWritable, StreamPoliciesRepository, StreamRepository, resol
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { InjectionScreen } from "./injection-screen"
+import type { WebSearchJudge } from "./web-search-judge"
 import { resolveEligibleConversation } from "./companion/conversation-highlight"
 import { PersonaRepository, resolveDraftTestPersona, type Persona } from "./persona-repository"
 import { PersonaConfigDraftRepository } from "./persona-config-draft-repository"
@@ -130,6 +131,7 @@ export interface PersonaAgentDeps {
   webSearchEngines?: WebSearchEngine[]
   pageBrowser?: PageBrowser
   injectionScreen?: InjectionScreen
+  webSearchJudge?: WebSearchJudge
   stubResponse?: string
   createMessage: (params: {
     initiatingUserId: string
@@ -463,6 +465,7 @@ export class PersonaAgent {
       webSearchEngines,
       pageBrowser,
       injectionScreen,
+      webSearchJudge,
       stubResponse,
       createMessage,
       editMessage,
@@ -1336,11 +1339,9 @@ export class PersonaAgent {
             }
           : undefined
 
-        const screenOutput = injectionScreen?.forTurn({
-          workspaceId,
-          userId: agentContext.invokingUserId,
-          sessionId: session.id,
-        })
+        const turn = { workspaceId, userId: agentContext.invokingUserId, sessionId: session.id }
+        const screenOutput = injectionScreen?.forTurn(turn)
+        const judgeSearch = webSearchJudge?.forTurn(turn)
 
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
@@ -1376,6 +1377,7 @@ export class PersonaAgent {
               webSearchEngines,
               pageBrowser,
               screenOutput,
+              judgeSearch,
               currentTime: agentContext.streamContext.temporal?.currentTime,
               timezone: agentContext.streamContext.temporal?.timezone,
               workspace: workspaceDeps,
@@ -1421,6 +1423,7 @@ export class PersonaAgent {
             webSearchEngines,
             pageBrowser,
             screenOutput,
+            judgeSearch,
             currentTime: agentContext.streamContext.temporal?.currentTime,
             timezone: agentContext.streamContext.temporal?.timezone,
             runWorkspaceAgent,

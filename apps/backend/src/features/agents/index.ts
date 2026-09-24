@@ -296,3 +296,4 @@ export {
   toolGuardianResponseSchema,
 } from "./guardian/config"
 export { InjectionScreen } from "./injection-screen"
+export { WebSearchJudge } from "./web-search-judge"

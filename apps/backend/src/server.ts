@@ -181,6 +181,7 @@ import {
   GeneralResearcher,
   PersonaAgent,
   InjectionScreen,
+  WebSearchJudge,
   TraceEmitter,
   SessionAbortRegistry,
   AgentSessionRepository,
@@ -1155,6 +1156,9 @@ export async function startServer(): Promise<ServerInstance> {
     injectionScreen: config.useStubAI
       ? undefined
       : new InjectionScreen({ ai, residency: aiResidency, availability: decisionsAvailability }),
+    webSearchJudge: config.useStubAI
+      ? undefined
+      : new WebSearchJudge({ ai, residency: aiResidency, availability: decisionsAvailability }),
     stubResponse: config.useStubCompanion
       ? "This is a stub response from the companion. The real AI integration is disabled."
       : undefined,

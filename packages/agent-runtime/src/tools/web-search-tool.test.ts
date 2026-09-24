@@ -1,6 +1,12 @@
 import { describe, it, expect, mock, afterEach } from "bun:test"
 import { createWebSearchTool } from "./web-search-tool"
-import { createExaEngine, createSerperEngine, createWebSearchEngines } from "./web-search-engines"
+import {
+  createExaEngine,
+  createSerperEngine,
+  createWebSearchEngines,
+  type WebPage,
+  type WebSearchEngine,
+} from "./web-search-engines"
 
 const toolOpts = { toolCallId: "test" }
 
@@ -268,6 +274,145 @@ describe("web-search-tool", () => {
 
     expect(parsed.error).toBeUndefined()
     expect(parsed.results.map((r: { url: string }) => r.url)).toEqual(["https://a.example/x"])
+  })
+})
+
+describe("web-search-tool judged and opened", () => {
+  const engine = (pages: WebPage[]): WebSearchEngine => ({ name: "serper", search: async () => pages })
+  const listed = (n: number): WebPage => ({
+    title: `Listing ${n}`,
+    url: `https://listed.example/${n}`,
+    content: `snippet ${n}`,
+    seen: "listed",
+  })
+  const both: WebPage = {
+    title: "Kris - Founding Engineer - Galdera Labs",
+    url: "https://profile.example/kris",
+    content: "Staff Engineer at Telness Tech",
+    seen: "both",
+  }
+  const stored: WebPage = { title: "Guide", url: "https://stored.example/guide", content: "Guide text", seen: "stored" }
+  const run = async (tool: ReturnType<typeof createWebSearchTool>) =>
+    JSON.parse((await tool.config.execute({ query: "kris role" }, toolOpts)).output)
+
+  it("opens the stale stored copy and the top three listings, and nothing else", async () => {
+    const opened: string[] = []
+    const tool = createWebSearchTool({
+      engines: [engine([listed(1), listed(2), listed(3), listed(4), both, stored])],
+      currentTime: "2026-09-23T10:00:00.000Z",
+      judge: async () => ({ offTopic: false, ambiguous: false, stale: [false, false, false, false, true, false] }),
+      openPage: async (url) => {
+        opened.push(url)
+        return `page at ${url}`
+      },
+    })
+
+    const parsed = await run(tool)
+
+    expect({
+      opened: opened.sort(),
+      results: parsed.results.map((r: { url: string; content: string; age: string }) => [r.url, r.content, r.age]),
+    }).toEqual({
+      opened: [both.url, listed(1).url, listed(2).url, listed(3).url].sort(),
+      results: [
+        [listed(1).url, `page at ${listed(1).url}`, "the page itself, read on 2026-09-23"],
+        [listed(2).url, `page at ${listed(2).url}`, "the page itself, read on 2026-09-23"],
+        [listed(3).url, `page at ${listed(3).url}`, "the page itself, read on 2026-09-23"],
+        [
+          listed(4).url,
+          "snippet 4",
+          "Google's listing on 2026-09-23. The title is current, the text under it may not be",
+        ],
+        [both.url, `page at ${both.url}`, "the page itself, read on 2026-09-23"],
+        [stored.url, "Guide text", "stored copy of the page, age unknown"],
+      ],
+    })
+  })
+
+  it("keeps the engine's text for a page that cannot be opened, and leaves out a stale one's", async () => {
+    const tool = createWebSearchTool({
+      engines: [engine([listed(1), both])],
+      judge: async () => ({ offTopic: false, ambiguous: false, stale: [false, true] }),
+      openPage: async (url) => {
+        if (url === both.url) throw new Error("authwall")
+        return null
+      },
+    })
+
+    const parsed = await run(tool)
+
+    expect(
+      parsed.results.map((r: { content: string; age: string }) => [r.content, r.age.includes("contradicts")])
+    ).toEqual([
+      ["snippet 1", false],
+      ["", true],
+    ])
+  })
+
+  it("leaves out stale copies' text when nothing opens pages", async () => {
+    const tool = createWebSearchTool({
+      engines: [engine([both, stored])],
+      judge: async () => ({ offTopic: false, ambiguous: false, stale: [true, false] }),
+    })
+
+    const parsed = await run(tool)
+
+    expect(
+      parsed.results.map((r: { url: string; content: string; age: string }) => [
+        r.url,
+        r.content,
+        r.age.includes("contradicts"),
+      ])
+    ).toEqual([
+      [both.url, "", true],
+      [stored.url, "Guide text", false],
+    ])
+  })
+
+  it("drops every result and says so when they are off topic", async () => {
+    const openPage = mock(async () => "page")
+    const tool = createWebSearchTool({
+      engines: [engine([listed(1), both])],
+      judge: async () => ({ offTopic: true, ambiguous: false, stale: [false, true] }),
+      openPage,
+    })
+
+    const parsed = await run(tool)
+
+    expect({ results: parsed.results, note: parsed.note, opens: openPage.mock.calls.length }).toEqual({
+      results: [],
+      note: expect.stringContaining("None of these results are about what was searched for"),
+      opens: 0,
+    })
+  })
+
+  it("keeps ambiguous results with a note to ask which one was meant", async () => {
+    const tool = createWebSearchTool({
+      engines: [engine([stored])],
+      judge: async () => ({ offTopic: false, ambiguous: true, stale: [false] }),
+    })
+
+    const parsed = await run(tool)
+
+    expect({ urls: parsed.results.map((r: { url: string }) => r.url), note: parsed.note }).toEqual({
+      urls: [stored.url],
+      note: expect.stringContaining("several different things that share a name"),
+    })
+  })
+
+  it("still opens thin listings when no judgment was made", async () => {
+    const tool = createWebSearchTool({
+      engines: [engine([listed(1), both])],
+      judge: async () => null,
+      openPage: async (url) => `page at ${url}`,
+    })
+
+    const parsed = await run(tool)
+
+    expect({
+      note: parsed.note,
+      contents: parsed.results.map((r: { content: string }) => r.content),
+    }).toEqual({ note: undefined, contents: [`page at ${listed(1).url}`, "Staff Engineer at Telness Tech"] })
   })
 })
 

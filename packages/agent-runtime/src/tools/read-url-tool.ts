@@ -4,7 +4,7 @@ import * as ipaddr from "ipaddr.js"
 import { NodeHtmlMarkdown } from "node-html-markdown"
 import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, resolveFetchUserAgent } from "@threahq/types"
 import { logger } from "../logger"
-import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
+import { defineAgentTool, type AgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { composeAbortSignal } from "../research/research-support"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
 import type { PageBrowser } from "./page-browser"
@@ -456,7 +456,15 @@ When to use read_url:
   })
 }
 
-/** A page's result, truncated to what the model gets, with the page as a source when it has a title. */
+/** Opens pages the way `read_url` reads them, for a tool that reads pages on the model's behalf. */
+export function createWebPageOpener(readUrl: AgentTool): (url: string, signal: AbortSignal) => Promise<string | null> {
+  return async (url, signal) => {
+    const { output } = await readUrl.config.execute({ url }, { toolCallId: `open:${url}`, signal })
+    const read = JSON.parse(output) as Partial<ReadUrlResult>
+    return typeof read.content === "string" && read.content ? read.content : null
+  }
+}
+
 function pageOutput(page: ReadUrlResult): AgentToolResult {
   const content =
     page.content.length > MAX_CONTENT_LENGTH

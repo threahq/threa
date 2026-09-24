@@ -10,9 +10,10 @@ export type WebSearchEngineName = (typeof WebSearchEngineNames)[keyof typeof Web
 /**
  * Where a result's text came from. A `listed` result is Google's listing today:
  * the title is current, the snippet may not be. A `stored` result is a crawled
- * copy that can be weeks old. `both` is one page both kinds found.
+ * copy that can be weeks old. `both` is one page both kinds found. `fetched`
+ * is the page itself, opened during the search.
  */
-export type WebPageSeen = "listed" | "stored" | "both"
+export type WebPageSeen = "listed" | "stored" | "both" | "fetched"
 
 export interface WebPage {
   title: string
@@ -137,7 +138,7 @@ export function combineWebPages(all: WebPage[]): WebPage[] {
     merged.add(sameAddress(page.url))
     return { ...page, title: twin.title, seen: "both" }
   })
-  const rank: Record<WebPageSeen, number> = { listed: 0, both: 1, stored: 2 }
+  const rank: Record<WebPageSeen, number> = { listed: 0, fetched: 0, both: 1, stored: 2 }
   return combined
     .filter((page) => !(page.seen === "listed" && merged.has(sameAddress(page.url))))
     .sort((a, b) => rank[a.seen] - rank[b.seen])
@@ -152,6 +153,7 @@ export function describeWebPageAge(page: WebPage, now: Date): string {
   if (page.seen === "both") {
     return `Google lists this page on ${today} under the title above. The text is a stored copy${page.date ? ` dated ${page.date}` : " of unknown age"}; where it disagrees with the title, the title is current`
   }
+  if (page.seen === "fetched") return `the page itself, read on ${today}${page.date ? `, dated ${page.date}` : ""}`
   return page.date ? `stored copy of the page, dated ${page.date}` : "stored copy of the page, age unknown"
 }
 
