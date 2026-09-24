@@ -1158,7 +1158,13 @@ export async function startServer(): Promise<ServerInstance> {
     storage,
     modelRegistry,
     workspaceIntegrationService,
-    sandbox: sandboxService ? { service: sandboxService, workspaceSettings: workspaceSettingsService } : undefined,
+    sandbox: sandboxService
+      ? {
+          service: sandboxService,
+          workspaceSettings: workspaceSettingsService,
+          sessionTokens: sandboxSessionTokenService,
+        }
+      : undefined,
     webSearchEngines: createWebSearchEngines(config.ai.webSearchKeys),
     pageBrowser: config.ai.browserbaseApiKey ? createBrowserbasePageBrowser(config.ai.browserbaseApiKey) : undefined,
     injectionScreen: config.useStubAI

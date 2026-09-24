@@ -135,6 +135,8 @@ export interface UpdateStreamBriefToolDeps {
  * the internet access the workspace setting and stream policy allow together.
  */
 export interface RunCommandToolDeps {
+  /** Commands can call Threa through the `threa` CLI; only a turn with an invoking user mints the token. */
+  threaApi: boolean
   internet: () => Promise<boolean>
   run: (params: {
     internet: boolean

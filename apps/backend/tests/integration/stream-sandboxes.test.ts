@@ -3,7 +3,9 @@ import type { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
 import {
   SandboxService,
+  SandboxSessionTokenService,
   StreamSandboxRepository,
+  type SandboxExecOptions,
   type SandboxExecResult,
   type SandboxFile,
   type SandboxRunner,
@@ -21,6 +23,8 @@ class FakeRunner implements SandboxRunner {
   readonly ran: Array<{ sandboxId: string; command: string }> = []
   readonly written: Array<{ sandboxId: string; path: string }> = []
   private next = 0
+  /** Runs inside `exec`, while the command would be running. */
+  duringExec: ((options: SandboxExecOptions) => Promise<void>) | null = null
   /** Runs inside `create`, after the box exists but before the service binds it. */
   beforeCreateReturns: (() => Promise<void>) | null = null
 
@@ -44,9 +48,10 @@ class FakeRunner implements SandboxRunner {
     for (const file of files) this.written.push({ sandboxId, path: file.path })
   }
 
-  async exec(sandboxId: string, command: string): Promise<SandboxExecResult> {
+  async exec(sandboxId: string, command: string, options: SandboxExecOptions): Promise<SandboxExecResult> {
     if (!this.live.has(sandboxId)) throw new Error(`exec on a missing box ${sandboxId}`)
     this.ran.push({ sandboxId, command })
+    await this.duringExec?.(options)
     return { stdout: "ok\n", stderr: "", exitCode: 0, timedOut: false, truncated: false }
   }
 
@@ -253,18 +258,36 @@ describe("SandboxService", () => {
 describe("run_command", () => {
   let pool: Pool
   let workspaceSettings: WorkspaceSettingsService
+  let sessionTokens: SandboxSessionTokenService
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
     workspaceSettings = new WorkspaceSettingsService(pool, createModelRegistry())
+    sessionTokens = new SandboxSessionTokenService({ pool })
   })
 
-  function commandTool(runner: FakeRunner, at: { workspaceId: string; streamId: string }, policy: ToolPrivacyPolicy) {
+  function commandTool(
+    runner: FakeRunner,
+    at: { workspaceId: string; streamId: string },
+    policy: ToolPrivacyPolicy,
+    invokingUserId: string | null = null
+  ) {
     const service = new SandboxService({ pool, runner })
     const workspace = { workspaceId: at.workspaceId, accessibleStreamIds: [at.streamId] } as WorkspaceToolDeps
     return createRunCommandTool(
       workspace,
-      bindStreamSandbox({ service, workspaceSettings }, { ...at, sealed: false, streamToolPolicy: policy })!
+      bindStreamSandbox(
+        { service, workspaceSettings, sessionTokens },
+        {
+          ...at,
+          sealed: false,
+          streamToolPolicy: policy,
+          personaId: "persona_ariadne",
+          sessionId: "session_1",
+          invokingUserId,
+          capturedStreamIds: [at.streamId],
+        }
+      )!
     )
   }
 
@@ -295,6 +318,51 @@ describe("run_command", () => {
       reported: results.map((r) => r.output.internet),
       created: runner.created.map((c) => c.internet),
     }).toEqual({ reported: [false, true, false], created: [false, true, false] })
+  })
+
+  test("a command's token reads as the invoking user while it runs, and is revoked when it ends", async () => {
+    const at = target()
+    const runner = new FakeRunner()
+    const during: Array<{ token: string; session: Awaited<ReturnType<typeof sessionTokens.validate>> }> = []
+    runner.duringExec = async (options) => {
+      const api = await options.api?.()
+      if (api) during.push({ token: api.token, session: await sessionTokens.validate(api.token) })
+    }
+
+    await runCommand(commandTool(runner, at, null, "usr_invoker"))
+
+    expect({
+      during: during.map(
+        ({ session }) =>
+          session && {
+            invokingUserId: session.invokingUserId,
+            personaId: session.personaId,
+            streamId: session.streamId,
+            capturedStreamIds: session.capturedStreamIds,
+          }
+      ),
+      after: await sessionTokens.validate(during[0]!.token),
+    }).toEqual({
+      during: [
+        {
+          invokingUserId: "usr_invoker",
+          personaId: "persona_ariadne",
+          streamId: at.streamId,
+          capturedStreamIds: [at.streamId],
+        },
+      ],
+      after: null,
+    })
+  })
+
+  test("a turn without an invoking user runs commands without a token", async () => {
+    const runner = new FakeRunner()
+    const apis: unknown[] = []
+    runner.duringExec = async (options) => void apis.push(options.api)
+
+    await runCommand(commandTool(runner, target(), null))
+
+    expect(apis).toEqual([undefined])
   })
 
   test("a replaced sandbox is reported to the model and on the trace step", async () => {

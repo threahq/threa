@@ -13,8 +13,10 @@ import { logger } from "../../../lib/logger"
 import {
   SANDBOX_DEFAULT_TIMEOUT_SEC,
   SANDBOX_MAX_TIMEOUT_SEC,
+  SANDBOX_TOKEN_GRACE_SEC,
   SandboxReplacedReasons,
   type SandboxService,
+  type SandboxSessionTokenService,
   type SandboxFile,
   type SandboxReplacedReason,
 } from "../../sandboxes"
@@ -63,6 +65,7 @@ function clip(text: string, max = TRACE_SECTION_MAX_CHARS): string {
 export interface StreamSandboxDeps {
   service: SandboxService
   workspaceSettings: Pick<WorkspaceSettingsService, "getSettings">
+  sessionTokens: Pick<SandboxSessionTokenService, "mint" | "revoke">
 }
 
 /**
@@ -70,19 +73,59 @@ export interface StreamSandboxDeps {
  * stream, whose plaintext and files must not reach a server-side box. Internet
  * needs the workspace setting AND the stream policy's `web` grant; the setting
  * is read per call so an admin's toggle applies to the next command.
+ *
+ * Each command gets its own API token, reading what this turn could read
+ * (`capturedStreamIds`) as the invoking user, minted when the command is about
+ * to start and revoked once it ends.
+ * A turn with no invoking user has nobody to read as, so its commands get none.
  */
 export function bindStreamSandbox(
   sandbox: StreamSandboxDeps,
-  target: { workspaceId: string; streamId: string; sealed: boolean; streamToolPolicy: ToolPrivacyPolicy }
+  target: {
+    workspaceId: string
+    streamId: string
+    sealed: boolean
+    streamToolPolicy: ToolPrivacyPolicy
+    personaId: string
+    sessionId: string
+    invokingUserId: string | null
+    capturedStreamIds: string[]
+  }
 ): RunCommandToolDeps | undefined {
-  const { workspaceId, streamId, sealed, streamToolPolicy } = target
+  const { workspaceId, streamId, sealed, streamToolPolicy, invokingUserId } = target
   if (sealed) return undefined
   return {
+    threaApi: invokingUserId !== null,
     internet: async () => {
       const settings = await sandbox.workspaceSettings.getSettings(workspaceId)
       return settings.sandboxInternet && isToolCategoryAllowed(streamToolPolicy, ToolPrivacyCategories.WEB)
     },
-    run: (params) => sandbox.service.run({ workspaceId, streamId, ...params }),
+    run: async (params) => {
+      if (!invokingUserId) return sandbox.service.run({ workspaceId, streamId, ...params })
+      let tokenId = null as string | null
+      const api = async () => {
+        const { session, value } = await sandbox.sessionTokens.mint({
+          workspaceId,
+          invokingUserId,
+          personaId: target.personaId,
+          sessionId: target.sessionId,
+          streamId,
+          capturedStreamIds: target.capturedStreamIds,
+          ttlSec: params.timeoutSec + SANDBOX_TOKEN_GRACE_SEC,
+        })
+        tokenId = session.id
+        return { token: value, workspaceId }
+      }
+      try {
+        return await sandbox.service.run({ workspaceId, streamId, ...params, api })
+      } finally {
+        if (tokenId) {
+          await sandbox.sessionTokens.revoke(workspaceId, tokenId).catch((err) => {
+            logger.warn({ err, workspaceId, tokenId }, "Sandbox token not revoked; it expires with its TTL")
+          })
+        }
+      }
+    },
   }
 }
 
@@ -103,7 +146,13 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
 
 - Pass \`attachmentIds\` to copy workspace files in; each lands at /work/attachments/<attachmentId>/<filename>.
 - Files you write persist between calls until the sandbox is replaced. When the result says it was replaced, tell the user that earlier files are gone. Attachments are still in the workspace: pass their ids again rather than asking the user to re-upload.
-- The result says whether the sandbox has internet. When it does not, don't try to install packages or fetch URLs.`,
+- The result says whether the sandbox has internet. When it does not, don't try to install packages or fetch URLs.${
+      deps.threaApi
+        ? `
+- Commands can use the \`threa\` CLI to read this workspace as you can in this turn: streams, messages, search, attachments (\`threa --help\`).
+- To hand the user a file you made, \`threa attachments upload <path>\` prints its id; link it in your reply as [filename](attachment:<id>). Nothing is posted for you.`
+        : ""
+    }`,
     description:
       "Run a shell command in this conversation's sandbox. Returns stdout, stderr and the exit code; optionally copies workspace attachments in first.",
     inputSchema: RunCommandSchema,

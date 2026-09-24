@@ -1312,6 +1312,10 @@ export class PersonaAgent {
               streamId: session.streamId,
               sealed: stream.e2eEnabled === true,
               streamToolPolicy,
+              personaId: persona.id,
+              sessionId: session.id,
+              invokingUserId: agentContext.invokingUserId ?? null,
+              capturedStreamIds: [...(agentContext.accessibleStreamIds ?? [])],
             })
           : undefined
 
