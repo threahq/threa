@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { PersonaListAvatar } from "@/components/persona-avatar"
 import { useArchivedPersonas, usePersonas, useUnarchivePersona } from "@/hooks/use-personas"
 import { FollowUpLimitSection } from "./follow-up-limit-section"
+import { SandboxInternetSection } from "./sandbox-internet-section"
 import { DefaultCompanionSection } from "./default-companion-section"
 import { SubagentModelsSection } from "./subagent-models-section"
 import { PersonaForkDialog } from "./persona-fork-dialog"
@@ -147,6 +148,7 @@ export function PersonasTab({ workspaceId }: PersonasTabProps) {
         <DefaultCompanionSection workspaceId={workspaceId} />
         <FollowUpLimitSection workspaceId={workspaceId} />
         <SubagentModelsSection workspaceId={workspaceId} />
+        <SandboxInternetSection workspaceId={workspaceId} />
       </div>
     </div>
   )

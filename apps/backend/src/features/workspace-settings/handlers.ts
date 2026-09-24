@@ -37,6 +37,7 @@ const updateWorkspaceSettingsSchema = z
     // The models a persona may delegate a subagent to. Registry membership is
     // checked in the service — the shape check here only bounds the list.
     subagentModels: z.array(z.string().trim().min(1).max(128)).max(20).optional(),
+    sandboxInternet: z.boolean().optional(),
   })
   // Reject unknown keys instead of silently stripping them: a stale client
   // PATCHing the retired `callsEnabled` (now the `calls` feature flag) must fail
