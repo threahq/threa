@@ -23,7 +23,7 @@ services:
       retries: 10
 
   minio:
-    image: quay.io/minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     ports:
       - "9099:9000"
       - "9001:9001"

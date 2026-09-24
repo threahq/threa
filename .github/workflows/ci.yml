@@ -107,7 +107,7 @@ jobs:
           docker run -d -p 9000:9000 --name minio \
             -e "MINIO_ROOT_USER=minioadmin" \
             -e "MINIO_ROOT_PASSWORD=minioadmin" \
-            quay.io/minio/minio:latest server /data
+            cgr.dev/chainguard/minio:latest server /data
           # Wait for MinIO to be ready
           for i in {1..30}; do
             if curl -sf http://localhost:9000/minio/health/live; then
