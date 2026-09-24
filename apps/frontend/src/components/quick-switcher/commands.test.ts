@@ -110,6 +110,7 @@ describe("commands", () => {
     const reachability: Record<SidebarQuickLinkKey, (ctx: ReturnType<typeof makeContext>) => void> = {
       drafts: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/drafts`),
       saved: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/saved`),
+      streams: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/streams`),
       files: ({ openExplorer }) => expect(openExplorer).toHaveBeenCalled(),
       agenda: ({ openOutcomes }) => expect(openOutcomes).toHaveBeenCalled(),
       scheduled: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/scheduled`),

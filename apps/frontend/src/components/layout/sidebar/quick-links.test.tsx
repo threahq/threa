@@ -43,6 +43,7 @@ function renderQuickLinks(props: Partial<Parameters<typeof SidebarQuickLinks>[0]
         isFilesPage={false}
         isAgendaPage={false}
         isLabelsPage={false}
+        isStreamsPage={false}
         unreadActivityCount={0}
         {...props}
       />
@@ -63,6 +64,17 @@ describe("SidebarQuickLinks", () => {
     expect(screen.getByText("Files")).toBeInTheDocument()
     expect(screen.getByText("Memory")).toBeInTheDocument()
     expect(screen.getByText("Activity")).toBeInTheDocument()
+  })
+
+  it("should link Streams to the stream explorer and mark it current when on the explorer", () => {
+    stubSidebar("open")
+    renderQuickLinks({ isStreamsPage: true })
+
+    const link = screen.getByRole("link", { name: "Streams" })
+    expect({ href: link.getAttribute("href"), current: link.getAttribute("aria-current") }).toEqual({
+      href: "/w/workspace_1/streams",
+      current: "page",
+    })
   })
 
   it("does not render a Threads quick link", () => {
@@ -113,6 +125,7 @@ describe("SidebarQuickLinks", () => {
           isFilesPage={false}
           isAgendaPage={false}
           isLabelsPage={false}
+          isStreamsPage={false}
           unreadActivityCount={0}
         />
       </MemoryRouter>

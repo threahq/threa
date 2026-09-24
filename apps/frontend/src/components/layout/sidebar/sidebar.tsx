@@ -162,6 +162,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isAgendaPage = splat === "agenda" || location.pathname.endsWith("/agenda")
   const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
+  const isStreamsPage = /^\/w\/[^/]+\/streams(\/|$)/.test(location.pathname)
 
   const memberStreamIds = useMemo(() => {
     const ids = new Set<string>()
@@ -460,6 +461,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       isFilesPage={isFilesPage}
       isAgendaPage={isAgendaPage}
       isLabelsPage={isLabelsPage}
+      isStreamsPage={isStreamsPage}
       unreadActivityCount={unreadActivityCount}
     />
   ) : null

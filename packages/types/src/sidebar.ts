@@ -94,6 +94,7 @@ export type SidebarBasePreset = (typeof SIDEBAR_BASE_PRESETS)[number]
 export const SIDEBAR_QUICK_LINKS = [
   "drafts",
   "saved",
+  "streams",
   "files",
   "scheduled",
   "agenda",
