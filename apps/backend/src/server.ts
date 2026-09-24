@@ -148,7 +148,13 @@ import {
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
 import { WorkspaceSettingsService } from "./features/workspace-settings"
-import { DockerSandboxRunner, RailwaySandboxRunner, SandboxService, type SandboxRunner } from "./features/sandboxes"
+import {
+  DockerSandboxRunner,
+  RailwaySandboxRunner,
+  SandboxService,
+  SandboxSessionTokenService,
+  type SandboxRunner,
+} from "./features/sandboxes"
 import { FeatureFlagService } from "./features/feature-flags"
 import { PlatformAdminService } from "./features/platform-admin"
 import { SidebarConfigService } from "./features/sidebar-config"
@@ -811,6 +817,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   // User-scoped API keys are managed by Threa, not WorkOS.
   const userApiKeyService = new UserApiKeyServiceImpl(pool)
+  const sandboxSessionTokenService = new SandboxSessionTokenService({ pool })
 
   // Voice dictation — session lifecycle service + the realtime STT factory.
   // The factory only registers a provider strategy when its key is present
@@ -988,6 +995,7 @@ export async function startServer(): Promise<ServerInstance> {
     workspaceAuthzService,
     workosOrgService,
     userApiKeyService,
+    sandboxSessionTokenService,
     voiceTranscriptionService,
     callService,
     callsCloudflareEnabled: config.cloudflareRealtime.enabled,

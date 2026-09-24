@@ -69,6 +69,7 @@ import {
 } from "./features/public-api"
 import { BotRuntimeService, type BotRuntimeWriteOps } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
+import type { SandboxSessionTokenService } from "./features/sandboxes"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
 import { createCallHandlers, type CallService } from "./features/calls"
 import {
@@ -88,7 +89,11 @@ import {
   type AnalyticsReporter,
   type PostHogConfig,
 } from "@threahq/backend-common"
-import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./middleware/public-api-auth"
+import {
+  createPublicApiAuthMiddleware,
+  requireApiKeyScope,
+  requireSandboxOperation,
+} from "./middleware/public-api-auth"
 import { createApiVersionGate } from "./middleware/api-version"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import type { WorkspaceService } from "./features/workspaces"
@@ -201,6 +206,7 @@ interface Dependencies {
   workspaceAuthzService: WorkspaceAuthzService
   workosOrgService: WorkosOrgService
   userApiKeyService: UserApiKeyService
+  sandboxSessionTokenService: SandboxSessionTokenService
   voiceTranscriptionService: VoiceTranscriptionService
   callService: CallService
   /** True when the CF Realtime media plane is configured; when false, calls surfaces 503. */
@@ -277,6 +283,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceAuthzService,
     workosOrgService,
     userApiKeyService,
+    sandboxSessionTokenService,
     voiceTranscriptionService,
     callService,
     callsCloudflareEnabled,
@@ -2095,7 +2102,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
 
   // Public API v1 — API key auth (workspace-scoped or user-scoped)
-  const publicAuth = createPublicApiAuthMiddleware({ userApiKeyService, botApiKeyService, workspaceAuthzService, pool })
+  const publicAuth = createPublicApiAuthMiddleware({
+    userApiKeyService,
+    botApiKeyService,
+    sandboxSessionTokenService,
+    workspaceAuthzService,
+    pool,
+  })
   const publicApi = createPublicApiHandlers({
     searchService,
     featureFlagService,
@@ -2140,6 +2153,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     searchAttachments: publicApi.searchAttachments,
     getAttachment: publicApi.getAttachment,
     getAttachmentDownloadUrl: publicApi.getAttachmentDownloadUrl,
+    downloadAttachment: publicApi.downloadAttachment,
     upsertBotRuntimePresence: publicApi.upsertBotRuntimePresence,
     createBotRuntimeSession: publicApi.createBotRuntimeSession,
     getBotOwnerE2eKey: publicApi.getBotOwnerE2eKey,
@@ -2214,6 +2228,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       ...publicMiddleware,
       audit(publicApiOperation(route.operationId), kind),
       createApiVersionGate(route.operationId),
+      requireSandboxOperation(route.operationId),
       ...scopeGuard,
       ...(Array.isArray(handler) ? handler : [handler])
     )

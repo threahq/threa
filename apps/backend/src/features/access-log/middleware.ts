@@ -42,6 +42,9 @@ function resolveIdentity(req: Request): Identity | null {
   if (req.botApiKey) {
     return { actorType: "bot", actorId: req.botApiKey.botId, authRef: req.botApiKey.id }
   }
+  if (req.sandboxSession) {
+    return { actorType: "persona", actorId: req.sandboxSession.personaId, authRef: req.sandboxSession.id }
+  }
   if (req.userApiKey) {
     return { actorType: "user", actorId: req.userApiKey.userId, authRef: req.userApiKey.id }
   }

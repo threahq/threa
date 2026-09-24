@@ -210,6 +210,11 @@ function buildSpec() {
 
     if (successStatus === "204") {
       responses["204"] = { description: "No content" }
+    } else if (route.responseContentType) {
+      responses[successStatus] = {
+        description: "Successful response",
+        content: { [route.responseContentType]: { schema: { type: "string", format: "binary" } } },
+      }
     } else {
       const responseJsonSchema = zodToJsonSchema(route.responseSchema)
       responses[successStatus] = {

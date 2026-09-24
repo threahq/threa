@@ -36,11 +36,13 @@ import {
   resolveSealingContext,
 } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
+import { isSandboxStreamReadable, sandboxReadableStreamIds } from "../sandboxes"
 import { failSessionWithLifecycleInTransaction, PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
   AttachmentExtractionRepository,
   AttachmentRepository,
+  buildContentDisposition,
   buildUploadParams,
   parseE2eUploadFlag,
   type Attachment,
@@ -805,6 +807,9 @@ export function createPublicApiHandlers({
   const conversationService = providedConversationService ?? new ConversationService(pool)
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
+    if (req.sandboxSession) {
+      return sandboxReadableStreamIds(pool, req.sandboxSession, filters)
+    }
     if (req.userApiKey) {
       return resolveUserAccessibleStreamIds(pool, req.workspaceId!, req.user!.id, filters)
     }
@@ -848,6 +853,12 @@ export function createPublicApiHandlers({
     streamId: string,
     options: { allowArchived?: boolean } = {}
   ): Promise<void> {
+    if (req.sandboxSession) {
+      if (!(await isSandboxStreamReadable(pool, req.sandboxSession, streamId))) {
+        throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
+      }
+      return
+    }
     if (req.userApiKey) {
       const stream = await streamService.tryAccess(streamId, req.workspaceId!, req.user!.id)
       if (!stream) {
@@ -1159,7 +1170,7 @@ export function createPublicApiHandlers({
       workspaceId: req.workspaceId!,
       accessibleStreamIds,
     })
-    if (!attachment) {
+    if (!attachment || (req.sandboxSession && attachment.e2eOnly)) {
       throw new HttpError("Attachment not found", { status: 404, code: "NOT_FOUND" })
     }
     return attachment
@@ -1168,7 +1179,7 @@ export function createPublicApiHandlers({
   return {
     async uploadAttachment(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const uploadedBy = req.userApiKey ? req.user!.id : req.botApiKey?.botId
+      const uploadedBy = req.sandboxSession?.personaId ?? (req.userApiKey ? req.user!.id : req.botApiKey?.botId)
       if (!uploadedBy) throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
 
       const file = req.file
@@ -1194,8 +1205,8 @@ export function createPublicApiHandlers({
         })
       }
 
-      const uploadResult = await attachmentService.createForUpload(
-        buildUploadParams(
+      const uploadResult = await attachmentService.createForUpload({
+        ...buildUploadParams(
           {
             id: attachmentId,
             workspaceId,
@@ -1206,8 +1217,11 @@ export function createPublicApiHandlers({
             storagePath: file.key,
           },
           e2e
-        )
-      )
+        ),
+        // Sandbox output belongs to the agent's stream from the start, so the
+        // reply that links it passes the send path's accessible-stream check.
+        streamId: req.sandboxSession?.streamId,
+      })
 
       if (uploadResult.status === "cleanup_failed") {
         throw new HttpError("Attachment quarantined and cleanup failed", { status: 500, code: "INTERNAL_ERROR" })
@@ -2949,6 +2963,29 @@ export function createPublicApiHandlers({
 
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data })
+    },
+
+    async downloadAttachment(req: Request, res: Response) {
+      const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
+      setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
+      const object = await attachmentService.getContent(attachment)
+
+      res.set("Content-Type", attachment.mimeType)
+      res.set("Content-Disposition", buildContentDisposition(attachment.filename))
+      res.set("X-Content-Type-Options", "nosniff")
+      res.set("Cache-Control", "private, no-store")
+      if (object.contentLength !== undefined) res.set("Content-Length", String(object.contentLength))
+
+      object.stream.on("error", (err) => {
+        if (!res.headersSent) {
+          res.status(500).end()
+        } else {
+          // Content-Length is already on the wire: abort so the client sees a
+          // failed transfer, not a truncated 200.
+          res.destroy(err)
+        }
+      })
+      object.stream.pipe(res)
     },
 
     async listStreams(req: Request, res: Response) {

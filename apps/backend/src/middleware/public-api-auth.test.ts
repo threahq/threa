@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
-import { createPublicApiAuthMiddleware, requireApiKeyScope } from "./public-api-auth"
+import { createPublicApiAuthMiddleware, requireApiKeyScope, requireSandboxOperation } from "./public-api-auth"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { CURRENT_API_VERSION } from "../features/public-api/versions"
 
@@ -52,6 +52,7 @@ describe("createPublicApiAuthMiddleware", () => {
     overrides: {
       userApiKeyService?: any
       botApiKeyService?: any
+      sandboxSessionTokenService?: any
       workspaceAuthzService?: any
       pool?: any
       ownerPermissions?: string[] | null
@@ -67,6 +68,7 @@ describe("createPublicApiAuthMiddleware", () => {
     return createPublicApiAuthMiddleware({
       userApiKeyService: { validateKey: async () => null } as any,
       botApiKeyService: { validateKey: async () => null } as any,
+      sandboxSessionTokenService: { validate: async () => null } as any,
       workspaceAuthzService: defaultAuthz,
       pool: createPoolStub(),
       ...rest,
@@ -286,6 +288,94 @@ describe("createPublicApiAuthMiddleware", () => {
 
     expect(error).not.toBeNull()
     expect(error!.status).toBe(401)
+  })
+})
+
+describe("sandbox tokens", () => {
+  const session = {
+    id: "sst_1",
+    workspaceId: "ws_1",
+    invokingUserId: "user_1",
+    personaId: "persona_1",
+    sessionId: "session_1",
+    streamId: "stream_1",
+    capturedStreamIds: ["stream_1"],
+    expiresAt: new Date(Date.now() + 60_000),
+  }
+
+  function sandboxMiddleware(permissions: string[] | null) {
+    return createPublicApiAuthMiddleware({
+      userApiKeyService: { validateKey: async () => null } as any,
+      botApiKeyService: { validateKey: async () => null } as any,
+      sandboxSessionTokenService: {
+        validate: async (token: string) => (token === "threa_sk_live" ? session : null),
+      } as any,
+      workspaceAuthzService: { resolveActivePermissions: async () => permissions } as any,
+      pool: {
+        query: async () => ({
+          rows: [{ id: "user_1", workspace_id: "ws_1", workos_user_id: "wos_1", role: "member" }],
+          rowCount: 1,
+        }),
+      } as any,
+    })
+  }
+
+  function sandboxReq(token: string, workspaceId = "ws_1") {
+    return createReq({ headers: { authorization: `Bearer ${token}` } as any, params: { workspaceId } })
+  }
+
+  test("should set the sandbox session and never a user", async () => {
+    const req = sandboxReq("threa_sk_live")
+    const { error } = await runMiddleware(sandboxMiddleware(["messages:read"]), req)
+
+    expect({ error, sandboxSession: req.sandboxSession, user: req.user, userApiKey: req.userApiKey }).toEqual({
+      error: null,
+      sandboxSession: session,
+      user: undefined,
+      userApiKey: undefined,
+    })
+  })
+
+  test("should reject an unknown token, another workspace, and an inactive invoker", async () => {
+    const results = await Promise.all([
+      runMiddleware(sandboxMiddleware(["messages:read"]), sandboxReq("threa_sk_revoked")),
+      runMiddleware(sandboxMiddleware(["messages:read"]), sandboxReq("threa_sk_live", "ws_2")),
+      runMiddleware(sandboxMiddleware(null), sandboxReq("threa_sk_live")),
+    ])
+
+    expect(results.map((r) => r.error?.status)).toEqual([401, 403, 401])
+  })
+
+  test("should 404 operations outside the sandbox allowlist and pass everything else through", () => {
+    const outcomes = (
+      [
+        ["sendMessage", true],
+        ["getAttachmentDownloadUrl", true],
+        ["listStreams", true],
+        ["sendMessage", false],
+      ] as const
+    ).map(([operationId, sandboxed]) => {
+      const req = createReq()
+      if (sandboxed) req.sandboxSession = session
+      let outcome: unknown = "unset"
+      requireSandboxOperation(operationId)(req, {} as Response, (err?: any) => {
+        outcome = err ? err.status : "next"
+      })
+      return outcome
+    })
+
+    expect(outcomes).toEqual([404, 404, "next", "next"])
+  })
+
+  test("should skip the key scope check for a sandbox session", () => {
+    const req = createReq()
+    req.sandboxSession = session
+    let outcome: unknown = "unset"
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH)(req, {} as Response, (err?: any) => {
+      outcome = err ?? "next"
+    })
+
+    expect(outcome).toBe("next")
   })
 })
 
