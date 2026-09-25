@@ -26,11 +26,10 @@ function getDisplayText(attrs: AttachmentReferenceAttrs): string {
 export function AttachmentReferenceView({ node }: NodeViewProps) {
   const attrs = node.attrs as AttachmentReferenceAttrs
   const isImage = attrs.mimeType.startsWith("image/")
-  const status = attrs.status === "uploaded" ? "ready" : attrs.status
 
   const content = (
     <NodeViewWrapper as="span" data-type="attachment-reference">
-      <AttachmentChip label={getDisplayText(attrs)} mimeType={attrs.mimeType} status={status} />
+      <AttachmentChip label={getDisplayText(attrs)} mimeType={attrs.mimeType} status={attrs.status} />
     </NodeViewWrapper>
   )
 

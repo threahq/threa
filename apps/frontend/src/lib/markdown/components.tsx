@@ -280,7 +280,6 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
           }}
           title={PENDING_STATE_LABELS[pendingState]}
           aria-label={`${extractTextFromChildren(children)} — ${PENDING_STATE_LABELS[pendingState]}`}
-          className="align-baseline"
         >
           <AttachmentChip
             label={<ProcessedChildren>{children}</ProcessedChildren>}
@@ -305,13 +304,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
     }
 
     return (
-      <button
-        type="button"
-        onClick={handleClick}
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        className="align-baseline"
-      >
+      <button type="button" onClick={handleClick} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
         <AttachmentChip label={<ProcessedChildren>{children}</ProcessedChildren>} mimeType={mimeType} />
       </button>
     )

@@ -2,10 +2,10 @@ import { type ReactNode } from "react"
 import { AlertCircle, FileIcon, ImageIcon, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-export type AttachmentChipStatus = "ready" | "uploading" | "pending" | "error"
+export type AttachmentChipStatus = "uploaded" | "uploading" | "pending" | "error"
 
 const STATUS_STYLES: Record<AttachmentChipStatus, string> = {
-  ready: cn(
+  uploaded: cn(
     "bg-primary/10 text-primary hover:bg-primary/20",
     "dark:bg-primary/20 dark:text-primary dark:hover:bg-primary/30"
   ),
@@ -23,7 +23,7 @@ const STATUS_STYLES: Record<AttachmentChipStatus, string> = {
 export function AttachmentChip({
   label,
   mimeType,
-  status = "ready",
+  status = "uploaded",
   className,
 }: {
   label: ReactNode
