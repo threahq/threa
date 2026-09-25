@@ -121,6 +121,8 @@ describe("ScratchpadItem", () => {
             },
             isPressed: false,
           },
+          touchHandlers: {},
+          swipe: { handlers: {}, offset: 0, offsetY: 0, isLocked: false, arm: "primary" },
         }) as unknown as ReturnType<typeof itemDrawerModule.useSidebarItemDrawer>
     )
 
@@ -539,7 +541,7 @@ describe("ScratchpadItem", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument()
   })
 
-  it("adds a Clear action ahead of Settings when the row is in the Inbox", () => {
+  it("adds a Settle action ahead of Settings when the row is in the Inbox", () => {
     renderWithRouter(
       <ScratchpadItem
         workspaceId="workspace_1"
@@ -556,11 +558,11 @@ describe("ScratchpadItem", () => {
     const labels = within(menu)
       .getAllByRole("button")
       .map((button) => button.textContent)
-    expect(labels[0]).toBe("Clear")
+    expect(labels[0]).toBe("Settle")
     expect(labels).toContain("Settings")
   })
 
-  it("does not offer a Clear action outside the Inbox", () => {
+  it("does not offer a Settle action outside the Inbox", () => {
     renderWithRouter(
       <ScratchpadItem
         workspaceId="workspace_1"
@@ -571,10 +573,10 @@ describe("ScratchpadItem", () => {
       />
     )
 
-    expect(screen.queryByText("Clear")).not.toBeInTheDocument()
+    expect(screen.queryByText("Settle")).not.toBeInTheDocument()
   })
 
-  it("calls onClearFromInbox when the Clear action is selected", () => {
+  it("calls onClearFromInbox when the Settle action is selected", () => {
     const onClearFromInbox = vi.fn()
     renderWithRouter(
       <ScratchpadItem
@@ -588,12 +590,12 @@ describe("ScratchpadItem", () => {
       />
     )
 
-    fireEvent.click(screen.getByText("Clear"))
+    fireEvent.click(screen.getByText("Settle"))
 
     expect(onClearFromInbox).toHaveBeenCalledTimes(1)
   })
 
-  it("dims a held Inbox scratchpad row and shows the row Clear button", () => {
+  it("dims a held Inbox scratchpad row and shows the row Settle button", () => {
     renderWithRouter(
       <ScratchpadItem
         workspaceId="workspace_1"
@@ -608,7 +610,9 @@ describe("ScratchpadItem", () => {
 
     const avatarRow = screen.getByText("Notes").parentElement!.parentElement!.parentElement!
     expect(avatarRow).toHaveClass("opacity-60")
-    expect(screen.getByRole("button", { name: "Clear from Inbox" })).toBeInTheDocument()
+    // The mocked row menu also renders a text "Settle"; the row button is the icon-only one.
+    const rowButtons = screen.getAllByRole("button", { name: "Settle" }).filter((button) => button.textContent === "")
+    expect(rowButtons).toHaveLength(1)
   })
 
   it("does not dim an Inbox scratchpad row that still has unread messages", () => {

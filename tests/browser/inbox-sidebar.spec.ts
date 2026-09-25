@@ -146,7 +146,7 @@ test.describe("Inbox sidebar section", () => {
     // Inbox and it reappears in Channels; with nothing else held/unread, the
     // Inbox goes back to "All caught up".
     await inboxRow.hover()
-    await inboxRow.getByRole("button", { name: "Clear from Inbox" }).click()
+    await inboxRow.getByRole("button", { name: "Settle" }).click()
     await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
     await expect(sectionByHeading(page, "Inbox").getByText("All caught up")).toBeVisible({ timeout: 10000 })
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
@@ -260,7 +260,7 @@ test.describe("Inbox sidebar section", () => {
 
     const drawer = page.locator("[data-vaul-drawer]")
     await expect(drawer).toBeVisible({ timeout: 10000 })
-    await drawer.getByRole("button", { name: "Clear", exact: true }).click()
+    await drawer.getByRole("button", { name: "Settle", exact: true }).click()
 
     await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })

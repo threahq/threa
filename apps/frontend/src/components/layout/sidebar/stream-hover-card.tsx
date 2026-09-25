@@ -207,7 +207,7 @@ function HoverCardBody({
           </CardAction>
         )}
         {onClearFromInbox && (
-          <CardAction label="Clear from Inbox" onClick={onClearFromInbox}>
+          <CardAction label="Settle" onClick={onClearFromInbox}>
             <Check />
           </CardAction>
         )}

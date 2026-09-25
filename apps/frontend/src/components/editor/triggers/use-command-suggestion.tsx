@@ -9,6 +9,7 @@ import {
   GIPHY_SLASH_ACTION,
   SNIPPET_SLASH_ACTION,
   ATTACHMENT_SLASH_ACTION,
+  SETTLE_SLASH_ACTION,
 } from "./command-extension"
 import { rankMatches } from "@/lib/match-score"
 import { useStreamCommands } from "@/hooks/use-stream-commands"
@@ -113,6 +114,16 @@ const ATTACHMENT_SLASH_ITEM: CommandItem = {
 }
 
 /**
+ * Settles the composer's stream out of the Inbox. Start-of-message only: it acts
+ * on the stream rather than composing into the message.
+ */
+const SETTLE_SLASH_ITEM: CommandItem = {
+  name: "settle",
+  description: "Settle this stream out of your Inbox",
+  clientActionId: SETTLE_SLASH_ACTION,
+}
+
+/**
  * Client-action commands (e.g. `/aside`) still insert a chip
  * into the composer via the normal suggestion flow; routing to the client
  * handler happens at composer-send time (`message-input.tsx`) so the user
@@ -127,6 +138,7 @@ export function useCommandSuggestion({
   onOpenGiphy,
   onOpenSnippet,
   onOpenAttachment,
+  onSettle,
   commandStreamId,
   includeStreamCommands = true,
 }: {
@@ -137,6 +149,8 @@ export function useCommandSuggestion({
   onOpenGiphy?: () => void
   onOpenSnippet?: () => void
   onOpenAttachment?: () => void
+  /** Offers `/settle`; absent when the stream isn't in the Inbox. */
+  onSettle?: () => void
   /**
    * Scopes the palette to a stream the route can't name — the conversation panel
    * is a `?panel=conv:` overlay, so its commands come from the conversation's own
@@ -163,6 +177,9 @@ export function useCommandSuggestion({
   onOpenSnippetRef.current = onOpenSnippet
   const onOpenAttachmentRef = useRef(onOpenAttachment)
   onOpenAttachmentRef.current = onOpenAttachment
+  const onSettleRef = useRef(onSettle)
+  onSettleRef.current = onSettle
+  const includeSettle = !!onSettle
   const streamCommands = useStreamCommands(workspaceId, streamId)
   const effectiveCommands = includeStreamCommands ? streamCommands : []
 
@@ -187,9 +204,10 @@ export function useCommandSuggestion({
       ...(includeGiphy ? [GIPHY_SLASH_ITEM] : []),
       ...(includeSnippet ? [SNIPPET_SLASH_ITEM] : []),
       ...(includeAttachment ? [ATTACHMENT_SLASH_ITEM] : []),
+      ...(includeSettle ? [SETTLE_SLASH_ITEM] : []),
       ...serverCommands,
     ]
-  }, [effectiveCommands, streamId, includeMemoSearch, includeGiphy, includeSnippet, includeAttachment])
+  }, [effectiveCommands, streamId, includeMemoSearch, includeGiphy, includeSnippet, includeAttachment, includeSettle])
 
   const renderList = useCallback(
     (props: {
@@ -207,6 +225,7 @@ export function useCommandSuggestion({
         if (item.clientActionId === GIPHY_SLASH_ACTION) onOpenGiphyRef.current?.()
         if (item.clientActionId === SNIPPET_SLASH_ACTION) onOpenSnippetRef.current?.()
         if (item.clientActionId === ATTACHMENT_SLASH_ACTION) onOpenAttachmentRef.current?.()
+        if (item.clientActionId === SETTLE_SLASH_ACTION) onSettleRef.current?.()
       }
       return <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={command} />
     },

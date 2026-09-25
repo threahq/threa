@@ -16,7 +16,14 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
-import { useDraftScratchpads, useArchiveStream, useSaveMessage, useStreamName, isDraftId } from "@/hooks"
+import {
+  useDraftScratchpads,
+  useArchiveStream,
+  useSaveMessage,
+  useStreamName,
+  useUnreadCounts,
+  isDraftId,
+} from "@/hooks"
 import {
   useWorkspaceUsers,
   useWorkspaceStreams,
@@ -105,6 +112,8 @@ export function QuickSwitcher({
   const { openStreamSettings } = useStreamSettings()
   const archiveStream = useArchiveStream(workspaceId)
   const currentStreamName = useStreamName(workspaceId, currentStreamId ?? "")
+  const { isInInbox, clearInbox } = useUnreadCounts(workspaceId)
+  const canSettle = !!currentStreamId && isInInbox(currentStreamId)
 
   // Destructive stream actions confirm before running; the label picker is a
   // standalone dialog opened after the palette closes. The pending-archive
@@ -259,6 +268,14 @@ export function QuickSwitcher({
     [handleClose, currentStreamName]
   )
 
+  const settleStream = useCallback(
+    (streamId: string) => {
+      handleClose()
+      clearInbox([streamId])
+    },
+    [handleClose, clearInbox]
+  )
+
   const openLabelPicker = useCallback(
     (streamId: string) => {
       handleClose()
@@ -312,8 +329,11 @@ export function QuickSwitcher({
       openLabelPicker,
       createSavedTodo,
       openAside: canOpenAside ? openAside : undefined,
+      settleStream: canSettle ? settleStream : undefined,
     }),
     [
+      canSettle,
+      settleStream,
       canOpenAside,
       openAside,
       workspaceId,

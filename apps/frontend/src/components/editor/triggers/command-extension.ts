@@ -41,6 +41,14 @@ export const SNIPPET_SLASH_ACTION = "snippet"
  */
 export const ATTACHMENT_SLASH_ACTION = "attachment"
 
+/**
+ * Client-action id for the synthetic "settle" slash entry. Inserts no chip —
+ * selecting it removes the typed `/settle` and the React layer (see
+ * `useCommandSuggestion`) settles the composer's stream out of the Inbox.
+ * Frontend-only.
+ */
+export const SETTLE_SLASH_ACTION = "settle"
+
 export interface CommandNodeAttrs {
   name: string
   /**
@@ -89,13 +97,14 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
       editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
       return true
     }
-    // The "giphy", "snippet" and "attachment" entries insert no chip — drop the
+    // The "giphy", "snippet", "attachment" and "settle" entries insert no chip — drop the
     // typed slash here; the React command wrapper opens the picker/editor once
     // handled.
     if (
       item.clientActionId === GIPHY_SLASH_ACTION ||
       item.clientActionId === SNIPPET_SLASH_ACTION ||
-      item.clientActionId === ATTACHMENT_SLASH_ACTION
+      item.clientActionId === ATTACHMENT_SLASH_ACTION ||
+      item.clientActionId === SETTLE_SLASH_ACTION
     ) {
       editor.chain().focus().deleteRange(range).run()
       return true

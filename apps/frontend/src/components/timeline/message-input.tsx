@@ -82,6 +82,8 @@ interface MessageInputProps {
   onComposerHeightChange?: (px: number, opts: { initial: boolean }) => void
   /** Notifies the timeline when focused mobile typing should suppress floating chrome. */
   onMobileTypingChange?: (typing: boolean) => void
+  /** Offers `/settle`; absent when the stream isn't in the Inbox. */
+  onSettle?: () => void
 }
 
 function attachmentMatchKey(attachment: Pick<PendingAttachment, "filename" | "mimeType">): string {
@@ -306,6 +308,7 @@ function MessageInputComponent({
   autoFocus,
   onComposerHeightChange,
   onMobileTypingChange,
+  onSettle,
 }: MessageInputProps) {
   const editLastCtx = useEditLastMessage()
   const triggerEditLast = editLastCtx?.triggerEditLast
@@ -1052,6 +1055,7 @@ function MessageInputComponent({
     // routes with no `:streamId` (the board), where the palette would fall to
     // workspace-only while dispatch held the thread's runtime commands.
     commandStreamId: streamId,
+    onSettle,
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,

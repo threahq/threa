@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react"
 import { toast } from "sonner"
 import { useParams, useSearchParams, useNavigate } from "react-router-dom"
 import {
+  Check,
   ListChecks,
   MoreHorizontal,
   Pencil,
@@ -39,6 +40,7 @@ import {
   isDmDraftId,
   useTypeToFocus,
   useActiveBotPresence,
+  useUnreadCounts,
 } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { usePanel, useSidebar } from "@/contexts"
@@ -251,6 +253,7 @@ export function StreamPage() {
   // mouse may still select to copy the name, and the rename input must stay
   // selectable while editing.
   const isTouchInput = useInputMode() === "touch"
+  const { isInInbox, clearInbox } = useUnreadCounts(workspaceId!)
   // The just-submitted name, held while the rename is in flight so the header
   // shows it continuously instead of dipping to the persisted name during the
   // network round-trip. Cleared once the write lands (the decrypt cache is seeded
@@ -420,6 +423,10 @@ export function StreamPage() {
   // (context panel, conversation views, DM profile) become sheet rows.
   const sheetViewActions: SidebarActionItem[] = []
   if (isMobile) {
+    // Mobile's stand-in for desktop Escape: the header has no room for it.
+    if (!isDraft && isInInbox(streamId!)) {
+      sheetViewActions.push({ id: "settle", label: "Settle", icon: Check, onSelect: () => clearInbox([streamId!]) })
+    }
     if (isDm && dmPeerUserId) {
       sheetViewActions.push({
         id: "view-profile",
