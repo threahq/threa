@@ -232,6 +232,21 @@ export function SectionHeader({
     </button>
   )
 
+  const titleLink = titleHref && (
+    <Link
+      to={titleHref}
+      onClick={onTitleNavigate}
+      className={actionClass}
+      aria-current={filterActive ? "true" : undefined}
+      title={titleLinkLabel}
+      aria-label={titleLinkLabel}
+    >
+      <TitleIcon className="h-3.5 w-3.5" />
+    </Link>
+  )
+
+  // The filter control always sits rightmost, so it lines up across headers
+  // whatever other actions a section carries.
   const rightContent = (
     <div
       className="flex items-center gap-1"
@@ -239,6 +254,27 @@ export function SectionHeader({
       onKeyDown={(e) => e.stopPropagation()}
     >
       {headerAccessory}
+      {!filterAffordance && titleLink}
+      {hasAggregate && (
+        <UnreadBadge
+          count={unreadAggregate}
+          className={cn(
+            "h-4 min-w-4 text-[10px] px-1",
+            hasMentions ? "bg-destructive text-destructive-foreground" : undefined
+          )}
+        />
+      )}
+      {addMenuActions && addMenuActions.length > 0 ? (
+        <SidebarActionMenu
+          actions={addMenuActions}
+          trigger={addButton}
+          ariaLabel={addTooltip ?? "Create"}
+          align="end"
+          contentClassName="w-56"
+        />
+      ) : (
+        onAdd && addButton
+      )}
       {viewOptions && !isMobile && (
         <SectionViewMenu
           label={label}
@@ -261,38 +297,7 @@ export function SectionHeader({
           <ListFilter className="h-3.5 w-3.5" />
         </Link>
       )}
-      {titleHref && (
-        <Link
-          to={titleHref}
-          onClick={onTitleNavigate}
-          className={actionClass}
-          aria-current={filterActive ? "true" : undefined}
-          title={titleLinkLabel}
-          aria-label={titleLinkLabel}
-        >
-          <TitleIcon className="h-3.5 w-3.5" />
-        </Link>
-      )}
-      {hasAggregate && (
-        <UnreadBadge
-          count={unreadAggregate}
-          className={cn(
-            "h-4 min-w-4 text-[10px] px-1",
-            hasMentions ? "bg-destructive text-destructive-foreground" : undefined
-          )}
-        />
-      )}
-      {addMenuActions && addMenuActions.length > 0 ? (
-        <SidebarActionMenu
-          actions={addMenuActions}
-          trigger={addButton}
-          ariaLabel={addTooltip ?? "Create"}
-          align="end"
-          contentClassName="w-56"
-        />
-      ) : (
-        onAdd && addButton
-      )}
+      {filterAffordance && titleLink}
     </div>
   )
 
