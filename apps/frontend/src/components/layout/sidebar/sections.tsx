@@ -1,5 +1,5 @@
 import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, ListFilter, Plus } from "lucide-react"
-import { Fragment, type ReactNode } from "react"
+import { Fragment, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarSectionFilter } from "@threahq/types"
 import type { CollapseState } from "@/contexts"
@@ -8,9 +8,16 @@ import { streamLabel } from "@/lib/streams"
 import { UnreadBadge } from "@/components/unread-badge"
 import { isDraftId } from "@/hooks"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
+import {
+  SectionViewDrawer,
+  SectionViewMenu,
+  sectionViewCustomized,
+  type SectionViewOptions,
+} from "./section-view-options"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
 
@@ -64,13 +71,12 @@ interface SectionHeaderProps {
    */
   filterActive?: boolean
   /**
-   * Chats-mode-only stream filter toggle ("all" | "unread"), independent of the
+   * Chats-mode-only view options (show, order, reverse), opened from the filter
+   * button: a dropdown on desktop, a sheet on mobile. Independent of the
    * board-mode `filterAffordance`/`filterActive` pair above. `undefined` on
-   * sections that never offer it (Inbox, Quick Links) and in board mode.
+   * quick links and in board mode.
    */
-  sectionFilter?: SidebarSectionFilter
-  /** Toggle `sectionFilter` between "all" and "unread". Omitted alongside `sectionFilter`. */
-  onToggleFilter?: () => void
+  viewOptions?: SectionViewOptions
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -113,8 +119,7 @@ export function SectionHeader({
   scopeAllTitle: scopeAllTitleOverride,
   filterAffordance = false,
   filterActive = false,
-  sectionFilter,
-  onToggleFilter,
+  viewOptions,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -134,7 +139,9 @@ export function SectionHeader({
     // sections) stay distinguishable to screen readers and on hover.
     headerTitle = label ? `${verb} ${label}` : `${verb} section`
   }
-  const isUnreadFilter = sectionFilter === "unread"
+  const isUnreadFilter = viewOptions?.filter === "unread"
+  const isMobile = useIsMobile()
+  const [optionsOpen, setOptionsOpen] = useState(false)
   // Collapsed always shows the aggregate (it's the only signal left); expanded
   // shows it too once the list is already unread-only, so the count stays
   // visible while toggled on instead of disappearing into the row list.
@@ -198,14 +205,32 @@ export function SectionHeader({
     : "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
   const TitleIcon = filterAffordance ? ListFilter : ArrowUpRight
 
-  const toggleFilterVerb = isUnreadFilter ? "Show all" : "Show unread only"
-  const toggleFilterLabel = label ? `${toggleFilterVerb} in ${label}` : toggleFilterVerb
-  // Same footprint on and off (INV-21): off uses the shared hover-reveal
-  // pattern (always visible on touch); on gets a persistent tint so the
-  // active filter stays legible without hovering.
-  const filterButtonClass = isUnreadFilter
-    ? "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded bg-primary/10 text-primary"
-    : "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded reveal-actions hover:bg-muted"
+  const viewOptionsLabel = label ? `${label} view options` : "View options"
+  // Same footprint in every state (INV-21): default uses the shared
+  // hover-reveal pattern (always visible on touch); a non-default view gets a
+  // persistent tint so it stays legible without hovering.
+  const viewOptionsButtonClass =
+    viewOptions && sectionViewCustomized(viewOptions)
+      ? "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded bg-primary/10 text-primary"
+      : cn(
+          "h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded hover:bg-muted",
+          optionsOpen ? "bg-muted" : "reveal-actions"
+        )
+
+  const viewOptionsButton = (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        if (isMobile) setOptionsOpen(true)
+      }}
+      className={viewOptionsButtonClass}
+      title={viewOptionsLabel}
+      aria-label={viewOptionsLabel}
+    >
+      <ListFilter className="h-3.5 w-3.5" />
+    </button>
+  )
 
   const rightContent = (
     <div
@@ -214,21 +239,16 @@ export function SectionHeader({
       onKeyDown={(e) => e.stopPropagation()}
     >
       {headerAccessory}
-      {onToggleFilter && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onToggleFilter()
-          }}
-          aria-pressed={isUnreadFilter}
-          className={filterButtonClass}
-          title={toggleFilterLabel}
-          aria-label={toggleFilterLabel}
-        >
-          <ListFilter className="h-3.5 w-3.5" />
-        </button>
+      {viewOptions && !isMobile && (
+        <SectionViewMenu
+          label={label}
+          options={viewOptions}
+          open={optionsOpen}
+          onOpenChange={setOptionsOpen}
+          trigger={viewOptionsButton}
+        />
       )}
+      {viewOptions && isMobile && viewOptionsButton}
       {scopeAllHref && (
         <Link
           to={scopeAllHref}
@@ -278,43 +298,54 @@ export function SectionHeader({
 
   const paddingClass = nested ? "px-2 py-1" : "px-3 py-2"
 
+  const viewOptionsSurface =
+    viewOptions && isMobile ? (
+      <SectionViewDrawer label={label} options={viewOptions} open={optionsOpen} onOpenChange={setOptionsOpen} />
+    ) : null
+
   if (isInteractive) {
     return (
+      <>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={headerTitle}
+          aria-expanded={!isCollapsed}
+          title={headerTitle}
+          onClick={onToggle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault()
+              onToggle()
+            }
+          }}
+          className={cn(
+            "group/section reveal-host w-full flex items-center justify-between rounded-md cursor-pointer select-none [-webkit-touch-callout:none]",
+            paddingClass,
+            "hover:bg-muted/50 transition-colors"
+          )}
+        >
+          {headingContent}
+          {rightContent}
+        </div>
+        {viewOptionsSurface}
+      </>
+    )
+  }
+
+  return (
+    <>
       <div
-        role="button"
-        tabIndex={0}
-        aria-label={headerTitle}
-        aria-expanded={!isCollapsed}
-        title={headerTitle}
-        onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault()
-            onToggle()
-          }
-        }}
         className={cn(
-          "group/section reveal-host w-full flex items-center justify-between rounded-md cursor-pointer select-none [-webkit-touch-callout:none]",
-          paddingClass,
-          "hover:bg-muted/50 transition-colors"
+          "group/section reveal-host flex items-center justify-between select-none [-webkit-touch-callout:none]",
+          paddingClass
         )}
       >
         {headingContent}
         {rightContent}
       </div>
-    )
-  }
-
-  return (
-    <div
-      className={cn(
-        "group/section reveal-host flex items-center justify-between select-none [-webkit-touch-callout:none]",
-        paddingClass
-      )}
-    >
-      {headingContent}
-      {rightContent}
-    </div>
+      {viewOptionsSurface}
+    </>
   )
 }
 
@@ -413,10 +444,8 @@ interface StreamSectionProps {
   filterAffordance?: boolean
   /** Board mode: this section's filter is the board's current selection. Forwarded to SectionHeader. */
   filterActive?: boolean
-  /** Chats-mode stream filter ("all" | "unread"). Forwarded to SectionHeader; drives which rows render. */
-  sectionFilter?: SidebarSectionFilter
-  /** Toggle `sectionFilter`. Omitted alongside `sectionFilter`. */
-  onToggleFilter?: () => void
+  /** Chats-mode view options. Forwarded to SectionHeader; its filter drives which rows render. */
+  viewOptions?: SectionViewOptions
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -427,7 +456,7 @@ interface StreamSectionProps {
   onToggle?: () => void
   /**
    * Current state of the inline "more" expander backing the unread-filter's
-   * hidden tail. Required whenever `sectionFilter` is set.
+   * hidden tail. Required whenever `viewOptions` carries a filter.
    */
   moreState?: CollapseState
   /** Toggle the inline "more" expander above. */
@@ -476,8 +505,7 @@ export function StreamSection({
   scopeAllTitle,
   filterAffordance,
   filterActive,
-  sectionFilter,
-  onToggleFilter,
+  viewOptions,
   items,
   allStreams,
   workspaceId,
@@ -513,7 +541,7 @@ export function StreamSection({
     contextIds,
   } = sectionVisibleItems(items, {
     tiered: false,
-    filter: sectionFilter ?? "all",
+    filter: viewOptions?.filter ?? "all",
     moreOpen: isMoreOpen,
     isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
   })
@@ -550,8 +578,7 @@ export function StreamSection({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={filterAffordance}
         filterActive={filterActive}
-        sectionFilter={sectionFilter}
-        onToggleFilter={onToggleFilter}
+        viewOptions={viewOptions}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -754,8 +781,7 @@ export function TieredStreamSection({
   scopeAllTitle,
   filterAffordance,
   filterActive,
-  sectionFilter,
-  onToggleFilter,
+  viewOptions,
   items,
   allStreams,
   workspaceId,
@@ -786,7 +812,7 @@ export function TieredStreamSection({
     contextIds,
   } = sectionVisibleItems(items, {
     tiered: true,
-    filter: sectionFilter ?? "all",
+    filter: viewOptions?.filter ?? "all",
     moreOpen: isMoreOpen,
     isActive: (streamId) => getUnreadCount(streamId) > 0 || getMentionCount(streamId) > 0,
   })
@@ -819,8 +845,7 @@ export function TieredStreamSection({
         scopeAllTitle={scopeAllTitle}
         filterAffordance={filterAffordance}
         filterActive={filterActive}
-        sectionFilter={sectionFilter}
-        onToggleFilter={onToggleFilter}
+        viewOptions={viewOptions}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}

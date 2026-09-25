@@ -247,6 +247,48 @@ describe("normalizeSidebarConfig section filter", () => {
   })
 })
 
+describe("normalizeSidebarConfig section order", () => {
+  const normalizeSections = (sections: unknown[]) =>
+    normalizeSidebarConfig({
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "all",
+      sections,
+      quickLinks: [],
+    } as unknown as RawSidebarConfig).sections
+
+  test("should keep a supported non-default order and reverse", () => {
+    expect(
+      normalizeSections([
+        { id: "channels", spec: { kind: "type", streamType: "channel" }, order: "activity", reverse: true },
+        { id: "unread", spec: { kind: "unread" }, order: "name" },
+      ])
+    ).toEqual([
+      { id: "channels", spec: { kind: "type", streamType: "channel" }, order: "activity", reverse: true },
+      { id: "unread", spec: { kind: "unread" }, order: "name" },
+    ])
+  })
+
+  test("should drop the default, unsupported and unknown orders and a false reverse", () => {
+    expect(
+      normalizeSections([
+        { id: "channels", spec: { kind: "type", streamType: "channel" }, order: "name", reverse: false },
+        { id: "scratchpads", spec: { kind: "type", streamType: "scratchpad" }, order: "activity" },
+        { id: "dms", spec: { kind: "type", streamType: "dm" }, order: "arrival" },
+        { id: "recent", spec: { kind: "smart", bucket: "recent" }, order: "name", reverse: true },
+        { id: "other", spec: { kind: "smart", bucket: "other" }, order: "starred" },
+        { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" }, reverse: true },
+      ])
+    ).toEqual([
+      { id: "channels", spec: { kind: "type", streamType: "channel" } },
+      { id: "scratchpads", spec: { kind: "type", streamType: "scratchpad" } },
+      { id: "dms", spec: { kind: "type", streamType: "dm" } },
+      { id: "recent", spec: { kind: "smart", bucket: "recent" }, reverse: true },
+      { id: "other", spec: { kind: "smart", bucket: "other" } },
+      { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } },
+    ])
+  })
+})
+
 describe("normalizeSidebarConfig quick-link sanitization", () => {
   test("drops a retired quick-link key (board) while keeping the rest and appending missing keys", () => {
     const config = {

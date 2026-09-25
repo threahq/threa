@@ -77,7 +77,6 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "labelRemoveOnMove",
     "unreadOpenPosition",
     "inboxClearMode",
-    "inboxOrder",
     "pushActions",
     "pushReminderMinutes",
     "pushQuickReaction",

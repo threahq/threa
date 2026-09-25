@@ -16,7 +16,6 @@ import {
   LABEL_REMOVE_ON_MOVE_OPTIONS,
   UNREAD_OPEN_POSITION_OPTIONS,
   INBOX_CLEAR_MODE_OPTIONS,
-  INBOX_ORDER_OPTIONS,
   PUSH_ACTION_OPTIONS,
   PUSH_ACTIONS_MAX,
   PUSH_REMINDER_MINUTES_MIN,
@@ -71,7 +70,6 @@ const updatePreferencesSchema = z.object({
   labelRemoveOnMove: z.enum(LABEL_REMOVE_ON_MOVE_OPTIONS).optional(),
   unreadOpenPosition: z.enum(UNREAD_OPEN_POSITION_OPTIONS).optional(),
   inboxClearMode: z.enum(INBOX_CLEAR_MODE_OPTIONS).optional(),
-  inboxOrder: z.enum(INBOX_ORDER_OPTIONS).optional(),
   pushActions: z
     .array(z.enum(PUSH_ACTION_OPTIONS))
     .max(PUSH_ACTIONS_MAX)

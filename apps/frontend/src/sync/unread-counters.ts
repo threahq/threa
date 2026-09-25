@@ -62,7 +62,7 @@ export interface UnreadCounterState {
    * (unread hit 0 and it wasn't held). Set once by `applyStreamActivityOrdinal`
    * on the first other-author message after a stream has no recorded arrival;
    * cleared by `dropArrivalIfSettled` wherever unread/held state changes.
-   * Powers `inboxOrder: "arrival"` (oldest-first) sidebar sorting.
+   * Powers the Inbox section's `arrival` order.
    */
   inboxArrivedAt?: Record<string, string>
 }

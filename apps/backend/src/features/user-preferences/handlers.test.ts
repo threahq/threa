@@ -96,22 +96,6 @@ describe("updatePreferencesSchema inboxClearMode", () => {
   })
 })
 
-describe("updatePreferencesSchema inboxOrder", () => {
-  it("accepts both orders", () => {
-    expect(updatePreferencesSchema.parse({ inboxOrder: "arrival" }).inboxOrder).toBe("arrival")
-    expect(updatePreferencesSchema.parse({ inboxOrder: "newest" }).inboxOrder).toBe("newest")
-  })
-
-  it("rejects an unknown order", () => {
-    expect(updatePreferencesSchema.safeParse({ inboxOrder: "oldest" }).success).toBe(false)
-  })
-
-  it("treats the field as optional and defaults to arrival", () => {
-    expect(updatePreferencesSchema.parse({}).inboxOrder).toBeUndefined()
-    expect(DEFAULT_USER_PREFERENCES.inboxOrder).toBe("arrival")
-  })
-})
-
 describe("updatePreferencesSchema analyticsConsent", () => {
   it("should accept analyticsConsent when the value is a known consent option", () => {
     expect(updatePreferencesSchema.parse({ analyticsConsent: "granted" }).analyticsConsent).toBe("granted")

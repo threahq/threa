@@ -33,8 +33,8 @@ test.describe("Sidebar section filter toggle", () => {
     const testId = owner.testId
     const workspaceId = page.url().match(/\/w\/([^/?]+)/)![1]
 
-    // Channels sort alphabetically by name (`sortStreamsStatic`), not by
-    // creation order — name them so the quiet one sorts first.
+    // Channels sort A–Z by default, not by creation order — name them so the
+    // quiet one sorts first.
     const quietId = await createChannelAway(page, workspaceId, `sf-a-quiet-${testId}`)
     const activeId = await createChannelAway(page, workspaceId, `sf-b-active-${testId}`)
 
@@ -66,9 +66,15 @@ test.describe("Sidebar section filter toggle", () => {
     // stream never reorders it within the section (static home order).
     await expect.poll(() => channelOrder(page, [quietId, activeId]), { timeout: 10000 }).toEqual([quietId, activeId])
 
-    const toggle = channelsSection.getByRole("button", { name: "Show unread only in Channels" })
-    await expect(toggle).toBeVisible()
-    await toggle.click()
+    const openViewOptions = async (section: Locator) => {
+      await section.getByRole("heading", { name: "Channels", level: 3 }).hover()
+      await section.getByRole("button", { name: "Channels view options" }).click()
+      return page.getByRole("menu", { name: "Channels view options" })
+    }
+    const options = await openViewOptions(channelsSection)
+    await options.getByRole("menuitemradio", { name: "Unread" }).click()
+    // The open menu is modal and hides the sidebar from role queries.
+    await page.keyboard.press("Escape")
 
     // Only the unread channel stays visible; the quiet one hides behind "1 more".
     await expect(sidebarRow(channelsSection, activeId)).toBeVisible({ timeout: 10000 })
@@ -78,19 +84,16 @@ test.describe("Sidebar section filter toggle", () => {
     // The filter persists in the synced sidebar config.
     await page.reload()
     const reloadedSection = sectionByHeading(page, "Channels")
-    const reloadedToggle = reloadedSection.getByRole("button", { name: "Show all in Channels" })
-    await expect(reloadedToggle).toBeVisible({ timeout: 10000 })
-    await expect(reloadedToggle).toHaveAttribute("aria-pressed", "true")
     await expect(sidebarRow(reloadedSection, activeId)).toBeVisible({ timeout: 10000 })
     await expect(sidebarRow(reloadedSection, quietId)).toHaveCount(0)
     await expect(reloadedSection.getByRole("button", { name: "1 more" })).toBeVisible()
+    const reloadedOptions = await openViewOptions(reloadedSection)
+    await expect(reloadedOptions.getByRole("menuitemradio", { name: "Unread" })).toHaveAttribute("aria-checked", "true")
 
-    // Toggling back shows every row again.
-    await reloadedToggle.click()
-    await expect(reloadedSection.getByRole("button", { name: "Show unread only in Channels" })).toHaveAttribute(
-      "aria-pressed",
-      "false"
-    )
+    // Switching back shows every row again.
+    await reloadedOptions.getByRole("menuitemradio", { name: "All" }).click()
+    await expect(reloadedOptions.getByRole("menuitemradio", { name: "All" })).toHaveAttribute("aria-checked", "true")
+    await page.keyboard.press("Escape")
     await expect(sidebarRow(reloadedSection, quietId)).toBeVisible({ timeout: 10000 })
     await expect(sidebarRow(reloadedSection, activeId)).toBeVisible({ timeout: 10000 })
 

@@ -7,6 +7,7 @@ import {
   SIDEBAR_TYPE_SECTIONS,
   SIDEBAR_BASE_PRESETS,
   SIDEBAR_SECTION_FILTERS,
+  SIDEBAR_SECTION_ORDERS,
   SIDEBAR_QUICK_LINK_VISIBILITIES,
   MAX_CUSTOM_SECTION_NAME_LENGTH,
   MAX_CUSTOM_SECTION_STREAM_IDS,
@@ -34,10 +35,12 @@ const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
 const sidebarSectionSchema = z.object({
   id: z.string().min(1).max(64),
   spec: sidebarSectionSpecSchema,
-  // Zod strips unknown keys, so a filter must be declared here to survive the
-  // PATCH; normalizeSidebarConfig drops it back to absent on the Inbox/quick
-  // links and canonicalizes "all" to absent on write.
+  // Zod strips unknown keys, so view options must be declared here to survive
+  // the PATCH; normalizeSidebarConfig drops defaults and options a section
+  // doesn't support back to absent on write.
   filter: z.enum(SIDEBAR_SECTION_FILTERS).optional(),
+  order: z.enum(SIDEBAR_SECTION_ORDERS).optional(),
+  reverse: z.boolean().optional(),
 })
 
 // `visibility` is the current tri-state; `enabled` is the pre-v2 boolean an
