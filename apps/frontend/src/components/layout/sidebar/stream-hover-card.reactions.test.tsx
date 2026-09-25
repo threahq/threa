@@ -10,6 +10,7 @@ import * as hooksModule from "@/hooks"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as syncEngineModule from "@/sync/sync-engine"
+import { updateMessageEvent } from "@/sync/stream-sync"
 import { StreamHoverCard, type SidebarHoverIntent } from "./stream-hover-card"
 
 const WS = "ws_1"
@@ -39,12 +40,13 @@ function messageRow(
 
 /** The socket echo of a reaction, as the sync handler patches it onto the message row. */
 async function echoReaction(messageId: string, emoji: string, userId: string, added: boolean) {
-  const row = await db.events.where("payload.messageId").equals(messageId).first()
-  const payload = row!.payload as { reactions: Record<string, string[]> }
-  const users = (payload.reactions[emoji] ?? []).filter((id) => id !== userId)
-  const reactions = { ...payload.reactions, [emoji]: added ? [...users, userId] : users }
-  if (reactions[emoji].length === 0) delete reactions[emoji]
-  await db.events.update(row!.id, { payload: { ...payload, reactions } })
+  await updateMessageEvent(STREAM.id, messageId, (payload) => {
+    const current = payload.reactions as Record<string, string[]>
+    const users = (current[emoji] ?? []).filter((id) => id !== userId)
+    const reactions = { ...current, [emoji]: added ? [...users, userId] : users }
+    if (reactions[emoji].length === 0) delete reactions[emoji]
+    return { ...payload, reactions }
+  })
 }
 
 function setup() {
