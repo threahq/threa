@@ -237,6 +237,41 @@ test.describe("Inbox sidebar section", () => {
     await otherContext.close()
   })
 
+  test("Escape in the thread panel leaves the page's stream in the Inbox", async ({ page, browser }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-esc-panel")
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await inboxRow.locator("a").click()
+    await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
+    await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
+
+    const message = page
+      .locator("[data-message-id]")
+      .filter({ hasText: /unread hello/ })
+      .first()
+    await message.hover()
+    await page.getByRole("link", { name: "Reply in thread" }).click()
+    const panel = page.getByTestId("panel")
+    await expect(panel.getByText(/Start a new thread/)).toBeVisible({ timeout: 10000 })
+
+    const pressEscapeFrom = async (target: Locator) => {
+      await target.click()
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.keyboard.press("Escape")
+      await page.keyboard.press("Escape")
+    }
+
+    await pressEscapeFrom(panel.getByText(/Start a new thread/))
+    // Give a wrongly-fired settle time to land before asserting it didn't.
+    await page.waitForTimeout(1500)
+    await expect(inboxRow).toHaveCount(1)
+
+    await pressEscapeFrom(message)
+    await expect(inboxRow).toHaveCount(0, { timeout: 10000 })
+
+    await otherContext.close()
+  })
+
   test("phone: a held row clears via the long-press action drawer", async ({ page: setupPage, browser }) => {
     const { workspaceId, streamId, otherContext } = await seedUnreadChannel(setupPage, browser, "inbox-phone")
 

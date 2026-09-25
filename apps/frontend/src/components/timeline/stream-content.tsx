@@ -35,7 +35,7 @@ import {
   workspaceKeys,
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
-import { useSocket, useCoordinatedLoading, usePreferencesOptional } from "@/contexts"
+import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import {
@@ -2133,6 +2133,7 @@ export function StreamContent({
   // StreamContent, and one keypress must never settle both.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
   const canSettleOnEscape = routeStreamId === streamId && isInInbox(streamId)
+  const { getFocusedPane } = usePanel()
 
   // The stream's sparse read overlay — message ids read individually above the
   // watermark (from a conversation-surface read). Threads through the read
@@ -2256,11 +2257,12 @@ export function StreamContent({
         )
       if (overlayOwnsEscape) return
       if (dividerEventId) escapeUnread()
-      else clearInboxRef.current([streamId])
+      // Escape while working in the thread panel must not settle the page behind it.
+      else if (getFocusedPane() === "main") clearInboxRef.current([streamId])
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isMobile, isDraft, dividerEventId, canSettleOnEscape, isSearchOpen, escapeUnread, streamId])
+  }, [isMobile, isDraft, dividerEventId, canSettleOnEscape, isSearchOpen, escapeUnread, streamId, getFocusedPane])
 
   // Manual "Mark as read" from a message action. The pointer is partial
   // unless the chosen row is the last loaded one — marking up to a mid-window
