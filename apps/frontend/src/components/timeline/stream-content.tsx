@@ -2234,7 +2234,7 @@ export function StreamContent({
   useEffect(() => {
     if (isMobile || isDraft || isSearchOpen || (!dividerEventId && !canSettleOnEscape)) return
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
+      if (event.key !== "Escape" || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
       if (isInput) return
