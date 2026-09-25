@@ -408,8 +408,7 @@ export function SidebarStreamList({
           defaultOrder,
           reverse: section.reverse ?? false,
           onFilterChange: (filter) => onSectionViewChange(section.id, { filter }),
-          onOrderChange: (order) => onSectionViewChange(section.id, { order }),
-          onReverseChange: (reverse) => onSectionViewChange(section.id, { reverse }),
+          onSortChange: (order, reverse) => onSectionViewChange(section.id, { order, reverse }),
         }
     // Walk exactly what this section is about to render: a tiered section or a
     // filtered one holds a tail behind the "more" expander, so raw items are

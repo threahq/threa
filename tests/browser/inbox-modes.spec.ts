@@ -169,10 +169,14 @@ test.describe("Inbox clear modes and order", () => {
     const inbox = sectionByHeading(page, "Inbox")
     await inbox.getByRole("heading", { name: "Inbox", level: 3 }).hover()
     await inbox.getByRole("button", { name: "Inbox view options" }).click()
-    await inbox
-      .getByRole("group", { name: "Inbox view options" })
-      .getByRole("button", { name: "Reverse order" })
-      .click()
+    // Picking the current order again flips it.
+    const options = page.getByRole("menu", { name: "Inbox view options" })
+    await options.getByRole("menuitemradio", { name: "Arrival" }).click()
+    await expect(options.getByRole("menuitemradio", { name: "Arrival, reversed" })).toHaveAttribute(
+      "aria-checked",
+      "true"
+    )
+    await page.keyboard.press("Escape")
     await expect.poll(() => inboxOrder(page, [first, second]), { timeout: 10000 }).toEqual([second, first])
 
     // The order lives in the synced sidebar config.

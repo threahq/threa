@@ -476,6 +476,11 @@ describe("SidebarStreamList — section view options", () => {
     )
   }
 
+  // Radix opens a dropdown on pointerdown, not click.
+  function openViewMenu(name: string) {
+    fireEvent.pointerDown(screen.getByRole("button", { name }), { button: 0 })
+  }
+
   it("shows the view options on a home section in chats mode", () => {
     renderFor([filterableSection("sec_1", [makeStream("stream_a")])])
     expect(screen.getByRole("button", { name: "sec_1 view options" })).toBeInTheDocument()
@@ -488,20 +493,20 @@ describe("SidebarStreamList — section view options", () => {
 
   it("offers order but no filter on the Inbox section", () => {
     renderFor([unreadSection([makeStream("stream_a")])])
-    fireEvent.click(screen.getByRole("button", { name: "Inbox view options" }))
+    openViewMenu("Inbox view options")
     expect(screen.queryByRole("group", { name: "Show" })).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Arrival" })).toHaveAttribute("aria-pressed", "true")
+    expect(screen.getByRole("menuitemradio", { name: "Arrival" })).toHaveAttribute("aria-checked", "true")
   })
 
   it("reports a view change with the section id", () => {
     const onSectionViewChange = vi.fn()
     renderFor([filterableSection("sec_1", [makeStream("stream_a")])], { onSectionViewChange })
-    fireEvent.click(screen.getByRole("button", { name: "sec_1 view options" }))
-    fireEvent.click(screen.getByRole("button", { name: "Unread" }))
-    fireEvent.click(screen.getByRole("button", { name: "A–Z" }))
+    openViewMenu("sec_1 view options")
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Unread" }))
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "A–Z" }))
     expect(onSectionViewChange.mock.calls).toEqual([
       ["custom:sec_1", { filter: "unread" }],
-      ["custom:sec_1", { order: "name" }],
+      ["custom:sec_1", { order: "name", reverse: false }],
     ])
   })
 

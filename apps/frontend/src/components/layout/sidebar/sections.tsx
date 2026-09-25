@@ -1,5 +1,5 @@
 import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, ListFilter, Plus } from "lucide-react"
-import { Fragment, useCallback, useId, useRef, useState, type ReactNode } from "react"
+import { Fragment, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarSectionFilter } from "@threahq/types"
 import type { CollapseState } from "@/contexts"
@@ -14,7 +14,7 @@ import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
 import {
   SectionViewDrawer,
-  SectionViewStrip,
+  SectionViewMenu,
   sectionViewCustomized,
   type SectionViewOptions,
 } from "./section-view-options"
@@ -142,9 +142,6 @@ export function SectionHeader({
   const isUnreadFilter = viewOptions?.filter === "unread"
   const isMobile = useIsMobile()
   const [optionsOpen, setOptionsOpen] = useState(false)
-  const closeOptions = useCallback(() => setOptionsOpen(false), [])
-  const optionsOpenerRef = useRef<HTMLButtonElement>(null)
-  const optionsStripId = useId()
   // Collapsed always shows the aggregate (it's the only signal left); expanded
   // shows it too once the list is already unread-only, so the count stays
   // visible while toggled on instead of disappearing into the row list.
@@ -220,6 +217,21 @@ export function SectionHeader({
           optionsOpen ? "bg-muted" : "reveal-actions"
         )
 
+  const viewOptionsButton = (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        if (isMobile) setOptionsOpen(true)
+      }}
+      className={viewOptionsButtonClass}
+      title={viewOptionsLabel}
+      aria-label={viewOptionsLabel}
+    >
+      <ListFilter className="h-3.5 w-3.5" />
+    </button>
+  )
+
   const rightContent = (
     <div
       className="flex items-center gap-1"
@@ -227,26 +239,16 @@ export function SectionHeader({
       onKeyDown={(e) => e.stopPropagation()}
     >
       {headerAccessory}
-      {viewOptions && (
-        <button
-          ref={optionsOpenerRef}
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setOptionsOpen((open) => !open)
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && optionsOpen && !isMobile) setOptionsOpen(false)
-          }}
-          aria-expanded={optionsOpen}
-          aria-controls={optionsOpen && !isMobile ? optionsStripId : undefined}
-          className={viewOptionsButtonClass}
-          title={viewOptionsLabel}
-          aria-label={viewOptionsLabel}
-        >
-          <ListFilter className="h-3.5 w-3.5" />
-        </button>
+      {viewOptions && !isMobile && (
+        <SectionViewMenu
+          label={label}
+          options={viewOptions}
+          open={optionsOpen}
+          onOpenChange={setOptionsOpen}
+          trigger={viewOptionsButton}
+        />
       )}
+      {viewOptions && isMobile && viewOptionsButton}
       {scopeAllHref && (
         <Link
           to={scopeAllHref}
@@ -296,22 +298,10 @@ export function SectionHeader({
 
   const paddingClass = nested ? "px-2 py-1" : "px-3 py-2"
 
-  let viewOptionsSurface: ReactNode = null
-  if (viewOptions && isMobile) {
-    viewOptionsSurface = (
+  const viewOptionsSurface =
+    viewOptions && isMobile ? (
       <SectionViewDrawer label={label} options={viewOptions} open={optionsOpen} onOpenChange={setOptionsOpen} />
-    )
-  } else if (viewOptions && optionsOpen) {
-    viewOptionsSurface = (
-      <SectionViewStrip
-        id={optionsStripId}
-        label={label}
-        options={viewOptions}
-        openerRef={optionsOpenerRef}
-        onClose={closeOptions}
-      />
-    )
-  }
+    ) : null
 
   if (isInteractive) {
     return (

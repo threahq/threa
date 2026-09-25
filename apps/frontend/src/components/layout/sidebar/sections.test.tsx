@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -267,8 +267,7 @@ function makeViewOptions(over: Partial<SectionViewOptions> = {}): SectionViewOpt
     defaultOrder: "name",
     reverse: false,
     onFilterChange: vi.fn(),
-    onOrderChange: vi.fn(),
-    onReverseChange: vi.fn(),
+    onSortChange: vi.fn(),
     ...over,
   }
 }
@@ -283,35 +282,42 @@ describe("SectionHeader view options", () => {
     expect(screen.queryByRole("button", { name: "Channels view options" })).not.toBeInTheDocument()
   })
 
-  it("should open the inline strip on desktop without toggling the section", async () => {
+  it("should open a menu on desktop without toggling the section", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     const { onToggle } = renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
-    const opener = screen.getByRole("button", { name: "Channels view options" })
-    expect(opener).toHaveAttribute("aria-expanded", "false")
 
-    await userEvent.click(opener)
+    await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
 
-    expect(opener).toHaveAttribute("aria-expanded", "true")
-    expect(screen.getByRole("group", { name: "Channels view options" })).toBeInTheDocument()
+    expect(screen.getByRole("menu", { name: "Channels view options" })).toBeInTheDocument()
     expect(onToggle).not.toHaveBeenCalled()
   })
 
-  it("should report each option change when picked in the strip", async () => {
+  it("should report a filter or a new order starting in its natural direction", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
-    const viewOptions = makeViewOptions()
+    const viewOptions = makeViewOptions({ reverse: true })
     renderHeader({ label: "Channels", viewOptions })
     await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
 
-    await userEvent.click(screen.getByRole("button", { name: "Unread" }))
-    await userEvent.click(screen.getByRole("button", { name: "Activity" }))
-    await userEvent.click(screen.getByRole("button", { name: "Reverse order" }))
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Unread" }))
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Latest activity" }))
 
     expect(viewOptions.onFilterChange).toHaveBeenCalledWith("unread")
-    expect(viewOptions.onOrderChange).toHaveBeenCalledWith("activity")
-    expect(viewOptions.onReverseChange).toHaveBeenCalledWith(true)
+    expect(viewOptions.onSortChange).toHaveBeenCalledWith("activity", false)
+    expect(screen.getByRole("menu", { name: "Channels view options" })).toBeInTheDocument()
   })
 
-  it("should mark the current choices pressed", async () => {
+  it("should flip the direction when the current order is picked again", async () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    const viewOptions = makeViewOptions({ order: "name", reverse: true })
+    renderHeader({ label: "Channels", viewOptions })
+    await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
+
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "A–Z, reversed" }))
+
+    expect(viewOptions.onSortChange).toHaveBeenCalledWith("name", false)
+  })
+
+  it("should check the current filter and order", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     renderHeader({
       label: "Channels",
@@ -319,11 +325,11 @@ describe("SectionHeader view options", () => {
     })
     await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
 
-    const pressed = screen
-      .getAllByRole("button")
-      .filter((button) => button.getAttribute("aria-pressed") === "true")
-      .map((button) => button.getAttribute("aria-label") ?? button.textContent)
-    expect(pressed).toEqual(["Unread", "Joined", "Reverse order"])
+    const checked = screen
+      .getAllByRole("menuitemradio")
+      .filter((item) => item.getAttribute("aria-checked") === "true")
+      .map((item) => item.getAttribute("aria-label"))
+    expect(checked).toEqual(["Unread", "Recently joined, reversed"])
   })
 
   it("should offer no Show group when the section has no filter", async () => {
@@ -340,22 +346,26 @@ describe("SectionHeader view options", () => {
     await userEvent.click(screen.getByRole("button", { name: "Inbox view options" }))
 
     expect(screen.queryByRole("group", { name: "Show" })).not.toBeInTheDocument()
-    expect(screen.getByRole("group", { name: "Order" })).toBeInTheDocument()
+    expect(screen.getByRole("group", { name: "Sort" })).toBeInTheDocument()
   })
 
-  it("should offer no Order group when the order is fixed", async () => {
+  it("should list the fixed order alone so it can still be flipped", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
-    renderHeader({
-      label: "Recent",
-      viewOptions: makeViewOptions({ order: "activity", orderOptions: [], defaultOrder: "activity" }),
-    })
+    const viewOptions = makeViewOptions({ order: "activity", orderOptions: [], defaultOrder: "activity" })
+    renderHeader({ label: "Recent", viewOptions })
     await userEvent.click(screen.getByRole("button", { name: "Recent view options" }))
 
-    expect(screen.queryByRole("group", { name: "Order" })).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Reverse" })).toBeInTheDocument()
+    const sort = screen.getByRole("group", { name: "Sort" })
+    expect(
+      within(sort)
+        .getAllByRole("menuitemradio")
+        .map((item) => item.getAttribute("aria-label"))
+    ).toEqual(["Latest activity"])
+    await userEvent.click(within(sort).getByRole("menuitemradio", { name: "Latest activity" }))
+    expect(viewOptions.onSortChange).toHaveBeenCalledWith("activity", true)
   })
 
-  it("should close the strip on Escape from the opener", async () => {
+  it("should close the menu on Escape and return focus to the opener", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
     const opener = screen.getByRole("button", { name: "Channels view options" })
@@ -363,20 +373,7 @@ describe("SectionHeader view options", () => {
 
     await userEvent.keyboard("{Escape}")
 
-    expect(screen.queryByRole("group", { name: "Channels view options" })).not.toBeInTheDocument()
-    expect(opener).toHaveFocus()
-  })
-
-  it("should close the strip on Escape from inside it and return focus to the opener", async () => {
-    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
-    renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
-    const opener = screen.getByRole("button", { name: "Channels view options" })
-    await userEvent.click(opener)
-    await userEvent.click(screen.getByRole("button", { name: "Unread" }))
-
-    await userEvent.keyboard("{Escape}")
-
-    expect(screen.queryByRole("group", { name: "Channels view options" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("menu", { name: "Channels view options" })).not.toBeInTheDocument()
     expect(opener).toHaveFocus()
   })
 
@@ -390,10 +387,10 @@ describe("SectionHeader view options", () => {
     // fireEvent, not userEvent: a real pointer sequence reaches vaul's drag
     // handling, which reads a computed transform jsdom does not produce.
     fireEvent.click(screen.getByRole("radio", { name: "A–Z" }))
-    fireEvent.click(screen.getByRole("checkbox", { name: "Reverse order" }))
+    fireEvent.click(screen.getByRole("radio", { name: "Latest activity" }))
 
-    expect(viewOptions.onOrderChange).toHaveBeenCalledWith("name")
-    expect(viewOptions.onReverseChange).toHaveBeenCalledWith(true)
+    expect(viewOptions.onSortChange).toHaveBeenCalledWith("name", false)
+    expect(viewOptions.onSortChange).toHaveBeenCalledWith("activity", true)
   })
 
   it("should tint the opener when any option is off its default", () => {

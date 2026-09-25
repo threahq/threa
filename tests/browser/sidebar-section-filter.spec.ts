@@ -69,10 +69,12 @@ test.describe("Sidebar section filter toggle", () => {
     const openViewOptions = async (section: Locator) => {
       await section.getByRole("heading", { name: "Channels", level: 3 }).hover()
       await section.getByRole("button", { name: "Channels view options" }).click()
-      return section.getByRole("group", { name: "Channels view options" })
+      return page.getByRole("menu", { name: "Channels view options" })
     }
     const options = await openViewOptions(channelsSection)
-    await options.getByRole("button", { name: "Unread" }).click()
+    await options.getByRole("menuitemradio", { name: "Unread" }).click()
+    // The open menu is modal and hides the sidebar from role queries.
+    await page.keyboard.press("Escape")
 
     // Only the unread channel stays visible; the quiet one hides behind "1 more".
     await expect(sidebarRow(channelsSection, activeId)).toBeVisible({ timeout: 10000 })
@@ -86,11 +88,12 @@ test.describe("Sidebar section filter toggle", () => {
     await expect(sidebarRow(reloadedSection, quietId)).toHaveCount(0)
     await expect(reloadedSection.getByRole("button", { name: "1 more" })).toBeVisible()
     const reloadedOptions = await openViewOptions(reloadedSection)
-    await expect(reloadedOptions.getByRole("button", { name: "Unread" })).toHaveAttribute("aria-pressed", "true")
+    await expect(reloadedOptions.getByRole("menuitemradio", { name: "Unread" })).toHaveAttribute("aria-checked", "true")
 
     // Switching back shows every row again.
-    await reloadedOptions.getByRole("button", { name: "All" }).click()
-    await expect(reloadedOptions.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true")
+    await reloadedOptions.getByRole("menuitemradio", { name: "All" }).click()
+    await expect(reloadedOptions.getByRole("menuitemradio", { name: "All" })).toHaveAttribute("aria-checked", "true")
+    await page.keyboard.press("Escape")
     await expect(sidebarRow(reloadedSection, quietId)).toBeVisible({ timeout: 10000 })
     await expect(sidebarRow(reloadedSection, activeId)).toBeVisible({ timeout: 10000 })
 
