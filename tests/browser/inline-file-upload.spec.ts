@@ -74,6 +74,14 @@ test.describe("Inline File Uploads", () => {
 
     // Verify the tray chip shows the renamed filename.
     await expect(page.getByRole("button", { name: "Preview pasted-image-1.png" })).toBeVisible({ timeout: 5000 })
+
+    // Hovering the tray chip rings its inline reference. The ring is drawn on
+    // the node view's host span, so the host must trace the chip's own box.
+    await page.getByRole("button", { name: "Preview pasted-image-1.png" }).hover()
+    const host = editor.locator(".composer-pill-highlighted")
+    await expect(host).toBeVisible()
+    const [hostBox, chipBox] = await Promise.all([host.boundingBox(), reference.boundingBox()])
+    expect(hostBox).toEqual(chipBox)
   })
 
   test("should insert [filename] reference when pasting a non-image file", async ({ page }) => {

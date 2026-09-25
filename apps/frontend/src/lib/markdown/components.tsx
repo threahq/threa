@@ -3,6 +3,7 @@ import { Children, isValidElement, type ReactNode, type MouseEvent } from "react
 import { Link, useNavigate, useParams } from "react-router-dom"
 import {
   parseAgentBlockHref,
+  parseAttachmentMetadata,
   parseGiphyHref,
   parseMemoHref,
   parseMentionPointerHref,
@@ -23,6 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
+import { AttachmentChip } from "@/components/timeline/attachment-chip"
 import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { PENDING_STATE_LABELS } from "@/lib/attachments/pending-state"
@@ -169,7 +171,7 @@ const BARE_MESSAGE_ID = /^msg_[0-9A-HJKMNP-TV-Z]{26}$/i
 // navigation, so a junk href can't become a navigable chip.
 const isIdShaped = (value: string, prefix: string) => value.startsWith(prefix) && value.length > prefix.length
 
-function MarkdownLink({ href, children }: { href?: string; children: ReactNode }) {
+function MarkdownLink({ href, title, children }: { href?: string; title?: string; children: ReactNode }) {
   const attachmentContext = useAttachmentContext()
   const linkPreviewContext = useLinkPreviewContext()
   const navigate = useNavigate()
@@ -257,6 +259,7 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
 
   if (href?.startsWith("attachment:")) {
     const attachmentId = href.replace("attachment:", "")
+    const { mimeType } = parseAttachmentMetadata(title)
 
     // Still uploading/scanning, failed, or quarantined: the bytes may not
     // exist (or must not be served), and the status chip below the message
@@ -277,9 +280,13 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
           }}
           title={PENDING_STATE_LABELS[pendingState]}
           aria-label={`${extractTextFromChildren(children)} — ${PENDING_STATE_LABELS[pendingState]}`}
-          className="break-all text-muted-foreground cursor-default text-left"
+          className="align-baseline"
         >
-          <ProcessedChildren>{children}</ProcessedChildren>
+          <AttachmentChip
+            label={<ProcessedChildren>{children}</ProcessedChildren>}
+            mimeType={mimeType}
+            status="pending"
+          />
         </button>
       )
     }
@@ -303,9 +310,9 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
         onClick={handleClick}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
-        className="break-all text-primary underline underline-offset-4 hover:text-primary/80 [&_span]:[text-decoration:inherit] cursor-pointer"
+        className="align-baseline"
       >
-        <ProcessedChildren>{children}</ProcessedChildren>
+        <AttachmentChip label={<ProcessedChildren>{children}</ProcessedChildren>} mimeType={mimeType} />
       </button>
     )
   }
@@ -447,7 +454,11 @@ export const markdownComponents: Components = {
 
   // Links - handles both regular links and attachment:// URLs
   // [&_span] ensures inline-flex elements like TriggerChips inherit underline decoration
-  a: ({ href, children }) => <MarkdownLink href={href}>{children}</MarkdownLink>,
+  a: ({ href, title, children }) => (
+    <MarkdownLink href={href} title={title}>
+      {children}
+    </MarkdownLink>
+  ),
 
   // Inline only. Blocks are detected in `pre`, never here: remark sets
   // `language-*` on the inner <code> only when the fence declared one, so a bare

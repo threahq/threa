@@ -1,8 +1,7 @@
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { attachmentReferenceLabel } from "@threahq/prosemirror"
-import { Loader2, FileIcon, AlertCircle, ImageIcon } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+import { AttachmentChip } from "@/components/timeline/attachment-chip"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 
 function formatFileSize(bytes: number | null): string {
@@ -27,44 +26,11 @@ function getDisplayText(attrs: AttachmentReferenceAttrs): string {
 export function AttachmentReferenceView({ node }: NodeViewProps) {
   const attrs = node.attrs as AttachmentReferenceAttrs
   const isImage = attrs.mimeType.startsWith("image/")
-  const displayText = getDisplayText(attrs)
-
-  let Icon = FileIcon
-  if (attrs.status === "uploading") {
-    Icon = Loader2
-  } else if (attrs.status === "error") {
-    Icon = AlertCircle
-  } else if (isImage) {
-    Icon = ImageIcon
-  }
-
-  const baseStyles = cn(
-    "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-sm",
-    "cursor-pointer transition-colors"
-  )
-
-  const statusStyles = {
-    uploading: "bg-muted/50 text-muted-foreground animate-pulse",
-    uploaded: cn(
-      "bg-primary/10 text-primary hover:bg-primary/20",
-      "dark:bg-primary/20 dark:text-primary dark:hover:bg-primary/30"
-    ),
-    error: "bg-destructive/10 text-destructive hover:bg-destructive/20",
-  }
-
-  const handleClick = () => {
-    if (attrs.status !== "uploaded") return
-  }
+  const status = attrs.status === "uploaded" ? "ready" : attrs.status
 
   const content = (
-    <NodeViewWrapper
-      as="span"
-      className={cn(baseStyles, statusStyles[attrs.status])}
-      onClick={handleClick}
-      data-type="attachment-reference"
-    >
-      <Icon className={cn("h-3.5 w-3.5 shrink-0", attrs.status === "uploading" && "animate-spin")} />
-      <span className="truncate max-w-[150px]">[{displayText}]</span>
+    <NodeViewWrapper as="span" data-type="attachment-reference">
+      <AttachmentChip label={getDisplayText(attrs)} mimeType={attrs.mimeType} status={status} />
     </NodeViewWrapper>
   )
 

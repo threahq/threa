@@ -957,6 +957,13 @@ html[data-input="mouse"]
   box-shadow: inset 0 0 0 100vmax hsl(var(--primary) / 0.32);
 }
 
+/* A React node view's host span is what ProseMirror decorates and selects. Left
+   inline it takes the line box, shorter than the chip's padded box, so every
+   ring and wash drew off the chip's edges. Shrink-wrap it to the chip. */
+.ProseMirror .react-renderer:is(.node-attachmentReference, .node-memoEmbed, .node-giphyEmbed) {
+  display: inline-flex;
+}
+
 /* "This one is already in your message, here." Ring + wash only, no metrics —
    the highlight lands mid-sentence and must not reflow the line (INV-21). */
 .ProseMirror .composer-pill-highlighted {
