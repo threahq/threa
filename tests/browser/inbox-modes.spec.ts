@@ -156,7 +156,7 @@ test.describe("Inbox clear modes and order", () => {
     await seeded.other.context.close()
   })
 
-  test("order: oldest arrival first by default, newest first when switched", async ({ page, browser }) => {
+  test("order: oldest arrival first by default, newest first when reversed", async ({ page, browser }) => {
     const seeded = await seedWorkspace(page, browser, "inbox-order")
     const first = await createChannelAway(page, seeded.workspaceId, `inbox-first-${seeded.testId}`)
     const second = await createChannelAway(page, seeded.workspaceId, `inbox-second-${seeded.testId}`)
@@ -166,7 +166,16 @@ test.describe("Inbox clear modes and order", () => {
 
     await expect.poll(() => inboxOrder(page, [first, second]), { timeout: 10000 }).toEqual([first, second])
 
-    await setPreferences(page, seeded.workspaceId, { inboxOrder: "newest" })
+    const inbox = sectionByHeading(page, "Inbox")
+    await inbox.getByRole("heading", { name: "Inbox", level: 3 }).hover()
+    await inbox.getByRole("button", { name: "Inbox view options" }).click()
+    await inbox
+      .getByRole("group", { name: "Inbox view options" })
+      .getByRole("button", { name: "Reverse order" })
+      .click()
+    await expect.poll(() => inboxOrder(page, [first, second]), { timeout: 10000 }).toEqual([second, first])
+
+    // The order lives in the synced sidebar config.
     await page.reload()
     await expect.poll(() => inboxOrder(page, [first, second]), { timeout: 10000 }).toEqual([second, first])
 
