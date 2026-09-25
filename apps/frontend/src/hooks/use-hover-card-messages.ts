@@ -1,7 +1,7 @@
-import { useLiveQuery } from "dexie-react-hooks"
-import Dexie from "dexie"
+import { useMemo } from "react"
 import type { StreamEvent } from "@threahq/types"
-import { db, type CachedEvent } from "@/db"
+import type { CachedEvent } from "@/db"
+import { useStreamEvents } from "@/stores/stream-store"
 
 const CARD_MESSAGE_LIMIT = 8
 
@@ -19,25 +19,21 @@ function isCardMessage(row: CachedEvent): boolean {
 }
 
 /**
- * A stream's latest messages from the local store, live: the socket keeps the rows
- * current and the sync engine warms the history before a card opens, so reading
- * never fetches. `undefined` until the first read resolves.
+ * A stream's latest messages, read through the timeline's own `useStreamEvents`:
+ * the socket keeps the rows current and the sync engine warms the history before a
+ * card opens, so reading never fetches. `undefined` until the first read resolves.
  */
 export function useHoverCardMessages(streamId: string): HoverCardMessage[] | undefined {
-  return useLiveQuery(async () => {
-    const rows = await db.events
-      .where("[streamId+_sequenceNum]")
-      .between([streamId, Dexie.minKey], [streamId, Dexie.maxKey], true, true)
-      .reverse()
+  const events = useStreamEvents(streamId)
+  return useMemo(() => {
+    if (!events) return undefined
+    return events
       .filter(isCardMessage)
-      .limit(CARD_MESSAGE_LIMIT)
-      .toArray()
-    return rows
-      .sort((a, b) => a._sequenceNum - b._sequenceNum)
+      .slice(-CARD_MESSAGE_LIMIT)
       .map((row) => ({
         messageId: (row.payload as { messageId: string }).messageId,
         sequence: BigInt(row.sequence),
         event: row as StreamEvent,
       }))
-  }, [streamId])
+  }, [events])
 }
