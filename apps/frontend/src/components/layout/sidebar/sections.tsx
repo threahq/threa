@@ -72,7 +72,7 @@ interface SectionHeaderProps {
   filterActive?: boolean
   /**
    * Chats-mode-only view options (show, order, reverse), opened from the filter
-   * button: an inline strip on desktop, a sheet on mobile. Independent of the
+   * button: a dropdown on desktop, a sheet on mobile. Independent of the
    * board-mode `filterAffordance`/`filterActive` pair above. `undefined` on
    * quick links and in board mode.
    */

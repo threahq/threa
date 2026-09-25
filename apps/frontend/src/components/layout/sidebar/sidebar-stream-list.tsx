@@ -398,17 +398,14 @@ export function SidebarStreamList({
     // View options are chats-mode only: board-mode sections filter the board
     // instead via `filterAffordance`/`filterActive`. The Inbox has its own
     // read/unread model, so it offers order and reverse but no filter.
-    const defaultOrder = defaultSectionOrder(section.spec)
     const viewOptions: SectionViewOptions | undefined = boardMode
       ? undefined
       : {
           filter: section.spec.kind === "unread" ? undefined : (section.filter ?? "all"),
-          order: section.order ?? defaultOrder,
+          order: section.order ?? defaultSectionOrder(section.spec),
           orderOptions: sectionOrderOptions(section.spec),
-          defaultOrder,
           reverse: section.reverse ?? false,
-          onFilterChange: (filter) => onSectionViewChange(section.id, { filter }),
-          onSortChange: (order, reverse) => onSectionViewChange(section.id, { order, reverse }),
+          onChange: (change) => onSectionViewChange(section.id, change),
         }
     // Walk exactly what this section is about to render: a tiered section or a
     // filtered one holds a tail behind the "more" expander, so raw items are

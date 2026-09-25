@@ -33,12 +33,10 @@ export interface SectionViewOptions {
   filter?: SidebarSectionFilter
   /** Current row order; `null` is the legacy mixed order ("Default"). */
   order: SidebarSectionOrder | null
-  /** The orders on offer, default first. Empty means the default order is fixed. */
+  /** The orders on offer, default first. */
   orderOptions: readonly (SidebarSectionOrder | null)[]
-  defaultOrder: SidebarSectionOrder | null
   reverse: boolean
-  onFilterChange: (filter: SidebarSectionFilter) => void
-  onSortChange: (order: SidebarSectionOrder | null, reverse: boolean) => void
+  onChange: (change: SectionViewChange) => void
 }
 
 /** One option change; set fields are the ones that changed. */
@@ -64,7 +62,7 @@ const FILTERS: Record<SidebarSectionFilter, { label: string; icon: LucideIcon }>
 
 /** Any option away from the section's default, which tints the opener. */
 export function sectionViewCustomized(options: SectionViewOptions): boolean {
-  return options.filter === "unread" || options.reverse || options.order !== options.defaultOrder
+  return options.filter === "unread" || options.reverse || options.order !== (options.orderOptions[0] ?? null)
 }
 
 interface ViewRow {
@@ -86,18 +84,16 @@ function filterRows(options: SectionViewOptions): ViewRow[] {
     key: filter,
     ...FILTERS[filter],
     checked: options.filter === filter,
-    onSelect: () => options.onFilterChange(filter),
+    onSelect: () => options.onChange({ filter }),
   }))
 }
 
 /**
  * The sort rows. Picking another order starts it in its natural direction;
  * picking the current one again flips it, and its icon shows which way it runs.
- * A section with a fixed order still lists that one order so it can be flipped.
  */
 function sortRows(options: SectionViewOptions): ViewRow[] {
-  const orders = options.orderOptions.length > 0 ? options.orderOptions : [options.defaultOrder]
-  return orders.map((order) => {
+  return options.orderOptions.map((order) => {
     const { label, icon, reversedIcon } = ORDERS[order ?? "default"]
     const checked = options.order === order
     const reversed = checked && options.reverse
@@ -107,7 +103,7 @@ function sortRows(options: SectionViewOptions): ViewRow[] {
       reversed,
       icon: reversed ? reversedIcon : icon,
       checked,
-      onSelect: () => options.onSortChange(order, checked ? !options.reverse : false),
+      onSelect: () => options.onChange({ order, reverse: checked ? !options.reverse : false }),
     }
   })
 }
@@ -195,7 +191,7 @@ export function SectionViewDrawer({ label, options, open, onOpenChange }: Sectio
 
 function DrawerGroup({ title, rows }: { title: string; rows: ViewRow[] }) {
   return (
-    <div role="radiogroup" aria-label={title} className="border-b border-border/50 py-1 last:border-b-0">
+    <div role="group" aria-label={title} className="border-b border-border/50 py-1 last:border-b-0">
       <div className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground" aria-hidden>
         {title}
       </div>
@@ -203,8 +199,7 @@ function DrawerGroup({ title, rows }: { title: string; rows: ViewRow[] }) {
         <button
           key={row.key}
           type="button"
-          role="radio"
-          aria-checked={row.checked}
+          aria-pressed={row.checked}
           aria-label={rowName(row)}
           onClick={row.onSelect}
           className="flex h-12 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors active:bg-muted/80"

@@ -1252,7 +1252,6 @@ export {
   type SidebarSectionOrder,
   sectionOrderOptions,
   defaultSectionOrder,
-  sectionCanReverse,
   SIDEBAR_BASE_PRESETS,
   type SidebarBasePreset,
   SIDEBAR_QUICK_LINKS,

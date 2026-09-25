@@ -100,8 +100,8 @@ export interface SidebarSection {
 }
 
 /**
- * The orders a section offers, default first. Empty means the order is fixed:
- * Recent is by definition the latest activity, and quick links hold no streams.
+ * The orders a section offers, default first. Recent offers only the latest
+ * activity, which it is by definition; quick links hold no streams.
  * Sections whose default is the mixed static order (non-channels newest joined,
  * channels A–Z) list `null` first for it.
  */
@@ -112,7 +112,7 @@ export function sectionOrderOptions(spec: SidebarSectionSpec): readonly (Sidebar
     case "quicklinks":
       return []
     case "smart":
-      return spec.bucket === "recent" ? [] : [null, "name", "activity", "joined"]
+      return spec.bucket === "recent" ? ["activity"] : [null, "name", "activity", "joined"]
     case "type":
       return spec.streamType === "scratchpad" ? ["activity", "name", "joined"] : ["name", "activity", "joined"]
     case "label":
@@ -123,13 +123,7 @@ export function sectionOrderOptions(spec: SidebarSectionSpec): readonly (Sidebar
 
 /** The order a section uses when none is stored; `null` is the mixed static order. */
 export function defaultSectionOrder(spec: SidebarSectionSpec): SidebarSectionOrder | null {
-  if (spec.kind === "smart" && spec.bucket === "recent") return "activity"
   return sectionOrderOptions(spec)[0] ?? null
-}
-
-/** Whether a section can be reversed. Every stream section can; quick links hold no rows. */
-export function sectionCanReverse(spec: SidebarSectionSpec): boolean {
-  return spec.kind !== "quicklinks"
 }
 
 export const SIDEBAR_BASE_PRESETS = ["smart", "all"] as const
@@ -400,7 +394,7 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
   sections = sections.map((section) => {
     const filter = normalizeSectionFilter(section.spec, section.filter)
     const order = normalizeSectionOrder(section.spec, section.order)
-    const reverse = section.reverse === true && sectionCanReverse(section.spec) ? true : undefined
+    const reverse = section.reverse === true && section.spec.kind !== "quicklinks" ? true : undefined
     if (filter === section.filter && order === section.order && reverse === section.reverse) return section
     return {
       id: section.id,
