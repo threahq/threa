@@ -126,7 +126,7 @@ export function SectionViewMenu({ label, options, open, onOpenChange, trigger }:
   return (
     <SidebarDropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48" aria-label={`${label} view options`}>
+      <DropdownMenuContent side="right" align="start" className="w-48" aria-label={`${label} view options`}>
         {filters.length > 0 && (
           <>
             <MenuGroup title="Show" rows={filters} />
