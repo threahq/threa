@@ -197,7 +197,7 @@ export function ScratchpadItem({
     // whenever boardMode is set), so boardActions is always empty here.
     const clearInbox: SidebarActionItem[] =
       isInboxRow && onClearFromInbox
-        ? [{ id: "clear-inbox", label: "Settle", icon: Check, onSelect: onClearFromInbox }]
+        ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox }]
         : []
     return [
       ...clearInbox,

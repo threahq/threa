@@ -83,15 +83,3 @@ describe("useCommandSuggestion command scoping", () => {
     expect(requestedWorkspaceIds).toEqual(["ws_1"])
   })
 })
-
-describe("useCommandSuggestion /settle", () => {
-  it("offers /settle only while the host passes onSettle", () => {
-    const wrap = { wrapper: wrapper("/w/ws_1/s/stream_host") }
-    const without = renderHook(() => useCommandSuggestion({}), wrap)
-    const withSettle = renderHook(() => useCommandSuggestion({ onSettle: () => {} }), wrap)
-    expect({
-      without: without.result.current.isKnownCommand("settle"),
-      withSettle: withSettle.result.current.isKnownCommand("settle"),
-    }).toEqual({ without: false, withSettle: true })
-  })
-})

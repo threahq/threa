@@ -100,13 +100,13 @@ const UNREAD_OPEN_DESCRIPTIONS: Record<UnreadOpenPosition, string> = {
 
 const INBOX_CLEAR_MODE_LABELS: Record<InboxClearMode, string> = {
   interaction: "When you reply or react",
-  manual: "Only when you settle it",
+  manual: "Only when you clear it",
   read: "When you read it",
 }
 
 const INBOX_CLEAR_MODE_DESCRIPTIONS: Record<InboxClearMode, string> = {
-  interaction: "Reading a stream keeps it in the Inbox; replying or reacting settles it",
-  manual: "Reading a stream keeps it in the Inbox until you settle it yourself",
+  interaction: "Reading a stream keeps it in the Inbox; replying or reacting clears it",
+  manual: "Reading a stream keeps it in the Inbox until you clear it yourself",
   read: "The Inbox is just your unread streams — nothing stays after you read it",
 }
 
@@ -506,7 +506,7 @@ export function AppearanceSettings() {
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-sm font-medium">Inbox settles</h3>
+          <h3 className="text-sm font-medium">Inbox clears</h3>
           <p className="text-sm text-muted-foreground">Which actions remove a stream from the Inbox</p>
         </div>
         <RadioGroup

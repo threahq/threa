@@ -587,7 +587,7 @@ describe("StreamItem", () => {
     expect(avatarRow()).not.toHaveClass("opacity-60")
   })
 
-  it("widens the title's right-side reserve to make room for the row Settle button", () => {
+  it("widens the title's right-side reserve to make room for the row Clear button", () => {
     touchState.inputMode = "mouse"
     const stream = createStream()
     const row = () => screen.getByText(/general/).parentElement
@@ -609,7 +609,7 @@ describe("StreamItem", () => {
     expect(row()).not.toHaveClass("pr-8")
   })
 
-  it("shows the row Settle button on an Inbox row under mouse input", () => {
+  it("shows the row Clear button on an Inbox row under mouse input", () => {
     touchState.inputMode = "mouse"
     const stream = createStream()
 
@@ -626,10 +626,10 @@ describe("StreamItem", () => {
       />
     )
 
-    expect(screen.getByRole("button", { name: "Settle" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear from Inbox" })).toBeInTheDocument()
   })
 
-  it("hides the row Settle button under touch input even for an Inbox row", () => {
+  it("hides the row Clear button under touch input even for an Inbox row", () => {
     touchState.inputMode = "touch"
     const stream = createStream()
 
@@ -646,10 +646,10 @@ describe("StreamItem", () => {
       />
     )
 
-    expect(screen.queryByRole("button", { name: "Settle" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Clear from Inbox" })).not.toBeInTheDocument()
   })
 
-  it("hides the row Settle button for a row outside the Inbox", () => {
+  it("hides the row Clear button for a row outside the Inbox", () => {
     touchState.inputMode = "mouse"
     const stream = createStream()
 
@@ -664,10 +664,10 @@ describe("StreamItem", () => {
       />
     )
 
-    expect(screen.queryByRole("button", { name: "Settle" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Clear from Inbox" })).not.toBeInTheDocument()
   })
 
-  it("clears the row and does not navigate when the Settle button is clicked", () => {
+  it("clears the row and does not navigate when the Clear button is clicked", () => {
     touchState.inputMode = "mouse"
     const stream = createStream()
     const onClearFromInbox = vi.fn()
@@ -687,13 +687,13 @@ describe("StreamItem", () => {
 
     expect(screen.getByTestId("location-pathname").textContent).toBe("/")
 
-    fireEvent.click(screen.getByRole("button", { name: "Settle" }))
+    fireEvent.click(screen.getByRole("button", { name: "Clear from Inbox" }))
 
     expect(onClearFromInbox).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId("location-pathname").textContent).toBe("/")
   })
 
-  it("should dim a held thread and release it from the sidebar on Settle", () => {
+  it("should dim a held thread and release it from the sidebar on Clear", () => {
     touchState.inputMode = "mouse"
     const stream = createStream({ held: true })
     const avatarRow = () => screen.getByText(/general/).parentElement!.parentElement!.parentElement!
@@ -712,7 +712,7 @@ describe("StreamItem", () => {
     )
     expect(avatarRow()).toHaveClass("opacity-60")
 
-    fireEvent.click(screen.getByRole("button", { name: "Settle" }))
+    fireEvent.click(screen.getByRole("button", { name: "Clear from sidebar" }))
 
     expect({ held: result.current.has(stream.id), path: screen.getByTestId("location-pathname").textContent }).toEqual({
       held: false,
@@ -720,7 +720,7 @@ describe("StreamItem", () => {
     })
   })
 
-  it("offers a Settle action in the mobile action drawer for an Inbox row", async () => {
+  it("offers a Clear action in the mobile action drawer for an Inbox row", async () => {
     const stream = createStream()
     const onClearFromInbox = vi.fn()
 
@@ -743,12 +743,12 @@ describe("StreamItem", () => {
       vi.advanceTimersByTime(500)
     })
 
-    fireEvent.click(screen.getByRole("button", { name: "Settle" }))
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }))
 
     expect(onClearFromInbox).toHaveBeenCalledTimes(1)
   })
 
-  it("settles an Inbox row on a right swipe without navigating", () => {
+  it("clears an Inbox row on a right swipe without navigating", () => {
     const stream = createStream()
     const onClearFromInbox = vi.fn()
 
@@ -772,9 +772,9 @@ describe("StreamItem", () => {
     fireEvent.click(link)
 
     expect({
-      settled: onClearFromInbox.mock.calls.length,
+      cleared: onClearFromInbox.mock.calls.length,
       path: screen.getByTestId("location-pathname").textContent,
-    }).toEqual({ settled: 1, path: "/" })
+    }).toEqual({ cleared: 1, path: "/" })
   })
 })
 

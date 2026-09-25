@@ -74,7 +74,7 @@ function UnreadSectionTitle({ label, quiet = false }: { label: string; quiet?: b
 }
 
 /** Inbox header actions: clear-read (held rows only) and clear-all. Unlike the
- *  row-level Settle button, these are always visible when shown — a static
+ *  row-level Clear button, these are always visible when shown — a static
  *  status control alongside "All caught up", not a hover reveal. */
 function InboxHeaderActions({
   heldCount,
@@ -99,14 +99,14 @@ function InboxHeaderActions({
                 e.stopPropagation()
                 onClearRead()
               }}
-              aria-label={`Settle ${heldCount} read`}
+              aria-label={`Clear ${heldCount} read`}
               className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <CheckCheck className="h-3.5 w-3.5" />
             </button>
           </TooltipTrigger>
           <TooltipContent side="top" className="text-xs">
-            Settle {heldCount} read
+            Clear {heldCount} read
           </TooltipContent>
         </Tooltip>
       )}
@@ -119,14 +119,14 @@ function InboxHeaderActions({
               e.stopPropagation()
               onClearAll()
             }}
-            aria-label={`Settle all ${totalCount}`}
+            aria-label={`Clear all ${totalCount}`}
             className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ListX className="h-3.5 w-3.5" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" className="text-xs">
-          Settle all {totalCount}, marks them read
+          Clear all {totalCount}, marks them read
         </TooltipContent>
       </Tooltip>
     </div>

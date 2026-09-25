@@ -173,8 +173,6 @@ export interface MessageComposerProps {
   commandStreamId?: string | null
   /** False keeps workspace/stream/runtime commands out of the `/` menu; the editor's own items stay. */
   includeStreamCommands?: boolean
-  /** Offers `/settle` in the `/` menu; absent when the stream isn't in the Inbox. */
-  onSettle?: () => void
   /** Workspace id; required only when `contextRefs` is non-empty so the strip can fetch source metadata. */
   workspaceId?: string
   fileInputRef: RefObject<HTMLInputElement | null>
@@ -287,7 +285,6 @@ export function MessageComposer({
   memoAnchorStreamId = streamId,
   commandStreamId,
   includeStreamCommands,
-  onSettle,
   workspaceId,
   fileInputRef,
   onFileSelect,
@@ -1167,7 +1164,6 @@ export function MessageComposer({
       memoAnchorStreamId={memoAnchorStreamId}
       commandStreamId={commandStreamId}
       includeStreamCommands={includeStreamCommands}
-      onSettle={onSettle}
       trayAttachments={pendingAttachments}
       onRequestFileUpload={handleRequestInlineUpload}
     />
@@ -1353,7 +1349,6 @@ export function MessageComposer({
                 memoAnchorStreamId={memoAnchorStreamId}
                 commandStreamId={commandStreamId}
                 includeStreamCommands={includeStreamCommands}
-                onSettle={onSettle}
                 trayAttachments={pendingAttachments}
                 onRequestFileUpload={handleRequestInlineUpload}
                 belowToolbarContent={

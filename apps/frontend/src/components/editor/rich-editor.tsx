@@ -188,8 +188,6 @@ interface RichEditorProps {
   commandStreamId?: string | null
   /** False keeps workspace/stream/runtime commands out of the `/` menu (see `useCommandSuggestion`). */
   includeStreamCommands?: boolean
-  /** Offers `/settle` in the `/` menu; absent when the stream isn't in the Inbox. */
-  onSettle?: () => void
   /** Whether @mentions should be parsed and autocompleted. */
   enableMentions?: boolean
   /** Whether #channel references should be parsed and autocompleted. */
@@ -318,7 +316,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     memoAnchorStreamId,
     commandStreamId,
     includeStreamCommands,
-    onSettle,
     enableMentions = true,
     enableChannels = true,
     enableCommands = true,
@@ -426,7 +423,6 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     onOpenAttachment: openAttachmentPicker,
     commandStreamId,
     includeStreamCommands,
-    onSettle,
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 

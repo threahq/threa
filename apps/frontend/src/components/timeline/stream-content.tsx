@@ -2,7 +2,7 @@ import { RollingNumber } from "@/components/rolling-number"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
-import { useLocation, useNavigationType, useParams, useSearchParams } from "react-router-dom"
+import { useLocation, useNavigationType, useSearchParams } from "react-router-dom"
 import { type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -35,7 +35,7 @@ import {
   workspaceKeys,
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
-import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel } from "@/contexts"
+import { useSocket, useCoordinatedLoading, usePreferencesOptional } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import {
@@ -2127,13 +2127,8 @@ export function StreamContent({
 
   const isMobile = useIsMobile()
   const readCommitQueue = useReadCommitQueue()
-  const { markAsRead, markUnread, getUnreadCount, isInInbox, clearInbox } = useUnreadCounts(workspaceId)
+  const { markAsRead, markUnread, getUnreadCount } = useUnreadCounts(workspaceId)
   const unreadCount = getUnreadCount(streamId)
-  // Only the page's own stream settles on Escape: a thread panel mounts a second
-  // StreamContent, and one keypress must never settle both.
-  const { streamId: routeStreamId } = useParams<{ streamId: string }>()
-  const canSettleOnEscape = routeStreamId === streamId && isInInbox(streamId)
-  const { getFocusedPane } = usePanel()
 
   // The stream's sparse read overlay — message ids read individually above the
   // watermark (from a conversation-surface read). Threads through the read
@@ -2206,9 +2201,6 @@ export function StreamContent({
   markAsReadRef.current = markAsRead
   const markUnreadRef = useRef(markUnread)
   markUnreadRef.current = markUnread
-  const clearInboxRef = useRef(clearInbox)
-  clearInboxRef.current = clearInbox
-  const settle = useCallback(() => clearInboxRef.current([streamId]), [streamId])
   useEffect(() => {
     readCommitQueue.observeReadPointer(streamId, lastReadEventId)
   }, [lastReadEventId, readCommitQueue, streamId])
@@ -2228,14 +2220,13 @@ export function StreamContent({
     scrollToBottom({ force: true })
   }, [streamId, dismissUnreadDivider, scrollToBottom])
 
-  // Desktop Slack-style Esc-marks-channel-read, then Esc again settles the
-  // stream out of the Inbox. Scoped to when there's a step left to take so it
-  // never swallows Escape elsewhere; the composer/editor keep their own Escape
-  // via the isInput guard, and search owns Escape while open.
+  // Desktop Slack-style Esc-marks-channel-read. Scoped to when the divider is
+  // actually shown so it never swallows Escape elsewhere; the composer/editor
+  // keep their own Escape via the isInput guard, and search owns Escape while open.
   useEffect(() => {
-    if (isMobile || isDraft || isSearchOpen || (!dividerEventId && !canSettleOnEscape)) return
+    if (isMobile || isDraft || !dividerEventId || isSearchOpen) return
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return
+      if (event.key !== "Escape") return
       const target = event.target as HTMLElement | null
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
       if (isInput) return
@@ -2256,13 +2247,11 @@ export function StreamContent({
           (wrapper) => wrapper.querySelector('[role="tooltip"]') == null
         )
       if (overlayOwnsEscape) return
-      if (dividerEventId) escapeUnread()
-      // Escape while working in the thread panel must not settle the page behind it.
-      else if (getFocusedPane() === "main") clearInboxRef.current([streamId])
+      escapeUnread()
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isMobile, isDraft, dividerEventId, canSettleOnEscape, isSearchOpen, escapeUnread, streamId, getFocusedPane])
+  }, [isMobile, isDraft, dividerEventId, isSearchOpen, escapeUnread])
 
   // Manual "Mark as read" from a message action. The pointer is partial
   // unless the chosen row is the last loaded one — marking up to a mid-window
@@ -3073,7 +3062,6 @@ export function StreamContent({
                       autoFocus={autoFocus}
                       onComposerHeightChange={handleComposerHeightChange}
                       onMobileTypingChange={setMobileComposerTyping}
-                      onSettle={!isDraft && isInInbox(streamId) ? settle : undefined}
                     />
                   )}
                 </div>
