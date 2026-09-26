@@ -506,7 +506,7 @@ export function AppearanceSettings() {
 
       <section className="space-y-3">
         <div>
-          <h3 className="text-sm font-medium">Inbox settles</h3>
+          <h3 className="text-sm font-medium">Settling</h3>
           <p className="text-sm text-muted-foreground">Which actions remove a stream from the Inbox</p>
         </div>
         <RadioGroup

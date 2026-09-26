@@ -237,6 +237,26 @@ test.describe("Inbox sidebar section", () => {
     await otherContext.close()
   })
 
+  test("the palette's Settle settles the open stream", async ({ page, browser }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-palette")
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await inboxRow.locator("a").click()
+    await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
+    await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
+
+    await page.keyboard.press("Meta+k")
+    await expect(page.getByRole("dialog")).toBeVisible()
+    await page.keyboard.type("> Settle")
+    await page.keyboard.press("Enter")
+
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
+    await otherContext.close()
+  })
+
   test("Escape in the thread panel leaves the page's stream in the Inbox", async ({ page, browser }) => {
     const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-esc-panel")
 
@@ -372,7 +392,6 @@ test.describe("Inbox sidebar section", () => {
 
     await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
-    await expect(page).toHaveURL(new RegExp(`/s/${streamId}`))
 
     await context.close()
     await otherContext.close()

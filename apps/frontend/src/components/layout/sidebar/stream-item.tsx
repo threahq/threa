@@ -119,15 +119,7 @@ export function BoardTileToggle({
  * formatted display string (see `getEffectiveKeyBinding`/`formatKeyBinding`);
  * omitted when the viewer disabled or unbound the shortcut.
  */
-export function InboxRowClearButton({
-  onClear,
-  keyHint,
-  ariaLabel = "Settle",
-}: {
-  onClear: () => void
-  keyHint?: string
-  ariaLabel?: string
-}) {
+export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void; keyHint?: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -138,7 +130,7 @@ export function InboxRowClearButton({
             e.stopPropagation()
             onClear()
           }}
-          aria-label={ariaLabel}
+          aria-label="Settle"
           className="reveal-actions-hover-only absolute right-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
         >
           <Check className="h-3.5 w-3.5" />

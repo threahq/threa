@@ -776,6 +776,37 @@ describe("StreamItem", () => {
       path: screen.getByTestId("location-pathname").textContent,
     }).toEqual({ settled: 1, path: "/" })
   })
+
+  it("does not settle when a drag follows a long-press that opened the drawer", async () => {
+    const stream = createStream()
+    const onClearFromInbox = vi.fn()
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+        isInboxRow
+        onClearFromInbox={onClearFromInbox}
+      />
+    )
+
+    const link = screen.getByRole("link", { name: /general/i })
+    fireEvent.touchStart(link, { touches: [{ clientX: 16, clientY: 16 }] })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+    fireEvent.touchMove(link, { touches: [{ clientX: 136, clientY: 18 }] })
+    fireEvent.touchEnd(link)
+
+    expect({
+      settled: onClearFromInbox.mock.calls.length,
+      drawerSettle: screen.queryByRole("button", { name: "Settle" }) !== null,
+    }).toEqual({ settled: 0, drawerSettle: true })
+  })
 })
 
 function makeBoardMode(over: Partial<SidebarBoardMode> = {}): SidebarBoardMode {

@@ -34,7 +34,7 @@ export function useSidebarItemDrawer({ canOpenDrawer, collapseOnMobile, onSwipeR
       preventNavigationUntilRef.current = Date.now() + 750
       onSwipeRight?.()
     },
-    enabled: touchCapable && !!onSwipeRight,
+    enabled: touchCapable && !!onSwipeRight && !drawerOpen,
   })
 
   const touchHandlers = touchCapable
