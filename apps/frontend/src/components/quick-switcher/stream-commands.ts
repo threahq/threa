@@ -1,4 +1,14 @@
-import { Archive, FileCode2, ListChecks, MessageSquareDashed, Paperclip, Settings, Tag, Trash2 } from "lucide-react"
+import {
+  Archive,
+  Check,
+  FileCode2,
+  ListChecks,
+  MessageSquareDashed,
+  Paperclip,
+  Settings,
+  Tag,
+  Trash2,
+} from "lucide-react"
 import { queueSnippetRequest } from "@/stores/snippet-request-store"
 import type { Command } from "./commands"
 
@@ -29,6 +39,18 @@ const createSnippetCommand: Command = {
  * are deleted via `draftStreamCommands` instead.
  */
 export const streamCommands: Command[] = [
+  {
+    // Surfaced only while `CommandContext.settleStream` is set (the stream in
+    // view is in the Inbox) — see `use-command-items`.
+    id: "stream-settle",
+    label: "Settle",
+    icon: Check,
+    keywords: ["inbox", "clear", "done", "dismiss", "read", "current stream"],
+    action: ({ currentStreamId, settleStream }) => {
+      if (!currentStreamId || !settleStream) return
+      settleStream(currentStreamId)
+    },
+  },
   createSnippetCommand,
   {
     // Surfaced only while `CommandContext.openAside` is set (the stream in view

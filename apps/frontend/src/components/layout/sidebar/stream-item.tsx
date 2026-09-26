@@ -122,7 +122,7 @@ export function BoardTileToggle({
 export function InboxRowClearButton({
   onClear,
   keyHint,
-  ariaLabel = "Clear from Inbox",
+  ariaLabel = "Settle",
 }: {
   onClear: () => void
   keyHint?: string
@@ -146,7 +146,7 @@ export function InboxRowClearButton({
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-medium">Clear</span>
+          <span className="font-medium">Settle</span>
           {keyHint && <span className="text-muted-foreground">{keyHint}</span>}
         </div>
       </TooltipContent>
@@ -155,7 +155,7 @@ export function InboxRowClearButton({
 }
 
 /**
- * What a row swiped right uncovers: the Clear check, filling only the strip the
+ * What a row swiped right uncovers: the Settle check, filling only the strip the
  * row has slid off so it never shows through the row itself.
  */
 export function InboxRowSwipeReveal({ offset, locked }: { offset: number; locked: boolean }) {
@@ -623,7 +623,7 @@ export function StreamItem({
     // held threads skip Clear whenever boardMode is set), so this never collides
     // with boardActions.
     const withClear = onClearRow
-      ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearRow } satisfies SidebarActionItem, ...base]
+      ? [{ id: "clear-inbox", label: "Settle", icon: Check, onSelect: onClearRow } satisfies SidebarActionItem, ...base]
       : base
     const browse = {
       ...browseStreamsAction(workspaceId, collapseOnMobile),
@@ -874,11 +874,7 @@ export function StreamItem({
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
           )}
           {onClearRow && !isTouchInput && (
-            <InboxRowClearButton
-              onClear={onClearRow}
-              keyHint={isInboxRow ? clearInboxKeyHint : undefined}
-              ariaLabel={isInboxRow ? undefined : "Clear from sidebar"}
-            />
+            <InboxRowClearButton onClear={onClearRow} keyHint={isInboxRow ? clearInboxKeyHint : undefined} />
           )}
         </div>
       </SidebarActionContextMenu>

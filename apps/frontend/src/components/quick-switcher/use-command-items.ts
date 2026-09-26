@@ -70,7 +70,11 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     let contextualCommands: Command[] = []
     if (currentStreamId) {
       contextualCommands = isDraftId(currentStreamId) ? draftStreamCommands : streamCommands
-      contextualCommands = contextualCommands.filter((c) => c.id !== "stream-open-aside" || !!commandContext.openAside)
+      contextualCommands = contextualCommands.filter(
+        (c) =>
+          (c.id !== "stream-open-aside" || !!commandContext.openAside) &&
+          (c.id !== "stream-settle" || !!commandContext.settleStream)
+      )
     }
     const contextualGroup = currentStreamName ? `This stream — ${currentStreamName}` : "This stream"
     // Groups render in section order, not by score, so they are ranked
