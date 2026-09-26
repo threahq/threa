@@ -169,8 +169,8 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   },
   {
     id: "clearInboxStream",
-    label: "Clear from Inbox",
-    description: "Clear the hovered Inbox row, or the open stream if it's in the Inbox",
+    label: "Settle",
+    description: "Settle the hovered Inbox row, or the open stream",
     defaultKey: "e",
     category: "view",
   },

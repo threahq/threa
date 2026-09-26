@@ -146,7 +146,7 @@ test.describe("Inbox sidebar section", () => {
     // Inbox and it reappears in Channels; with nothing else held/unread, the
     // Inbox goes back to "All caught up".
     await inboxRow.hover()
-    await inboxRow.getByRole("button", { name: "Clear from Inbox" }).click()
+    await inboxRow.getByRole("button", { name: "Settle" }).click()
     await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
     await expect(sectionByHeading(page, "Inbox").getByText("All caught up")).toBeVisible({ timeout: 10000 })
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
@@ -207,6 +207,91 @@ test.describe("Inbox sidebar section", () => {
     await otherContext.close()
   })
 
+  test("Escape settles the open stream once it's read", async ({ page, browser }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-esc")
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await inboxRow.locator("a").click()
+    await expect(page).toHaveURL(new RegExp(`/s/${streamId}`))
+    await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
+    await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
+
+    // Escape is ignored inside the composer, which can take focus late.
+    await page.mouse.move(0, 0)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const settled = document.activeElement === document.body
+          if (!settled) (document.activeElement as HTMLElement | null)?.blur()
+          return settled
+        })
+      )
+      .toBe(true)
+    // The first press may only dismiss a lingering unread divider; the next settles.
+    await page.keyboard.press("Escape")
+    await page.keyboard.press("Escape")
+
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
+    await otherContext.close()
+  })
+
+  test("the palette's Settle settles the open stream", async ({ page, browser }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-palette")
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await inboxRow.locator("a").click()
+    await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
+    await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
+
+    await page.keyboard.press("Meta+k")
+    await expect(page.getByRole("dialog")).toBeVisible()
+    await page.keyboard.type("> Settle")
+    await page.keyboard.press("Enter")
+
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
+    await otherContext.close()
+  })
+
+  test("Escape in the thread panel leaves the page's stream in the Inbox", async ({ page, browser }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-esc-panel")
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await inboxRow.locator("a").click()
+    await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
+    await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
+
+    const message = page
+      .locator("[data-message-id]")
+      .filter({ hasText: /unread hello/ })
+      .first()
+    await message.hover()
+    await page.getByRole("link", { name: "Reply in thread" }).click()
+    const panel = page.getByTestId("panel")
+    await expect(panel.getByText(/Start a new thread/)).toBeVisible({ timeout: 10000 })
+
+    const pressEscapeFrom = async (target: Locator) => {
+      await target.click()
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.keyboard.press("Escape")
+      await page.keyboard.press("Escape")
+    }
+
+    await pressEscapeFrom(panel.getByText(/Start a new thread/))
+    // Give a wrongly-fired settle time to land before asserting it didn't.
+    await page.waitForTimeout(1500)
+    await expect(inboxRow).toHaveCount(1)
+
+    await pressEscapeFrom(message)
+    await expect(inboxRow).toHaveCount(0, { timeout: 10000 })
+
+    await otherContext.close()
+  })
+
   test("phone: a held row clears via the long-press action drawer", async ({ page: setupPage, browser }) => {
     const { workspaceId, streamId, otherContext } = await seedUnreadChannel(setupPage, browser, "inbox-phone")
 
@@ -260,7 +345,50 @@ test.describe("Inbox sidebar section", () => {
 
     const drawer = page.locator("[data-vaul-drawer]")
     await expect(drawer).toBeVisible({ timeout: 10000 })
-    await drawer.getByRole("button", { name: "Clear", exact: true }).click()
+    await drawer.getByRole("button", { name: "Settle", exact: true }).click()
+
+    await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
+    await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })
+
+    await context.close()
+    await otherContext.close()
+  })
+
+  test("phone: swiping a held row right settles it", async ({ page: setupPage, browser }) => {
+    const { workspaceId, streamId, otherContext } = await seedUnreadChannel(setupPage, browser, "inbox-swipe")
+    await sidebarRow(sectionByHeading(setupPage, "Inbox"), streamId).locator("a").click()
+    await expect(setupPage).toHaveURL(new RegExp(`/s/${streamId}`))
+    await expect.poll(() => serverUnreadCount(setupPage, workspaceId, streamId), { timeout: 15000 }).toBe(0)
+
+    const storageState = await setupPage.context().storageState()
+    const context = await browser.newContext({ storageState, hasTouch: true, viewport: PHONE })
+    const page = await context.newPage()
+    await page.goto(setupPage.url())
+
+    const toggles = page.getByRole("button", { name: "Pin sidebar" })
+    await expect(toggles.first()).toBeAttached({ timeout: 20000 })
+    for (let i = 0; i < (await toggles.count()); i += 1) {
+      const box = await toggles.nth(i).boundingBox()
+      if (box && box.x >= 0 && box.x + box.width <= PHONE.width) {
+        await toggles.nth(i).click()
+        break
+      }
+    }
+    const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
+    await expect(nav.getByRole("button", { name: "Collapse sidebar" })).toBeVisible({ timeout: 15000 })
+
+    const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
+    await expect(inboxRow).toBeVisible({ timeout: 10000 })
+
+    const link = inboxRow.locator("a")
+    const box = (await link.boundingBox())!
+    const y = box.y + box.height / 2
+    const at = (x: number) => ({ identifier: 1, clientX: x, clientY: y })
+    await link.dispatchEvent("touchstart", { touches: [at(box.x + 20)], changedTouches: [at(box.x + 20)] })
+    for (const x of [box.x + 40, box.x + 80, box.x + 120, box.x + 160]) {
+      await link.dispatchEvent("touchmove", { touches: [at(x)], changedTouches: [at(x)] })
+    }
+    await link.dispatchEvent("touchend", { touches: [], changedTouches: [at(box.x + 160)] })
 
     await expect(sidebarRow(sectionByHeading(page, "Inbox"), streamId)).toHaveCount(0)
     await expect(sidebarRow(sectionByHeading(page, "Channels"), streamId)).toBeVisible({ timeout: 10000 })

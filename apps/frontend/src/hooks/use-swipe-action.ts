@@ -13,6 +13,8 @@ interface UseSwipeActionOptions {
   onSwipeDown?: () => void
   /** Vertical distance (px) after the lock that switches to `onSwipeDown` (default: 24) */
   downThreshold?: number
+  /** Which way the row slides to fire (default: left) */
+  direction?: "left" | "right"
   /** Disable the hook */
   enabled?: boolean
 }
@@ -28,7 +30,7 @@ export type SwipeArm = "primary" | "down"
 
 interface UseSwipeActionReturn {
   handlers: SwipeHandlers
-  /** Current horizontal offset (negative = swiped left) */
+  /** Current horizontal offset (negative = swiped left, positive = swiped right) */
   offset: number
   /** How far the row follows the finger down the L's leg (px, ≥ 0). */
   offsetY: number
@@ -82,15 +84,16 @@ function startedInHorizontalScroller(target: EventTarget | null): boolean {
 }
 
 /**
- * Swipe-from-right gesture for mobile quote reply.
- * The user swipes left on a message; once they cross the threshold,
- * haptic feedback fires and the action locks in. Releasing triggers the callback.
+ * Horizontal swipe (quote reply on messages, settle on sidebar rows). Once the
+ * drag crosses the threshold, haptic feedback fires and the action locks in.
+ * Releasing triggers the callback.
  */
 export function useSwipeAction({
   threshold = 80,
   onSwipe,
   onSwipeDown,
   downThreshold = 24,
+  direction = "left",
   enabled = true,
 }: UseSwipeActionOptions): UseSwipeActionReturn {
   const startPos = useRef<{ x: number; y: number } | null>(null)
@@ -120,6 +123,7 @@ export function useSwipeAction({
   const [isLocked, setIsLocked] = useState(false)
   const [arm, setArm] = useState<SwipeArm>("primary")
 
+  const sign = direction === "right" ? 1 : -1
   const onSwipeRef = useRef(onSwipe)
   onSwipeRef.current = onSwipe
   const claimTouchMoveRef = useRef((e: TouchEvent) => {
@@ -186,7 +190,7 @@ export function useSwipeAction({
       // Determine direction once after a small movement
       if (isHorizontalRef.current === null) {
         if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
-          isHorizontalRef.current = Math.abs(dx) > Math.abs(dy) && dx < 0
+          isHorizontalRef.current = Math.abs(dx) > Math.abs(dy) && dx * sign > 0
           if (!isHorizontalRef.current) {
             // Vertical scroll — bail out
             reset()
@@ -199,8 +203,8 @@ export function useSwipeAction({
 
       if (!isHorizontalRef.current) return
 
-      // Only track leftward swipes (negative dx), capped at threshold * 1.2
-      const clampedOffset = Math.max(dx, -(threshold * 1.2))
+      // Only track swipes in `direction`, capped at threshold * 1.2
+      const clampedOffset = sign * Math.min(Math.max(dx * sign, 0), threshold * 1.2)
       setOffset(clampedOffset)
 
       // Half-way to the threshold the row owns the touch: from here the
@@ -259,7 +263,7 @@ export function useSwipeAction({
         }
       }
     },
-    [enabled, threshold, downThreshold, reset]
+    [enabled, threshold, downThreshold, sign, reset]
   )
 
   const onTouchEnd = useCallback(() => {

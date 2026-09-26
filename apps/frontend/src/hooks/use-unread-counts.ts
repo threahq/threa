@@ -482,7 +482,7 @@ export function useUnreadCounts(workspaceId: string) {
           applyInboxHeld(state, context.previouslyHeldStreamIds, true)
         )
       }
-      toast.error("Couldn't clear from Inbox")
+      toast.error("Couldn't settle")
     },
   })
 

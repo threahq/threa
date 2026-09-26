@@ -51,6 +51,7 @@ import {
   AgentActivityPreviewLine,
   agentActivityLabel,
   InboxRowClearButton,
+  InboxRowSwipeReveal,
   type BoardTileState,
 } from "./stream-item"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
@@ -196,7 +197,7 @@ export function ScratchpadItem({
     // whenever boardMode is set), so boardActions is always empty here.
     const clearInbox: SidebarActionItem[] =
       isInboxRow && onClearFromInbox
-        ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearFromInbox }]
+        ? [{ id: "clear-inbox", label: "Settle", icon: Check, onSelect: onClearFromInbox }]
         : []
     return [
       ...clearInbox,
@@ -278,10 +279,12 @@ export function ScratchpadItem({
         }
       : null
 
-  const { drawerOpen, setDrawerOpen, handleClick, touchCapable, longPress } = useSidebarItemDrawer({
-    canOpenDrawer: actions.length > 0,
-    collapseOnMobile,
-  })
+  const { drawerOpen, setDrawerOpen, handleClick, touchCapable, longPress, touchHandlers, swipe } =
+    useSidebarItemDrawer({
+      canOpenDrawer: actions.length > 0,
+      collapseOnMobile,
+      onSwipeRight: isInboxRow ? onClearFromInbox : undefined,
+    })
   // Presentation (select-none, right-click suppression, hover preview) follows
   // the active input; the long-press gesture follows touch capability above.
   const isTouchInput = useInputMode() === "touch"
@@ -355,7 +358,7 @@ export function ScratchpadItem({
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div
-          className="group reveal-host relative"
+          className={cn("group reveal-host relative", swipe.offset !== 0 && "overflow-hidden")}
           onPointerEnter={(event) => {
             hover.onPointerEnter(event)
             if (isInboxRow) handleInboxHoverEnter()
@@ -365,6 +368,7 @@ export function ScratchpadItem({
             if (isInboxRow) handleInboxHoverLeave()
           }}
         >
+          <InboxRowSwipeReveal offset={swipe.offset} locked={swipe.isLocked} />
           <StreamHoverCard
             hover={hover}
             workspaceId={workspaceId}
@@ -377,10 +381,8 @@ export function ScratchpadItem({
               to={rowTo}
               aria-keyshortcuts={quickJump?.keyshortcut}
               onClick={handleRowClick}
-              onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
-              onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
-              onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
-              onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
+              {...touchHandlers}
+              style={swipe.offset ? { transform: `translateX(${swipe.offset}px)` } : undefined}
               className={cn(
                 "flex items-stretch rounded-lg text-sm transition-colors",
                 // The tinted background means exactly one thing: "you are here" — or,

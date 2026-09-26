@@ -87,6 +87,8 @@ export interface CommandContext {
   createSavedTodo: (title: string) => Promise<void>
   /** Open a private aside on the stream in view. Absent when that stream can't host one. */
   openAside?: (streamId: string) => Promise<void>
+  /** Settle the stream in view out of the Inbox. Absent when it isn't in the Inbox. */
+  settleStream?: (streamId: string) => void
 }
 
 export interface Command {

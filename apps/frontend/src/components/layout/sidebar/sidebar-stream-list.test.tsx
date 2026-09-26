@@ -305,30 +305,30 @@ describe("SidebarStreamList — Inbox section", () => {
     expect(screen.getByText("Inbox")).not.toHaveClass("text-muted-foreground/50")
   })
 
-  it("shows Clear all but not Clear read when no row is held", () => {
+  it("shows Settle all but not Settle read when no row is held", () => {
     renderInbox([makeStream("stream_a")], { unread: () => 1 })
-    expect(screen.getByRole("button", { name: "Clear all 1" })).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /Clear \d+ read/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Settle all 1" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Settle \d+ read/ })).not.toBeInTheDocument()
   })
 
-  it("shows Clear read alongside Clear all when a row is held", () => {
+  it("shows Settle read alongside Settle all when a row is held", () => {
     const streams = [makeStream("stream_a"), makeStream("stream_b")]
     renderInbox(streams, { unread: (id) => (id === "stream_a" ? 0 : 3) })
-    expect(screen.getByRole("button", { name: "Clear 1 read" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear all 2" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Settle 1 read" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Settle all 2" })).toBeInTheDocument()
   })
 
-  it("clears only held rows when Clear read is clicked", () => {
+  it("clears only held rows when Settle read is clicked", () => {
     const streams = [makeStream("stream_a"), makeStream("stream_b")]
     const onClearInbox = renderInbox(streams, { unread: (id) => (id === "stream_a" ? 0 : 3) })
-    fireEvent.click(screen.getByRole("button", { name: "Clear 1 read" }))
+    fireEvent.click(screen.getByRole("button", { name: "Settle 1 read" }))
     expect(onClearInbox).toHaveBeenCalledWith(["stream_a"])
   })
 
-  it("clears every row when Clear all is clicked", () => {
+  it("clears every row when Settle all is clicked", () => {
     const streams = [makeStream("stream_a"), makeStream("stream_b")]
     const onClearInbox = renderInbox(streams, { unread: (id) => (id === "stream_a" ? 0 : 3) })
-    fireEvent.click(screen.getByRole("button", { name: "Clear all 2" }))
+    fireEvent.click(screen.getByRole("button", { name: "Settle all 2" }))
     expect(onClearInbox).toHaveBeenCalledWith(["stream_a", "stream_b"])
   })
 
@@ -361,8 +361,8 @@ describe("SidebarStreamList — Inbox section", () => {
     )
 
     expect(screen.getByText("Inbox")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear 1 read" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear all 1" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Settle 1 read" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Settle all 1" })).toBeInTheDocument()
   })
 })
 

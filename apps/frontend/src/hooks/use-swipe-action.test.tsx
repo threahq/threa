@@ -63,6 +63,42 @@ describe("useSwipeAction", () => {
     el.remove()
   })
 
+  it("with direction right, fires on a rightward swipe and follows the finger with a positive offset", () => {
+    const onSwipe = vi.fn()
+    const { result } = renderHook(() => useSwipeAction({ onSwipe, threshold: 80, direction: "right" }))
+    const target = document.createElement("div")
+    document.body.appendChild(target)
+
+    act(() => {
+      result.current.handlers.onTouchStart(touchEvent(target, 100, 100))
+      result.current.handlers.onTouchMove(touchEvent(target, 190, 100))
+    })
+    expect({ offset: result.current.offset, isLocked: result.current.isLocked }).toEqual({ offset: 90, isLocked: true })
+
+    act(() => result.current.handlers.onTouchEnd())
+    expect(onSwipe).toHaveBeenCalledTimes(1)
+
+    target.remove()
+  })
+
+  it("with direction right, ignores a leftward swipe", () => {
+    const onSwipe = vi.fn()
+    const { result } = renderHook(() => useSwipeAction({ onSwipe, threshold: 80, direction: "right" }))
+    const target = document.createElement("div")
+    document.body.appendChild(target)
+
+    act(() => {
+      result.current.handlers.onTouchStart(touchEvent(target, 200, 100))
+      result.current.handlers.onTouchMove(touchEvent(target, 100, 100))
+      result.current.handlers.onTouchEnd()
+    })
+
+    expect(onSwipe).not.toHaveBeenCalled()
+    expect(result.current.offset).toBe(0)
+
+    target.remove()
+  })
+
   it("triggers onSwipe for a leftward swipe past threshold outside any scroller", () => {
     const onSwipe = vi.fn()
     const { result } = renderHook(() => useSwipeAction({ onSwipe, threshold: 80 }))

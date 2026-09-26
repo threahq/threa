@@ -119,15 +119,7 @@ export function BoardTileToggle({
  * formatted display string (see `getEffectiveKeyBinding`/`formatKeyBinding`);
  * omitted when the viewer disabled or unbound the shortcut.
  */
-export function InboxRowClearButton({
-  onClear,
-  keyHint,
-  ariaLabel = "Clear from Inbox",
-}: {
-  onClear: () => void
-  keyHint?: string
-  ariaLabel?: string
-}) {
+export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void; keyHint?: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -138,7 +130,7 @@ export function InboxRowClearButton({
             e.stopPropagation()
             onClear()
           }}
-          aria-label={ariaLabel}
+          aria-label="Settle"
           className="reveal-actions-hover-only absolute right-8 top-1 z-10 flex h-6 w-6 items-center justify-center rounded hover:bg-muted"
         >
           <Check className="h-3.5 w-3.5" />
@@ -146,11 +138,28 @@ export function InboxRowClearButton({
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-medium">Clear</span>
+          <span className="font-medium">Settle</span>
           {keyHint && <span className="text-muted-foreground">{keyHint}</span>}
         </div>
       </TooltipContent>
     </Tooltip>
+  )
+}
+
+/**
+ * What a row swiped right uncovers: the Settle check, filling only the strip the
+ * row has slid off so it never shows through the row itself.
+ */
+export function InboxRowSwipeReveal({ offset, locked }: { offset: number; locked: boolean }) {
+  if (offset <= 0) return null
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-y-0 left-0 flex items-center justify-center overflow-hidden"
+      style={{ width: offset }}
+    >
+      <Check className={cn("h-5 w-5 shrink-0 transition-colors", locked ? "text-primary" : "text-muted-foreground")} />
+    </div>
   )
 }
 
@@ -606,7 +615,7 @@ export function StreamItem({
     // held threads skip Clear whenever boardMode is set), so this never collides
     // with boardActions.
     const withClear = onClearRow
-      ? [{ id: "clear-inbox", label: "Clear", icon: Check, onSelect: onClearRow } satisfies SidebarActionItem, ...base]
+      ? [{ id: "clear-inbox", label: "Settle", icon: Check, onSelect: onClearRow } satisfies SidebarActionItem, ...base]
       : base
     const browse = {
       ...browseStreamsAction(workspaceId, collapseOnMobile),
@@ -642,10 +651,12 @@ export function StreamItem({
 
   const hasPreviewOnlyDrawer = stream.type === StreamTypes.DM && drawerPreview !== null
   const canOpenDrawer = actions.length > 0 || hasPreviewOnlyDrawer
-  const { drawerOpen, setDrawerOpen, handleClick, touchCapable, longPress } = useSidebarItemDrawer({
-    canOpenDrawer,
-    collapseOnMobile,
-  })
+  const { drawerOpen, setDrawerOpen, handleClick, touchCapable, longPress, touchHandlers, swipe } =
+    useSidebarItemDrawer({
+      canOpenDrawer,
+      collapseOnMobile,
+      onSwipeRight: onClearRow,
+    })
   // Presentation (select-none, right-click suppression, hover preview) follows
   // the active input; the long-press gesture follows touch capability above.
   const isTouchInput = useInputMode() === "touch"
@@ -737,7 +748,7 @@ export function StreamItem({
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div
-          className="group reveal-host relative"
+          className={cn("group reveal-host relative", swipe.offset !== 0 && "overflow-hidden")}
           onPointerEnter={(event) => {
             hover.onPointerEnter(event)
             if (isInboxRow) handleInboxHoverEnter()
@@ -747,6 +758,7 @@ export function StreamItem({
             if (isInboxRow) handleInboxHoverLeave()
           }}
         >
+          <InboxRowSwipeReveal offset={swipe.offset} locked={swipe.isLocked} />
           <StreamHoverCard
             hover={hover}
             workspaceId={workspaceId}
@@ -759,10 +771,8 @@ export function StreamItem({
               to={rowTo}
               aria-keyshortcuts={quickJump?.keyshortcut}
               onClick={handleRowClick}
-              onTouchStart={touchCapable ? longPress.handlers.onTouchStart : undefined}
-              onTouchEnd={touchCapable ? longPress.handlers.onTouchEnd : undefined}
-              onTouchMove={touchCapable ? longPress.handlers.onTouchMove : undefined}
-              onContextMenu={touchCapable ? longPress.handlers.onContextMenu : undefined}
+              {...touchHandlers}
+              style={swipe.offset ? { transform: `translateX(${swipe.offset}px)` } : undefined}
               className={cn(
                 "flex items-stretch rounded-lg text-sm transition-colors",
                 // The tinted background means exactly one thing: "you are here" — or,
@@ -856,11 +866,7 @@ export function StreamItem({
             <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
           )}
           {onClearRow && !isTouchInput && (
-            <InboxRowClearButton
-              onClear={onClearRow}
-              keyHint={isInboxRow ? clearInboxKeyHint : undefined}
-              ariaLabel={isInboxRow ? undefined : "Clear from sidebar"}
-            />
+            <InboxRowClearButton onClear={onClearRow} keyHint={isInboxRow ? clearInboxKeyHint : undefined} />
           )}
         </div>
       </SidebarActionContextMenu>
