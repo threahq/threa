@@ -406,6 +406,50 @@ describe("SectionHeader view options", () => {
   })
 })
 
+function precedes(a: Element, b: Element): boolean {
+  return !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+}
+
+describe("SectionHeader filter placement", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should place the view options button after every other header control", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
+    renderHeader({
+      label: "Design",
+      titleHref: "/w/ws_1/labels/label_1",
+      viewOptions: makeViewOptions({ filter: "unread" }),
+      unreadAggregate: 3,
+      onAdd: vi.fn(),
+      addTooltip: "Add to Design",
+    })
+
+    const filter = screen.getByRole("button", { name: "Design view options" })
+    const others = [
+      screen.getByRole("link", { name: "Open Design" }),
+      screen.getByText("3"),
+      screen.getByRole("button", { name: "Add to Design" }),
+    ]
+    expect(others.filter((el) => !precedes(el, filter))).toEqual([])
+  })
+
+  it("should place the board filter link after the add button", () => {
+    renderHeader({
+      label: "Channels",
+      titleHref: "/w/ws_1/board?is=channel",
+      titleActionLabel: "Filter board by Channels",
+      filterAffordance: true,
+      onAdd: vi.fn(),
+      addTooltip: "New channel",
+    })
+
+    const add = screen.getByRole("button", { name: "New channel" })
+    expect(precedes(add, screen.getByRole("link", { name: "Filter board by Channels" }))).toBe(true)
+  })
+})
+
 describe("SectionHeader label open target", () => {
   it("points the open link at the label page in chats mode", () => {
     renderHeader({ label: "Design", titleContent: "Design", titleHref: "/w/ws_1/labels/label_1" })
