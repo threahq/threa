@@ -35,9 +35,10 @@ import {
   workspaceKeys,
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
-import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel, isConversationPanel } from "@/contexts"
+import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
+import { getAsideState } from "@/stores/aside-store"
 import {
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,
@@ -2133,7 +2134,7 @@ export function StreamContent({
   // StreamContent, and one keypress must never settle both.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
   const canSettleOnEscape = routeStreamId === streamId && isInInbox(streamId)
-  const { getFocusedPane, panelId } = usePanel()
+  const { panelId } = usePanel()
 
   // The stream's sparse read overlay — message ids read individually above the
   // watermark (from a conversation-surface read). Threads through the read
@@ -2234,7 +2235,7 @@ export function StreamContent({
   useEffect(() => {
     if (isMobile || isDraft || isSearchOpen || (!dividerEventId && !canSettleOnEscape)) return
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return
+      if (event.key !== "Escape" || event.repeat || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
       if (isInput) return
@@ -2256,13 +2257,16 @@ export function StreamContent({
         )
       if (overlayOwnsEscape) return
       if (dividerEventId) escapeUnread()
-      // Never settle the page behind a panel: Escape in the thread panel belongs
-      // to it, and a conversation panel closes on every Escape.
-      else if (getFocusedPane() === "main" && !(panelId && isConversationPanel(panelId)))
+      // Settle only a stream alone on the page: with a panel, an aside or the
+      // conversation list open, Escape belongs to that surface.
+      else if (!panelId && getAsideState() === null && searchParams.get("convView") !== "open")
         clearInboxRef.current([streamId])
+      else return
+      // One step per keypress: the thread panel's StreamContent listens too.
+      event.preventDefault()
     }
-    // On window so every document-level Escape owner has run, and the
-    // defaultPrevented check sees them regardless of mount order.
+    // On window so document-level Escape owners that preventDefault run first,
+    // regardless of mount order.
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [
@@ -2273,8 +2277,8 @@ export function StreamContent({
     isSearchOpen,
     escapeUnread,
     streamId,
-    getFocusedPane,
     panelId,
+    searchParams,
   ])
 
   // Manual "Mark as read" from a message action. The pointer is partial

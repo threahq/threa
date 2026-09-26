@@ -84,9 +84,9 @@ function startedInHorizontalScroller(target: EventTarget | null): boolean {
 }
 
 /**
- * Swipe-from-right gesture for mobile quote reply.
- * The user swipes left on a message; once they cross the threshold,
- * haptic feedback fires and the action locks in. Releasing triggers the callback.
+ * Horizontal swipe (quote reply on messages, settle on sidebar rows). Once the
+ * drag crosses the threshold, haptic feedback fires and the action locks in.
+ * Releasing triggers the callback.
  */
 export function useSwipeAction({
   threshold = 80,
