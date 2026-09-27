@@ -1,4 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { useQuery } from "@tanstack/react-query"
+import type { StreamBootstrap } from "@threahq/types"
+import { streamKeys } from "@/hooks/use-streams"
 import { isUtilityStream } from "@/lib/streams"
 import { isAsideHostType } from "@threahq/types"
 import { useNavigate, useSearchParams } from "react-router-dom"
@@ -19,6 +22,7 @@ import {
 import {
   useDraftScratchpads,
   useArchiveStream,
+  useUnarchiveStream,
   useSaveMessage,
   useStreamName,
   useUnreadCounts,
@@ -111,6 +115,7 @@ export function QuickSwitcher({
   const { open: openOutcomes } = useOutcomesUrlState()
   const { openStreamSettings } = useStreamSettings()
   const archiveStream = useArchiveStream(workspaceId)
+  const unarchiveStream = useUnarchiveStream(workspaceId)
   const currentStreamName = useStreamName(workspaceId, currentStreamId ?? "")
   const { isInInbox, clearInbox } = useUnreadCounts(workspaceId)
   const canSettle = !!currentStreamId && isInInbox(currentStreamId)
@@ -129,7 +134,14 @@ export function QuickSwitcher({
   const allStreams = useWorkspaceStreams(workspaceId)
   // The palette's "Open an aside here" follows the host rules the server
   // enforces (host type, no E2E), so it never offers an aside that would fail.
-  const currentStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
+  const cachedStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
+  const { data: streamBootstrap } = useQuery({
+    queryKey: streamKeys.bootstrap(workspaceId, currentStreamId ?? ""),
+    queryFn: () => null as StreamBootstrap | null,
+    enabled: false,
+    staleTime: Infinity,
+  })
+  const currentStream = cachedStream ?? streamBootstrap?.stream
   const currentRoot = currentStream?.rootStreamId
     ? allStreams.find((s) => s.id === currentStream.rootStreamId)
     : undefined
@@ -268,6 +280,18 @@ export function QuickSwitcher({
     [handleClose, currentStreamName]
   )
 
+  const handleUnarchiveStream = useCallback(
+    async (streamId: string) => {
+      handleClose()
+      try {
+        await unarchiveStream.mutateAsync(streamId)
+      } catch {
+        toast.error("Failed to unarchive stream")
+      }
+    },
+    [handleClose, unarchiveStream]
+  )
+
   const settleStream = useCallback(
     (streamId: string) => {
       handleClose()
@@ -324,8 +348,10 @@ export function QuickSwitcher({
       openOutcomes,
       currentStreamId,
       currentStreamName,
+      currentStreamArchived: currentStream ? currentStream.archivedAt != null : undefined,
       openStreamSettings: handleOpenStreamSettings,
       requestArchiveStream,
+      unarchiveStream: handleUnarchiveStream,
       openLabelPicker,
       createSavedTodo,
       openAside: canOpenAside ? openAside : undefined,
@@ -351,8 +377,10 @@ export function QuickSwitcher({
       openOutcomes,
       currentStreamId,
       currentStreamName,
+      currentStream?.archivedAt,
       handleOpenStreamSettings,
       requestArchiveStream,
+      handleUnarchiveStream,
       openLabelPicker,
       createSavedTodo,
     ]

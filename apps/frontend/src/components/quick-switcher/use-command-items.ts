@@ -5,7 +5,7 @@ import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
-import { draftStreamCommands, streamCommands } from "./stream-commands"
+import { draftStreamCommands, streamCommands, unarchiveStreamCommand } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
 
 interface UseCommandItemsParams {
@@ -69,7 +69,15 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // settings/files/labels, so they only get a delete command.
     let contextualCommands: Command[] = []
     if (currentStreamId) {
-      contextualCommands = isDraftId(currentStreamId) ? draftStreamCommands : streamCommands
+      if (isDraftId(currentStreamId)) {
+        contextualCommands = draftStreamCommands
+      } else if (commandContext.currentStreamArchived === undefined) {
+        contextualCommands = streamCommands.filter((c) => c.id !== "stream-archive")
+      } else {
+        contextualCommands = commandContext.currentStreamArchived
+          ? [...streamCommands.slice(0, -1), unarchiveStreamCommand]
+          : streamCommands
+      }
       contextualCommands = contextualCommands.filter(
         (c) =>
           (c.id !== "stream-open-aside" || !!commandContext.openAside) &&
