@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { hashKey, useQueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap } from "@threahq/types"
 import { streamKeys } from "@/hooks/use-streams"
 import { useEffectiveArchived } from "@/hooks/use-effective-archived"
@@ -137,14 +137,19 @@ export function QuickSwitcher({
   // The palette's "Open an aside here" follows the host rules the server
   // enforces (host type, no E2E), so it never offers an aside that would fail.
   const cachedStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
+  const bootstrapKey = streamKeys.bootstrap(workspaceId, currentStreamId ?? "")
+  const bootstrapQueryHash = hashKey(bootstrapKey)
   const subscribeToQueryCache = useCallback(
-    (notify: () => void) => queryClient.getQueryCache().subscribe(notify),
-    [queryClient]
+    (notify: () => void) =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (event?.query.queryHash === bootstrapQueryHash) notify()
+      }),
+    [queryClient, bootstrapQueryHash]
   )
   const streamBootstrap = useSyncExternalStore(subscribeToQueryCache, () => {
     // A disabled useQuery observer replaces the active route's bootstrap queryFn during invalidation.
     // eslint-disable-next-line threa/no-queryclient-getquerydata-in-render
-    return queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, currentStreamId ?? ""))
+    return queryClient.getQueryData<StreamBootstrap>(bootstrapKey)
   })
   const currentStream = cachedStream ?? streamBootstrap?.stream
   const currentRoot = currentStream?.rootStreamId
