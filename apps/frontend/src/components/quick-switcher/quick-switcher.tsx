@@ -295,14 +295,19 @@ export function QuickSwitcher({
 
   const handleUnarchiveStream = useCallback(
     async (streamId: string) => {
+      const archivedAt = currentStream?.id === streamId ? currentStream.archivedAt : null
+      if (!archivedAt) {
+        toast.error("Stream state changed. Try again.")
+        return
+      }
       handleClose()
       try {
-        await unarchiveStream.mutateAsync(streamId)
+        await unarchiveStream.mutateAsync({ streamId, archivedAt })
       } catch {
         toast.error("Failed to unarchive stream")
       }
     },
-    [handleClose, unarchiveStream]
+    [currentStream, handleClose, unarchiveStream]
   )
 
   const settleStream = useCallback(

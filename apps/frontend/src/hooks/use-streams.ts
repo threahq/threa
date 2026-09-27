@@ -4,7 +4,6 @@ import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { getQueryLoadState, isTerminalBootstrapError } from "@/lib/query-load-state"
 import { STREAM_BOOTSTRAP_QUERY_OPTIONS } from "@/lib/stream-bootstrap-query"
 import { db } from "@/db"
-import { getCachedWorkspaceTables } from "@/stores/workspace-store"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { deleteStreamSlots } from "@/stores/slot-store"
@@ -326,14 +325,14 @@ export function useUnarchiveStream(workspaceId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (streamId: string) => {
+    mutationFn: ({ streamId, archivedAt }: { streamId: string; archivedAt: string }) => {
       const bootstrapArchivedAt = queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId))
         ?.stream.archivedAt
-      const cachedRow = getCachedWorkspaceTables(workspaceId).streams?.find((stream) => stream.id === streamId)
-      const cachedArchivedAt = cachedRow ? cachedRow.archivedAt : bootstrapArchivedAt
-      return streamService.unarchive(workspaceId, streamId).then(() => ({ bootstrapArchivedAt, cachedArchivedAt }))
+      return streamService
+        .unarchive(workspaceId, streamId)
+        .then(() => ({ bootstrapArchivedAt, cachedArchivedAt: archivedAt }))
     },
-    onSuccess: async (observed, streamId) => {
+    onSuccess: async (observed, { streamId }) => {
       const key = streamKeys.bootstrap(workspaceId, streamId)
       queryClient.setQueryData<StreamBootstrap>(key, (old) =>
         old && old.stream.archivedAt === observed.bootstrapArchivedAt

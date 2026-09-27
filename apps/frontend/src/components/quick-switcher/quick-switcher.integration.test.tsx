@@ -1251,7 +1251,12 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
       await user.click(screen.getByText("Unarchive this stream"))
 
-      await waitFor(() => expect(mockUnarchiveMutateAsync).toHaveBeenCalledWith("stream_channel1"))
+      await waitFor(() =>
+        expect(mockUnarchiveMutateAsync).toHaveBeenCalledWith({
+          streamId: "stream_channel1",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        })
+      )
       expect(mockArchiveMutateAsync).not.toHaveBeenCalled()
       expect(screen.queryByText("Archive #general?")).not.toBeInTheDocument()
     })

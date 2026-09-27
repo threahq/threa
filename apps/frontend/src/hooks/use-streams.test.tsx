@@ -15,6 +15,7 @@ import {
 import { workspaceKeys } from "./use-workspaces"
 import { streamKeys, useCreateStream, useUnarchiveStream } from "./use-streams"
 import * as syncEngineModule from "@/sync/sync-engine"
+import { seedWorkspaceCache } from "@/stores/workspace-store"
 
 const mockCreate = vi.fn<(workspaceId: string, data: CreateStreamInput) => Promise<Stream>>()
 const mockUnarchive = vi.fn<(workspaceId: string, streamId: string) => Promise<void>>()
@@ -161,12 +162,48 @@ describe("useUnarchiveStream", () => {
 
     const { result } = renderHook(() => useUnarchiveStream("ws_1"), { wrapper: createWrapper(queryClient) })
     await act(async () => {
-      await result.current.mutateAsync(stream.id)
+      await result.current.mutateAsync({ streamId: stream.id, archivedAt: stream.archivedAt! })
     })
 
     expect({
       bootstrapArchivedAt: (queryClient.getQueryData(streamKeys.bootstrap("ws_1", stream.id)) as { stream: Stream })
         .stream.archivedAt,
+      persistedArchivedAt: (await db.streams.get(stream.id))?.archivedAt,
+    }).toEqual({ bootstrapArchivedAt: null, persistedArchivedAt: null })
+  })
+
+  it("should unarchive the shown generation even when the workspace fallback cache is stale", async () => {
+    const archivedAt = "2026-03-01T00:00:00.000Z"
+    const stream = createMockStream({
+      id: "stream_stale_workspace_cache",
+      type: "channel",
+      workspaceId: "ws_1",
+      archivedAt,
+    })
+    const workspace = makeWorkspaceBootstrap().workspace
+    seedWorkspaceCache("ws_1", {
+      workspace: { ...workspace, _cachedAt: Date.now() },
+      users: [],
+      streams: [{ ...stream, archivedAt: null, lastMessagePreview: null, _cachedAt: Date.now() }],
+      memberships: [],
+      dmPeers: [],
+      personas: [],
+      bots: [],
+    })
+    await db.streams.put({ ...stream, lastMessagePreview: null, _cachedAt: Date.now() })
+    const queryClient = new QueryClient()
+    const key = streamKeys.bootstrap("ws_1", stream.id)
+    queryClient.setQueryData(key, { stream })
+    vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue()
+    mockUnarchive.mockResolvedValue(undefined)
+
+    const { result } = renderHook(() => useUnarchiveStream("ws_1"), { wrapper: createWrapper(queryClient) })
+    await act(async () => {
+      await result.current.mutateAsync({ streamId: stream.id, archivedAt })
+    })
+
+    expect({
+      bootstrapArchivedAt: (queryClient.getQueryData(key) as { stream: Stream }).stream.archivedAt,
       persistedArchivedAt: (await db.streams.get(stream.id))?.archivedAt,
     }).toEqual({ bootstrapArchivedAt: null, persistedArchivedAt: null })
   })
@@ -189,7 +226,7 @@ describe("useUnarchiveStream", () => {
 
     const { result } = renderHook(() => useUnarchiveStream("ws_1"), { wrapper: createWrapper(queryClient) })
     await act(async () => {
-      await result.current.mutateAsync(stream.id)
+      await result.current.mutateAsync({ streamId: stream.id, archivedAt: stream.archivedAt! })
     })
 
     expect(mockUnarchive).toHaveBeenCalledWith("ws_1", stream.id)
@@ -213,7 +250,7 @@ describe("useUnarchiveStream", () => {
     const { result } = renderHook(() => useUnarchiveStream("ws_1"), { wrapper: createWrapper(queryClient) })
     let mutation!: ReturnType<typeof result.current.mutateAsync>
     act(() => {
-      mutation = result.current.mutateAsync(stream.id)
+      mutation = result.current.mutateAsync({ streamId: stream.id, archivedAt: stream.archivedAt! })
     })
     await waitFor(() => expect(mockUnarchive).toHaveBeenCalled())
     const newerArchive = { ...stream, archivedAt: "2026-04-01T00:00:00.000Z", updatedAt: "2026-04-01T00:00:00.000Z" }
@@ -248,7 +285,7 @@ describe("useUnarchiveStream", () => {
     const { result } = renderHook(() => useUnarchiveStream("ws_1"), { wrapper: createWrapper(queryClient) })
     let mutation!: ReturnType<typeof result.current.mutateAsync>
     act(() => {
-      mutation = result.current.mutateAsync(stream.id)
+      mutation = result.current.mutateAsync({ streamId: stream.id, archivedAt: stream.archivedAt! })
     })
     await waitFor(() => expect(mockUnarchive).toHaveBeenCalled())
     act(() => queryClient.setQueryData(key, { stream, readState: { lastReadSequence: "12" } }))
