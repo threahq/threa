@@ -73,10 +73,14 @@ export interface CommandContext {
   currentStreamId?: string | null
   /** Resolved display name of `currentStreamId`, for section headers/confirm copy. */
   currentStreamName?: string | null
+  /** Archive state of the stream in view, when resolved. */
+  currentStreamArchived?: boolean
   /** Open the stream settings dialog for a stream. */
   openStreamSettings: (streamId: string) => void
   /** Open the destructive confirmation for archiving (or deleting a draft) a stream. */
   requestArchiveStream: (streamId: string) => void
+  /** Restore an archived stream without a destructive confirmation. */
+  unarchiveStream: (streamId: string) => Promise<void>
   /** Open the label picker for a stream. */
   openLabelPicker: (streamId: string) => void
   /**

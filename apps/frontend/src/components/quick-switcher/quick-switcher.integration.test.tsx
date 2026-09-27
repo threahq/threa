@@ -3,7 +3,7 @@ import { useState } from "react"
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
 import { SidebarProvider } from "@/contexts/sidebar-context"
@@ -22,6 +22,7 @@ import * as e2eSessionStoreModule from "@/stores/e2e-session-store"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamsApiModule from "@/api/streams"
+import { streamKeys } from "@/hooks/use-streams"
 import * as contextsModule from "@/contexts"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
 
@@ -42,6 +43,7 @@ const mockSearchState = {
 
 // Contextual stream-command collaborators, asserted on across tests.
 const mockArchiveMutateAsync = vi.fn()
+const mockUnarchiveMutateAsync = vi.fn()
 const mockDeleteDraft = vi.fn()
 const mockOpenStreamSettings = vi.fn()
 
@@ -143,8 +145,27 @@ function ProvidersWrapper({ children }: { children: React.ReactNode }) {
   )
 }
 
-function renderWithProviders(ui: React.ReactElement) {
-  const queryClient = createTestQueryClient()
+function ActiveStreamBootstrap({
+  streamId,
+  stream,
+  onFetch,
+}: {
+  streamId: string
+  stream: ReturnType<typeof createMockStream>
+  onFetch: () => void
+}) {
+  useQuery({
+    queryKey: streamKeys.bootstrap("workspace_1", streamId),
+    queryFn: async () => {
+      onFetch()
+      return { stream }
+    },
+    staleTime: Infinity,
+  })
+  return null
+}
+
+function renderWithProviders(ui: React.ReactElement, queryClient = createTestQueryClient()) {
   return render(
     <QueryClientProvider client={queryClient}>
       <ProvidersWrapper>{ui}</ProvidersWrapper>
@@ -174,6 +195,11 @@ function installSpies() {
     mutate: vi.fn(),
     isPending: false,
   } as unknown as ReturnType<typeof hooksModule.useArchiveStream>)
+  vi.spyOn(hooksModule, "useUnarchiveStream").mockReturnValue({
+    mutateAsync: mockUnarchiveMutateAsync,
+    mutate: vi.fn(),
+    isPending: false,
+  } as unknown as ReturnType<typeof hooksModule.useUnarchiveStream>)
   // `useSaveMessage` (backs the Add To-do command) resolves the saved service
   // from ServicesProvider, which this harness doesn't mount — stub the hook.
   vi.spyOn(hooksModule, "useSaveMessage").mockReturnValue({
@@ -240,6 +266,14 @@ function installSpies() {
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockImplementation(
     () => (mockWorkspaceBootstrap.data.streams ?? []) as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
   )
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamIndex").mockImplementation(
+    () =>
+      new Map(
+        (mockWorkspaceBootstrap.data.streams as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>).map(
+          (stream) => [stream.id, stream]
+        )
+      )
+  )
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation(
     () => (mockWorkspaceBootstrap.data.users ?? []) as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>
   )
@@ -288,11 +322,12 @@ describe("QuickSwitcher Integration Tests", () => {
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
     mockArchiveMutateAsync.mockReset()
+    mockUnarchiveMutateAsync.mockReset()
     mockDeleteDraft.mockReset()
     mockOpenStreamSettings.mockReset()
     mockCreateEncryptedScratchpad.mockClear()
     mockWorkspaceBootstrap.data = {
-      streams: mockStreamsList,
+      streams: mockStreamsList.map((stream) => ({ ...stream, createdBy: "member_1" })),
       streamMemberships: [],
       users: mockUsersList,
       personas: [],
@@ -1179,6 +1214,189 @@ describe("QuickSwitcher Integration Tests", () => {
         expect(screen.getByText("Open stream settings")).toBeInTheDocument()
       })
       expect(screen.queryByText("Open an aside here")).toBeNull()
+    })
+
+    it("should preserve the active stream bootstrap when it is invalidated while the palette is mounted", async () => {
+      const queryClient = createTestQueryClient()
+      const stream = createMockStream({ id: "stream_owner_bootstrap", type: StreamTypes.CHANNEL })
+      const bootstrap = { stream }
+      const fetchBootstrap = vi.fn()
+      queryClient.setQueryData(streamKeys.bootstrap("workspace_1", stream.id), bootstrap)
+      renderWithProviders(
+        <>
+          <ActiveStreamBootstrap streamId={stream.id} stream={stream} onFetch={fetchBootstrap} />
+          <QuickSwitcher {...defaultProps} currentStreamId={stream.id} />
+        </>,
+        queryClient
+      )
+
+      await queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap("workspace_1", stream.id) })
+      expect({
+        cached: queryClient.getQueryData(streamKeys.bootstrap("workspace_1", stream.id)),
+        networkFetches: fetchBootstrap.mock.calls.length,
+      }).toEqual({ cached: bootstrap, networkFetches: 1 })
+    })
+
+    it("should unarchive the current archived stream from the filtered command palette", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      mockWorkspaceBootstrap.data.streams = mockStreamsList.map((stream) =>
+        stream.id === "stream_channel1"
+          ? { ...stream, createdBy: "member_1", archivedAt: "2026-03-01T00:00:00.000Z" }
+          : stream
+      )
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "arch")
+      expect(screen.getByText("Unarchive this stream")).toBeInTheDocument()
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+      await user.click(screen.getByText("Unarchive this stream"))
+
+      await waitFor(() =>
+        expect(mockUnarchiveMutateAsync).toHaveBeenCalledWith({
+          streamId: "stream_channel1",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        })
+      )
+      expect(mockArchiveMutateAsync).not.toHaveBeenCalled()
+      expect(screen.queryByText("Archive #general?")).not.toBeInTheDocument()
+    })
+
+    it("should unarchive a deep-linked stream that only exists in its stream bootstrap", async () => {
+      const queryClient = createTestQueryClient()
+      queryClient.setQueryData(streamKeys.bootstrap("workspace_1", "stream_archived_deep_link"), {
+        stream: createMockStream({
+          id: "stream_archived_deep_link",
+          type: StreamTypes.CHANNEL,
+          createdBy: "member_1",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        }),
+      })
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_archived_deep_link" />,
+        queryClient
+      )
+
+      expect(screen.getByText("Unarchive this stream")).toBeInTheDocument()
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+    })
+
+    it("should not offer unarchive to a viewer who did not create the stream", () => {
+      mockWorkspaceBootstrap.data.streams = [
+        ...mockStreamsList,
+        createMockStream({
+          id: "stream_other_owner",
+          type: StreamTypes.CHANNEL,
+          createdBy: "member_2",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        }),
+      ]
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_other_owner" />
+      )
+
+      expect(screen.queryByText("Unarchive this stream")).not.toBeInTheDocument()
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+    })
+
+    it("should let a root creator unarchive a thread created by someone else", () => {
+      mockWorkspaceBootstrap.data.streams = [
+        createMockStream({ id: "stream_root_owner", type: StreamTypes.CHANNEL, createdBy: "member_1" }),
+        createMockStream({
+          id: "stream_child_other_owner",
+          type: StreamTypes.THREAD,
+          createdBy: "member_2",
+          parentStreamId: "stream_root_owner",
+          rootStreamId: "stream_root_owner",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        }),
+      ]
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_child_other_owner" />
+      )
+
+      expect(screen.getByText("Unarchive this stream")).toBeInTheDocument()
+    })
+
+    it("should hide archive actions for a thread inside a cached archived ancestor", () => {
+      mockWorkspaceBootstrap.data.streams = [
+        createMockStream({
+          id: "stream_archived_root",
+          type: StreamTypes.CHANNEL,
+          createdBy: "member_1",
+          archivedAt: "2026-03-01T00:00:00.000Z",
+        }),
+        createMockStream({
+          id: "stream_child_sealed",
+          type: StreamTypes.THREAD,
+          createdBy: "member_1",
+          parentStreamId: "stream_archived_root",
+          rootStreamId: "stream_archived_root",
+        }),
+      ]
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_child_sealed" />
+      )
+
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+      expect(screen.queryByText("Unarchive this stream")).not.toBeInTheDocument()
+    })
+
+    it("should still unarchive a thread's own archive under an archived parent", () => {
+      const archivedAt = "2026-03-01T00:00:00.000Z"
+      mockWorkspaceBootstrap.data.streams = [
+        createMockStream({
+          id: "stream_parent_archived",
+          type: StreamTypes.CHANNEL,
+          createdBy: "member_1",
+          archivedAt,
+        }),
+        createMockStream({
+          id: "stream_child_archived",
+          type: StreamTypes.THREAD,
+          createdBy: "member_1",
+          parentStreamId: "stream_parent_archived",
+          rootStreamId: "stream_parent_archived",
+          archivedAt,
+        }),
+      ]
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_child_archived" />
+      )
+
+      expect(screen.getByText("Unarchive this stream")).toBeInTheDocument()
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+    })
+
+    it("should hide archive actions when a direct-linked thread is sealed by an archived ancestor", () => {
+      const queryClient = createTestQueryClient()
+      const streamId = "stream_sealed_thread"
+      queryClient.setQueryData(streamKeys.bootstrap("workspace_1", streamId), {
+        stream: createMockStream({
+          id: streamId,
+          type: StreamTypes.THREAD,
+          createdBy: "member_1",
+          parentStreamId: "stream_archived_parent",
+          rootStreamId: "stream_archived_parent",
+        }),
+        archivedAncestor: { streamId: "stream_archived_parent", archivedAt: "2026-03-01T00:00:00.000Z" },
+      })
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId={streamId} />,
+        queryClient
+      )
+
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+      expect(screen.queryByText("Unarchive this stream")).not.toBeInTheDocument()
+    })
+
+    it("should not offer archive actions before the current stream state is known", () => {
+      renderWithProviders(
+        <QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_not_cached_yet" />
+      )
+
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+      expect(screen.queryByText("Unarchive this stream")).not.toBeInTheDocument()
+      expect(screen.getByText("Open stream settings")).toBeInTheDocument()
     })
 
     it("should confirm before archiving, and only archive after confirmation", async () => {

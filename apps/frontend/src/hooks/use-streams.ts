@@ -325,8 +325,27 @@ export function useUnarchiveStream(workspaceId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (streamId: string) => streamService.unarchive(workspaceId, streamId),
-    onSuccess: () => {
+    mutationFn: ({ streamId, archivedAt }: { streamId: string; archivedAt: string }) => {
+      const bootstrapArchivedAt = queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId))
+        ?.stream.archivedAt
+      return streamService
+        .unarchive(workspaceId, streamId)
+        .then(() => ({ bootstrapArchivedAt, cachedArchivedAt: archivedAt }))
+    },
+    onSuccess: async (observed, { streamId }) => {
+      const key = streamKeys.bootstrap(workspaceId, streamId)
+      queryClient.setQueryData<StreamBootstrap>(key, (old) =>
+        old && old.stream.archivedAt === observed.bootstrapArchivedAt
+          ? { ...old, stream: { ...old.stream, archivedAt: null } }
+          : old
+      )
+      await db.transaction("rw", db.streams, async () => {
+        const current = await db.streams.get(streamId)
+        // An archive delivered while the request was in flight owns the newer local state.
+        if (current && current.archivedAt === observed.cachedArchivedAt) {
+          await db.streams.update(streamId, { archivedAt: null })
+        }
+      })
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
       queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
     },

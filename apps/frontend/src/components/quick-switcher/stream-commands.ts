@@ -35,7 +35,7 @@ const createSnippetCommand: Command = {
  * surfaces these when `CommandContext.currentStreamId` is set, so the guard in
  * each action is belt-and-suspenders. Archive is destructive, so it sits last
  * to keep it away from the default-focused top of the palette where users could
- * trigger it by accident. Real streams archive (reversible); draft scratchpads
+ * trigger it by accident. Real streams archive or unarchive; draft scratchpads
  * are deleted via `draftStreamCommands` instead.
  */
 export const streamCommands: Command[] = [
@@ -117,6 +117,16 @@ export const streamCommands: Command[] = [
     action: ({ currentStreamId, requestArchiveStream }) => {
       if (!currentStreamId) return
       requestArchiveStream(currentStreamId)
+    },
+  },
+  {
+    id: "stream-unarchive",
+    label: "Unarchive this stream",
+    icon: Archive,
+    keywords: ["restore", "archive", "current stream"],
+    action: ({ currentStreamId, unarchiveStream }) => {
+      if (!currentStreamId) return
+      void unarchiveStream(currentStreamId)
     },
   },
 ]

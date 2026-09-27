@@ -499,10 +499,13 @@ function ArchiveSection({
   if (!canArchive) return null
 
   const handleAction = () => {
-    if (isArchived) {
-      unarchiveMutation.mutate(stream.id, {
-        onError: () => toast.error("Failed to unarchive"),
-      })
+    if (stream.archivedAt) {
+      unarchiveMutation.mutate(
+        { streamId: stream.id, archivedAt: stream.archivedAt },
+        {
+          onError: () => toast.error("Failed to unarchive"),
+        }
+      )
     } else {
       archiveMutation.mutate(stream.id, {
         onError: () => toast.error("Failed to archive"),
