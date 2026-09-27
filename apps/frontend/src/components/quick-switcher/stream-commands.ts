@@ -119,18 +119,17 @@ export const streamCommands: Command[] = [
       requestArchiveStream(currentStreamId)
     },
   },
-]
-
-export const unarchiveStreamCommand: Command = {
-  id: "stream-unarchive",
-  label: "Unarchive this stream",
-  icon: Archive,
-  keywords: ["restore", "archive", "current stream"],
-  action: ({ currentStreamId, unarchiveStream }) => {
-    if (!currentStreamId) return
-    void unarchiveStream(currentStreamId)
+  {
+    id: "stream-unarchive",
+    label: "Unarchive this stream",
+    icon: Archive,
+    keywords: ["restore", "archive", "current stream"],
+    action: ({ currentStreamId, unarchiveStream }) => {
+      if (!currentStreamId) return
+      void unarchiveStream(currentStreamId)
+    },
   },
-}
+]
 
 /** Draft scratchpads have no server-side settings/files/labels — only snippet
  *  creation (the draft has a composer) and deletion. */

@@ -4,6 +4,7 @@ import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { getQueryLoadState, isTerminalBootstrapError } from "@/lib/query-load-state"
 import { STREAM_BOOTSTRAP_QUERY_OPTIONS } from "@/lib/stream-bootstrap-query"
 import { db } from "@/db"
+import { getCachedWorkspaceTables } from "@/stores/workspace-store"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyStreamBootstrap, toCachedStreamBootstrap, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { deleteStreamSlots } from "@/stores/slot-store"
@@ -325,8 +326,27 @@ export function useUnarchiveStream(workspaceId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (streamId: string) => streamService.unarchive(workspaceId, streamId),
-    onSuccess: () => {
+    mutationFn: (streamId: string) => {
+      const bootstrapArchivedAt = queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId))
+        ?.stream.archivedAt
+      const cachedRow = getCachedWorkspaceTables(workspaceId).streams?.find((stream) => stream.id === streamId)
+      const cachedArchivedAt = cachedRow ? cachedRow.archivedAt : bootstrapArchivedAt
+      return streamService.unarchive(workspaceId, streamId).then(() => ({ bootstrapArchivedAt, cachedArchivedAt }))
+    },
+    onSuccess: async (observed, streamId) => {
+      const key = streamKeys.bootstrap(workspaceId, streamId)
+      queryClient.setQueryData<StreamBootstrap>(key, (old) =>
+        old && old.stream.archivedAt === observed.bootstrapArchivedAt
+          ? { ...old, stream: { ...old.stream, archivedAt: null } }
+          : old
+      )
+      await db.transaction("rw", db.streams, async () => {
+        const current = await db.streams.get(streamId)
+        // An archive delivered while the request was in flight owns the newer local state.
+        if (current && current.archivedAt === observed.cachedArchivedAt) {
+          await db.streams.update(streamId, { archivedAt: null })
+        }
+      })
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
       queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
     },

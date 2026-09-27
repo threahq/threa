@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap } from "@threahq/types"
 import { streamKeys } from "@/hooks/use-streams"
+import { useEffectiveArchived } from "@/hooks/use-effective-archived"
 import { isUtilityStream } from "@/lib/streams"
 import { isAsideHostType } from "@threahq/types"
 import { useNavigate, useSearchParams } from "react-router-dom"
@@ -106,6 +107,7 @@ export function QuickSwitcher({
   openAside,
 }: QuickSwitcherProps) {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [, setSearchParams] = useSearchParams()
   const user = useUser()
   const { createScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
@@ -135,16 +137,24 @@ export function QuickSwitcher({
   // The palette's "Open an aside here" follows the host rules the server
   // enforces (host type, no E2E), so it never offers an aside that would fail.
   const cachedStream = currentStreamId ? allStreams.find((s) => s.id === currentStreamId) : undefined
-  const { data: streamBootstrap } = useQuery({
-    queryKey: streamKeys.bootstrap(workspaceId, currentStreamId ?? ""),
-    queryFn: () => null as StreamBootstrap | null,
-    enabled: false,
-    staleTime: Infinity,
+  const subscribeToQueryCache = useCallback(
+    (notify: () => void) => queryClient.getQueryCache().subscribe(notify),
+    [queryClient]
+  )
+  const streamBootstrap = useSyncExternalStore(subscribeToQueryCache, () => {
+    // A disabled useQuery observer replaces the active route's bootstrap queryFn during invalidation.
+    // eslint-disable-next-line threa/no-queryclient-getquerydata-in-render
+    return queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, currentStreamId ?? ""))
   })
   const currentStream = cachedStream ?? streamBootstrap?.stream
   const currentRoot = currentStream?.rootStreamId
     ? allStreams.find((s) => s.id === currentStream.rootStreamId)
     : undefined
+  const { ancestorArchived } = useEffectiveArchived({
+    workspaceId,
+    stream: currentStream,
+    fallbackArchived: streamBootstrap?.archivedAncestor,
+  })
   const canOpenAside =
     !!openAside &&
     isAsideHostType(currentStream?.type ?? "") &&
@@ -181,6 +191,9 @@ export function QuickSwitcher({
     () => users.find((workspaceUser) => workspaceUser.workosUserId === user?.id)?.id ?? null,
     [users, user?.id]
   )
+  const canChangeArchiveState =
+    !!currentUserId && (currentStream?.createdBy === currentUserId || currentRoot?.createdBy === currentUserId)
+  const canChangeCurrentStreamArchive = canChangeArchiveState && (!ancestorArchived || !!currentStream?.archivedAt)
 
   const isMobile = useIsMobile()
   // Width drives the layout (tab position, escape-hint clipping); the active
@@ -348,7 +361,8 @@ export function QuickSwitcher({
       openOutcomes,
       currentStreamId,
       currentStreamName,
-      currentStreamArchived: currentStream ? currentStream.archivedAt != null : undefined,
+      currentStreamArchived:
+        currentStream && canChangeCurrentStreamArchive ? currentStream.archivedAt != null : undefined,
       openStreamSettings: handleOpenStreamSettings,
       requestArchiveStream,
       unarchiveStream: handleUnarchiveStream,
@@ -378,6 +392,7 @@ export function QuickSwitcher({
       currentStreamId,
       currentStreamName,
       currentStream?.archivedAt,
+      canChangeCurrentStreamArchive,
       handleOpenStreamSettings,
       requestArchiveStream,
       handleUnarchiveStream,
