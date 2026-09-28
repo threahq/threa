@@ -240,6 +240,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "push.subscribe",
   "push.unsubscribe",
   "push.test",
+  "push.test_progress",
   "push.cleanup_endpoint",
   // Agent sessions / context bag
   "agent_sessions.get",

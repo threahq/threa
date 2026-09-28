@@ -317,6 +317,7 @@ import { ControlPlaneClient } from "./lib/control-plane-client"
 import { createBackfillPlanWorker, createBackfillChunkWorker } from "./lib/backfill"
 import { registerMentionBackfill } from "./features/mentions"
 import { registerStreamContextBackfill } from "./features/stream-context"
+import { E2eStreamsRepository } from "./features/e2e-streams"
 
 export interface ServerInstance {
   server: Server
@@ -809,6 +810,9 @@ export async function startServer(): Promise<ServerInstance> {
       resolveFiredReminder: (params) => savedMessagesService.resolveFiredReminder(params),
       // Constructed further down; only called by the push.deliver worker once the queue runs.
       isRewrapOutstanding: (params) => enclaveClaimService.isRewrapOutstanding(params),
+      findAnalyticsConsentGrant: (db, userId) => userPreferencesService.findAnalyticsConsentGrant(db, userId),
+      isE2eRootedStream: async (db, workspaceId, streamId) =>
+        (await E2eStreamsRepository.excludeE2eRootedStreamIds(db, [{ workspaceId, streamId }])).length === 0,
     },
   })
   const systemMessageService = new SystemMessageService({ pool, createMessage: createInternalMessage })

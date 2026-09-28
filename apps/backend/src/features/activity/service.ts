@@ -70,6 +70,8 @@ export interface ActivityPushSource {
   /** Current message markdown; null when the type has no message or the message is end-to-end encrypted. */
   contentMarkdown: string | null
   encrypted: boolean
+  /** The stream's root is end-to-end encrypted under the current policy, whatever the activity type. */
+  e2eRooted: boolean
   streamName: string | null
   authorName: string | null
   authorAvatarUrl?: string
@@ -702,6 +704,11 @@ export class ActivityService {
       const stream = activity.streamId ? await checkStreamAccess(client, activity.streamId, workspaceId, userId) : null
       if (activity.streamId && !stream) return invalid("access_lost")
 
+      const e2eRooted = stream
+        ? (await E2eStreamsRepository.excludeE2eRootedStreamIds(client, [{ workspaceId, streamId: stream.id }]))
+            .length === 0
+        : false
+
       let contentMarkdown: string | null = null
       let encrypted = false
       if (stream && activity.messageId && MESSAGE_ACTIVITY_TYPES.has(activity.activityType)) {
@@ -719,10 +726,7 @@ export class ActivityService {
           }
         }
 
-        const plaintextRoot = await E2eStreamsRepository.excludeE2eRootedStreamIds(client, [
-          { workspaceId, streamId: stream.id },
-        ])
-        encrypted = plaintextRoot.length === 0 || message.ciphertext !== null || message.e2eVersion !== null
+        encrypted = e2eRooted || message.ciphertext !== null || message.e2eVersion !== null
         contentMarkdown = encrypted ? null : message.contentMarkdown
       }
 
@@ -737,6 +741,7 @@ export class ActivityService {
           messageId: activity.messageId,
           contentMarkdown,
           encrypted,
+          e2eRooted,
           streamName: stream ? resolvePushStreamName(activity.activityType, stream) : null,
           authorName: author.authorName,
           authorAvatarUrl: author.authorAvatarUrl,

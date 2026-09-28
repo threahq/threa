@@ -135,10 +135,9 @@ export class ControlPlaneClient {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      logger.error(
-        { workspaceId: params.workspaceId, workosUserId: params.workosUserId, status: res.status, body },
-        "Failed to confirm workspace membership with control plane"
-      )
+      // Status only: this lookup backs the workspace self-heal, which also guards push
+      // diagnostics that run with analytics denied, so no ids and no response body.
+      logger.error({ status: res.status }, "Failed to confirm workspace membership with control plane")
       throw new Error(`Control-plane returned ${res.status}: ${body}`)
     }
 

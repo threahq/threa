@@ -42,6 +42,23 @@ export const UserPreferencesRepository = {
     return row ? { key: row.key, value: row.value } : null
   },
 
+  /**
+   * The value generation of the user's override for `key` while it holds
+   * exactly `value`, or null. The row is share-locked until the caller's
+   * transaction ends, so a concurrent change to it commits either before this
+   * read (and is seen) or after the caller's writes, never between.
+   */
+  async findOverrideGeneration(db: Querier, userId: string, key: string, value: unknown): Promise<string | null> {
+    const result = await db.query<{ value_generation: string }>(sql`
+      SELECT value_generation FROM user_preference_overrides
+      WHERE user_id = ${userId}
+        AND key = ${key}
+        AND value = ${JSON.stringify(value)}::jsonb
+      FOR SHARE
+    `)
+    return result.rows[0]?.value_generation ?? null
+  },
+
   async setOverride(db: Querier, userId: string, key: string, value: unknown): Promise<void> {
     await db.query(sql`
       INSERT INTO user_preference_overrides (user_id, key, value)

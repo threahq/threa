@@ -145,4 +145,35 @@ describe("errorHandler", () => {
 
     expect(reporter.calls).toEqual([])
   })
+
+  test("should report an anonymous request's failure by route template, method and error code only", () => {
+    const res = makeRes()
+    const reporter = makeRecordingReporter()
+    const errorHandler = createErrorHandler({ analyticsReporter: reporter, isAnonymous: () => true })
+    const req = {
+      path: "/api/workspaces/ws_01SECRET/push/test/push_test_01SECRET",
+      method: "GET",
+      authUser: { id: "user_01SECRET", email: "a@example.com", firstName: null, lastName: null, permissions: null },
+    } as unknown as Request
+
+    errorHandler(Object.assign(new Error("timeout for user_01SECRET"), { code: "57014" }), req, res, next)
+
+    expect({ status: res.statusCode, body: res.body, calls: reporter.calls }).toEqual({
+      status: 500,
+      body: { error: "Internal server error", code: "INTERNAL_ERROR" },
+      calls: [
+        {
+          error: new Error("Unhandled error (57014)"),
+          context: {
+            properties: {
+              path: "/api/workspaces/:id/push/test/:id",
+              method: "GET",
+              status_code: 500,
+              error_code: "57014",
+            },
+          },
+        },
+      ],
+    })
+  })
 })

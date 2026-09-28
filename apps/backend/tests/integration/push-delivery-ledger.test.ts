@@ -323,7 +323,7 @@ describe("push delivery ledger", () => {
         abandonedClaims: 0,
         subscriptionId: sub.id,
         subscriptionGeneration: 1,
-        subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
+        subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, receiptVersion: null },
       })
       expect(afterRekey).toMatchObject({ version: 2, subscription: null })
     })

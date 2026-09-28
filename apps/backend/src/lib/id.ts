@@ -34,6 +34,7 @@ export {
   activityId,
   pushDeliveryId,
   pushDeliveryPlanId,
+  pushReceiptId,
   avatarUploadId,
   messageVersionId,
   pushSubscriptionId,

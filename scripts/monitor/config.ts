@@ -43,6 +43,30 @@ export const THRESHOLDS = {
   logsDefaultSinceMs: 60 * 60 * 1000,
   /** Railway log page sizes (the API caps around 5000). */
   logFetchLimit: 1_000,
+  /**
+   * Push thresholds are initial conservative picks, not calibrated against
+   * production traffic. Provider failures: below this many terminal device
+   * deliveries with a provider answer, a rate is noise.
+   */
+  pushTransportMinSample: 20,
+  /** Share of those that ended rejected, or unreachable until attempts or the send window ran out. */
+  pushTransportFailureRate: 0.1,
+  /** A due, unleased delivery waiting this long means push workers are not claiming (matches queueReadyAgeWarnSec). */
+  pushBacklogOverdueSec: 5 * 60,
+  /**
+   * Receipt cohorts are selected by capability expiry, so each window is closed.
+   * One day each for current and baseline: a message push's TTL is 24h, so a
+   * delivery matures about a day after it was sent.
+   */
+  pushReceiptCohortWindowMs: 24 * 60 * 60 * 1000,
+  /** Below this many eligible deliveries a window is insufficient evidence: no finding, never "healthy". At 30 the 95% interval is about ±15 points. */
+  pushReceiptMinSample: 30,
+  /** Warn when even the 95% upper bound of the confirmed share is below this: offline devices alone should not get there. */
+  pushReceiptFloor: 0.5,
+  /** Warn on a drop only when the intervals do not overlap AND the point estimate fell at least this much. */
+  pushReceiptDropPoints: 0.15,
+  /** Share of confirmed deliveries whose worker reported notification creation failed. */
+  pushCreationFailedRate: 0.1,
 } as const
 
 /**

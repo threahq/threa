@@ -34,7 +34,7 @@ export type { Querier, DatabasePools } from "./db/index"
 export { composeSql } from "./db/compose"
 export { createMigrator, runMigrations } from "./db/migrations"
 
-export { HttpError, isUniqueViolation } from "./errors"
+export { HttpError, isUniqueViolation, safeErrorCode } from "./errors"
 
 export { createErrorHandler, sanitizeRoutePath } from "./middleware/error-handler"
 export { createInternalAuthMiddleware, INTERNAL_API_KEY_HEADER } from "./middleware/internal-auth"
@@ -87,6 +87,7 @@ export {
   activityId,
   pushDeliveryId,
   pushDeliveryPlanId,
+  pushReceiptId,
   avatarUploadId,
   messageVersionId,
   taskId,

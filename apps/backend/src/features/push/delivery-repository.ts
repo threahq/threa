@@ -72,7 +72,7 @@ export interface ClaimedPushDelivery {
   abandonedClaims: number
   subscriptionId: string
   subscriptionGeneration: number
-  subscription: { endpoint: string; p256dh: string; auth: string } | null
+  subscription: { endpoint: string; p256dh: string; auth: string; receiptVersion: number | null } | null
 }
 
 export type PushDeliverySettlement =
@@ -133,6 +133,7 @@ interface ClaimedRow {
   endpoint: string | null
   p256dh: string | null
   auth: string | null
+  receipt_version: number | null
 }
 
 export const PushDeliveryRepository = {
@@ -223,7 +224,7 @@ export const PushDeliveryRepository = {
         c.id, c.workspace_id, p.user_id, p.kind, p.source_event_id::text AS source_event_id, p.source_id,
         p.source_generation, p.source_created_at, p.expires_at, c.attempts, c.version,
         c.version - 1 - 2 * c.attempts AS abandoned_claims,
-        c.subscription_id, c.subscription_generation, s.endpoint, s.p256dh, s.auth
+        c.subscription_id, c.subscription_generation, s.endpoint, s.p256dh, s.auth, s.receipt_version
       FROM claimed c
       JOIN push_delivery_plans p ON p.id = c.plan_id AND p.workspace_id = c.workspace_id
       LEFT JOIN push_subscriptions s
@@ -249,7 +250,10 @@ export const PushDeliveryRepository = {
       abandonedClaims: row.abandoned_claims,
       subscriptionId: row.subscription_id,
       subscriptionGeneration: row.subscription_generation,
-      subscription: row.endpoint === null ? null : { endpoint: row.endpoint, p256dh: row.p256dh!, auth: row.auth! },
+      subscription:
+        row.endpoint === null
+          ? null
+          : { endpoint: row.endpoint, p256dh: row.p256dh!, auth: row.auth!, receiptVersion: row.receipt_version },
     }
   },
 
@@ -294,14 +298,30 @@ export const PushDeliveryRepository = {
    * Fails once another worker claimed the row after this lease lapsed (the
    * version moved on) or the row settled, so slow revalidation reads can never
    * send under a lost claim. The version is unchanged, so settle still uses it.
+   * `sent` records what the attempt is about to send (topic, whether it
+   * carries a receipt capability, the endpoint's hash) in the same
+   * ownership-checked write, so a rival's attempt can never overwrite the one
+   * this claim sends.
    */
   async renewLease(
     db: Querier,
-    params: { workspaceId: string; deliveryId: string; claimVersion: number; leaseMs: number }
+    params: {
+      workspaceId: string
+      deliveryId: string
+      claimVersion: number
+      leaseMs: number
+      sent?: { topic: string | null; withReceipt: boolean; endpointHash: string }
+    }
   ): Promise<boolean> {
+    const sent = params.sent ?? null
     const result = await db.query(sql`
       UPDATE push_deliveries SET
         lease_expires_at = NOW() + (${params.leaseMs} * INTERVAL '1 millisecond'),
+        sent_topic = CASE WHEN ${sent !== null} THEN ${sent?.topic ?? null}::text ELSE sent_topic END,
+        sent_with_receipt = CASE WHEN ${sent !== null} THEN ${sent?.withReceipt ?? null}::boolean ELSE sent_with_receipt END,
+        sent_claim_version = CASE WHEN ${sent !== null} THEN ${params.claimVersion}::int ELSE sent_claim_version END,
+        sent_at = CASE WHEN ${sent !== null} THEN NOW() ELSE sent_at END,
+        sent_endpoint_hash = CASE WHEN ${sent !== null} THEN ${sent?.endpointHash ?? null}::text ELSE sent_endpoint_hash END,
         updated_at = NOW()
       WHERE id = ${params.deliveryId}
         AND workspace_id = ${params.workspaceId}

@@ -1,5 +1,12 @@
-import type { Request, Response } from "express"
+import express, {
+  type ErrorRequestHandler,
+  type NextFunction,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from "express"
 import { z } from "zod"
+import { PUSH_RECEIPT_STAGES, PUSH_RECEIPT_SUPPRESSION_REASONS, PUSH_RECEIPT_TOKEN_PATTERN } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import type { PushService } from "./service"
@@ -44,7 +51,69 @@ const subscribeSchema = z.object({
   auth: z.string().min(1),
   deviceKey: z.string().min(1),
   userAgent: z.string().optional(),
+  /** The active service worker's receipt protocol; absent from old frontends and old workers. */
+  receiptVersion: z.number().int().min(1).max(1_000).optional(),
 })
+
+const receiptSchema = z
+  .object({
+    token: z.string().regex(PUSH_RECEIPT_TOKEN_PATTERN),
+    stage: z.enum(PUSH_RECEIPT_STAGES),
+    reason: z.enum(PUSH_RECEIPT_SUPPRESSION_REASONS).optional(),
+  })
+  .strict()
+
+const receiptParamsSchema = z.object({ workspaceId: z.string().min(1).max(64) })
+
+const testProgressParamsSchema = z.object({ testId: z.string().min(1).max(64) })
+
+/**
+ * The token-only receipt route, matched on `req.path` in any letter case, as
+ * Express routes it (an absolute-form request target included). The app-wide
+ * 10mb parser skips it; {@link pushReceiptBodyParser} runs instead.
+ */
+const PUSH_RECEIPT_PATH = /^\/api\/workspaces\/[^/]+\/push\/receipts\/?$/i
+
+export function isPushReceiptPath(path: string): boolean {
+  return PUSH_RECEIPT_PATH.test(path)
+}
+
+/**
+ * A receipt path whose workspace segment is a canonical id, so Express always
+ * decodes it and routes to the receipt limiter. Only this may skip the global
+ * baseline: an undecodable segment (`%zz`) fails before any route runs.
+ */
+const ROUTABLE_PUSH_RECEIPT_PATH = /^\/api\/workspaces\/[A-Za-z0-9_-]{1,64}\/push\/receipts\/?$/i
+
+export function isRoutablePushReceiptPath(path: string): boolean {
+  return ROUTABLE_PUSH_RECEIPT_PATH.test(path)
+}
+
+/** A receipt body is a token and two enum values, far under this. */
+const PUSH_RECEIPT_BODY_LIMIT = "1kb"
+
+export const pushReceiptBodyParser: RequestHandler = express.json({ limit: PUSH_RECEIPT_BODY_LIMIT, type: () => true })
+
+/**
+ * Body-parser failures become plain HttpErrors here: the shared error
+ * handler would otherwise log and report the parser error, and a
+ * malformed-JSON error carries the raw body (the capability token) with it.
+ * Every body-parser error carries a string `type` and a 4xx `status`
+ * (entity.*, charset/encoding unsupported, request aborted or mis-sized).
+ */
+export const pushReceiptErrors: ErrorRequestHandler = (
+  err: unknown,
+  _req: Request,
+  _res: Response,
+  next: NextFunction
+) => {
+  const { type, status } = (err ?? {}) as { type?: unknown; status?: unknown }
+  if (typeof type !== "string" || typeof status !== "number" || status < 400 || status >= 500) return next(err)
+  if (type === "entity.too.large") {
+    return next(new HttpError("Receipt body too large", { status: 413, code: "PAYLOAD_TOO_LARGE" }))
+  }
+  next(new HttpError("Receipt body is not valid JSON", { status: 400, code: "INVALID_PAYLOAD" }))
+}
 
 const unsubscribeSchema = z.object({
   endpoint: pushEndpointSchema,
@@ -97,6 +166,29 @@ export function createPushHandlers({ pushService }: Dependencies) {
 
       await pushService.unsubscribeAllWorkspaces(endpoint, req.workosUserId!)
       res.json({ ok: true })
+    },
+
+    /**
+     * A service worker's receipt. No session: the token in the body is the
+     * credential, scoped to this workspace. Always 204 for a well-formed body,
+     * whatever the token matched, so it answers nothing about tokens.
+     */
+    async recordReceipt(req: Request, res: Response) {
+      const { workspaceId } = validateRequest(receiptParamsSchema, req.params)
+      const body = validateRequest(receiptSchema, req.body)
+      await pushService.recordReceipt({
+        workspaceId,
+        token: body.token,
+        stage: body.stage,
+        reason: body.reason ?? null,
+      })
+      res.status(204).end()
+    },
+
+    /** Poll the caller's own Send test for per-device receipts. */
+    async getTestProgress(req: Request, res: Response) {
+      const { testId } = validateRequest(testProgressParamsSchema, req.params)
+      res.json(await pushService.getTestProgress(req.workspaceId!, req.user!.id, testId))
     },
 
     async getVapidKey(_req: Request, res: Response) {

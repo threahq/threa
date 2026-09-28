@@ -3,6 +3,7 @@ import type { Request, RequestHandler, Response } from "express"
 import { createRateLimit, getClientIp, type RateLimitRejection } from "@threahq/backend-common"
 import { BOT_KEY_PREFIX } from "@threahq/types"
 import { isInboundWebhookUrl, isSlackWebhookUrl } from "../features/incoming-webhooks"
+import { isRoutablePushReceiptPath } from "../features/push"
 
 export interface RateLimiterSet {
   globalBaseline: RequestHandler
@@ -12,6 +13,7 @@ export interface RateLimiterSet {
   messageCreate: RequestHandler
   commandDispatch: RequestHandler
   pushTest: RequestHandler
+  pushReceipt: RequestHandler
   calls: RequestHandler
   callsStart: RequestHandler
   perfCapture: RequestHandler
@@ -66,7 +68,10 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       key: (req) => getClientIp(req, "unknown"),
       // Inbound webhooks have their own per-IP ceiling. The baseline would answer first,
       // in JSON, where a Slack sender expects text/plain `rate_limited`.
-      skip: (req) => isInboundWebhookUrl(req.originalUrl),
+      // Push receipts have their own per-IP ceiling too: a device reports every
+      // notification it shows, so the baseline would drop them in a burst.
+      skip: (req) =>
+        isInboundWebhookUrl(req.originalUrl) || (req.method === "POST" && isRoutablePushReceiptPath(req.path)),
     }),
 
     auth: createRateLimit({
@@ -117,6 +122,15 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       windowMs: 60_000,
       max: 6,
       key: userScopeKey,
+    }),
+
+    // Unauthenticated service worker receipts: at most two per notification
+    // (received + terminal). Per IP, since there is no user to key on.
+    pushReceipt: createRateLimit({
+      name: "push-receipt",
+      windowMs: 60_000,
+      max: 240,
+      key: (req) => getClientIp(req, "unknown"),
     }),
 
     // CF media-proxy pass-throughs: renegotiation + track pulls churn on a bad

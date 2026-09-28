@@ -9,7 +9,13 @@ import {
   resolveLatestMessageId,
   resolveClickedAction,
 } from "./lib/sw-notification-format"
-import { ACCOUNT_ASSERTION_HEADER, type PushAction } from "@threahq/types"
+import {
+  ACCOUNT_ASSERTION_HEADER,
+  PUSH_RECEIPT_STAGES,
+  PUSH_RECEIPT_SUPPRESSION_REASONS,
+  PUSH_RECEIPT_SW_VERSION,
+  type PushAction,
+} from "@threahq/types"
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
 import { isDevicePresent } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
@@ -41,6 +47,7 @@ import {
 } from "./lib/sw-messages"
 import { stashShareTarget } from "./lib/share-target-storage"
 import { openNotificationTarget } from "./lib/sw-notification-open"
+import { createPushReceipt, trackNotificationCreation } from "./lib/sw-push-receipt"
 
 declare const self: ServiceWorkerGlobalScope
 declare const __APP_VERSION__: string
@@ -169,6 +176,7 @@ self.addEventListener("message", (event) => {
           version: BUILD_VERSION,
           buildId: BUILD_ID,
           ready,
+          pushReceiptVersion: PUSH_RECEIPT_SW_VERSION,
         })
       })()
     )
@@ -478,12 +486,21 @@ self.addEventListener("push", (event) => {
   if (!event.data) return
 
   let data: PushData
+  let capability: unknown
   try {
-    const payload = event.data.json() as { data?: PushData }
+    // The capability rides beside `data`, never in it: notification data is readable by every page of this origin.
+    const payload = event.data.json() as { data?: PushData; receipt?: unknown }
     data = payload.data ?? {}
+    capability = payload.receipt
   } catch {
     data = {}
   }
+
+  const receipt = createPushReceipt(
+    { workspaceId: data.workspaceId, receipt: capability },
+    { origin: self.location.origin, fetch: (url, init) => fetch(url, init), hold: (p) => event.waitUntil(p) }
+  )
+  receipt?.received()
 
   if (data.action === "clear") {
     if (!data.streamId) return
@@ -501,44 +518,53 @@ self.addEventListener("push", (event) => {
 
   if (data.kind === "test") {
     event.waitUntil(
-      self.registration.showNotification("Threa test notification", {
-        body: "Push delivery is working — you should see this on every subscribed device.",
-        icon: "/threa-logo-192.png",
-        badge: "/threa-logo-192.png",
-        tag: "threa-test",
-        renotify: true,
-        vibrate: THREA_VIBRATION_PATTERN,
-        data: { ...data, kind: "test" },
-      } as ExtendedNotificationOptions)
+      trackNotificationCreation(
+        receipt,
+        self.registration.showNotification("Threa test notification", {
+          body: "Push delivery is working — you should see this on every subscribed device.",
+          icon: "/threa-logo-192.png",
+          badge: "/threa-logo-192.png",
+          tag: "threa-test",
+          renotify: true,
+          vibrate: THREA_VIBRATION_PATTERN,
+          data: { ...data, kind: "test" },
+        } as ExtendedNotificationOptions)
+      )
     )
     return
   }
 
   if (data.action === "session_expired") {
     event.waitUntil(
-      self.registration.showNotification("Session expired", {
-        body: "Your session has expired. Tap to sign back in.",
-        icon: "/threa-logo-192.png",
-        badge: "/threa-logo-192.png",
-        tag: "session-expired",
-        vibrate: THREA_VIBRATION_PATTERN,
-        data: { ...data, action: "session_expired" },
-      } as ExtendedNotificationOptions)
+      trackNotificationCreation(
+        receipt,
+        self.registration.showNotification("Session expired", {
+          body: "Your session has expired. Tap to sign back in.",
+          icon: "/threa-logo-192.png",
+          badge: "/threa-logo-192.png",
+          tag: "session-expired",
+          vibrate: THREA_VIBRATION_PATTERN,
+          data: { ...data, action: "session_expired" },
+        } as ExtendedNotificationOptions)
+      )
     )
     return
   }
 
   if (data.kind === "rewrap_needed") {
     event.waitUntil(
-      self.registration.showNotification("Your assistant is waiting", {
-        body: "Unlock Threa to let your assistant reply in your encrypted scratchpad.",
-        icon: "/threa-logo-192.png",
-        badge: "/threa-logo-192.png",
-        tag: data.streamId ? `rewrap:${data.streamId}` : "rewrap",
-        renotify: true,
-        vibrate: THREA_VIBRATION_PATTERN,
-        data: { ...data, kind: "rewrap_needed" },
-      } as ExtendedNotificationOptions)
+      trackNotificationCreation(
+        receipt,
+        self.registration.showNotification("Your assistant is waiting", {
+          body: "Unlock Threa to let your assistant reply in your encrypted scratchpad.",
+          icon: "/threa-logo-192.png",
+          badge: "/threa-logo-192.png",
+          tag: data.streamId ? `rewrap:${data.streamId}` : "rewrap",
+          renotify: true,
+          vibrate: THREA_VIBRATION_PATTERN,
+          data: { ...data, kind: "rewrap_needed" },
+        } as ExtendedNotificationOptions)
+      )
     )
     return
   }
@@ -546,15 +572,18 @@ self.addEventListener("push", (event) => {
   if (data.kind === "call_ring") {
     if (!data.attemptId) return
     event.waitUntil(
-      self.registration.showNotification(data.inviterName ? `${data.inviterName} is calling…` : "Incoming call…", {
-        body: data.mode === "audio_only" ? "Voice call" : "Video call",
-        icon: "/threa-logo-192.png",
-        badge: "/threa-logo-192.png",
-        tag: `call-${data.attemptId}`,
-        renotify: true,
-        vibrate: THREA_VIBRATION_PATTERN,
-        data: { ...data, kind: "call_ring" },
-      } as ExtendedNotificationOptions)
+      trackNotificationCreation(
+        receipt,
+        self.registration.showNotification(data.inviterName ? `${data.inviterName} is calling…` : "Incoming call…", {
+          body: data.mode === "audio_only" ? "Voice call" : "Video call",
+          icon: "/threa-logo-192.png",
+          badge: "/threa-logo-192.png",
+          tag: `call-${data.attemptId}`,
+          renotify: true,
+          vibrate: THREA_VIBRATION_PATTERN,
+          data: { ...data, kind: "call_ring" },
+        } as ExtendedNotificationOptions)
+      )
     )
     return
   }
@@ -577,15 +606,18 @@ self.addEventListener("push", (event) => {
     const inviter = data.authorName
     const where = data.streamName ? ` in ${data.streamName}` : ""
     event.waitUntil(
-      self.registration.showNotification(inviter ? `Missed call from ${inviter}` : "Missed call", {
-        body: (data.mode === "audio_only" ? "Voice call" : "Video call") + where,
-        icon: "/threa-logo-192.png",
-        badge: "/threa-logo-192.png",
-        tag: data.streamId ? `missed-call:${data.streamId}` : "missed-call",
-        renotify: true,
-        vibrate: THREA_VIBRATION_PATTERN,
-        data: { ...data, kind: "missed_call" },
-      } as ExtendedNotificationOptions)
+      trackNotificationCreation(
+        receipt,
+        self.registration.showNotification(inviter ? `Missed call from ${inviter}` : "Missed call", {
+          body: (data.mode === "audio_only" ? "Voice call" : "Video call") + where,
+          icon: "/threa-logo-192.png",
+          badge: "/threa-logo-192.png",
+          tag: data.streamId ? `missed-call:${data.streamId}` : "missed-call",
+          renotify: true,
+          vibrate: THREA_VIBRATION_PATTERN,
+          data: { ...data, kind: "missed_call" },
+        } as ExtendedNotificationOptions)
+      )
     )
     return
   }
@@ -594,67 +626,76 @@ self.addEventListener("push", (event) => {
   const tag = data.streamId ? resolveTag(data.streamId, data.activityType) : "threa-notification"
 
   event.waitUntil(
-    Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()]).then(
-      async ([
-        { appendMessage, formatTitle, formatBody, isViewingStream, resolveActions, resolvePushActionLimit },
-        clients,
-        visibleStreams,
-      ]) => {
-        const focusedClients = clients.filter((c) => c.focused && new URL(c.url).origin === self.location.origin)
-        const viewingThisStream =
-          focusedClients.some((c) => isViewingStream(c.url, data.workspaceId, data.streamId)) ||
-          (focusedClients.length > 0 && !!data.streamId && visibleStreams.has(data.streamId))
-        if (viewingThisStream && (await isDevicePresent())) return
+    Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()])
+      .then(
+        async ([
+          { appendMessage, formatTitle, formatBody, isViewingStream, resolveActions, resolvePushActionLimit },
+          clients,
+          visibleStreams,
+        ]) => {
+          const focusedClients = clients.filter((c) => c.focused && new URL(c.url).origin === self.location.origin)
+          const viewingThisStream =
+            focusedClients.some((c) => isViewingStream(c.url, data.workspaceId, data.streamId)) ||
+            (focusedClients.length > 0 && !!data.streamId && visibleStreams.has(data.streamId))
+          if (viewingThisStream && (await isDevicePresent())) {
+            receipt?.settle(PUSH_RECEIPT_STAGES.SUPPRESSED, PUSH_RECEIPT_SUPPRESSION_REASONS.PRESENCE)
+            return
+          }
 
-        const existing = await self.registration.getNotifications({ tag })
-        const previous = existing[0]?.data as PushData | undefined
-        const messages = appendMessage(previous?.messages ?? [], {
-          authorName: data.authorName,
-          contentPreview: data.contentPreview,
-          emoji: data.emoji,
-        })
+          const existing = await self.registration.getNotifications({ tag })
+          const previous = existing[0]?.data as PushData | undefined
+          const messages = appendMessage(previous?.messages ?? [], {
+            authorName: data.authorName,
+            contentPreview: data.contentPreview,
+            emoji: data.emoji,
+          })
 
-        const title = formatTitle(messages, data.streamName, data.activityType)
-        const body = formatBody(messages)
+          const title = formatTitle(messages, data.streamName, data.activityType)
+          const body = formatBody(messages)
 
-        // A grouped banner deep-links to the oldest message it covers so a tap
-        // lands where reading resumes instead of past everything unread.
-        // The avatar route is unauthenticated (S3 keys carry unguessable ULIDs),
-        // so the OS can fetch the icon without a session.
-        const options: ExtendedNotificationOptions = {
-          body,
-          icon: data.authorAvatarUrl ?? "/threa-logo-192.png",
-          badge: "/threa-logo-192.png",
-          data: {
-            ...data,
-            messageId: previous?.messageId ?? data.messageId,
-            latestMessageId: resolveLatestMessageId(previous, data),
-            messages,
-          },
-          tag,
-          renotify: true,
-          vibrate: THREA_VIBRATION_PATTERN,
-          actions: resolveActions(data.activityType, data, resolvePushActionLimit(self.navigator.userAgent)),
-        }
-
-        for (const n of existing) n.close()
-
-        await self.registration.showNotification(title, options)
-        await syncAppBadge()
-
-        if (data.workspaceId) {
-          await queueBootstrapSync(
-            {
-              workspaceId: data.workspaceId,
-              streamId: data.streamId ?? null,
-              messageId: data.messageId ?? null,
-              workosUserId: data.workosUserId ?? null,
+          // A grouped banner deep-links to the oldest message it covers so a tap
+          // lands where reading resumes instead of past everything unread.
+          // The avatar route is unauthenticated (S3 keys carry unguessable ULIDs),
+          // so the OS can fetch the icon without a session.
+          const options: ExtendedNotificationOptions = {
+            body,
+            icon: data.authorAvatarUrl ?? "/threa-logo-192.png",
+            badge: "/threa-logo-192.png",
+            data: {
+              ...data,
+              messageId: previous?.messageId ?? data.messageId,
+              latestMessageId: resolveLatestMessageId(previous, data),
+              messages,
             },
-            self.registration
-          ).catch(() => {})
+            tag,
+            renotify: true,
+            vibrate: THREA_VIBRATION_PATTERN,
+            actions: resolveActions(data.activityType, data, resolvePushActionLimit(self.navigator.userAgent)),
+          }
+
+          for (const n of existing) n.close()
+
+          await trackNotificationCreation(receipt, self.registration.showNotification(title, options))
+          await syncAppBadge()
+
+          if (data.workspaceId) {
+            await queueBootstrapSync(
+              {
+                workspaceId: data.workspaceId,
+                streamId: data.streamId ?? null,
+                messageId: data.messageId ?? null,
+                workosUserId: data.workosUserId ?? null,
+              },
+              self.registration
+            ).catch(() => {})
+          }
         }
-      }
-    )
+      )
+      .catch((error: unknown) => {
+        // Anything that stopped the card before it was created; a no-op once a stage settled.
+        receipt?.settle(PUSH_RECEIPT_STAGES.CREATION_FAILED)
+        throw error
+      })
   )
 })
 

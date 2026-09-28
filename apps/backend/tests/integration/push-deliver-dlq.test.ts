@@ -113,6 +113,8 @@ describe("dead-lettered push delivery jobs", () => {
         }),
         resolveFiredReminder: async () => null,
         isRewrapOutstanding: async () => false,
+        findAnalyticsConsentGrant: async () => null,
+        isE2eRootedStream: async () => false,
       },
     })
   }

@@ -3,6 +3,7 @@ import type { Pool } from "pg"
 import type { Querier } from "../../db"
 import { logger } from "../../lib/logger"
 import { accessLogId } from "../../lib/id"
+import { safeErrorCode } from "../../lib/errors"
 import {
   AccessLogRepository,
   type AccessLogRow,
@@ -54,7 +55,8 @@ export class AccessLogService {
   record(entry: AccessLogEntry): void {
     const p = this.insert(this.pool, entry)
       .catch((err) => {
-        logger.error({ err, operation: entry.operation }, "access-log insert failed")
+        // A pg error's message and detail carry row values: actor, workspace and subject ids.
+        logger.error({ errorCode: safeErrorCode(err), operation: entry.operation }, "access-log insert failed")
       })
       .finally(() => {
         this.inFlight.delete(p)

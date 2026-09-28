@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express"
-import { HttpError } from "../errors"
+import { HttpError, safeErrorCode } from "../errors"
 import { logger } from "../logger"
 import type { AnalyticsReporter } from "../posthog/reporter"
 import { redactHookSecret } from "./request-log"
@@ -25,8 +25,15 @@ export function sanitizeRoutePath(path: string): string {
  * fall back to parsing Express' HTML error pages for unexpected failures.
  * Known `HttpError`s carry their own status/code; everything else is logged,
  * reported, and surfaced as a 500.
+ *
+ * `isAnonymous` marks requests whose failures must not link to anyone: they
+ * are still logged and reported, with the route template, method and error
+ * code only, never the caller's identity, the raw error or its message.
  */
-export function createErrorHandler(deps: { analyticsReporter: AnalyticsReporter }) {
+export function createErrorHandler(deps: {
+  analyticsReporter: AnalyticsReporter
+  isAnonymous?: (req: Request) => boolean
+}) {
   return function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
     if (err instanceof HttpError) {
       res.status(err.status).json({
@@ -37,12 +44,20 @@ export function createErrorHandler(deps: { analyticsReporter: AnalyticsReporter 
       return
     }
 
-    deps.analyticsReporter.captureException(err, {
-      ...(req.authUser?.id !== undefined && { distinctId: req.authUser.id }),
-      properties: { path: sanitizeRoutePath(req.path), method: req.method, status_code: 500 },
-    })
-
-    logger.error({ err, path: redactHookSecret(req.path), method: req.method }, "Unhandled error")
+    if (deps.isAnonymous?.(req)) {
+      const errorCode = safeErrorCode(err)
+      const path = sanitizeRoutePath(req.path)
+      deps.analyticsReporter.captureException(new Error(`Unhandled error (${errorCode ?? "no code"})`), {
+        properties: { path, method: req.method, status_code: 500, error_code: errorCode },
+      })
+      logger.error({ path, method: req.method, errorCode }, "Unhandled error")
+    } else {
+      deps.analyticsReporter.captureException(err, {
+        ...(req.authUser?.id !== undefined && { distinctId: req.authUser.id }),
+        properties: { path: sanitizeRoutePath(req.path), method: req.method, status_code: 500 },
+      })
+      logger.error({ err, path: redactHookSecret(req.path), method: req.method }, "Unhandled error")
+    }
     res.status(500).json({ error: "Internal server error", code: "INTERNAL_ERROR" })
   }
 }

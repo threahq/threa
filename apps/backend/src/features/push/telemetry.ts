@@ -18,7 +18,23 @@ export const PUSH_HEALTH_DISTINCT_ID = "service:push"
 export const PUSH_HEALTH_EVENTS = {
   SEND_OUTCOMES: "push_send_outcomes",
   SUPPRESSED: "push_suppressed",
+  RECEIPTS: "push_receipts",
 } as const
+
+/** Receipt capability lifecycle, counted without scope, stage or any identifier. */
+export const PUSH_RECEIPT_RESULTS = {
+  ISSUED: "issued",
+  /** Issuing failed (consent read or row write); the push went out without a capability. */
+  ISSUE_FAILED: "issue_failed",
+  RECORDED: "recorded",
+  /** Consent or root E2E policy no longer allowed the automatic receipt; it was dropped. */
+  REVOKED: "revoked",
+  /** Unknown, expired, revoked or other-workspace capability. */
+  UNMATCHED: "unmatched",
+} as const
+
+export type PushReceiptResult = (typeof PUSH_RECEIPT_RESULTS)[keyof typeof PUSH_RECEIPT_RESULTS]
+const RECEIPT_RESULTS = new Set<string>(Object.values(PUSH_RECEIPT_RESULTS))
 
 const KINDS = new Set<string>(Object.values(PUSH_SEND_KINDS))
 const OUTCOMES = new Set<string>(Object.values(PUSH_PROVIDER_OUTCOMES))
@@ -45,6 +61,7 @@ export class PushTelemetry {
   private readonly flushIntervalMs: number
   private outcomeCounts = new Map<string, number>()
   private suppressedCounts = new Map<string, number>()
+  private receiptCounts = new Map<string, number>()
   private windowStartedAt = Date.now()
   private timer: ReturnType<typeof setInterval> | null = null
 
@@ -92,12 +109,23 @@ export class PushTelemetry {
     }
   }
 
+  recordReceipt(result: PushReceiptResult): void {
+    try {
+      if (!RECEIPT_RESULTS.has(result)) return
+      increment(this.receiptCounts, result)
+    } catch {
+      // Telemetry must not fail a delivery.
+    }
+  }
+
   flush(): void {
     const outcomes = this.outcomeCounts
     const suppressed = this.suppressedCounts
+    const receipts = this.receiptCounts
     const windowSeconds = Math.max(0, Math.round((Date.now() - this.windowStartedAt) / 1000))
     this.outcomeCounts = new Map()
     this.suppressedCounts = new Map()
+    this.receiptCounts = new Map()
     this.windowStartedAt = Date.now()
 
     for (const [key, count] of outcomes) {
@@ -107,6 +135,9 @@ export class PushTelemetry {
     for (const [key, count] of suppressed) {
       const [kind, reason] = key.split("|")
       this.capture(PUSH_HEALTH_EVENTS.SUPPRESSED, { kind, reason, count, window_seconds: windowSeconds })
+    }
+    for (const [result, count] of receipts) {
+      this.capture(PUSH_HEALTH_EVENTS.RECEIPTS, { result, count, window_seconds: windowSeconds })
     }
   }
 

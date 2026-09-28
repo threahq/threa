@@ -12,6 +12,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository, StreamMemberRepository } from "../streams"
 import { MessageRepository } from "../messaging"
 import { ConversationRepository, settleMessagesOnEngagement } from "../conversations"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { reminderQueueId } from "../../lib/id"
 import { JobQueues, QueueRepository, enqueueQueuedJob, type SavedReminderFireJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
@@ -33,6 +34,8 @@ export interface FiredReminderSource {
   /** Null when the item is standalone or its message is unavailable. */
   contentMarkdown: string | null
   unavailableReason: SavedMessageView["unavailableReason"]
+  /** The message's stream root is end-to-end encrypted under the current policy (an old plaintext message included). */
+  e2eRooted: boolean
 }
 
 export interface SaveParams {
@@ -405,6 +408,13 @@ export class SavedMessagesService {
       return null
     }
     const [view] = await resolveSavedView(this.pool, params.userId, [row])
+    const e2eRooted = row.streamId
+      ? (
+          await E2eStreamsRepository.excludeE2eRootedStreamIds(this.pool, [
+            { workspaceId: params.workspaceId, streamId: row.streamId },
+          ])
+        ).length === 0
+      : false
     return {
       savedId: row.id,
       messageId: row.messageId,
@@ -414,6 +424,7 @@ export class SavedMessagesService {
       streamName: view!.message?.streamName ?? null,
       contentMarkdown: view!.message?.contentMarkdown ?? null,
       unavailableReason: view!.unavailableReason,
+      e2eRooted,
     }
   }
 

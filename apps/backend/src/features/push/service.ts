@@ -1,5 +1,15 @@
+import { createHash, randomBytes } from "node:crypto"
 import type { Pool } from "pg"
-import { PUSH_PROVIDER_OUTCOMES, type PushTestResponse, type UserPreferences } from "@threahq/types"
+import {
+  PUSH_PROVIDER_OUTCOMES,
+  PUSH_RECEIPT_STAGES,
+  PUSH_RECEIPT_SW_VERSION,
+  type PushReceiptStage,
+  type PushReceiptSuppressionReason,
+  type PushTestProgress,
+  type PushTestResponse,
+  type UserPreferences,
+} from "@threahq/types"
 import webpush from "web-push"
 import { withTransaction, withClient, type Querier } from "../../db"
 import { PushSubscriptionRepository, type PushSubscription, type InsertPushSubscriptionParams } from "./repository"
@@ -17,6 +27,7 @@ import {
   type ProviderAttemptResult,
 } from "./retry-policy"
 import { UserSessionRepository, type UserSession } from "./session-repository"
+import { PushReceiptRepository, PUSH_RECEIPT_SCOPES, type LivePushReceipt } from "./receipt-repository"
 import {
   PrefNotificationLevels,
   ActivityTypes,
@@ -43,7 +54,7 @@ import {
   type PushSendKind,
   type PushSuppressionReason,
 } from "./outcome"
-import type { PushTelemetry } from "./telemetry"
+import { PUSH_RECEIPT_RESULTS, type PushTelemetry } from "./telemetry"
 import type {
   ActivityCreatedOutboxPayload,
   SavedReminderFiredOutboxPayload,
@@ -186,6 +197,15 @@ const PUSH_DELIVERY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
 const RETENTION_BATCH_SIZE = 500
 const RETENTION_MAX_BATCHES = 20
 
+/** An automatic receipt can still land this long after its delivery's push TTL ran out. */
+const DELIVERY_RECEIPT_GRACE_MS = 10 * 60 * 1_000
+
+/** An explicit test's capability: long enough for a woken device to answer while the user watches. */
+const TEST_RECEIPT_CAPABILITY_MS = 10 * 60 * 1_000
+
+/** Test results are first-party diagnostics for the person who ran them; kept a day, not the ledger's week. */
+const TEST_RECEIPT_RETENTION_MS = 24 * 60 * 60 * 1_000
+
 /** Slack past the DB-computed claimable time: the queue compares `process_after` with app-server time. */
 const WAKE_MARGIN_MS = 1_000
 
@@ -241,6 +261,14 @@ interface CrossFeatureLookups {
   }) => Promise<FiredReminderSource | null>
   /** Whether the owner's re-wrap of this root stream is still needed. */
   isRewrapOutstanding: (params: { workspaceId: string; rootStreamId: string; ownerUserId: string }) => Promise<boolean>
+  /**
+   * The user's current analytics consent grant (a generation that changes on
+   * every withdrawal, reset or re-grant), or null when not granted. Inside a
+   * transaction on `db`, a concurrent change cannot commit until it ends.
+   */
+  findAnalyticsConsentGrant: (db: Querier, userId: string) => Promise<string | null>
+  /** The stream's root is end-to-end encrypted under the current policy (INV-62 root walk). */
+  isE2eRootedStream: (db: Querier, workspaceId: string, streamId: string) => Promise<boolean>
 }
 
 interface PushServiceDeps {
@@ -357,24 +385,44 @@ export class PushService {
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, userId)
     if (subscriptions.length === 0) {
       this.telemetry.recordSuppressed(PUSH_SEND_KINDS.TEST, PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS)
-      return { testId, attempted: 0, accepted: 0, failed: 0, delivered: 0, devices: [] }
+      return { testId, attempted: 0, accepted: 0, failed: 0, delivered: 0, devices: [], progress: null }
     }
 
-    const pushPayload = JSON.stringify({
-      data: {
-        kind: "test" as const,
-        workspaceId,
-        sentAt: Date.now(),
-      },
-    })
-
+    const { tokens, progress } = await this.armTestReceipts(workspaceId, userId, testId, subscriptions)
+    const sentAt = Date.now()
+    // One attempt per device, never retried: a test is only meaningful while the user watches.
     const results = await this.sendAndEvictStale(
       workspaceId,
       subscriptions,
-      pushPayload,
+      (subscription) => {
+        const token = tokens.get(subscription.id)
+        return JSON.stringify({
+          data: { kind: "test" as const, workspaceId, sentAt },
+          ...(token ? { receipt: { token } } : {}),
+        })
+      },
       { ttlSeconds: TEST_PUSH_TTL_SECONDS, urgency: "high" },
       PUSH_SEND_KINDS.TEST
     )
+
+    let storedProgress = progress
+    if (progress) {
+      try {
+        await PushReceiptRepository.recordTestProviderOutcomes(this.pool, {
+          workspaceId,
+          testId,
+          results: results.map((r) => ({
+            subscriptionId: r.subscription.id,
+            outcome: r.outcome,
+            statusCode: r.statusCode,
+          })),
+        })
+      } catch (err) {
+        // Without stored provider outcomes the poll would show every device awaiting a receipt.
+        logger.warn({ errorCode: safeErrorCode(err) }, "Failed to store push test provider outcomes")
+        storedProgress = null
+      }
+    }
 
     const accepted = results.filter((r) => r.outcome === PUSH_PROVIDER_OUTCOMES.ACCEPTED).length
     return {
@@ -390,7 +438,57 @@ export class PushService {
         outcome,
         statusCode,
       })),
+      progress: storedProgress,
     }
+  }
+
+  /** Per-device results of the caller's own test. Another user's test id is indistinguishable from a missing one. */
+  async getTestProgress(workspaceId: string, userId: string, testId: string): Promise<PushTestProgress> {
+    const found = await PushReceiptRepository.findTestProgress(this.pool, { workspaceId, userId, testId })
+    if (!found) throw new HttpError("Push test not found", { status: 404, code: "PUSH_TEST_NOT_FOUND" })
+    return { testId, expiresAt: found.expiresAt.toISOString(), devices: found.devices }
+  }
+
+  /**
+   * Record what a service worker reported, authorized by the capability token
+   * alone (no cookie: a parked account or closed app still reports). Every
+   * outcome, unknown, expired, revoked or replayed included, returns the same
+   * way so the caller learns nothing. An automatic receipt is kept only while
+   * the analytics consent grant it was armed under is still the user's current
+   * one and the stream's root is not end-to-end encrypted, both read now.
+   */
+  async recordReceipt(params: {
+    workspaceId: string
+    token: string
+    stage: PushReceiptStage
+    reason: PushReceiptSuppressionReason | null
+  }): Promise<void> {
+    const { workspaceId } = params
+    const tokenHash = sha256Hex(params.token)
+    // One transaction: the receipt row and the consent row stay locked from the
+    // check to the write, so a withdrawal or re-arm lands before (and is seen)
+    // or after, never between.
+    const result = await withTransaction(this.pool, async (client) => {
+      const receipt = await PushReceiptRepository.findLive(client, { workspaceId, tokenHash })
+      if (!receipt) return PUSH_RECEIPT_RESULTS.UNMATCHED
+
+      if (
+        receipt.scope === PUSH_RECEIPT_SCOPES.DELIVERY &&
+        !(await this.deliveryReceiptAllowed(client, workspaceId, receipt))
+      ) {
+        await PushReceiptRepository.revoke(client, { workspaceId, id: receipt.id, tokenHash })
+        return PUSH_RECEIPT_RESULTS.REVOKED
+      }
+
+      await PushReceiptRepository.recordStage(client, {
+        workspaceId,
+        tokenHash,
+        stage: params.stage,
+        reason: params.stage === PUSH_RECEIPT_STAGES.SUPPRESSED ? params.reason : null,
+      })
+      return PUSH_RECEIPT_RESULTS.RECORDED
+    })
+    this.telemetry.recordReceipt(result)
   }
 
   async upsertSession(params: {
@@ -547,25 +645,25 @@ export class PushService {
       return this.settleUnsent(this.pool, claimed, prepared.status, prepared.reason)
     }
 
-    const owned = await PushDeliveryRepository.renewLease(this.pool, {
-      workspaceId,
-      deliveryId,
-      claimVersion: claimed.version,
-      leaseMs: PUSH_DELIVERY_LEASE_MS,
-    })
+    const { owned, receiptToken } = await this.renewLeaseAndArmReceipt(claimed, prepared)
     if (!owned) return
 
-    // The reads above can be slow: the send window and TTL are measured after them.
+    // The reads and the arming above can be slow: the send window and TTL are measured after them.
     const ttlSeconds = sendableTtlSeconds(claimed.expiresAt, prepared.deadline, Date.now())
     if (ttlSeconds === null) {
       this.suppress(claimed.kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
       return this.settleUnsent(this.pool, claimed, PUSH_DELIVERY_STATUSES.EXPIRED, PUSH_SUPPRESSION_REASONS.EXPIRED)
     }
 
+    const payload = JSON.stringify({
+      data: prepared.data,
+      ...(receiptToken ? { receipt: { token: receiptToken } } : {}),
+    })
+
     // At-least-once: a crash or failed settle after this send leaves the row
     // pending, and the attempt is reclaimed and sent again once the lease
     // lapses, up to PUSH_MAX_ABANDONED_CLAIMS times.
-    const result = await sendToDevice(prepared.subscription, prepared.payload, {
+    const result = await sendToDevice(prepared.subscription, payload, {
       ttlSeconds,
       urgency: "high",
       topic: prepared.topic,
@@ -687,6 +785,17 @@ export class PushService {
     }
   }
 
+  /** Delete receipt rows past their retention, in bounded batches. */
+  async cleanupExpiredReceipts(): Promise<number> {
+    let deleted = 0
+    for (let batch = 0; batch < RETENTION_MAX_BATCHES; batch++) {
+      const count = await PushReceiptRepository.deleteExpired(this.pool, { limit: RETENTION_BATCH_SIZE })
+      deleted += count
+      if (count < RETENTION_BATCH_SIZE) break
+    }
+    return deleted
+  }
+
   /** Delete ledger rows whose expiry is past the retention window, in bounded batches. */
   async cleanupExpiredDeliveries(): Promise<number> {
     const expiredBefore = new Date(Date.now() - PUSH_DELIVERY_RETENTION_MS)
@@ -745,7 +854,7 @@ export class PushService {
     await this.sendAndEvictStale(
       workspaceId,
       active,
-      pushPayload,
+      () => pushPayload,
       { ttlSeconds, urgency: "high", topic: pushTopic(savedId) },
       kind
     )
@@ -825,21 +934,143 @@ export class PushService {
     if (!targeted) return drop(PUSH_DELIVERY_STATUSES.SUPPRESSED, PUSH_SUPPRESSION_REASONS.NOT_TARGETED)
 
     const workosUserId = content.withWorkosUserId ? await this.lookups.getWorkosUserId(workspaceId, userId) : null
-    const payload = JSON.stringify({
-      data: {
-        ...content.data,
-        ...(workosUserId ? { workosUserId } : {}),
-        ...(content.withButtons
-          ? {
-              // Button preferences ride every card so the worker renders them without a fetch.
-              pushActions: recipient.prefs.pushActions,
-              pushReminderMinutes: recipient.prefs.pushReminderMinutes,
-              pushQuickReaction: recipient.prefs.pushQuickReaction,
-            }
-          : {}),
+    const payloadData = {
+      ...content.data,
+      ...(workosUserId ? { workosUserId } : {}),
+      ...(content.withButtons
+        ? {
+            // Button preferences ride every card so the worker renders them without a fetch.
+            pushActions: recipient.prefs.pushActions,
+            pushReminderMinutes: recipient.prefs.pushReminderMinutes,
+            pushQuickReaction: recipient.prefs.pushQuickReaction,
+          }
+        : {}),
+    }
+    const receipt = content.receipt && supportsReceipts(claimed.subscription.receiptVersion) ? content.receipt : null
+    return {
+      send: true,
+      subscription: claimed.subscription,
+      data: payloadData,
+      receipt,
+      topic: content.topic,
+      deadline,
+    }
+  }
+
+  /**
+   * When this attempt wants a receipt, arm it with a fresh capability in one
+   * transaction with a lease renewal: the renewal's version CAS row-locks the
+   * delivery, so only the current claim holder can rotate the token. The
+   * user's consent grant is read in that transaction, after the receipt row is
+   * locked (the order ingest uses), so the capability is issued only under the
+   * grant that is current when it commits. No grant, or a failed arming, never
+   * fails the attempt; it sends without a capability. Either way
+   * the claim is re-asserted by a standalone renewal as the last step before
+   * the send: the arming transaction's lease is measured from its start (NOW()),
+   * so a slow arm can commit an already-lapsed lease that a rival may reclaim.
+   */
+  private async renewLeaseAndArmReceipt(
+    claimed: ClaimedPushDelivery,
+    { receipt, topic, subscription }: Extract<PreparedAttempt, { send: true }>
+  ): Promise<{ owned: boolean; receiptToken: string | null }> {
+    const lease = {
+      workspaceId: claimed.workspaceId,
+      deliveryId: claimed.id,
+      claimVersion: claimed.version,
+      leaseMs: PUSH_DELIVERY_LEASE_MS,
+    }
+    let receiptToken: string | null = null
+    if (receipt) {
+      const token = newReceiptToken()
+      try {
+        const armed = await withTransaction(this.pool, async (client) => {
+          if (!(await PushDeliveryRepository.renewLease(client, lease))) return null
+          await PushReceiptRepository.lockDelivery(client, { workspaceId: claimed.workspaceId, deliveryId: claimed.id })
+          const consentGeneration = await this.lookups.findAnalyticsConsentGrant(client, claimed.userId)
+          if (consentGeneration === null) return false
+          return PushReceiptRepository.armDelivery(client, {
+            workspaceId: claimed.workspaceId,
+            userId: claimed.userId,
+            deliveryId: claimed.id,
+            subscriptionId: claimed.subscriptionId,
+            streamId: receipt.streamId,
+            tokenHash: sha256Hex(token),
+            consentGeneration,
+            capabilityExpiresAt: new Date(claimed.expiresAt.getTime() + DELIVERY_RECEIPT_GRACE_MS),
+            retainUntil: new Date(claimed.expiresAt.getTime() + PUSH_DELIVERY_RETENTION_MS),
+          })
+        })
+        if (armed === null) return { owned: false, receiptToken: null }
+        if (armed) {
+          this.telemetry.recordReceipt(PUSH_RECEIPT_RESULTS.ISSUED)
+          receiptToken = token
+        }
+      } catch (err) {
+        this.receiptIssueFailed(claimed.kind, err)
+      }
+    }
+    const owned = await PushDeliveryRepository.renewLease(this.pool, {
+      ...lease,
+      sent: {
+        topic: topic ?? null,
+        withReceipt: receiptToken !== null,
+        endpointHash: sha256Hex(subscription.endpoint),
       },
     })
-    return { send: true, subscription: claimed.subscription, payload, topic: content.topic, deadline }
+    return { owned, receiptToken: owned ? receiptToken : null }
+  }
+
+  /** Store an explicit test's per-device rows before sending. On failure the test still sends, provider results only. */
+  private async armTestReceipts(
+    workspaceId: string,
+    userId: string,
+    testId: string,
+    subscriptions: PushSubscription[]
+  ): Promise<{ tokens: Map<string, string>; progress: { expiresAt: string } | null }> {
+    const tokens = new Map(
+      subscriptions.filter((s) => supportsReceipts(s.receiptVersion)).map((s) => [s.id, newReceiptToken()] as const)
+    )
+    const now = Date.now()
+    const expiresAt = new Date(now + TEST_RECEIPT_CAPABILITY_MS)
+    try {
+      await PushReceiptRepository.insertTestDevices(this.pool, {
+        workspaceId,
+        userId,
+        testId,
+        devices: subscriptions.map((s) => {
+          const token = tokens.get(s.id)
+          return {
+            subscriptionId: s.id,
+            deviceKey: s.deviceKey,
+            userAgent: s.userAgent,
+            tokenHash: token ? sha256Hex(token) : null,
+          }
+        }),
+        capabilityExpiresAt: expiresAt,
+        retainUntil: new Date(now + TEST_RECEIPT_RETENTION_MS),
+      })
+      for (let i = 0; i < tokens.size; i++) this.telemetry.recordReceipt(PUSH_RECEIPT_RESULTS.ISSUED)
+      return { tokens, progress: { expiresAt: expiresAt.toISOString() } }
+    } catch (err) {
+      this.receiptIssueFailed(PUSH_SEND_KINDS.TEST, err)
+      return { tokens: new Map(), progress: null }
+    }
+  }
+
+  private receiptIssueFailed(kind: PushSendKind, err: unknown): void {
+    this.telemetry.recordReceipt(PUSH_RECEIPT_RESULTS.ISSUE_FAILED)
+    logger.warn({ kind, errorCode: safeErrorCode(err) }, "Push receipt capability not issued; sending without it")
+  }
+
+  /**
+   * The consent grant the receipt was armed under is still the current one,
+   * and the root policy allows it now; issuance-time eligibility is never
+   * trusted. A grant withdrawn and given again is a different grant.
+   */
+  private async deliveryReceiptAllowed(db: Querier, workspaceId: string, receipt: LivePushReceipt): Promise<boolean> {
+    const grant = await this.lookups.findAnalyticsConsentGrant(db, receipt.userId)
+    if (grant === null || grant !== receipt.consentGeneration) return false
+    return receipt.streamId === null || !(await this.lookups.isE2eRootedStream(db, workspaceId, receipt.streamId))
   }
 
   /** Current source content per kind; the event snapshot is never reused. */
@@ -863,6 +1094,7 @@ export class PushService {
       return {
         valid: true,
         activity: { activityType: source.activityType, streamId: source.streamId },
+        receipt: source.encrypted || source.e2eRooted ? null : { streamId: source.streamId },
         withWorkosUserId: true,
         withButtons: true,
         // Topic keyed by stream + notification group: mentions display under their
@@ -904,6 +1136,7 @@ export class PushService {
       return {
         valid: true,
         activity: null,
+        receipt: reminder.e2eRooted ? null : { streamId: reminder.streamId },
         withWorkosUserId: false,
         withButtons: false,
         topic: pushTopic(sourceId),
@@ -930,9 +1163,11 @@ export class PushService {
       ownerUserId: userId,
     })
     if (!outstanding) return { valid: false, reason: PUSH_SUPPRESSION_REASONS.SOURCE_GONE }
+    // A rewrap nudge only exists for end-to-end encrypted scratchpads: never a receipt.
     return {
       valid: true,
       activity: null,
+      receipt: null,
       withWorkosUserId: true,
       withButtons: false,
       // "r" suffix keeps repeated nudges collapsing with each other, not with
@@ -1070,7 +1305,7 @@ export class PushService {
     await this.sendAndEvictStale(
       workspaceId,
       subscriptions,
-      pushPayload,
+      () => pushPayload,
       { ttlSeconds: CALL_RING_TTL_SECONDS, urgency: "high", topic: pushTopic(attemptId, "c") },
       kind
     )
@@ -1116,7 +1351,7 @@ export class PushService {
     await this.sendAndEvictStale(
       workspaceId,
       subscriptions,
-      pushPayload,
+      () => pushPayload,
       { ttlSeconds: CALL_RING_TTL_SECONDS, urgency: "high", topic: pushTopic(attemptId, "c") },
       kind
     )
@@ -1139,13 +1374,13 @@ export class PushService {
   private async sendAndEvictStale(
     workspaceId: string,
     subscriptions: PushSubscription[],
-    pushPayload: string,
+    payloadFor: (subscription: PushSubscription) => string,
     options: PushDeliveryOptions,
     kind: PushSendKind
   ): Promise<DeviceSendResult[]> {
     const results = await Promise.all(
       subscriptions.map(async (subscription) => {
-        const result = await sendToDevice(subscription, pushPayload, options)
+        const result = await sendToDevice(subscription, payloadFor(subscription), options)
         this.telemetry.recordSendOutcome({ ...result, kind, provider: providerFamily(subscription.endpoint) })
         return { ...result, subscription }
       })
@@ -1382,7 +1617,9 @@ type PreparedAttempt =
   | {
       send: true
       subscription: NonNullable<ClaimedPushDelivery["subscription"]>
-      payload: string
+      data: Record<string, unknown>
+      /** Set when this attempt should carry a receipt capability. */
+      receipt: { streamId: string | null } | null
       topic: string | undefined
       deadline: Date
     }
@@ -1393,12 +1630,28 @@ type ResolvedContent =
       valid: true
       /** Present for activities: drives the mentions-mode gate. */
       activity: { activityType: string; streamId: string | null } | null
+      /** Null when the source's stream root is end-to-end encrypted: no receipt metadata may leave it. */
+      receipt: { streamId: string | null } | null
       withWorkosUserId: boolean
       withButtons: boolean
       topic: string | undefined
       data: Record<string, unknown>
     }
   | { valid: false; reason: PushSuppressionReason }
+
+/** The registration's active worker advertised a receipt protocol this server speaks. Unknown is unsupported. */
+function supportsReceipts(receiptVersion: number | null): boolean {
+  return receiptVersion !== null && receiptVersion >= PUSH_RECEIPT_SW_VERSION
+}
+
+/** 32 random bytes as base64url: the opaque capability. Only its hash is stored. */
+function newReceiptToken(): string {
+  return randomBytes(32).toString("base64url")
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex")
+}
 
 function drop(status: TerminalPushDeliveryStatus, reason: PushSuppressionReason): PreparedAttempt {
   return { send: false, status, reason }

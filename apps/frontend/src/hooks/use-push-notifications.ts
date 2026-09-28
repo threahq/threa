@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { DEVICE_KEY_LENGTH } from "@threahq/types"
 import { ApiError, api } from "@/api/client"
 import { useAccountScopeOptional } from "@/auth/account-scope"
+import { queryActiveWorkerReceiptVersion } from "@/lib/push-receipt-capability"
 
 type PushPermission = NotificationPermission | "unsupported"
 
@@ -134,6 +135,23 @@ function pushOptOutKey(workspaceId: string, accountId: string | null): string {
 
 type SubscribeOutcome = { kind: "subscribed" } | { kind: "disabled-on-server" }
 
+/** What the backend needs to reach and encrypt for this browser: a change to any field is a new registration. */
+interface PushBinding {
+  endpoint: string
+  p256dh: string
+  auth: string
+}
+
+function readPushBinding(subscription: PushSubscription | null): PushBinding | null {
+  const keys = subscription?.toJSON().keys
+  if (!subscription || !keys?.p256dh || !keys.auth) return null
+  return { endpoint: subscription.endpoint, p256dh: keys.p256dh, auth: keys.auth }
+}
+
+function sameBinding(a: PushBinding, b: PushBinding | null): boolean {
+  return b !== null && a.endpoint === b.endpoint && a.p256dh === b.p256dh && a.auth === b.auth
+}
+
 /**
  * Runs the full subscribe handshake: fetch VAPID config, reconcile the browser
  * subscription, and register it with the backend. Pure flow — all state
@@ -147,7 +165,8 @@ async function runSubscribeFlow(
   workspaceId: string,
   registration: ServiceWorkerRegistration,
   vapidCacheRef: React.RefObject<{ workspaceId: string; config: VapidConfig } | null>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  attempt: { binding: PushBinding | null }
 ): Promise<SubscribeOutcome> {
   // Cache VAPID config per workspace to avoid redundant fetches (key doesn't change)
   let vapidPublicKey: string | null
@@ -184,6 +203,8 @@ async function runSubscribeFlow(
       userVisibleOnly: true,
       applicationServerKey: expectedKey,
     }))
+  const binding = readPushBinding(subscription)
+  attempt.binding = binding
 
   // Clean up the stale subscription only after the new one is confirmed.
   // Guard against browsers that return the same subscription despite a
@@ -192,23 +213,24 @@ async function runSubscribeFlow(
     staleSubscription.unsubscribe().catch(() => {})
   }
 
-  const json = subscription.toJSON()
-  if (!json.keys?.p256dh || !json.keys?.auth) {
+  if (!binding) {
     throw new Error("Browser returned a push subscription without encryption keys")
   }
 
   const deviceKey = await getDeviceKey()
+  const receiptVersion = await queryActiveWorkerReceiptVersion(registration)
 
   // Backend upsert (ON CONFLICT DO UPDATE) — idempotent for re-registrations.
   // toJSON().keys returns base64url encoding, matching web-push library's contract.
   await api.post(
     `/api/workspaces/${workspaceId}/push/subscribe`,
     {
-      endpoint: subscription.endpoint,
-      p256dh: json.keys.p256dh,
-      auth: json.keys.auth,
+      endpoint: binding.endpoint,
+      p256dh: binding.p256dh,
+      auth: binding.auth,
       deviceKey,
       userAgent: navigator.userAgent,
+      ...(receiptVersion !== null ? { receiptVersion } : {}),
     },
     { signal }
   )
@@ -241,6 +263,9 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
   // attempt — a failed/aborted one leaves it untouched so a transient error
   // doesn't block the next recovery retry for the throttle window.
   const lastSubscribeAtRef = useRef(0)
+  // The binding the backend last confirmed from this hook. A refresh of that
+  // same binding that fails leaves it registered; any other failure does not.
+  const confirmedBindingRef = useRef<{ workspaceId: string; binding: PushBinding } | null>(null)
 
   // Re-sync opt-out state when workspaceId/account changes (initializer only runs on mount)
   useEffect(() => {
@@ -272,6 +297,7 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
     // (mobile Firefox on a fresh domain, blocked SW install, etc.) leaves
     // the UI in "subscribing" forever.
     let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const attempt: { binding: PushBinding | null } = { binding: null }
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(() => reject(new SubscribeTimeoutError()), SUBSCRIBE_TIMEOUT_MS)
     })
@@ -290,8 +316,9 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
           // app start. The handshake's terminal state still wins: a failure
           // flips this back to false in the catch below.
           const existing = await registration.pushManager.getSubscription()
+          attempt.binding = readPushBinding(existing)
           if (existing && isLatest()) setIsSubscribed(true)
-          return runSubscribeFlow(workspaceId, registration, vapidCacheRef, controller.signal)
+          return runSubscribeFlow(workspaceId, registration, vapidCacheRef, controller.signal, attempt)
         })(),
         timeoutPromise,
       ])
@@ -304,12 +331,14 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
       lastSubscribeAtRef.current = Date.now()
 
       if (result.kind === "disabled-on-server") {
+        confirmedBindingRef.current = null
         setIsSubscribed(false)
         setPushDisabledOnServer(true)
         setStatus("idle")
         return
       }
 
+      confirmedBindingRef.current = attempt.binding ? { workspaceId, binding: attempt.binding } : null
       setPushDisabledOnServer(false)
       setIsSubscribed(true)
       setStatus("subscribed")
@@ -321,6 +350,14 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
         controller.abort()
       }
       console.error("[Push] Failed to subscribe:", err)
+      const confirmed = confirmedBindingRef.current
+      if (confirmed?.workspaceId === workspaceId && sameBinding(confirmed.binding, attempt.binding)) {
+        // A failed refresh changes nothing the backend holds; the next
+        // foreground, online or liveness trigger retries it.
+        setStatus("subscribed")
+        return
+      }
+      confirmedBindingRef.current = null
       setIsSubscribed(false)
       setError(toSubscriptionError(err))
       setStatus("error")
@@ -332,6 +369,7 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
 
   useEffect(() => {
     if (permission !== "granted" || !workspaceId) {
+      confirmedBindingRef.current = null
       setIsSubscribed(false)
       setStatus("idle")
       setError(null)
@@ -414,6 +452,7 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
         })
       }
 
+      confirmedBindingRef.current = null
       setIsSubscribed(false)
       setStatus("idle")
       setError(null)

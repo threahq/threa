@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { CapturedNetworkRequest } from "posthog-js"
 import {
   beforeSend,
   capture,
@@ -68,6 +69,9 @@ describe("analytics client lifecycle", () => {
           maskAllInputs: true,
           maskTextSelector: "*",
           blockSelector: "img, video, canvas",
+          recordBody: false,
+          recordHeaders: false,
+          maskCapturedNetworkRequestFn: expect.any(Function),
         },
         enable_recording_console_log: false,
         capture_exceptions: true,
@@ -243,6 +247,81 @@ describe("analytics client lifecycle", () => {
     capture("event_1", { foo: "bar" })
 
     expect(root.instances.get("threa_tok_1")!.capture).not.toHaveBeenCalled()
+  })
+})
+
+describe("replay network capture", () => {
+  type MaskFn = (request: CapturedNetworkRequest) => CapturedNetworkRequest | null | undefined
+
+  async function networkMask(): Promise<MaskFn> {
+    const root = createFakeRoot()
+    await startAnalytics(params, root)
+    const config = vi.mocked(root.init).mock.calls[0]![1] as {
+      session_recording: { maskCapturedNetworkRequestFn: MaskFn }
+    }
+    return config.session_recording.maskCapturedNetworkRequestFn
+  }
+
+  function request(name: string, extra: Partial<CapturedNetworkRequest> = {}): CapturedNetworkRequest {
+    return {
+      name,
+      entryType: "resource",
+      startTime: 1,
+      duration: 2,
+      requestBody: '{"endpoint":"https://push.example/SECRET"}',
+      responseBody: '{"testId":"ptest_01ABC"}',
+      ...extra,
+    } as CapturedNetworkRequest
+  }
+
+  it("should drop every push API request, however its URL is written", async () => {
+    const mask = await networkMask()
+    const names = [
+      "https://app.threa.io/api/workspaces/ws_01X/push/test",
+      "https://app.threa.io/api/workspaces/ws_01X/push/test/ptest_01ABC",
+      "https://app.threa.io/api/workspaces/ws_01X/push/subscribe",
+      "https://app.threa.io/api/workspaces/ws_01X/push/unsubscribe",
+      "https://app.threa.io/api/workspaces/ws_01X/push/vapid-key",
+      "https://app.threa.io/api/workspaces/ws_01X/push/receipts",
+      "https://app.threa.io/api/push/cleanup-endpoint",
+      "https://app.threa.io/API/Workspaces/WS_01X/Push/Test/",
+      "https://app.threa.io/api/workspaces/ws_01X/push/test/ptest_01ABC?poll=1#x",
+      "/api/workspaces/ws_01X/push/test",
+      "api/push/cleanup-endpoint",
+    ]
+
+    expect(names.map((name) => mask(request(name, { isInitial: name.endsWith("/test") })))).toEqual(
+      names.map(() => null)
+    )
+  })
+
+  it("should keep other requests and page URLs with their timing only, and sanitize their URL", async () => {
+    const mask = await networkMask()
+    const origin = window.location.origin
+    const timing = (name: string, extra: Partial<CapturedNetworkRequest> = {}) =>
+      ({ name, entryType: "resource", startTime: 1, duration: 2, ...extra }) as CapturedNetworkRequest
+
+    expect({
+      api: mask(
+        request("https://app.threa.io/api/workspaces/ws_01X/streams/stream_01Y?cursor=c_1", {
+          requestHeaders: { "x-request-id": "req_1" },
+          responseHeaders: { "content-type": "application/json" },
+          responseBody: '{"token":"secret"}',
+        })
+      ),
+      relative: mask(request("/api/workspaces/ws_01X/pushes", { isInitial: true })),
+      page: mask({ name: "https://app.threa.io/w/ws_01X/push/test?m=msg_01Q" } as CapturedNetworkRequest),
+    }).toEqual({
+      api: timing("https://app.threa.io/api/workspaces/:id/streams/:id"),
+      relative: timing(`${origin}/api/workspaces/:id/pushes`, { isInitial: true }),
+      page: { name: "https://app.threa.io/w/:id/push/test" },
+    })
+  })
+
+  it("should drop a request whose URL cannot be read instead of throwing", async () => {
+    const mask = await networkMask()
+
+    expect([mask(request("http://[")), mask({ entryType: "resource" } as CapturedNetworkRequest)]).toEqual([null, null])
   })
 })
 

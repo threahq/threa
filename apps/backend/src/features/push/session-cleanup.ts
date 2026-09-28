@@ -8,9 +8,10 @@ export interface PushSessionCleanup {
 }
 
 /**
- * Periodically deletes stale push user sessions and expired delivery ledger
- * rows to bound table growth.
- * Only runs when push is enabled — no sessions are written when disabled.
+ * Periodically deletes stale push user sessions, expired delivery ledger
+ * rows and expired receipts to bound table growth. Database-only, so it runs
+ * whether or not the provider can send: rows written before push was disabled
+ * still reach their retention.
  */
 export function createPushSessionCleanup(
   pushService: PushService,
@@ -42,11 +43,19 @@ export function createPushSessionCleanup(
     } catch (err) {
       logger.warn({ errorCode: safeErrorCode(err) }, "Failed to clean up expired push delivery plans")
     }
+    try {
+      const deleted = await pushService.cleanupExpiredReceipts()
+      if (deleted > 0) {
+        logger.info({ deleted }, "Cleaned up expired push receipts")
+      }
+    } catch (err) {
+      logger.warn({ errorCode: safeErrorCode(err) }, "Failed to clean up expired push receipts")
+    }
   }
 
   return {
     start() {
-      if (timer || !pushService.isEnabled()) return
+      if (timer) return
       timer = setInterval(cleanup, intervalMs)
     },
 

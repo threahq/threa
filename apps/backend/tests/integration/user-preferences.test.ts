@@ -3,7 +3,7 @@ import { Pool } from "pg"
 import { UserPreferencesService, UserPreferencesRepository } from "../../src/features/user-preferences"
 import { workspaceId, userId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
-import { DEFAULT_USER_PREFERENCES } from "@threahq/types"
+import { ANALYTICS_CONSENT_GRANTED, ANALYTICS_CONSENT_KEY, DEFAULT_USER_PREFERENCES } from "@threahq/types"
 import { ARIADNE_AGENT_ID } from "../../src/features/agents"
 
 describe("User Preferences - Sparse Override Pattern", () => {
@@ -296,6 +296,130 @@ describe("User Preferences - Sparse Override Pattern", () => {
       // Payload should contain full merged preferences, not just overrides
       expect(payload.preferences.theme).toBe("dark")
       expect(payload.preferences.messageDisplay).toBe(DEFAULT_USER_PREFERENCES.messageDisplay)
+    })
+  })
+
+  describe("analytics consent grant", () => {
+    const grant = () => service.findAnalyticsConsentGrant(pool, testUserId)
+    const setConsent = (analyticsConsent: "granted" | "denied" | "unset") =>
+      service.updatePreferences(testWorkspaceId, testUserId, { analyticsConsent })
+
+    test("should keep one grant across no-op and unrelated writes, and hand out a new one after any withdrawal, reset or delete", async () => {
+      const seen: Record<string, string | null> = {}
+      await setConsent("granted")
+      seen.granted = await grant()
+      await setConsent("granted")
+      seen.regrantedNoOp = await grant()
+      await UserPreferencesRepository.setOverride(pool, testUserId, ANALYTICS_CONSENT_KEY, ANALYTICS_CONSENT_GRANTED)
+      seen.setOverrideNoOp = await grant()
+      await UserPreferencesRepository.bulkSetOverrides(pool, testUserId, [
+        { key: ANALYTICS_CONSENT_KEY, value: ANALYTICS_CONSENT_GRANTED },
+        { key: "theme", value: "dark" },
+      ])
+      seen.bulkNoOp = await grant()
+      await service.updatePreferences(testWorkspaceId, testUserId, { theme: "light" })
+      seen.unrelatedWrite = await grant()
+
+      await setConsent("denied")
+      seen.denied = await grant()
+      await setConsent("granted")
+      seen.afterDenied = await grant()
+      await setConsent("unset")
+      seen.unset = await grant()
+      await setConsent("granted")
+      seen.afterUnset = await grant()
+      await UserPreferencesRepository.deleteOverride(pool, testUserId, ANALYTICS_CONSENT_KEY)
+      await UserPreferencesRepository.setOverride(pool, testUserId, ANALYTICS_CONSENT_KEY, ANALYTICS_CONSENT_GRANTED)
+      seen.afterDelete = await grant()
+      await UserPreferencesRepository.deleteAllOverrides(pool, testUserId)
+      seen.reset = await grant()
+      await UserPreferencesRepository.bulkSetOverrides(pool, testUserId, [
+        { key: ANALYTICS_CONSENT_KEY, value: ANALYTICS_CONSENT_GRANTED },
+      ])
+      seen.afterReset = await grant()
+
+      const grants = [seen.granted, seen.afterDenied, seen.afterUnset, seen.afterDelete, seen.afterReset]
+      expect({
+        seen,
+        distinctGrants: new Set(grants).size,
+        increasing: grants.every((g, i) => i === 0 || BigInt(g!) > BigInt(grants[i - 1]!)),
+      }).toEqual({
+        seen: {
+          granted: expect.any(String),
+          regrantedNoOp: seen.granted,
+          setOverrideNoOp: seen.granted,
+          bulkNoOp: seen.granted,
+          unrelatedWrite: seen.granted,
+          denied: null,
+          afterDenied: expect.any(String),
+          unset: null,
+          afterUnset: expect.any(String),
+          afterDelete: expect.any(String),
+          reset: null,
+          afterReset: expect.any(String),
+        },
+        distinctGrants: 5,
+        increasing: true,
+      })
+    })
+
+    test("should own the generation in the database, whatever a legacy or explicit write sends", async () => {
+      const rowGeneration = async () =>
+        (
+          await pool.query<{ value_generation: string }>(
+            "SELECT value_generation FROM user_preference_overrides WHERE user_id = $1 AND key = $2",
+            [testUserId, ANALYTICS_CONSENT_KEY]
+          )
+        ).rows[0]?.value_generation ?? null
+      const seen: Record<string, string | null> = {}
+
+      // A replica that predates the column: its statements never name it.
+      await pool.query(
+        `INSERT INTO user_preference_overrides (user_id, key, value) VALUES ($1, $2, $3::jsonb)
+         ON CONFLICT (user_id, key) DO UPDATE SET value = $3::jsonb, updated_at = NOW()`,
+        [testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted")]
+      )
+      seen.legacyInsert = await rowGeneration()
+      await pool.query("UPDATE user_preference_overrides SET updated_at = NOW() WHERE user_id = $1 AND key = $2", [
+        testUserId,
+        ANALYTICS_CONSENT_KEY,
+      ])
+      seen.legacyTouch = await rowGeneration()
+      await pool.query(
+        "UPDATE user_preference_overrides SET value = $3::jsonb, updated_at = NOW() WHERE user_id = $1 AND key = $2",
+        [testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("denied")]
+      )
+      seen.legacyChange = await rowGeneration()
+
+      // A writer that tries to pick the number, or to restore an old one.
+      await pool.query("UPDATE user_preference_overrides SET value_generation = $3 WHERE user_id = $1 AND key = $2", [
+        testUserId,
+        ANALYTICS_CONSENT_KEY,
+        seen.legacyInsert,
+      ])
+      seen.explicitUpdate = await rowGeneration()
+      await pool.query("DELETE FROM user_preference_overrides WHERE user_id = $1", [testUserId])
+      await pool.query(
+        "INSERT INTO user_preference_overrides (user_id, key, value, value_generation) VALUES ($1, $2, $3::jsonb, $4)",
+        [testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted"), seen.legacyInsert]
+      )
+      seen.explicitInsert = await rowGeneration()
+
+      expect({
+        seen,
+        explicitInsertIsNew: ![seen.legacyInsert, seen.legacyChange].includes(seen.explicitInsert),
+        grant: await grant(),
+      }).toEqual({
+        seen: {
+          legacyInsert: expect.any(String),
+          legacyTouch: seen.legacyInsert,
+          legacyChange: expect.not.stringMatching(`^${seen.legacyInsert}$`),
+          explicitUpdate: seen.legacyChange,
+          explicitInsert: expect.any(String),
+        },
+        explicitInsertIsNew: true,
+        grant: seen.explicitInsert,
+      })
     })
   })
 })

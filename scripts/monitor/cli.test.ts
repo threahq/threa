@@ -20,9 +20,16 @@ describe("flag parsing", () => {
     expect(() => parseSince("yesterday", now)).toThrow()
   })
   test("--only and --skip select sections and reject unknown ones", () => {
-    expect([...pickSections(undefined, undefined)]).toEqual(["revision", "liveness", "pipelines", "logs", "resources"])
+    expect([...pickSections(undefined, undefined)]).toEqual([
+      "revision",
+      "liveness",
+      "pipelines",
+      "push",
+      "logs",
+      "resources",
+    ])
     expect([...pickSections("revision,logs", undefined)]).toEqual(["revision", "logs"])
-    expect([...pickSections(undefined, "resources,logs")]).toEqual(["revision", "liveness", "pipelines"])
+    expect([...pickSections(undefined, "resources,logs")]).toEqual(["revision", "liveness", "pipelines", "push"])
     expect(() => pickSections("nope", undefined)).toThrow("unknown section: nope")
   })
   test("--service rejects a name that would filter to zero lines and read as no errors", () => {

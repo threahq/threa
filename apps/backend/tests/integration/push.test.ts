@@ -1,14 +1,16 @@
-import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, afterEach, beforeEach, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import webpush from "web-push"
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import {
+  PushReceiptRepository,
   PushSubscriptionRepository,
   PushService,
   UserSessionRepository,
   PushTelemetry,
   type PushPreferences,
 } from "../../src/features/push"
+import { PUSH_HEALTH_EVENTS } from "../../src/features/push/telemetry"
 import { DisabledAnalyticsReporter, type AnalyticsEvent, type AnalyticsReporter } from "@threahq/backend-common"
 import { logger } from "../../src/lib/logger"
 import { workspaceId, userId, streamId, messageId, activityId } from "../../src/lib/id"
@@ -74,6 +76,10 @@ describe("Push Notifications", () => {
     testUserId = userId()
     sendSpy.mockReset()
     sendSpy.mockResolvedValue({} as any)
+  })
+
+  afterEach(async () => {
+    await pool.query("DELETE FROM push_receipts WHERE workspace_id = $1", [testWorkspaceId])
   })
 
   describe("PushSubscriptionRepository", () => {
@@ -420,6 +426,8 @@ describe("Push Notifications", () => {
           resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
           resolveFiredReminder: async () => null,
           isRewrapOutstanding: async () => false,
+          findAnalyticsConsentGrant: async () => null,
+          isE2eRootedStream: async () => false,
         },
       })
     }
@@ -620,6 +628,8 @@ describe("Push Notifications", () => {
           },
           resolveFiredReminder: async () => null,
           isRewrapOutstanding: async () => false,
+          findAnalyticsConsentGrant: async () => null,
+          isE2eRootedStream: async () => false,
         },
       })
     }
@@ -1375,10 +1385,10 @@ describe("Push Notifications", () => {
   })
 
   describe("PushService.deliverTestPush", () => {
-    function createService() {
+    function createService(telemetry = new PushTelemetry({ reporter: new DisabledAnalyticsReporter() })) {
       return new PushService({
         pool,
-        telemetry: new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
+        telemetry,
         vapidConfig: {
           publicKey: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
           privateKey: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
@@ -1392,6 +1402,8 @@ describe("Push Notifications", () => {
           resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
           resolveFiredReminder: async () => null,
           isRewrapOutstanding: async () => false,
+          findAnalyticsConsentGrant: async () => null,
+          isE2eRootedStream: async () => false,
         },
       })
     }
@@ -1406,6 +1418,7 @@ describe("Push Notifications", () => {
         failed: 0,
         delivered: 0,
         devices: [],
+        progress: null,
       })
       expect(sendSpy).not.toHaveBeenCalled()
     })
@@ -1494,9 +1507,174 @@ describe("Push Notifications", () => {
             statusCode: 201,
           },
         ],
+        progress: { expiresAt: expect.any(String) },
       })
       const remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
       expect(remaining.map((s) => s.id).sort()).toEqual([downSub.id, liveSub.id].sort())
+    })
+
+    test("should issue receipt capabilities only to devices whose worker supports them, with analytics denied, sending each device once, and await a report unless the provider definitely refused", async () => {
+      const reporter = new RecordingReporter()
+      const telemetry = new PushTelemetry({ reporter })
+      const service = createService(telemetry)
+      const insertSub = (name: string, receiptVersion?: number) =>
+        PushSubscriptionRepository.insert(pool, {
+          workspaceId: testWorkspaceId,
+          userId: testUserId,
+          endpoint: `https://push.example.com/sub/receipt-${name}`,
+          ...registrationKeys(),
+          deviceKey: `d-${name}`,
+          receiptVersion,
+        })
+      const supported = await insertSub("supported", 1)
+      const legacy = await insertSub("legacy")
+      const down = await insertSub("down", 1)
+      const refused = await insertSub("refused", 1)
+      sendSpy.mockImplementation(async (sub: any) => {
+        if (sub.endpoint.endsWith("/receipt-down")) throw Object.assign(new Error("Unavailable"), { statusCode: 503 })
+        if (sub.endpoint.endsWith("/receipt-refused"))
+          throw Object.assign(new Error("Bad request"), { statusCode: 400 })
+        return { statusCode: 201, body: "", headers: {} } as any
+      })
+
+      const result = await service.deliverTestPush(testWorkspaceId, testUserId)
+      const payloadFor = (endpoint: string) => {
+        const call = sendSpy.mock.calls.find((c) => (c[0] as { endpoint: string }).endpoint === endpoint)!
+        return JSON.parse(call[1] as string) as { data: Record<string, unknown>; receipt?: { token: string } }
+      }
+      const tokenFor = (endpoint: string) => payloadFor(endpoint).receipt?.token ?? null
+      const supportedToken = tokenFor(supported.endpoint)
+      await service.recordReceipt({
+        workspaceId: testWorkspaceId,
+        token: supportedToken!,
+        stage: "received",
+        reason: null,
+      })
+      // A lost provider response is not proof of non-delivery: the device's late report still lands.
+      await service.recordReceipt({
+        workspaceId: testWorkspaceId,
+        token: tokenFor(down.endpoint)!,
+        stage: "notification_created",
+        reason: null,
+      })
+      const progress = await service.getTestProgress(testWorkspaceId, testUserId, result.testId)
+      telemetry.flush()
+
+      const receiptOf = (id: string) => progress.devices.find((d) => d.subscriptionId === id)?.receipt
+      // A pre-receipt worker copies `data` into notification data; the capability rides beside it.
+      const envelopeOf = (endpoint: string) => {
+        const { data, ...rest } = payloadFor(endpoint)
+        return { dataKeys: Object.keys(data).sort(), envelopeKeys: Object.keys(rest).sort() }
+      }
+      expect({
+        wire: { supported: envelopeOf(supported.endpoint), legacy: envelopeOf(legacy.endpoint) },
+        sends: sendSpy.mock.calls.length,
+        armed: {
+          supported: supportedToken !== null,
+          legacy: tokenFor(legacy.endpoint) !== null,
+          down: tokenFor(down.endpoint) !== null,
+          refused: tokenFor(refused.endpoint) !== null,
+        },
+        progress: result.progress,
+        receipts: {
+          supported: receiptOf(supported.id),
+          legacy: receiptOf(legacy.id),
+          down: receiptOf(down.id),
+          refused: receiptOf(refused.id),
+        },
+      }).toEqual({
+        wire: {
+          supported: { dataKeys: ["kind", "sentAt", "workspaceId"], envelopeKeys: ["receipt"] },
+          legacy: { dataKeys: ["kind", "sentAt", "workspaceId"], envelopeKeys: [] },
+        },
+        sends: 4,
+        armed: { supported: true, legacy: false, down: true, refused: true },
+        progress: { expiresAt: progress.expiresAt },
+        receipts: {
+          supported: { expected: true, stage: "received", reason: null },
+          legacy: { expected: false, stage: null, reason: null },
+          down: { expected: true, stage: "notification_created", reason: null },
+          refused: { expected: false, stage: null, reason: null },
+        },
+      })
+      const reported = JSON.stringify(reporter.events)
+      const tokens = [supported, down, refused].map((sub) => tokenFor(sub.endpoint)!)
+      const identifying = [
+        testWorkspaceId,
+        testUserId,
+        result.testId,
+        ...[supported, legacy, down, refused].flatMap((sub) => [sub.id, sub.endpoint, sub.deviceKey]),
+        ...tokens,
+        ...tokens.map((token) => createHash("sha256").update(token).digest("hex")),
+      ]
+      expect({
+        receiptAggregates: reporter.events
+          .filter((e) => e.event === PUSH_HEALTH_EVENTS.RECEIPTS)
+          .map((e) => ({ result: e.properties?.result, count: e.properties?.count }))
+          .sort((a, b) => String(a.result).localeCompare(String(b.result))),
+        distinctIds: [...new Set(reporter.events.map((e) => e.distinctId))],
+        leaks: identifying.filter((v) => reported.includes(v)),
+      }).toEqual({
+        receiptAggregates: [
+          { result: "issued", count: 3 },
+          { result: "recorded", count: 2 },
+        ],
+        distinctIds: ["service:push"],
+        leaks: [],
+      })
+    })
+
+    test("should still send the test, without capabilities or progress, when its receipt rows cannot be stored", async () => {
+      const service = createService()
+      await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/receipt-store-fails",
+        ...registrationKeys(),
+        deviceKey: "d-store-fails",
+        receiptVersion: 1,
+      })
+      const insert = spyOn(PushReceiptRepository, "insertTestDevices").mockRejectedValue(new Error("connection reset"))
+      let result
+      try {
+        result = await service.deliverTestPush(testWorkspaceId, testUserId)
+      } finally {
+        insert.mockRestore()
+      }
+
+      expect({
+        accepted: result.accepted,
+        progress: result.progress,
+        receipt: JSON.parse(sendSpy.mock.calls[0]![1] as string).receipt ?? null,
+      }).toEqual({ accepted: 1, progress: null, receipt: null })
+    })
+
+    test("should drop the test's progress when its provider outcomes cannot be stored", async () => {
+      const service = createService()
+      const sub = await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/receipt-outcomes-fail",
+        ...registrationKeys(),
+        deviceKey: "d-outcomes-fail",
+        receiptVersion: 1,
+      })
+      const store = spyOn(PushReceiptRepository, "recordTestProviderOutcomes").mockRejectedValue(
+        new Error("connection reset")
+      )
+      let result
+      try {
+        result = await service.deliverTestPush(testWorkspaceId, testUserId)
+      } finally {
+        store.mockRestore()
+      }
+      const polled = await service.getTestProgress(testWorkspaceId, testUserId, result.testId)
+
+      expect({
+        accepted: result.accepted,
+        progress: result.progress,
+        polled: polled.devices.map((d) => ({ id: d.subscriptionId, outcome: d.outcome, expected: d.receipt.expected })),
+      }).toEqual({ accepted: 1, progress: null, polled: [{ id: sub.id, outcome: null, expected: false }] })
     })
 
     test("throws when push is not enabled on the server", async () => {
@@ -1512,6 +1690,8 @@ describe("Push Notifications", () => {
           resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
           resolveFiredReminder: async () => null,
           isRewrapOutstanding: async () => false,
+          findAnalyticsConsentGrant: async () => null,
+          isE2eRootedStream: async () => false,
         },
       })
       await expect(service.deliverTestPush(testWorkspaceId, testUserId)).rejects.toThrow(/not enabled/i)
