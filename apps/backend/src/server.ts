@@ -756,12 +756,10 @@ export async function startServer(): Promise<ServerInstance> {
   }
   const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
-  // PushService runs on pools.realtime so push delivery (outbox hot path) has
-  // reserved DB capacity isolated from background workers. Subscription CRUD
-  // endpoints also use this pool — low volume, plenty of headroom.
+  // Push queue workers share the main pool so fan-out cannot starve realtime broadcast queries.
   const pushTelemetry = new PushTelemetry({ reporter: analyticsReporter })
   const pushService = new PushService({
-    pool: pools.realtime,
+    pool,
     telemetry: pushTelemetry,
     vapidConfig: config.push.enabled
       ? {
@@ -1806,8 +1804,9 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   // Real-time delivery handlers (broadcast, push) use a dedicated `pools.realtime`
-  // so a saturated main pool (AI workers, file processing, embeddings) can never
-  // starve socket.io broadcasts or push notifications. All other outbox handlers
+  // for outbox fetch/cursor work so a saturated main pool (AI workers, file
+  // processing, embeddings) can never starve socket.io broadcasts. Push planning
+  // and delivery run through PushService on the main pool. All other outbox handlers
   // use the main pool — they enqueue jobs and can tolerate back-pressure.
   // `io.of("/bot")` is idempotent — `attachBotNamespace` already created
   // this namespace above; we resolve it once and hand it to the broadcaster

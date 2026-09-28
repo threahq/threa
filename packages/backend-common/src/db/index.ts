@@ -124,14 +124,12 @@ export function createDatabasePools(connectionString: string): DatabasePools {
 
   // Realtime pool reserved for real-time delivery:
   //   - BroadcastHandler (outbox fetch + cursor lock)
-  //   - PushNotificationHandler (outbox fetch + cursor lock + sequential delivery)
-  //   - PushService (subscription lookups, webpush delivery)
+  //   - PushNotificationHandler + CallRingPushHandler (outbox fetch + cursor lock;
+  //     the PushService queries they call run on the main pool)
   //   - socket.io postgres adapter (1 persistent LISTEN + pg_notify publishes)
   //
-  // Push delivery is sequential within a batch (parallel would risk message
-  // loss via CursorLock gap-window expiry — see outbox-handler.ts). The
-  // adapter's persistent LISTEN holds 1 slot permanently, leaving ~7 for
-  // transactional work. A saturated main pool cannot delay message delivery
+  // The adapter's persistent LISTEN holds 1 slot permanently, leaving ~7 for
+  // transactional work. A saturated main pool cannot delay broadcast delivery
   // because this pool is fully isolated.
   const realtime = createDatabasePool(connectionString, { max: realtimeMax })
 
