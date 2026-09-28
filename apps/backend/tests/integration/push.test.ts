@@ -1,12 +1,16 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import webpush from "web-push"
+import { randomBytes } from "node:crypto"
 import {
   PushSubscriptionRepository,
   PushService,
   UserSessionRepository,
+  PushTelemetry,
   type PushPreferences,
 } from "../../src/features/push"
+import { DisabledAnalyticsReporter, type AnalyticsEvent, type AnalyticsReporter } from "@threahq/backend-common"
+import { logger } from "../../src/lib/logger"
 import { workspaceId, userId, streamId, messageId, activityId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
 import {
@@ -28,6 +32,20 @@ function pushPreferences(notificationLevel: PrefNotificationLevel): PushPreferen
     pushReminderMinutes: DEFAULT_PUSH_REMINDER_MINUTES,
     pushQuickReaction: DEFAULT_PUSH_QUICK_REACTION,
   }
+}
+
+class RecordingReporter implements AnalyticsReporter {
+  events: AnalyticsEvent[] = []
+  captureException(): void {}
+  captureEvent(event: AnalyticsEvent): void {
+    this.events.push(event)
+  }
+  async shutdown(): Promise<void> {}
+}
+
+/** A browser-shaped registration: p256dh is an uncompressed P-256 point, auth 16 random bytes. */
+function registrationKeys(): { p256dh: string; auth: string } {
+  return { p256dh: webpush.generateVAPIDKeys().publicKey, auth: randomBytes(16).toString("base64url") }
 }
 
 // Stub web-push to avoid real HTTP calls
@@ -375,6 +393,7 @@ describe("Push Notifications", () => {
     function createService() {
       return new PushService({
         pool,
+        telemetry: new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
         vapidConfig: {
           publicKey: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
           privateKey: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
@@ -536,9 +555,11 @@ describe("Push Notifications", () => {
       notificationPaused?: boolean
       streamType?: StreamType | null
       workosUserId?: string | null
+      telemetry?: PushTelemetry
     }) {
       return new PushService({
         pool,
+        telemetry: overrides?.telemetry ?? new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
         vapidConfig: {
           publicKey: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
           privateKey: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
@@ -562,8 +583,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/pref-none",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
 
@@ -581,8 +601,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/mentions-channel",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
 
@@ -607,8 +626,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/mentions-mention",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
@@ -638,8 +656,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/mentions-dm",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
@@ -668,8 +685,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/all-activity",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
@@ -696,8 +712,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/workos-id",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
@@ -716,8 +731,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/no-workos-id",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
@@ -736,8 +750,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/reaction-emoji",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
@@ -770,16 +783,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-2",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
 
@@ -816,16 +827,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-2",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
 
@@ -865,16 +874,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-2",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
 
@@ -916,8 +923,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
 
@@ -956,16 +962,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-2",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
 
@@ -995,16 +999,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/device-2",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
 
@@ -1045,16 +1047,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/expired-1",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/expired-2",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
       // No socket session AND no recent re-registration → genuinely expired.
@@ -1082,16 +1082,14 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/active-device",
-        p256dh: "p1",
-        auth: "a1",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/expired-device",
-        p256dh: "p2",
-        auth: "a2",
+        ...registrationKeys(),
         deviceKey: "device-2",
       })
 
@@ -1132,8 +1130,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/active-user",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
 
@@ -1167,8 +1164,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/cross-ws",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "device-1",
       })
       // Backdate the local re-registration so ONLY the cross-workspace session
@@ -1208,8 +1204,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/http-only",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "device-http-only",
       })
 
@@ -1224,6 +1219,82 @@ describe("Push Notifications", () => {
       expect(remaining).toHaveLength(1)
     })
 
+    test("should not log endpoint, identifiers or the raw error when a send fails", async () => {
+      const service = createServiceWithLookups()
+      const sub = await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://fcm.googleapis.com/fcm/send/endpoint-secret-token",
+        ...registrationKeys(),
+        deviceKey: "d",
+      })
+      await createRecentInactiveSession(testWorkspaceId, testUserId)
+      sendSpy.mockRejectedValueOnce(
+        Object.assign(new Error("Received unexpected response code"), {
+          statusCode: 500,
+          endpoint: sub.endpoint,
+          body: "provider-body-secret",
+          headers: { "x-secret": "header-secret" },
+        })
+      )
+      const spies = (["debug", "info", "warn", "error"] as const).map((level) =>
+        spyOn(logger, level).mockImplementation(() => {})
+      )
+      try {
+        const payload = makePayload()
+        await service.deliverPushForActivity(payload)
+
+        const logged = JSON.stringify(spies.flatMap((spy) => spy.mock.calls))
+        expect(logged).toContain("unreachable")
+        for (const secret of [
+          "endpoint-secret-token",
+          "provider-body-secret",
+          "header-secret",
+          testWorkspaceId,
+          testUserId,
+          sub.id,
+          payload.activity.streamId!,
+          payload.activity.messageId!,
+          "Hello",
+        ]) {
+          expect(logged).not.toContain(secret)
+        }
+      } finally {
+        for (const spy of spies) spy.mockRestore()
+      }
+    })
+
+    test("should report the suppression reason as an aggregate event when the user paused notifications", async () => {
+      const reporter = new RecordingReporter()
+      const telemetry = new PushTelemetry({ reporter })
+      const service = createServiceWithLookups({ notificationPaused: true, telemetry })
+      await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/paused",
+        ...registrationKeys(),
+        deviceKey: "d",
+      })
+
+      await service.deliverPushForActivity(makePayload())
+      telemetry.flush()
+
+      expect(sendSpy).not.toHaveBeenCalled()
+      expect(reporter.events).toEqual([
+        {
+          distinctId: "service:push",
+          event: "push_suppressed",
+          properties: {
+            kind: "activity",
+            reason: "paused",
+            count: 1,
+            window_seconds: expect.any(Number),
+            $process_person_profile: false,
+          },
+        },
+      ])
+    })
+
     test("stale subscription cleanup on 410 response", async () => {
       const service = createServiceWithLookups()
 
@@ -1231,8 +1302,7 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/stale-410",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d",
       })
 
@@ -1254,6 +1324,7 @@ describe("Push Notifications", () => {
     function createService() {
       return new PushService({
         pool,
+        telemetry: new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
         vapidConfig: {
           publicKey: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
           privateKey: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
@@ -1271,7 +1342,14 @@ describe("Push Notifications", () => {
     test("returns zero attempted when user has no subscriptions", async () => {
       const service = createService()
       const result = await service.deliverTestPush(testWorkspaceId, testUserId)
-      expect(result).toEqual({ attempted: 0, failed: 0 })
+      expect(result).toEqual({
+        testId: expect.stringMatching(/^push_del_/),
+        attempted: 0,
+        accepted: 0,
+        failed: 0,
+        delivered: 0,
+        devices: [],
+      })
       expect(sendSpy).not.toHaveBeenCalled()
     })
 
@@ -1284,65 +1362,90 @@ describe("Push Notifications", () => {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/test-1",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d1",
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
         endpoint: "https://push.example.com/sub/test-2",
-        p256dh: "p",
-        auth: "a",
+        ...registrationKeys(),
         deviceKey: "d2",
       })
 
       const result = await service.deliverTestPush(testWorkspaceId, testUserId)
 
-      expect(result).toEqual({ attempted: 2, failed: 0 })
+      expect(result).toMatchObject({ attempted: 2, accepted: 2, failed: 0, delivered: 2 })
       expect(sendSpy).toHaveBeenCalledTimes(2)
       const payload = JSON.parse(sendSpy.mock.calls[0]![1] as string)
       expect(payload.data.kind).toBe("test")
       expect(payload.data.workspaceId).toBe(testWorkspaceId)
     })
 
-    test("counts failures and evicts subscriptions returning 410 Gone", async () => {
+    test("should report each device's push-service outcome, keeping attempted/failed/delivered for cached clients", async () => {
       const service = createService()
-
-      const liveSub = await PushSubscriptionRepository.insert(pool, {
-        workspaceId: testWorkspaceId,
-        userId: testUserId,
-        endpoint: "https://push.example.com/sub/live",
-        p256dh: "p",
-        auth: "a",
-        deviceKey: "d-live",
-      })
-      await PushSubscriptionRepository.insert(pool, {
-        workspaceId: testWorkspaceId,
-        userId: testUserId,
-        endpoint: "https://push.example.com/sub/stale",
-        p256dh: "p",
-        auth: "a",
-        deviceKey: "d-stale",
-      })
+      const insertSub = (name: string) =>
+        PushSubscriptionRepository.insert(pool, {
+          workspaceId: testWorkspaceId,
+          userId: testUserId,
+          endpoint: `https://push.example.com/sub/${name}`,
+          ...registrationKeys(),
+          deviceKey: `d-${name}`,
+          userAgent: `agent-${name}`,
+        })
+      const liveSub = await insertSub("live")
+      const goneSub = await insertSub("gone")
+      const downSub = await insertSub("down")
 
       sendSpy.mockImplementation(async (sub: any) => {
-        if (sub.endpoint.endsWith("/stale")) {
-          throw Object.assign(new Error("Gone"), { statusCode: 410 })
-        }
-        return {} as any
+        if (sub.endpoint.endsWith("/gone")) throw Object.assign(new Error("Gone"), { statusCode: 410 })
+        if (sub.endpoint.endsWith("/down")) throw Object.assign(new Error("Unavailable"), { statusCode: 503 })
+        return { statusCode: 201, body: "", headers: {} } as any
       })
 
       const result = await service.deliverTestPush(testWorkspaceId, testUserId)
 
-      expect(result).toEqual({ attempted: 2, failed: 1 })
+      expect({
+        ...result,
+        devices: [...result.devices].sort((a, b) => a.deviceKey.localeCompare(b.deviceKey)),
+      }).toEqual({
+        testId: expect.stringMatching(/^push_del_/),
+        attempted: 3,
+        accepted: 1,
+        failed: 2,
+        delivered: 1,
+        devices: [
+          {
+            subscriptionId: downSub.id,
+            deviceKey: "d-down",
+            userAgent: "agent-down",
+            outcome: "unreachable",
+            statusCode: 503,
+          },
+          {
+            subscriptionId: goneSub.id,
+            deviceKey: "d-gone",
+            userAgent: "agent-gone",
+            outcome: "registration_gone",
+            statusCode: 410,
+          },
+          {
+            subscriptionId: liveSub.id,
+            deviceKey: "d-live",
+            userAgent: "agent-live",
+            outcome: "accepted",
+            statusCode: 201,
+          },
+        ],
+      })
       const remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
-      expect(remaining.map((s) => s.id)).toEqual([liveSub.id])
+      expect(remaining.map((s) => s.id).sort()).toEqual([downSub.id, liveSub.id].sort())
     })
 
     test("throws when push is not enabled on the server", async () => {
       const service = new PushService({
         pool,
+        telemetry: new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
         vapidConfig: null,
         lookups: {
           getUserPushPreferences: async () => pushPreferences(PrefNotificationLevels.ALL),

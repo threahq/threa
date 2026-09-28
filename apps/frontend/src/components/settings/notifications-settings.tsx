@@ -13,11 +13,16 @@ import { CustomDurationPicker } from "@/components/scheduling/custom-duration-pi
 import { PushActionsSection } from "./push-actions-section"
 import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
-import { usePushNotifications } from "@/hooks/use-push-notifications"
+import { getDeviceKey, usePushNotifications } from "@/hooks/use-push-notifications"
 import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
 import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
-import { PREF_NOTIFICATION_LEVEL_OPTIONS, type PrefNotificationLevel } from "@threahq/types"
+import {
+  PREF_NOTIFICATION_LEVEL_OPTIONS,
+  type PrefNotificationLevel,
+  type PushProviderOutcome,
+  type PushTestResponse,
+} from "@threahq/types"
 
 const NOTIFICATION_LABELS: Record<PrefNotificationLevel, string> = {
   all: "All messages",
@@ -31,103 +36,171 @@ const NOTIFICATION_DESCRIPTIONS: Record<PrefNotificationLevel, string> = {
   none: "Don't send any notifications",
 }
 
-interface TestPushResponse {
-  attempted: number
-  delivered: number
-  failed: number
+/**
+ * A backend that predates per-device results answers only
+ * `{ attempted, failed, delivered }`, where `delivered` counts push-service
+ * acceptances.
+ */
+type TestPushResult =
+  | (Pick<PushTestResponse, "attempted" | "accepted"> & Partial<Pick<PushTestResponse, "devices">>)
+  | Pick<PushTestResponse, "attempted" | "delivered">
+
+interface TestOutcome {
+  result: TestPushResult
+  thisDeviceKey: string | null
 }
 
 type TestStatus =
   | { kind: "idle" }
-  | { kind: "sending" }
-  | { kind: "ok"; delivered: number; attempted: number; failed: number }
+  | { kind: "sending"; previous: TestOutcome | null }
+  | ({ kind: "ok" } & TestOutcome)
   | { kind: "error"; message: string }
 
-function TestPushButton({ workspaceId }: { workspaceId: string }) {
+const OUTCOME_TEXT: Record<PushProviderOutcome, string> = {
+  accepted: "Accepted by push service",
+  registration_gone: "Registration expired — removed",
+  rejected: "Rejected by push service",
+  unreachable: "Couldn't reach push service",
+  invalid_registration: "Invalid registration — not sent",
+}
+
+function describeUserAgent(userAgent: string | null): string {
+  if (!userAgent) return "Unknown device"
+  let browser = "Browser"
+  if (/Edg(A|iOS)?\//.test(userAgent)) browser = "Edge"
+  else if (/OPR\//.test(userAgent)) browser = "Opera"
+  else if (/SamsungBrowser\//.test(userAgent)) browser = "Samsung Internet"
+  else if (/(Firefox|FxiOS)\//.test(userAgent)) browser = "Firefox"
+  else if (/(Chrome|CriOS)\//.test(userAgent)) browser = "Chrome"
+  else if (/Safari\//.test(userAgent)) browser = "Safari"
+
+  let os: string | null = null
+  if (/iPhone/.test(userAgent)) os = "iPhone"
+  else if (/iPad/.test(userAgent)) os = "iPad"
+  else if (/Android/.test(userAgent)) os = "Android"
+  else if (/CrOS/.test(userAgent)) os = "ChromeOS"
+  else if (/Mac OS X|Macintosh/.test(userAgent)) os = "macOS"
+  else if (/Windows/.test(userAgent)) os = "Windows"
+  else if (/Linux/.test(userAgent)) os = "Linux"
+
+  return os ? `${browser} on ${os}` : browser
+}
+
+function useTestPush(workspaceId: string) {
   const [state, setState] = useState<TestStatus>({ kind: "idle" })
-  // Track the auto-reset timer so a second click clears any pending reset
-  // from the previous click — without this, a stale timer can fire mid-flight
-  // and clobber a "sending"/"ok" state with "idle".
+  // Only an error resets on its own; per-device results stay until the next
+  // test so they can be read. A second click clears a pending reset so a stale
+  // timer can't clobber the new attempt.
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Bumped per attempt and on unmount: a completion whose attempt is no longer
+  // current (superseded, unsubscribed, workspace switched) is dropped.
+  const attemptRef = useRef(0)
 
   useEffect(
     () => () => {
+      attemptRef.current += 1
       if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
     },
     []
   )
-
-  function scheduleReset() {
-    if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
-    resetTimerRef.current = setTimeout(() => {
-      resetTimerRef.current = null
-      setState({ kind: "idle" })
-    }, 5000)
-  }
 
   async function sendTest() {
     if (resetTimerRef.current !== null) {
       clearTimeout(resetTimerRef.current)
       resetTimerRef.current = null
     }
-    setState({ kind: "sending" })
+    const attempt = ++attemptRef.current
+    setState((current) => ({
+      kind: "sending",
+      previous: current.kind === "ok" ? { result: current.result, thisDeviceKey: current.thisDeviceKey } : null,
+    }))
     try {
-      // Backend-driven test: actually exercises the full delivery loop
-      // (DB → web-push → device), not just the local SW path. The phone
-      // should receive the notification within a few seconds.
-      const result = await api.post<TestPushResponse>(`/api/workspaces/${workspaceId}/push/test`)
-      setState({
-        kind: "ok",
-        delivered: result.delivered,
-        attempted: result.attempted,
-        failed: result.failed,
-      })
+      // Backend-driven test: exercises DB → web-push → push service, not just
+      // the local SW path.
+      const [result, thisDeviceKey] = await Promise.all([
+        api.post<TestPushResult>(`/api/workspaces/${workspaceId}/push/test`),
+        getDeviceKey().catch(() => null),
+      ])
+      if (attempt !== attemptRef.current) return
+      setState({ kind: "ok", result, thisDeviceKey })
     } catch (err) {
+      if (attempt !== attemptRef.current) return
       console.error("[Push] Test push failed:", err)
       const message = ApiError.isApiError(err) ? err.message : "Failed to send test"
       setState({ kind: "error", message })
-    } finally {
-      scheduleReset()
+      resetTimerRef.current = setTimeout(() => {
+        resetTimerRef.current = null
+        setState({ kind: "idle" })
+      }, 5000)
     }
   }
 
-  // Keep the button label fixed so a long backend message (e.g. "Push
-  // notifications are not enabled on this server") never blows out the layout
-  // — surface the message in an adjacent line instead.
+  return { state, sendTest }
+}
+
+function TestPushButton({ state, onSend }: { state: TestStatus; onSend: () => void }) {
+  // Fixed label so a long backend message never blows out the button; the
+  // message renders in the result area instead.
   let buttonLabel: string
   if (state.kind === "sending") buttonLabel = "Sending…"
   else if (state.kind === "error") buttonLabel = "Retry test"
   else buttonLabel = "Send test"
 
-  let resultLine: { tone: "muted" | "destructive"; text: string } | null = null
-  if (state.kind === "ok") {
-    if (state.attempted === 0) {
-      resultLine = { tone: "muted", text: "No devices subscribed yet." }
-    } else if (state.failed === 0) {
-      resultLine = {
-        tone: "muted",
-        text: `Sent to ${state.delivered} device${state.delivered === 1 ? "" : "s"}.`,
-      }
-    } else {
-      resultLine = {
-        tone: "destructive",
-        text: `Delivered to ${state.delivered} of ${state.attempted} devices — ${state.failed} failed.`,
-      }
-    }
-  } else if (state.kind === "error") {
-    resultLine = { tone: "destructive", text: state.message }
-  }
-
   return (
-    <div className="flex flex-col gap-1">
-      <Button onClick={sendTest} variant="outline" size="sm" disabled={state.kind === "sending"} className="self-start">
-        {state.kind === "sending" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-        {buttonLabel}
-      </Button>
-      {resultLine && (
-        <p className={resultLine.tone === "destructive" ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-          {resultLine.text}
-        </p>
+    <Button onClick={onSend} variant="outline" size="sm" disabled={state.kind === "sending"}>
+      {state.kind === "sending" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+      {buttonLabel}
+    </Button>
+  )
+}
+
+function TestPushResultView({ state }: { state: TestStatus }) {
+  if (state.kind === "error") return <p className="text-xs text-destructive">{state.message}</p>
+  if (state.kind === "ok") return <TestOutcomeView outcome={state} />
+  if (state.kind === "sending" && state.previous) return <TestOutcomeView outcome={state.previous} refreshing />
+  return null
+}
+
+function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome; refreshing?: boolean }) {
+  const { result, thisDeviceKey } = outcome
+  if (result.attempted === 0) return <p className="text-xs text-muted-foreground">No devices subscribed yet.</p>
+
+  const accepted = "accepted" in result ? result.accepted : result.delivered
+  const devices = "devices" in result ? (result.devices ?? []) : []
+  // The device key hashes only the user agent, so two machines on the same
+  // reduced UA share it; claim "This device" only when the match is unique.
+  const matches = devices.filter((device) => device.deviceKey === thisDeviceKey)
+  const thisSubscriptionId = matches.length === 1 ? matches[0]!.subscriptionId : null
+  return (
+    <div className={refreshing ? "space-y-2 opacity-60 transition-opacity" : "space-y-2"} aria-busy={refreshing}>
+      <p className={accepted === result.attempted ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
+        {`Accepted by push service on ${accepted} of ${result.attempted} device${result.attempted === 1 ? "" : "s"}.`}
+      </p>
+      {devices.length > 0 && (
+        <ul className="divide-y rounded-md border">
+          {devices.map((device) => (
+            <li
+              key={device.subscriptionId}
+              className="flex flex-col gap-0.5 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-medium">{describeUserAgent(device.userAgent)}</span>
+                {device.subscriptionId === thisSubscriptionId && (
+                  <Badge variant="secondary" className="shrink-0 font-normal">
+                    This device
+                  </Badge>
+                )}
+              </span>
+              <span
+                className={
+                  device.outcome === "accepted" ? "shrink-0 text-muted-foreground" : "shrink-0 text-destructive"
+                }
+              >
+                {OUTCOME_TEXT[device.outcome]}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   )
@@ -143,6 +216,28 @@ function PushStatusBadge({ info }: { info: StatusInfo }) {
     <Badge variant={info.variant} className="font-normal">
       {info.label}
     </Badge>
+  )
+}
+
+function SubscribedPushControls({ workspaceId, onUnsubscribe }: { workspaceId: string; onUnsubscribe: () => void }) {
+  const testPush = useTestPush(workspaceId)
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-2 text-sm">
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        <p className="text-muted-foreground">
+          This device is subscribed. Use <span className="font-medium text-foreground">Send test</span> to verify that
+          your phone or other devices actually receive a push.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <TestPushButton state={testPush.state} onSend={testPush.sendTest} />
+        <Button onClick={onUnsubscribe} variant="outline" size="sm">
+          Disable for this device
+        </Button>
+      </div>
+      <TestPushResultView state={testPush.state} />
+    </div>
   )
 }
 
@@ -201,21 +296,9 @@ function PushNotificationSection({ workspaceId }: { workspaceId: string }) {
         )}
 
         {permission === "granted" && isSubscribed && (
-          <div className="space-y-3">
-            <div className="flex items-start gap-2 text-sm">
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              <p className="text-muted-foreground">
-                This device is subscribed. Use <span className="font-medium text-foreground">Send test</span> to verify
-                that your phone or other devices actually receive a push.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <TestPushButton workspaceId={workspaceId} />
-              <Button onClick={unsubscribe} variant="outline" size="sm">
-                Disable for this device
-              </Button>
-            </div>
-          </div>
+          // Keyed so results never carry over to another workspace; unmounting on
+          // unsubscribe drops them too.
+          <SubscribedPushControls key={workspaceId} workspaceId={workspaceId} onUnsubscribe={unsubscribe} />
         )}
 
         {permission === "granted" && !isSubscribed && optedOut && (

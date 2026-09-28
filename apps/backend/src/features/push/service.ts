@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import type { UserPreferences } from "@threahq/types"
+import { PUSH_PROVIDER_OUTCOMES, type PushTestResponse, type UserPreferences } from "@threahq/types"
 import webpush from "web-push"
 import { withTransaction, withClient } from "../../db"
 import { PushSubscriptionRepository, type PushSubscription, type InsertPushSubscriptionParams } from "./repository"
@@ -18,6 +18,19 @@ import {
 import { toEmoji } from "../emoji"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
+import { pushDeliveryId } from "../../lib/id"
+import {
+  PUSH_SEND_KINDS,
+  PUSH_SUPPRESSION_REASONS,
+  INVALID_REGISTRATION_RESULT,
+  classifyProviderResult,
+  providerFamily,
+  safeErrorCode,
+  type ProviderResult,
+  type PushSendKind,
+  type PushSuppressionReason,
+} from "./outcome"
+import type { PushTelemetry } from "./telemetry"
 import type {
   ActivityCreatedOutboxPayload,
   SavedReminderFiredOutboxPayload,
@@ -38,6 +51,33 @@ const MAX_SUBSCRIPTIONS_PER_USER = 10
  * the process restarts.
  */
 const WEBPUSH_TIMEOUT_MS = 10_000
+
+/**
+ * web-push rejects keys it cannot encrypt to with the same status-less
+ * rejection as a network failure. Encrypting first, locally and
+ * deterministically, keeps a malformed stored registration from being counted
+ * (and later retried) as an unreachable push service.
+ */
+async function sendToDevice(
+  sub: PushSubscription,
+  payload: string,
+  options: PushDeliveryOptions
+): Promise<ProviderResult> {
+  try {
+    webpush.encrypt(sub.p256dh, sub.auth, payload, webpush.supportedContentEncodings.AES_128_GCM)
+  } catch {
+    return INVALID_REGISTRATION_RESULT
+  }
+  const [settled] = await Promise.allSettled([
+    webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
+      timeout: WEBPUSH_TIMEOUT_MS,
+      TTL: options.ttlSeconds,
+      urgency: options.urgency,
+      ...(options.topic ? { topic: options.topic } : {}),
+    }),
+  ])
+  return classifyProviderResult(settled)
+}
 
 /**
  * How long the push service may queue a message push for an offline device.
@@ -151,6 +191,11 @@ interface PushServiceDeps {
     subject: string
   } | null
   lookups: CrossFeatureLookups
+  telemetry: PushTelemetry
+}
+
+interface DeviceSendResult extends ProviderResult {
+  subscription: PushSubscription
 }
 
 /**
@@ -167,38 +212,17 @@ export function resolvePushPreview(contentMarkdown: string | null | undefined): 
   return stripMarkdownToInline(contentMarkdown, toEmoji).slice(0, 200)
 }
 
-/**
- * Classify a webpush send failure. 404/410 mean the endpoint is gone — evict.
- * 401/403 are never per-device: the push service rejected our VAPID auth, so
- * every future send to that service fails identically — logged at error level
- * (INV-11: a misconfig must be an alarm, not a warn-line in the noise).
- */
-function classifySendFailure(err: unknown, subscriptionId: string): "stale" | "other" {
-  const statusCode = (err as { statusCode?: number }).statusCode
-  if (statusCode === 404 || statusCode === 410) {
-    logger.info({ subscriptionId, statusCode }, "Marking stale push subscription for removal")
-    return "stale"
-  }
-  if (statusCode === 401 || statusCode === 403) {
-    logger.error(
-      { err, subscriptionId, statusCode },
-      "Push service rejected VAPID auth — delivery to this push service is broken until VAPID config is fixed"
-    )
-    return "other"
-  }
-  logger.warn({ err, subscriptionId }, "Failed to send push notification")
-  return "other"
-}
-
 export class PushService {
   private readonly pool: Pool
   private readonly vapidPublicKey: string
   private readonly canSend: boolean
   private readonly lookups: CrossFeatureLookups
+  private readonly telemetry: PushTelemetry
 
   constructor(deps: PushServiceDeps) {
     this.pool = deps.pool
     this.lookups = deps.lookups
+    this.telemetry = deps.telemetry
 
     if (deps.vapidConfig) {
       // INV-9 approved exception: web-push requires module-level VAPID config
@@ -256,11 +280,12 @@ export class PushService {
    * because this is an explicit user diagnostic — we want to know whether the
    * full delivery loop (DB → web-push → device) is working.
    *
-   * Returns delivery stats so the caller can show "delivered to N devices" or
-   * "all N devices failed". Stale endpoints (404/410) are evicted so the next
-   * test reflects current registration state.
+   * Reports what each device's push service answered. Acceptance by the push
+   * service is not display on the device, so nothing here claims delivery.
+   * Stale endpoints (404/410) are evicted so the next test reflects current
+   * registration state.
    */
-  async deliverTestPush(workspaceId: string, userId: string): Promise<{ attempted: number; failed: number }> {
+  async deliverTestPush(workspaceId: string, userId: string): Promise<PushTestResponse> {
     if (!this.canSend) {
       // Mirror handlers.ts contract (INV-32) so non-handler callers (workers,
       // internal APIs) get the same status/code semantics instead of a generic
@@ -268,9 +293,11 @@ export class PushService {
       throw new HttpError("Push notifications are not enabled", { status: 503, code: "PUSH_DISABLED" })
     }
 
+    const testId = pushDeliveryId()
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, userId)
     if (subscriptions.length === 0) {
-      return { attempted: 0, failed: 0 }
+      this.telemetry.recordSuppressed(PUSH_SEND_KINDS.TEST, PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS)
+      return { testId, attempted: 0, accepted: 0, failed: 0, delivered: 0, devices: [] }
     }
 
     const pushPayload = JSON.stringify({
@@ -281,34 +308,29 @@ export class PushService {
       },
     })
 
-    let failed = 0
-    const staleIds: string[] = []
-    await Promise.allSettled(
-      subscriptions.map(async (sub) => {
-        try {
-          await webpush.sendNotification(
-            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-            pushPayload,
-            { timeout: WEBPUSH_TIMEOUT_MS, TTL: TEST_PUSH_TTL_SECONDS, urgency: "high" }
-          )
-        } catch (err: unknown) {
-          failed++
-          if (classifySendFailure(err, sub.id) === "stale") {
-            staleIds.push(sub.id)
-          }
-        }
-      })
+    const results = await this.sendAndEvictStale(
+      workspaceId,
+      subscriptions,
+      pushPayload,
+      { ttlSeconds: TEST_PUSH_TTL_SECONDS, urgency: "high" },
+      PUSH_SEND_KINDS.TEST
     )
 
-    if (staleIds.length > 0) {
-      try {
-        await PushSubscriptionRepository.deleteByIds(this.pool, workspaceId, staleIds)
-      } catch (deleteErr) {
-        logger.warn({ err: deleteErr, count: staleIds.length }, "Failed to delete stale subscriptions after test push")
-      }
+    const accepted = results.filter((r) => r.outcome === PUSH_PROVIDER_OUTCOMES.ACCEPTED).length
+    return {
+      testId,
+      attempted: results.length,
+      accepted,
+      failed: results.length - accepted,
+      delivered: accepted,
+      devices: results.map(({ subscription, outcome, statusCode }) => ({
+        subscriptionId: subscription.id,
+        deviceKey: subscription.deviceKey,
+        userAgent: subscription.userAgent,
+        outcome,
+        statusCode,
+      })),
     }
-
-    return { attempted: subscriptions.length, failed }
   }
 
   async upsertSession(params: {
@@ -347,50 +369,41 @@ export class PushService {
    * formats display text client-side.
    */
   async deliverPushForActivity(payload: ActivityCreatedOutboxPayload): Promise<void> {
-    if (!this.canSend) return
+    const kind = PUSH_SEND_KINDS.ACTIVITY
+    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
 
     const { workspaceId, targetUserId, activity } = payload
 
     // Self rows represent the target user's own action — do not push.
-    if (activity.isSelf) return
+    if (activity.isSelf) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.SELF)
 
     // Member-added activities notify via the feed only, not push.
-    if (activity.activityType === ActivityTypes.MEMBER_ADDED) return
+    if (activity.activityType === ActivityTypes.MEMBER_ADDED) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.MEMBER_ADDED)
+    }
 
     const prefs = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
     const prefLevel = prefs.notificationLevel
 
     if (prefLevel === PrefNotificationLevels.NONE) {
-      return
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
     }
 
     // Do-not-disturb suppresses push delivery (the activity feed already
     // recorded the row — DND silences the alert, it does not drop history).
     if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
     }
 
     if (prefLevel === PrefNotificationLevels.MENTIONS) {
       const shouldPush = await this.shouldPushForMentionsMode(workspaceId, activity.activityType, activity.streamId)
       if (!shouldPush) {
-        return
+        return this.suppress(kind, PUSH_SUPPRESSION_REASONS.MENTIONS_MODE)
       }
     }
 
-    // Subscriptions on devices with an expired session get a one-shot "session expired"
-    // notification and are cleaned up; active-device subscriptions get normal delivery.
-    const { active: activeSubscriptions, expired: expiredSubscriptions } = await this.getTargetSubscriptions(
-      workspaceId,
-      targetUserId
-    )
-
-    if (expiredSubscriptions.length > 0) {
-      await this.deliverSessionExpiredAndCleanup(workspaceId, targetUserId, expiredSubscriptions)
-    }
-
-    if (activeSubscriptions.length === 0) {
-      return
-    }
+    const activeSubscriptions = await this.resolveActiveSubscriptions(kind, workspaceId, targetUserId)
+    if (activeSubscriptions.length === 0) return
 
     // Recipient's global WorkOS user id — lets the SW flip the active account
     // before opening the deep link when this push is for a parked account.
@@ -440,11 +453,17 @@ export class PushService {
     // Topic keyed by stream + notification group: mentions display under their
     // own tag in the SW, so they collapse separately from plain messages.
     const isMention = activity.activityType === ActivityTypes.MENTION
-    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload, {
-      ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
-      urgency: "high",
-      topic: activity.streamId ? pushTopic(activity.streamId, isMention ? "m" : "") : undefined,
-    })
+    await this.sendAndEvictStale(
+      workspaceId,
+      activeSubscriptions,
+      pushPayload,
+      {
+        ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
+        urgency: "high",
+        topic: activity.streamId ? pushTopic(activity.streamId, isMention ? "m" : "") : undefined,
+      },
+      kind
+    )
   }
 
   /**
@@ -454,33 +473,24 @@ export class PushService {
    * still fires via socket delivery on online devices.)
    */
   async deliverPushForSavedReminder(payload: SavedReminderFiredOutboxPayload): Promise<void> {
-    if (!this.canSend) return
+    const kind = PUSH_SEND_KINDS.SAVED_REMINDER
+    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
 
     const { workspaceId, targetUserId, savedId, messageId, streamId, saved } = payload
 
     const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
     if (prefLevel === PrefNotificationLevels.NONE) {
-      return
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
     }
 
     // A reminder the user scheduled still respects an active do-not-disturb
     // window — the push is held back; the in-app/socket toast still fires.
     if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
     }
 
-    const { active: activeSubscriptions, expired: expiredSubscriptions } = await this.getTargetSubscriptions(
-      workspaceId,
-      targetUserId
-    )
-
-    if (expiredSubscriptions.length > 0) {
-      await this.deliverSessionExpiredAndCleanup(workspaceId, targetUserId, expiredSubscriptions)
-    }
-
-    if (activeSubscriptions.length === 0) {
-      return
-    }
+    const activeSubscriptions = await this.resolveActiveSubscriptions(kind, workspaceId, targetUserId)
+    if (activeSubscriptions.length === 0) return
 
     // Structured payload (INV-46): the SW composes display text. When the
     // message is unavailable (deleted or access lost) we still notify — the
@@ -503,11 +513,13 @@ export class PushService {
       },
     })
 
-    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload, {
-      ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
-      urgency: "high",
-      topic: pushTopic(savedId),
-    })
+    await this.sendAndEvictStale(
+      workspaceId,
+      activeSubscriptions,
+      pushPayload,
+      { ttlSeconds: MESSAGE_PUSH_TTL_SECONDS, urgency: "high", topic: pushTopic(savedId) },
+      kind
+    )
   }
 
   /**
@@ -521,23 +533,18 @@ export class PushService {
    * owner is already looking at — there the socket signal already healed it.
    */
   async deliverRewrapNudge(payload: E2eRewrapNudgeOutboxPayload): Promise<void> {
-    if (!this.canSend) return
+    const kind = PUSH_SEND_KINDS.REWRAP_NUDGE
+    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
 
     const { workspaceId, targetUserId, rootStreamId } = payload
 
     const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) return
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
-
-    const { active: activeSubscriptions, expired: expiredSubscriptions } = await this.getTargetSubscriptions(
-      workspaceId,
-      targetUserId
-    )
-
-    if (expiredSubscriptions.length > 0) {
-      await this.deliverSessionExpiredAndCleanup(workspaceId, targetUserId, expiredSubscriptions)
+    if (prefLevel === PrefNotificationLevels.NONE) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
     }
 
+    const activeSubscriptions = await this.resolveActiveSubscriptions(kind, workspaceId, targetUserId)
     if (activeSubscriptions.length === 0) return
 
     const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
@@ -554,11 +561,13 @@ export class PushService {
 
     // "r" suffix keeps repeated nudges collapsing with each other, not with
     // message pushes for the same stream.
-    await this.sendAndEvictStale(workspaceId, activeSubscriptions, pushPayload, {
-      ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
-      urgency: "high",
-      topic: pushTopic(rootStreamId, "r"),
-    })
+    await this.sendAndEvictStale(
+      workspaceId,
+      activeSubscriptions,
+      pushPayload,
+      { ttlSeconds: MESSAGE_PUSH_TTL_SECONDS, urgency: "high", topic: pushTopic(rootStreamId, "r") },
+      kind
+    )
   }
 
   /**
@@ -604,15 +613,18 @@ export class PushService {
    * payload (INV-46): the service worker composes the notification.
    */
   async deliverCallRing(payload: CallInvitationCreatedOutboxPayload): Promise<void> {
-    if (!this.canSend) return
+    const kind = PUSH_SEND_KINDS.CALL_RING
+    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
     const { workspaceId, targetUserId, attemptId, callId, streamId, inviter, mode, expiresAt } = payload
 
     const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) return
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
+    if (prefLevel === PrefNotificationLevels.NONE) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
+    }
 
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
-    if (subscriptions.length === 0) return
+    if (subscriptions.length === 0) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS)
 
     const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
     const pushPayload = JSON.stringify({
@@ -629,11 +641,13 @@ export class PushService {
       },
     })
 
-    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {
-      ttlSeconds: CALL_RING_TTL_SECONDS,
-      urgency: "high",
-      topic: pushTopic(attemptId, "c"),
-    })
+    await this.sendAndEvictStale(
+      workspaceId,
+      subscriptions,
+      pushPayload,
+      { ttlSeconds: CALL_RING_TTL_SECONDS, urgency: "high", topic: pushTopic(attemptId, "c") },
+      kind
+    )
   }
 
   /**
@@ -648,15 +662,18 @@ export class PushService {
    * to cancel.
    */
   async deliverCallRingCancel(payload: CallInvitationSettledOutboxPayload): Promise<void> {
-    if (!this.canSend) return
+    const kind = PUSH_SEND_KINDS.CALL_RING_CANCEL
+    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
     const { workspaceId, targetUserId, attemptId, inviterName } = payload
 
     const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) return
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) return
+    if (prefLevel === PrefNotificationLevels.NONE) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
+    }
 
     const subscriptions = await PushSubscriptionRepository.findByUserId(this.pool, workspaceId, targetUserId)
-    if (subscriptions.length === 0) return
+    if (subscriptions.length === 0) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS)
 
     const pushPayload = JSON.stringify({
       data: {
@@ -670,16 +687,19 @@ export class PushService {
       },
     })
 
-    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {
-      ttlSeconds: CALL_RING_TTL_SECONDS,
-      urgency: "high",
-      topic: pushTopic(attemptId, "c"),
-    })
+    await this.sendAndEvictStale(
+      workspaceId,
+      subscriptions,
+      pushPayload,
+      { ttlSeconds: CALL_RING_TTL_SECONDS, urgency: "high", topic: pushTopic(attemptId, "c") },
+      kind
+    )
   }
 
   /**
-   * Sends a push payload to the given subscriptions and batch-deletes any
-   * that return 404/410 (INV-56). Shared by all delivery paths (INV-35).
+   * Sends a push payload to the given subscriptions, records each push
+   * service answer, and batch-deletes registrations that are gone (404/410,
+   * INV-56). Shared by all delivery paths (INV-35).
    *
    * Deliberately NO web-push "clear" fan-out exists here (it used to): a push
    * that results in no visible notification counts against browser silent-push
@@ -694,37 +714,58 @@ export class PushService {
     workspaceId: string,
     subscriptions: PushSubscription[],
     pushPayload: string,
-    options: PushDeliveryOptions
-  ): Promise<void> {
-    const staleIds: string[] = []
-    await Promise.allSettled(
-      subscriptions.map(async (sub) => {
-        try {
-          await webpush.sendNotification(
-            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-            pushPayload,
-            {
-              timeout: WEBPUSH_TIMEOUT_MS,
-              TTL: options.ttlSeconds,
-              urgency: options.urgency,
-              ...(options.topic ? { topic: options.topic } : {}),
-            }
-          )
-        } catch (err: unknown) {
-          if (classifySendFailure(err, sub.id) === "stale") {
-            staleIds.push(sub.id)
-          }
-        }
+    options: PushDeliveryOptions,
+    kind: PushSendKind
+  ): Promise<DeviceSendResult[]> {
+    const results = await Promise.all(
+      subscriptions.map(async (subscription) => {
+        const result = await sendToDevice(subscription, pushPayload, options)
+        this.telemetry.recordSendOutcome({ ...result, kind, provider: providerFamily(subscription.endpoint) })
+        return { ...result, subscription }
       })
     )
 
+    const staleIds = results
+      .filter((r) => r.outcome === PUSH_PROVIDER_OUTCOMES.REGISTRATION_GONE)
+      .map((r) => r.subscription.id)
     if (staleIds.length > 0) {
       try {
         await PushSubscriptionRepository.deleteByIds(this.pool, workspaceId, staleIds)
       } catch (deleteErr) {
-        logger.warn({ err: deleteErr, count: staleIds.length }, "Failed to delete stale subscriptions")
+        logger.warn(
+          { kind, count: staleIds.length, errorCode: safeErrorCode(deleteErr) },
+          "Failed to delete stale push subscriptions"
+        )
       }
     }
+    return results
+  }
+
+  private suppress(kind: PushSendKind, reason: PushSuppressionReason): void {
+    this.telemetry.recordSuppressed(kind, reason)
+  }
+
+  /**
+   * Devices to notify now. Devices whose session expired get the one-shot
+   * session-expired push and are cleaned up; an empty result is recorded as
+   * a suppression for `kind`.
+   */
+  private async resolveActiveSubscriptions(
+    kind: PushSendKind,
+    workspaceId: string,
+    userId: string
+  ): Promise<PushSubscription[]> {
+    const { active, expired } = await this.getTargetSubscriptions(workspaceId, userId)
+    if (expired.length > 0) {
+      await this.deliverSessionExpiredAndCleanup(workspaceId, expired)
+    }
+    if (active.length === 0) {
+      this.suppress(
+        kind,
+        expired.length > 0 ? PUSH_SUPPRESSION_REASONS.SESSIONS_EXPIRED : PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS
+      )
+    }
+    return active
   }
 
   /**
@@ -733,11 +774,7 @@ export class PushService {
    * devices are unaffected. The SW shows a "Your session has expired — tap
    * to sign back in" notification.
    */
-  private async deliverSessionExpiredAndCleanup(
-    workspaceId: string,
-    userId: string,
-    subscriptions: PushSubscription[]
-  ): Promise<void> {
+  private async deliverSessionExpiredAndCleanup(workspaceId: string, subscriptions: PushSubscription[]): Promise<void> {
     const pushPayload = JSON.stringify({
       data: {
         action: "session_expired" as const,
@@ -746,11 +783,13 @@ export class PushService {
     })
 
     // Best-effort delivery — some subscriptions may already be stale
-    await this.sendAndEvictStale(workspaceId, subscriptions, pushPayload, {
-      ttlSeconds: SESSION_EXPIRED_TTL_SECONDS,
-      urgency: "normal",
-      topic: "session-expired",
-    })
+    await this.sendAndEvictStale(
+      workspaceId,
+      subscriptions,
+      pushPayload,
+      { ttlSeconds: SESSION_EXPIRED_TTL_SECONDS, urgency: "normal", topic: "session-expired" },
+      PUSH_SEND_KINDS.SESSION_EXPIRED
+    )
 
     // Clean up remaining subscriptions so no further notifications are sent.
     // Reuse the IDs we already have rather than re-fetching (INV-20: avoids
@@ -759,12 +798,12 @@ export class PushService {
     const subscriptionIds = subscriptions.map((s) => s.id)
     try {
       await PushSubscriptionRepository.deleteByIds(this.pool, workspaceId, subscriptionIds)
-      logger.info(
-        { workspaceId, userId, count: subscriptionIds.length },
-        "Cleaned up push subscriptions for expired session"
-      )
+      logger.info({ count: subscriptionIds.length }, "Cleaned up push subscriptions for expired session")
     } catch (err) {
-      logger.warn({ err, workspaceId, userId }, "Failed to clean up push subscriptions for expired session")
+      logger.warn(
+        { count: subscriptionIds.length, errorCode: safeErrorCode(err) },
+        "Failed to clean up push subscriptions for expired session"
+      )
     }
   }
 

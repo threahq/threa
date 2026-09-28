@@ -211,6 +211,20 @@ export const callRingOutcomesTotal = new Counter({
   registers: [registry],
 })
 
+export const pushSendOutcomesTotal = new Counter({
+  name: "push_send_outcomes_total",
+  help: "Web push sends by kind, push-service outcome and provider family",
+  labelNames: ["kind", "outcome", "provider"],
+  registers: [registry],
+})
+
+export const pushSuppressedTotal = new Counter({
+  name: "push_suppressed_total",
+  help: "Push deliveries that sent nothing, by kind and reason",
+  labelNames: ["kind", "reason"],
+  registers: [registry],
+})
+
 export const callSweepReapedTotal = new Counter({
   name: "call_sweep_reaped_total",
   help: "Rows reaped by the call lease sweeper by kind",

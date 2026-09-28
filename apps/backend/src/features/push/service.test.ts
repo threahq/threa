@@ -1,8 +1,11 @@
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test"
 import webpush from "web-push"
+import { randomBytes } from "node:crypto"
 import type { Pool } from "pg"
 import { ActivityTypes, PrefNotificationLevels, SavedStatuses, type PrefNotificationLevel } from "@threahq/types"
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { PushService } from "./service"
+import { PushTelemetry } from "./telemetry"
 import { PushSubscriptionRepository } from "./repository"
 import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../lib/outbox"
 
@@ -26,6 +29,11 @@ function makeActivityPayload(): ActivityCreatedOutboxPayload {
   }
 }
 
+/** A browser-shaped registration: p256dh is an uncompressed P-256 point, auth 16 random bytes. */
+function registrationKeys(): { p256dh: string; auth: string } {
+  return { p256dh: webpush.generateVAPIDKeys().publicKey, auth: randomBytes(16).toString("base64url") }
+}
+
 const fakePool = {
   connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
 } as unknown as Pool
@@ -37,6 +45,7 @@ function makeService(
   const keys = webpush.generateVAPIDKeys()
   return new PushService({
     pool: fakePool,
+    telemetry: new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
     vapidConfig: { publicKey: keys.publicKey, privateKey: keys.privateKey, subject: "mailto:test@example.com" },
     lookups: {
       getUserPushPreferences: async () => ({
@@ -118,8 +127,7 @@ describe("PushService delivery options", () => {
     workspaceId: "ws_1",
     userId: "usr_1",
     endpoint: "https://push.example.com/sub",
-    p256dh: "p256dh",
-    auth: "auth",
+    ...registrationKeys(),
     deviceKey: "device1",
     userAgent: null,
     createdAt: new Date(),
@@ -274,6 +282,20 @@ describe("PushService delivery options", () => {
 
     const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
     expect(options).toEqual({ timeout: 10_000, TTL: 24 * 60 * 60, urgency: "high", topic: "1r" })
+  })
+
+  it("records a stored registration whose keys cannot be encrypted to as invalid, without sending", async () => {
+    findByUserId.mockResolvedValue([{ ...subscription, p256dh: "not-a-p256-point", auth: "short" }])
+
+    const result = await makeService(false).deliverTestPush("ws_1", "usr_1")
+
+    expect(sendNotification).not.toHaveBeenCalled()
+    expect(result).toMatchObject({
+      attempted: 1,
+      accepted: 0,
+      failed: 1,
+      devices: [{ subscriptionId: subscription.id, outcome: "invalid_registration", statusCode: null }],
+    })
   })
 
   it("delivers session-expired at normal urgency with a week-long TTL before cleaning the subscription up", async () => {

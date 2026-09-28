@@ -25,6 +25,8 @@ export {
   callTimeToJoinSeconds,
   callEndedTotal,
   callRingOutcomesTotal,
+  pushSendOutcomesTotal,
+  pushSuppressedTotal,
   callSweepReapedTotal,
   callTransportPolicyDecisionsTotal,
   callTransportAdmissionTotal,
