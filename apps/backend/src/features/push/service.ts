@@ -1,8 +1,21 @@
 import type { Pool } from "pg"
 import { PUSH_PROVIDER_OUTCOMES, type PushTestResponse, type UserPreferences } from "@threahq/types"
 import webpush from "web-push"
-import { withTransaction, withClient } from "../../db"
+import { withTransaction, withClient, type Querier } from "../../db"
 import { PushSubscriptionRepository, type PushSubscription, type InsertPushSubscriptionParams } from "./repository"
+import {
+  PushDeliveryRepository,
+  PUSH_DELIVERY_STATUSES,
+  type ClaimedPushDelivery,
+  type DurablePushKind,
+  type TerminalPushDeliveryStatus,
+} from "./delivery-repository"
+import {
+  decideSettlement,
+  PUSH_INFRASTRUCTURE_FAILURE,
+  PUSH_MAX_ABANDONED_CLAIMS,
+  type ProviderAttemptResult,
+} from "./retry-policy"
 import { UserSessionRepository, type UserSession } from "./session-repository"
 import {
   PrefNotificationLevels,
@@ -17,7 +30,7 @@ import {
 } from "@threahq/types"
 import { toEmoji } from "../emoji"
 import { logger } from "../../lib/logger"
-import { HttpError } from "../../lib/errors"
+import { HttpError, safeErrorCode } from "../../lib/errors"
 import { pushDeliveryId } from "../../lib/id"
 import {
   PUSH_SEND_KINDS,
@@ -25,7 +38,7 @@ import {
   INVALID_REGISTRATION_RESULT,
   classifyProviderResult,
   providerFamily,
-  safeErrorCode,
+  retryAfterMs,
   type ProviderResult,
   type PushSendKind,
   type PushSuppressionReason,
@@ -38,18 +51,21 @@ import type {
   CallInvitationCreatedOutboxPayload,
   CallInvitationSettledOutboxPayload,
 } from "../../lib/outbox"
+import {
+  JobQueues,
+  QueueRepository,
+  type InsertQueueMessageParams,
+  type PushDeliverJobData,
+  type PushSessionExpiredJobData,
+} from "../../lib/queue"
+import type { ActivityPushInvalidReason, ActivityPushResolution } from "../activity"
+import type { FiredReminderSource } from "../saved-messages"
+import { REWRAP_WEBPUSH_REEMIT_MS } from "../enclave-runtimes"
 
 /** Maximum push subscriptions per user per workspace to bound parallel delivery calls */
 const MAX_SUBSCRIPTIONS_PER_USER = 10
 
-/**
- * Hard cap on each web-push HTTP request. Without it the web-push library sets
- * no socket timeout at all, so a push-service connection that accepts TLS but
- * never responds blocks indefinitely (Node enables no TCP keepalive here) —
- * and because the outbox handler processes events sequentially under a held
- * cursor lock, one hung send wedges ALL push delivery for every user until
- * the process restarts.
- */
+/** web-push has no default socket timeout; stalled single-attempt sends still hold the outbox cursor. */
 const WEBPUSH_TIMEOUT_MS = 10_000
 
 /**
@@ -59,14 +75,14 @@ const WEBPUSH_TIMEOUT_MS = 10_000
  * (and later retried) as an unreachable push service.
  */
 async function sendToDevice(
-  sub: PushSubscription,
+  sub: Pick<PushSubscription, "endpoint" | "p256dh" | "auth">,
   payload: string,
   options: PushDeliveryOptions
-): Promise<ProviderResult> {
+): Promise<ProviderAttemptResult> {
   try {
     webpush.encrypt(sub.p256dh, sub.auth, payload, webpush.supportedContentEncodings.AES_128_GCM)
   } catch {
-    return INVALID_REGISTRATION_RESULT
+    return { ...INVALID_REGISTRATION_RESULT, retryAfterMs: null }
   }
   const [settled] = await Promise.allSettled([
     webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, {
@@ -76,7 +92,7 @@ async function sendToDevice(
       ...(options.topic ? { topic: options.topic } : {}),
     }),
   ])
-  return classifyProviderResult(settled)
+  return { ...classifyProviderResult(settled), retryAfterMs: retryAfterMs(settled, Date.now()) }
 }
 
 /**
@@ -158,6 +174,34 @@ const RECENT_INTERACTION_WINDOW_MS = PRESENCE_INTERACTION_WINDOW_MS
  */
 const SESSION_EXPIRY_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000 // 30 days (matches cookie TTL)
 
+/**
+ * How long a claimed device delivery stays owned: revalidation reads plus the
+ * send timeout, with room to spare. Ownership is re-asserted right before the
+ * send, so a worker whose reads outlived its lease never sends.
+ */
+const PUSH_DELIVERY_LEASE_MS = 60_000
+
+/** Ledger rows are kept this long past their expiry (first-party diagnostics), then deleted. */
+const PUSH_DELIVERY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
+const RETENTION_BATCH_SIZE = 500
+const RETENTION_MAX_BATCHES = 20
+
+/** Slack past the DB-computed claimable time: the queue compares `process_after` with app-server time. */
+const WAKE_MARGIN_MS = 1_000
+
+/**
+ * Session-expired notice job ids carry this bucket: a dead-lettered notice
+ * holds its id until DLQ retention, so a later event re-plans it in the next
+ * bucket, at most one notice per registration generation per bucket.
+ */
+const SESSION_EXPIRED_NOTICE_BUCKET_MS = 24 * 60 * 60 * 1_000
+
+/** The outbox event a push is planned from: its id dedupes replays, its time anchors expiry. */
+export interface PushSourceEvent {
+  id: bigint
+  createdAt: Date
+}
+
 export type PushPreferences = Pick<
   UserPreferences,
   "notificationLevel" | "pushActions" | "pushReminderMinutes" | "pushQuickReaction"
@@ -181,6 +225,22 @@ interface CrossFeatureLookups {
    * account before opening the deep link. Returns null if the user is not found.
    */
   getWorkosUserId: (workspaceId: string, userId: string) => Promise<string | null>
+  /** Revalidate an activity and rebuild its push content from current rows (INV-62 access, read, moved, deleted). */
+  resolveActivityPush: (params: {
+    workspaceId: string
+    userId: string
+    activityId: string
+    plannedStreamId: string | null
+  }) => Promise<ActivityPushResolution>
+  /** The fired reminder at exactly this generation, with fresh content; null once cancelled, rescheduled or re-fired. */
+  resolveFiredReminder: (params: {
+    workspaceId: string
+    userId: string
+    savedId: string
+    reminderGeneration: number
+  }) => Promise<FiredReminderSource | null>
+  /** Whether the owner's re-wrap of this root stream is still needed. */
+  isRewrapOutstanding: (params: { workspaceId: string; rootStreamId: string; ownerUserId: string }) => Promise<boolean>
 }
 
 interface PushServiceDeps {
@@ -362,13 +422,12 @@ export class PushService {
   }
 
   /**
-   * Core delivery method: evaluates an activity:created event and sends push
-   * notifications to the target user's eligible devices.
-   *
-   * Sends structured data in the push payload (INV-46); the service worker
-   * formats display text client-side.
+   * Plan push for an activity:created event: shared recipient gates, then one
+   * device delivery row plus its first queue job per targeted device, committed
+   * together before the outbox cursor moves. No provider I/O here; content is
+   * built fresh by each attempt, never copied from the event.
    */
-  async deliverPushForActivity(payload: ActivityCreatedOutboxPayload): Promise<void> {
+  async planActivityPush(event: PushSourceEvent, payload: ActivityCreatedOutboxPayload): Promise<void> {
     const kind = PUSH_SEND_KINDS.ACTIVITY
     if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
 
@@ -382,120 +441,294 @@ export class PushService {
       return this.suppress(kind, PUSH_SUPPRESSION_REASONS.MEMBER_ADDED)
     }
 
-    const prefs = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    const prefLevel = prefs.notificationLevel
-
-    if (prefLevel === PrefNotificationLevels.NONE) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
+    // The same fire also emits saved_reminder:fired, which owns the reminder push.
+    if (activity.activityType === ActivityTypes.SAVED_REMINDER) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.NOT_PUSHABLE)
     }
 
-    // Do-not-disturb suppresses push delivery (the activity feed already
-    // recorded the row — DND silences the alert, it does not drop history).
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
-    }
-
-    if (prefLevel === PrefNotificationLevels.MENTIONS) {
-      const shouldPush = await this.shouldPushForMentionsMode(workspaceId, activity.activityType, activity.streamId)
-      if (!shouldPush) {
-        return this.suppress(kind, PUSH_SUPPRESSION_REASONS.MENTIONS_MODE)
-      }
-    }
-
-    const activeSubscriptions = await this.resolveActiveSubscriptions(kind, workspaceId, targetUserId)
-    if (activeSubscriptions.length === 0) return
-
-    // Recipient's global WorkOS user id — lets the SW flip the active account
-    // before opening the deep link when this push is for a parked account.
-    // Resolved after the no-subscriptions early-return so we never pay the
-    // lookup for a delivery that won't happen.
-    const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
-
-    const context = activity.context as
-      | {
-          contentPreview?: string
-          streamName?: string
-          authorName?: string
-          authorAvatarUrl?: string
-          emoji?: string
-          mode?: string
-        }
-      | null
-      | undefined
-    // A missed call renders with its own SW branch ("Missed call from …"): the
-    // generic message-grouping path has no missed_call copy, so it would title
-    // the banner "New message". The kind + mode route it to the dedicated branch.
-    const isMissedCall = activity.activityType === ActivityTypes.MISSED_CALL
-    const pushPayload = JSON.stringify({
-      data: {
-        ...(isMissedCall ? { kind: "missed_call" as const, mode: context?.mode } : {}),
-        workspaceId,
-        workosUserId: recipientWorkosUserId ?? undefined,
-        streamId: activity.streamId,
-        messageId: activity.messageId,
-        activityType: activity.activityType,
-        contentPreview: resolvePushPreview(context?.contentPreview) ?? undefined,
-        streamName: context?.streamName,
-        authorName: context?.authorName,
-        authorAvatarUrl: context?.authorAvatarUrl,
-        // Button preferences ride every card so the worker renders them without a fetch.
-        pushActions: prefs.pushActions,
-        pushReminderMinutes: prefs.pushReminderMinutes,
-        pushQuickReaction: prefs.pushQuickReaction,
-        // Reaction emoji — lets the SW render "Alice reacted 👍 to …" instead of
-        // formatting a reaction like a plain incoming message. Absent for
-        // non-reactions. Reactions are stored as shortcodes; a custom emoji
-        // has no character and stays as its shortcode.
-        emoji: context?.emoji ? (toEmoji(context.emoji) ?? context.emoji) : undefined,
-      },
+    const recipient = await this.checkRecipient(workspaceId, targetUserId, {
+      activityType: activity.activityType,
+      streamId: activity.streamId,
     })
+    if (!recipient.eligible) return this.suppress(kind, recipient.reason)
 
-    // Topic keyed by stream + notification group: mentions display under their
-    // own tag in the SW, so they collapse separately from plain messages.
-    const isMention = activity.activityType === ActivityTypes.MENTION
-    await this.sendAndEvictStale(
+    await this.planDevices({
+      kind,
       workspaceId,
-      activeSubscriptions,
-      pushPayload,
-      {
-        ttlSeconds: MESSAGE_PUSH_TTL_SECONDS,
-        urgency: "high",
-        topic: activity.streamId ? pushTopic(activity.streamId, isMention ? "m" : "") : undefined,
-      },
-      kind
-    )
+      userId: targetUserId,
+      event,
+      sourceId: activity.id,
+      sourceGeneration: null,
+      sourceStreamId: activity.streamId,
+    })
   }
 
   /**
-   * Deliver push for a saved-message reminder. Reminders respect the user's
-   * global notification preference — a user with push disabled gets no
-   * delivery even for a reminder they explicitly scheduled. (Sonner toast
-   * still fires via socket delivery on online devices.)
+   * Plan push for a fired saved reminder. Reminders respect the user's global
+   * notification preference and do-not-disturb (the in-app toast still fires).
+   * Each attempt revalidates the reminder at the generation pinned when it
+   * fired, so a cancelled, rescheduled or re-fired reminder never pushes late.
    */
-  async deliverPushForSavedReminder(payload: SavedReminderFiredOutboxPayload): Promise<void> {
+  async planSavedReminderPush(event: PushSourceEvent, payload: SavedReminderFiredOutboxPayload): Promise<void> {
     const kind = PUSH_SEND_KINDS.SAVED_REMINDER
     if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
 
+    if (payload.reminderGeneration === undefined) return this.deliverLegacySavedReminder(event, payload)
+
+    const recipient = await this.checkRecipient(payload.workspaceId, payload.targetUserId, null)
+    if (!recipient.eligible) return this.suppress(kind, recipient.reason)
+
+    await this.planDevices({
+      kind,
+      workspaceId: payload.workspaceId,
+      userId: payload.targetUserId,
+      event,
+      sourceId: payload.savedId,
+      sourceGeneration: payload.reminderGeneration,
+      sourceStreamId: null,
+    })
+  }
+
+  /**
+   * Plan the offline owner's re-wrap nudge: an enclave turn in their E2E
+   * scratchpad is stuck because no live agent instance holds the stream's key,
+   * and only their unlocked device can re-wrap it. The graced web-push pulls
+   * them back to the app, where the heal fires on open. Respects the global
+   * notification preference and do-not-disturb like a saved reminder — an owner
+   * who silenced push isn't woken; their next app open heals it regardless.
+   * Focus targeting keeps it off a device the owner is already looking at —
+   * there the socket signal already healed it.
+   */
+  async planRewrapNudgePush(event: PushSourceEvent, payload: E2eRewrapNudgeOutboxPayload): Promise<void> {
+    const kind = PUSH_SEND_KINDS.REWRAP_NUDGE
+    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
+
+    const recipient = await this.checkRecipient(payload.workspaceId, payload.targetUserId, null)
+    if (!recipient.eligible) return this.suppress(kind, recipient.reason)
+
+    await this.planDevices({
+      kind,
+      workspaceId: payload.workspaceId,
+      userId: payload.targetUserId,
+      event,
+      sourceId: payload.rootStreamId,
+      sourceGeneration: null,
+      sourceStreamId: null,
+    })
+  }
+
+  /**
+   * One provider attempt for one device delivery (the `push.deliver` job).
+   * Claims the row before anything else, revalidates everything a delay can
+   * change, re-asserts the claim, sends with no DB connection held (INV-41),
+   * then records the result and schedules the next attempt in one
+   * transaction. Throws only on infrastructure failure; the queue retries the
+   * job, and a retry that finds this attempt still leased schedules a wake-up
+   * for when the lease lapses instead of finishing as a no-op.
+   */
+  async attemptDelivery(data: PushDeliverJobData): Promise<void> {
+    const { workspaceId, deliveryId, attempt } = data
+    const claimed = await PushDeliveryRepository.claim(this.pool, {
+      workspaceId,
+      deliveryId,
+      attempt,
+      leaseMs: PUSH_DELIVERY_LEASE_MS,
+    })
+    if (!claimed) return this.wakeWhenClaimable(this.pool, data)
+
+    if (claimed.abandonedClaims >= PUSH_MAX_ABANDONED_CLAIMS) {
+      logger.warn({ kind: claimed.kind }, "Push delivery failed after repeated abandoned claims")
+      return this.settleUnsent(this.pool, claimed, PUSH_DELIVERY_STATUSES.FAILED, PUSH_INFRASTRUCTURE_FAILURE)
+    }
+
+    const prepared = await this.prepareAttempt(claimed, data)
+    if (!prepared.send) {
+      this.suppress(claimed.kind, prepared.reason)
+      return this.settleUnsent(this.pool, claimed, prepared.status, prepared.reason)
+    }
+
+    const owned = await PushDeliveryRepository.renewLease(this.pool, {
+      workspaceId,
+      deliveryId,
+      claimVersion: claimed.version,
+      leaseMs: PUSH_DELIVERY_LEASE_MS,
+    })
+    if (!owned) return
+
+    // The reads above can be slow: the send window and TTL are measured after them.
+    const ttlSeconds = sendableTtlSeconds(claimed.expiresAt, prepared.deadline, Date.now())
+    if (ttlSeconds === null) {
+      this.suppress(claimed.kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
+      return this.settleUnsent(this.pool, claimed, PUSH_DELIVERY_STATUSES.EXPIRED, PUSH_SUPPRESSION_REASONS.EXPIRED)
+    }
+
+    // At-least-once: a crash or failed settle after this send leaves the row
+    // pending, and the attempt is reclaimed and sent again once the lease
+    // lapses, up to PUSH_MAX_ABANDONED_CLAIMS times.
+    const result = await sendToDevice(prepared.subscription, prepared.payload, {
+      ttlSeconds,
+      urgency: "high",
+      topic: prepared.topic,
+    })
+    this.telemetry.recordSendOutcome({
+      ...result,
+      kind: claimed.kind,
+      provider: providerFamily(prepared.subscription.endpoint),
+    })
+
+    const settlement = decideSettlement({
+      result,
+      attemptsBefore: claimed.attempts,
+      nowMs: Date.now(),
+      deadline: prepared.deadline,
+    })
+    await withTransaction(this.pool, async (client) => {
+      const settled = await PushDeliveryRepository.settle(client, {
+        workspaceId,
+        deliveryId,
+        claimVersion: claimed.version,
+        settlement,
+      })
+      if (!settled) return
+      if (settlement.kind === "retry") {
+        await QueueRepository.batchInsert(client, [
+          deliverJob(
+            { workspaceId, deliveryId, attempt: settled.attempts, sourceStreamId: data.sourceStreamId },
+            settlement.nextAttemptAt
+          ),
+        ])
+      }
+      if (settled.status === PUSH_DELIVERY_STATUSES.REGISTRATION_GONE) {
+        await PushSubscriptionRepository.deleteByIdsAtGeneration(client, workspaceId, [
+          { id: claimed.subscriptionId, generation: claimed.subscriptionGeneration },
+        ])
+      }
+    })
+  }
+
+  /**
+   * `push.deliver` onDLQ hook, inside the dead-letter transaction, so a job
+   * whose infrastructure retries ran out never leaves its delivery pending with
+   * nothing left to run it. No-op unless this job really is dead-lettered and
+   * no other open job for the same attempt can still run it. Otherwise it
+   * claims the attempt and fails it as infrastructure. A live lease (possibly
+   * this job's own orphan) or a scheduled retry blocks the claim; the attempt
+   * then goes to a wake-up job at the claimable time, whose claims
+   * PUSH_MAX_ABANDONED_CLAIMS bounds.
+   */
+  async recoverDeadLetteredAttempt(db: Querier, job: { id: string; data: PushDeliverJobData }): Promise<void> {
+    const { workspaceId, deliveryId, attempt } = job.data
+    const message = await QueueRepository.getById(db, job.id)
+    if (!message?.dlqAt) return
+    // Sibling jobs for the same attempt can dead-letter in overlapping transactions; each would see
+    // the other's uncommitted DLQ as a live successor and both would leave the row pending.
+    await PushDeliveryRepository.lockForUpdate(db, { workspaceId, deliveryId })
+    const successor = await QueueRepository.hasOtherOpenMessage(db, {
+      queueName: JobQueues.PUSH_DELIVER,
+      workspaceId,
+      payload: { deliveryId, attempt },
+      excludeId: job.id,
+    })
+    if (successor) return
+
+    const claimed = await PushDeliveryRepository.claim(db, {
+      workspaceId,
+      deliveryId,
+      attempt,
+      leaseMs: PUSH_DELIVERY_LEASE_MS,
+    })
+    if (!claimed) return this.wakeWhenClaimable(db, job.data)
+    logger.warn({ kind: claimed.kind }, "Push delivery failed after its job was dead-lettered")
+    await this.settleUnsent(db, claimed, PUSH_DELIVERY_STATUSES.FAILED, PUSH_INFRASTRUCTURE_FAILURE)
+  }
+
+  /**
+   * The "session expired" push for one registration (`push.session_expired`
+   * job): a single best-effort attempt, never retried on a provider failure.
+   * Skipped when the registration was removed or re-keyed, or its device has
+   * signed back in since planning; otherwise sent, then removed at the
+   * generation it was sent to unless it came back to life during the send.
+   */
+  async deliverSessionExpired(data: PushSessionExpiredJobData): Promise<void> {
+    if (!this.canSend) return
+    const { workspaceId, subscriptionId, generation } = data
+    const subscription = await PushSubscriptionRepository.findById(this.pool, workspaceId, subscriptionId)
+    if (!subscription || subscription.generation !== generation) return
+
+    const recentDeviceKeys = await UserSessionRepository.getRecentDeviceKeys(
+      this.pool,
+      [subscription.deviceKey],
+      SESSION_EXPIRY_WINDOW_MS
+    )
+    if (isSessionLive(subscription, recentDeviceKeys)) return
+
+    const pushPayload = JSON.stringify({ data: { action: "session_expired" as const, workspaceId } })
+    const result = await sendToDevice(subscription, pushPayload, {
+      ttlSeconds: SESSION_EXPIRED_TTL_SECONDS,
+      urgency: "normal",
+      topic: "session-expired",
+    })
+    this.telemetry.recordSendOutcome({
+      ...result,
+      kind: PUSH_SEND_KINDS.SESSION_EXPIRED,
+      provider: providerFamily(subscription.endpoint),
+    })
+
+    // Not thrown: a queue retry would send the notice again.
+    try {
+      await PushSubscriptionRepository.deleteStaleAtGeneration(this.pool, {
+        workspaceId,
+        id: subscriptionId,
+        generation,
+        staleForMs: SESSION_EXPIRY_WINDOW_MS,
+      })
+    } catch (err) {
+      logger.warn({ errorCode: safeErrorCode(err) }, "Failed to clean up push subscription for expired session")
+    }
+  }
+
+  /** Delete ledger rows whose expiry is past the retention window, in bounded batches. */
+  async cleanupExpiredDeliveries(): Promise<number> {
+    const expiredBefore = new Date(Date.now() - PUSH_DELIVERY_RETENTION_MS)
+    let deleted = 0
+    for (let batch = 0; batch < RETENTION_MAX_BATCHES; batch++) {
+      const count = await PushDeliveryRepository.deleteExpiredPlans(this.pool, {
+        expiredBefore,
+        limit: RETENTION_BATCH_SIZE,
+      })
+      deleted += count
+      if (count < RETENTION_BATCH_SIZE) break
+    }
+    return deleted
+  }
+
+  /**
+   * Legacy `saved_reminder:fired` events (written by replicas predating
+   * reminder generations) carry no generation to revalidate against, so they
+   * keep the previous behavior: one inline attempt from the event's snapshot,
+   * no retries, never resolving a current generation for them. Finite: only
+   * events emitted during the rolling deploy take this path.
+   */
+  private async deliverLegacySavedReminder(
+    event: PushSourceEvent,
+    payload: SavedReminderFiredOutboxPayload
+  ): Promise<void> {
+    const kind = PUSH_SEND_KINDS.SAVED_REMINDER
     const { workspaceId, targetUserId, savedId, messageId, streamId, saved } = payload
 
-    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
-    }
+    const expiresAt = expiryFor(event)
+    if (remainingSeconds(expiresAt, Date.now()) < 1) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
 
-    // A reminder the user scheduled still respects an active do-not-disturb
-    // window — the push is held back; the in-app/socket toast still fires.
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
-    }
+    const recipient = await this.checkRecipient(workspaceId, targetUserId, null)
+    if (!recipient.eligible) return this.suppress(kind, recipient.reason)
 
-    const activeSubscriptions = await this.resolveActiveSubscriptions(kind, workspaceId, targetUserId)
-    if (activeSubscriptions.length === 0) return
+    const { active, expired } = await this.getTargetSubscriptions(workspaceId, targetUserId)
+    if (expired.length > 0) await QueueRepository.batchInsert(this.pool, sessionExpiredJobs(workspaceId, expired))
+    if (active.length === 0) return this.suppress(kind, noDevicesReason(expired))
 
-    // Structured payload (INV-46): the SW composes display text. When the
-    // message is unavailable (deleted or access lost) we still notify — the
-    // user set the reminder deliberately — but include the reason so the SW
-    // can render "Reminder (message deleted)".
+    const ttlSeconds = remainingSeconds(expiresAt, Date.now())
+    if (ttlSeconds < 1) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
+
     const pushPayload = JSON.stringify({
       data: {
         kind: "saved_reminder",
@@ -503,71 +736,264 @@ export class PushService {
         savedId,
         streamId,
         messageId,
-        // When the message was saved from a conversation, the SW deep-links the
-        // click into the conversation panel instead of the stream permalink.
         conversationId: saved.conversationId ?? undefined,
         streamName: saved.message?.streamName ?? null,
-        // Standalone (message-less) items preview their own title.
         contentPreview: resolvePushPreview(saved.message?.contentMarkdown) ?? saved.title,
         unavailableReason: saved.unavailableReason ?? null,
       },
     })
-
     await this.sendAndEvictStale(
       workspaceId,
-      activeSubscriptions,
+      active,
       pushPayload,
-      { ttlSeconds: MESSAGE_PUSH_TTL_SECONDS, urgency: "high", topic: pushTopic(savedId) },
+      { ttlSeconds, urgency: "high", topic: pushTopic(savedId) },
       kind
     )
   }
 
   /**
-   * Deliver the offline owner's re-wrap nudge: an enclave turn in their E2E
-   * scratchpad is stuck because no live agent instance holds the stream's key,
-   * and only their unlocked device can re-wrap it. The graced web-push pulls
-   * them back to the app, where the heal fires on open. Respects the global
-   * notification preference and do-not-disturb like a saved reminder — an owner
-   * who silenced push isn't woken; their next app open heals it regardless.
-   * Focus-suppression (via `getTargetSubscriptions`) keeps it off a device the
-   * owner is already looking at — there the socket signal already healed it.
+   * Persist the plan and its jobs atomically. A replayed event finds its plan
+   * and enqueues nothing new; a failure throws so the outbox retries the event.
+   * Devices whose session expired get their one-shot notice as a separate job.
    */
-  async deliverRewrapNudge(payload: E2eRewrapNudgeOutboxPayload): Promise<void> {
-    const kind = PUSH_SEND_KINDS.REWRAP_NUDGE
-    if (!this.canSend) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PUSH_DISABLED)
-
-    const { workspaceId, targetUserId, rootStreamId } = payload
-
-    const { notificationLevel: prefLevel } = await this.lookups.getUserPushPreferences(workspaceId, targetUserId)
-    if (prefLevel === PrefNotificationLevels.NONE) return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PREF_NONE)
-    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
-      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.PAUSED)
+  private async planDevices(params: {
+    kind: DurablePushKind
+    workspaceId: string
+    userId: string
+    event: PushSourceEvent
+    sourceId: string
+    sourceGeneration: number | null
+    sourceStreamId: string | null
+  }): Promise<void> {
+    const { kind, workspaceId, userId, event } = params
+    const expiresAt = expiryFor(event)
+    if (Date.now() >= sendDeadline(kind, event.createdAt, expiresAt).getTime()) {
+      return this.suppress(kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
     }
 
-    const activeSubscriptions = await this.resolveActiveSubscriptions(kind, workspaceId, targetUserId)
-    if (activeSubscriptions.length === 0) return
+    const { active, expired } = await this.getTargetSubscriptions(workspaceId, userId)
+    if (active.length === 0) this.suppress(kind, noDevicesReason(expired))
+    if (active.length === 0 && expired.length === 0) return
 
-    const recipientWorkosUserId = await this.lookups.getWorkosUserId(workspaceId, targetUserId)
+    await withTransaction(this.pool, async (client) => {
+      const jobs = sessionExpiredJobs(workspaceId, expired)
+      if (active.length > 0) {
+        const plan = await PushDeliveryRepository.insertPlan(client, {
+          workspaceId,
+          userId,
+          kind,
+          sourceEventId: event.id,
+          sourceId: params.sourceId,
+          sourceGeneration: params.sourceGeneration,
+          sourceCreatedAt: event.createdAt,
+          expiresAt,
+          subscriptions: active.map((s) => ({ id: s.id, generation: s.generation })),
+        })
+        for (const device of plan?.devices ?? []) {
+          jobs.push(
+            deliverJob(
+              { workspaceId, deliveryId: device.id, attempt: 0, sourceStreamId: params.sourceStreamId },
+              new Date()
+            )
+          )
+        }
+      }
+      await QueueRepository.batchInsert(client, jobs)
+    })
+  }
 
-    // Structured payload (INV-46): the service worker composes the display text.
-    const pushPayload = JSON.stringify({
+  /** Everything a delay can change, rechecked on every attempt. */
+  private async prepareAttempt(claimed: ClaimedPushDelivery, data: PushDeliverJobData): Promise<PreparedAttempt> {
+    const { workspaceId, userId, kind } = claimed
+    if (!claimed.subscription) return drop(PUSH_DELIVERY_STATUSES.SUPERSEDED, PUSH_SUPPRESSION_REASONS.SUPERSEDED)
+
+    const deadline = sendDeadline(kind, claimed.sourceCreatedAt, claimed.expiresAt)
+    if (sendableTtlSeconds(claimed.expiresAt, deadline, Date.now()) === null) {
+      return drop(PUSH_DELIVERY_STATUSES.EXPIRED, PUSH_SUPPRESSION_REASONS.EXPIRED)
+    }
+
+    const content = await this.resolveContent(claimed, data)
+    if (!content.valid) return drop(PUSH_DELIVERY_STATUSES.SUPPRESSED, content.reason)
+
+    const recipient = await this.checkRecipient(workspaceId, userId, content.activity)
+    if (!recipient.eligible) return drop(PUSH_DELIVERY_STATUSES.SUPPRESSED, recipient.reason)
+
+    const { active } = await this.getTargetSubscriptions(workspaceId, userId)
+    const targeted = active.some(
+      (s) => s.id === claimed.subscriptionId && s.generation === claimed.subscriptionGeneration
+    )
+    if (!targeted) return drop(PUSH_DELIVERY_STATUSES.SUPPRESSED, PUSH_SUPPRESSION_REASONS.NOT_TARGETED)
+
+    const workosUserId = content.withWorkosUserId ? await this.lookups.getWorkosUserId(workspaceId, userId) : null
+    const payload = JSON.stringify({
       data: {
-        kind: "rewrap_needed",
-        workspaceId,
-        workosUserId: recipientWorkosUserId ?? undefined,
-        streamId: rootStreamId,
+        ...content.data,
+        ...(workosUserId ? { workosUserId } : {}),
+        ...(content.withButtons
+          ? {
+              // Button preferences ride every card so the worker renders them without a fetch.
+              pushActions: recipient.prefs.pushActions,
+              pushReminderMinutes: recipient.prefs.pushReminderMinutes,
+              pushQuickReaction: recipient.prefs.pushQuickReaction,
+            }
+          : {}),
       },
     })
+    return { send: true, subscription: claimed.subscription, payload, topic: content.topic, deadline }
+  }
 
-    // "r" suffix keeps repeated nudges collapsing with each other, not with
-    // message pushes for the same stream.
-    await this.sendAndEvictStale(
+  /** Current source content per kind; the event snapshot is never reused. */
+  private async resolveContent(claimed: ClaimedPushDelivery, data: PushDeliverJobData): Promise<ResolvedContent> {
+    const { workspaceId, userId, sourceId } = claimed
+
+    if (claimed.kind === PUSH_SEND_KINDS.ACTIVITY) {
+      const resolution = await this.lookups.resolveActivityPush({
+        workspaceId,
+        userId,
+        activityId: sourceId,
+        plannedStreamId: data.sourceStreamId,
+      })
+      if (!resolution.valid) return { valid: false, reason: ACTIVITY_INVALID_REASONS[resolution.reason] }
+      const source = resolution.source
+      // A missed call renders with its own SW branch ("Missed call from …"): the
+      // generic message-grouping path has no missed_call copy, so it would title
+      // the banner "New message". The kind + mode route it to the dedicated branch.
+      const isMissedCall = source.activityType === ActivityTypes.MISSED_CALL
+      const isMention = source.activityType === ActivityTypes.MENTION
+      return {
+        valid: true,
+        activity: { activityType: source.activityType, streamId: source.streamId },
+        withWorkosUserId: true,
+        withButtons: true,
+        // Topic keyed by stream + notification group: mentions display under their
+        // own tag in the SW, so they collapse separately from plain messages.
+        topic: source.streamId ? pushTopic(source.streamId, isMention ? "m" : "") : undefined,
+        data: {
+          ...(isMissedCall ? { kind: "missed_call" as const, mode: source.mode ?? undefined } : {}),
+          workspaceId,
+          streamId: source.streamId,
+          messageId: source.messageId,
+          activityType: source.activityType,
+          contentPreview: source.encrypted
+            ? ENCRYPTED_MESSAGE_PREVIEW_LABEL
+            : (resolvePushPreview(source.contentMarkdown) ?? undefined),
+          streamName: source.streamName ?? undefined,
+          authorName: source.authorName ?? undefined,
+          authorAvatarUrl: source.authorAvatarUrl,
+          // Reactions are stored as shortcodes; a custom emoji has no character
+          // and stays as its shortcode.
+          emoji: source.emoji ? (toEmoji(source.emoji) ?? source.emoji) : undefined,
+        },
+      }
+    }
+
+    if (claimed.kind === PUSH_SEND_KINDS.SAVED_REMINDER) {
+      const reminder =
+        claimed.sourceGeneration === null
+          ? null
+          : await this.lookups.resolveFiredReminder({
+              workspaceId,
+              userId,
+              savedId: sourceId,
+              reminderGeneration: claimed.sourceGeneration,
+            })
+      if (!reminder) return { valid: false, reason: PUSH_SUPPRESSION_REASONS.SOURCE_GONE }
+      // When the message is unavailable (deleted or access lost) the reminder
+      // still notifies — the user set it deliberately — with the reason so the
+      // SW renders "Reminder (message deleted)", and no content.
+      return {
+        valid: true,
+        activity: null,
+        withWorkosUserId: false,
+        withButtons: false,
+        topic: pushTopic(sourceId),
+        data: {
+          kind: "saved_reminder",
+          workspaceId,
+          savedId: sourceId,
+          streamId: reminder.streamId,
+          messageId: reminder.messageId,
+          // When the message was saved from a conversation, the SW deep-links the
+          // click into the conversation panel instead of the stream permalink.
+          conversationId: reminder.conversationId ?? undefined,
+          streamName: reminder.streamName,
+          // Standalone (message-less) items preview their own title.
+          contentPreview: resolvePushPreview(reminder.contentMarkdown) ?? reminder.title,
+          unavailableReason: reminder.unavailableReason ?? null,
+        },
+      }
+    }
+
+    const outstanding = await this.lookups.isRewrapOutstanding({
       workspaceId,
-      activeSubscriptions,
-      pushPayload,
-      { ttlSeconds: MESSAGE_PUSH_TTL_SECONDS, urgency: "high", topic: pushTopic(rootStreamId, "r") },
-      kind
-    )
+      rootStreamId: sourceId,
+      ownerUserId: userId,
+    })
+    if (!outstanding) return { valid: false, reason: PUSH_SUPPRESSION_REASONS.SOURCE_GONE }
+    return {
+      valid: true,
+      activity: null,
+      withWorkosUserId: true,
+      withButtons: false,
+      // "r" suffix keeps repeated nudges collapsing with each other, not with
+      // message pushes for the same stream.
+      topic: pushTopic(sourceId, "r"),
+      data: { kind: "rewrap_needed", workspaceId, streamId: sourceId },
+    }
+  }
+
+  /**
+   * A job that could not claim its attempt: finished work (terminal, a later
+   * attempt, or retention-deleted) completes quietly. An attempt that is only
+   * leased or not yet due gets a wake-up job at the time a claim can succeed,
+   * committed before this job completes — so a retry that follows a failure
+   * mid-attempt neither strands the delivery nor burns the queue's short
+   * retry budget waiting out the lease.
+   */
+  private async wakeWhenClaimable(db: Querier, data: PushDeliverJobData): Promise<void> {
+    const state = await PushDeliveryRepository.findState(db, {
+      workspaceId: data.workspaceId,
+      deliveryId: data.deliveryId,
+    })
+    if (!state || state.status !== PUSH_DELIVERY_STATUSES.PENDING || state.attempts !== data.attempt) return
+
+    const wake = (data.wake ?? 0) + 1
+    await QueueRepository.batchInsert(db, [
+      {
+        ...deliverJob({ ...data, wake }, new Date(state.claimableAt.getTime() + WAKE_MARGIN_MS)),
+        id: `${data.deliveryId}_a${data.attempt}_v${state.version}_w${wake}`,
+      },
+    ])
+  }
+
+  /**
+   * Recipient gates shared by planning and every attempt: notification level,
+   * do-not-disturb (evaluated at delivery time, so an expired pause stops
+   * suppressing even while the user is offline) and, for activities, the
+   * mentions-mode rule.
+   */
+  private async checkRecipient(
+    workspaceId: string,
+    userId: string,
+    activity: { activityType: string; streamId: string | null } | null
+  ): Promise<{ eligible: true; prefs: PushPreferences } | { eligible: false; reason: PushSuppressionReason }> {
+    const prefs = await this.lookups.getUserPushPreferences(workspaceId, userId)
+    if (prefs.notificationLevel === PrefNotificationLevels.NONE) {
+      return { eligible: false, reason: PUSH_SUPPRESSION_REASONS.PREF_NONE }
+    }
+    // Do-not-disturb suppresses push delivery (the activity feed already
+    // recorded the row — DND silences the alert, it does not drop history).
+    if (await this.lookups.isNotificationPaused(workspaceId, userId)) {
+      return { eligible: false, reason: PUSH_SUPPRESSION_REASONS.PAUSED }
+    }
+    if (
+      activity &&
+      prefs.notificationLevel === PrefNotificationLevels.MENTIONS &&
+      !(await this.shouldPushForMentionsMode(workspaceId, activity.activityType, activity.streamId))
+    ) {
+      return { eligible: false, reason: PUSH_SUPPRESSION_REASONS.MENTIONS_MODE }
+    }
+    return { eligible: true, prefs }
   }
 
   /**
@@ -725,15 +1151,17 @@ export class PushService {
       })
     )
 
-    const staleIds = results
+    // Pinned to the generation that was sent to: a registration re-keyed since
+    // then is a new binding and must survive this eviction.
+    const stale = results
       .filter((r) => r.outcome === PUSH_PROVIDER_OUTCOMES.REGISTRATION_GONE)
-      .map((r) => r.subscription.id)
-    if (staleIds.length > 0) {
+      .map((r) => ({ id: r.subscription.id, generation: r.subscription.generation }))
+    if (stale.length > 0) {
       try {
-        await PushSubscriptionRepository.deleteByIds(this.pool, workspaceId, staleIds)
+        await PushSubscriptionRepository.deleteByIdsAtGeneration(this.pool, workspaceId, stale)
       } catch (deleteErr) {
         logger.warn(
-          { kind, count: staleIds.length, errorCode: safeErrorCode(deleteErr) },
+          { kind, count: stale.length, errorCode: safeErrorCode(deleteErr) },
           "Failed to delete stale push subscriptions"
         )
       }
@@ -741,70 +1169,23 @@ export class PushService {
     return results
   }
 
+  /** Settle a claimed attempt that sent nothing, guarded by its claim. */
+  private async settleUnsent(
+    db: Querier,
+    claimed: ClaimedPushDelivery,
+    status: TerminalPushDeliveryStatus,
+    reason: string
+  ): Promise<void> {
+    await PushDeliveryRepository.settle(db, {
+      workspaceId: claimed.workspaceId,
+      deliveryId: claimed.id,
+      claimVersion: claimed.version,
+      settlement: { kind: "terminal", status, attempted: false, outcome: null, statusCode: null, reason },
+    })
+  }
+
   private suppress(kind: PushSendKind, reason: PushSuppressionReason): void {
     this.telemetry.recordSuppressed(kind, reason)
-  }
-
-  /**
-   * Devices to notify now. Devices whose session expired get the one-shot
-   * session-expired push and are cleaned up; an empty result is recorded as
-   * a suppression for `kind`.
-   */
-  private async resolveActiveSubscriptions(
-    kind: PushSendKind,
-    workspaceId: string,
-    userId: string
-  ): Promise<PushSubscription[]> {
-    const { active, expired } = await this.getTargetSubscriptions(workspaceId, userId)
-    if (expired.length > 0) {
-      await this.deliverSessionExpiredAndCleanup(workspaceId, expired)
-    }
-    if (active.length === 0) {
-      this.suppress(
-        kind,
-        expired.length > 0 ? PUSH_SUPPRESSION_REASONS.SESSIONS_EXPIRED : PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS
-      )
-    }
-    return active
-  }
-
-  /**
-   * Sends a "session expired" push to the given devices and deletes their
-   * subscriptions. Only targets devices whose sessions have expired — active
-   * devices are unaffected. The SW shows a "Your session has expired — tap
-   * to sign back in" notification.
-   */
-  private async deliverSessionExpiredAndCleanup(workspaceId: string, subscriptions: PushSubscription[]): Promise<void> {
-    const pushPayload = JSON.stringify({
-      data: {
-        action: "session_expired" as const,
-        workspaceId,
-      },
-    })
-
-    // Best-effort delivery — some subscriptions may already be stale
-    await this.sendAndEvictStale(
-      workspaceId,
-      subscriptions,
-      pushPayload,
-      { ttlSeconds: SESSION_EXPIRED_TTL_SECONDS, urgency: "normal", topic: "session-expired" },
-      PUSH_SEND_KINDS.SESSION_EXPIRED
-    )
-
-    // Clean up remaining subscriptions so no further notifications are sent.
-    // Reuse the IDs we already have rather than re-fetching (INV-20: avoids
-    // select-then-delete race where a concurrent subscribe could be wiped).
-    // deleteByIds is a no-op for IDs already removed by sendAndEvictStale.
-    const subscriptionIds = subscriptions.map((s) => s.id)
-    try {
-      await PushSubscriptionRepository.deleteByIds(this.pool, workspaceId, subscriptionIds)
-      logger.info({ count: subscriptionIds.length }, "Cleaned up push subscriptions for expired session")
-    } catch (err) {
-      logger.warn(
-        { count: subscriptionIds.length, errorCode: safeErrorCode(err) },
-        "Failed to clean up push subscriptions for expired session"
-      )
-    }
   }
 
   /**
@@ -874,12 +1255,10 @@ export class PushService {
     // A subscription is only "expired" (→ session-expired push + cleanup) once
     // BOTH signals are stale for the full window — i.e. the device genuinely
     // hasn't logged in for ~30 days (matching the auth cookie TTL).
-    const expiryThreshold = Date.now() - SESSION_EXPIRY_WINDOW_MS
     const activeSubs: PushSubscription[] = []
     const expiredSubs: PushSubscription[] = []
     for (const sub of allSubs) {
-      const seenRecently = sub.updatedAt.getTime() > expiryThreshold
-      if (recentDeviceKeys.has(sub.deviceKey) || seenRecently) {
+      if (isSessionLive(sub, recentDeviceKeys)) {
         activeSubs.push(sub)
       } else {
         expiredSubs.push(sub)
@@ -923,4 +1302,104 @@ export class PushService {
     const active = matched.length > 0 ? matched : activeSubs
     return { active, expired: expiredSubs }
   }
+}
+
+/** Either signal proves the device still authenticated within the window: a heartbeat for its device key, or a re-registration. */
+function isSessionLive(sub: PushSubscription, recentDeviceKeys: ReadonlySet<string>): boolean {
+  return recentDeviceKeys.has(sub.deviceKey) || sub.updatedAt.getTime() > Date.now() - SESSION_EXPIRY_WINDOW_MS
+}
+
+function noDevicesReason(expired: PushSubscription[]): PushSuppressionReason {
+  return expired.length > 0 ? PUSH_SUPPRESSION_REASONS.SESSIONS_EXPIRED : PUSH_SUPPRESSION_REASONS.NO_SUBSCRIPTIONS
+}
+
+/** Anchored to the source event's time, so a late or replayed event never gains a fresh TTL. */
+function expiryFor(event: PushSourceEvent): Date {
+  return new Date(event.createdAt.getTime() + MESSAGE_PUSH_TTL_SECONDS * 1_000)
+}
+
+/**
+ * Last moment an attempt may be sent. A rewrap nudge stops at the sweep's
+ * re-emit window, after which a still-stuck turn gets a fresh nudge; its
+ * push-service TTL still runs to the original expiry.
+ */
+function sendDeadline(kind: DurablePushKind, sourceCreatedAt: Date, expiresAt: Date): Date {
+  if (kind !== PUSH_SEND_KINDS.REWRAP_NUDGE) return expiresAt
+  return new Date(Math.min(expiresAt.getTime(), sourceCreatedAt.getTime() + REWRAP_WEBPUSH_REEMIT_MS))
+}
+
+function remainingSeconds(until: Date, nowMs: number): number {
+  return Math.floor((until.getTime() - nowMs) / 1_000)
+}
+
+/**
+ * Push-service TTL left for an attempt sent at `nowMs`, or null once its send
+ * window closed. The TTL runs to the original expiry even where attempts stop
+ * earlier (rewrap), since the push service may still hold it for an offline device.
+ */
+function sendableTtlSeconds(expiresAt: Date, deadline: Date, nowMs: number): number | null {
+  const ttlSeconds = remainingSeconds(expiresAt, nowMs)
+  return nowMs >= deadline.getTime() || ttlSeconds < 1 ? null : ttlSeconds
+}
+
+function deliverJob(data: PushDeliverJobData, processAfter: Date): InsertQueueMessageParams {
+  return {
+    id: `${data.deliveryId}_a${data.attempt}`,
+    queueName: JobQueues.PUSH_DELIVER,
+    workspaceId: data.workspaceId,
+    payload: data,
+    processAfter,
+    insertedAt: new Date(),
+  }
+}
+
+/** One per registration generation and notice bucket, so every event that finds the same expired device enqueues one notice. */
+function sessionExpiredJobs(workspaceId: string, subscriptions: PushSubscription[]): InsertQueueMessageParams[] {
+  const bucket = Math.floor(Date.now() / SESSION_EXPIRED_NOTICE_BUCKET_MS)
+  return subscriptions.map((s) => {
+    const payload: PushSessionExpiredJobData = { workspaceId, subscriptionId: s.id, generation: s.generation }
+    return {
+      id: `${s.id}_expired_g${s.generation}_b${bucket}`,
+      queueName: JobQueues.PUSH_SESSION_EXPIRED,
+      workspaceId,
+      payload,
+      processAfter: new Date(),
+      insertedAt: new Date(),
+    }
+  })
+}
+
+const ACTIVITY_INVALID_REASONS: Record<ActivityPushInvalidReason, PushSuppressionReason> = {
+  gone: PUSH_SUPPRESSION_REASONS.SOURCE_GONE,
+  not_pushable: PUSH_SUPPRESSION_REASONS.NOT_PUSHABLE,
+  read: PUSH_SUPPRESSION_REASONS.READ,
+  sealed: PUSH_SUPPRESSION_REASONS.SOURCE_GONE,
+  access_lost: PUSH_SUPPRESSION_REASONS.ACCESS_LOST,
+  moved: PUSH_SUPPRESSION_REASONS.SOURCE_GONE,
+}
+
+type PreparedAttempt =
+  | {
+      send: true
+      subscription: NonNullable<ClaimedPushDelivery["subscription"]>
+      payload: string
+      topic: string | undefined
+      deadline: Date
+    }
+  | { send: false; status: TerminalPushDeliveryStatus; reason: PushSuppressionReason }
+
+type ResolvedContent =
+  | {
+      valid: true
+      /** Present for activities: drives the mentions-mode gate. */
+      activity: { activityType: string; streamId: string | null } | null
+      withWorkosUserId: boolean
+      withButtons: boolean
+      topic: string | undefined
+      data: Record<string, unknown>
+    }
+  | { valid: false; reason: PushSuppressionReason }
+
+function drop(status: TerminalPushDeliveryStatus, reason: PushSuppressionReason): PreparedAttempt {
+  return { send: false, status, reason }
 }

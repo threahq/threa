@@ -500,6 +500,28 @@ export const ActivityRepository = {
   },
 
   /**
+   * One activity row owned by `userId`, plus whether its stream is currently
+   * sealed. Plain read (no lock): delayed push delivery re-reads it on every
+   * attempt and must never block the mark-read UPDATE.
+   */
+  async findForUser(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    activityId: string
+  ): Promise<{ activity: Activity; streamSealed: boolean } | null> {
+    const result = await db.query<ActivityRow & { stream_not_sealed: boolean }>(sql`
+      SELECT ${sql.raw(USER_ACTIVITY_COLUMNS)}, ${STREAM_NOT_SEALED} AS stream_not_sealed
+      FROM user_activity
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
+        AND id = ${activityId}
+    `)
+    const row = result.rows[0]
+    return row ? { activity: mapRowToActivity(row), streamSealed: !row.stream_not_sealed } : null
+  },
+
+  /**
    * Delete the reaction activity row for a specific (message, actor, emoji).
    * Removes exactly what `processReactionAdded` would have created for that
    * emoji — the author's notification row and the reactor's self row are

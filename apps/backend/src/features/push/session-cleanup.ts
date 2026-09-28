@@ -1,5 +1,6 @@
 import type { PushService } from "./service"
 import { logger } from "../../lib/logger"
+import { safeErrorCode } from "../../lib/errors"
 
 export interface PushSessionCleanup {
   start(): void
@@ -7,7 +8,8 @@ export interface PushSessionCleanup {
 }
 
 /**
- * Periodically deletes stale push user sessions to bound table growth.
+ * Periodically deletes stale push user sessions and expired delivery ledger
+ * rows to bound table growth.
  * Only runs when push is enabled — no sessions are written when disabled.
  */
 export function createPushSessionCleanup(
@@ -31,6 +33,14 @@ export function createPushSessionCleanup(
       }
     } catch (err) {
       logger.warn({ err }, "Failed to clean up stale push user sessions")
+    }
+    try {
+      const deleted = await pushService.cleanupExpiredDeliveries()
+      if (deleted > 0) {
+        logger.info({ deleted }, "Cleaned up expired push delivery plans")
+      }
+    } catch (err) {
+      logger.warn({ errorCode: safeErrorCode(err) }, "Failed to clean up expired push delivery plans")
     }
   }
 

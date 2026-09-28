@@ -304,6 +304,28 @@ export const QueueRepository = {
     }
   },
 
+  /** Whether another open message (not completed, cancelled or dead-lettered) carries a payload containing `payload`. */
+  async hasOtherOpenMessage(
+    db: Querier,
+    params: { queueName: string; workspaceId: string; payload: Record<string, unknown>; excludeId: string }
+  ): Promise<boolean> {
+    const result = await db.query<{ exists: boolean }>(
+      sql`
+        SELECT EXISTS (
+          SELECT 1 FROM queue_messages
+          WHERE queue_name = ${params.queueName}
+            AND workspace_id = ${params.workspaceId}
+            AND id <> ${params.excludeId}
+            AND completed_at IS NULL
+            AND cancelled_at IS NULL
+            AND dlq_at IS NULL
+            AND payload @> ${JSON.stringify(params.payload)}::jsonb
+        ) AS exists
+      `
+    )
+    return result.rows[0]!.exists
+  },
+
   /**
    * Cancel a pending queue message. Used when the upstream domain entity no
    * longer needs the job (e.g. a saved message marked done — the pending

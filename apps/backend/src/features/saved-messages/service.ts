@@ -22,6 +22,19 @@ interface SavedMessagesServiceDeps {
   pool: Pool
 }
 
+export interface FiredReminderSource {
+  savedId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
+  streamId: string | null
+  conversationId: string | null
+  title: string | null
+  streamName: string | null
+  /** Null when the item is standalone or its message is unavailable. */
+  contentMarkdown: string | null
+  unavailableReason: SavedMessageView["unavailableReason"]
+}
+
 export interface SaveParams {
   workspaceId: string
   userId: string
@@ -364,10 +377,44 @@ export class SavedMessagesService {
         messageId: row.messageId,
         streamId: row.streamId,
         saved: view!,
+        reminderGeneration: updated.reminderGeneration,
       })
 
       return { fired: true }
     })
+  }
+
+  /**
+   * Fresh source for a fired reminder's push, or null once the row left the
+   * pinned generation. A deleted or access-lost message stays valid with its
+   * reason and no content, as the saved view reports it.
+   */
+  async resolveFiredReminder(params: {
+    workspaceId: string
+    userId: string
+    savedId: string
+    reminderGeneration: number
+  }): Promise<FiredReminderSource | null> {
+    const row = await SavedMessagesRepository.findById(this.pool, params.workspaceId, params.userId, params.savedId)
+    if (
+      !row ||
+      row.reminderGeneration !== params.reminderGeneration ||
+      row.status !== SavedStatuses.SAVED ||
+      row.reminderSentAt === null
+    ) {
+      return null
+    }
+    const [view] = await resolveSavedView(this.pool, params.userId, [row])
+    return {
+      savedId: row.id,
+      messageId: row.messageId,
+      streamId: row.streamId,
+      conversationId: row.conversationId,
+      title: row.title,
+      streamName: view!.message?.streamName ?? null,
+      contentMarkdown: view!.message?.contentMarkdown ?? null,
+      unavailableReason: view!.unavailableReason,
+    }
   }
 
   async list(params: ListParams): Promise<{ saved: SavedMessageView[]; nextCursor: string | null }> {

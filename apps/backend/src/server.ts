@@ -225,6 +225,9 @@ import {
   CallRingPushHandler,
   PushTelemetry,
   createPushSessionCleanup,
+  createPushDeliverWorker,
+  createPushDeliverOnDLQ,
+  createPushSessionExpiredWorker,
 } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AISpendGate, WorkspaceAIResidencyPolicy } from "./features/ai-usage"
@@ -804,6 +807,10 @@ export async function startServer(): Promise<ServerInstance> {
         const user = await UserRepository.findById(pool, workspaceId, userId)
         return user?.workosUserId ?? null
       },
+      resolveActivityPush: (params) => activityService.resolvePushSource(params),
+      resolveFiredReminder: (params) => savedMessagesService.resolveFiredReminder(params),
+      // Constructed further down; only called by the push.deliver worker once the queue runs.
+      isRewrapOutstanding: (params) => enclaveClaimService.isRewrapOutstanding(params),
     },
   })
   const systemMessageService = new SystemMessageService({ pool, createMessage: createInternalMessage })
@@ -1686,6 +1693,24 @@ export async function startServer(): Promise<ServerInstance> {
     tier: QueueTiers.LIGHT,
     fairness: QueueFairness.NONE,
   })
+
+  // Registered only where push can send; planned jobs otherwise wait for a
+  // replica that can. maxRetries covers infrastructure failures only. Job ids
+  // name deliveries and registrations, so their logs stay private.
+  if (pushService.isEnabled()) {
+    jobQueue.registerHandler(JobQueues.PUSH_DELIVER, createPushDeliverWorker({ pushService }), {
+      hooks: { onDLQ: createPushDeliverOnDLQ({ pushService }) },
+      tier: QueueTiers.LIGHT,
+      fairness: QueueFairness.NONE,
+      maxRetries: 10,
+      privateLogs: true,
+    })
+    jobQueue.registerHandler(JobQueues.PUSH_SESSION_EXPIRED, createPushSessionExpiredWorker({ pushService }), {
+      tier: QueueTiers.LIGHT,
+      fairness: QueueFairness.NONE,
+      privateLogs: true,
+    })
+  }
 
   // Scheduled message send worker — fires due messages via EventService.createMessage
   const scheduledMessageSendWorker = createScheduledMessageSendWorker({ scheduledMessagesService })

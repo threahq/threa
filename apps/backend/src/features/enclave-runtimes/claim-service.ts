@@ -94,7 +94,7 @@ const STALE_RUNNING_HEARTBEAT_MS = 60_000
  * before a fresh nudge is allowed. Re-arming inside the park window guarantees
  * the re-stuck turn gets its own web-push before it dead-letters.
  */
-const REWRAP_WEBPUSH_REEMIT_MS = 10 * 60 * 1000
+export const REWRAP_WEBPUSH_REEMIT_MS = 10 * 60 * 1000
 
 /**
  * Grace before the first web-push: a turn that just went unservable may still
@@ -252,6 +252,19 @@ export class EnclaveClaimService {
       // No-op claim — the row was completed in place; take the next one.
     }
     return null
+  }
+
+  /** Whether the owner's re-wrap for this root stream is still needed, by the same predicate the sweep nudges on. */
+  async isRewrapOutstanding(params: {
+    workspaceId: string
+    rootStreamId: string
+    ownerUserId: string
+  }): Promise<boolean> {
+    const rows = await EnclaveInvocationsRepository.findUnservablePending(this.pool, {
+      stalenessMs: ENCLAVE_RUNTIME_STALENESS_MS,
+      scope: params,
+    })
+    return rows.length > 0
   }
 
   /**

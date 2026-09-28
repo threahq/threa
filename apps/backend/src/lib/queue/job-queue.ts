@@ -54,6 +54,8 @@ export const JobQueues = {
   GITHUB_WEBHOOK_PROCESS: "github_webhook.process",
   GITHUB_PREVIEW_REFRESH: "github_preview.refresh",
   LINK_PREVIEW_VISIBLE_REFRESH: "link_preview.visible-refresh",
+  PUSH_DELIVER: "push.deliver",
+  PUSH_SESSION_EXPIRED: "push.session_expired",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -287,6 +289,25 @@ export interface VideoTranscodeCheckJobData {
   workspaceId: string
 }
 
+/** One provider attempt for one planned device delivery (`push_deliveries` row). */
+export interface PushDeliverJobData {
+  workspaceId: string
+  deliveryId: string
+  /** The provider attempt number this job may claim; a stale or duplicate job claims nothing. */
+  attempt: number
+  /** Activity pushes: the activity's stream when planned, so a moved message is caught. Null for other kinds. */
+  sourceStreamId: string | null
+  /** Re-wake count after this attempt was found busy or early; distinguishes each wake job's id. */
+  wake?: number
+}
+
+/** Best-effort single "session expired" push to one registration, pinned to its generation. */
+export interface PushSessionExpiredJobData {
+  workspaceId: string
+  subscriptionId: string
+  generation: number
+}
+
 /**
  * Saved-message reminder fire job. Enqueued when a saved row gets a remindAt;
  * the worker looks up the row, emits `saved_reminder:fired` outbox event, and
@@ -442,6 +463,8 @@ export interface JobDataMap {
   [JobQueues.VIDEO_TRANSCODE_SUBMIT]: VideoTranscodeSubmitJobData
   [JobQueues.VIDEO_TRANSCODE_CHECK]: VideoTranscodeCheckJobData
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
+  [JobQueues.PUSH_DELIVER]: PushDeliverJobData
+  [JobQueues.PUSH_SESSION_EXPIRED]: PushSessionExpiredJobData
   [JobQueues.SCHEDULED_MESSAGE_SEND]: ScheduledMessageSendJobData
   [JobQueues.AGENT_FOLLOW_UP_FIRE]: AgentFollowUpFireJobData
   [JobQueues.AGENT_EPISODE_SUMMARIZE]: AgentEpisodeSummarizeJobData
@@ -539,4 +562,11 @@ export interface HandlerOptions<T> {
    * exponential backoff) gives the healer no time to act.
    */
   maxRetries?: number
+  /**
+   * Job ids and handler errors of this queue carry identifiers that must never
+   * reach shipped logs. Its lifecycle logs keep only the queue name, counts and
+   * a bounded error code; the queue row keeps the id and full error
+   * (`last_error`, DLQ) for first-party diagnosis.
+   */
+  privateLogs?: boolean
 }

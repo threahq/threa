@@ -12,12 +12,16 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { StreamTypes } from "@threahq/types"
-import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
+import { setupTestDatabase, setupIsolatedTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../src/features/e2e-streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { EnclaveRuntimesRepository, EnclaveInvocationsRepository } from "../../src/features/enclave-runtimes"
+import {
+  EnclaveClaimService,
+  EnclaveRuntimesRepository,
+  EnclaveInvocationsRepository,
+} from "../../src/features/enclave-runtimes"
 import { userId, workspaceId, streamId, messageId, enclaveInvocationId, enclaveRuntimeId } from "../../src/lib/id"
 
 const STALENESS_MS = 2 * 60 * 1000
@@ -48,19 +52,22 @@ describe("findUnservablePending", () => {
    * EIK fleet and wrap set. `currentGen` is the stream's reply generation; the
    * trigger message seals under `triggerGen`.
    */
-  async function seed(params: {
-    currentGen: number
-    triggerGen: number
-    eiks: EikSpec[]
-    wraps: WrapSpec[]
-  }): Promise<{ wsId: string; sId: string; ownerId: string; invId: string }> {
+  async function seed(
+    params: {
+      currentGen: number
+      triggerGen: number
+      eiks: EikSpec[]
+      wraps: WrapSpec[]
+    },
+    db: Pool = pool
+  ): Promise<{ wsId: string; sId: string; ownerId: string; invId: string }> {
     const wsId = workspaceId()
     let ownerId = userId()
     const sId = streamId()
     const triggerId = messageId()
     const invId = enclaveInvocationId()
 
-    await withTransaction(pool, async (client) => {
+    await withTransaction(db, async (client) => {
       await WorkspaceRepository.insert(client, {
         id: wsId,
         name: "Rewrap WS",
@@ -217,5 +224,122 @@ describe("findUnservablePending", () => {
       ],
     })
     expect(await findFor(sId)).toHaveLength(1)
+  })
+  describe("scoped to one root stream and owner", () => {
+    function claimService(db: Pool = pool) {
+      return new EnclaveClaimService({
+        pool: db,
+        storage: { getObject: async () => Buffer.alloc(0) } as never,
+        userPreferencesService: { getPreferences: async () => ({}) } as never,
+        spendGate: { admit: async () => ({ allowed: true }) },
+      })
+    }
+
+    test("should report a stuck root as outstanding only for its own workspace, stream and owner", async () => {
+      const { wsId, sId, ownerId, invId } = await seed({
+        currentGen: 1,
+        triggerGen: 1,
+        eiks: [{ keyId: "eik_scoped_stuck" }],
+        wraps: [],
+      })
+      const other = await seed({ currentGen: 1, triggerGen: 1, eiks: [{ keyId: "eik_scoped_other" }], wraps: [] })
+      const service = claimService()
+
+      const scoped = await EnclaveInvocationsRepository.findUnservablePending(pool, {
+        stalenessMs: STALENESS_MS,
+        scope: { workspaceId: wsId, rootStreamId: sId, ownerUserId: ownerId },
+      })
+      const outstanding = {
+        own: await service.isRewrapOutstanding({ workspaceId: wsId, rootStreamId: sId, ownerUserId: ownerId }),
+        otherOwner: await service.isRewrapOutstanding({
+          workspaceId: wsId,
+          rootStreamId: sId,
+          ownerUserId: other.ownerId,
+        }),
+        otherStreamSameWorkspace: await service.isRewrapOutstanding({
+          workspaceId: wsId,
+          rootStreamId: other.sId,
+          ownerUserId: ownerId,
+        }),
+        otherWorkspace: await service.isRewrapOutstanding({
+          workspaceId: other.wsId,
+          rootStreamId: sId,
+          ownerUserId: ownerId,
+        }),
+      }
+
+      expect(scoped.map((row) => row.id)).toEqual([invId])
+      expect(outstanding).toEqual({
+        own: true,
+        otherOwner: false,
+        otherStreamSameWorkspace: false,
+        otherWorkspace: false,
+      })
+      // The unscoped sweep still sees both stuck roots.
+      expect((await findFor(sId)).map((row) => row.id)).toEqual([invId])
+      expect((await findFor(other.sId)).map((row) => row.id)).toEqual([other.invId])
+    })
+
+    test("should stop being outstanding once the owner re-wraps or the turn is no longer pending", async () => {
+      const rewrapped = await seed({ currentGen: 1, triggerGen: 1, eiks: [{ keyId: "eik_scoped_heal" }], wraps: [] })
+      const finished = await seed({ currentGen: 1, triggerGen: 1, eiks: [{ keyId: "eik_scoped_done" }], wraps: [] })
+      const service = claimService()
+      const scopeOf = (s: { wsId: string; sId: string; ownerId: string }) => ({
+        workspaceId: s.wsId,
+        rootStreamId: s.sId,
+        ownerUserId: s.ownerId,
+      })
+      const before = [
+        await service.isRewrapOutstanding(scopeOf(rewrapped)),
+        await service.isRewrapOutstanding(scopeOf(finished)),
+      ]
+
+      await StreamE2eKeyWrapsRepository.insertMany(pool, [
+        {
+          workspaceId: rewrapped.wsId,
+          streamId: rewrapped.sId,
+          keyGeneration: 1,
+          recipientKeyId: "eik_scoped_heal",
+          recipientKind: "enclave" as const,
+          wrapEnc: Buffer.from("enc").toString("base64"),
+          wrapCt: Buffer.from("ct").toString("base64"),
+        },
+      ])
+      // End state of a served or cancelled turn: the invocation leaves `pending`.
+      await pool.query("UPDATE enclave_invocations SET status = 'completed' WHERE id = $1", [finished.invId])
+
+      const after = [
+        await service.isRewrapOutstanding(scopeOf(rewrapped)),
+        await service.isRewrapOutstanding(scopeOf(finished)),
+      ]
+      expect({ before, after }).toEqual({ before: [true, true], after: [false, false] })
+    })
+
+    // The live-runtime check spans the whole fleet, so this needs a database no other test's runtimes share.
+    describe("with an isolated enclave fleet", () => {
+      let isolated: { pool: Pool; cleanup: () => Promise<void> }
+
+      beforeAll(async () => {
+        isolated = await setupIsolatedTestDatabase("rewrap-stale-fleet")
+      }, 30_000)
+
+      afterAll(async () => {
+        await isolated.cleanup()
+      }, 30_000)
+
+      test("should stop being outstanding once every enclave runtime has gone stale", async () => {
+        const stuck = await seed(
+          { currentGen: 1, triggerGen: 1, eiks: [{ keyId: "eik_isolated_stale" }], wraps: [] },
+          isolated.pool
+        )
+        const service = claimService(isolated.pool)
+        const scope = { workspaceId: stuck.wsId, rootStreamId: stuck.sId, ownerUserId: stuck.ownerId }
+        const live = await service.isRewrapOutstanding(scope)
+
+        await isolated.pool.query("UPDATE enclave_runtimes SET last_seen_at = NOW() - INTERVAL '1 day'")
+
+        expect({ live, stale: await service.isRewrapOutstanding(scope) }).toEqual({ live: true, stale: false })
+      })
+    })
   })
 })

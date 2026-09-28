@@ -7,12 +7,14 @@ import {
   StreamEventRepository,
   resolveNotificationLevelsForStream,
   usersReadThroughEffective,
+  checkStreamAccess,
   type Stream,
 } from "../streams"
 import { ARIADNE_AGENT_ID, PersonaRepository } from "../agents"
 import { collectMentionActorRefs } from "@threahq/prosemirror"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
+import { E2eStreamsRepository } from "../e2e-streams"
 import {
   Visibilities,
   NotificationLevels,
@@ -38,6 +40,47 @@ const ACTIVITY_READ_EVENT_CHUNK = 500
 interface ActivityServiceDeps {
   pool: Pool
 }
+
+/** Activity types whose delivery belongs to push; saved reminders push through `saved_reminder:fired`. */
+const PUSHABLE_ACTIVITY_TYPES: ReadonlySet<string> = new Set([
+  ActivityTypes.MENTION,
+  ActivityTypes.MESSAGE,
+  ActivityTypes.REACTION,
+  ActivityTypes.MISSED_CALL,
+])
+
+/** Message-anchored types whose content and unread state come from the message. */
+const MESSAGE_ACTIVITY_TYPES: ReadonlySet<string> = new Set([
+  ActivityTypes.MENTION,
+  ActivityTypes.MESSAGE,
+  ActivityTypes.REACTION,
+])
+
+/** Types a stream read watermark can clear; a reaction arrives after its message, so only `read_at` clears it. */
+const WATERMARK_READ_ACTIVITY_TYPES: ReadonlySet<string> = new Set([ActivityTypes.MENTION, ActivityTypes.MESSAGE])
+
+export type ActivityPushInvalidReason = "gone" | "not_pushable" | "read" | "sealed" | "access_lost" | "moved"
+
+/** Current content and display context for one activity's push, derived fresh from its sources. */
+export interface ActivityPushSource {
+  activityId: string
+  activityType: string
+  streamId: string | null
+  messageId: string | null
+  /** Current message markdown; null when the type has no message or the message is end-to-end encrypted. */
+  contentMarkdown: string | null
+  encrypted: boolean
+  streamName: string | null
+  authorName: string | null
+  authorAvatarUrl?: string
+  emoji: string | null
+  /** Missed-call mode (audio/video) carried from the row. */
+  mode: string | null
+}
+
+export type ActivityPushResolution =
+  | { valid: true; source: ActivityPushSource }
+  | { valid: false; reason: ActivityPushInvalidReason }
 
 export class ActivityService {
   private readonly pool: Pool
@@ -632,6 +675,78 @@ export class ActivityService {
     })
   }
 
+  /**
+   * Revalidate one activity for a (possibly delayed) push attempt, with content
+   * rebuilt from current rows rather than the insert-time context snapshot. A
+   * message move carries the activity row with it, hence `plannedStreamId`.
+   */
+  async resolvePushSource(params: {
+    workspaceId: string
+    userId: string
+    activityId: string
+    /** The activity's stream when the push was planned (`activity:created` payload). */
+    plannedStreamId: string | null
+  }): Promise<ActivityPushResolution> {
+    const { workspaceId, userId, activityId, plannedStreamId } = params
+    const invalid = (reason: ActivityPushInvalidReason): ActivityPushResolution => ({ valid: false, reason })
+
+    return withClient(this.pool, async (client) => {
+      const found = await ActivityRepository.findForUser(client, workspaceId, userId, activityId)
+      if (!found) return invalid("gone")
+      const { activity, streamSealed } = found
+      if (activity.isSelf || !PUSHABLE_ACTIVITY_TYPES.has(activity.activityType)) return invalid("not_pushable")
+      if (activity.readAt !== null) return invalid("read")
+      if (streamSealed) return invalid("sealed")
+      if (activity.streamId !== plannedStreamId) return invalid("moved")
+
+      const stream = activity.streamId ? await checkStreamAccess(client, activity.streamId, workspaceId, userId) : null
+      if (activity.streamId && !stream) return invalid("access_lost")
+
+      let contentMarkdown: string | null = null
+      let encrypted = false
+      if (stream && activity.messageId && MESSAGE_ACTIVITY_TYPES.has(activity.activityType)) {
+        const message = (await MessageRepository.findByIdsInWorkspace(client, workspaceId, [activity.messageId])).get(
+          activity.messageId
+        )
+        if (!message || message.deletedAt !== null) return invalid("gone")
+        if (message.streamId !== stream.id) return invalid("moved")
+
+        if (WATERMARK_READ_ACTIVITY_TYPES.has(activity.activityType)) {
+          const event = await StreamEventRepository.findByMessageId(client, stream.id, message.id)
+          if (event) {
+            const readers = await usersReadThroughEffective(client, workspaceId, stream.id, [userId], event.sequence)
+            if (readers.has(userId)) return invalid("read")
+          }
+        }
+
+        const plaintextRoot = await E2eStreamsRepository.excludeE2eRootedStreamIds(client, [
+          { workspaceId, streamId: stream.id },
+        ])
+        encrypted = plaintextRoot.length === 0 || message.ciphertext !== null || message.e2eVersion !== null
+        contentMarkdown = encrypted ? null : message.contentMarkdown
+      }
+
+      const author = await this.resolveAuthor(client, workspaceId, activity.actorId, activity.actorType)
+      const mode = activity.context.mode
+      return {
+        valid: true,
+        source: {
+          activityId: activity.id,
+          activityType: activity.activityType,
+          streamId: activity.streamId,
+          messageId: activity.messageId,
+          contentMarkdown,
+          encrypted,
+          streamName: stream ? resolvePushStreamName(activity.activityType, stream) : null,
+          authorName: author.authorName,
+          authorAvatarUrl: author.authorAvatarUrl,
+          emoji: activity.emoji,
+          mode: typeof mode === "string" ? mode : null,
+        },
+      }
+    })
+  }
+
   async listFeed(
     userId: string,
     workspaceId: string,
@@ -752,6 +867,12 @@ export class ActivityService {
 function resolveStreamName(stream: Stream): string | null {
   if (stream.type === StreamTypes.CHANNEL && stream.slug) return `#${stream.slug}`
   return stream.displayName ?? null
+}
+
+function resolvePushStreamName(activityType: string, stream: Stream): string | null {
+  // Missed calls keep the label the calls feature writes: display name, else the bare slug.
+  if (activityType === ActivityTypes.MISSED_CALL) return stream.displayName ?? stream.slug ?? null
+  return resolveStreamName(stream)
 }
 
 interface StreamContext {

@@ -13,6 +13,7 @@ import { DisabledAnalyticsReporter, type AnalyticsEvent, type AnalyticsReporter 
 import { logger } from "../../src/lib/logger"
 import { workspaceId, userId, streamId, messageId, activityId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
+import { drainDuePushJobs } from "./push-queue-helpers"
 import {
   PrefNotificationLevels,
   ActivityTypes,
@@ -66,6 +67,8 @@ describe("Push Notifications", () => {
 
   beforeEach(async () => {
     await pool.query("DELETE FROM push_subscriptions")
+    await pool.query("DELETE FROM push_deliveries")
+    await pool.query("DELETE FROM push_delivery_plans")
     await pool.query("DELETE FROM user_sessions")
     testWorkspaceId = workspaceId()
     testUserId = userId()
@@ -183,7 +186,7 @@ describe("Push Notifications", () => {
       expect(notFound).toBe(false)
     })
 
-    test("deleteByIds batch removes subscriptions; no-op for empty array", async () => {
+    test("deleteByIdsAtGeneration removes only rows still at the pinned generation; no-op for empty array", async () => {
       const sub1 = await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
         userId: testUserId,
@@ -200,16 +203,26 @@ describe("Push Notifications", () => {
         auth: "a2",
         deviceKey: "d2",
       })
+      const rekeyed = await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/batch-2",
+        p256dh: "p2-new",
+        auth: "a2",
+        deviceKey: "d2",
+      })
 
-      // No-op for empty array
-      await PushSubscriptionRepository.deleteByIds(pool, testWorkspaceId, [])
-      let remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
-      expect(remaining).toHaveLength(2)
+      expect(await PushSubscriptionRepository.deleteByIdsAtGeneration(pool, testWorkspaceId, [])).toEqual([])
+      const deleted = await PushSubscriptionRepository.deleteByIdsAtGeneration(pool, testWorkspaceId, [
+        { id: sub1.id, generation: sub1.generation },
+        { id: sub2.id, generation: sub2.generation },
+      ])
 
-      // Delete both
-      await PushSubscriptionRepository.deleteByIds(pool, testWorkspaceId, [sub1.id, sub2.id])
-      remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
-      expect(remaining).toHaveLength(0)
+      expect(deleted).toEqual([sub1.id])
+      const remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
+      expect(remaining.map((s) => ({ id: s.id, generation: s.generation }))).toEqual([
+        { id: rekeyed.id, generation: sub2.generation + 1 },
+      ])
     })
 
     test("findByUserId returns all subs for user; empty for no subs", async () => {
@@ -404,6 +417,9 @@ describe("Push Notifications", () => {
           isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
+          resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
+          resolveFiredReminder: async () => null,
+          isRewrapOutstanding: async () => false,
         },
       })
     }
@@ -511,7 +527,17 @@ describe("Push Notifications", () => {
     })
   })
 
-  describe("PushService.deliverPushForActivity", () => {
+  describe("PushService activity push (planned, then sent by the push.deliver worker)", () => {
+    /** Current activity rows by id, standing in for the activity feature's fresh-source lookup. */
+    const plannedActivities = new Map<string, ActivityCreatedOutboxPayload["activity"]>()
+    let nextEventId = 1n
+
+    async function deliver(service: PushService, payload: ActivityCreatedOutboxPayload) {
+      plannedActivities.set(payload.activity.id, payload.activity)
+      await service.planActivityPush({ id: nextEventId++, createdAt: new Date() }, payload)
+      await drainDuePushJobs(pool, service, testWorkspaceId)
+    }
+
     /** Create a session that's stale for the 60s active window but within the 30-day expiry window. */
     async function createRecentInactiveSession(wId: string, uId: string, deviceKey = "d") {
       const s = await UserSessionRepository.upsert(pool, { workspaceId: wId, userId: uId, deviceKey })
@@ -571,6 +597,29 @@ describe("Push Notifications", () => {
           isNotificationPaused: async () => overrides?.notificationPaused ?? false,
           getStreamType: async (_workspaceId) => overrides?.streamType ?? StreamTypes.CHANNEL,
           getWorkosUserId: async () => overrides?.workosUserId ?? null,
+          resolveActivityPush: async ({ activityId, plannedStreamId }) => {
+            const activity = plannedActivities.get(activityId)
+            if (!activity) return { valid: false, reason: "gone" }
+            const context = activity.context as Record<string, string | undefined>
+            return {
+              valid: true,
+              source: {
+                activityId,
+                activityType: activity.activityType,
+                streamId: plannedStreamId,
+                messageId: activity.messageId,
+                contentMarkdown: context.contentPreview ?? null,
+                encrypted: false,
+                streamName: context.streamName ?? null,
+                authorName: context.authorName ?? null,
+                authorAvatarUrl: context.authorAvatarUrl,
+                emoji: context.emoji ?? null,
+                mode: context.mode ?? null,
+              },
+            }
+          },
+          resolveFiredReminder: async () => null,
+          isRewrapOutstanding: async () => false,
         },
       })
     }
@@ -587,7 +636,7 @@ describe("Push Notifications", () => {
         deviceKey: "d",
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
       expect(sendSpy).not.toHaveBeenCalled()
     })
 
@@ -605,7 +654,8 @@ describe("Push Notifications", () => {
         deviceKey: "d",
       })
 
-      await service.deliverPushForActivity(
+      await deliver(
+        service,
         makePayload({
           activity: {
             ...makePayload().activity,
@@ -631,7 +681,8 @@ describe("Push Notifications", () => {
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
 
-      await service.deliverPushForActivity(
+      await deliver(
+        service,
         makePayload({
           activity: {
             ...makePayload().activity,
@@ -661,7 +712,8 @@ describe("Push Notifications", () => {
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
 
-      await service.deliverPushForActivity(
+      await deliver(
+        service,
         makePayload({
           activity: {
             ...makePayload().activity,
@@ -690,7 +742,8 @@ describe("Push Notifications", () => {
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
 
-      await service.deliverPushForActivity(
+      await deliver(
+        service,
         makePayload({
           activity: {
             ...makePayload().activity,
@@ -717,7 +770,7 @@ describe("Push Notifications", () => {
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       expect(sendSpy).toHaveBeenCalledTimes(1)
       const payload = JSON.parse(sendSpy.mock.calls[0][1] as string)
@@ -736,7 +789,7 @@ describe("Push Notifications", () => {
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       expect(sendSpy).toHaveBeenCalledTimes(1)
       const payload = JSON.parse(sendSpy.mock.calls[0][1] as string)
@@ -755,7 +808,8 @@ describe("Push Notifications", () => {
       })
       await createRecentInactiveSession(testWorkspaceId, testUserId)
 
-      await service.deliverPushForActivity(
+      await deliver(
+        service,
         makePayload({
           activity: {
             ...makePayload().activity,
@@ -810,7 +864,7 @@ describe("Push Notifications", () => {
         interacted: true,
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Only device-1 receives push — SW decides whether to display
       expect(sendSpy).toHaveBeenCalledTimes(1)
@@ -855,7 +909,7 @@ describe("Push Notifications", () => {
         deviceKey: "device-2",
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // No device proves the user is on it → push everywhere so they see it
       // on whichever device they pick up next.
@@ -904,7 +958,7 @@ describe("Push Notifications", () => {
         deviceKey: "device-2",
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Interaction stale → fanout so the user gets it on whichever device they pick up
       expect(sendSpy).toHaveBeenCalledTimes(2)
@@ -944,7 +998,7 @@ describe("Push Notifications", () => {
         interacted: true,
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Intersection is empty → falls back to all active subs (only device-1)
       expect(sendSpy).toHaveBeenCalledTimes(1)
@@ -978,7 +1032,7 @@ describe("Push Notifications", () => {
       await createRecentInactiveSession(testWorkspaceId, testUserId, "device-1")
       await createRecentInactiveSession(testWorkspaceId, testUserId, "device-2")
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Both devices receive normal push — user is offline but sessions not expired
       expect(sendSpy).toHaveBeenCalledTimes(2)
@@ -1028,7 +1082,7 @@ describe("Push Notifications", () => {
         [[s1.id, s2.id]]
       )
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // All sessions stale → user is offline → push to all devices
       expect(sendSpy).toHaveBeenCalledTimes(2)
@@ -1061,7 +1115,7 @@ describe("Push Notifications", () => {
       await backdateSubscriptionRegistration("https://push.example.com/sub/expired-1", "60 days")
       await backdateSubscriptionRegistration("https://push.example.com/sub/expired-2", "60 days")
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Should have sent session_expired push to both devices
       expect(sendSpy).toHaveBeenCalledTimes(2)
@@ -1098,7 +1152,7 @@ describe("Push Notifications", () => {
       // device-2 has neither a session nor a recent re-registration → expired.
       await backdateSubscriptionRegistration("https://push.example.com/sub/expired-device", "60 days")
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Should send 2 pushes: normal to device-1, session_expired to device-2
       expect(sendSpy).toHaveBeenCalledTimes(2)
@@ -1142,7 +1196,7 @@ describe("Push Notifications", () => {
         focused: true,
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Should send normal push, not session_expired
       expect(sendSpy).toHaveBeenCalledTimes(1)
@@ -1179,7 +1233,7 @@ describe("Push Notifications", () => {
         deviceKey: "device-1",
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Should send normal push — device is still authenticated
       expect(sendSpy).toHaveBeenCalledTimes(1)
@@ -1208,7 +1262,7 @@ describe("Push Notifications", () => {
         deviceKey: "device-http-only",
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // Normal push (not session_expired), and the subscription is retained.
       expect(sendSpy).toHaveBeenCalledTimes(1)
@@ -1242,7 +1296,7 @@ describe("Push Notifications", () => {
       )
       try {
         const payload = makePayload()
-        await service.deliverPushForActivity(payload)
+        await deliver(service, payload)
 
         const logged = JSON.stringify(spies.flatMap((spy) => spy.mock.calls))
         expect(logged).toContain("unreachable")
@@ -1276,7 +1330,7 @@ describe("Push Notifications", () => {
         deviceKey: "d",
       })
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
       telemetry.flush()
 
       expect(sendSpy).not.toHaveBeenCalled()
@@ -1312,7 +1366,7 @@ describe("Push Notifications", () => {
       // Simulate 410 Gone from push service
       sendSpy.mockRejectedValueOnce(Object.assign(new Error("Gone"), { statusCode: 410 }))
 
-      await service.deliverPushForActivity(makePayload())
+      await deliver(service, makePayload())
 
       // The stale subscription should be deleted
       const remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
@@ -1335,6 +1389,9 @@ describe("Push Notifications", () => {
           isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
+          resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
+          resolveFiredReminder: async () => null,
+          isRewrapOutstanding: async () => false,
         },
       })
     }
@@ -1452,6 +1509,9 @@ describe("Push Notifications", () => {
           isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
+          resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
+          resolveFiredReminder: async () => null,
+          isRewrapOutstanding: async () => false,
         },
       })
       await expect(service.deliverTestPush(testWorkspaceId, testUserId)).rejects.toThrow(/not enabled/i)

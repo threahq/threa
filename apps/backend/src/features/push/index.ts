@@ -4,7 +4,11 @@ export type { PushSubscription, InsertPushSubscriptionParams } from "./repositor
 export { UserSessionRepository } from "./session-repository"
 export type { UserSession } from "./session-repository"
 
-export { PushService, type PushPreferences } from "./service"
+export { PushService, type PushPreferences, type PushSourceEvent } from "./service"
+
+export { PushDeliveryRepository } from "./delivery-repository"
+
+export { createPushDeliverWorker, createPushDeliverOnDLQ, createPushSessionExpiredWorker } from "./deliver-worker"
 
 export { createPushHandlers } from "./handlers"
 
