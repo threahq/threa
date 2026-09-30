@@ -32,7 +32,7 @@ import {
 import type { ActivityCreatedOutboxPayload } from "../../src/lib/outbox"
 import { activityId, messageId, userId, workspaceId } from "../../src/lib/id"
 import { setupIsolatedTestDatabase } from "./setup"
-import { listPushJobs, makeDeliveryDue, runPushJob } from "./push-queue-helpers"
+import { listPushJobs, runPushJob } from "./push-queue-helpers"
 
 async function waitFor(check: () => Promise<boolean>, timeoutMs: number, message: string): Promise<void> {
   const deadline = Date.now() + timeoutMs
@@ -76,6 +76,7 @@ describe("dead-lettered push delivery jobs", () => {
   })
 
   const spies: Array<{ mockRestore: () => void }> = []
+  const realFailDeadLettered = PushDeliveryRepository.failDeadLettered.bind(PushDeliveryRepository)
 
   function createService() {
     return new PushService({
@@ -181,48 +182,23 @@ describe("dead-lettered push delivery jobs", () => {
       terminal_reason: string | null
       attempts: number
       version: number
-      lease_expires_at: Date | null
-    }>(`SELECT status, terminal_reason, attempts, version, lease_expires_at FROM push_deliveries WHERE id = $1`, [id])
+    }>(`SELECT status, terminal_reason, attempts, version FROM push_deliveries WHERE id = $1`, [id])
     const r = result.rows[0]!
-    return {
-      status: r.status,
-      reason: r.terminal_reason,
-      attempts: r.attempts,
-      version: r.version,
-      leaseExpiresAt: r.lease_expires_at,
-    }
+    return { status: r.status, reason: r.terminal_reason, attempts: r.attempts, version: r.version }
   }
 
-  test("should fail a stranded delivery, leave live and failing ones pending, and keep ids and errors out of shipped logs", async () => {
+  test("should fail a dead-lettered attempt as infrastructure, leave it pending when the hook fails, and keep ids and errors out of shipped logs", async () => {
     const service = createService()
-    const d = await planDeliveries(service, ["stranded", "successor", "hookFails", "orphanLease"] as const)
+    const d = await planDeliveries(service, ["stranded", "hookFails"] as const)
 
-    const [successorJob] = (await listPushJobs(pool, ws)).filter((j) => j.payload.deliveryId === d.successor.id)
-    await QueueRepository.insert(pool, {
-      id: `${d.successor.id}_a0_live`,
-      queueName: JobQueues.PUSH_DELIVER,
-      workspaceId: ws,
-      payload: successorJob!.payload,
-      processAfter: new Date(Date.now() + 60 * 60 * 1000),
-      insertedAt: new Date(),
-    })
-    // A worker that crashed mid-send: its lease is live, yet no job of its own will ever run again.
-    const orphan = await PushDeliveryRepository.claim(pool, {
-      workspaceId: ws,
-      deliveryId: d.orphanLease.id,
-      attempt: 0,
-      leaseMs: 60_000,
-    })
-    const orphanLease = await row(d.orphanLease.id)
-
-    const realClaim = PushDeliveryRepository.claim.bind(PushDeliveryRepository)
     spies.push(
-      spyOn(PushDeliveryRepository, "claim").mockImplementation(async (db, params) => {
-        if (db === pool || params.deliveryId === d.hookFails.id) {
-          await new Promise((resolve) => setTimeout(resolve, 60))
-          throw new Error(`claim failed for ${params.deliveryId} in ${params.workspaceId}`)
-        }
-        return realClaim(db, params)
+      spyOn(PushDeliveryRepository, "startAttempt").mockImplementation(async (_db, params) => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        throw new Error(`start failed for ${params.deliveryId} in ${params.workspaceId}`)
+      }),
+      spyOn(PushDeliveryRepository, "failDeadLettered").mockImplementation(async (db, params) => {
+        if (params.deliveryId === d.hookFails.id) throw new Error(`dlq settle failed for ${params.deliveryId}`)
+        return realFailDeadLettered(db, params)
       }),
       spyOn(QueueRepository, "batchRenewClaims").mockImplementation(async (_db, params) => {
         throw new Error(`renew failed for ${params.messageIds.join(",")} in ${ws}`)
@@ -282,33 +258,24 @@ describe("dead-lettered push delivery jobs", () => {
       logger.level = levelBefore
     }
 
-    const wake = (await listPushJobs(pool, ws)).find(
-      (j) => j.payload.deliveryId === d.orphanLease.id && j.id !== `${d.orphanLease.id}_a0`
-    )
     const lastError = await pool.query<{ last_error: string }>(`SELECT last_error FROM queue_messages WHERE id = $1`, [
       `${d.stranded.id}_a0`,
     ])
     expect({
       stranded: await row(d.stranded.id),
-      successor: (await row(d.successor.id)).status,
       hookFails: (await row(d.hookFails.id)).status,
-      orphan: { status: (await row(d.orphanLease.id)).status, wakeId: wake?.id, wakeAt: wake?.processAfter.getTime() },
+      jobs: (await listPushJobs(pool, ws)).map((j) => j.id).sort(),
       lastError: lastError.rows[0]!.last_error,
     }).toEqual({
-      stranded: { status: "failed", reason: "infrastructure", attempts: 0, version: 2, leaseExpiresAt: null },
-      successor: "pending",
+      stranded: { status: "failed", reason: "infrastructure", attempts: 0, version: 2 },
       hookFails: "pending",
-      orphan: {
-        status: "pending",
-        wakeId: `${d.orphanLease.id}_a0_v${orphan!.version}_w1`,
-        wakeAt: orphanLease.leaseExpiresAt!.getTime() + 1000,
-      },
-      lastError: `claim failed for ${d.stranded.id} in ${ws}`,
+      jobs: originalJobIds.sort(),
+      lastError: `start failed for ${d.stranded.id} in ${ws}`,
     })
 
     const exported = shipped.join("\n")
-    const leaks = [ws, "push_del_", "claim failed", "renew failed", "token renew failed"].filter((s) =>
-      exported.includes(s)
+    const leaks = [ws, "push_del_", "start failed", "dlq settle failed", "renew failed", "token renew failed"].filter(
+      (s) => exported.includes(s)
     )
     const bodies = [
       "Message processing failed",
@@ -319,103 +286,52 @@ describe("dead-lettered push delivery jobs", () => {
       "Message scheduled for retry",
     ].filter((s) => !exported.includes(s))
     expect({ leaks, missingBodies: bodies }).toEqual({ leaks: [], missingBodies: [] })
-
-    for (const spy of spies.splice(0)) spy.mockRestore()
-    await makeDeliveryDue(pool, d.orphanLease.id)
-    await runPushJob(pool, service, { ...wake!, processAfter: new Date() })
-    expect({
-      orphan: (await row(d.orphanLease.id)).status,
-      sends: sendSpy.mock.calls.map((c) => (c[0] as { endpoint: string }).endpoint),
-    }).toEqual({ orphan: "accepted", sends: [d.orphanLease.endpoint] })
   })
 
-  test("should leave the delivery alone when the hook runs for a job that was not dead-lettered or a delivery already accepted", async () => {
+  test("should leave the delivery alone when the hook runs for a job that was not dead-lettered, is not the attempt's own, or is late for an attempt already settled or retried", async () => {
     const service = createService()
     const hook = createPushDeliverOnDLQ({ pushService: service })
-    const d = await planDeliveries(service, ["stale", "accepted"] as const)
+    sendSpy.mockImplementation(((sub: { endpoint: string }) =>
+      sub.endpoint.endsWith("/retried")
+        ? Promise.reject(Object.assign(new Error("unavailable"), { statusCode: 503, headers: {}, body: "" }))
+        : Promise.resolve({ statusCode: 201, body: "", headers: {} })) as never)
+    const d = await planDeliveries(service, ["live", "accepted", "retried", "foreign"] as const)
     const jobs = await listPushJobs(pool, ws)
     const jobFor = (id: string) => jobs.find((j) => j.payload.deliveryId === id)!
 
     await runPushJob(pool, service, jobFor(d.accepted.id))
-    await pool.query(`UPDATE queue_messages SET dlq_at = NOW() WHERE id = $1`, [jobFor(d.accepted.id).id])
-    const before = { stale: await row(d.stale.id), accepted: await row(d.accepted.id) }
-
-    const meta = { failedCount: 1, insertedAt: new Date(), workspaceId: ws }
-    for (const name of ["stale", "accepted"] as const) {
-      const job = jobFor(d[name].id)
-      await hook(
-        pool,
-        { id: job.id, name: JobQueues.PUSH_DELIVER, data: job.payload as unknown as PushDeliverJobData },
-        new Error("boom"),
-        meta
-      )
-    }
-
-    expect({
-      rows: { stale: await row(d.stale.id), accepted: await row(d.accepted.id) },
-      jobs: (await listPushJobs(pool, ws)).map((j) => j.id).sort(),
-    }).toEqual({ rows: before, jobs: jobs.map((j) => j.id).sort() })
-    expect(before.accepted.status).toBe("accepted")
-  })
-
-  test("should fail the delivery when two jobs for the same attempt dead-letter in overlapping transactions", async () => {
-    const service = createService()
-    const hook = createPushDeliverOnDLQ({ pushService: service })
-    const d = await planDeliveries(service, ["raced"] as const)
-    const [original] = await listPushJobs(pool, ws)
-    const sibling = `${d.raced.id}_a0_sibling`
+    await runPushJob(pool, service, jobFor(d.retried.id))
+    const foreignId = `${jobFor(d.foreign.id).id}_v1_w1`
     await QueueRepository.insert(pool, {
-      id: sibling,
+      id: foreignId,
       queueName: JobQueues.PUSH_DELIVER,
       workspaceId: ws,
-      payload: original!.payload,
+      payload: jobFor(d.foreign.id).payload,
       processAfter: new Date(),
       insertedAt: new Date(),
     })
-    await pool.query(`UPDATE queue_messages SET claimed_by = 'worker' WHERE id = ANY($1::text[])`, [
-      [original!.id, sibling],
+    await pool.query(`UPDATE queue_messages SET dlq_at = NOW() WHERE id = ANY($1::text[])`, [
+      [jobFor(d.accepted.id).id, jobFor(d.retried.id).id, foreignId],
     ])
+    const rows = async () => ({
+      live: await row(d.live.id),
+      accepted: await row(d.accepted.id),
+      retried: await row(d.retried.id),
+      foreign: await row(d.foreign.id),
+    })
+    const before = await rows()
 
-    const meta = { failedCount: 10, insertedAt: new Date(), workspaceId: ws }
-    const first = await pool.connect()
-    const second = await pool.connect()
-    try {
-      await first.query("BEGIN")
-      await second.query("BEGIN")
-      for (const [client, id] of [
-        [first, original!.id],
-        [second, sibling],
-      ] as const) {
-        await QueueRepository.failDlq(client, { messageId: id, claimedBy: "worker", error: "boom", dlqAt: new Date() })
-      }
-      const runHook = (client: typeof first, id: string) =>
-        hook(
-          client,
-          { id, name: JobQueues.PUSH_DELIVER, data: original!.payload as unknown as PushDeliverJobData },
-          new Error("boom"),
-          meta
-        )
-
-      // Each hook sees the other job's dead-lettering uncommitted, so the other still looks open.
-      await runHook(first, original!.id)
-      const secondHook = runHook(second, sibling)
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      await first.query("COMMIT")
-      await secondHook
-      await second.query("COMMIT")
-    } finally {
-      await first.query("ROLLBACK").catch(() => {})
-      await second.query("ROLLBACK").catch(() => {})
-      first.release()
-      second.release()
+    const meta = { failedCount: 1, insertedAt: new Date(), workspaceId: ws }
+    const runHook = (id: string, data: unknown) =>
+      hook(pool, { id, name: JobQueues.PUSH_DELIVER, data: data as PushDeliverJobData }, new Error("boom"), meta)
+    for (const name of ["live", "accepted", "retried"] as const) {
+      await runHook(jobFor(d[name].id).id, jobFor(d[name].id).payload)
     }
+    await runHook(foreignId, jobFor(d.foreign.id).payload)
 
-    expect(await row(d.raced.id)).toEqual({
-      status: "failed",
-      reason: "infrastructure",
-      attempts: 0,
-      version: 2,
-      leaseExpiresAt: null,
+    expect({ rows: await rows(), before: { accepted: before.accepted.status, retried: before.retried } }).toEqual({
+      rows: before,
+      before: { accepted: "accepted", retried: { status: "pending", reason: null, attempts: 1, version: 2 } },
     })
   })
 })

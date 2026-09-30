@@ -518,6 +518,56 @@ describe("QueueRepository", () => {
     })
   })
 
+  describe("lockClaim", () => {
+    test("should lock only for the current claim generation, even when a worker id is reused, and never once finished", async () => {
+      await withTestTransaction(pool, async (client) => {
+        const now = new Date()
+        await QueueRepository.insert(client, {
+          id: "queue_test1",
+          queueName: "test.queue",
+          workspaceId: "ws_test",
+          payload: {},
+          processAfter: now,
+          insertedAt: now,
+        })
+        const claim = (claimedUntil: Date, at: Date) =>
+          claimNext(client, {
+            queueName: "test.queue",
+            workspaceId: "ws_test",
+            claimedBy: "worker_reused",
+            claimedAt: at,
+            claimedUntil,
+            now: at,
+          })
+        const first = await claim(new Date(now.getTime() + 1), now)
+        const later = new Date(now.getTime() + 10)
+        const second = await claim(new Date(later.getTime() + 10_000), later)
+        const lock = (claimedBy: string, claimedCount: number) =>
+          QueueRepository.lockClaim(client, { messageId: "queue_test1", claimedBy, claimedCount })
+
+        const observed = {
+          counts: [first!.claimedCount, second!.claimedCount],
+          staleGeneration: await lock("worker_reused", 1),
+          current: await lock("worker_reused", 2),
+          otherWorker: await lock("worker_other", 2),
+        }
+        await QueueRepository.complete(client, {
+          messageId: "queue_test1",
+          claimedBy: "worker_reused",
+          completedAt: later,
+        })
+
+        expect({ ...observed, afterComplete: await lock("worker_reused", 2) }).toEqual({
+          counts: [1, 2],
+          staleGeneration: null,
+          current: { claimedUntil: second!.claimedUntil },
+          otherWorker: null,
+          afterComplete: null,
+        })
+      })
+    })
+  })
+
   describe("fail", () => {
     test("should record failure and set retry backoff", async () => {
       await withTestTransaction(pool, async (client) => {

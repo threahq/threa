@@ -1,9 +1,12 @@
 import type { JobHandler, OnDLQHook, PushDeliverJobData, PushSessionExpiredJobData } from "../../lib/queue"
 import type { PushService } from "./service"
 
-/** `push.deliver`: one provider attempt per job. Throws only on infrastructure failure (INV-34). */
+/** `push.deliver`: one provider attempt per job, owned by the job's queue claim. Throws only on infrastructure failure (INV-34). */
 export function createPushDeliverWorker(deps: { pushService: PushService }): JobHandler<PushDeliverJobData> {
-  return (job) => deps.pushService.attemptDelivery(job.data)
+  return ({ id, data, claim }) => {
+    if (!claim) throw new Error("push.deliver runs only under a queue claim")
+    return deps.pushService.attemptDelivery({ id, data, claim })
+  }
 }
 
 /** `push.deliver` onDLQ: a dead-lettered job must not strand its delivery as pending. */

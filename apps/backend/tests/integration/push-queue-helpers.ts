@@ -1,6 +1,13 @@
 import type { Pool } from "pg"
-import type { PushService } from "../../src/features/push"
-import { JobQueues, type PushDeliverJobData, type PushSessionExpiredJobData } from "../../src/lib/queue"
+import { createPushDeliverWorker, type PushService } from "../../src/features/push"
+import {
+  JobQueues,
+  QueueRepository,
+  type PushDeliverJobData,
+  type PushSessionExpiredJobData,
+  type QueueClaim,
+} from "../../src/lib/queue"
+import { workerId } from "../../src/lib/id"
 
 export interface PushJobRow {
   id: string
@@ -37,17 +44,59 @@ export async function listPushJobs(pool: Pool, workspaceId: string): Promise<Pus
 }
 
 /**
- * Run one push job the way the queue manager does: the handler, then complete
- * the message only if it returned. A throw leaves the message open and is
- * rethrown so the test can assert on it.
+ * Claim one open job the way the queue manager does: a fresh worker id, the
+ * claim count moved on, a claim that lasts `claimMs` (long by default: the
+ * manager keeps renewing a live run's claim, however slow its reads). Null
+ * while another claim is live or the job finished.
+ */
+export async function claimPushJob(pool: Pool, jobId: string, claimMs = 60 * 60_000): Promise<QueueClaim | null> {
+  const claimedBy = workerId()
+  const result = await pool.query<{ claimed_count: number }>(
+    `UPDATE queue_messages SET
+       claimed_by = $2, claimed_at = NOW(), claimed_until = NOW() + ($3 * INTERVAL '1 millisecond'),
+       claimed_count = claimed_count + 1
+     WHERE id = $1 AND completed_at IS NULL AND cancelled_at IS NULL AND dlq_at IS NULL
+       AND process_after <= NOW()
+       AND (claimed_until IS NULL OR claimed_until < NOW())
+     RETURNING claimed_count`,
+    [jobId, claimedBy, claimMs]
+  )
+  const row = result.rows[0]
+  return row ? { messageId: jobId, claimedBy, claimedCount: row.claimed_count } : null
+}
+
+/** Run a `push.deliver` job's handler under `claim`, as the queue manager dispatches it. */
+export function runPushDeliverUnder(service: PushService, job: PushJobRow, claim: QueueClaim): Promise<void> {
+  const handler = createPushDeliverWorker({ pushService: service })
+  return handler({ id: job.id, name: job.queueName, data: job.payload as unknown as PushDeliverJobData, claim })
+}
+
+/**
+ * Run one push job the way the queue manager does: claim it, run the handler,
+ * then complete the message if it returned. A throw records the failure (the
+ * claim is released and the job is due again) and is rethrown.
  */
 export async function runPushJob(pool: Pool, service: PushService, job: PushJobRow): Promise<void> {
-  if (job.queueName === JobQueues.PUSH_DELIVER) {
-    await service.attemptDelivery(job.payload as unknown as PushDeliverJobData)
-  } else {
+  if (job.queueName !== JobQueues.PUSH_DELIVER) {
     await service.deliverSessionExpired(job.payload as unknown as PushSessionExpiredJobData)
+    await pool.query(`UPDATE queue_messages SET completed_at = NOW() WHERE id = $1`, [job.id])
+    return
   }
-  await pool.query(`UPDATE queue_messages SET completed_at = NOW() WHERE id = $1`, [job.id])
+  const claim = await claimPushJob(pool, job.id)
+  if (!claim) throw new Error(`push job ${job.id} is claimed or finished`)
+  try {
+    await runPushDeliverUnder(service, job, claim)
+  } catch (err) {
+    await QueueRepository.fail(pool, {
+      messageId: job.id,
+      claimedBy: claim.claimedBy,
+      error: String(err),
+      processAfter: new Date(),
+      now: new Date(),
+    })
+    throw err
+  }
+  await QueueRepository.complete(pool, { messageId: job.id, claimedBy: claim.claimedBy, completedAt: new Date() })
 }
 
 /** Drain every due, open push job for the workspace (including jobs the drained ones enqueue that are already due). */
@@ -62,17 +111,18 @@ export async function drainDuePushJobs(pool: Pool, service: PushService, workspa
   throw new Error("push jobs kept re-enqueueing due work")
 }
 
-/** Time-travel a delivery: its lease and scheduled retry lapse, and its open jobs become due. */
+/** Time-travel a delivery: its scheduled retry and any queue claim lapse, and its open jobs become due. */
 export async function makeDeliveryDue(pool: Pool, deliveryId: string): Promise<void> {
   await pool.query(
     `UPDATE push_deliveries SET
-       lease_expires_at = CASE WHEN lease_expires_at IS NULL THEN NULL ELSE NOW() - INTERVAL '1 second' END,
        next_attempt_at = CASE WHEN next_attempt_at IS NULL THEN NULL ELSE NOW() - INTERVAL '1 second' END
      WHERE id = $1`,
     [deliveryId]
   )
   await pool.query(
-    `UPDATE queue_messages SET process_after = NOW() - INTERVAL '1 second'
+    `UPDATE queue_messages SET
+       process_after = NOW() - INTERVAL '1 second',
+       claimed_until = CASE WHEN claimed_until IS NULL THEN NULL ELSE NOW() - INTERVAL '1 second' END
      WHERE payload->>'deliveryId' = $1 AND completed_at IS NULL`,
     [deliveryId]
   )

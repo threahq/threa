@@ -4,7 +4,7 @@ export type { PushSubscription, InsertPushSubscriptionParams } from "./repositor
 export { UserSessionRepository } from "./session-repository"
 export type { UserSession } from "./session-repository"
 
-export { PushService, type PushPreferences, type PushSourceEvent } from "./service"
+export { PushService, PushClaimLostError, type PushPreferences, type PushSourceEvent } from "./service"
 
 export { PushDeliveryRepository } from "./delivery-repository"
 

@@ -55,7 +55,13 @@ export { QueueRetentionWorker, type QueueRetentionWorkerConfig } from "./retenti
 export { QueueDepthSampler, type QueueDepthSamplerConfig } from "./depth-sampler"
 export { Ticker, type TickerConfig } from "@threahq/backend-common"
 export { QueueRepository } from "./repository"
-export type { QueueMessage, InsertQueueMessageParams, QueueRetentionCategory, QueueDepthRow } from "./repository"
+export type {
+  QueueMessage,
+  QueueClaim,
+  InsertQueueMessageParams,
+  QueueRetentionCategory,
+  QueueDepthRow,
+} from "./repository"
 export { enqueueQueuedJob } from "./enqueue-with-id-retry"
 export { TokenPoolRepository } from "./token-pool-repository"
 export { CronRepository } from "./cron-repository"

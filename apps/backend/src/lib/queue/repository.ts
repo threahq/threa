@@ -55,6 +55,13 @@ export interface ClaimNextParams {
   now: Date
 }
 
+/** One claim of one message: the worker id and the claim count it took the message at. */
+export interface QueueClaim {
+  messageId: string
+  claimedBy: string
+  claimedCount: number
+}
+
 export interface BatchRenewClaimsParams {
   messageIds: string[]
   claimedBy: string
@@ -264,14 +271,14 @@ export const QueueRepository = {
   },
 
   /**
-   * Completed/cancelled/DLQ'd messages are skipped, so a renewal can partially
-   * succeed while some messages in the batch finish independently.
+   * Completed/cancelled/DLQ'd messages are skipped. A heartbeat must not shorten
+   * a claim that its handler extended to cover an external operation.
    */
   async batchRenewClaims(db: Querier, params: BatchRenewClaimsParams): Promise<number> {
     const result = await db.query(
       sql`
         UPDATE queue_messages
-        SET claimed_until = ${params.claimedUntil}
+        SET claimed_until = GREATEST(claimed_until, ${params.claimedUntil})
         WHERE id = ANY(${params.messageIds})
           AND claimed_by = ${params.claimedBy}
           AND completed_at IS NULL
@@ -304,26 +311,26 @@ export const QueueRepository = {
     }
   },
 
-  /** Whether another open message (not completed, cancelled or dead-lettered) carries a payload containing `payload`. */
-  async hasOtherOpenMessage(
-    db: Querier,
-    params: { queueName: string; workspaceId: string; payload: Record<string, unknown>; excludeId: string }
-  ): Promise<boolean> {
-    const result = await db.query<{ exists: boolean }>(
+  /**
+   * Row-lock a message for the caller's transaction while `claim` still owns
+   * it, returning its claim expiry; null once the message finished or another
+   * claim took it over. `claimedCount` pins the claim generation.
+   */
+  async lockClaim(db: Querier, claim: QueueClaim): Promise<{ claimedUntil: Date } | null> {
+    const result = await db.query<{ claimed_until: Date }>(
       sql`
-        SELECT EXISTS (
-          SELECT 1 FROM queue_messages
-          WHERE queue_name = ${params.queueName}
-            AND workspace_id = ${params.workspaceId}
-            AND id <> ${params.excludeId}
-            AND completed_at IS NULL
-            AND cancelled_at IS NULL
-            AND dlq_at IS NULL
-            AND payload @> ${JSON.stringify(params.payload)}::jsonb
-        ) AS exists
+        SELECT claimed_until FROM queue_messages
+        WHERE id = ${claim.messageId}
+          AND claimed_by = ${claim.claimedBy}
+          AND claimed_count = ${claim.claimedCount}
+          AND completed_at IS NULL
+          AND cancelled_at IS NULL
+          AND dlq_at IS NULL
+        FOR UPDATE
       `
     )
-    return result.rows[0]!.exists
+    const row = result.rows[0]
+    return row ? { claimedUntil: row.claimed_until } : null
   },
 
   /**

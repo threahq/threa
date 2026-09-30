@@ -240,7 +240,7 @@ describe("monitor push probe", () => {
     settledAfterMs?: number
   }
 
-  /** One device delivery through the real claim/renew/settle path, then moved back in time. */
+  /** One device delivery through the real start/record/settle path, then moved back in time. */
   async function send(opts: SendOpts): Promise<string> {
     const planned = await PushDeliveryRepository.insertPlan(pool, {
       workspaceId: ws,
@@ -255,7 +255,7 @@ describe("monitor push probe", () => {
     })
     const deliveryId = planned!.devices[0]!.id
     let token = randomBytes(16).toString("hex")
-    const lease = { workspaceId: ws, deliveryId, leaseMs: LEASE_MS }
+    const row = { workspaceId: ws, deliveryId }
     const arm = async () => {
       token = randomBytes(16).toString("hex")
       tokens.set(deliveryId, token)
@@ -275,24 +275,20 @@ describe("monitor push probe", () => {
     const armed = opts.armed ?? true
     const topic = opts.topic === undefined ? randomBytes(4).toString("hex") : opts.topic
 
-    let claimed = await PushDeliveryRepository.claim(pool, { ...lease, attempt: 0 })
+    let claimed = await PushDeliveryRepository.startAttempt(pool, { ...row, attempt: 0 })
     if (opts.abandonBeforeSend) {
-      await pool.query(
-        "UPDATE push_deliveries SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE workspace_id = $1 AND id = $2",
-        [ws, deliveryId]
-      )
-      claimed = await PushDeliveryRepository.claim(pool, { ...lease, attempt: 0 })
+      claimed = await PushDeliveryRepository.startAttempt(pool, { ...row, attempt: 0 })
     }
     if (opts.retriedAfter) {
       await arm()
-      await PushDeliveryRepository.renewLease(pool, {
-        ...lease,
-        claimVersion: claimed!.version,
+      await PushDeliveryRepository.recordSend(pool, {
+        ...row,
+        version: claimed!.version,
         sent: { topic, withReceipt: true, endpointHash: hash(opts.sub.endpoint) },
       })
       await PushDeliveryRepository.settle(pool, {
-        ...lease,
-        claimVersion: claimed!.version,
+        ...row,
+        version: claimed!.version,
         settlement: {
           kind: "retry",
           nextAttemptAt: new Date(Date.now() - 1_000),
@@ -303,18 +299,18 @@ describe("monitor push probe", () => {
       for (const stage of opts.retriedAfter) {
         await PushReceiptRepository.recordStage(pool, { workspaceId: ws, tokenHash: hash(token), stage, reason: null })
       }
-      claimed = await PushDeliveryRepository.claim(pool, { ...lease, attempt: 1 })
+      claimed = await PushDeliveryRepository.startAttempt(pool, { ...row, attempt: 1 })
     }
     if (armed === "earlier") {
       await arm()
-      await PushDeliveryRepository.renewLease(pool, {
-        ...lease,
-        claimVersion: claimed!.version,
+      await PushDeliveryRepository.recordSend(pool, {
+        ...row,
+        version: claimed!.version,
         sent: { topic, withReceipt: true, endpointHash: hash(opts.sub.endpoint) },
       })
       await PushDeliveryRepository.settle(pool, {
-        ...lease,
-        claimVersion: claimed!.version,
+        ...row,
+        version: claimed!.version,
         settlement: {
           kind: "retry",
           nextAttemptAt: new Date(Date.now() - 1_000),
@@ -322,15 +318,15 @@ describe("monitor push probe", () => {
           statusCode: null,
         },
       })
-      claimed = await PushDeliveryRepository.claim(pool, { ...lease, attempt: 1 })
+      claimed = await PushDeliveryRepository.startAttempt(pool, { ...row, attempt: 1 })
     } else if (armed) {
       await arm()
     }
     const status = opts.status ?? "accepted"
     if (status === "suppressed") {
       await PushDeliveryRepository.settle(pool, {
-        ...lease,
-        claimVersion: claimed!.version,
+        ...row,
+        version: claimed!.version,
         settlement: { kind: "terminal", status, attempted: false, outcome: null, statusCode: null, reason: "prefs" },
       })
     } else {
@@ -339,15 +335,15 @@ describe("monitor push probe", () => {
       } else if (opts.recorded === "without-endpoint") {
         await pool.query(PRE_ENDPOINT_RENEW_LEASE, [LEASE_MS, deliveryId, ws, claimed!.version, topic, armed === true])
       } else {
-        await PushDeliveryRepository.renewLease(pool, {
-          ...lease,
-          claimVersion: claimed!.version,
+        await PushDeliveryRepository.recordSend(pool, {
+          ...row,
+          version: claimed!.version,
           sent: { topic, withReceipt: armed === true, endpointHash: hash(opts.sub.endpoint) },
         })
       }
       await PushDeliveryRepository.settle(pool, {
-        ...lease,
-        claimVersion: claimed!.version,
+        ...row,
+        version: claimed!.version,
         settlement: decideSettlement({
           result: {
             outcome: status === "accepted" ? "accepted" : "rejected",
@@ -716,9 +712,9 @@ describe("monitor push probe", () => {
     expect(report.findings.map((finding) => finding.id)).toEqual(["push.receipts.shortfall"])
   })
 
-  test("should count terminal device outcomes by settle time and leave renewed pending rows to the backlog gauge", async () => {
+  test("should count terminal device outcomes by settle time and leave in-flight pending rows to the backlog gauge", async () => {
     const uid = await user(null)
-    const lease = (deliveryId: string) => ({ workspaceId: ws, deliveryId, leaseMs: LEASE_MS })
+    const row = (deliveryId: string) => ({ workspaceId: ws, deliveryId })
     const plan = async () => {
       const sub = await subscribe(uid)
       const planned = await PushDeliveryRepository.insertPlan(pool, {
@@ -741,11 +737,11 @@ describe("monitor push probe", () => {
       outcome: PushProviderOutcome,
       opts: { windowClosing?: boolean } = {}
     ) => {
-      const claimed = await PushDeliveryRepository.claim(pool, { ...lease(deliveryId), attempt })
+      const claimed = await PushDeliveryRepository.startAttempt(pool, { ...row(deliveryId), attempt })
       const nowMs = Date.now() - HOUR_MS
       await PushDeliveryRepository.settle(pool, {
-        ...lease(deliveryId),
-        claimVersion: claimed!.version,
+        ...row(deliveryId),
+        version: claimed!.version,
         settlement: decideSettlement({
           result: { outcome, statusCode: outcome === "unreachable" ? 503 : null, retryAfterMs: null },
           attemptsBefore: claimed!.attempts,
@@ -756,17 +752,16 @@ describe("monitor push probe", () => {
     }
     /** Settle without a send, as the worker does for suppression, expiry and infrastructure failure. */
     const unsent = async (deliveryId: string, attempt: number, status: TerminalPushDeliveryStatus, reason: string) => {
-      const claimed = await PushDeliveryRepository.claim(pool, { ...lease(deliveryId), attempt })
+      const claimed = await PushDeliveryRepository.startAttempt(pool, { ...row(deliveryId), attempt })
       return PushDeliveryRepository.settle(pool, {
-        ...lease(deliveryId),
-        claimVersion: claimed!.version,
+        ...row(deliveryId),
+        version: claimed!.version,
         settlement: { kind: "terminal", status, attempted: false, outcome: null, statusCode: null, reason },
       })
     }
-    /** A claim that never settles: its lease lapses, as after a crash. */
+    /** A start that never settles, as after a crash. */
     const abandon = async (deliveryId: string, attempt: number) => {
-      await PushDeliveryRepository.claim(pool, { workspaceId: ws, deliveryId, attempt, leaseMs: 1 })
-      await Bun.sleep(5)
+      await PushDeliveryRepository.startAttempt(pool, { workspaceId: ws, deliveryId, attempt })
     }
 
     await provider(await plan(), 0, "accepted")
@@ -796,11 +791,15 @@ describe("monitor push probe", () => {
     await provider(earlier, 0, "accepted")
     await pool.query("UPDATE push_deliveries SET updated_at = NOW() - interval '90 minutes' WHERE id = $1", [earlier])
 
-    // Pending: one overdue retry, one leased and renewed right now.
+    // Pending: one overdue retry, one started and sending right now.
     await provider(await plan(), 0, "unreachable")
-    const leased = await plan()
-    const claimed = await PushDeliveryRepository.claim(pool, { ...lease(leased), attempt: 0 })
-    await PushDeliveryRepository.renewLease(pool, { ...lease(leased), claimVersion: claimed!.version })
+    const inFlight = await plan()
+    const claimed = await PushDeliveryRepository.startAttempt(pool, { ...row(inFlight), attempt: 0 })
+    await PushDeliveryRepository.recordSend(pool, {
+      ...row(inFlight),
+      version: claimed!.version,
+      sent: { topic: null, withReceipt: false, endpointHash: hash("in-flight") },
+    })
 
     const report = await probe()
     expect({ outcomes: report.outcomes, findings: report.findings.map((finding) => finding.id) }).toEqual({
