@@ -45,8 +45,8 @@ function channel(
   } as StreamWithPreview
 }
 
-function stats(streamId: string, memberCount: number, activity: number[]): StreamDirectoryStats {
-  return { streamId, memberCount, recentMemberIds: ["usr_ana"], activity }
+function stats(streamId: string, memberCount: number, activity: number[], messageCount = 0): StreamDirectoryStats {
+  return { streamId, memberCount, recentMemberIds: ["usr_ana"], messageCount, activity }
 }
 
 const STREAMS = [
@@ -67,8 +67,8 @@ function thread(id: string, name: string, rootStreamId: string, lastAt: string):
 }
 
 const STATS = [
-  stats("stream_general", 2, [1, 0, 0]),
-  stats("stream_design", 9, [0, 4, 3]),
+  stats("stream_general", 2, [1, 0, 0], 1),
+  stats("stream_design", 9, [0, 4, 3], 6256),
   stats("stream_random", 5, [0, 0, 0]),
 ]
 
@@ -149,6 +149,15 @@ describe("StreamsPage", () => {
         .getAllByRole("link")
         .map((link) => link.textContent?.match(/#[a-z]+/)?.[0])
     ).toEqual(["#design", "#general"])
+  })
+
+  it("should label most active cards with the stream's all-time message count", async () => {
+    setup(`/w/${WS}/streams`)
+
+    const strip = await screen.findByRole("region", { name: "Most active" })
+    const design = within(strip).getByRole("link", { name: /#design/ })
+    expect(within(design).getByText("6,256 messages")).toBeInTheDocument()
+    expect(within(design).getByRole("img", { name: "7 messages in the last 3 days" })).toBeInTheDocument()
   })
 
   it("should order rows by member count when the URL asks for it", async () => {

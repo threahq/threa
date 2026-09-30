@@ -340,6 +340,8 @@ export interface StreamDirectoryStats {
   memberCount: number
   /** Up to five member ids, most recently joined first. */
   recentMemberIds: string[]
+  /** All non-deleted messages ever posted to the stream. */
+  messageCount: number
   activity: number[]
 }
 
