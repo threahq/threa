@@ -156,7 +156,9 @@ describe("StreamsPage", () => {
 
     const strip = await screen.findByRole("region", { name: "Most active" })
     const design = within(strip).getByRole("link", { name: /#design/ })
-    expect(within(design).getByText("6,256 messages")).toBeInTheDocument()
+    expect(
+      within(design).getByText(`${(6256).toLocaleString()} messages`, { normalizer: (text) => text })
+    ).toBeInTheDocument()
     expect(within(design).getByRole("img", { name: "7 messages in the last 3 days" })).toBeInTheDocument()
   })
 
