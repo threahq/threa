@@ -156,9 +156,11 @@ describe("StreamsPage", () => {
 
     const strip = await screen.findByRole("region", { name: "Most active" })
     const design = within(strip).getByRole("link", { name: /#design/ })
-    expect(
-      within(design).getByText(`${(6256).toLocaleString()} messages`, { normalizer: (text) => text })
-    ).toBeInTheDocument()
+    const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(6256)
+    expect(within(design).getByText(`${compact} messages`, { normalizer: (text) => text })).toHaveAttribute(
+      "title",
+      `${(6256).toLocaleString()} messages`
+    )
     expect(within(design).getByRole("img", { name: "7 messages in the last 3 days" })).toBeInTheDocument()
   })
 

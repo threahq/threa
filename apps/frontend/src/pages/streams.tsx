@@ -70,6 +70,7 @@ const MEMBERSHIP_LABELS: Record<Exclude<DirectoryMembership, "any">, string> = {
 const VALID_TABS = new Set<string>(DIRECTORY_TABS)
 const MOST_ACTIVE_LIMIT = 4
 const EMPTY_STATS: StreamDirectoryStats[] = []
+const COMPACT_COUNT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 })
 
 type ListedStream = Stream & { lastMessagePreview?: LastMessagePreview | null }
 
@@ -301,14 +302,12 @@ function StreamsPageInner({
                 Most active
               </h2>
               <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {mostActive.map((row) => (
-                  <MostActiveCard
-                    key={row.stream.id}
-                    workspaceId={workspaceId}
-                    row={row}
-                    stats={statsById.get(row.stream.id)}
-                  />
-                ))}
+                {mostActive.map((row) => {
+                  const stats = statsById.get(row.stream.id)
+                  return (
+                    stats && <MostActiveCard key={row.stream.id} workspaceId={workspaceId} row={row} stats={stats} />
+                  )
+                })}
               </ul>
             </section>
           )}
@@ -339,8 +338,8 @@ function recentMessageTotal(stats: StreamDirectoryStats | undefined): number {
   return stats ? stats.activity.reduce((sum, count) => sum + count, 0) : 0
 }
 
-function messageCountLabel(count: number): string {
-  return count === 1 ? "1 message" : `${count.toLocaleString()} messages`
+function messageCountLabel(count: number, formatted = count.toLocaleString()): string {
+  return count === 1 ? "1 message" : `${formatted} messages`
 }
 
 function directoryEmptyText(state: { failed: boolean; loading: boolean; empty: boolean; searching: boolean }) {
@@ -360,7 +359,7 @@ function MostActiveCard({
 }: {
   workspaceId: string
   row: DirectoryRow<ListedStream>
-  stats: StreamDirectoryStats | undefined
+  stats: StreamDirectoryStats
 }) {
   const Icon = STREAM_ICONS[row.stream.type]
   return (
@@ -373,10 +372,12 @@ function MostActiveCard({
           <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{row.name}</span>
         </span>
-        {stats && <ActivitySparkline activity={stats.activity} className="h-8 w-full" />}
+        <ActivitySparkline activity={stats.activity} className="h-8 w-full" />
         <span className="flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
-          <span>{messageCountLabel(stats?.messageCount ?? 0)}</span>
-          {stats && <MemberStack workspaceId={workspaceId} stats={stats} max={3} />}
+          <span className="whitespace-nowrap" title={messageCountLabel(stats.messageCount)}>
+            {messageCountLabel(stats.messageCount, COMPACT_COUNT.format(stats.messageCount))}
+          </span>
+          <MemberStack workspaceId={workspaceId} stats={stats} max={3} />
         </span>
       </Link>
     </li>
