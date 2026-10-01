@@ -89,6 +89,7 @@ describe("StreamConnectionService", () => {
         state: "invited",
         hostWorkspaceId: host,
         hostWorkspaceName: "Acme",
+        hostRegion: "eu",
         streamDisplayName: "Launch",
         streamSlug: "launch",
         partnerWorkspaceId: null,

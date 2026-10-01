@@ -209,6 +209,7 @@ export class StreamConnectionService {
       state: snapshot.state,
       hostWorkspaceId: snapshot.hostWorkspaceId,
       hostWorkspaceName: snapshot.hostWorkspaceName,
+      hostRegion: snapshot.hostRegion,
       streamDisplayName: snapshot.hostStreamDisplayName,
       streamSlug: snapshot.hostStreamSlug,
       partnerWorkspaceId: snapshot.partnerWorkspaceId,

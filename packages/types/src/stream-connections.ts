@@ -101,6 +101,8 @@ export interface StreamConnectionLookupResponse {
   state: StreamConnectionState
   hostWorkspaceId: string
   hostWorkspaceName: string
+  /** Where the host's data lives. Accepting agrees to the partner's copy being served from there too. */
+  hostRegion: string
   streamDisplayName: string | null
   streamSlug: string | null
   /** Set once accepted, so the partner admin who accepted sees where it went. */
