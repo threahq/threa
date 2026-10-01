@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import { classifyProviderResult, providerFamily } from "./outcome"
+import { classifyProviderResult, providerFamily, retryAfterMs } from "./outcome"
 
 const rejectedWith = (reason: unknown): PromiseSettledResult<unknown> => ({ status: "rejected", reason })
 const webPushError = (statusCode: number) =>
@@ -60,5 +60,25 @@ describe("providerFamily", () => {
     ["not a url", "other"],
   ] as const)("should map %s to %s", (endpoint, family) => {
     expect(providerFamily(endpoint)).toBe(family)
+  })
+})
+
+describe("retryAfterMs", () => {
+  const NOW = Date.parse("2026-09-28T12:00:00.000Z")
+  const withHeaders = (headers: unknown) => rejectedWith(Object.assign(webPushError(429), { headers }))
+
+  it.each([
+    ["delta seconds", { "retry-after": "120" }, 120_000],
+    ["an HTTP date", { "retry-after": "Mon, 28 Sep 2026 12:05:00 GMT" }, 5 * 60_000],
+    ["a date already past", { "retry-after": "Mon, 28 Sep 2026 11:00:00 GMT" }, 0],
+    ["a differently cased header", { "Retry-After": "7" }, 7_000],
+    ["no header", {}, null],
+    ["garbage", { "retry-after": "soon" }, null],
+  ])("reads %s", (_label, headers, expected) => {
+    expect(retryAfterMs(withHeaders(headers), NOW)).toBe(expected)
+  })
+
+  it("ignores accepted sends", () => {
+    expect(retryAfterMs({ status: "fulfilled", value: { headers: { "retry-after": "5" } } }, NOW)).toBeNull()
   })
 })

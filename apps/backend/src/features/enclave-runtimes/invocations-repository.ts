@@ -409,14 +409,28 @@ export const EnclaveInvocationsRepository = {
    * "owner must re-wrap" signal: a healthy fleet that already holds the wraps
    * just serves the turn and never surfaces here. Coalesced per (workspace,
    * root stream) by the caller — the wraps and the heal are the root's.
+   * `scope` narrows it to one root stream and owner, so a delayed nudge can
+   * ask whether its heal is still needed through this same predicate.
    */
-  async findUnservablePending(db: Querier, params: { stalenessMs: number }): Promise<UnservablePendingInvocation[]> {
+  async findUnservablePending(
+    db: Querier,
+    params: { stalenessMs: number; scope?: { workspaceId: string; rootStreamId: string; ownerUserId: string } }
+  ): Promise<UnservablePendingInvocation[]> {
+    const scope = params.scope
     const result = await db.query<UnservablePendingRow>(sql`
       SELECT i.id, i.workspace_id, i.root_stream_id, e.owner_user_id, i.created_at
       FROM enclave_invocations i
       JOIN e2e_streams e
         ON e.workspace_id = i.workspace_id AND e.stream_id = i.root_stream_id
       WHERE i.status = 'pending'
+        AND (
+          ${scope === undefined}
+          OR (
+            i.workspace_id = ${scope?.workspaceId ?? null}
+            AND i.root_stream_id = ${scope?.rootStreamId ?? null}
+            AND e.owner_user_id = ${scope?.ownerUserId ?? null}
+          )
+        )
         AND EXISTS (
           SELECT 1 FROM enclave_runtimes r
           WHERE r.revoked_at IS NULL

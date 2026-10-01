@@ -2,12 +2,12 @@ import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test"
 import webpush from "web-push"
 import { randomBytes } from "node:crypto"
 import type { Pool } from "pg"
-import { ActivityTypes, PrefNotificationLevels, SavedStatuses, type PrefNotificationLevel } from "@threahq/types"
+import { ActivityTypes, PrefNotificationLevels, type PrefNotificationLevel } from "@threahq/types"
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { PushService } from "./service"
 import { PushTelemetry } from "./telemetry"
 import { PushSubscriptionRepository } from "./repository"
-import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../lib/outbox"
+import type { ActivityCreatedOutboxPayload } from "../../lib/outbox"
 
 function makeActivityPayload(): ActivityCreatedOutboxPayload {
   return {
@@ -34,6 +34,8 @@ function registrationKeys(): { p256dh: string; auth: string } {
   return { p256dh: webpush.generateVAPIDKeys().publicKey, auth: randomBytes(16).toString("base64url") }
 }
 
+const EVENT = { id: 1n, createdAt: new Date() }
+
 const fakePool = {
   connect: async () => ({ query: async () => ({ rows: [] }), release: () => {} }),
 } as unknown as Pool
@@ -57,6 +59,9 @@ function makeService(
       isNotificationPaused: async () => isNotificationPaused,
       getStreamType: async () => "channel",
       getWorkosUserId: async () => "workos_1",
+      resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
+      resolveFiredReminder: async () => null,
+      isRewrapOutstanding: async () => false,
     },
   })
 }
@@ -73,7 +78,7 @@ describe("PushService do-not-disturb gating", () => {
   })
 
   it("does not deliver — or even resolve devices — while notifications are paused", async () => {
-    await makeService(true).deliverPushForActivity(makeActivityPayload())
+    await makeService(true).planActivityPush(EVENT, makeActivityPayload())
     expect(findByUserId).not.toHaveBeenCalled()
   })
 
@@ -115,8 +120,15 @@ describe("PushService do-not-disturb gating", () => {
     expect(findByUserId).not.toHaveBeenCalled()
   })
 
+  it("never plans a push for a saved_reminder activity row: saved_reminder:fired owns that push", async () => {
+    const payload = makeActivityPayload()
+    payload.activity.activityType = ActivityTypes.SAVED_REMINDER
+    await makeService(false).planActivityPush(EVENT, payload)
+    expect(findByUserId).not.toHaveBeenCalled()
+  })
+
   it("resolves the user's devices when notifications are not paused", async () => {
-    await makeService(false).deliverPushForActivity(makeActivityPayload())
+    await makeService(false).planActivityPush(EVENT, makeActivityPayload())
     expect(findByUserId).toHaveBeenCalledTimes(1)
   })
 })
@@ -130,6 +142,7 @@ describe("PushService delivery options", () => {
     ...registrationKeys(),
     deviceKey: "device1",
     userAgent: null,
+    generation: 1,
     createdAt: new Date(),
     updatedAt: new Date(), // fresh re-registration → passes the session-expiry check
   }
@@ -149,50 +162,6 @@ describe("PushService delivery options", () => {
   afterEach(() => {
     findByUserId.mockRestore()
     sendNotification.mockRestore()
-  })
-
-  it("sends message pushes with a timeout, high urgency, bounded TTL, and a per-stream topic", async () => {
-    await makeService(false).deliverPushForActivity(makeActivityPayload())
-
-    expect(sendNotification).toHaveBeenCalledTimes(1)
-    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
-    expect(options).toEqual({
-      timeout: 10_000,
-      TTL: 24 * 60 * 60,
-      urgency: "high",
-      topic: "1", // ULID part of stream_1; mentions get an "m" suffix
-    })
-  })
-
-  it("ships a plain-text body, the actor avatar path, and the user's button preferences", async () => {
-    const payload = makeActivityPayload()
-    payload.activity.activityType = ActivityTypes.REACTION
-    payload.activity.context = {
-      contentPreview: "**ship it** :rocket: [@kris](user:usr_1)",
-      emoji: ":+1:",
-      authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
-    }
-    await makeService(false).deliverPushForActivity(payload)
-
-    const [, body] = sendNotification.mock.calls[0] as [unknown, string]
-    const { data } = JSON.parse(body) as { data: Record<string, unknown> }
-    expect(data).toMatchObject({
-      contentPreview: "ship it 🚀 @kris",
-      emoji: "👍",
-      authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
-      pushActions: ["mark_read", "remind"],
-      pushReminderMinutes: 5,
-      pushQuickReaction: "👍",
-    })
-  })
-
-  it("keeps mention pushes on a distinct topic so they don't collapse into message pushes", async () => {
-    const payload = makeActivityPayload()
-    payload.activity.activityType = ActivityTypes.MENTION
-    await makeService(false).deliverPushForActivity(payload)
-
-    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
-    expect(options.topic).toBe("1m")
   })
 
   it("sends a call ring with high urgency, a 45s TTL, and an attempt-keyed topic", async () => {
@@ -242,48 +211,6 @@ describe("PushService delivery options", () => {
     expect(options).toEqual({ timeout: 10_000, TTL: 60, urgency: "high" })
   })
 
-  it("sends saved-reminder pushes with high urgency and a savedId-derived topic", async () => {
-    const payload: SavedReminderFiredOutboxPayload = {
-      workspaceId: "ws_1",
-      targetUserId: "usr_1",
-      savedId: "saved_01ABCDEF",
-      messageId: null,
-      streamId: null,
-      saved: {
-        id: "saved_01ABCDEF",
-        workspaceId: "ws_1",
-        userId: "usr_1",
-        messageId: null,
-        streamId: null,
-        conversationId: null,
-        status: SavedStatuses.SAVED,
-        title: "Standalone reminder",
-        note: null,
-        remindAt: new Date().toISOString(),
-        reminderSentAt: null,
-        savedAt: new Date().toISOString(),
-        statusChangedAt: new Date().toISOString(),
-        message: null,
-        unavailableReason: null,
-      },
-    }
-    await makeService(false).deliverPushForSavedReminder(payload)
-
-    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
-    expect(options).toEqual({ timeout: 10_000, TTL: 24 * 60 * 60, urgency: "high", topic: "01ABCDEF" })
-  })
-
-  it("sends rewrap nudges on a topic that never collapses into the stream's message pushes", async () => {
-    await makeService(false).deliverRewrapNudge({
-      workspaceId: "ws_1",
-      targetUserId: "usr_1",
-      rootStreamId: "stream_1",
-    })
-
-    const [, , options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
-    expect(options).toEqual({ timeout: 10_000, TTL: 24 * 60 * 60, urgency: "high", topic: "1r" })
-  })
-
   it("records a stored registration whose keys cannot be encrypted to as invalid, without sending", async () => {
     findByUserId.mockResolvedValue([{ ...subscription, p256dh: "not-a-p256-point", auth: "short" }])
 
@@ -296,24 +223,5 @@ describe("PushService delivery options", () => {
       failed: 1,
       devices: [{ subscriptionId: subscription.id, outcome: "invalid_registration", statusCode: null }],
     })
-  })
-
-  it("delivers session-expired at normal urgency with a week-long TTL before cleaning the subscription up", async () => {
-    const deleteByIds = spyOn(PushSubscriptionRepository, "deleteByIds").mockResolvedValue(undefined)
-    try {
-      // 31 days without a re-registration or heartbeat → the expired partition.
-      const expired = { ...subscription, updatedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000) }
-      findByUserId.mockResolvedValue([expired])
-
-      await makeService(false).deliverPushForActivity(makeActivityPayload())
-
-      expect(sendNotification).toHaveBeenCalledTimes(1)
-      const [, payload, options] = sendNotification.mock.calls[0] as [unknown, string, Record<string, unknown>]
-      expect(JSON.parse(payload).data.action).toBe("session_expired")
-      expect(options).toEqual({ timeout: 10_000, TTL: 7 * 24 * 60 * 60, urgency: "normal", topic: "session-expired" })
-      expect(deleteByIds).toHaveBeenCalledWith(fakePool, "ws_1", [expired.id])
-    } finally {
-      deleteByIds.mockRestore()
-    }
   })
 })

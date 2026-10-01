@@ -24,7 +24,7 @@ import {
   queueMessageDuration,
   queueTokensStuck,
 } from "../observability"
-import { isUniqueViolation } from "../errors"
+import { isUniqueViolation, safeErrorCode } from "../errors"
 import { AISpendDeniedError } from "@threahq/agent-runtime"
 
 /** How long a job blocked by an AI spend limit waits before it asks again. */
@@ -133,6 +133,7 @@ export class QueueManager {
   private readonly handlerTiers = new Map<string, QueueTier>()
   private readonly handlerFairness = new Map<string, QueueFairnessMode>()
   private readonly handlerMaxRetries = new Map<string, number>()
+  private readonly privateLogQueues = new Set<string>()
   private readonly managerId: string
   private isStarted = false
   private isStopping = false
@@ -213,6 +214,22 @@ export class QueueManager {
     }
     if (options?.hooks) {
       this.handlerHooks.set(queueName, options.hooks as HandlerHooks<unknown>)
+    }
+    if (options?.privateLogs) {
+      this.privateLogQueues.add(queueName)
+    }
+  }
+
+  /** Job-identifying log fields; a `privateLogs` queue logs only its name, counts and an error code. */
+  private jobLogFields(
+    queueName: string,
+    fields: { messageId?: string; messageIds?: string[]; workspaceId?: string; err?: unknown }
+  ): Record<string, unknown> {
+    if (!this.privateLogQueues.has(queueName)) return { queueName, ...fields }
+    return {
+      queueName,
+      ...(fields.messageIds ? { messageCount: fields.messageIds.length } : {}),
+      ...("err" in fields ? { errorCode: safeErrorCode(fields.err) } : {}),
     }
   }
 
@@ -312,14 +329,17 @@ export class QueueManager {
       })
     } catch (error) {
       if (options?.messageId && isUniqueViolation(error, "queue_messages_pkey")) {
-        logger.info({ queueName, messageId, workspaceId }, "Queue message already enqueued (idempotent send)")
+        logger.info(
+          this.jobLogFields(queueName, { messageId, workspaceId }),
+          "Queue message already enqueued (idempotent send)"
+        )
         return messageId
       }
       throw error
     }
 
     queueMessagesEnqueued.inc({ queue: queueName, workspace_id: workspaceId })
-    logger.debug({ queueName, messageId, workspaceId }, "Message sent to queue")
+    logger.debug(this.jobLogFields(queueName, { messageId, workspaceId }), "Message sent to queue")
 
     return messageId
   }
@@ -575,7 +595,10 @@ export class QueueManager {
           logger.debug({ tokenId: token.id }, "Token lease renewed")
         }
       } catch (err) {
-        logger.warn({ tokenId: token.id, err }, "Failed to renew token lease")
+        logger.warn(
+          { tokenId: token.id, ...this.jobLogFields(token.queueName, { err }) },
+          "Failed to renew token lease"
+        )
       } finally {
         tokenRenewalInProgress = false
       }
@@ -590,8 +613,7 @@ export class QueueManager {
       logger.warn(
         {
           tokenId: token.id,
-          queueName: token.queueName,
-          workspaceId: token.workspaceId,
+          ...this.jobLogFields(token.queueName, { workspaceId: token.workspaceId }),
           runtimeMs,
           thresholdMs: this.stuckTokenWarnMs,
         },
@@ -634,7 +656,7 @@ export class QueueManager {
     }
 
     logger.debug(
-      { messageCount: messages.length, queueName: token.queueName, workspaceId: token.workspaceId },
+      { messageCount: messages.length, ...this.jobLogFields(token.queueName, { workspaceId: token.workspaceId }) },
       "Batch claimed messages"
     )
 
@@ -644,7 +666,10 @@ export class QueueManager {
 
     const messageRenewTimer = setInterval(async () => {
       if (messageRenewalInProgress) {
-        logger.debug({ messageIds }, "Skipping batch renewal - previous renewal still in progress")
+        logger.debug(
+          this.jobLogFields(token.queueName, { messageIds }),
+          "Skipping batch renewal - previous renewal still in progress"
+        )
         return
       }
 
@@ -659,7 +684,7 @@ export class QueueManager {
         const renewed = await this.batchRenewClaims(idsToRenew, workerIdValue)
         logger.debug({ renewedCount: renewed, totalMessages: idsToRenew.length }, "Batch renewed claims")
       } catch (err) {
-        logger.warn({ messageIds: idsToRenew, err }, "Failed to batch renew claims")
+        logger.warn(this.jobLogFields(token.queueName, { messageIds: idsToRenew, err }), "Failed to batch renew claims")
       } finally {
         messageRenewalInProgress = false
       }
@@ -743,7 +768,7 @@ export class QueueManager {
       queueMessagesProcessed.inc({ queue: message.queueName, status: "success", workspace_id: workspaceId })
       queueMessageDuration.observe({ queue: message.queueName, workspace_id: workspaceId }, durationSeconds)
 
-      logger.debug({ messageId: message.id, queueName: message.queueName }, "Message completed")
+      logger.debug(this.jobLogFields(message.queueName, { messageId: message.id }), "Message completed")
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err))
 
@@ -762,7 +787,10 @@ export class QueueManager {
         return
       }
 
-      logger.warn({ messageId: message.id, queueName: message.queueName, err: error }, "Message processing failed")
+      logger.warn(
+        this.jobLogFields(message.queueName, { messageId: message.id, err: error }),
+        "Message processing failed"
+      )
 
       const newFailedCount = message.failedCount + 1
 
@@ -772,7 +800,7 @@ export class QueueManager {
 
         queueMessagesProcessed.inc({ queue: message.queueName, status: "dlq", workspace_id: workspaceId })
         logger.error(
-          { messageId: message.id, queueName: message.queueName },
+          this.jobLogFields(message.queueName, { messageId: message.id }),
           "Message moved to DLQ after exhausting retries"
         )
       } else {
@@ -780,7 +808,7 @@ export class QueueManager {
 
         queueMessagesProcessed.inc({ queue: message.queueName, status: "failed", workspace_id: workspaceId })
         logger.debug(
-          { messageId: message.id, queueName: message.queueName, retryCount: newFailedCount },
+          { ...this.jobLogFields(message.queueName, { messageId: message.id }), retryCount: newFailedCount },
           "Message scheduled for retry"
         )
       }
@@ -859,7 +887,7 @@ export class QueueManager {
           })
         } catch (hookError) {
           logger.error(
-            { messageId: message.id, queueName: message.queueName, err: hookError },
+            this.jobLogFields(message.queueName, { messageId: message.id, err: hookError }),
             "onDLQ hook failed - DLQ move will still commit"
           )
         }

@@ -1,4 +1,5 @@
 import { PUSH_PROVIDER_OUTCOMES, type PushProviderOutcome } from "@threahq/types"
+import { safeErrorCode } from "../../lib/errors"
 
 export const PUSH_SEND_KINDS = {
   ACTIVITY: "activity",
@@ -22,6 +23,18 @@ export const PUSH_SUPPRESSION_REASONS = {
   NO_SUBSCRIPTIONS: "no_subscriptions",
   /** Every device's session expired: those devices got the session-expired push instead. */
   SESSIONS_EXPIRED: "sessions_expired",
+  /** Saved-reminder activity rows: the reminder pushes through `saved_reminder:fired`, never twice. */
+  NOT_PUSHABLE: "not_pushable",
+  READ: "read",
+  /** The source was deleted, moved, sealed, cancelled or re-fired, or its need was resolved. */
+  SOURCE_GONE: "source_gone",
+  ACCESS_LOST: "access_lost",
+  /** The original event's expiry passed before a send. */
+  EXPIRED: "expired",
+  /** The planned registration was removed or re-keyed. */
+  SUPERSEDED: "superseded",
+  /** Targeting moved to the device the user is attending, or this device's session expired. */
+  NOT_TARGETED: "not_targeted",
 } as const
 
 export type PushSuppressionReason = (typeof PUSH_SUPPRESSION_REASONS)[keyof typeof PUSH_SUPPRESSION_REASONS]
@@ -52,13 +65,6 @@ function httpStatusOf(value: unknown): number | null {
     : null
 }
 
-/** Error codes are logged, messages are not: `WebPushError` and pg errors carry endpoints, bodies and row values. */
-export function safeErrorCode(err: unknown): string | null {
-  if (typeof err !== "object" || err === null) return null
-  const code = (err as { code?: unknown }).code
-  return typeof code === "string" && /^[A-Z0-9_]{1,40}$/.test(code) ? code : null
-}
-
 function outcomeForStatus(statusCode: number): PushProviderOutcome {
   if (statusCode >= 200 && statusCode < 300) return PUSH_PROVIDER_OUTCOMES.ACCEPTED
   if (statusCode === 404 || statusCode === 410) return PUSH_PROVIDER_OUTCOMES.REGISTRATION_GONE
@@ -86,6 +92,26 @@ export function classifyProviderResult(settled: PromiseSettledResult<unknown>): 
     return { outcome: PUSH_PROVIDER_OUTCOMES.UNREACHABLE, statusCode, errorCode: safeErrorCode(settled.reason) }
   }
   return { outcome: outcomeForStatus(statusCode), statusCode, errorCode: null }
+}
+
+/**
+ * The push service's requested wait from a `Retry-After` header (delta
+ * seconds or HTTP date) on a rejected send, in ms from `nowMs`. Null when absent
+ * or unparseable; a date in the past is a zero wait.
+ */
+export function retryAfterMs(settled: PromiseSettledResult<unknown>, nowMs: number): number | null {
+  if (settled.status !== "rejected") return null
+  const reason = settled.reason
+  if (typeof reason !== "object" || reason === null) return null
+  const headers = (reason as { headers?: unknown }).headers
+  if (typeof headers !== "object" || headers === null) return null
+  const raw = Object.entries(headers).find(([name]) => name.toLowerCase() === "retry-after")?.[1]
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== "string" && typeof value !== "number") return null
+  const text = String(value).trim()
+  if (/^\d+$/.test(text)) return Number(text) * 1000
+  const at = Date.parse(text)
+  return Number.isNaN(at) ? null : Math.max(0, at - nowMs)
 }
 
 /** A request that was never built: nothing reached the push service, and resending the same keys fails the same way. */

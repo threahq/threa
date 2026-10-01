@@ -988,6 +988,12 @@ export interface SavedReminderFiredOutboxPayload extends WorkspaceScopedPayload 
   messageId: string | null
   streamId: string | null
   saved: SavedMessageView
+  /**
+   * `saved_messages.reminder_generation` right after this fire. Absent on
+   * events written by replicas predating it; consumers must treat absence as
+   * unknown and never substitute the current generation.
+   */
+  reminderGeneration?: number
 }
 
 export interface SavedSuggestionUpsertedOutboxPayload extends WorkspaceScopedPayload {

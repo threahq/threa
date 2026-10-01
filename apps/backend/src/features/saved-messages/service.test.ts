@@ -90,6 +90,7 @@ function fakeSaved(overrides: Partial<SavedMessage> = {}): SavedMessage {
     remindAt: null,
     reminderSentAt: null,
     reminderQueueMessageId: null,
+    reminderGeneration: 0,
     savedAt: NOW,
     statusChangedAt: NOW,
     createdAt: NOW,

@@ -11,6 +11,7 @@ interface PushSubscriptionRow {
   auth: string
   device_key: string
   user_agent: string | null
+  generation: number
   created_at: Date
   updated_at: Date
 }
@@ -24,6 +25,8 @@ export interface PushSubscription {
   auth: string
   deviceKey: string
   userAgent: string | null
+  /** Trigger-maintained; bumps only when the device binding (endpoint, keys, device key, owner) changes. */
+  generation: number
   createdAt: Date
   /**
    * Bumped on every (idempotent) re-registration via {@link insert}, which is
@@ -54,6 +57,7 @@ function mapRowToSubscription(row: PushSubscriptionRow): PushSubscription {
     auth: row.auth,
     deviceKey: row.device_key,
     userAgent: row.user_agent,
+    generation: row.generation,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -96,12 +100,51 @@ export const PushSubscriptionRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  async deleteByIds(db: Querier, workspaceId: string, ids: string[]): Promise<void> {
-    if (ids.length === 0) return
-    await db.query(sql`
-      DELETE FROM push_subscriptions
-      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
+  /**
+   * Delete only rows still at the observed generation, so a delayed eviction
+   * cannot remove a registration that was re-keyed after it was read.
+   * Returns the ids actually deleted.
+   */
+  async deleteByIdsAtGeneration(
+    db: Querier,
+    workspaceId: string,
+    pins: Array<{ id: string; generation: number }>
+  ): Promise<string[]> {
+    if (pins.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      DELETE FROM push_subscriptions s
+      USING unnest(${pins.map((p) => p.id)}::text[], ${pins.map((p) => p.generation)}::int[]) AS pin(id, generation)
+      WHERE s.workspace_id = ${workspaceId}
+        AND s.id = pin.id
+        AND s.generation = pin.generation
+      RETURNING s.id
     `)
+    return result.rows.map((row) => row.id)
+  },
+
+  /**
+   * Delete one registration only while it is at `generation` and still stale:
+   * not re-registered and no heartbeat for its device key within `staleForMs`
+   * (the session-liveness rule, evaluated by this statement, so a sign-in that
+   * lands while the caller works keeps the row). Returns whether it was deleted.
+   */
+  async deleteStaleAtGeneration(
+    db: Querier,
+    params: { workspaceId: string; id: string; generation: number; staleForMs: number }
+  ): Promise<boolean> {
+    const result = await db.query(sql`
+      DELETE FROM push_subscriptions s
+      WHERE s.workspace_id = ${params.workspaceId}
+        AND s.id = ${params.id}
+        AND s.generation = ${params.generation}
+        AND s.updated_at <= NOW() - (${params.staleForMs}::text || ' milliseconds')::interval
+        AND NOT EXISTS (
+          SELECT 1 FROM user_sessions us
+          WHERE us.device_key = s.device_key
+            AND us.last_active_at > NOW() - (${params.staleForMs}::text || ' milliseconds')::interval
+        )
+    `)
+    return (result.rowCount ?? 0) > 0
   },
 
   /** Check if a subscription already exists for this user+endpoint (used for cap-safe upserts). */
@@ -154,6 +197,14 @@ export const PushSubscriptionRepository = {
         AND user_id IN (SELECT id FROM users WHERE workos_user_id = ${workosUserId})
     `)
     return result.rowCount ?? 0
+  },
+
+  async findById(db: Querier, workspaceId: string, id: string): Promise<PushSubscription | null> {
+    const result = await db.query<PushSubscriptionRow>(sql`
+      SELECT * FROM push_subscriptions
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
+    `)
+    return result.rows[0] ? mapRowToSubscription(result.rows[0]) : null
   },
 
   async findByUserId(db: Querier, workspaceId: string, userId: string): Promise<PushSubscription[]> {

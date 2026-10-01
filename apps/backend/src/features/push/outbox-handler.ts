@@ -9,8 +9,6 @@ import type { PushService } from "./service"
 import { logger } from "../../lib/logger"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig } from "../../lib/outbox"
 
-// Smaller batch than other outbox handlers: each event triggers external HTTP
-// calls (webpush.sendNotification) that hold the cursor lock during network I/O.
 const HANDLER_CONFIG: DebouncedOutboxHandlerConfig = {
   batchSize: 10,
 }
@@ -21,7 +19,7 @@ interface PushNotificationHandlerDeps {
 }
 
 /**
- * Listens for outbox events and delegates push delivery to PushService.
+ * Listens for outbox events and delegates push planning to PushService.
  * Handles activity:created, saved_reminder:fired, and e2e:rewrap_nudge —
  * every event here results in a VISIBLE notification. stream:read events are
  * deliberately not consumed: pushing a notification-less "clear" burns the
@@ -37,20 +35,12 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
     this.pushService = deps.pushService
   }
 
-  // Delivery is sequential within the batch (the base loops events in order and
-  // stops at the first throw). Parallel delivery is tempting but unsafe with
-  // CursorLock's sliding-window compaction: if event 8 fails but events 9-10
-  // succeed and are added to processedIds, the gap window can expire during
-  // retry backoff, causing the cursor to jump past event 8 and permanently lose
-  // it. Sequential stops at the first failure, ensuring the cursor never
-  // advances past un-delivered events.
-  //
-  // Push events are low-volume (activity:created, reminders, nudges) so sequential
-  // within a batch of 10 has negligible latency impact — the real throughput
-  // win is the dedicated realtime pool isolating push from background workers.
-  //
-  // Per-device webpush failures are handled inside PushService (stale
-  // subscription eviction) and don't escape as thrown errors here.
+  // Planning is sequential within the batch: it stops at the first throw, so
+  // the cursor never advances past an event whose delivery rows and jobs were
+  // not committed. Planning does no provider I/O — sends happen in the
+  // push.deliver worker — so nothing here holds the cursor across the network.
+  // The only exception is a legacy saved_reminder:fired event (no reminder
+  // generation) from a replica predating durable delivery, sent inline once.
   protected async processEvent(event: OutboxEvent): Promise<void> {
     if (event.eventType === "activity:created") {
       const payload = event.payload as ActivityCreatedOutboxPayload
@@ -58,7 +48,7 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
         logger.warn({ eventId: event.id }, "Skipping malformed activity:created payload")
         return
       }
-      await this.pushService.deliverPushForActivity(payload)
+      await this.pushService.planActivityPush(event, payload)
       return
     }
 
@@ -68,7 +58,7 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
         logger.warn({ eventId: event.id }, "Skipping malformed saved_reminder:fired payload")
         return
       }
-      await this.pushService.deliverPushForSavedReminder(payload)
+      await this.pushService.planSavedReminderPush(event, payload)
       return
     }
 
@@ -78,7 +68,7 @@ export class PushNotificationHandler extends DebouncedOutboxHandler {
         logger.warn({ eventId: event.id }, "Skipping malformed e2e:rewrap_nudge payload")
         return
       }
-      await this.pushService.deliverRewrapNudge(payload)
+      await this.pushService.planRewrapNudgePush(event, payload)
       return
     }
   }

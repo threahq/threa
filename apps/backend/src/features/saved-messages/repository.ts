@@ -16,6 +16,7 @@ interface SavedMessageRow {
   remind_at: Date | null
   reminder_sent_at: Date | null
   reminder_queue_message_id: string | null
+  reminder_generation: number
   saved_at: Date
   status_changed_at: Date
   created_at: Date
@@ -44,6 +45,8 @@ export interface SavedMessage {
   remindAt: Date | null
   reminderSentAt: Date | null
   reminderQueueMessageId: string | null
+  /** Trigger-maintained; bumps whenever status, remind_at, reminder_sent_at or the reminder queue pointer changes. */
+  reminderGeneration: number
   savedAt: Date
   statusChangedAt: Date
   createdAt: Date
@@ -87,7 +90,7 @@ export interface ListSavedOpts {
 }
 
 const SAVED_MESSAGE_COLUMNS =
-  "id, workspace_id, user_id, message_id, stream_id, conversation_id, status, title, note, remind_at, reminder_sent_at, reminder_queue_message_id, saved_at, status_changed_at, created_at, updated_at"
+  "id, workspace_id, user_id, message_id, stream_id, conversation_id, status, title, note, remind_at, reminder_sent_at, reminder_queue_message_id, reminder_generation, saved_at, status_changed_at, created_at, updated_at"
 
 function mapRow(row: SavedMessageRow): SavedMessage {
   return {
@@ -103,6 +106,7 @@ function mapRow(row: SavedMessageRow): SavedMessage {
     remindAt: row.remind_at,
     reminderSentAt: row.reminder_sent_at,
     reminderQueueMessageId: row.reminder_queue_message_id,
+    reminderGeneration: row.reminder_generation,
     savedAt: row.saved_at,
     statusChangedAt: row.status_changed_at,
     createdAt: row.created_at,
