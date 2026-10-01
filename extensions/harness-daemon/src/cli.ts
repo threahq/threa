@@ -308,6 +308,8 @@ export function parseSpawn(args: string[]): SpawnOptions {
   const thinking = stringFlag(flags, "thinking")?.toLowerCase()
   const levels = runtimeDefinition(runtime).thinkingLevels
   if (thinking && !levels.includes(thinking)) die(`--thinking for ${runtime} must be one of: ${levels.join(", ")}`)
+  const model = stringFlag(flags, "model")
+  if (model?.startsWith("-")) die(`--model must name a model, not an option: ${model}`)
 
   return {
     runtime,
@@ -316,7 +318,7 @@ export function parseSpawn(args: string[]): SpawnOptions {
     base: stringFlag(flags, "base"),
     ...(cwd !== undefined ? { cwd: resolve(cwd) } : { repo: resolve(stringFlag(flags, "repo") ?? defaultRepo()) }),
     profile: stringFlag(flags, "profile"),
-    model: stringFlag(flags, "model"),
+    model,
     ...(thinking ? { thinking } : {}),
     tmux: stringFlag(flags, "tmux"),
     skipSetup: boolFlag(flags, "skip-setup"),
