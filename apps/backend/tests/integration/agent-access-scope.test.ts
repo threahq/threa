@@ -131,6 +131,107 @@ describe("Agent Access Scope", () => {
     })
   })
 
+  test("DM agent access resolves threads through their root, not the thread's own row", async () => {
+    await withTestTransaction(pool, async (client) => {
+      const ownerWorkosUserId = userId()
+      const secondWorkosUserId = userId()
+      const testWorkspaceId = workspaceId()
+
+      await WorkspaceRepository.insert(client, {
+        id: testWorkspaceId,
+        name: "Agent Thread Scope Workspace",
+        slug: `agent-thread-scope-${testWorkspaceId}`,
+        createdBy: ownerWorkosUserId,
+      })
+
+      const ownerMember = await addTestMember(client, testWorkspaceId, ownerWorkosUserId)
+      const secondMember = await addTestMember(client, testWorkspaceId, secondWorkosUserId)
+
+      const sharedDmId = streamId()
+      const ownerOnlyChannelId = streamId()
+      const sharedPrivateChannelId = streamId()
+      const publicChannelId = streamId()
+      const staleVisibilityThreadId = streamId()
+      const directMemberThreadId = streamId()
+      const sharedChannelThreadId = streamId()
+      const publicChannelThreadId = streamId()
+
+      await StreamRepository.insert(client, {
+        id: sharedDmId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.DM,
+        visibility: Visibilities.PRIVATE,
+        createdBy: ownerMember.id,
+      })
+      await StreamMemberRepository.insert(client, sharedDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, sharedDmId, secondMember.id)
+
+      await StreamRepository.insert(client, {
+        id: ownerOnlyChannelId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PRIVATE,
+        createdBy: ownerMember.id,
+      })
+      await StreamMemberRepository.insert(client, ownerOnlyChannelId, ownerMember.id)
+
+      await StreamRepository.insert(client, {
+        id: sharedPrivateChannelId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PRIVATE,
+        createdBy: ownerMember.id,
+      })
+      await StreamMemberRepository.insert(client, sharedPrivateChannelId, ownerMember.id)
+      await StreamMemberRepository.insert(client, sharedPrivateChannelId, secondMember.id)
+
+      await StreamRepository.insert(client, {
+        id: publicChannelId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PUBLIC,
+        createdBy: ownerMember.id,
+      })
+
+      const threadUnder = (id: string, rootId: string, visibility: (typeof Visibilities)[keyof typeof Visibilities]) =>
+        StreamRepository.insert(client, {
+          id,
+          workspaceId: testWorkspaceId,
+          type: StreamTypes.THREAD,
+          visibility,
+          parentStreamId: rootId,
+          rootStreamId: rootId,
+          createdBy: ownerMember.id,
+        })
+
+      // Threads copy the root's visibility at creation and are never re-synced:
+      // a channel that went private leaves its threads saying "public".
+      await threadUnder(staleVisibilityThreadId, ownerOnlyChannelId, Visibilities.PUBLIC)
+      // A thread membership row is participation, not access (INV-62).
+      await threadUnder(directMemberThreadId, ownerOnlyChannelId, Visibilities.PRIVATE)
+      await StreamMemberRepository.insert(client, directMemberThreadId, ownerMember.id)
+      await StreamMemberRepository.insert(client, directMemberThreadId, secondMember.id)
+      await threadUnder(sharedChannelThreadId, sharedPrivateChannelId, Visibilities.PRIVATE)
+      await threadUnder(publicChannelThreadId, publicChannelId, Visibilities.PUBLIC)
+
+      const sharedDm = await StreamRepository.findById(client, sharedDmId)
+      const accessSpec = await computeAgentAccessSpec(client, {
+        stream: sharedDm!,
+        invokingUserId: ownerMember.id,
+      })
+
+      const accessibleStreamIds = await SearchRepository.getAccessibleStreamsForAgent(
+        client,
+        accessSpec,
+        testWorkspaceId
+      )
+
+      expect(new Set(accessibleStreamIds)).toEqual(
+        new Set([sharedDmId, sharedPrivateChannelId, publicChannelId, sharedChannelThreadId, publicChannelThreadId])
+      )
+    })
+  })
+
   test("DM agent attachment search only returns uploads from shared streams", async () => {
     await withTestTransaction(pool, async (client) => {
       const ownerWorkosUserId = userId()

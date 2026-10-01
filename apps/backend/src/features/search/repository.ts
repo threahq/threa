@@ -823,40 +823,20 @@ export const SearchRepository = {
       }
 
       case "user_intersection": {
-        const userIds = getValidatedUserIntersectionUserIds(spec.userIds)
+        const [firstUserId, secondUserId] = getValidatedUserIntersectionUserIds(spec.userIds)
         const hasTypeFilter = options?.streamTypes && options.streamTypes.length > 0
-        const archiveCondition = sql.raw(
+        const archiveCondition = sql`${sql.raw(
           archiveStatusSql("s", options?.archiveStatus, { archivedIncludesSealed: true })
-        )
+        )}`
 
-        const result = await db.query<{ id: string }>(sql`
-          WITH requested_users AS (
-            SELECT member_id
-            FROM unnest(${userIds}::text[]) AS requested_users(member_id)
-          ),
-          shared_access AS (
-            SELECT s.id, requested_users.member_id
-            FROM streams s
-            CROSS JOIN requested_users
-            LEFT JOIN stream_members sm ON s.id = sm.stream_id AND sm.member_id = requested_users.member_id
-            LEFT JOIN streams root ON s.root_stream_id = root.id
-            LEFT JOIN stream_members root_sm ON root.id = root_sm.stream_id AND root_sm.member_id = requested_users.member_id
-            WHERE s.workspace_id = ${workspaceId}
-              AND (
-                sm.member_id IS NOT NULL
-                OR s.visibility = ${Visibilities.PUBLIC}
-                OR (
-                  s.root_stream_id IS NOT NULL
-                  AND (root_sm.member_id IS NOT NULL OR root.visibility = ${Visibilities.PUBLIC})
-                )
-              )
-              AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
-              AND ${archiveCondition}
-          )
-          SELECT id
-          FROM shared_access
-          GROUP BY id
-          HAVING COUNT(DISTINCT member_id) = ${DM_PARTICIPANT_COUNT}
+        const result = await db.query<{ id: string }>(composeSql`
+          SELECT s.id
+          FROM streams s
+          WHERE s.workspace_id = ${workspaceId}
+            AND ${streamAccessPredicateSql(workspaceId, firstUserId, "s.id")}
+            AND ${streamAccessPredicateSql(workspaceId, secondUserId, "s.id")}
+            AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
+            AND ${archiveCondition}
         `)
 
         return result.rows.map((r) => r.id)
