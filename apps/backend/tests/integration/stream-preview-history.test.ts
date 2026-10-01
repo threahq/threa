@@ -401,7 +401,22 @@ describe("batched preview history", () => {
       otherCitation.event.id,
       JSON.stringify({ memoEmbeds: [{ memoId: memo, title: "stale secret" }] }),
     ])
-    const results = (await service.get(workspace, viewer, [thread, publicRoot])).results
+    const batchSpy = spyOn(MemoRepository, "findEmbedSummariesByRoot")
+    let results
+    try {
+      results = (await service.get(workspace, viewer, [thread, publicRoot])).results
+      expect(batchSpy).toHaveBeenCalledTimes(1)
+      expect(batchSpy.mock.calls[0]).toEqual([
+        pool,
+        workspace,
+        expect.arrayContaining([
+          { memoId: memo, citingRootStreamId: memberRoot },
+          { memoId: memo, citingRootStreamId: publicRoot },
+        ]),
+      ])
+    } finally {
+      batchSpy.mockRestore()
+    }
     const summaries = results.map((result, index) => {
       if (result.status !== 200) throw new Error("expected accessible history")
       const id = index === 0 ? ownCitation.event.id : otherCitation.event.id

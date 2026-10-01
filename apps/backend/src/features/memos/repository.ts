@@ -384,8 +384,22 @@ export const MemoRepository = {
     memoIds: string[],
     citingRootStreamId: string
   ): Promise<Map<string, MemoEmbedSummary>> {
-    if (memoIds.length === 0) return new Map()
+    const summaries = await this.findEmbedSummariesByRoot(
+      db,
+      workspaceId,
+      memoIds.map((memoId) => ({ memoId, citingRootStreamId }))
+    )
+    return summaries.get(citingRootStreamId) ?? new Map()
+  },
+
+  async findEmbedSummariesByRoot(
+    db: Querier,
+    workspaceId: string,
+    pairs: readonly { memoId: string; citingRootStreamId: string }[]
+  ): Promise<Map<string, Map<string, MemoEmbedSummary>>> {
+    if (pairs.length === 0) return new Map()
     const result = await db.query<{
+      citing_root_stream_id: string
       id: string
       title: string
       knowledge_type: string
@@ -394,33 +408,40 @@ export const MemoRepository = {
       updated_at: Date
       card_version: number
     }>(sql`
-      SELECT m.id, m.title, m.knowledge_type, m.memo_type, m.tags, m.updated_at, m.card_version
-      FROM memos m
+      SELECT DISTINCT requested.citing_root_stream_id,
+        m.id, m.title, m.knowledge_type, m.memo_type, m.tags, m.updated_at, m.card_version
+      FROM unnest(
+        ${pairs.map((pair) => pair.memoId)}::text[],
+        ${pairs.map((pair) => pair.citingRootStreamId)}::text[]
+      ) AS requested(memo_id, citing_root_stream_id)
+      JOIN memos m ON m.id = requested.memo_id
       LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
       LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
       LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1]
       LEFT JOIN streams s ON s.id = COALESCE(src_msg.stream_id, src_conv.stream_id, first_msg.stream_id)
+        AND s.workspace_id = ${workspaceId}
       LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
-      WHERE m.id = ANY(${memoIds})
-        AND m.workspace_id = ${workspaceId}
+        AND root.workspace_id = ${workspaceId}
+      WHERE m.workspace_id = ${workspaceId}
         AND m.scope <> 'user'
         AND root.id IS NOT NULL
-        AND (root.id = ${citingRootStreamId} OR root.visibility = 'public')
+        AND (root.id = requested.citing_root_stream_id OR root.visibility = 'public')
     `)
-    return new Map(
-      result.rows.map((row) => [
-        row.id,
-        {
-          memoId: row.id,
-          title: row.title,
-          knowledgeType: row.knowledge_type as KnowledgeType,
-          memoType: row.memo_type as MemoType,
-          tags: row.tags,
-          updatedAt: row.updated_at.toISOString(),
-          version: row.card_version,
-        },
-      ])
-    )
+    const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
+    for (const row of result.rows) {
+      const summaries = summariesByRoot.get(row.citing_root_stream_id) ?? new Map<string, MemoEmbedSummary>()
+      summaries.set(row.id, {
+        memoId: row.id,
+        title: row.title,
+        knowledgeType: row.knowledge_type as KnowledgeType,
+        memoType: row.memo_type as MemoType,
+        tags: row.tags,
+        updatedAt: row.updated_at.toISOString(),
+        version: row.card_version,
+      })
+      summariesByRoot.set(row.citing_root_stream_id, summaries)
+    }
+    return summariesByRoot
   },
 
   /**

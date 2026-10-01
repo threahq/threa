@@ -2624,20 +2624,14 @@ export class EventService {
       for (const id of ids) rootIds.add(id)
       idsByRoot.set(root, rootIds)
     }
-    const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
-    await Promise.all(
-      [...idsByRoot].map(async ([root, ids]) => {
-        summariesByRoot.set(
-          root,
-          ids.size > 0
-            ? await MemoRepository.findEmbedSummaries(this.pool, scope.workspaceId, [...ids], root)
-            : new Map<string, MemoEmbedSummary>()
-        )
-      })
+    const summariesByRoot = await MemoRepository.findEmbedSummariesByRoot(
+      this.pool,
+      scope.workspaceId,
+      [...idsByRoot].flatMap(([citingRootStreamId, ids]) => [...ids].map((memoId) => ({ memoId, citingRootStreamId })))
     )
     for (const [messageId, ids] of byMessage) {
-      const summaries = summariesByRoot.get(rootByStream.get(sourceStreamByMessage.get(messageId)!)!)!
-      const resolved = ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
+      const summaries = summariesByRoot.get(rootByStream.get(sourceStreamByMessage.get(messageId)!)!)
+      const resolved = ids.map((id) => summaries?.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
       const mustSet = editedIds.has(messageId) || messageIdsWithKey.has(messageId)
       if (!mustSet && resolved.length === 0) continue
       refreshed.set(messageId, resolved)
