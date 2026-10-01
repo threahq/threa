@@ -54,8 +54,8 @@ export interface PlannedPushDelivery {
   devices: PlannedPushDevice[]
 }
 
-/** A claimed device delivery. `subscription` is null when the row was deleted or re-keyed since planning. */
-export interface ClaimedPushDelivery {
+/** A started device attempt. `subscription` is null when the row was deleted or re-keyed since planning. */
+export interface StartedPushDelivery {
   id: string
   workspaceId: string
   userId: string
@@ -66,10 +66,8 @@ export interface ClaimedPushDelivery {
   sourceCreatedAt: Date
   expiresAt: Date
   attempts: number
-  /** Lease identity: pass back to {@link PushDeliveryRepository.settle}. */
+  /** The version this start wrote: pass back to {@link PushDeliveryRepository.recordSend} and `settle`. */
   version: number
-  /** Earlier claims that never settled: a crash, a failed settle, a lost lease. */
-  abandonedClaims: number
   subscriptionId: string
   subscriptionGeneration: number
   subscription: { endpoint: string; p256dh: string; auth: string; receiptVersion: number | null } | null
@@ -99,15 +97,6 @@ export interface SettledPushDelivery {
   version: number
 }
 
-/** Where an unclaimable delivery stands, so a job can tell finished work from work that is only busy or early. */
-export interface PushDeliveryState {
-  status: PushDeliveryStatus
-  attempts: number
-  version: number
-  /** When a claim can next succeed: the later of the lease expiry and the scheduled retry, never before now. */
-  claimableAt: Date
-}
-
 interface PlannedRow {
   plan_id: string
   id: string | null
@@ -115,7 +104,7 @@ interface PlannedRow {
   subscription_generation: number | null
 }
 
-interface ClaimedRow {
+interface StartedRow {
   id: string
   workspace_id: string
   user_id: string
@@ -127,7 +116,6 @@ interface ClaimedRow {
   expires_at: Date
   attempts: number
   version: number
-  abandoned_claims: number
   subscription_id: string
   subscription_generation: number
   endpoint: string | null
@@ -192,40 +180,34 @@ export const PushDeliveryRepository = {
   },
 
   /**
-   * Take the lease on one pending device delivery before any network I/O.
-   * Succeeds only for the expected attempt number, once any earlier lease has
-   * lapsed and the scheduled retry time has arrived — so a duplicate or early
-   * job, or a delivery already settled (accepted included), claims nothing.
-   * The subscription is joined at the planned generation only.
+   * Start one provider attempt on a pending device delivery. Call only in a
+   * transaction that holds the attempt's queue claim: the queue claim owns
+   * execution, this only rejects work already finished (settled, a later
+   * attempt, retention-deleted) and moves `version`. The subscription is
+   * joined at the planned generation only.
    *
-   * While a row is pending, each settled attempt has moved `version` twice (its
-   * claim and its retry settle) and each abandoned claim once, so the version
-   * before this claim, less two per recorded attempt, counts abandoned claims.
+   * `version` counts attempt starts and settles (each +1), so `version - 1`
+   * of an accepted row is the start that accepted, and a settled row at
+   * version 2 had exactly one start. Receipt monitoring relies on both.
    */
-  async claim(
+  async startAttempt(
     db: Querier,
-    params: { workspaceId: string; deliveryId: string; attempt: number; leaseMs: number }
-  ): Promise<ClaimedPushDelivery | null> {
-    const result = await db.query<ClaimedRow>(sql`
-      WITH claimed AS (
-        UPDATE push_deliveries SET
-          version = version + 1,
-          lease_expires_at = NOW() + (${params.leaseMs} * INTERVAL '1 millisecond'),
-          updated_at = NOW()
+    params: { workspaceId: string; deliveryId: string; attempt: number }
+  ): Promise<StartedPushDelivery | null> {
+    const result = await db.query<StartedRow>(sql`
+      WITH started AS (
+        UPDATE push_deliveries SET version = version + 1, updated_at = NOW()
         WHERE id = ${params.deliveryId}
           AND workspace_id = ${params.workspaceId}
           AND status = 'pending'
           AND attempts = ${params.attempt}
-          AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
-          AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
         RETURNING id, workspace_id, plan_id, subscription_id, subscription_generation, attempts, version
       )
       SELECT
         c.id, c.workspace_id, p.user_id, p.kind, p.source_event_id::text AS source_event_id, p.source_id,
         p.source_generation, p.source_created_at, p.expires_at, c.attempts, c.version,
-        c.version - 1 - 2 * c.attempts AS abandoned_claims,
         c.subscription_id, c.subscription_generation, s.endpoint, s.p256dh, s.auth, s.receipt_version
-      FROM claimed c
+      FROM started c
       JOIN push_delivery_plans p ON p.id = c.plan_id AND p.workspace_id = c.workspace_id
       LEFT JOIN push_subscriptions s
         ON s.id = c.subscription_id
@@ -247,7 +229,6 @@ export const PushDeliveryRepository = {
       expiresAt: row.expires_at,
       attempts: row.attempts,
       version: row.version,
-      abandonedClaims: row.abandoned_claims,
       subscriptionId: row.subscription_id,
       subscriptionGeneration: row.subscription_generation,
       subscription:
@@ -258,15 +239,15 @@ export const PushDeliveryRepository = {
   },
 
   /**
-   * Record a claimed attempt's result, guarded by the claim's version. A retry
+   * Record a started attempt's result, guarded by the start's version. A retry
    * keeps the row pending with `attempts + 1` and a `next_attempt_at`, so only
-   * the job for that next attempt number can claim it. Returns null when the
-   * lease was lost (another worker reclaimed or already settled the row);
-   * callers enqueue the next job in the same transaction only on success.
+   * the job for that next attempt number can start it. Returns null when the
+   * row moved on; callers enqueue the next job in the same transaction only on
+   * success.
    */
   async settle(
     db: Querier,
-    params: { workspaceId: string; deliveryId: string; claimVersion: number; settlement: PushDeliverySettlement }
+    params: { workspaceId: string; deliveryId: string; version: number; settlement: PushDeliverySettlement }
   ): Promise<SettledPushDelivery | null> {
     const s = params.settlement
     const isRetry = s.kind === "retry"
@@ -277,7 +258,6 @@ export const PushDeliveryRepository = {
         status = ${status},
         attempts = attempts + ${attempted ? 1 : 0},
         version = version + 1,
-        lease_expires_at = NULL,
         next_attempt_at = ${isRetry ? s.nextAttemptAt : null},
         last_outcome = COALESCE(${s.outcome}, last_outcome),
         last_status_code = CASE WHEN ${attempted} THEN ${s.statusCode} ELSE last_status_code END,
@@ -286,7 +266,7 @@ export const PushDeliveryRepository = {
         updated_at = NOW()
       WHERE id = ${params.deliveryId}
         AND workspace_id = ${params.workspaceId}
-        AND version = ${params.claimVersion}
+        AND version = ${params.version}
         AND status = 'pending'
       RETURNING id, status, attempts, version
     `)
@@ -294,68 +274,59 @@ export const PushDeliveryRepository = {
   },
 
   /**
-   * Re-assert ownership right before the network send and extend the lease.
-   * Fails once another worker claimed the row after this lease lapsed (the
-   * version moved on) or the row settled, so slow revalidation reads can never
-   * send under a lost claim. The version is unchanged, so settle still uses it.
-   * `sent` records what the attempt is about to send (topic, whether it
-   * carries a receipt capability, the endpoint's hash) in the same
-   * ownership-checked write, so a rival's attempt can never overwrite the one
-   * this claim sends.
+   * Record what the started attempt is about to send (topic, whether it
+   * carries a receipt capability, the endpoint's hash) as the last write
+   * before the send, guarded by the start's version so a later start's record
+   * is never overwritten. `sent_at` is a lower bound on when the send began.
    */
-  async renewLease(
+  async recordSend(
     db: Querier,
     params: {
       workspaceId: string
       deliveryId: string
-      claimVersion: number
-      leaseMs: number
-      sent?: { topic: string | null; withReceipt: boolean; endpointHash: string }
+      version: number
+      sent: { topic: string | null; withReceipt: boolean; endpointHash: string }
     }
   ): Promise<boolean> {
-    const sent = params.sent ?? null
+    const { sent } = params
     const result = await db.query(sql`
       UPDATE push_deliveries SET
-        lease_expires_at = NOW() + (${params.leaseMs} * INTERVAL '1 millisecond'),
-        sent_topic = CASE WHEN ${sent !== null} THEN ${sent?.topic ?? null}::text ELSE sent_topic END,
-        sent_with_receipt = CASE WHEN ${sent !== null} THEN ${sent?.withReceipt ?? null}::boolean ELSE sent_with_receipt END,
-        sent_claim_version = CASE WHEN ${sent !== null} THEN ${params.claimVersion}::int ELSE sent_claim_version END,
-        sent_at = CASE WHEN ${sent !== null} THEN NOW() ELSE sent_at END,
-        sent_endpoint_hash = CASE WHEN ${sent !== null} THEN ${sent?.endpointHash ?? null}::text ELSE sent_endpoint_hash END,
+        sent_topic = ${sent.topic},
+        sent_with_receipt = ${sent.withReceipt},
+        sent_claim_version = ${params.version},
+        sent_at = NOW(),
+        sent_endpoint_hash = ${sent.endpointHash},
         updated_at = NOW()
       WHERE id = ${params.deliveryId}
         AND workspace_id = ${params.workspaceId}
-        AND version = ${params.claimVersion}
+        AND version = ${params.version}
         AND status = 'pending'
     `)
     return (result.rowCount ?? 0) > 0
   },
 
-  /** Row-lock the delivery for the rest of the caller's transaction. */
-  async lockForUpdate(db: Querier, params: { workspaceId: string; deliveryId: string }): Promise<void> {
-    await db.query(sql`
-      SELECT 1 FROM push_deliveries
-      WHERE id = ${params.deliveryId} AND workspace_id = ${params.workspaceId}
-      FOR UPDATE
+  /**
+   * Fail the attempt a dead-lettered job was running, as `infrastructure`,
+   * unless the delivery already settled or moved to a later attempt. Moves
+   * `version` by a start and a settle, like any settle of an unsent attempt.
+   */
+  async failDeadLettered(
+    db: Querier,
+    params: { workspaceId: string; deliveryId: string; attempt: number; reason: string }
+  ): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE push_deliveries SET
+        status = ${PUSH_DELIVERY_STATUSES.FAILED},
+        version = version + 2,
+        next_attempt_at = NULL,
+        terminal_reason = ${params.reason},
+        updated_at = NOW()
+      WHERE id = ${params.deliveryId}
+        AND workspace_id = ${params.workspaceId}
+        AND status = 'pending'
+        AND attempts = ${params.attempt}
     `)
-  },
-
-  async findState(db: Querier, params: { workspaceId: string; deliveryId: string }): Promise<PushDeliveryState | null> {
-    const result = await db.query<{
-      status: PushDeliveryStatus
-      attempts: number
-      version: number
-      claimable_at: Date
-    }>(sql`
-      SELECT
-        status, attempts, version,
-        GREATEST(NOW(), COALESCE(lease_expires_at, NOW()), COALESCE(next_attempt_at, NOW())) AS claimable_at
-      FROM push_deliveries
-      WHERE id = ${params.deliveryId} AND workspace_id = ${params.workspaceId}
-    `)
-    const row = result.rows[0]
-    if (!row) return null
-    return { status: row.status, attempts: row.attempts, version: row.version, claimableAt: row.claimable_at }
+    return (result.rowCount ?? 0) > 0
   },
 
   /**

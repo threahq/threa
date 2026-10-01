@@ -13,7 +13,6 @@ import { userId, workspaceId } from "../../src/lib/id"
 
 const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
-const LEASE_MS = 60_000
 const TEST_QUEUE = "push.deliver.ledger-test"
 
 let nextEventId = BigInt(Date.now()) * 1000n
@@ -266,33 +265,13 @@ describe("push delivery ledger", () => {
     })
   })
 
-  describe("claims", () => {
-    test("should let exactly one of two concurrent workers claim a device delivery", async () => {
-      const { ws, device } = await planOne()
-      const second = createTestPool()
-      try {
-        const results = await Promise.all([
-          PushDeliveryRepository.claim(pool, { workspaceId: ws, deliveryId: device.id, attempt: 0, leaseMs: LEASE_MS }),
-          PushDeliveryRepository.claim(second, {
-            workspaceId: ws,
-            deliveryId: device.id,
-            attempt: 0,
-            leaseMs: LEASE_MS,
-          }),
-        ])
-        expect(results.filter((r) => r !== null)).toHaveLength(1)
-      } finally {
-        await second.end()
-      }
-    })
-
+  describe("attempt starts", () => {
     test("should return the pinned subscription while its generation matches and null after a re-key or delete", async () => {
       const { ws, uid, sub, device } = await planOne()
-      const claimed = await PushDeliveryRepository.claim(pool, {
+      const started = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: 0,
       })
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: ws,
@@ -301,14 +280,13 @@ describe("push delivery ledger", () => {
         ...keys(),
         deviceKey: sub.deviceKey,
       })
-      const afterRekey = await PushDeliveryRepository.claim(pool, {
+      const afterRekey = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: 0,
       })
 
-      expect(claimed).toEqual({
+      expect(started).toEqual({
         id: device.id,
         workspaceId: ws,
         userId: uid,
@@ -320,7 +298,6 @@ describe("push delivery ledger", () => {
         expiresAt: expect.any(Date),
         attempts: 0,
         version: 1,
-        abandonedClaims: 0,
         subscriptionId: sub.id,
         subscriptionGeneration: 1,
         subscription: { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth, receiptVersion: null },
@@ -328,30 +305,28 @@ describe("push delivery ledger", () => {
       expect(afterRekey).toMatchObject({ version: 2, subscription: null })
     })
 
-    test("should refuse a claim while another lease is live, then let a reclaim win over the stale holder", async () => {
+    test("should reject a settle or send record from an earlier start of the same attempt", async () => {
       const { ws, device } = await planOne()
-      const stale = await PushDeliveryRepository.claim(pool, {
+      const earlier = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: 0,
       })
-      const takeover = await PushDeliveryRepository.claim(pool, {
+      const later = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: LEASE_MS,
       })
-      const whileLeased = await PushDeliveryRepository.claim(pool, {
+      const staleRecord = await PushDeliveryRepository.recordSend(pool, {
         workspaceId: ws,
         deliveryId: device.id,
-        attempt: 0,
-        leaseMs: LEASE_MS,
+        version: earlier!.version,
+        sent: { topic: "t", withReceipt: false, endpointHash: "h" },
       })
       const staleSettle = await PushDeliveryRepository.settle(pool, {
         workspaceId: ws,
         deliveryId: device.id,
-        claimVersion: stale!.version,
+        version: earlier!.version,
         settlement: {
           kind: "terminal",
           status: PUSH_DELIVERY_STATUSES.ACCEPTED,
@@ -362,28 +337,50 @@ describe("push delivery ledger", () => {
         },
       })
 
-      expect({ stale: stale?.version, takeover: takeover?.version, whileLeased, staleSettle }).toEqual({
-        stale: 1,
-        takeover: 2,
-        whileLeased: null,
+      expect({ earlier: earlier?.version, later: later?.version, staleRecord, staleSettle }).toEqual({
+        earlier: 1,
+        later: 2,
+        staleRecord: false,
         staleSettle: null,
+      })
+      expect(await deviceRow(device.id)).toMatchObject({ status: "pending", version: 2 })
+    })
+
+    test("should fail a dead-lettered attempt only while it is still that pending attempt", async () => {
+      const { ws, device } = await planOne()
+      const dlq = (attempt: number) =>
+        PushDeliveryRepository.failDeadLettered(pool, {
+          workspaceId: ws,
+          deliveryId: device.id,
+          attempt,
+          reason: "infrastructure",
+        })
+      const laterAttempt = await dlq(1)
+      const own = await dlq(0)
+      const again = await dlq(0)
+
+      expect({ laterAttempt, own, again }).toEqual({ laterAttempt: false, own: true, again: false })
+      expect(await deviceRow(device.id)).toMatchObject({
+        status: "failed",
+        terminal_reason: "infrastructure",
+        attempts: 0,
+        version: 2,
       })
     })
   })
 
   describe("settling", () => {
-    test("should schedule a retry that only the next attempt can claim once its time arrives", async () => {
+    test("should schedule a retry that only the next attempt can start", async () => {
       const { ws, device } = await planOne()
-      const first = await PushDeliveryRepository.claim(pool, {
+      const first = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: LEASE_MS,
       })
       const retry = await PushDeliveryRepository.settle(pool, {
         workspaceId: ws,
         deliveryId: device.id,
-        claimVersion: first!.version,
+        version: first!.version,
         settlement: {
           kind: "retry",
           nextAttemptAt: new Date(Date.now() + HOUR_MS),
@@ -391,23 +388,14 @@ describe("push delivery ledger", () => {
           statusCode: 503,
         },
       })
-      const duplicateFirstJob = await PushDeliveryRepository.claim(pool, {
+      const duplicateFirstJob = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: LEASE_MS,
       })
-      const earlyRetryJob = await PushDeliveryRepository.claim(pool, {
-        workspaceId: ws,
-        deliveryId: device.id,
-        attempt: 1,
-        leaseMs: LEASE_MS,
-      })
-
-      expect({ retry, duplicateFirstJob, earlyRetryJob }).toEqual({
+      expect({ retry, duplicateFirstJob }).toEqual({
         retry: { id: device.id, status: "pending", attempts: 1, version: 2 },
         duplicateFirstJob: null,
-        earlyRetryJob: null,
       })
       expect(await deviceRow(device.id)).toEqual({
         status: "pending",
@@ -421,18 +409,17 @@ describe("push delivery ledger", () => {
       })
     })
 
-    test("should never claim an accepted delivery again on job or cursor replay", async () => {
+    test("should never start an accepted delivery again on job or cursor replay", async () => {
       const { ws, device } = await planOne()
-      const first = await PushDeliveryRepository.claim(pool, {
+      const first = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: LEASE_MS,
       })
       const retry = await PushDeliveryRepository.settle(pool, {
         workspaceId: ws,
         deliveryId: device.id,
-        claimVersion: first!.version,
+        version: first!.version,
         settlement: {
           kind: "retry",
           nextAttemptAt: new Date(Date.now() - 1000),
@@ -440,16 +427,15 @@ describe("push delivery ledger", () => {
           statusCode: 429,
         },
       })
-      const second = await PushDeliveryRepository.claim(pool, {
+      const second = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 1,
-        leaseMs: LEASE_MS,
       })
       const accepted = await PushDeliveryRepository.settle(pool, {
         workspaceId: ws,
         deliveryId: device.id,
-        claimVersion: second!.version,
+        version: second!.version,
         settlement: {
           kind: "terminal",
           status: PUSH_DELIVERY_STATUSES.ACCEPTED,
@@ -461,7 +447,7 @@ describe("push delivery ledger", () => {
       })
       const replays = await Promise.all(
         [0, 1, 2].map((attempt) =>
-          PushDeliveryRepository.claim(pool, { workspaceId: ws, deliveryId: device.id, attempt, leaseMs: 0 })
+          PushDeliveryRepository.startAttempt(pool, { workspaceId: ws, deliveryId: device.id, attempt })
         )
       )
 
@@ -475,16 +461,15 @@ describe("push delivery ledger", () => {
 
     test("should settle a pre-send suppression without counting an attempt", async () => {
       const { ws, device } = await planOne()
-      const claimed = await PushDeliveryRepository.claim(pool, {
+      const claimed = await PushDeliveryRepository.startAttempt(pool, {
         workspaceId: ws,
         deliveryId: device.id,
         attempt: 0,
-        leaseMs: LEASE_MS,
       })
       const settled = await PushDeliveryRepository.settle(pool, {
         workspaceId: ws,
         deliveryId: device.id,
-        claimVersion: claimed!.version,
+        version: claimed!.version,
         settlement: {
           kind: "terminal",
           status: PUSH_DELIVERY_STATUSES.SUPPRESSED,

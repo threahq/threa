@@ -35,7 +35,7 @@ export interface PushBacklog {
   pending: number
   /** Pending with at least one settled attempt: waiting for a retry. */
   retrying: number
-  /** Due, not leased, and waiting longer than the threshold. */
+  /** Due, still unsettled, and waiting longer than the threshold. */
   overdue: number
   oldestDueSec: number | null
 }
@@ -151,9 +151,9 @@ const SCHEMA_SQL = `
          ) AS consent_columns`
 
 /**
- * Terminal rows by settle time. A terminal row is never written again (claim,
- * renewal and settle all require `pending`), so its `updated_at` is the settle.
- * Pending rows are excluded: lease renewals move their `updated_at`.
+ * Terminal rows by settle time. A terminal row is never written again (start,
+ * send record and settle all require `pending`), so its `updated_at` is the
+ * settle. Pending rows are excluded: starts and send records move their `updated_at`.
  */
 const OUTCOMES_SQL = `
   SELECT CASE WHEN updated_at >= $1 THEN 'since' ELSE 'prior' END AS win,
@@ -169,12 +169,10 @@ const BACKLOG_SQL = `
   SELECT count(*) AS pending,
          count(*) FILTER (WHERE attempts > 0) AS retrying,
          count(*) FILTER (
-           WHERE (lease_expires_at IS NULL OR lease_expires_at <= NOW())
-             AND COALESCE(next_attempt_at, created_at) <= NOW() - ($1 * INTERVAL '1 second')
+           WHERE COALESCE(next_attempt_at, created_at) <= NOW() - ($1 * INTERVAL '1 second')
          ) AS overdue,
          EXTRACT(EPOCH FROM (NOW() - min(COALESCE(next_attempt_at, created_at)) FILTER (
-           WHERE (lease_expires_at IS NULL OR lease_expires_at <= NOW())
-             AND COALESCE(next_attempt_at, created_at) <= NOW()
+           WHERE COALESCE(next_attempt_at, created_at) <= NOW()
          )))::int AS oldest_due_sec
     FROM push_deliveries
    WHERE status = 'pending'`
@@ -187,15 +185,16 @@ const BACKLOG_SQL = `
  *
  * - revoked: consent or root policy was withdrawn at a report
  * - not_accepted: armed on some attempt, but the delivery did not end accepted
- * - unarmed_send: the accepting claim (always `version - 1`) did not record a
- *   send with a capability; a replica that predates recording leaves an
- *   earlier claim's record behind
+ * - unarmed_send: the accepting attempt start (always `version - 1`: each start
+ *   and each settle moves `version` by one) did not record a send with a
+ *   capability; a replica that predates recording leaves an earlier start's
+ *   record behind
  * - consent: the analytics consent grant the receipt was armed under is not
  *   the user's current grant (withdrawn, reset or granted again since), or
  *   the row predates grant tracking
  * - policy: the stream, or the root it inherits from (INV-62), is gone, or the
  *   root is end-to-end encrypted now
- * - endpoint_unknown: this delivery has a topic but its accepting claim did
+ * - endpoint_unknown: this delivery has a topic but its accepting start did
  *   not record an endpoint, so replacement cannot be checked
  * - collapsed: a same-topic send to the same endpoint was accepted, and
  *   passed its last check no earlier than this delivery's acceptance and before
@@ -205,8 +204,8 @@ const BACKLOG_SQL = `
  *   not recorded yet), may have reached the provider while this one could
  *   still be replaced, in an order the ledger cannot tell. A send that provably
  *   finished before this one was sent, started after it expired, never reached
- *   a send, or was rejected outright on its only claim replaces nothing.
- *   Missing metadata cannot prove an abandoned claim used a recording writer:
+ *   a send, or was rejected outright on its only start replaces nothing.
+ *   Missing metadata cannot prove an abandoned start used a recording writer:
  *   even a new-code crash followed by an unsent settlement can exclude nearby
  *   workspace deliveries. These incident-correlated exclusions can hide a
  *   receipt shortfall; the eligible rate is not a fleet-wide reliability rate.
@@ -421,7 +420,7 @@ export function evaluatePush(report: Omit<PushReport, "findings">): Finding[] {
     findings.push({
       level: "warn",
       id: "push.backlog",
-      message: `push: ${report.backlog.overdue} device deliveries due and unclaimed for over ${THRESHOLDS.pushBacklogOverdueSec}s (oldest ${report.backlog.oldestDueSec}s)`,
+      message: `push: ${report.backlog.overdue} device deliveries due and unsettled for over ${THRESHOLDS.pushBacklogOverdueSec}s (oldest ${report.backlog.oldestDueSec}s)`,
     })
   }
 

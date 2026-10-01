@@ -9,9 +9,10 @@ const PUSH_RETRY_DELAYS_MS = [30_000, 2 * 60_000, 8 * 60_000, 32 * 60_000] as co
 export const PUSH_MAX_ATTEMPTS = PUSH_RETRY_DELAYS_MS.length + 1
 
 /**
- * Claims that never settled (a crash, a failed settle, a lost lease) a delivery
- * absorbs before it fails as `infrastructure`. Any of them may already have sent,
- * so a device can see up to this many requests beyond {@link PUSH_MAX_ATTEMPTS}.
+ * Queue claims of a delivery's jobs that never settled (a crash, a thrown
+ * failure, a lost claim) a delivery absorbs before it fails as
+ * `infrastructure`. Any of them may already have sent, so a device can see up
+ * to this many requests beyond {@link PUSH_MAX_ATTEMPTS}.
  */
 export const PUSH_MAX_ABANDONED_CLAIMS = 3
 

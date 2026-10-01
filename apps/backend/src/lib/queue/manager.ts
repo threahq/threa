@@ -737,6 +737,7 @@ export class QueueManager {
       workspaceId: string
       payload: unknown
       failedCount: number
+      claimedCount: number
       insertedAt: Date
     },
     workerId: string,
@@ -758,6 +759,7 @@ export class QueueManager {
         data: message.payload,
         attempt: message.failedCount,
         maxAttempts: maxRetries,
+        claim: { messageId: message.id, claimedBy: workerId, claimedCount: message.claimedCount },
       })
 
       await this.completeMessage(message.id, workerId)

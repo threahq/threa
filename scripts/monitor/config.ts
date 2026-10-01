@@ -51,7 +51,7 @@ export const THRESHOLDS = {
   pushTransportMinSample: 20,
   /** Share of those that ended rejected, or unreachable until attempts or the send window ran out. */
   pushTransportFailureRate: 0.1,
-  /** A due, unleased delivery waiting this long means push workers are not claiming (matches queueReadyAgeWarnSec). */
+  /** A due delivery still unsettled this long means push workers are not finishing it (matches queueReadyAgeWarnSec). */
   pushBacklogOverdueSec: 5 * 60,
   /**
    * Receipt cohorts are selected by capability expiry, so each window is closed.

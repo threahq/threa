@@ -1,5 +1,6 @@
 import { AgentTriggers, type AgentSessionRerunContext, type JSONContent } from "@threahq/types"
 import type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
+import type { QueueClaim } from "./repository"
 export type { DynamicNamingEvaluateJobData } from "./dynamic-naming-contract"
 
 export interface Job<T = unknown> {
@@ -17,6 +18,8 @@ export interface Job<T = unknown> {
   attempt?: number
   /** Retry budget for this queue (manager-wide default or per-queue override). */
   maxAttempts?: number
+  /** The claim this run holds on its message. Set by the queue manager on dispatch; absent on the onDLQ hook's job. */
+  claim?: QueueClaim
 }
 
 export const JobQueues = {
@@ -297,8 +300,8 @@ export interface PushDeliverJobData {
   attempt: number
   /** Activity pushes: the activity's stream when planned, so a moved message is caught. Null for other kinds. */
   sourceStreamId: string | null
-  /** Re-wake count after this attempt was found busy or early; distinguishes each wake job's id. */
-  wake?: number
+  /** Claims of earlier attempts' jobs that never settled, so the budget spans the whole delivery. Absent = 0. */
+  abandonedClaims?: number
 }
 
 /** Best-effort single "session expired" push to one registration, pinned to its generation. */

@@ -21,6 +21,7 @@ import {
 } from "@threahq/types"
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import {
+  PushClaimLostError,
   PushDeliveryRepository,
   PushReceiptRepository,
   PushService,
@@ -43,7 +44,14 @@ import { QueueRepository } from "../../src/lib/queue"
 import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../src/lib/outbox"
 import { activityId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { setupIsolatedTestDatabase, addTestMember, testMessageContent } from "./setup"
-import { drainDuePushJobs, listPushJobs, makeDeliveryDue, runPushJob } from "./push-queue-helpers"
+import {
+  claimPushJob,
+  drainDuePushJobs,
+  listPushJobs,
+  makeDeliveryDue,
+  runPushDeliverUnder,
+  runPushJob,
+} from "./push-queue-helpers"
 
 const HOUR_MS = 60 * 60 * 1000
 const SECOND_MS = 1000
@@ -54,6 +62,14 @@ const failing =
   (statusCode: number, headers: Record<string, string> = {}): Send =>
   () =>
     Promise.reject(Object.assign(new Error("Received unexpected response code"), { statusCode, headers, body: "" }))
+
+async function waitFor(condition: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition never held")
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
 
 function registrationKeys(): { p256dh: string; auth: string } {
   return { p256dh: webpush.generateVAPIDKeys().publicKey, auth: randomBytes(16).toString("base64url") }
@@ -66,7 +82,6 @@ interface DeliveryRow {
   attempts: number
   terminalReason: string | null
   nextAttemptAt: Date | null
-  leaseExpiresAt: Date | null
 }
 
 describe("durable push delivery", () => {
@@ -127,7 +142,7 @@ describe("durable push delivery", () => {
 
   async function deliveries(ws: string): Promise<DeliveryRow[]> {
     const result = await pool.query(
-      `SELECT id, subscription_id, status, attempts, terminal_reason, next_attempt_at, lease_expires_at
+      `SELECT id, subscription_id, status, attempts, terminal_reason, next_attempt_at
        FROM push_deliveries WHERE workspace_id = $1 ORDER BY id`,
       [ws]
     )
@@ -138,7 +153,6 @@ describe("durable push delivery", () => {
       attempts: r.attempts,
       terminalReason: r.terminal_reason,
       nextAttemptAt: r.next_attempt_at,
-      leaseExpiresAt: r.lease_expires_at,
     }))
   }
 
@@ -330,7 +344,7 @@ describe("durable push delivery", () => {
       return clock
     }
 
-    /** Run every open job, lapsing leases and schedules first, the way queue retries eventually would. */
+    /** Run every open job, lapsing claims and schedules first, the way queue retries eventually would. */
     async function runUntilQuiet(service: PushService): Promise<void> {
       for (let round = 0; round < 30; round++) {
         const open = (await listPushJobs(pool, ws)).filter((j) => j.completedAt === null && !j.deadLettered)
@@ -375,6 +389,10 @@ describe("durable push delivery", () => {
       await service.planActivityPush(source, payload)
       await drainDuePushJobs(pool, service, ws)
       const [firstJob] = await listPushJobs(pool, ws)
+      // An operator re-drives the finished job.
+      await pool.query(`UPDATE queue_messages SET completed_at = NULL, process_after = NOW() WHERE id = $1`, [
+        firstJob!.id,
+      ])
       await runPushJob(pool, service, firstJob!)
       await service.planActivityPush(source, payload)
       await drainDuePushJobs(pool, service, ws)
@@ -607,7 +625,7 @@ describe("durable push delivery", () => {
       expect((await PushSubscriptionRepository.findByUserId(pool, ws, uid)).map((s) => s.id)).toEqual([rekeyed.id])
     })
 
-    test("should recover a failed settle after the send: the queue retry waits out the lease, then resends once", async () => {
+    test("should retry a failed settle on the same queue job and resend once, at least once", async () => {
       const service = createService()
       const sub = await subscribe(ws, uid, "https://push.example.com/settle-fails")
       await service.planActivityPush(event(), activityPayload())
@@ -618,31 +636,20 @@ describe("durable push delivery", () => {
       } finally {
         settle.mockRestore()
       }
+      expect((await deliveries(ws))[0]).toMatchObject({ status: "pending", attempts: 0 })
 
-      // The queue's quick infrastructure retry finds the attempt still leased.
+      // The queue's infrastructure retry reruns the same job; no other job exists for the attempt.
       await runPushJob(pool, service, job!)
-      const leased = (await deliveries(ws))[0]!
-      const jobs = await listPushJobs(pool, ws)
-      const wake = jobs.find((j) => j.id !== job!.id)
+
       expect({
         sends: sendsTo(sub.endpoint).length,
-        row: { status: leased.status, attempts: leased.attempts },
-        originalJobDone: jobs.find((j) => j.id === job!.id)!.completedAt !== null,
-        wakeAtLeaseExpiry: wake!.processAfter.getTime() - leased.leaseExpiresAt!.getTime(),
-      }).toEqual({
-        sends: 1,
-        row: { status: "pending", attempts: 0 },
-        originalJobDone: true,
-        wakeAtLeaseExpiry: 1000,
+        row: (await deliveries(ws))[0],
+        jobs: (await listPushJobs(pool, ws)).map((j) => ({ id: j.id, done: j.completedAt !== null })),
+      }).toMatchObject({
+        sends: 2,
+        row: { status: "accepted", attempts: 1 },
+        jobs: [{ id: job!.id, done: true }],
       })
-      expect(wake!.payload).toMatchObject({ deliveryId: leased.id, attempt: 0, wake: 1 })
-
-      await makeDeliveryDue(pool, leased.id)
-      await drainDuePushJobs(pool, service, ws)
-
-      // At-least-once: the lost settle means the push goes out again.
-      expect(sendsTo(sub.endpoint)).toHaveLength(2)
-      expect((await deliveries(ws))[0]).toMatchObject({ status: "accepted", attempts: 1 })
     })
 
     test("should recover a failed source read before the send and send exactly once", async () => {
@@ -653,63 +660,155 @@ describe("durable push delivery", () => {
       sources.activity = new Error("statement timeout")
 
       await expect(runPushJob(pool, service, job!)).rejects.toThrow("statement timeout")
-      await runPushJob(pool, service, job!)
       expect(sendsTo(sub.endpoint)).toHaveLength(0)
-
-      await makeDeliveryDue(pool, (await deliveries(ws))[0]!.id)
-      await drainDuePushJobs(pool, service, ws)
+      await runPushJob(pool, service, job!)
 
       expect(sendsTo(sub.endpoint)).toHaveLength(1)
       expect((await deliveries(ws))[0]).toMatchObject({ status: "accepted", attempts: 1 })
     })
 
-    test("should hold an early retry job until the scheduled time instead of sending or dropping it", async () => {
+    test("should rerun the attempt on the job's next claim after crashes before the send and after acceptance", async () => {
       const service = createService()
-      const sub = await subscribe(ws, uid, "https://push.example.com/early")
-      scripts.set(sub.endpoint, [failing(503)])
+      const sub = await subscribe(ws, uid, "https://push.example.com/crashes")
       await service.planActivityPush(event(), activityPayload())
-      await drainDuePushJobs(pool, service, ws)
-      const row = (await deliveries(ws))[0]!
-      const retryJob = (await listPushJobs(pool, ws)).find((j) => j.id === `${row.id}_a1`)!
+      const [job] = await listPushJobs(pool, ws)
+      const deliveryId = (await deliveries(ws))[0]!.id
+      /** A process that dies mid-run: nothing releases its claim, so only its lapse lets the job run again. */
+      async function crashRun(): Promise<void> {
+        const claim = await claimPushJob(pool, job!.id)
+        await runPushDeliverUnder(service, job!, claim!).catch(() => {})
+        expect(await claimPushJob(pool, job!.id)).toBeNull()
+        await makeDeliveryDue(pool, deliveryId)
+      }
 
-      await runPushJob(pool, service, retryJob)
+      sources.activity = new Error("statement timeout")
+      await crashRun()
+      const sendsAfterEarlyCrash = sendsTo(sub.endpoint).length
+      const settle = spyOn(PushDeliveryRepository, "settle").mockRejectedValueOnce(new Error("connection terminated"))
+      try {
+        await crashRun()
+      } finally {
+        settle.mockRestore()
+      }
+      await runPushJob(pool, service, job!)
 
-      const wake = (await listPushJobs(pool, ws)).find((j) => j.id.includes("_w1"))
       expect({
+        sendsAfterEarlyCrash,
         sends: sendsTo(sub.endpoint).length,
-        attempts: (await deliveries(ws))[0]!.attempts,
-        wakeAfterScheduled: wake!.processAfter.getTime() - row.nextAttemptAt!.getTime(),
-      }).toEqual({ sends: 1, attempts: 1, wakeAfterScheduled: 1000 })
+        row: (await deliveries(ws))[0],
+        claims: (await QueueRepository.getById(pool, job!.id))?.claimedCount,
+      }).toMatchObject({ sendsAfterEarlyCrash: 0, sends: 2, row: { status: "accepted", attempts: 1 }, claims: 3 })
     })
 
-    test("should never send under a lease lost during slow source reads; the reclaiming worker sends once", async () => {
+    test("should never send under a claim taken over during slow source reads; the new owner sends once", async () => {
       const service = createService()
       const sub = await subscribe(ws, uid, "https://push.example.com/slow")
       await service.planActivityPush(event(), activityPayload())
       const [job] = await listPushJobs(pool, ws)
-      const data = job!.payload as { workspaceId: string; deliveryId: string; attempt: number; sourceStreamId: string }
+      const stale = await claimPushJob(pool, job!.id)
       sources.onResolveActivity = async () => {
-        await pool.query(`UPDATE push_deliveries SET lease_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1`, [
-          data.deliveryId,
-        ])
-        await service.attemptDelivery(data)
+        sources.onResolveActivity = null
+        await makeDeliveryDue(pool, (await deliveries(ws))[0]!.id)
+        await runPushJob(pool, service, job!)
       }
 
-      await service.attemptDelivery(data)
+      await expect(runPushDeliverUnder(service, job!, stale!)).rejects.toThrow(PushClaimLostError)
 
       expect(sendsTo(sub.endpoint)).toHaveLength(1)
       expect((await deliveries(ws))[0]).toMatchObject({ status: "accepted", attempts: 1 })
     })
 
-    test("should send once when two workers run the same attempt concurrently", async () => {
+    test("should write nothing when a stale response arrives after its successor started", async () => {
+      const service = createService()
+      const sub = await subscribe(ws, uid, "https://push.example.com/stale-response")
+      await service.planActivityPush(event(), activityPayload())
+      const [job] = await listPushJobs(pool, ws)
+      const stale = await claimPushJob(pool, job!.id)
+      let releaseStale!: () => void
+      scripts.set(sub.endpoint, [
+        () =>
+          new Promise((resolve, reject) => {
+            releaseStale = () => reject(Object.assign(new Error("gone"), { statusCode: 410, headers: {}, body: "" }))
+          }),
+        failing(503),
+      ])
+      const staleRun = runPushDeliverUnder(service, job!, stale!)
+      await waitFor(() => sendsTo(sub.endpoint).length === 1)
+
+      // The claim lapses; a new owner runs the attempt and schedules its retry.
+      await makeDeliveryDue(pool, (await deliveries(ws))[0]!.id)
+      await runPushJob(pool, service, job!)
+      releaseStale()
+      await expect(staleRun).rejects.toThrow(PushClaimLostError)
+
+      expect({
+        row: (await deliveries(ws))[0],
+        registrations: (await PushSubscriptionRepository.findByUserId(pool, ws, uid)).map((s) => s.id),
+        jobs: (await listPushJobs(pool, ws)).map((j) => j.id),
+      }).toMatchObject({
+        row: { status: "pending", attempts: 1 },
+        registrations: [sub.id],
+        jobs: [job!.id, `${(await deliveries(ws))[0]!.id}_a1`],
+      })
+    })
+
+    test("should let one of two concurrent workers claim an attempt's job, and send once", async () => {
       const service = createService()
       const sub = await subscribe(ws, uid, "https://push.example.com/race")
       await service.planActivityPush(event(), activityPayload())
       const [job] = await listPushJobs(pool, ws)
 
-      await Promise.all([runPushJob(pool, service, job!), service.attemptDelivery(job!.payload as never)])
+      const now = new Date()
+      const claims = await Promise.all(
+        ["worker_left", "worker_right"].map((claimedBy) =>
+          QueueRepository.batchClaimMessages(pool, {
+            queueName: job!.queueName,
+            workspaceId: ws,
+            claimedBy,
+            claimedAt: now,
+            claimedUntil: new Date(now.getTime() + 60_000),
+            now,
+            limit: 1,
+          })
+        )
+      )
+      for (const message of claims.flat()) {
+        await runPushDeliverUnder(service, job!, {
+          messageId: message.id,
+          claimedBy: message.claimedBy!,
+          claimedCount: message.claimedCount,
+        })
+      }
 
+      expect(
+        claims.map((messages) => messages.map((message) => message.id)).sort((a, b) => a.length - b.length)
+      ).toEqual([[], [job!.id]])
       expect(sendsTo(sub.endpoint)).toHaveLength(1)
+    })
+
+    test("should never run an attempt from a job other than its own", async () => {
+      const service = createService()
+      const sub = await subscribe(ws, uid, "https://push.example.com/foreign-job")
+      await service.planActivityPush(event(), activityPayload())
+      const [job] = await listPushJobs(pool, ws)
+      await QueueRepository.batchInsert(pool, [
+        {
+          id: `${job!.id}_v1_w1`,
+          queueName: job!.queueName,
+          workspaceId: ws,
+          payload: { ...job!.payload, wake: 1 },
+          processAfter: new Date(),
+          insertedAt: new Date(),
+        },
+      ])
+      const legacyWake = (await listPushJobs(pool, ws)).find((j) => j.id !== job!.id)!
+
+      await runPushJob(pool, service, legacyWake)
+
+      expect({ sends: sendsTo(sub.endpoint).length, row: (await deliveries(ws))[0] }).toMatchObject({
+        sends: 0,
+        row: { status: "pending", attempts: 0 },
+      })
     })
 
     test("should send each durable kind with its topic, urgency, remaining TTL and current payload", async () => {
@@ -904,6 +1003,34 @@ describe("durable push delivery", () => {
         sends: 3,
         status: "failed",
         reason: "infrastructure",
+      })
+    })
+
+    test("should carry abandoned claims into the next attempt's job, so the budget spans the delivery", async () => {
+      const service = createService()
+      const sub = await subscribe(ws, uid, "https://push.example.com/crashes-across-attempts")
+      scripts.set(sub.endpoint, [failing(503)])
+      await service.planActivityPush(event(), activityPayload())
+      const [first] = await listPushJobs(pool, ws)
+      // Two claims of the first attempt's job die before settling; the third settles a retry.
+      for (let i = 0; i < 2; i++) {
+        sources.activity = new Error("statement timeout")
+        await expect(runPushJob(pool, service, first!)).rejects.toThrow("statement timeout")
+      }
+      await runPushJob(pool, service, first!)
+      const row = (await deliveries(ws))[0]!
+      const retry = (await listPushJobs(pool, ws)).find((j) => j.id === `${row.id}_a1`)!
+      expect(retry.payload).toMatchObject({ attempt: 1, abandonedClaims: 2 })
+
+      // One more abandoned claim on the retry's job exhausts the delivery's budget of three.
+      await makeDeliveryDue(pool, row.id)
+      sources.activity = new Error("statement timeout")
+      await expect(runPushJob(pool, service, retry)).rejects.toThrow("statement timeout")
+      await runPushJob(pool, service, retry)
+
+      expect({ sends: sendsTo(sub.endpoint).length, row: (await deliveries(ws))[0] }).toMatchObject({
+        sends: 1,
+        row: { status: "failed", terminalReason: "infrastructure", attempts: 1 },
       })
     })
 
@@ -1342,7 +1469,7 @@ describe("durable push delivery", () => {
         })
       })
 
-      test("should record a receipt without touching the delivery's lease version or attempts", async () => {
+      test("should record a receipt without touching the delivery's version or attempts", async () => {
         const service = createService()
         sources.consent = GRANT
         const sub = await subscribe(ws, uid, "https://push.example.com/version", 1)
@@ -1485,26 +1612,20 @@ describe("durable push delivery", () => {
         expect(observed).toEqual({ withdrawn: refused, "withdrawn and given again": refused })
       })
 
-      test("should never send when the claim is lost before the arming transaction renews it", async () => {
+      test("should arm and record nothing when the job's claim is taken over during source reads", async () => {
         const service = createService()
         sources.consent = GRANT
         const sub = await subscribe(ws, uid, "https://push.example.com/lost-claim-arm", 1)
-        const renewLease = PushDeliveryRepository.renewLease.bind(PushDeliveryRepository)
-        let calls = 0
-        const renew = spyOn(PushDeliveryRepository, "renewLease").mockImplementation(async (db, params) => {
-          if (calls++ === 0) {
-            // A rival reclaims the lapsed attempt between this worker's reads and its arming.
-            await pool.query(`UPDATE push_deliveries SET version = version + 1 WHERE id = $1`, [params.deliveryId])
-          }
-          return renewLease(db, params)
-        })
-        try {
-          await service.planActivityPush(event(), activityPayload())
-          const [job] = (await listPushJobs(pool, ws)).filter((j) => j.completedAt === null)
-          await runPushJob(pool, service, job!)
-        } finally {
-          renew.mockRestore()
+        await service.planActivityPush(event(), activityPayload())
+        const [job] = await listPushJobs(pool, ws)
+        const stale = await claimPushJob(pool, job!.id)
+        let rival: Awaited<ReturnType<typeof claimPushJob>> = null
+        sources.onResolveActivity = async () => {
+          await makeDeliveryDue(pool, (await deliveries(ws))[0]!.id)
+          rival = await claimPushJob(pool, job!.id)
         }
+
+        await expect(runPushDeliverUnder(service, job!, stale!)).rejects.toThrow(PushClaimLostError)
         const delivery = await deliveryFor(ws, sub.id)
         const { rows: sent } = await pool.query(
           `SELECT sent_at, sent_with_receipt FROM push_deliveries WHERE id = $1`,
@@ -1512,14 +1633,21 @@ describe("durable push delivery", () => {
         )
 
         expect({
+          rivalClaimed: rival !== null,
           sends: sendsTo(sub.endpoint).length,
           receipt: await receiptRow(delivery.id),
           status: delivery.status,
           sent: sent[0],
-        }).toEqual({ sends: 0, receipt: null, status: "pending", sent: { sent_at: null, sent_with_receipt: null } })
+        }).toEqual({
+          rivalClaimed: true,
+          sends: 0,
+          receipt: null,
+          status: "pending",
+          sent: { sent_at: null, sent_with_receipt: null },
+        })
       })
 
-      test("should arm only under the renewed claim, so a competing claim waits until the send's lease is committed", async () => {
+      test("should hold the job's queue row while arming, so a competing claim waits until the send is recorded", async () => {
         const service = createService()
         sources.consent = GRANT
         const sub = await subscribe(ws, uid, "https://push.example.com/arm-under-claim", 1)
@@ -1530,7 +1658,9 @@ describe("durable push delivery", () => {
           try {
             await rival.query("BEGIN")
             await rival.query("SET LOCAL lock_timeout = '300ms'")
-            await rival.query("UPDATE push_deliveries SET version = version + 1 WHERE id = $1", [params.deliveryId])
+            await rival.query("UPDATE queue_messages SET claimed_by = 'worker_rival' WHERE id = $1", [
+              `${params.deliveryId}_a0`,
+            ])
             await rival.query("COMMIT")
             competingClaim = "claimed"
           } catch (err) {
@@ -1558,48 +1688,108 @@ describe("durable push delivery", () => {
         }).toEqual({ competingClaim: "blocked", sends: 1, status: "accepted", stored: true })
       })
 
-      test("should re-assert the lease after a slow arm commits, so a rival cannot reclaim the attempt before the send", async () => {
+      test("should roll back the arming and never send when the claim lapses during a slow arm", async () => {
         const service = createService()
         sources.consent = GRANT
         const sub = await subscribe(ws, uid, "https://push.example.com/slow-arm", 1)
-        const renewLease = PushDeliveryRepository.renewLease.bind(PushDeliveryRepository)
+        await service.planActivityPush(event(), activityPayload())
+        const [job] = await listPushJobs(pool, ws)
         const armDelivery = PushReceiptRepository.armDelivery.bind(PushReceiptRepository)
-        let renewals = 0
-        const renew = spyOn(PushDeliveryRepository, "renewLease").mockImplementation(async (db, params) =>
-          renewLease(db, renewals++ === 0 ? { ...params, leaseMs: 200 } : params)
-        )
-        let deliveryId: string | null = null
         const arm = spyOn(PushReceiptRepository, "armDelivery").mockImplementation(async (db, params) => {
-          deliveryId = params.deliveryId
           await new Promise((resolve) => setTimeout(resolve, 400))
           return armDelivery(db, params)
         })
-        let rivalClaimed: boolean | null = null
+        const shortClaim = await claimPushJob(pool, job!.id, 200)
+        let lapsedRun: unknown = null
+        try {
+          await runPushDeliverUnder(service, job!, shortClaim!).catch((err) => (lapsedRun = err))
+        } finally {
+          arm.mockRestore()
+        }
+        const delivery = await deliveryFor(ws, sub.id)
+        const afterLapse = { sends: sendsTo(sub.endpoint).length, receipt: await receiptRow(delivery.id) }
+
+        await runPushJob(pool, service, job!)
+
+        expect({
+          lapsedRun: lapsedRun instanceof PushClaimLostError,
+          afterLapse,
+          sends: sendsTo(sub.endpoint).length,
+          status: (await deliveryFor(ws, sub.id)).status,
+        }).toEqual({ lapsedRun: true, afterLapse: { sends: 0, receipt: null }, sends: 1, status: "accepted" })
+      })
+
+      test("should extend the queue claim through the send without a heartbeat shortening it", async () => {
+        const service = createService()
+        const sub = await subscribe(ws, uid, "https://push.example.com/near-lapse", 1)
+        await service.planActivityPush(event(), activityPayload())
+        const [job] = await listPushJobs(pool, ws)
+        const nearLapse = await claimPushJob(pool, job!.id, 10_000)
+        let rivalJobs: string[] | null = null
         scripts.set(sub.endpoint, [
           async () => {
-            const rival = await PushDeliveryRepository.claim(pool, {
-              workspaceId: ws,
-              deliveryId: deliveryId!,
-              attempt: 0,
-              leaseMs: 60 * SECOND_MS,
+            const now = new Date()
+            await QueueRepository.batchRenewClaims(pool, {
+              messageIds: [job!.id],
+              claimedBy: nearLapse!.claimedBy,
+              claimedUntil: new Date(now.getTime() + 10_000),
             })
-            rivalClaimed = rival !== null
+            rivalJobs = (
+              await QueueRepository.batchClaimMessages(pool, {
+                queueName: job!.queueName,
+                workspaceId: ws,
+                claimedBy: "worker_rival",
+                claimedAt: new Date(now.getTime() + 20_000),
+                claimedUntil: new Date(now.getTime() + 30_000),
+                now: new Date(now.getTime() + 20_000),
+                limit: 1,
+              })
+            ).map((message) => message.id)
             return accepted()
           },
         ])
-        try {
-          await service.planActivityPush(event(), activityPayload())
-          await drainDuePushJobs(pool, service, ws)
-        } finally {
-          renew.mockRestore()
-          arm.mockRestore()
-        }
 
+        await runPushDeliverUnder(service, job!, nearLapse!)
         expect({
-          rivalClaimed,
+          rivalJobs,
           sends: sendsTo(sub.endpoint).length,
           status: (await deliveryFor(ws, sub.id)).status,
-        }).toEqual({ rivalClaimed: false, sends: 1, status: "accepted" })
+        }).toEqual({
+          rivalJobs: [],
+          sends: 1,
+          status: "accepted",
+        })
+      })
+
+      test("should refuse a send when the claim expires after the arming transaction commits", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/post-commit-lapse", 1)
+        await service.planActivityPush(event(), activityPayload())
+        const [job] = await listPushJobs(pool, ws)
+        const claim = await claimPushJob(pool, job!.id, 10_000)
+        const realNow = Date.now.bind(Date)
+        let elapsed = 0
+        const clock = spyOn(Date, "now").mockImplementation(() => realNow() + elapsed)
+        const issued = spyOn(PushTelemetry.prototype, "recordReceipt").mockImplementation((result) => {
+          if (result === "issued") elapsed = 61_000
+        })
+        try {
+          await expect(runPushDeliverUnder(service, job!, claim!)).rejects.toThrow(PushClaimLostError)
+        } finally {
+          issued.mockRestore()
+          clock.mockRestore()
+        }
+        const delivery = await deliveryFor(ws, sub.id)
+        expect({
+          committedReceipt: (await receiptRow(delivery.id)) !== null,
+          sends: sendsTo(sub.endpoint).length,
+          status: delivery.status,
+        }).toEqual({
+          committedReceipt: true,
+          sends: 0,
+          status: "pending",
+        })
       })
 
       test("should serialize a report with a concurrent re-arm: the re-arm waits, then rotates the token and keeps the reported stage", async () => {

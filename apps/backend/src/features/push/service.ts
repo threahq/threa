@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import {
   PUSH_PROVIDER_OUTCOMES,
   PUSH_RECEIPT_STAGES,
@@ -16,7 +16,7 @@ import { PushSubscriptionRepository, type PushSubscription, type InsertPushSubsc
 import {
   PushDeliveryRepository,
   PUSH_DELIVERY_STATUSES,
-  type ClaimedPushDelivery,
+  type StartedPushDelivery,
   type DurablePushKind,
   type TerminalPushDeliveryStatus,
 } from "./delivery-repository"
@@ -67,6 +67,7 @@ import {
   QueueRepository,
   type InsertQueueMessageParams,
   type PushDeliverJobData,
+  type QueueClaim,
   type PushSessionExpiredJobData,
 } from "../../lib/queue"
 import type { ActivityPushInvalidReason, ActivityPushResolution } from "../activity"
@@ -185,17 +186,13 @@ const RECENT_INTERACTION_WINDOW_MS = PRESENCE_INTERACTION_WINDOW_MS
  */
 const SESSION_EXPIRY_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000 // 30 days (matches cookie TTL)
 
-/**
- * How long a claimed device delivery stays owned: revalidation reads plus the
- * send timeout, with room to spare. Ownership is re-asserted right before the
- * send, so a worker whose reads outlived its lease never sends.
- */
-const PUSH_DELIVERY_LEASE_MS = 60_000
-
 /** Ledger rows are kept this long past their expiry (first-party diagnostics), then deleted. */
 const PUSH_DELIVERY_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
 const RETENTION_BATCH_SIZE = 500
 const RETENTION_MAX_BATCHES = 20
+
+// Cover the provider timeout and delayed commit/dispatch even when queue heartbeats stall.
+const PUSH_SEND_CLAIM_MS = 60_000
 
 /** An automatic receipt can still land this long after its delivery's push TTL ran out. */
 const DELIVERY_RECEIPT_GRACE_MS = 10 * 60 * 1_000
@@ -205,9 +202,6 @@ const TEST_RECEIPT_CAPABILITY_MS = 10 * 60 * 1_000
 
 /** Test results are first-party diagnostics for the person who ran them; kept a day, not the ledger's week. */
 const TEST_RECEIPT_RETENTION_MS = 24 * 60 * 60 * 1_000
-
-/** Slack past the DB-computed claimable time: the queue compares `process_after` with app-server time. */
-const WAKE_MARGIN_MS = 1_000
 
 /**
  * Session-expired notice job ids carry this bucket: a dead-lettered notice
@@ -615,54 +609,46 @@ export class PushService {
     })
   }
 
-  /**
-   * One provider attempt for one device delivery (the `push.deliver` job).
-   * Claims the row before anything else, revalidates everything a delay can
-   * change, re-asserts the claim, sends with no DB connection held (INV-41),
-   * then records the result and schedules the next attempt in one
-   * transaction. Throws only on infrastructure failure; the queue retries the
-   * job, and a retry that finds this attempt still leased schedules a wake-up
-   * for when the lease lapses instead of finishing as a no-op.
-   */
-  async attemptDelivery(data: PushDeliverJobData): Promise<void> {
+  async attemptDelivery(job: PushDeliverJob): Promise<void> {
+    const { data, claim } = job
     const { workspaceId, deliveryId, attempt } = data
-    const claimed = await PushDeliveryRepository.claim(this.pool, {
-      workspaceId,
-      deliveryId,
-      attempt,
-      leaseMs: PUSH_DELIVERY_LEASE_MS,
+    // Only the attempt's own job may run it: a second job for one attempt would be a second owner.
+    if (job.id !== deliverJobId(data)) return
+
+    const started = await this.whileOwned(claim, async (client) => {
+      const row = await PushDeliveryRepository.startAttempt(client, { workspaceId, deliveryId, attempt })
+      if (!row) return null
+      if (abandonedClaims(job) >= PUSH_MAX_ABANDONED_CLAIMS) {
+        logger.warn({ kind: row.kind }, "Push delivery failed after repeated abandoned claims")
+        await this.settleUnsent(client, row, PUSH_DELIVERY_STATUSES.FAILED, PUSH_INFRASTRUCTURE_FAILURE)
+        return null
+      }
+      return row
     })
-    if (!claimed) return this.wakeWhenClaimable(this.pool, data)
+    if (!started) return
 
-    if (claimed.abandonedClaims >= PUSH_MAX_ABANDONED_CLAIMS) {
-      logger.warn({ kind: claimed.kind }, "Push delivery failed after repeated abandoned claims")
-      return this.settleUnsent(this.pool, claimed, PUSH_DELIVERY_STATUSES.FAILED, PUSH_INFRASTRUCTURE_FAILURE)
-    }
-
-    const prepared = await this.prepareAttempt(claimed, data)
+    const prepared = await this.prepareAttempt(started, data)
     if (!prepared.send) {
-      this.suppress(claimed.kind, prepared.reason)
-      return this.settleUnsent(this.pool, claimed, prepared.status, prepared.reason)
+      this.suppress(started.kind, prepared.reason)
+      return this.whileOwned(claim, (client) => this.settleUnsent(client, started, prepared.status, prepared.reason))
     }
 
-    const { owned, receiptToken } = await this.renewLeaseAndArmReceipt(claimed, prepared)
-    if (!owned) return
+    const { receiptToken, claimedUntil } = await this.armAndRecordSend(claim, started, prepared)
 
     // The reads and the arming above can be slow: the send window and TTL are measured after them.
-    const ttlSeconds = sendableTtlSeconds(claimed.expiresAt, prepared.deadline, Date.now())
+    const ttlSeconds = sendableTtlSeconds(started.expiresAt, prepared.deadline, Date.now())
     if (ttlSeconds === null) {
-      this.suppress(claimed.kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
-      return this.settleUnsent(this.pool, claimed, PUSH_DELIVERY_STATUSES.EXPIRED, PUSH_SUPPRESSION_REASONS.EXPIRED)
+      this.suppress(started.kind, PUSH_SUPPRESSION_REASONS.EXPIRED)
+      return this.whileOwned(claim, (client) =>
+        this.settleUnsent(client, started, PUSH_DELIVERY_STATUSES.EXPIRED, PUSH_SUPPRESSION_REASONS.EXPIRED)
+      )
     }
 
     const payload = JSON.stringify({
       data: prepared.data,
       ...(receiptToken ? { receipt: { token: receiptToken } } : {}),
     })
-
-    // At-least-once: a crash or failed settle after this send leaves the row
-    // pending, and the attempt is reclaimed and sent again once the lease
-    // lapses, up to PUSH_MAX_ABANDONED_CLAIMS times.
+    if (claimedUntil.getTime() <= Date.now() + WEBPUSH_TIMEOUT_MS) throw new PushClaimLostError()
     const result = await sendToDevice(prepared.subscription, payload, {
       ttlSeconds,
       urgency: "high",
@@ -670,74 +656,64 @@ export class PushService {
     })
     this.telemetry.recordSendOutcome({
       ...result,
-      kind: claimed.kind,
+      kind: started.kind,
       provider: providerFamily(prepared.subscription.endpoint),
     })
 
     const settlement = decideSettlement({
       result,
-      attemptsBefore: claimed.attempts,
+      attemptsBefore: started.attempts,
       nowMs: Date.now(),
       deadline: prepared.deadline,
     })
-    await withTransaction(this.pool, async (client) => {
+    await this.whileOwned(claim, async (client) => {
       const settled = await PushDeliveryRepository.settle(client, {
         workspaceId,
         deliveryId,
-        claimVersion: claimed.version,
+        version: started.version,
         settlement,
       })
       if (!settled) return
       if (settlement.kind === "retry") {
         await QueueRepository.batchInsert(client, [
           deliverJob(
-            { workspaceId, deliveryId, attempt: settled.attempts, sourceStreamId: data.sourceStreamId },
+            {
+              workspaceId,
+              deliveryId,
+              attempt: settled.attempts,
+              sourceStreamId: data.sourceStreamId,
+              abandonedClaims: abandonedClaims(job),
+            },
             settlement.nextAttemptAt
           ),
         ])
       }
       if (settled.status === PUSH_DELIVERY_STATUSES.REGISTRATION_GONE) {
         await PushSubscriptionRepository.deleteByIdsAtGeneration(client, workspaceId, [
-          { id: claimed.subscriptionId, generation: claimed.subscriptionGeneration },
+          { id: started.subscriptionId, generation: started.subscriptionGeneration },
         ])
       }
     })
   }
 
   /**
-   * `push.deliver` onDLQ hook, inside the dead-letter transaction, so a job
-   * whose infrastructure retries ran out never leaves its delivery pending with
-   * nothing left to run it. No-op unless this job really is dead-lettered and
-   * no other open job for the same attempt can still run it. Otherwise it
-   * claims the attempt and fails it as infrastructure. A live lease (possibly
-   * this job's own orphan) or a scheduled retry blocks the claim; the attempt
-   * then goes to a wake-up job at the claimable time, whose claims
-   * PUSH_MAX_ABANDONED_CLAIMS bounds.
+   * `push.deliver` onDLQ hook, inside the transaction that dead-letters the
+   * job under its claim: the attempt that job owned has no runner left, so it
+   * fails as infrastructure. Only the attempt's own job counts, and a
+   * delivery already settled or on a later attempt is left alone.
    */
   async recoverDeadLetteredAttempt(db: Querier, job: { id: string; data: PushDeliverJobData }): Promise<void> {
     const { workspaceId, deliveryId, attempt } = job.data
+    if (job.id !== deliverJobId(job.data)) return
     const message = await QueueRepository.getById(db, job.id)
     if (!message?.dlqAt) return
-    // Sibling jobs for the same attempt can dead-letter in overlapping transactions; each would see
-    // the other's uncommitted DLQ as a live successor and both would leave the row pending.
-    await PushDeliveryRepository.lockForUpdate(db, { workspaceId, deliveryId })
-    const successor = await QueueRepository.hasOtherOpenMessage(db, {
-      queueName: JobQueues.PUSH_DELIVER,
-      workspaceId,
-      payload: { deliveryId, attempt },
-      excludeId: job.id,
-    })
-    if (successor) return
-
-    const claimed = await PushDeliveryRepository.claim(db, {
+    const failed = await PushDeliveryRepository.failDeadLettered(db, {
       workspaceId,
       deliveryId,
       attempt,
-      leaseMs: PUSH_DELIVERY_LEASE_MS,
+      reason: PUSH_INFRASTRUCTURE_FAILURE,
     })
-    if (!claimed) return this.wakeWhenClaimable(db, job.data)
-    logger.warn({ kind: claimed.kind }, "Push delivery failed after its job was dead-lettered")
-    await this.settleUnsent(db, claimed, PUSH_DELIVERY_STATUSES.FAILED, PUSH_INFRASTRUCTURE_FAILURE)
+    if (failed) logger.warn("Push delivery failed after its job was dead-lettered")
   }
 
   /**
@@ -912,7 +888,7 @@ export class PushService {
   }
 
   /** Everything a delay can change, rechecked on every attempt. */
-  private async prepareAttempt(claimed: ClaimedPushDelivery, data: PushDeliverJobData): Promise<PreparedAttempt> {
+  private async prepareAttempt(claimed: StartedPushDelivery, data: PushDeliverJobData): Promise<PreparedAttempt> {
     const { workspaceId, userId, kind } = claimed
     if (!claimed.subscription) return drop(PUSH_DELIVERY_STATUSES.SUPERSEDED, PUSH_SUPPRESSION_REASONS.SUPERSEDED)
 
@@ -957,67 +933,71 @@ export class PushService {
     }
   }
 
-  /**
-   * When this attempt wants a receipt, arm it with a fresh capability in one
-   * transaction with a lease renewal: the renewal's version CAS row-locks the
-   * delivery, so only the current claim holder can rotate the token. The
-   * user's consent grant is read in that transaction, after the receipt row is
-   * locked (the order ingest uses), so the capability is issued only under the
-   * grant that is current when it commits. No grant, or a failed arming, never
-   * fails the attempt; it sends without a capability. Either way
-   * the claim is re-asserted by a standalone renewal as the last step before
-   * the send: the arming transaction's lease is measured from its start (NOW()),
-   * so a slow arm can commit an already-lapsed lease that a rival may reclaim.
-   */
-  private async renewLeaseAndArmReceipt(
-    claimed: ClaimedPushDelivery,
+  // Receipt locks precede consent reads, matching ingestion's lock order.
+  private async armAndRecordSend(
+    claim: QueueClaim,
+    started: StartedPushDelivery,
     { receipt, topic, subscription }: Extract<PreparedAttempt, { send: true }>
-  ): Promise<{ owned: boolean; receiptToken: string | null }> {
-    const lease = {
-      workspaceId: claimed.workspaceId,
-      deliveryId: claimed.id,
-      claimVersion: claimed.version,
-      leaseMs: PUSH_DELIVERY_LEASE_MS,
-    }
-    let receiptToken: string | null = null
-    if (receipt) {
-      const token = newReceiptToken()
-      try {
-        const armed = await withTransaction(this.pool, async (client) => {
-          if (!(await PushDeliveryRepository.renewLease(client, lease))) return null
-          await PushReceiptRepository.lockDelivery(client, { workspaceId: claimed.workspaceId, deliveryId: claimed.id })
-          const consentGeneration = await this.lookups.findAnalyticsConsentGrant(client, claimed.userId)
-          if (consentGeneration === null) return false
-          return PushReceiptRepository.armDelivery(client, {
-            workspaceId: claimed.workspaceId,
-            userId: claimed.userId,
-            deliveryId: claimed.id,
-            subscriptionId: claimed.subscriptionId,
-            streamId: receipt.streamId,
-            tokenHash: sha256Hex(token),
-            consentGeneration,
-            capabilityExpiresAt: new Date(claimed.expiresAt.getTime() + DELIVERY_RECEIPT_GRACE_MS),
-            retainUntil: new Date(claimed.expiresAt.getTime() + PUSH_DELIVERY_RETENTION_MS),
+  ): Promise<{ receiptToken: string | null; claimedUntil: Date }> {
+    const armed = await this.whileOwned(claim, async (client, claimedUntil) => {
+      let receiptToken: string | null = null
+      if (receipt) {
+        const token = newReceiptToken()
+        try {
+          const armed = await withTransaction(client, async (savepoint) => {
+            await PushReceiptRepository.lockDelivery(savepoint, {
+              workspaceId: started.workspaceId,
+              deliveryId: started.id,
+            })
+            const consentGeneration = await this.lookups.findAnalyticsConsentGrant(savepoint, started.userId)
+            if (consentGeneration === null) return false
+            return PushReceiptRepository.armDelivery(savepoint, {
+              workspaceId: started.workspaceId,
+              userId: started.userId,
+              deliveryId: started.id,
+              subscriptionId: started.subscriptionId,
+              streamId: receipt.streamId,
+              tokenHash: sha256Hex(token),
+              consentGeneration,
+              capabilityExpiresAt: new Date(started.expiresAt.getTime() + DELIVERY_RECEIPT_GRACE_MS),
+              retainUntil: new Date(started.expiresAt.getTime() + PUSH_DELIVERY_RETENTION_MS),
+            })
           })
-        })
-        if (armed === null) return { owned: false, receiptToken: null }
-        if (armed) {
-          this.telemetry.recordReceipt(PUSH_RECEIPT_RESULTS.ISSUED)
-          receiptToken = token
+          if (armed) receiptToken = token
+        } catch (err) {
+          this.receiptIssueFailed(started.kind, err)
         }
-      } catch (err) {
-        this.receiptIssueFailed(claimed.kind, err)
       }
-    }
-    const owned = await PushDeliveryRepository.renewLease(this.pool, {
-      ...lease,
-      sent: {
-        topic: topic ?? null,
-        withReceipt: receiptToken !== null,
-        endpointHash: sha256Hex(subscription.endpoint),
-      },
+      const recorded = await PushDeliveryRepository.recordSend(client, {
+        workspaceId: started.workspaceId,
+        deliveryId: started.id,
+        version: started.version,
+        sent: {
+          topic: topic ?? null,
+          withReceipt: receiptToken !== null,
+          endpointHash: sha256Hex(subscription.endpoint),
+        },
+      })
+      if (!recorded || claimedUntil.getTime() <= Date.now()) throw new PushClaimLostError()
+      const extendedUntil = new Date(Math.max(claimedUntil.getTime(), Date.now() + PUSH_SEND_CLAIM_MS))
+      const renewed = await QueueRepository.batchRenewClaims(client, {
+        messageIds: [claim.messageId],
+        claimedBy: claim.claimedBy,
+        claimedUntil: extendedUntil,
+      })
+      if (renewed !== 1) throw new PushClaimLostError()
+      return { receiptToken, claimedUntil: extendedUntil }
     })
-    return { owned, receiptToken: owned ? receiptToken : null }
+    if (armed.receiptToken) this.telemetry.recordReceipt(PUSH_RECEIPT_RESULTS.ISSUED)
+    return armed
+  }
+
+  private whileOwned<T>(claim: QueueClaim, work: (client: PoolClient, claimedUntil: Date) => Promise<T>): Promise<T> {
+    return withTransaction(this.pool, async (client) => {
+      const owned = await QueueRepository.lockClaim(client, claim)
+      if (!owned) throw new PushClaimLostError()
+      return work(client, owned.claimedUntil)
+    })
   }
 
   /** Store an explicit test's per-device rows before sending. On failure the test still sends, provider results only. */
@@ -1074,7 +1054,7 @@ export class PushService {
   }
 
   /** Current source content per kind; the event snapshot is never reused. */
-  private async resolveContent(claimed: ClaimedPushDelivery, data: PushDeliverJobData): Promise<ResolvedContent> {
+  private async resolveContent(claimed: StartedPushDelivery, data: PushDeliverJobData): Promise<ResolvedContent> {
     const { workspaceId, userId, sourceId } = claimed
 
     if (claimed.kind === PUSH_SEND_KINDS.ACTIVITY) {
@@ -1175,30 +1155,6 @@ export class PushService {
       topic: pushTopic(sourceId, "r"),
       data: { kind: "rewrap_needed", workspaceId, streamId: sourceId },
     }
-  }
-
-  /**
-   * A job that could not claim its attempt: finished work (terminal, a later
-   * attempt, or retention-deleted) completes quietly. An attempt that is only
-   * leased or not yet due gets a wake-up job at the time a claim can succeed,
-   * committed before this job completes — so a retry that follows a failure
-   * mid-attempt neither strands the delivery nor burns the queue's short
-   * retry budget waiting out the lease.
-   */
-  private async wakeWhenClaimable(db: Querier, data: PushDeliverJobData): Promise<void> {
-    const state = await PushDeliveryRepository.findState(db, {
-      workspaceId: data.workspaceId,
-      deliveryId: data.deliveryId,
-    })
-    if (!state || state.status !== PUSH_DELIVERY_STATUSES.PENDING || state.attempts !== data.attempt) return
-
-    const wake = (data.wake ?? 0) + 1
-    await QueueRepository.batchInsert(db, [
-      {
-        ...deliverJob({ ...data, wake }, new Date(state.claimableAt.getTime() + WAKE_MARGIN_MS)),
-        id: `${data.deliveryId}_a${data.attempt}_v${state.version}_w${wake}`,
-      },
-    ])
   }
 
   /**
@@ -1404,17 +1360,17 @@ export class PushService {
     return results
   }
 
-  /** Settle a claimed attempt that sent nothing, guarded by its claim. */
+  /** Settle a started attempt that sent nothing, guarded by its start. */
   private async settleUnsent(
     db: Querier,
-    claimed: ClaimedPushDelivery,
+    started: StartedPushDelivery,
     status: TerminalPushDeliveryStatus,
     reason: string
   ): Promise<void> {
     await PushDeliveryRepository.settle(db, {
-      workspaceId: claimed.workspaceId,
-      deliveryId: claimed.id,
-      claimVersion: claimed.version,
+      workspaceId: started.workspaceId,
+      deliveryId: started.id,
+      version: started.version,
       settlement: { kind: "terminal", status, attempted: false, outcome: null, statusCode: null, reason },
     })
   }
@@ -1577,9 +1533,32 @@ function sendableTtlSeconds(expiresAt: Date, deadline: Date, nowMs: number): num
   return nowMs >= deadline.getTime() || ttlSeconds < 1 ? null : ttlSeconds
 }
 
+export interface PushDeliverJob {
+  id: string
+  data: PushDeliverJobData
+  claim: QueueClaim
+}
+
+/** Thrown when the job's queue claim no longer owns it: the queue retries the job or its new owner runs it. */
+export class PushClaimLostError extends Error {
+  readonly code = "PUSH_CLAIM_LOST"
+  constructor() {
+    super("push.deliver job lost its queue claim")
+  }
+}
+
+/** Unsettled claims so far: earlier attempts' jobs plus this job's earlier claims. */
+function abandonedClaims(job: PushDeliverJob): number {
+  return (job.data.abandonedClaims ?? 0) + job.claim.claimedCount - 1
+}
+
+function deliverJobId(data: PushDeliverJobData): string {
+  return `${data.deliveryId}_a${data.attempt}`
+}
+
 function deliverJob(data: PushDeliverJobData, processAfter: Date): InsertQueueMessageParams {
   return {
-    id: `${data.deliveryId}_a${data.attempt}`,
+    id: deliverJobId(data),
     queueName: JobQueues.PUSH_DELIVER,
     workspaceId: data.workspaceId,
     payload: data,
@@ -1616,7 +1595,7 @@ const ACTIVITY_INVALID_REASONS: Record<ActivityPushInvalidReason, PushSuppressio
 type PreparedAttempt =
   | {
       send: true
-      subscription: NonNullable<ClaimedPushDelivery["subscription"]>
+      subscription: NonNullable<StartedPushDelivery["subscription"]>
       data: Record<string, unknown>
       /** Set when this attempt should carry a receipt capability. */
       receipt: { streamId: string | null } | null
