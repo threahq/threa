@@ -81,11 +81,12 @@ describe("Memo Repositories", () => {
 
       test("deduplicates items by workspace/type/itemId", async () => {
         const itemId = `msg_dedupe_${Date.now()}`
+        const firstId = pendingItemId()
 
         await withTransaction(pool, async (client) => {
           await PendingItemRepository.queue(client, [
             {
-              id: pendingItemId(),
+              id: firstId,
               workspaceId: testWorkspaceId,
               streamId: testStreamId,
               itemType: "message",
@@ -107,16 +108,10 @@ describe("Memo Repositories", () => {
           ])
         })
 
-        // Returns empty because ON CONFLICT does nothing for unprocessed items
-        expect(secondQueue.length).toBe(0)
-
-        // Verify only one exists
-        const count = await withTransaction(pool, async (client) => {
-          return PendingItemRepository.countUnprocessed(client, testWorkspaceId, testStreamId)
-        })
-
-        // Count should include this item (exact count depends on other tests, but at least 1)
-        expect(count).toBeGreaterThanOrEqual(1)
+        // Requeueing a still-pending item keeps its row and bumps its version
+        expect(secondQueue.map(({ id, version, processedAt }) => ({ id, version, processedAt }))).toEqual([
+          { id: firstId, version: 1, processedAt: null },
+        ])
       })
 
       test("allows re-queue after item is processed", async () => {
@@ -134,7 +129,7 @@ describe("Memo Repositories", () => {
               itemId,
             },
           ])
-          await PendingItemRepository.markProcessed(client, [firstId])
+          await PendingItemRepository.markProcessed(client, [{ id: firstId, version: 0 }])
         })
 
         // Queue same item again - should work since previous was processed
@@ -190,7 +185,7 @@ describe("Memo Repositories", () => {
             },
           ])
 
-          await PendingItemRepository.markProcessed(client, [processedPendingId])
+          await PendingItemRepository.markProcessed(client, [{ id: processedPendingId, version: 0 }])
         })
 
         const unprocessed = await withTransaction(pool, async (client) => {
@@ -258,7 +253,7 @@ describe("Memo Repositories", () => {
         expect(beforeProcess.some((i) => i.id === pendingId)).toBe(true)
 
         await withTransaction(pool, async (client) => {
-          await PendingItemRepository.markProcessed(client, [pendingId])
+          await PendingItemRepository.markProcessed(client, [{ id: pendingId, version: 0 }])
         })
 
         const afterProcess = await withTransaction(pool, async (client) => {

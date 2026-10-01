@@ -36,6 +36,7 @@ function fakePendingItem(overrides: Partial<PendingMemoItem> = {}): PendingMemoI
     queuedAt: new Date(),
     processedAt: null,
     classifiedFingerprint: null,
+    version: 0,
     ...overrides,
   }
 }
@@ -1267,7 +1268,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
 
     await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
-    expect(markProcessed.mock.calls[0]?.[1]).toEqual(["pend_1"])
+    expect(markProcessed.mock.calls[0]?.[1]).toEqual([expect.objectContaining({ id: "pend_1", version: 0 })])
   })
 
   it("classifies again when the stored digest is stale", async () => {
