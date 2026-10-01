@@ -115,12 +115,19 @@ export const StreamConnectionRepository = {
     )
   },
 
-  /** Locks the channel's live connection, if any. Call inside a transaction. */
+  /**
+   * Locks the channel's live connection, if any. Call inside a transaction.
+   * Row locks can't hold a row that doesn't exist yet, so the channel-wide
+   * advisory lock is what serializes two first-time mints.
+   */
   async lockLiveForStream(
     db: Querier,
     hostWorkspaceId: string,
     hostStreamId: string
   ): Promise<StreamConnectionRecord | null> {
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `stream_connections:${hostWorkspaceId}:${hostStreamId}`,
+    ])
     const result = await db.query<StreamConnectionRow>(
       `SELECT ${RECORD_COLUMNS} FROM stream_connections
        WHERE host_workspace_id = $1 AND host_stream_id = $2 AND state IN ('invited', 'active')

@@ -1,4 +1,4 @@
-import { test, expect, type Browser, type Page } from "@playwright/test"
+import { test, expect, type Page } from "@playwright/test"
 import { expectApiOk, loginAndCreateWorkspace } from "./helpers"
 
 /**
@@ -37,7 +37,7 @@ async function setUpWorkspace(page: Page, prefix: string) {
   return { ...created, workspaceId }
 }
 
-async function setUpHostAndPartner(browser: Browser, hostPage: Page, contextOptions = {}) {
+async function setUpHostAndPartner(hostPage: Page, partnerPage: Page) {
   const host = await setUpWorkspace(hostPage, "host")
   const slug = `design-${host.testId}`
   const response = await hostPage.request.post(`/api/workspaces/${host.workspaceId}/streams`, {
@@ -46,11 +46,9 @@ async function setUpHostAndPartner(browser: Browser, hostPage: Page, contextOpti
   await expectApiOk(response, "Create channel")
   const streamId = ((await response.json()) as { stream: { id: string } }).stream.id
 
-  const partnerContext = await browser.newContext(contextOptions)
-  const partnerPage = await partnerContext.newPage()
   const partner = await setUpWorkspace(partnerPage, "partner")
 
-  return { host, partner, partnerPage, partnerContext, slug, streamId }
+  return { host, partner, slug, streamId }
 }
 
 function settingsUrl(workspaceId: string, streamId: string, tab: string): string {
@@ -85,9 +83,11 @@ async function expectSharedWith(page: Page, workspaceId: string, streamId: strin
 
 test.describe("Stream connections", () => {
   test("should share a channel with another workspace when its admin accepts the invite", async ({ browser, page }) => {
-    const { host, partner, partnerPage, partnerContext, slug, streamId } = await setUpHostAndPartner(browser, page)
-
+    const partnerContext = await browser.newContext()
     try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage)
+
       await page.goto(settingsUrl(host.workspaceId, streamId, "general"))
       await page
         .locator('[data-slot="settings-nav"]')
@@ -109,12 +109,11 @@ test.describe("Stream connections", () => {
       browser,
       page,
     }) => {
-      const { host, partner, partnerPage, partnerContext, slug, streamId } = await setUpHostAndPartner(browser, page, {
-        viewport: PHONE,
-        hasTouch: true,
-      })
-
+      const partnerContext = await browser.newContext({ viewport: PHONE, hasTouch: true })
       try {
+        const partnerPage = await partnerContext.newPage()
+        const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage)
+
         await page.goto(settingsUrl(host.workspaceId, streamId, "general"))
         await page.getByRole("dialog").getByRole("combobox").first().click()
         await page.getByRole("option", { name: "Connect" }).click()

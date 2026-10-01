@@ -1,12 +1,11 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threahq/backend-common"
-import { STREAM_CONNECTION_TOKEN_MAX_LENGTH, VISIBILITY_OPTIONS } from "@threahq/types"
+import { VISIBILITY_OPTIONS, streamConnectionTokenSchema } from "@threahq/types"
 import { parseRequest } from "../../lib/validation"
 import type { StreamConnectionService } from "./service"
 
 const idSchema = z.string().min(1).max(64)
-const tokenSchema = z.string().min(1).max(STREAM_CONNECTION_TOKEN_MAX_LENGTH)
 
 const createInviteSchema = z
   .object({
@@ -20,13 +19,13 @@ const createInviteSchema = z
 const revokeSchema = z.object({ hostWorkspaceId: idSchema }).strict()
 const acceptSchema = z
   .object({
-    token: tokenSchema,
+    token: streamConnectionTokenSchema,
     partnerWorkspaceId: idSchema,
     acceptedByUserId: idSchema,
     visibility: z.enum(VISIBILITY_OPTIONS),
   })
   .strict()
-const lookupSchema = z.object({ token: tokenSchema })
+const lookupSchema = z.object({ token: streamConnectionTokenSchema })
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService

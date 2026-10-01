@@ -1,6 +1,7 @@
 import { logger } from "./logger"
-import { HttpError, INTERNAL_API_KEY_HEADER, requestLogLevel } from "@threahq/backend-common"
+import { HttpError, INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
 import {
+  StreamConnectionErrorCodes,
   streamConnectionSnapshotSchema,
   type InvitationStatus,
   type StreamConnectionSnapshot,
@@ -18,6 +19,7 @@ const createdInviteSchema = z.object({
   superseded: streamConnectionSnapshotSchema.nullable(),
 })
 const snapshotResponseSchema = z.object({ snapshot: streamConnectionSnapshotSchema })
+const streamConnectionOutcomeCodes = new Set<string>(Object.values(StreamConnectionErrorCodes))
 
 // CP's shared error middleware always responds with `{ error, code? }` JSON.
 // Translate that into an HttpError carrying the CP's status + code so the
@@ -420,9 +422,14 @@ export class ControlPlaneClient {
     })
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      // An expired or already-accepted invite is a user outcome, not a fault: log like a request would.
-      logger[requestLogLevel(res.status)]({ path, status: res.status, body }, `Failed to ${action}`)
-      throw toControlPlaneHttpError(res.status, body, `Failed to ${action}`)
+      const error = toControlPlaneHttpError(res.status, body, `Failed to ${action}`)
+      // Only the invite's own outcomes reach the browser; a CP 401 forwarded as-is would sign the admin out.
+      if (res.status < 500 && error.code && streamConnectionOutcomeCodes.has(error.code)) {
+        logger.info({ path, status: res.status, code: error.code }, `Failed to ${action}`)
+        throw error
+      }
+      logger.error({ path, status: res.status, body }, `Failed to ${action}`)
+      throw new HttpError(`Failed to ${action}`, { status: 502, code: "CONTROL_PLANE_UNAVAILABLE" })
     }
     return res.json()
   }

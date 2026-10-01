@@ -14,13 +14,8 @@ export const StreamConnectionStates = {
   REVOKED: "revoked",
 } as const satisfies Record<string, StreamConnectionState>
 
-export const STREAM_CONNECTION_ROLES = ["host", "partner"] as const
+const STREAM_CONNECTION_ROLES = ["host", "partner"] as const
 export type StreamConnectionRole = (typeof STREAM_CONNECTION_ROLES)[number]
-
-export const StreamConnectionRoles = {
-  HOST: "host",
-  PARTNER: "partner",
-} as const satisfies Record<string, StreamConnectionRole>
 
 export const StreamConnectionErrorCodes = {
   DISABLED: "STREAM_CONNECTIONS_DISABLED",
@@ -73,6 +68,7 @@ export interface StreamConnection {
   remoteWorkspaceName: string | null
   /** The partner admin's choice at accept. Null until accepted. */
   partnerVisibility: Visibility | null
+  /** The invite link's deadline. Only meaningful while the state is invited. */
   expiresAt: string
 }
 
@@ -90,29 +86,40 @@ export interface StreamConnectionResponse {
   connection: StreamConnection
 }
 
-export const STREAM_CONNECTION_TOKEN_MAX_LENGTH = 200
+export const streamConnectionTokenSchema = z.string().min(1).max(200)
 
 export const acceptStreamConnectionSchema = z
   .object({
-    token: z.string().min(1).max(STREAM_CONNECTION_TOKEN_MAX_LENGTH),
+    token: streamConnectionTokenSchema,
     visibility: z.enum(VISIBILITY_OPTIONS),
   })
   .strict()
 export type AcceptStreamConnectionInput = z.infer<typeof acceptStreamConnectionSchema>
 
-/** What the invite page shows before accepting. Safe for any signed-in user holding the token. */
-export interface StreamConnectionLookupResponse {
+interface StreamConnectionLookupBase {
   connectionId: string
-  /** A revoked invite is an error, never a lookup result. */
-  state: Exclude<StreamConnectionState, "revoked">
   hostWorkspaceId: string
   hostWorkspaceName: string
   /** Where the host's data lives. Accepting agrees to the partner's copy being served from there too. */
   hostRegion: string
   streamDisplayName: string | null
   streamSlug: string | null
-  /** Set once accepted, and only for a member of the partner workspace. */
-  partnerWorkspaceId: string | null
-  partnerWorkspaceName: string | null
+  /** The invite link's deadline. Only meaningful while the state is invited. */
   expiresAt: string
 }
+
+/**
+ * What the invite page shows. A revoked or expired invite is an error, never a
+ * lookup result, and so is a used one unless the viewer belongs to the partner.
+ */
+export type StreamConnectionLookupResponse =
+  | (StreamConnectionLookupBase & {
+      state: typeof StreamConnectionStates.INVITED
+      partnerWorkspaceId: null
+      partnerWorkspaceName: null
+    })
+  | (StreamConnectionLookupBase & {
+      state: typeof StreamConnectionStates.ACTIVE
+      partnerWorkspaceId: string
+      partnerWorkspaceName: string
+    })

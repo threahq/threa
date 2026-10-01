@@ -33,7 +33,7 @@ describe("Stream connections E2E", () => {
     expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403])
   })
 
-  test("should project a valid snapshot and reject a malformed one on the internal sync endpoint", async () => {
+  test("should accept a valid snapshot, ignore unknown keys, and reject a malformed one on the internal sync endpoint", async () => {
     const snapshot: StreamConnectionSnapshot = {
       id: streamConnectionId(),
       revision: 1,
@@ -51,11 +51,20 @@ describe("Stream connections E2E", () => {
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     }
 
-    const [valid, malformed] = await Promise.all([
+    const [valid, newerControlPlane, malformed] = await Promise.all([
       owner.internalRequest("POST", "/internal/stream-connections", snapshot),
+      owner.internalRequest("POST", "/internal/stream-connections", {
+        ...snapshot,
+        id: streamConnectionId(),
+        fieldFromNewerControlPlane: true,
+      }),
       owner.internalRequest("POST", "/internal/stream-connections", { ...snapshot, revision: "one" }),
     ])
 
-    expect({ valid: valid.status, malformed: malformed.status }).toEqual({ valid: 204, malformed: 400 })
+    expect({ valid: valid.status, newerControlPlane: newerControlPlane.status, malformed: malformed.status }).toEqual({
+      valid: 204,
+      newerControlPlane: 204,
+      malformed: 400,
+    })
   })
 })

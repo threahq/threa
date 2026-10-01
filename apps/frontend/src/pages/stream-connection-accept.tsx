@@ -1,7 +1,7 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { Ban, Check, Hourglass, Link2, SearchX, type LucideIcon } from "lucide-react"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Ban, Check, Hourglass, Link2, Link2Off, SearchX, type LucideIcon } from "lucide-react"
 import {
   StreamConnectionErrorCodes,
   StreamConnectionStates,
@@ -24,6 +24,7 @@ import { formatRegion } from "@/lib/regions"
 import { streamLabel } from "@/lib/streams"
 
 const LINK_CLASS = "text-sm text-foreground underline-offset-4 hover:underline"
+const FIELD_LABEL_CLASS = "text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
 
 const LOOKUP_ERROR_COPY = {
   [StreamConnectionErrorCodes.NOT_FOUND]: {
@@ -40,6 +41,11 @@ const LOOKUP_ERROR_COPY = {
     title: "Invite expired",
     body: "Ask the channel's admin for a new link.",
     icon: Hourglass,
+  },
+  [StreamConnectionErrorCodes.ALREADY_ACCEPTED]: {
+    title: "Invite already used",
+    body: "Another workspace accepted this link. Ask the channel's admin for a new one.",
+    icon: Link2Off,
   },
 } satisfies Partial<Record<StreamConnectionErrorCode, { title: string; body: string; icon: LucideIcon }>>
 
@@ -72,6 +78,10 @@ function acceptErrorMessage(error: unknown): string {
   }
 }
 
+function lookupKey(token: string) {
+  return ["stream-connection-lookup", token] as const
+}
+
 function channelLabel(lookup: StreamConnectionLookupResponse): string {
   return streamLabel({ type: StreamTypes.CHANNEL, slug: lookup.streamSlug, displayName: lookup.streamDisplayName })
 }
@@ -84,18 +94,14 @@ export function StreamConnectionAcceptPage() {
 
   if (!user) {
     return (
-      <StandalonePage>
-        <div className="flex w-full flex-col items-center gap-6 text-center">
-          <HaloIcon icon={Link2} tone="primary" />
-          <h1 className="text-2xl font-medium leading-tight">Sign in to connect a shared channel</h1>
-          <Button
-            className="h-11 w-full text-xs font-medium uppercase tracking-[0.14em]"
-            onClick={() => login(`/connections/${encodeURIComponent(token)}`)}
-          >
-            Sign in
-          </Button>
-        </div>
-      </StandalonePage>
+      <StatusScreen icon={Link2} tone="primary" title="Sign in to connect a shared channel">
+        <Button
+          className="h-11 w-full text-xs font-medium uppercase tracking-[0.14em]"
+          onClick={() => login(`/connections/${encodeURIComponent(token)}`)}
+        >
+          Sign in
+        </Button>
+      </StatusScreen>
     )
   }
 
@@ -106,7 +112,7 @@ export function StreamConnectionAcceptPage() {
 function SignedInAccept({ token }: { token: string }) {
   const { workspaces, isLoading: workspacesLoading, refetch: refetchWorkspaces } = useWorkspaces()
   const lookup = useQuery({
-    queryKey: ["stream-connection-lookup", token],
+    queryKey: lookupKey(token),
     queryFn: () => streamConnectionsApi.lookup(token),
     retry: false,
   })
@@ -119,84 +125,63 @@ function SignedInAccept({ token }: { token: string }) {
     )
   }
 
-  // A failed background refetch keeps the invite it already loaded on screen.
-  const data = lookup.data
-  if (data === undefined) {
-    const code = lookupErrorCode(lookup.error)
-    if (!code) {
-      return (
-        <StandalonePage>
-          <div className="flex w-full flex-col items-center gap-4 text-center">
-            <HaloIcon icon={SearchX} />
-            <h1 className="text-2xl font-medium leading-tight">Couldn't load this invite</h1>
-            <Button variant="outline" className="h-11 w-full" onClick={() => void lookup.refetch()}>
-              Try again
-            </Button>
-          </div>
-        </StandalonePage>
-      )
-    }
-    const copy = LOOKUP_ERROR_COPY[code]
+  // A link that died since it loaded wins over the invite still in the cache.
+  const deadCode = lookupErrorCode(lookup.error)
+  if (deadCode) {
+    const copy = LOOKUP_ERROR_COPY[deadCode]
     return (
-      <StandalonePage>
-        <div className="flex w-full flex-col items-center gap-4 text-center">
-          <HaloIcon icon={copy.icon} />
-          <h1 className="text-2xl font-medium leading-tight">{copy.title}</h1>
-          <p className="text-sm text-muted-foreground">{copy.body}</p>
-          <OpenThreaLink />
-        </div>
-      </StandalonePage>
+      <StatusScreen icon={copy.icon} title={copy.title}>
+        <p className="text-sm text-muted-foreground">{copy.body}</p>
+        <OpenThreaLink />
+      </StatusScreen>
     )
   }
 
-  if (workspaces === undefined) {
+  // Any other failed background refetch keeps the invite it already loaded on screen.
+  const data = lookup.data
+  if (data === undefined) {
     return (
-      <StandalonePage>
-        <div className="flex w-full flex-col items-center gap-4 text-center">
-          <HaloIcon icon={SearchX} />
-          <h1 className="text-2xl font-medium leading-tight">Couldn't load your workspaces</h1>
-          <Button variant="outline" className="h-11 w-full" onClick={() => void refetchWorkspaces()}>
-            Try again
-          </Button>
-        </div>
-      </StandalonePage>
+      <StatusScreen icon={SearchX} title="Couldn't load this invite">
+        <Button variant="outline" className="h-11 w-full" onClick={() => void lookup.refetch()}>
+          Try again
+        </Button>
+      </StatusScreen>
     )
   }
 
   if (data.state === StreamConnectionStates.ACTIVE) {
     return (
-      <StandalonePage>
-        <Connected
-          channel={channelLabel(data)}
-          partnerWorkspaceId={data.partnerWorkspaceId}
-          partnerWorkspaceName={data.partnerWorkspaceName}
-          canOpen={workspaces.some((w) => w.id === data.partnerWorkspaceId)}
-        />
-      </StandalonePage>
+      <Connected
+        channel={channelLabel(data)}
+        workspaceId={data.partnerWorkspaceId}
+        workspaceName={data.partnerWorkspaceName}
+      />
+    )
+  }
+
+  if (workspaces === undefined) {
+    return (
+      <StatusScreen icon={SearchX} title="Couldn't load your workspaces">
+        <Button variant="outline" className="h-11 w-full" onClick={() => void refetchWorkspaces()}>
+          Try again
+        </Button>
+      </StatusScreen>
     )
   }
 
   const candidates = workspaces.filter((w) => w.id !== data.hostWorkspaceId)
   if (candidates.length === 0) {
     return (
-      <StandalonePage>
-        <div className="flex flex-col items-center gap-4 text-center">
-          <HaloIcon icon={SearchX} />
-          <h1 className="text-2xl font-medium leading-tight">No other workspace to connect</h1>
-          <p className="text-sm text-muted-foreground">
-            Accept from a workspace you administer, other than {data.hostWorkspaceName}.
-          </p>
-          <OpenThreaLink />
-        </div>
-      </StandalonePage>
+      <StatusScreen icon={SearchX} title="No other workspace to connect">
+        <p className="text-sm text-muted-foreground">
+          Accept from a workspace you administer, other than {data.hostWorkspaceName}.
+        </p>
+        <OpenThreaLink />
+      </StatusScreen>
     )
   }
 
-  return (
-    <StandalonePage>
-      <AcceptForm token={token} lookup={data} workspaces={candidates} />
-    </StandalonePage>
-  )
+  return <AcceptForm token={token} lookup={data} workspaces={candidates} />
 }
 
 function AcceptForm({
@@ -208,126 +193,142 @@ function AcceptForm({
   lookup: StreamConnectionLookupResponse
   workspaces: Workspace[]
 }) {
+  const queryClient = useQueryClient()
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
   const [visibility, setVisibility] = useState<Visibility>("private")
   const workspace = workspaces.find((w) => w.id === workspaceId)
   const accept = useMutation({
-    mutationFn: () => streamConnectionsApi.accept(workspaceId, { token, visibility }),
+    mutationFn: (target: Workspace) => streamConnectionsApi.accept(target.id, { token, visibility }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: lookupKey(token) }),
   })
   const channel = channelLabel(lookup)
 
   if (accept.isSuccess) {
-    return (
-      <Connected
-        channel={channel}
-        partnerWorkspaceId={workspaceId}
-        partnerWorkspaceName={workspace?.name ?? null}
-        canOpen
-      />
-    )
+    return <Connected channel={channel} workspaceId={accept.variables.id} workspaceName={accept.variables.name} />
   }
 
   return (
-    <div className="w-full space-y-8">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <HaloIcon icon={Link2} tone="primary" />
-        <h1 className="text-2xl font-medium leading-tight">
-          <span className="text-primary">{channel}</span> from {lookup.hostWorkspaceName}
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Hosted in {formatRegion(lookup.hostRegion)}. Messages your workspace posts in this channel are stored there
-          too.
-        </p>
-      </div>
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (workspace) accept.mutate()
-        }}
-      >
-        <div className="space-y-2">
-          <Label
-            htmlFor="accept-workspace"
-            className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
-          >
-            Workspace
-          </Label>
-          <Select
-            value={workspaceId}
-            onValueChange={(id) => {
-              accept.reset()
-              setWorkspaceId(id)
-            }}
-            disabled={accept.isPending}
-          >
-            <SelectTrigger id="accept-workspace" className="h-11">
-              <SelectValue placeholder="Choose a workspace" />
-            </SelectTrigger>
-            <SelectContent>
-              {workspaces.map((w) => (
-                <SelectItem key={w.id} value={w.id}>
-                  {w.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-            Visibility
-          </Label>
-          <VisibilityPicker
-            value={visibility}
-            onChange={(next) => {
-              accept.reset()
-              setVisibility(next)
-            }}
-            disabled={accept.isPending}
-          />
-        </div>
-        {accept.isError && (
-          <p role="alert" className="text-sm text-destructive">
-            {acceptErrorMessage(accept.error)}
+    <StandalonePage>
+      <div className="w-full space-y-8">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <HaloIcon icon={Link2} tone="primary" />
+          <h1 className="text-2xl font-medium leading-tight">
+            <span className="text-primary">{channel}</span> from {lookup.hostWorkspaceName}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Hosted in {formatRegion(lookup.hostRegion)}. Messages your workspace posts in this channel are stored there
+            too.
           </p>
-        )}
-        <Button
-          type="submit"
-          className="h-11 w-full text-xs font-medium uppercase tracking-[0.14em]"
-          disabled={accept.isPending || !workspace}
+        </div>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (workspace) accept.mutate(workspace)
+          }}
         >
-          {accept.isPending ? "Accepting…" : "Accept"}
-        </Button>
-      </form>
-    </div>
+          <div className="space-y-2">
+            <Label htmlFor="accept-workspace" className={FIELD_LABEL_CLASS}>
+              Workspace
+            </Label>
+            <Select
+              value={workspaceId}
+              onValueChange={(id) => {
+                accept.reset()
+                setWorkspaceId(id)
+              }}
+              disabled={accept.isPending}
+            >
+              <SelectTrigger id="accept-workspace" className="h-11">
+                <SelectValue placeholder="Choose a workspace" />
+              </SelectTrigger>
+              <SelectContent>
+                {workspaces.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {w.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label id="accept-visibility" className={FIELD_LABEL_CLASS}>
+              Visibility
+            </Label>
+            <div role="group" aria-labelledby="accept-visibility">
+              <VisibilityPicker
+                value={visibility}
+                onChange={(next) => {
+                  accept.reset()
+                  setVisibility(next)
+                }}
+                disabled={accept.isPending}
+              />
+            </div>
+          </div>
+          {accept.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              {acceptErrorMessage(accept.error)}
+            </p>
+          )}
+          <Button
+            type="submit"
+            className="h-11 w-full text-xs font-medium uppercase tracking-[0.14em]"
+            disabled={accept.isPending || !workspace}
+          >
+            {accept.isPending ? "Accepting…" : "Accept"}
+          </Button>
+        </form>
+      </div>
+    </StandalonePage>
+  )
+}
+
+function StatusScreen({
+  icon,
+  tone,
+  title,
+  children,
+}: {
+  icon: LucideIcon
+  tone?: "primary"
+  title: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <StandalonePage>
+      <div className="flex w-full flex-col items-center gap-4 text-center">
+        <HaloIcon icon={icon} tone={tone} />
+        <h1 className="text-2xl font-medium leading-tight">{title}</h1>
+        {children}
+      </div>
+    </StandalonePage>
   )
 }
 
 function Connected({
   channel,
-  partnerWorkspaceId,
-  partnerWorkspaceName,
-  canOpen,
+  workspaceId,
+  workspaceName,
 }: {
   channel: string
-  partnerWorkspaceId: string | null
-  partnerWorkspaceName: string | null
-  canOpen: boolean
+  workspaceId: string
+  workspaceName: string
 }) {
   return (
-    <div className="flex flex-col items-center gap-4 text-center">
-      <HaloIcon icon={Check} tone="primary" />
-      <h1 className="text-2xl font-medium leading-tight">
-        <span className="text-primary">{channel}</span> is shared with {partnerWorkspaceName ?? "another workspace"}
-      </h1>
-      {canOpen && partnerWorkspaceId ? (
-        <Link to={`/w/${partnerWorkspaceId}`} className={LINK_CLASS}>
-          Open {partnerWorkspaceName}
-        </Link>
-      ) : (
-        <OpenThreaLink />
-      )}
-    </div>
+    <StatusScreen
+      icon={Check}
+      tone="primary"
+      title={
+        <>
+          <span className="text-primary">{channel}</span> is shared with {workspaceName}
+        </>
+      }
+    >
+      <Link to={`/w/${workspaceId}`} className={LINK_CLASS}>
+        Open {workspaceName}
+      </Link>
+    </StatusScreen>
   )
 }
 

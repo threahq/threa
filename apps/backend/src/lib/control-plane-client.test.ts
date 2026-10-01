@@ -74,6 +74,35 @@ describe("ControlPlaneClient error translation", () => {
       message: "Failed to change workspace member role",
     })
   })
+
+  test.each([
+    {
+      cp: { status: 409, body: { error: "Invite expired", code: "STREAM_CONNECTION_EXPIRED" } },
+      expected: { status: 409, code: "STREAM_CONNECTION_EXPIRED", message: "Invite expired" },
+    },
+    {
+      cp: { status: 401, body: { error: "Invalid or missing internal API key", code: "UNAUTHORIZED" } },
+      expected: { status: 502, code: "CONTROL_PLANE_UNAVAILABLE", message: "Failed to accept share link" },
+    },
+    {
+      cp: { status: 404, body: { error: "Not found" } },
+      expected: { status: 502, code: "CONTROL_PLANE_UNAVAILABLE", message: "Failed to accept share link" },
+    },
+  ])(
+    "should forward only invite outcomes from a failed share-link call (CP $cp.status)",
+    async ({ cp, expected }) => {
+      globalThis.fetch = mock(async () => makeResponse(cp.status, JSON.stringify(cp.body))) as unknown as typeof fetch
+
+      await expect(
+        client.acceptStreamConnection({
+          token: "tok",
+          partnerWorkspaceId: "ws_1",
+          acceptedByUserId: "usr_1",
+          visibility: "private",
+        })
+      ).rejects.toMatchObject({ name: "HttpError", ...expected })
+    }
+  )
 })
 
 describe("ControlPlaneClient invitation protocol", () => {

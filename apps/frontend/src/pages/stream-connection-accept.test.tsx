@@ -7,7 +7,7 @@ import {
   type StreamConnectionLookupResponse,
   type Workspace,
 } from "@threahq/types"
-import { render, screen, userEvent, waitFor } from "@/test"
+import { render, screen, userEvent, waitFor, within } from "@/test"
 import { ApiError } from "@/api/client"
 import { streamConnectionsApi } from "@/api/stream-connections"
 import * as authModule from "@/auth"
@@ -28,7 +28,7 @@ function makeWorkspace(id: string, name: string): Workspace {
   }
 }
 
-function makeLookup(overrides: Partial<StreamConnectionLookupResponse> = {}): StreamConnectionLookupResponse {
+function makeLookup(): StreamConnectionLookupResponse {
   return {
     connectionId: "sconn_1",
     state: "invited",
@@ -40,15 +40,18 @@ function makeLookup(overrides: Partial<StreamConnectionLookupResponse> = {}): St
     partnerWorkspaceId: null,
     partnerWorkspaceName: null,
     expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
-    ...overrides,
   }
 }
 
-function renderPage() {
+function makeAcceptedLookup(): StreamConnectionLookupResponse {
+  return { ...makeLookup(), state: "active", partnerWorkspaceId: "ws_beta", partnerWorkspaceName: "Beta" }
+}
+
+function renderPage(path = "/connections/tok_1") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/connections/tok_1"]}>
+      <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/connections/:token" element={<StreamConnectionAcceptPage />} />
         </Routes>
@@ -79,14 +82,17 @@ describe("StreamConnectionAcceptPage", () => {
     refetchWorkspaces.mockReset()
   })
 
-  it("should send a signed-out visitor to sign in and back to the same invite", async () => {
-    mockSession(null, [])
+  it.each(["/connections/tok_1", "/connections/a%7Cb%2Fc"])(
+    "should send a signed-out visitor to sign in and back to the same invite (%s)",
+    async (path) => {
+      mockSession(null, [])
 
-    renderPage()
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }))
+      renderPage(path)
+      await userEvent.click(screen.getByRole("button", { name: "Sign in" }))
 
-    expect(login).toHaveBeenCalledWith("/connections/tok_1")
-  })
+      expect(login).toHaveBeenCalledWith(path)
+    }
+  )
 
   it("should accept into the chosen workspace with the chosen visibility when the admin confirms", async () => {
     mockSession({ id: "user_1" }, [
@@ -94,20 +100,29 @@ describe("StreamConnectionAcceptPage", () => {
       makeWorkspace("ws_beta", "Beta"),
       makeWorkspace("ws_gamma", "Gamma"),
     ])
-    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValueOnce(makeLookup()).mockResolvedValue(makeAcceptedLookup())
     const accept = vi.spyOn(streamConnectionsApi, "accept").mockResolvedValue({ state: "active" } as StreamConnection)
 
-    renderPage()
+    const queryClient = renderPage()
 
     expect(await screen.findByRole("heading", { name: "#design from Acme" })).toBeInTheDocument()
     expect(screen.getByText(/Hosted in Europe \(Stockholm\)/)).toBeInTheDocument()
     expect(screen.getByRole("combobox")).toHaveTextContent("Beta")
-    await userEvent.click(screen.getByRole("button", { name: /Public/ }))
+    const visibility = screen.getByRole("group", { name: "Visibility" })
+    await userEvent.click(within(visibility).getByRole("button", { name: /Public/ }))
+    expect(within(visibility).getByRole("button", { name: /Public/ })).toHaveAttribute("aria-pressed", "true")
     await userEvent.click(screen.getByRole("button", { name: "Accept" }))
 
     expect(await screen.findByRole("heading", { name: "#design is shared with Beta" })).toBeInTheDocument()
     expect(accept).toHaveBeenCalledWith("ws_beta", { token: "tok_1", visibility: "public" })
     expect(screen.getByRole("link", { name: "Open Beta" })).toHaveAttribute("href", "/w/ws_beta")
+    // Coming back to the link later shows where it went, not the form again.
+    await waitFor(() =>
+      expect(queryClient.getQueryData(["stream-connection-lookup", "tok_1"])).toMatchObject({
+        state: "active",
+        partnerWorkspaceId: "ws_beta",
+      })
+    )
   })
 
   it("should explain the refusal in place when the viewer isn't an admin of the chosen workspace", async () => {
@@ -124,6 +139,26 @@ describe("StreamConnectionAcceptPage", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 
+  it.each([
+    { code: StreamConnectionErrorCodes.DISABLED, message: "Shared channels aren't turned on for that workspace." },
+    { code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, message: "Another workspace already accepted this invite." },
+    {
+      code: StreamConnectionErrorCodes.SAME_WORKSPACE,
+      message: "Pick a workspace other than the one sharing the channel.",
+    },
+    { code: StreamConnectionErrorCodes.EXPIRED, message: "Invite expired" },
+    { code: StreamConnectionErrorCodes.REVOKED, message: "Invite revoked" },
+  ])("should say why accepting failed ($code)", async ({ code, message }) => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
+    vi.spyOn(streamConnectionsApi, "accept").mockRejectedValue(new ApiError(409, code, "refused"))
+
+    renderPage()
+    await userEvent.click(await screen.findByRole("button", { name: "Accept" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message)
+  })
+
   it("should point the viewer elsewhere when the host is their only workspace", async () => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_acme", "Acme")])
     vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
@@ -138,6 +173,7 @@ describe("StreamConnectionAcceptPage", () => {
     { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND, heading: "Invite not found" },
     { status: 409, code: StreamConnectionErrorCodes.REVOKED, heading: "Invite revoked" },
     { status: 409, code: StreamConnectionErrorCodes.EXPIRED, heading: "Invite expired" },
+    { status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, heading: "Invite already used" },
   ])("should say why the link is dead and offer a way out ($code)", async ({ status, code, heading }) => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
     vi.spyOn(streamConnectionsApi, "lookup").mockRejectedValue(new ApiError(status, code, "dead link"))
@@ -188,23 +224,25 @@ describe("StreamConnectionAcceptPage", () => {
 
   it("should show where the channel went when the invite was already accepted", async () => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
-    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(
-      makeLookup({ state: "active", partnerWorkspaceId: "ws_beta", partnerWorkspaceName: "Beta" })
-    )
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeAcceptedLookup())
 
     renderPage()
 
     expect(await screen.findByRole("heading", { name: "#design is shared with Beta" })).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole("link", { name: "Open Beta" })).toHaveAttribute("href", "/w/ws_beta"))
+    expect(screen.getByRole("link", { name: "Open Beta" })).toHaveAttribute("href", "/w/ws_beta")
   })
 
-  it("should not name or link the accepting workspace to a viewer outside it", async () => {
-    mockSession({ id: "user_1" }, [makeWorkspace("ws_gamma", "Gamma")])
-    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup({ state: "active" }))
+  it("should show a link that died after it loaded as dead, not as the stale invite", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "lookup")
+      .mockResolvedValueOnce(makeLookup())
+      .mockRejectedValue(new ApiError(409, StreamConnectionErrorCodes.REVOKED, "revoked"))
 
-    renderPage()
+    const queryClient = renderPage()
+    expect(await screen.findByRole("heading", { name: "#design from Acme" })).toBeInTheDocument()
+    await queryClient.refetchQueries()
 
-    expect(await screen.findByRole("heading", { name: "#design is shared with another workspace" })).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Open Threa" })).toHaveAttribute("href", "/")
+    expect(await screen.findByRole("heading", { name: "Invite revoked" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument()
   })
 })

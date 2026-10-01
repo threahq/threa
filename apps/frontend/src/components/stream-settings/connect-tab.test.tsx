@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamConnectionErrorCodes, StreamTypes, type Stream, type StreamConnection } from "@threahq/types"
-import { render, screen, userEvent, waitFor } from "@/test"
+import { act, render, screen, userEvent, waitFor } from "@/test"
 import { ApiError } from "@/api/client"
 import { streamConnectionsApi } from "@/api/stream-connections"
 import * as contextsModule from "@/contexts"
@@ -140,6 +140,86 @@ describe("ConnectTab", () => {
 
     expect(await screen.findByText("Encrypted channels can't be shared.")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Create invite link" })).not.toBeInTheDocument()
+  })
+
+  it("should explain why an archived channel can't be shared instead of offering a link", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])
+
+    renderTab(makeStream({ archivedAt: "2026-10-01T12:00:00.000Z" }))
+
+    expect(await screen.findByText("Archived channels can't be shared.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Create invite link" })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    {
+      error: new ApiError(409, StreamConnectionErrorCodes.NOT_SHAREABLE, "not shareable"),
+      message: "Only active, unencrypted channels can be shared.",
+    },
+    { error: new ApiError(500, "INTERNAL", "boom"), message: "Couldn't create the link. Try again." },
+  ])("should say why creating the link failed and let the admin retry ($error.code)", async ({ error, message }) => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])
+    vi.spyOn(streamConnectionsApi, "createInvite").mockRejectedValue(error)
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message)
+    expect(screen.getByRole("button", { name: "Create invite link" })).toBeEnabled()
+  })
+
+  it("should ask the admin to copy the link by hand when the clipboard refuses", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])
+    vi.spyOn(streamConnectionsApi, "createInvite").mockResolvedValue({
+      connection: makeConnection(),
+      token: "tok_secret",
+    })
+    const writeText = vi.fn().mockRejectedValue(new Error("denied"))
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true })
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+    await userEvent.click(await screen.findByRole("button", { name: "Copy link" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't copy the link. Select it and copy it yourself.")
+    expect(screen.getByLabelText("Invite link")).toHaveValue(`${window.location.origin}/connections/tok_secret`)
+  })
+
+  it("should keep the new link when a refresh that started before the create lands after it", async () => {
+    let landStaleList!: (connections: StreamConnection[]) => void
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([])
+      .mockReturnValueOnce(new Promise((resolve) => (landStaleList = resolve)))
+    vi.spyOn(streamConnectionsApi, "createInvite").mockResolvedValue({
+      connection: makeConnection(),
+      token: "tok_secret",
+    })
+
+    const queryClient = renderTab()
+    const createButton = await screen.findByRole("button", { name: "Create invite link" })
+    const staleRefresh = queryClient.refetchQueries()
+    await userEvent.click(createButton)
+    expect(await screen.findByLabelText("Invite link")).toBeInTheDocument()
+    await act(async () => {
+      landStaleList([])
+      await staleRefresh
+      // React Query notifies observers on a timer; let the landed list render.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByLabelText("Invite link")).toHaveValue(`${window.location.origin}/connections/tok_secret`)
+  })
+
+  it("should give the expiry as a clock time once the invite is in its last hour", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] })
+    vi.setSystemTime(new Date(2026, 9, 1, 10, 0))
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
+      makeConnection({ expiresAt: new Date(2026, 9, 1, 10, 30).toISOString() }),
+    ])
+
+    renderTab()
+
+    expect(await screen.findByText("Expires 10:30.")).toBeInTheDocument()
   })
 
   it("should refresh to the shared state when a create races an accept", async () => {

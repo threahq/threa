@@ -28,7 +28,7 @@ interface DatePrefs {
   dateFormat?: DateFormat
 }
 
-interface TimePrefs {
+export interface TimePrefs {
   timeFormat?: TimeFormat
   /** IANA timezone (e.g. "America/New_York"); falls back to system local when absent. */
   timezone?: string

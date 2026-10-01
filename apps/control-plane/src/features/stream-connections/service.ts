@@ -1,13 +1,6 @@
 import { createHash, randomBytes } from "node:crypto"
 import type { Pool, PoolClient } from "pg"
-import {
-  HttpError,
-  OutboxRepository,
-  isUniqueViolation,
-  logger,
-  streamConnectionId,
-  withTransaction,
-} from "@threahq/backend-common"
+import { HttpError, OutboxRepository, logger, streamConnectionId, withTransaction } from "@threahq/backend-common"
 import {
   STREAM_CONNECTION_INVITE_TTL_MS,
   StreamConnectionErrorCodes,
@@ -99,12 +92,7 @@ export class StreamConnectionService {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
 
-    const { id, token, supersededId } = await this.mint(params).catch((error: unknown) => {
-      // A concurrent create committed between our lock and insert. Retry once:
-      // it now sees that invite and supersedes it, or the share it became.
-      if (isUniqueViolation(error, "stream_connections_live_per_stream")) return this.mint(params)
-      throw error
-    })
+    const { id, token, supersededId } = await this.mint(params)
 
     return {
       snapshot: await this.requireSnapshot(id),
@@ -196,32 +184,34 @@ export class StreamConnectionService {
     return this.requireSnapshot(connectionId)
   }
 
-  /**
-   * What the invite page shows. Never exposes who created the link, and names
-   * the accepting workspace only to its members.
-   */
+  /** What the invite page shows. Never exposes who created the link. */
   async lookup(token: string, workosUserId: string): Promise<StreamConnectionLookupResponse> {
     const snapshot = await StreamConnectionRepository.findSnapshotByTokenHash(this.pool, hashToken(token))
     if (!snapshot) throw notFound()
     if (snapshot.state === StreamConnectionStates.REVOKED) throw revoked()
-    if (snapshot.state === StreamConnectionStates.INVITED && new Date(snapshot.expiresAt) <= new Date()) {
-      throw expired()
-    }
-    const showPartner =
-      snapshot.partnerWorkspaceId !== null &&
-      (await WorkspaceRegistryRepository.isMember(this.pool, snapshot.partnerWorkspaceId, workosUserId))
-    return {
+    const base = {
       connectionId: snapshot.id,
-      state: snapshot.state,
       hostWorkspaceId: snapshot.hostWorkspaceId,
       hostWorkspaceName: snapshot.hostWorkspaceName,
       hostRegion: snapshot.hostRegion,
       streamDisplayName: snapshot.hostStreamDisplayName,
       streamSlug: snapshot.hostStreamSlug,
-      partnerWorkspaceId: showPartner ? snapshot.partnerWorkspaceId : null,
-      partnerWorkspaceName: showPartner ? snapshot.partnerWorkspaceName : null,
       expiresAt: snapshot.expiresAt,
     }
+    if (snapshot.state === StreamConnectionStates.INVITED) {
+      if (new Date(snapshot.expiresAt) <= new Date()) throw expired()
+      return { ...base, state: snapshot.state, partnerWorkspaceId: null, partnerWorkspaceName: null }
+    }
+    // A used link tells only the accepting workspace's members where the channel went.
+    const { partnerWorkspaceId, partnerWorkspaceName } = snapshot
+    if (
+      partnerWorkspaceId === null ||
+      partnerWorkspaceName === null ||
+      !(await WorkspaceRegistryRepository.isMember(this.pool, partnerWorkspaceId, workosUserId))
+    ) {
+      throw alreadyAccepted()
+    }
+    return { ...base, state: snapshot.state, partnerWorkspaceId, partnerWorkspaceName }
   }
 
   /**
@@ -236,14 +226,25 @@ export class StreamConnectionService {
       logger.warn({ connectionId: payload.connectionId }, "Stream connection sync skipped: connection or host gone")
       return
     }
-    const regions = new Set([snapshot.hostRegion])
-    if (snapshot.partnerRegion) regions.add(snapshot.partnerRegion)
+    const regions =
+      snapshot.partnerRegion && snapshot.partnerRegion !== snapshot.hostRegion
+        ? [snapshot.hostRegion, snapshot.partnerRegion]
+        : [snapshot.hostRegion]
     const results = await Promise.allSettled(
-      [...regions].map((region) => this.regionalClient.syncStreamConnection(region, snapshot))
+      regions.map((region) => this.regionalClient.syncStreamConnection(region, snapshot))
     )
-    const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+    const failures = results.flatMap((result, i) =>
+      result.status === "rejected" ? [{ region: regions[i], reason: result.reason as unknown }] : []
+    )
     if (failures.length > 0) {
-      throw new AggregateError(failures, `Stream connection sync failed for ${failures.length} region(s)`)
+      // The outbox keeps only the message on a dead letter, so it names each failed region.
+      const detail = failures
+        .map(({ region, reason }) => `${region}: ${reason instanceof Error ? reason.message : String(reason)}`)
+        .join("; ")
+      throw new AggregateError(
+        failures.map((f) => f.reason),
+        `Stream connection sync failed (${detail})`
+      )
     }
   }
 

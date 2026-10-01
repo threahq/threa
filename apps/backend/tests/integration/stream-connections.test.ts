@@ -228,6 +228,35 @@ describe("StreamConnectionService", () => {
     })
   })
 
+  test("should answer with the newer projection when the control plane's reply is already stale", async () => {
+    const host = await seedWorkspace("Acme")
+    const partner = await seedWorkspace("Globex")
+    const stream = await seedStream(host.id, host.adminId)
+    const active = activated(snapshot(host, stream.id), partner)
+    await service.applySnapshot({ ...active, revision: active.revision + 1, partnerVisibility: "public" })
+    cp.respond(200, { snapshot: active })
+
+    const accepted = await service.accept({
+      workspaceId: partner.id,
+      userId: partner.adminId,
+      token: "tok_secret",
+      visibility: "private",
+    })
+
+    expect(accepted).toEqual({
+      id: active.id,
+      role: "partner",
+      state: "active",
+      streamId: stream.id,
+      streamSlug: "launch",
+      streamDisplayName: "Launch",
+      remoteWorkspaceId: host.id,
+      remoteWorkspaceName: "Acme",
+      partnerVisibility: "public",
+      expiresAt: active.expiresAt,
+    })
+  })
+
   test("should keep the newer state when an older snapshot arrives late", async () => {
     const host = await seedWorkspace("Acme")
     const partner = await seedWorkspace("Globex")

@@ -8,11 +8,12 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences } from "@/contexts"
-import { formatFutureTime } from "@/lib/dates"
+import { formatFutureTime, formatTime, type TimePrefs } from "@/lib/dates"
 
 const COPY_CONFIRMATION_MS = 2_000
 /** Picks up the partner's accept while the host has the tab open. */
 const PENDING_INVITE_POLL_MS = 15_000
+const HOUR_MS = 60 * 60_000
 
 function connectionsKey(workspaceId: string, streamId: string) {
   return ["stream-connections", workspaceId, streamId] as const
@@ -39,6 +40,12 @@ function isStaleState(error: unknown): boolean {
 
 function isPendingInvite(connection: StreamConnection | undefined): boolean {
   return connection?.state === StreamConnectionStates.INVITED && new Date(connection.expiresAt).getTime() > Date.now()
+}
+
+/** formatFutureTime counts down minutes inside the last hour, which an open tab would leave stale. */
+function expiryTime(expiresAt: Date, prefs: TimePrefs): string {
+  if (expiresAt.getTime() - Date.now() < HOUR_MS) return formatTime(expiresAt, prefs)
+  return formatFutureTime(expiresAt, new Date(), prefs)
 }
 
 function unshareableReason(stream: Stream): string | null {
@@ -70,7 +77,9 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
   const create = useMutation({
     mutationFn: () => streamConnectionsApi.createInvite(workspaceId, stream.id),
     onMutate: () => setActionError(null),
-    onSuccess: ({ connection, token }) => {
+    onSuccess: async ({ connection, token }) => {
+      // A poll still in flight would land the pre-create list and hide the only copy of the link.
+      await queryClient.cancelQueries({ queryKey })
       queryClient.setQueryData<StreamConnection[]>(queryKey, [connection])
       setCreated({ connectionId: connection.id, url: streamConnectionInviteUrl(token) })
     },
@@ -83,7 +92,8 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
   const revoke = useMutation({
     mutationFn: (connectionId: string) => streamConnectionsApi.revoke(workspaceId, connectionId),
     onMutate: () => setActionError(null),
-    onSuccess: (connection) => {
+    onSuccess: async (connection) => {
+      await queryClient.cancelQueries({ queryKey })
       queryClient.setQueryData<StreamConnection[]>(queryKey, (current) =>
         (current ?? []).filter((c) => c.id !== connection.id)
       )
@@ -162,7 +172,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
   const link = created?.connectionId === live.id ? created.url : null
   const note = [
     link && "Copy it now, it won't be shown again.",
-    !expired && `Expires ${formatFutureTime(expiresAt, new Date(), { timeFormat: preferences?.timeFormat })}.`,
+    !expired && `Expires ${expiryTime(expiresAt, { timeFormat: preferences?.timeFormat })}.`,
   ]
     .filter(Boolean)
     .join(" ")

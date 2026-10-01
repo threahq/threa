@@ -1430,11 +1430,10 @@ export {
 // Stream connections (Threa Connect: a channel shared with another workspace)
 export {
   StreamConnectionStates,
-  StreamConnectionRoles,
   StreamConnectionErrorCodes,
   STREAM_CONNECTION_INVITE_TTL_MS,
-  STREAM_CONNECTION_TOKEN_MAX_LENGTH,
   streamConnectionSnapshotSchema,
+  streamConnectionTokenSchema,
   acceptStreamConnectionSchema,
   type StreamConnectionState,
   type StreamConnectionRole,

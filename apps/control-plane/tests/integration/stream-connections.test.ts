@@ -144,14 +144,17 @@ describe("StreamConnectionService", () => {
 
     const sync = service.syncToRegions({ connectionId: accepted.id })
 
-    await expect(sync).rejects.toBeInstanceOf(AggregateError)
+    await expect(sync).rejects.toMatchObject({
+      name: "AggregateError",
+      message: "Stream connection sync failed (us: Regional backend returned 503: )",
+    })
     expect({ eu: received(eu), us: received(us) }).toEqual({
       eu: [{ url: "/internal/stream-connections", body: accepted }],
       us: [{ url: "/internal/stream-connections", body: accepted }],
     })
   })
 
-  test("should name the accepting workspace on lookup only to its members", async () => {
+  test("should show a used link only to members of the workspace that accepted it", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     await WorkspaceRegistryRepository.insertMembership(pool, partner, "workos_partner_member")
@@ -159,11 +162,13 @@ describe("StreamConnectionService", () => {
     await service.accept({ token, partnerWorkspaceId: partner, acceptedByUserId: "usr_p", visibility: "public" })
 
     const member = await service.lookup(token, "workos_partner_member")
-    const outsider = await service.lookup(token, "workos_outsider")
 
-    expect({ member, outsider }).toEqual({
-      member: expect.objectContaining({ state: "active", partnerWorkspaceId: partner, partnerWorkspaceName: "Globex" }),
-      outsider: expect.objectContaining({ state: "active", partnerWorkspaceId: null, partnerWorkspaceName: null }),
+    expect(member).toEqual(
+      expect.objectContaining({ state: "active", partnerWorkspaceId: partner, partnerWorkspaceName: "Globex" })
+    )
+    await expect(service.lookup(token, "workos_outsider")).rejects.toMatchObject({
+      status: 409,
+      code: StreamConnectionErrorCodes.ALREADY_ACCEPTED,
     })
   })
 
@@ -259,23 +264,28 @@ describe("StreamConnectionService", () => {
   test.each([
     ["no link is pending", false],
     ["a link is already pending", true],
-  ])("should keep only the newest of two links minted at once when %s", async (_case, pending) => {
+  ])("should keep only the newest of three links minted at once when %s", async (_case, pending) => {
     const host = await seedWorkspace("eu", "Acme")
     const stream = `stream_race_${crypto.randomUUID()}`
     const earlier = pending ? await invite(host, stream) : null
 
-    const [a, b] = await Promise.all([invite(host, stream), invite(host, stream)])
+    const minted = await Promise.all([invite(host, stream), invite(host, stream), invite(host, stream)])
 
-    const [newest, older] = b.superseded?.id === a.snapshot.id ? [b, a] : [a, b]
     const live = await pool.query<{ id: string }>(
       `SELECT id FROM stream_connections WHERE host_workspace_id = $1 AND state IN ('invited', 'active')`,
       [host]
     )
-    expect({ live: live.rows.map((r) => r.id), newestSuperseded: newest.superseded?.id }).toEqual({
-      live: [newest.snapshot.id],
-      newestSuperseded: older.snapshot.id,
+    const liveIds = live.rows.map((r) => r.id)
+    const mintedIds = minted.map((m) => m.snapshot.id)
+    const everyId = earlier ? [earlier.snapshot.id, ...mintedIds] : mintedIds
+    // Each mint superseded whatever was live when it ran, so every other link was superseded exactly once.
+    expect({
+      liveIsMinted: liveIds.length === 1 && mintedIds.includes(liveIds[0]),
+      superseded: minted.flatMap((m) => (m.superseded ? [m.superseded.id] : [])).toSorted(),
+    }).toEqual({
+      liveIsMinted: true,
+      superseded: everyId.filter((id) => id !== liveIds[0]).toSorted(),
     })
-    expect(older.superseded?.id ?? null).toBe(earlier?.snapshot.id ?? null)
   })
 
   test("should refuse to accept an unknown, revoked, expired, or own-workspace invite", async () => {
