@@ -110,6 +110,8 @@ export function createPushHandlers({ pushService }: Dependencies) {
      * Send a real push notification to all of the caller's devices in this
      * workspace. Used by the in-app "Send test" diagnostic so the user can
      * verify the full delivery loop, not just the local SW notification path.
+     * The response keeps `attempted`/`failed`/`delivered` for cached PWA
+     * bundles that predate per-device results.
      */
     async sendTest(req: Request, res: Response) {
       if (!pushService.isEnabled()) {
@@ -118,8 +120,7 @@ export function createPushHandlers({ pushService }: Dependencies) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const { attempted, failed } = await pushService.deliverTestPush(workspaceId, userId)
-      res.json({ attempted, failed, delivered: attempted - failed })
+      res.json(await pushService.deliverTestPush(workspaceId, userId))
     },
   }
 }

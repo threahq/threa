@@ -219,7 +219,13 @@ import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-s
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
-import { PushService, PushNotificationHandler, CallRingPushHandler, createPushSessionCleanup } from "./features/push"
+import {
+  PushService,
+  PushNotificationHandler,
+  CallRingPushHandler,
+  PushTelemetry,
+  createPushSessionCleanup,
+} from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AISpendGate, WorkspaceAIResidencyPolicy } from "./features/ai-usage"
 import {
@@ -750,8 +756,10 @@ export async function startServer(): Promise<ServerInstance> {
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
   // reserved DB capacity isolated from background workers. Subscription CRUD
   // endpoints also use this pool — low volume, plenty of headroom.
+  const pushTelemetry = new PushTelemetry({ reporter: analyticsReporter })
   const pushService = new PushService({
     pool: pools.realtime,
+    telemetry: pushTelemetry,
     vapidConfig: config.push.enabled
       ? {
           publicKey: config.push.vapidPublicKey,
@@ -1958,6 +1966,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   const pushSessionCleanup = createPushSessionCleanup(pushService)
   pushSessionCleanup.start()
+  pushTelemetry.start()
 
   // Safety net for voice sessions the in-process max-duration timer never
   // finalized (crash/restart, or an HTTP-created session whose socket never
@@ -2023,6 +2032,7 @@ export async function startServer(): Promise<ServerInstance> {
         server.close((err) => (err ? reject(err) : resolve()))
       })
     }
+    pushTelemetry.stop()
     await analyticsReporter.shutdown()
     await logShipper?.shutdown()
     logger.info("Closing database pools...")

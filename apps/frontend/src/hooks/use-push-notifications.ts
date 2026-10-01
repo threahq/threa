@@ -92,7 +92,7 @@ function toSubscriptionError(err: unknown): PushSubscriptionError {
  * Algorithm contract documented in @threahq/types (DEVICE_KEY_LENGTH).
  * Must match backend's deriveDeviceKey (socket.ts).
  */
-async function getDeviceKey(): Promise<string> {
+export async function getDeviceKey(): Promise<string> {
   // crypto.subtle is always available in secure contexts (HTTPS + localhost)
   const encoder = new TextEncoder()
   const data = encoder.encode(navigator.userAgent)
