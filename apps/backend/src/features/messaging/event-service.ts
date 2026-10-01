@@ -929,6 +929,7 @@ export class EventService {
 
     const message = await MessageRepository.insert(client, {
       id: msgId,
+      workspaceId: params.workspaceId,
       streamId: params.streamId,
       sequence: event.sequence,
       authorId: params.authorId,
@@ -987,7 +988,12 @@ export class EventService {
     }
 
     if (params.authorType === "persona") {
-      await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
+      await StreamPersonaParticipantRepository.recordParticipation(
+        client,
+        params.workspaceId,
+        params.streamId,
+        params.authorId
+      )
     }
 
     // Compose-session provenance rides the send's own transaction so a trace can
@@ -1345,6 +1351,7 @@ export class EventService {
 
         const snapshot = await MessageVersionRepository.insert(client, {
           id: messageVersionId(),
+          workspaceId: params.workspaceId,
           messageId: params.messageId,
           versionNumber: existing.revision,
           contentJson: existing.contentJson,
@@ -2379,7 +2386,13 @@ export class EventService {
           actorType,
         })
 
-        const message = await MessageRepository.addReaction(client, params.messageId, params.emoji, params.userId)
+        const message = await MessageRepository.addReaction(
+          client,
+          params.workspaceId,
+          params.messageId,
+          params.emoji,
+          params.userId
+        )
 
         if (message && actorType === AuthorTypes.USER) {
           // Reacting is engagement: a provisional conversation placement the

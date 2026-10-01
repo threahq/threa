@@ -85,6 +85,7 @@ describe("memo:created delivery", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id,
         streamId: stream,
         sequence: sequence++,

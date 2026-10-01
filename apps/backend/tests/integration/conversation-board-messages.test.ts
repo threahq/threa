@@ -59,6 +59,7 @@ describe("ConversationService.getBoardMessages", () => {
         createdBy: testUserId,
       })
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: liveMessageId,
         streamId: testStreamId,
         sequence: BigInt(1),
@@ -67,6 +68,7 @@ describe("ConversationService.getBoardMessages", () => {
         ...testMessageContent("still here"),
       })
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: deletedMessageId,
         streamId: testStreamId,
         sequence: BigInt(2),
@@ -74,7 +76,7 @@ describe("ConversationService.getBoardMessages", () => {
         authorType: "user",
         ...testMessageContent("the secret pre-deletion body"),
       })
-      await MessageRepository.addReaction(client, deletedMessageId, "🔥", testUserId)
+      await MessageRepository.addReaction(client, testWorkspaceId, deletedMessageId, "🔥", testUserId)
       const attachment = await AttachmentRepository.insert(client, {
         id: attachmentId(),
         workspaceId: testWorkspaceId,
@@ -107,6 +109,7 @@ describe("ConversationService.getBoardMessages", () => {
       await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, deletedMessageId, testUserId)
 
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: allDeletedMessageId,
         streamId: testStreamId,
         sequence: BigInt(3),

@@ -10,7 +10,12 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { MessageReferenceErrorCodes, sharedMessageSlotKey, type JSONContent, type SharedMessageRef } from "@threahq/types"
+import {
+  MessageReferenceErrorCodes,
+  sharedMessageSlotKey,
+  type JSONContent,
+  type SharedMessageRef,
+} from "@threahq/types"
 
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -407,6 +412,7 @@ describe("message reference resolution", () => {
       }
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id,
           streamId: source,
           sequence: legacySequence++,

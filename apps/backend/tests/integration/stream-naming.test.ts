@@ -296,6 +296,7 @@ describe("Dynamic plaintext stream naming", () => {
     await withTransaction(pool, async (client) => {
       for (let index = 1; index <= messageCount; index += 1) {
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: messageId(),
           streamId: stream.id,
           sequence: BigInt(index),
@@ -439,6 +440,7 @@ describe("Dynamic plaintext stream naming", () => {
       })
       await StreamMemberRepository.insert(client, rootId, ownerId)
       await MessageRepository.insert(client, {
+        workspaceId: wsId,
         id: anchorId,
         streamId: rootId,
         sequence: 1n,
@@ -458,6 +460,7 @@ describe("Dynamic plaintext stream naming", () => {
         createdBy: ownerId,
       })
       await MessageRepository.insert(client, {
+        workspaceId: wsId,
         id: messageId(),
         streamId: threadId,
         sequence: 2n,
@@ -580,6 +583,7 @@ describe("Dynamic plaintext stream naming", () => {
     await withTransaction(pool, async (client) => {
       for (let sequence = 2; sequence <= 3; sequence += 1) {
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: messageId(),
           streamId: stream.id,
           sequence: BigInt(sequence),
@@ -593,6 +597,7 @@ describe("Dynamic plaintext stream naming", () => {
     await withTransaction(pool, async (client) => {
       for (let sequence = 4; sequence <= 6; sequence += 1) {
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: messageId(),
           streamId: stream.id,
           sequence: BigInt(sequence),

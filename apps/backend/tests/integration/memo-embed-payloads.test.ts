@@ -58,6 +58,7 @@ describe("memo embed summaries on message payloads", () => {
     const msgId = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: msgId,
         streamId: sourceStreamId,
         sequence: sequence++,

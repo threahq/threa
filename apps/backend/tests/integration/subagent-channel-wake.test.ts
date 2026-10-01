@@ -117,6 +117,7 @@ describe("subagent thread in a channel", () => {
     const anchorId = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: ctx.workspaceId,
         id: anchorId,
         streamId: channel.id,
         sequence: 1,

@@ -38,6 +38,7 @@ describe("briefRuntimeSession", () => {
   async function anchorMessage(markdown = "anchor message") {
     sequence += 1n
     return MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: root,
       sequence,
@@ -396,6 +397,7 @@ describe("briefRuntimeSession", () => {
 
     test("refuses with 400 E2E_STREAM_PLAINTEXT_UNSUPPORTED and writes nothing", async () => {
       const anchor = await MessageRepository.insert(e2ePool, {
+        workspaceId: workspace,
         id: messageId(),
         streamId: e2eRoot,
         sequence: 1n,

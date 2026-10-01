@@ -24,6 +24,7 @@ export interface MessageVersion {
 
 interface InsertParams {
   id: string
+  workspaceId: string
   messageId: string
   /** The revision this snapshot IS — the message's pre-edit `revision`. */
   versionNumber: number
@@ -58,9 +59,10 @@ function mapRow(row: MessageVersionRow): MessageVersion {
 export const MessageVersionRepository = {
   async insert(db: Querier, params: InsertParams): Promise<MessageVersion> {
     const result = await db.query<MessageVersionRow>(sql`
-      INSERT INTO message_versions (id, message_id, version_number, content_json, content_markdown, edited_by)
+      INSERT INTO message_versions (id, workspace_id, message_id, version_number, content_json, content_markdown, edited_by)
       VALUES (
         ${params.id},
+        ${params.workspaceId},
         ${params.messageId},
         GREATEST(
           ${params.versionNumber},

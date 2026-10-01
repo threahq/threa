@@ -55,6 +55,7 @@ async function seedChannel(client: PoolClient) {
 /** Insert a channel message and return its id. */
 async function seedMessage(
   client: PoolClient,
+  wsId: string,
   channelId: string,
   ownerId: string,
   sequence: number,
@@ -62,6 +63,7 @@ async function seedMessage(
 ): Promise<string> {
   const id = messageId()
   await MessageRepository.insert(client, {
+    workspaceId: wsId,
     id,
     streamId: channelId,
     sequence: BigInt(sequence),
@@ -108,9 +110,9 @@ describe("loadCrossSurfaceStitch", () => {
     await withTestTransaction(pool, async (client) => {
       const { wsId, channelId, ownerId } = await seedChannel(client)
 
-      const before = await seedMessage(client, channelId, ownerId, 1, "We need to pick a deploy window")
-      const spawning = await seedMessage(client, channelId, ownerId, 2, "@ariadne what are the risks?")
-      const after = await seedMessage(client, channelId, ownerId, 3, "Friday is risky because of the freeze")
+      const before = await seedMessage(client, wsId, channelId, ownerId, 1, "We need to pick a deploy window")
+      const spawning = await seedMessage(client, wsId, channelId, ownerId, 2, "@ariadne what are the risks?")
+      const after = await seedMessage(client, wsId, channelId, ownerId, 3, "Friday is risky because of the freeze")
 
       const conv = conversationId()
       await ConversationRepository.insert(client, {
@@ -139,9 +141,9 @@ describe("loadCrossSurfaceStitch", () => {
       const { wsId, channelId, ownerId } = await seedChannel(client)
 
       // The spawning @-mention is not (yet) classified into any conversation.
-      const spawning = await seedMessage(client, channelId, ownerId, 1, "@ariadne can you help?")
-      const liveA = await seedMessage(client, channelId, ownerId, 2, "The migration keeps timing out")
-      const liveB = await seedMessage(client, channelId, ownerId, 3, "It's the index rebuild")
+      const spawning = await seedMessage(client, wsId, channelId, ownerId, 1, "@ariadne can you help?")
+      const liveA = await seedMessage(client, wsId, channelId, ownerId, 2, "The migration keeps timing out")
+      const liveB = await seedMessage(client, wsId, channelId, ownerId, 3, "It's the index rebuild")
 
       // A stale topic and a live topic both overlap the recent channel window;
       // the more recently active one must win the fallback.
@@ -152,7 +154,7 @@ describe("loadCrossSurfaceStitch", () => {
         workspaceId: wsId,
         topicSummary: "Old onboarding chatter",
       })
-      const staleMsg = await seedMessage(client, channelId, ownerId, 4, "welcome aboard")
+      const staleMsg = await seedMessage(client, wsId, channelId, ownerId, 4, "welcome aboard")
       await ConversationRepository.addPrimaryMessage(client, wsId, stale, staleMsg, ownerId)
       await ConversationRepository.update(client, wsId, stale, { lastActivityAt: new Date("2026-01-01T00:00:00Z") })
 
@@ -181,7 +183,7 @@ describe("loadCrossSurfaceStitch", () => {
   test("returns null when nothing in the channel is classified", async () => {
     await withTestTransaction(pool, async (client) => {
       const { wsId, channelId, ownerId } = await seedChannel(client)
-      const spawning = await seedMessage(client, channelId, ownerId, 1, "@ariadne hello")
+      const spawning = await seedMessage(client, wsId, channelId, ownerId, 1, "@ariadne hello")
       const thread = await seedThread(client, wsId, channelId, spawning, ownerId)
 
       const stitch = await loadCrossSurfaceStitch(client, { workspaceId: wsId, thread, maxChars: BIG_BUDGET })
@@ -193,8 +195,8 @@ describe("loadCrossSurfaceStitch", () => {
   test("ignores a resolved spawning conversation", async () => {
     await withTestTransaction(pool, async (client) => {
       const { wsId, channelId, ownerId } = await seedChannel(client)
-      const before = await seedMessage(client, channelId, ownerId, 1, "earlier point")
-      const spawning = await seedMessage(client, channelId, ownerId, 2, "@ariadne thoughts?")
+      const before = await seedMessage(client, wsId, channelId, ownerId, 1, "earlier point")
+      const spawning = await seedMessage(client, wsId, channelId, ownerId, 2, "@ariadne thoughts?")
 
       const conv = conversationId()
       await ConversationRepository.insert(client, {
@@ -220,10 +222,10 @@ describe("loadCrossSurfaceStitch", () => {
     await withTestTransaction(pool, async (client) => {
       const { wsId, channelId, ownerId } = await seedChannel(client)
 
-      const oldest = await seedMessage(client, channelId, ownerId, 1, "A".repeat(100))
-      const middle = await seedMessage(client, channelId, ownerId, 2, "B".repeat(100))
-      const spawning = await seedMessage(client, channelId, ownerId, 3, "@ariadne?")
-      const newest = await seedMessage(client, channelId, ownerId, 4, "C".repeat(100))
+      const oldest = await seedMessage(client, wsId, channelId, ownerId, 1, "A".repeat(100))
+      const middle = await seedMessage(client, wsId, channelId, ownerId, 2, "B".repeat(100))
+      const spawning = await seedMessage(client, wsId, channelId, ownerId, 3, "@ariadne?")
+      const newest = await seedMessage(client, wsId, channelId, ownerId, 4, "C".repeat(100))
 
       const conv = conversationId()
       await ConversationRepository.insert(client, {

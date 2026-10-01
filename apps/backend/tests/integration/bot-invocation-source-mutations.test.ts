@@ -45,6 +45,7 @@ describe("bot invocation canonical source mutations", () => {
 
   async function source(markdown = "one") {
     return MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: stream,
       sequence: ++sourceSequence,
@@ -205,6 +206,7 @@ describe("bot invocation canonical source mutations", () => {
     )
 
     await MessageVersionRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageVersionId(),
       messageId: message.id,
       contentJson: testContentJson("before"),

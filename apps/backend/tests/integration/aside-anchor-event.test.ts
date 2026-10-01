@@ -59,6 +59,7 @@ describe("Aside anchor event", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: wsId,
         id,
         streamId,
         sequence: sequence++,

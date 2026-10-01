@@ -181,6 +181,7 @@ describe("message revision", () => {
         const untouched = "msg_backfill_untouched"
         for (const id of [edited, untouched]) {
           await MessageRepository.insert(client, {
+            workspaceId: testWorkspaceId,
             id,
             streamId: channel,
             sequence: BigInt(id === edited ? 900001 : 900002),

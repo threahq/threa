@@ -60,6 +60,7 @@ describe("board feed recent window", () => {
         const id = messageId()
         orderedIds.push(id)
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id,
           streamId: testStreamId,
           sequence: BigInt(i + 1),

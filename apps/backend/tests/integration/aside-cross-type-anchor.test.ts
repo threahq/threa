@@ -43,6 +43,7 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: wsId,
         id,
         streamId,
         sequence: sequence++,

@@ -85,6 +85,7 @@ describe("Per-row text-search config for memos and attachments", () => {
       const sourceMessageId = messageId()
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: ws.workspaceId,
           id: sourceMessageId,
           streamId: ws.streamId,
           sequence: BigInt(Date.now()),
