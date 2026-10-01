@@ -3,12 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Building2, Check, Copy, Link as LinkIcon } from "lucide-react"
 import { StreamConnectionErrorCodes, StreamConnectionStates, type Stream, type StreamConnection } from "@threahq/types"
 import { ApiError } from "@/api/client"
-import { streamConnectionInviteUrl, streamConnectionsApi } from "@/api/stream-connections"
+import { streamConnectionsApi } from "@/api/stream-connections"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences } from "@/contexts"
 import { formatFutureTime, formatTime, type TimePrefs } from "@/lib/dates"
+import { buildStreamConnectionInviteLink } from "@/lib/stream-links"
 
 const COPY_CONFIRMATION_MS = 2_000
 /** Picks up the partner's accept while the host has the tab open. */
@@ -81,7 +82,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       // A poll still in flight would land the pre-create list and hide the only copy of the link.
       await queryClient.cancelQueries({ queryKey })
       queryClient.setQueryData<StreamConnection[]>(queryKey, [connection])
-      setCreated({ connectionId: connection.id, url: streamConnectionInviteUrl(token) })
+      setCreated({ connectionId: connection.id, url: buildStreamConnectionInviteLink(token) })
     },
     onError: (error) => {
       if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
@@ -92,11 +93,8 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
   const revoke = useMutation({
     mutationFn: (connectionId: string) => streamConnectionsApi.revoke(workspaceId, connectionId),
     onMutate: () => setActionError(null),
-    onSuccess: async (connection) => {
-      await queryClient.cancelQueries({ queryKey })
-      queryClient.setQueryData<StreamConnection[]>(queryKey, (current) =>
-        (current ?? []).filter((c) => c.id !== connection.id)
-      )
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey })
       setCreated(null)
     },
     onError: (error) => {
@@ -191,7 +189,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       <div className="flex flex-wrap gap-2">
         {!blocked && (
           <Button variant="outline" size="sm" onClick={() => create.mutate()} disabled={busy}>
-            {create.isPending ? "Creating…" : "New link"}
+            {create.isPending ? "Creating…" : "Replace link"}
           </Button>
         )}
         {!expired && (

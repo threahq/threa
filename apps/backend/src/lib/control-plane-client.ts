@@ -382,7 +382,6 @@ export class ControlPlaneClient {
     hostStreamId: string
     hostStreamSlug: string | null
     hostStreamDisplayName: string | null
-    invitedByUserId: string
   }): Promise<z.infer<typeof createdInviteSchema>> {
     const body = await this.postStreamConnection("/internal/stream-connections", params, "create share link")
     return createdInviteSchema.parse(body)
@@ -403,7 +402,6 @@ export class ControlPlaneClient {
   async acceptStreamConnection(params: {
     token: string
     partnerWorkspaceId: string
-    acceptedByUserId: string
     visibility: Visibility
   }): Promise<StreamConnectionSnapshot> {
     const body = await this.postStreamConnection("/internal/stream-connections/accept", params, "accept share link")

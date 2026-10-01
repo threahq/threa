@@ -199,13 +199,20 @@ function AcceptForm({
   const workspace = workspaces.find((w) => w.id === workspaceId)
   const accept = useMutation({
     mutationFn: (target: Workspace) => streamConnectionsApi.accept(target.id, { token, visibility }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: lookupKey(token) }),
+    onSuccess: async (_, target) => {
+      // The accept is the answer; a refetch racing it could show the form or a dead link instead.
+      await queryClient.cancelQueries({ queryKey: lookupKey(token) })
+      queryClient.setQueryData<StreamConnectionLookupResponse>(lookupKey(token), {
+        ...lookup,
+        state: StreamConnectionStates.ACTIVE,
+        partnerWorkspaceId: target.id,
+        partnerWorkspaceName: target.name,
+      })
+    },
+    // A link that died while the form was open shows as dead, not as an error under the form.
+    onError: () => void queryClient.invalidateQueries({ queryKey: lookupKey(token) }),
   })
   const channel = channelLabel(lookup)
-
-  if (accept.isSuccess) {
-    return <Connected channel={channel} workspaceId={accept.variables.id} workspaceName={accept.variables.name} />
-  }
 
   return (
     <StandalonePage>

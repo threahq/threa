@@ -97,15 +97,12 @@ export const acceptStreamConnectionSchema = z
 export type AcceptStreamConnectionInput = z.infer<typeof acceptStreamConnectionSchema>
 
 interface StreamConnectionLookupBase {
-  connectionId: string
   hostWorkspaceId: string
   hostWorkspaceName: string
   /** Where the host's data lives. Accepting agrees to the partner's copy being served from there too. */
   hostRegion: string
   streamDisplayName: string | null
   streamSlug: string | null
-  /** The invite link's deadline. Only meaningful while the state is invited. */
-  expiresAt: string
 }
 
 /**

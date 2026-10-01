@@ -42,7 +42,3 @@ export const streamConnectionsApi = {
     return api.get<StreamConnectionLookupResponse>(`/api/stream-connections/lookup?token=${encodeURIComponent(token)}`)
   },
 }
-
-export function streamConnectionInviteUrl(token: string): string {
-  return `${window.location.origin}/connections/${token}`
-}

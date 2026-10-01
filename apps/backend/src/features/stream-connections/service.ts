@@ -54,7 +54,6 @@ export class StreamConnectionService {
       hostStreamId: stream.id,
       hostStreamSlug: stream.slug,
       hostStreamDisplayName: stream.displayName,
-      invitedByUserId: params.userId,
     })
     if (result.superseded) await this.applySnapshot(result.superseded)
     await this.applySnapshot(result.snapshot)
@@ -71,17 +70,11 @@ export class StreamConnectionService {
     return this.readBack(params.workspaceId, snapshot.id)
   }
 
-  async accept(params: {
-    workspaceId: string
-    userId: string
-    token: string
-    visibility: Visibility
-  }): Promise<StreamConnection> {
+  async accept(params: { workspaceId: string; token: string; visibility: Visibility }): Promise<StreamConnection> {
     await this.assertEnabled(params.workspaceId)
     const snapshot = await this.requireControlPlane().acceptStreamConnection({
       token: params.token,
       partnerWorkspaceId: params.workspaceId,
-      acceptedByUserId: params.userId,
       visibility: params.visibility,
     })
     await this.applySnapshot(snapshot)

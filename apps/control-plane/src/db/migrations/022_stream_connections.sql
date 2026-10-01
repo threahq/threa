@@ -12,8 +12,6 @@ CREATE TABLE stream_connections (
     partner_visibility TEXT,
     state TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
-    invited_by_user_id TEXT NOT NULL,
-    accepted_by_user_id TEXT,
     expires_at TIMESTAMPTZ NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

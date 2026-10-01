@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { expectApiOk, loginAndCreateWorkspace } from "./helpers"
+import { expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
 
 /**
  * Sharing a channel across workspaces: the host admin mints an invite link from
@@ -22,12 +22,6 @@ async function enrollStreamConnections(page: Page, workspaceId: string): Promise
     }),
     "Enroll workspace in streamConnections"
   )
-}
-
-function workspaceIdFromUrl(page: Page): string {
-  const match = page.url().match(/\/w\/([^/?]+)/)
-  if (!match) throw new Error(`No workspace id in ${page.url()}`)
-  return match[1]
 }
 
 async function setUpWorkspace(page: Page, prefix: string) {

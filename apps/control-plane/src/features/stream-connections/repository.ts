@@ -43,7 +43,6 @@ export interface InsertStreamConnectionParams {
   hostStreamSlug: string | null
   hostStreamDisplayName: string | null
   tokenHash: string
-  invitedByUserId: string
   expiresAt: Date
 }
 
@@ -51,7 +50,6 @@ export interface ActivateStreamConnectionParams {
   id: string
   partnerWorkspaceId: string
   partnerVisibility: Visibility
-  acceptedByUserId: string
 }
 
 const RECORD_COLUMNS = "id, host_workspace_id, host_stream_id, partner_workspace_id, state, expires_at"
@@ -100,8 +98,8 @@ export const StreamConnectionRepository = {
     await db.query(
       `INSERT INTO stream_connections (
          id, host_workspace_id, host_stream_id, host_stream_slug, host_stream_display_name,
-         state, token_hash, invited_by_user_id, expires_at
-       ) VALUES ($1, $2, $3, $4, $5, 'invited', $6, $7, $8)`,
+         state, token_hash, expires_at
+       ) VALUES ($1, $2, $3, $4, $5, 'invited', $6, $7)`,
       [
         params.id,
         params.hostWorkspaceId,
@@ -109,7 +107,6 @@ export const StreamConnectionRepository = {
         params.hostStreamSlug,
         params.hostStreamDisplayName,
         params.tokenHash,
-        params.invitedByUserId,
         params.expiresAt,
       ]
     )
@@ -169,10 +166,10 @@ export const StreamConnectionRepository = {
   async activate(db: Querier, params: ActivateStreamConnectionParams): Promise<void> {
     await db.query(
       `UPDATE stream_connections
-       SET state = 'active', partner_workspace_id = $2, partner_visibility = $3, accepted_by_user_id = $4,
+       SET state = 'active', partner_workspace_id = $2, partner_visibility = $3,
            revision = revision + 1, updated_at = NOW()
        WHERE id = $1 AND state = 'invited'`,
-      [params.id, params.partnerWorkspaceId, params.partnerVisibility, params.acceptedByUserId]
+      [params.id, params.partnerWorkspaceId, params.partnerVisibility]
     )
   },
 

@@ -88,21 +88,13 @@ describe("ControlPlaneClient error translation", () => {
       cp: { status: 404, body: { error: "Not found" } },
       expected: { status: 502, code: "CONTROL_PLANE_UNAVAILABLE", message: "Failed to accept share link" },
     },
-  ])(
-    "should forward only invite outcomes from a failed share-link call (CP $cp.status)",
-    async ({ cp, expected }) => {
-      globalThis.fetch = mock(async () => makeResponse(cp.status, JSON.stringify(cp.body))) as unknown as typeof fetch
+  ])("should forward only invite outcomes from a failed share-link call (CP $cp.status)", async ({ cp, expected }) => {
+    globalThis.fetch = mock(async () => makeResponse(cp.status, JSON.stringify(cp.body))) as unknown as typeof fetch
 
-      await expect(
-        client.acceptStreamConnection({
-          token: "tok",
-          partnerWorkspaceId: "ws_1",
-          acceptedByUserId: "usr_1",
-          visibility: "private",
-        })
-      ).rejects.toMatchObject({ name: "HttpError", ...expected })
-    }
-  )
+    await expect(
+      client.acceptStreamConnection({ token: "tok", partnerWorkspaceId: "ws_1", visibility: "private" })
+    ).rejects.toMatchObject({ name: "HttpError", ...expected })
+  })
 })
 
 describe("ControlPlaneClient invitation protocol", () => {

@@ -30,7 +30,6 @@ function makeWorkspace(id: string, name: string): Workspace {
 
 function makeLookup(): StreamConnectionLookupResponse {
   return {
-    connectionId: "sconn_1",
     state: "invited",
     hostWorkspaceId: "ws_acme",
     hostWorkspaceName: "Acme",
@@ -39,7 +38,6 @@ function makeLookup(): StreamConnectionLookupResponse {
     streamSlug: "design",
     partnerWorkspaceId: null,
     partnerWorkspaceName: null,
-    expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
   }
 }
 
@@ -100,7 +98,7 @@ describe("StreamConnectionAcceptPage", () => {
       makeWorkspace("ws_beta", "Beta"),
       makeWorkspace("ws_gamma", "Gamma"),
     ])
-    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValueOnce(makeLookup()).mockResolvedValue(makeAcceptedLookup())
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
     const accept = vi.spyOn(streamConnectionsApi, "accept").mockResolvedValue({ state: "active" } as StreamConnection)
 
     const queryClient = renderPage()
@@ -157,6 +155,42 @@ describe("StreamConnectionAcceptPage", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Accept" }))
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message)
+  })
+
+  it("should stay on the shared screen when an invite refresh in flight lands after the accept", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    let finishRefresh: (lookup: StreamConnectionLookupResponse) => void = () => {}
+    vi.spyOn(streamConnectionsApi, "lookup")
+      .mockResolvedValueOnce(makeLookup())
+      .mockImplementationOnce(() => new Promise((resolve) => (finishRefresh = resolve)))
+    vi.spyOn(streamConnectionsApi, "accept").mockResolvedValue({ state: "active" } as StreamConnection)
+
+    const queryClient = renderPage()
+    await screen.findByRole("button", { name: "Accept" })
+    void queryClient.refetchQueries()
+    await userEvent.click(screen.getByRole("button", { name: "Accept" }))
+    expect(await screen.findByRole("heading", { name: "#design is shared with Beta" })).toBeInTheDocument()
+    finishRefresh(makeLookup())
+
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0))
+    expect(screen.getByRole("heading", { name: "#design is shared with Beta" })).toBeInTheDocument()
+  })
+
+  it("should show the link as dead when it expired while the form was open", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "lookup")
+      .mockResolvedValueOnce(makeLookup())
+      .mockRejectedValue(new ApiError(409, StreamConnectionErrorCodes.EXPIRED, "expired"))
+    vi.spyOn(streamConnectionsApi, "accept").mockRejectedValue(
+      new ApiError(409, StreamConnectionErrorCodes.EXPIRED, "expired")
+    )
+
+    renderPage()
+    await userEvent.click(await screen.findByRole("button", { name: "Accept" }))
+
+    expect(await screen.findByRole("heading", { name: "Invite expired" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Threa" })).toHaveAttribute("href", "/")
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument()
   })
 
   it("should point the viewer elsewhere when the host is their only workspace", async () => {

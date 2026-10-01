@@ -13,7 +13,6 @@ const createInviteSchema = z
     hostStreamId: idSchema,
     hostStreamSlug: z.string().max(200).nullable(),
     hostStreamDisplayName: z.string().max(200).nullable(),
-    invitedByUserId: idSchema,
   })
   .strict()
 const revokeSchema = z.object({ hostWorkspaceId: idSchema }).strict()
@@ -21,7 +20,6 @@ const acceptSchema = z
   .object({
     token: streamConnectionTokenSchema,
     partnerWorkspaceId: idSchema,
-    acceptedByUserId: idSchema,
     visibility: z.enum(VISIBILITY_OPTIONS),
   })
   .strict()

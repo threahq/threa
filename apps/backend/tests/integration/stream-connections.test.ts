@@ -157,7 +157,6 @@ describe("StreamConnectionService", () => {
             hostStreamId: stream.id,
             hostStreamSlug: stream.slug,
             hostStreamDisplayName: "Launch",
-            invitedByUserId: host.adminId,
           },
         },
       ],
@@ -190,7 +189,6 @@ describe("StreamConnectionService", () => {
 
     const accepted = await service.accept({
       workspaceId: partner.id,
-      userId: partner.adminId,
       token: "tok_secret",
       visibility: "private",
     })
@@ -218,7 +216,6 @@ describe("StreamConnectionService", () => {
           body: {
             token: "tok_secret",
             partnerWorkspaceId: partner.id,
-            acceptedByUserId: partner.adminId,
             visibility: "private",
           },
         },
@@ -238,7 +235,6 @@ describe("StreamConnectionService", () => {
 
     const accepted = await service.accept({
       workspaceId: partner.id,
-      userId: partner.adminId,
       token: "tok_secret",
       visibility: "private",
     })
@@ -405,7 +401,7 @@ describe("StreamConnectionService", () => {
       service.createInvite(ids),
       service.listForStream(ids),
       service.revokeInvite({ workspaceId: host.id, connectionId: streamConnectionId() }),
-      service.accept({ workspaceId: host.id, userId: host.adminId, token: "tok", visibility: "public" }),
+      service.accept({ workspaceId: host.id, token: "tok", visibility: "public" }),
     ])
 
     expect(outcomes.map((o) => (o.status === "rejected" ? (o.reason as { status: number; code: string }) : o))).toEqual(

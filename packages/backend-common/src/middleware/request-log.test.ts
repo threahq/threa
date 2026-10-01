@@ -108,6 +108,16 @@ describe("requestLogSerializers.req token redaction", () => {
       "/api/invitations/lookup?a=1&token=[redacted]&b=2",
     ],
     ["should leave a param that only ends in token alone", "/api/things?next_token=abc", "/api/things?next_token=abc"],
+    [
+      "should replace the state when given a sign-in callback url",
+      "/api/auth/callback?code=c&state=%2Fconnections%2Ftok_S3cr3t",
+      "/api/auth/callback?code=c&state=[redacted]",
+    ],
+    [
+      "should replace redirect_to when given a sign-in url",
+      "/api/auth/login?redirect_to=%2Fconnections%2Ftok_S3cr3t",
+      "/api/auth/login?redirect_to=[redacted]",
+    ],
   ]
 
   for (const [name, url, expected] of cases) {

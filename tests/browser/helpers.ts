@@ -165,7 +165,7 @@ export async function expandCollapsedSidebarSections(page: Page): Promise<void> 
 }
 
 /** Extract the workspace id from the current `/w/:workspaceId/...` URL. */
-function workspaceIdFromUrl(page: Page): string {
+export function workspaceIdFromUrl(page: Page): string {
   const match = page.url().match(/\/w\/([^/?]+)/)
   if (!match) throw new Error(`Could not extract workspaceId from URL: ${page.url()}`)
   return match[1]

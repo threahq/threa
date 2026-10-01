@@ -25,7 +25,6 @@ export interface CreateInviteParams {
   hostStreamId: string
   hostStreamSlug: string | null
   hostStreamDisplayName: string | null
-  invitedByUserId: string
 }
 
 export interface CreateInviteResult {
@@ -37,7 +36,6 @@ export interface CreateInviteResult {
 export interface AcceptParams {
   token: string
   partnerWorkspaceId: string
-  acceptedByUserId: string
   visibility: Visibility
 }
 
@@ -92,7 +90,9 @@ export class StreamConnectionService {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
 
-    const { id, token, supersededId } = await this.mint(params)
+    const minted = await this.mint(params)
+    if (!minted) throw alreadyShared()
+    const { id, token, supersededId } = minted
 
     return {
       snapshot: await this.requireSnapshot(id),
@@ -101,16 +101,22 @@ export class StreamConnectionService {
     }
   }
 
-  private async mint(params: CreateInviteParams): Promise<{ id: string; token: string; supersededId: string | null }> {
+  /** Null when the channel is already shared. */
+  private async mint(
+    params: CreateInviteParams
+  ): Promise<{ id: string; token: string; supersededId: string | null } | null> {
     const id = streamConnectionId()
     const token = randomBytes(32).toString("base64url")
-    const supersededId = await withTransaction(this.pool, async (client) => {
+    return withTransaction(this.pool, async (client) => {
       const live = await StreamConnectionRepository.lockLiveForStream(
         client,
         params.hostWorkspaceId,
         params.hostStreamId
       )
-      if (live?.state === StreamConnectionStates.ACTIVE) throw alreadyShared()
+      if (live?.state === StreamConnectionStates.ACTIVE) {
+        await this.resyncAccepted(client, live.id)
+        return null
+      }
       if (live) {
         await StreamConnectionRepository.revokeInvite(client, live.id)
         await this.enqueueSync(client, live.id)
@@ -122,26 +128,29 @@ export class StreamConnectionService {
         hostStreamSlug: params.hostStreamSlug,
         hostStreamDisplayName: params.hostStreamDisplayName,
         tokenHash: hashToken(token),
-        invitedByUserId: params.invitedByUserId,
         expiresAt: new Date(Date.now() + STREAM_CONNECTION_INVITE_TTL_MS),
       })
       await this.enqueueSync(client, id)
-      return live?.id ?? null
+      return { id, token, supersededId: live?.id ?? null }
     })
-    return { id, token, supersededId }
   }
 
   /** Revokes a pending invite. Disconnecting an accepted share is a separate operation. */
   async revokeInvite(params: { connectionId: string; hostWorkspaceId: string }): Promise<StreamConnectionSnapshot> {
-    await withTransaction(this.pool, async (client) => {
+    const accepted = await withTransaction(this.pool, async (client) => {
       const record = await StreamConnectionRepository.lockById(client, params.connectionId)
       if (!record || record.hostWorkspaceId !== params.hostWorkspaceId) throw notFound()
-      if (record.state === StreamConnectionStates.ACTIVE) throw alreadyAccepted()
+      if (record.state === StreamConnectionStates.ACTIVE) {
+        await this.resyncAccepted(client, record.id)
+        return true
+      }
       if (record.state === StreamConnectionStates.INVITED) {
         await StreamConnectionRepository.revokeInvite(client, record.id)
         await this.enqueueSync(client, record.id)
       }
+      return false
     })
+    if (accepted) throw alreadyAccepted()
     return this.requireSnapshot(params.connectionId)
   }
 
@@ -176,7 +185,6 @@ export class StreamConnectionService {
         id: record.id,
         partnerWorkspaceId: params.partnerWorkspaceId,
         partnerVisibility: params.visibility,
-        acceptedByUserId: params.acceptedByUserId,
       })
       await this.enqueueSync(client, record.id)
       return record.id
@@ -190,13 +198,11 @@ export class StreamConnectionService {
     if (!snapshot) throw notFound()
     if (snapshot.state === StreamConnectionStates.REVOKED) throw revoked()
     const base = {
-      connectionId: snapshot.id,
       hostWorkspaceId: snapshot.hostWorkspaceId,
       hostWorkspaceName: snapshot.hostWorkspaceName,
       hostRegion: snapshot.hostRegion,
       streamDisplayName: snapshot.hostStreamDisplayName,
       streamSlug: snapshot.hostStreamSlug,
-      expiresAt: snapshot.expiresAt,
     }
     if (snapshot.state === StreamConnectionStates.INVITED) {
       if (new Date(snapshot.expiresAt) <= new Date()) throw expired()
@@ -246,6 +252,15 @@ export class StreamConnectionService {
         `Stream connection sync failed (${detail})`
       )
     }
+  }
+
+  /**
+   * The host region learns of an accept only through the outbox. A host admin
+   * acting on what still looks like a pending invite re-sends the snapshot, so
+   * an accept the outbox dead-lettered heals on their retry.
+   */
+  private async resyncAccepted(client: PoolClient, connectionId: string): Promise<void> {
+    await this.enqueueSync(client, connectionId)
   }
 
   private async enqueueSync(client: PoolClient, connectionId: string): Promise<void> {

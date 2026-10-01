@@ -100,7 +100,7 @@ describe("ConnectTab", () => {
   })
 
   it("should return to the share prompt when the admin revokes the pending invite", async () => {
-    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makeConnection()])
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValueOnce([makeConnection()]).mockResolvedValue([])
     const revoke = vi.spyOn(streamConnectionsApi, "revoke").mockResolvedValue(makeConnection({ state: "revoked" }))
 
     renderTab()
@@ -110,7 +110,23 @@ describe("ConnectTab", () => {
     expect(revoke).toHaveBeenCalledWith("ws_host", "sconn_1")
   })
 
-  it("should offer only a new link when the pending invite has expired", async () => {
+  it("should keep showing a pending invite when another admin replaced the link the admin revoked", async () => {
+    const list = vi
+      .spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection()])
+      .mockResolvedValue([makeConnection({ id: "sconn_2" })])
+    vi.spyOn(streamConnectionsApi, "revoke").mockResolvedValue(makeConnection({ state: "revoked" }))
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }))
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Revoke" })).toBeEnabled())
+    expect(screen.getByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Create invite link" })).not.toBeInTheDocument()
+  })
+
+  it("should offer only a replacement link when the pending invite has expired", async () => {
     vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
       makeConnection({ expiresAt: new Date(Date.now() - 1000).toISOString() }),
     ])
@@ -118,7 +134,7 @@ describe("ConnectTab", () => {
     renderTab()
 
     expect(await screen.findByText("This link has expired.")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "New link" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Replace link" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument()
   })
 
@@ -181,7 +197,9 @@ describe("ConnectTab", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
     await userEvent.click(await screen.findByRole("button", { name: "Copy link" }))
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't copy the link. Select it and copy it yourself.")
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't copy the link. Select it and copy it yourself."
+    )
     expect(screen.getByLabelText("Invite link")).toHaveValue(`${window.location.origin}/connections/tok_secret`)
   })
 
