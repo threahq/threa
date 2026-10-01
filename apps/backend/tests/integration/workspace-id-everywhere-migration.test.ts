@@ -1,19 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool, type PoolClient } from "pg"
+import { readdirSync } from "node:fs"
 import { resolve } from "node:path"
 import { setupIsolatedTestDatabase, withTestTransaction } from "./setup"
 
 const MIGRATIONS_DIR = resolve(import.meta.dir, "../../src/db/migrations")
 
-/** The files that backfill workspace_id, in the order the migrator runs them. */
-const BACKFILL_MIGRATIONS = [
-  "20261001230002_workspace_id_messages_backfill.sql",
-  "20261001230004_workspace_id_stream_events.sql",
-  "20261001230005_workspace_id_stream_children.sql",
-  "20261001230006_workspace_id_message_children.sql",
-  "20261001230007_workspace_id_agent_session_steps.sql",
-  "20261001230008_workspace_id_user_preference_overrides.sql",
-]
+/** The workspace_id rollout's files, in the order the migrator runs them. */
+const ROLLOUT_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
+  .filter((file) => /^20261001230\d{3}_workspace_id_/.test(file))
+  .sort()
 
 const PARENT_WORKSPACE = "ws_bridge"
 const EXPLICIT_WORKSPACE = "ws_explicit"
@@ -170,7 +166,7 @@ describe("workspace_id bridge and backfill migrations", () => {
 
   test("the backfill UPDATEs fill every table from its parent and keep value_generation", async () => {
     const updates = (
-      await Promise.all(BACKFILL_MIGRATIONS.map((file) => Bun.file(resolve(MIGRATIONS_DIR, file)).text()))
+      await Promise.all(ROLLOUT_MIGRATIONS.map((file) => Bun.file(resolve(MIGRATIONS_DIR, file)).text()))
     ).flatMap((sql) => sql.match(/^UPDATE [^;]+;/gm) ?? [])
 
     const outcome = await withTestTransaction(pool, async (client) => {

@@ -227,7 +227,7 @@ describe("MemoRepository.findEmbedSummaries", () => {
     const foreignMemo = memoId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
-        workspaceId: testWorkspaceId,
+        workspaceId: otherWorkspace,
         id: foreignMsg,
         streamId: otherStream,
         sequence: sequence++,

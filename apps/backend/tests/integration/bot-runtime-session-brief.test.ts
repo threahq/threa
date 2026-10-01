@@ -397,7 +397,7 @@ describe("briefRuntimeSession", () => {
 
     test("refuses with 400 E2E_STREAM_PLAINTEXT_UNSUPPORTED and writes nothing", async () => {
       const anchor = await MessageRepository.insert(e2ePool, {
-        workspaceId: workspace,
+        workspaceId: e2eWorkspace,
         id: messageId(),
         streamId: e2eRoot,
         sequence: 1n,
