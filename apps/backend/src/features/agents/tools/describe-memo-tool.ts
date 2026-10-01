@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threahq/types"
+import { AgentStepTypes, AgentToolNames, MemoStatuses, TOOL_CATEGORIES_BY_NAME } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
@@ -55,7 +55,7 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
           accessibleStreamIds,
           userId: memoViewerUserId,
         })
-        if (!detail) {
+        if (detail?.memo.status !== MemoStatuses.ACTIVE) {
           return {
             output: JSON.stringify({
               error: "Memo not found, archived, or you don't have access to its source stream",

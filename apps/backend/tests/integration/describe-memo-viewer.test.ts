@@ -20,6 +20,8 @@ describe("describe_memo viewer", () => {
   let ownerScratchpadId: string
   let privateMemoId: string
   let sharedMemoId: string
+  let supersededMemoId: string
+  let archivedMemoId: string
 
   /** Tool deps as a turn in `invocationStreamId` gets them: scope and memo viewer both from the access spec. */
   async function describeFrom(invocationStreamId: string, memo: string): Promise<Record<string, unknown>> {
@@ -49,6 +51,8 @@ describe("describe_memo viewer", () => {
     ownerScratchpadId = streamId()
     privateMemoId = memoId()
     sharedMemoId = memoId()
+    supersededMemoId = memoId()
+    archivedMemoId = memoId()
     const ownerWorkosUserId = userId()
 
     await withTransaction(pool, async (client) => {
@@ -108,6 +112,10 @@ describe("describe_memo viewer", () => {
         scopeUserId: ownerId,
       })
       await MemoRepository.insert(client, { ...memoBase, id: sharedMemoId, title: "Shared" })
+      await MemoRepository.insert(client, { ...memoBase, id: supersededMemoId, title: "Superseded" })
+      await MemoRepository.markSuperseded(client, testWorkspaceId, [supersededMemoId], "revised")
+      await MemoRepository.insert(client, { ...memoBase, id: archivedMemoId, title: "Archived" })
+      await MemoRepository.archive(client, archivedMemoId)
     })
   })
 
@@ -131,5 +139,15 @@ describe("describe_memo viewer", () => {
 
   test("a turn in a shared stream still describes workspace-scoped memos", async () => {
     expect(await describeFrom(publicChannelId, sharedMemoId)).toMatchObject({ id: sharedMemoId, title: "Shared" })
+  })
+
+  test("retired memos are not described", async () => {
+    expect([
+      await describeFrom(publicChannelId, supersededMemoId),
+      await describeFrom(publicChannelId, archivedMemoId),
+    ]).toEqual([
+      { error: "Memo not found, archived, or you don't have access to its source stream", memoId: supersededMemoId },
+      { error: "Memo not found, archived, or you don't have access to its source stream", memoId: archivedMemoId },
+    ])
   })
 })
