@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createElement } from "react"
+import Dexie from "dexie"
 import { render, cleanup } from "@testing-library/react"
-import { db } from "@/db/database"
-import { bumpAccountGeneration } from "@/db/event-writes"
+import { db, getActiveDb } from "@/db/database"
+import * as eventWrites from "@/db/event-writes"
 import { ApiError } from "@/api/client"
 import { streamKeys } from "@/hooks/use-streams"
 import { useStreamWarmup } from "@/hooks/use-stream-warmup"
@@ -55,6 +56,31 @@ function deferred<T>() {
     resolve = done
   })
   return { promise, resolve }
+}
+
+function interceptPreviewWrite(onWrite: () => void) {
+  const put = eventWrites.putEventsBounded
+  let triggered = false
+  return vi.spyOn(eventWrites, "putEventsBounded").mockImplementation((table, rows) => {
+    return put(table, rows).then(() => {
+      if (triggered || !rows.some((event) => event.id === "evt_stream_a_2")) return
+      triggered = true
+      const transaction = Dexie.currentTransaction
+      expect({
+        active: transaction?.active,
+        mode: transaction?.mode,
+        sameDatabase: transaction?.db === getActiveDb(),
+      }).toEqual({ active: true, mode: "readwrite", sameDatabase: true })
+      return transaction!
+        .table("events")
+        .get("evt_stream_a_2")
+        .then((event) => {
+          expect(event).toMatchObject({ id: "evt_stream_a_2", streamId: "stream_a" })
+          // UI ownership changes run outside the preview's transaction context.
+          Dexie.ignoreTransaction(onWrite)
+        })
+    })
+  })
 }
 
 describe("preview history recovery", () => {
@@ -165,6 +191,78 @@ describe("preview history recovery", () => {
     expect(await db.events.get("evt_stream_a_2")).toBeUndefined()
     expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
   })
+
+  it.each(["becomes active", "loses its last owner"])(
+    "should keep other previews when one stream %s during its history write",
+    async (change) => {
+      const { deps, engine } = await setup()
+      const foreground = deferred<ReturnType<typeof makeStreamBootstrap>>()
+      deps.streamService.bootstrap.mockImplementationOnce(() => foreground.promise)
+      let changed = false
+      let release = () => {}
+      const spy = interceptPreviewWrite(() => {
+        changed = true
+        if (change === "becomes active") engine.setCurrentStreamId("stream_a")
+        else release()
+      })
+      const siblings = Array.from({ length: 24 }, (_, i) => (i === 0 ? "stream_b" : `stream_sibling_${i}`))
+      try {
+        release = engine.warmStreams(["stream_a"])
+        engine.warmStreams(siblings)
+        await vi.waitFor(async () => expect(await db.events.get("evt_stream_sibling_23_2")).toBeTruthy())
+        expect(changed).toBe(true)
+        const siblingEvents = await db.events.bulkGet(siblings.map((id) => `evt_${id}_2`))
+        expect({
+          cancelled: await db.events.get("evt_stream_a_2"),
+          cancelledStream: await db.streams.get("stream_a"),
+          siblings: siblingEvents.map((event) => event?.streamId),
+          batches: deps.streamService.previewHistory.mock.calls.map((call) => call[1]),
+        }).toEqual({ cancelled: undefined, cancelledStream: undefined, siblings, batches: [["stream_a", ...siblings]] })
+        engine.setCurrentStreamId(undefined)
+        engine.warmStreams(["stream_a"])
+        await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
+        expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1])).toEqual([
+          ["stream_a", ...siblings],
+          ["stream_a"],
+        ])
+      } finally {
+        spy.mockRestore()
+        engine.destroy()
+        foreground.resolve(makeStreamBootstrap("stream_a"))
+        if (deps.streamService.bootstrap.mock.calls.length > 0) {
+          await vi.waitFor(() => expect(deps.syncStatus.get("stream:stream_a")).toBe("synced"))
+        }
+      }
+    }
+  )
+
+  it.each(["account changes", "socket disconnects"])(
+    "should roll back the current preview and stop its siblings when the %s during its history write",
+    async (change) => {
+      const { deps, engine, socket } = await setup()
+      let changed = false
+      const spy = interceptPreviewWrite(() => {
+        changed = true
+        if (change === "account changes") eventWrites.bumpAccountGeneration()
+        else {
+          socket.connected = false
+          engine.onDisconnect()
+        }
+      })
+      try {
+        engine.warmStreams(["stream_a", "stream_b"])
+        await vi.waitFor(() => expect(changed).toBe(true))
+        expect({
+          events: await db.events.bulkGet(["evt_stream_a_2", "evt_stream_b_2"]),
+          streams: await db.streams.bulkGet(["stream_a", "stream_b"]),
+        }).toEqual({ events: [undefined, undefined], streams: [undefined, undefined] })
+        expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
+      } finally {
+        spy.mockRestore()
+        engine.destroy()
+      }
+    }
+  )
 
   it("should recheck demand after room joins before dispatch", async () => {
     const { deps, engine, socket } = await setup()
@@ -329,7 +427,7 @@ describe("preview history recovery", () => {
     deps.streamService.previewHistory.mockImplementationOnce(() => held.promise)
     engine.warmStreams(["stream_a"])
     await vi.waitFor(() => expect(deps.streamService.previewHistory).toHaveBeenCalledOnce())
-    bumpAccountGeneration()
+    eventWrites.bumpAccountGeneration()
     held.resolve(await original("ws_1", ["stream_a"]))
     await pause()
     expect(await db.events.get("evt_stream_a_2")).toBeUndefined()

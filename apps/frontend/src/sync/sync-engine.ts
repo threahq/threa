@@ -468,16 +468,17 @@ export class SyncEngine {
         const eligible = (id: string) => this.warmStreamIds.has(id) && !this.getVisibleServerStreamIds().includes(id)
         const results = response.results.filter((result) => ids.includes(result.streamId) && eligible(result.streamId))
         const histories = results.flatMap((result) => (result.status === 200 ? [result.history] : []))
-        await applyStreamPreviewHistories(
+        const applied = await applyStreamPreviewHistories(
           this.workspaceId,
           histories,
           { database: this.accountDatabase, generation: this.accountGeneration },
-          () => this.canRecoverPreview(generation) && histories.every((history) => eligible(history.stream.id)),
+          () => this.canRecoverPreview(generation),
+          eligible,
           fetchStartedAt
         )
         if (!this.canRecoverPreview(generation)) return
         for (const result of results) {
-          if (!eligible(result.streamId)) continue
+          if (!eligible(result.streamId) || (result.status === 200 && !applied.has(result.streamId))) continue
           this.refreshedWarmStreamIds.add(result.streamId)
           if (result.status !== 200)
             this.applyReconnectStreamError(result.streamId, new ApiError(result.status, result.code, result.code))

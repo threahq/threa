@@ -811,24 +811,52 @@ export async function applyStreamPreviewHistories(
   histories: StreamPreviewHistory[],
   account: AccountWriteContext,
   isCurrent: () => boolean,
+  isEligible: (streamId: string) => boolean,
   fetchStartedAt: number
-): Promise<void> {
+): Promise<Set<string>> {
   const db = account.database
-  await db.transaction(
-    "rw",
-    [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
-    async () => {
-      if (!isCurrent() || getAccountGeneration() !== account.generation) throw new Error("Obsolete preview recovery")
-      const now = Date.now()
-      for (const history of histories) {
-        if (!isCurrent()) throw new Error("Obsolete preview recovery")
-        await writeBootstrapEventsAndStream(workspaceId, history.stream.id, history, now, fetchStartedAt, account, true)
-      }
-      if (!isCurrent()) throw new Error("Obsolete preview recovery")
+  const applied = new Set<string>()
+  const current = () => isCurrent() && getAccountGeneration() === account.generation
+  for (const history of histories) {
+    if (!current()) throw new Error("Obsolete preview recovery")
+    if (!isEligible(history.stream.id)) continue
+    let becameIneligible = false
+    try {
+      const written = await db.transaction(
+        "rw",
+        [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
+        async () => {
+          if (!current()) throw new Error("Obsolete preview recovery")
+          if (!isEligible(history.stream.id)) return false
+          await writeBootstrapEventsAndStream(
+            workspaceId,
+            history.stream.id,
+            history,
+            Date.now(),
+            fetchStartedAt,
+            account,
+            true
+          )
+          if (!current()) throw new Error("Obsolete preview recovery")
+          if (!isEligible(history.stream.id)) {
+            becameIneligible = true
+            throw new Error("Preview stream became ineligible")
+          }
+          return true
+        }
+      )
+      if (written) applied.add(history.stream.id)
+    } catch (error) {
+      if (!becameIneligible || !current()) throw error
     }
-  )
-  if (!isCurrent() || getAccountGeneration() !== account.generation) return
-  for (const history of histories) reconcileStreamBootstrapAgentActivity(workspaceId, history)
+  }
+  if (!current()) return applied
+  for (const history of histories) {
+    if (applied.has(history.stream.id) && isEligible(history.stream.id)) {
+      reconcileStreamBootstrapAgentActivity(workspaceId, history)
+    }
+  }
+  return applied
 }
 
 export function reconcileStreamBootstrapAgentActivity(
