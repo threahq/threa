@@ -520,7 +520,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     messages,
     triggerMessage,
     invokingUserId,
-    invokingWorkosUserId: invokingUser?.workosUserId,
+    invokingWorkosUserId: invokingUser?.workosUserId ?? undefined,
     preferences,
     authorNames,
     streamContext,

@@ -182,6 +182,36 @@ function stripPinFieldsFromSpec(node: unknown): unknown {
   return node
 }
 
+/** Operations returning user objects, which omit `email` for a user who has none: only someone nobody has claimed yet. */
+const UNCLAIMED_USER_OPERATIONS = new Set<OperationId>(["listUsers"])
+
+function requireEmailInNode(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(requireEmailInNode)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    const out = Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, requireEmailInNode(value)]))
+    const props = obj.properties as Record<string, unknown> | undefined
+    if (props && "email" in props && Array.isArray(obj.required)) {
+      const required = new Set([...obj.required, "email"])
+      out.required = Object.keys(props).filter((key) => required.has(key))
+    }
+    return out
+  }
+  return node
+}
+
+function requireUserEmailInSpec(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(requireUserEmailInSpec)
+  if (node && typeof node === "object") {
+    const obj = node as Record<string, unknown>
+    if (typeof obj.operationId === "string" && UNCLAIMED_USER_OPERATIONS.has(obj.operationId as OperationId)) {
+      return { ...obj, responses: requireEmailInNode(obj.responses) }
+    }
+    return Object.fromEntries(Object.entries(obj).map(([key, value]) => [key, requireUserEmailInSpec(value)]))
+  }
+  return node
+}
+
 export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-07-22",
@@ -231,6 +261,25 @@ export const VERSION_CHANGES: VersionChange[] = [
       return { ...envelope, slots: downgradeSlotsToLegacyKeys(envelope.slots as Record<string, unknown>) }
     },
     downgradeSpec: (spec) => stripPinFieldsFromSpec(spec) as OpenApiSpec,
+  },
+  {
+    version: "2026-10-01",
+    description:
+      "A workspace can list people who have not claimed an account yet. Such a user may have no `email`, so `email` is optional on users. Pins before this version never see a user without an email.",
+    operations: UNCLAIMED_USER_OPERATIONS,
+    downgradeResponse: (payload, context) => {
+      if (!UNCLAIMED_USER_OPERATIONS.has(context.operationId)) return payload
+      if (payload === null || typeof payload !== "object") return payload
+      const envelope = payload as Record<string, unknown>
+      if (!Array.isArray(envelope.data)) return payload
+      // The page can come back short, even empty, while `hasMore` and `cursor`
+      // still describe the full listing, so paging on stays correct.
+      return {
+        ...envelope,
+        data: envelope.data.filter((user) => typeof (user as Record<string, unknown>).email === "string"),
+      }
+    },
+    downgradeSpec: (spec) => requireUserEmailInSpec(spec) as OpenApiSpec,
   },
 ]
 

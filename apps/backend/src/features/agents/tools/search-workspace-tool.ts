@@ -69,7 +69,7 @@ export type SearchUsersInput = z.infer<typeof SearchUsersSchema>
 export interface UserSearchResult {
   id: string
   name: string
-  email: string
+  email: string | null
 }
 
 const GetStreamMessagesSchema = z.object({

@@ -20,6 +20,9 @@ async function resolveTargetWorkosUserId(pool: Pool, workspaceId: string, userId
   if (!user) {
     throw new HttpError("User not found in workspace", { status: 404, code: "NOT_FOUND" })
   }
+  if (!user.workosUserId) {
+    throw new HttpError("User has not claimed their account", { status: 409, code: "USER_UNCLAIMED" })
+  }
   return user.workosUserId
 }
 
