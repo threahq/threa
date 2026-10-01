@@ -163,7 +163,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       )}
       <p className="text-xs text-muted-foreground">
         {link && "Copy it now, it won't be shown again. "}
-        {expired ? "" : `Expires ${formatFutureTime(expiresAt, new Date(), { timeFormat: preferences?.timeFormat })}.`}
+        {!expired && `Expires ${formatFutureTime(expiresAt, new Date(), { timeFormat: preferences?.timeFormat })}.`}
       </p>
       <div className="flex flex-wrap gap-2">
         {!blocked && (

@@ -69,6 +69,10 @@ function expired(): HttpError {
   return new HttpError("Invite expired", { status: 409, code: StreamConnectionErrorCodes.EXPIRED })
 }
 
+function alreadyShared(): HttpError {
+  return new HttpError("Channel already shared", { status: 409, code: StreamConnectionErrorCodes.ALREADY_SHARED })
+}
+
 function alreadyAccepted(): HttpError {
   return new HttpError("Invite already accepted", { status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED })
 }
@@ -103,12 +107,7 @@ export class StreamConnectionService {
         params.hostWorkspaceId,
         params.hostStreamId
       )
-      if (live?.state === StreamConnectionStates.ACTIVE) {
-        throw new HttpError("Channel already shared", {
-          status: 409,
-          code: StreamConnectionErrorCodes.ALREADY_SHARED,
-        })
-      }
+      if (live?.state === StreamConnectionStates.ACTIVE) throw alreadyShared()
       if (live) {
         await StreamConnectionRepository.revokeInvite(client, live.id)
         await this.enqueueSync(client, live.id)
@@ -127,12 +126,7 @@ export class StreamConnectionService {
       return live?.id ?? null
     }).catch((error: unknown) => {
       // A concurrent create for the same channel committed first.
-      if (isUniqueViolation(error, "stream_connections_live_per_stream")) {
-        throw new HttpError("Channel already shared", {
-          status: 409,
-          code: StreamConnectionErrorCodes.ALREADY_SHARED,
-        })
-      }
+      if (isUniqueViolation(error, "stream_connections_live_per_stream")) throw alreadyShared()
       throw error
     })
 

@@ -49,7 +49,8 @@ function lookupErrorCode(error: unknown): LookupErrorCode | null {
 }
 
 function acceptErrorMessage(error: unknown): string {
-  if (!ApiError.isApiError(error)) return "Couldn't accept the invite. Try again."
+  const fallback = "Couldn't accept the invite. Try again."
+  if (!ApiError.isApiError(error)) return fallback
   if (error.status === 403) return "Only admins of that workspace can accept."
   switch (error.code) {
     case StreamConnectionErrorCodes.DISABLED:
@@ -63,7 +64,7 @@ function acceptErrorMessage(error: unknown): string {
     case StreamConnectionErrorCodes.REVOKED:
       return LOOKUP_ERROR_COPY[StreamConnectionErrorCodes.REVOKED].title
     default:
-      return "Couldn't accept the invite. Try again."
+      return fallback
   }
 }
 

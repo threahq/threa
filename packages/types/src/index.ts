@@ -1429,9 +1429,7 @@ export {
 
 // Stream connections (Threa Connect: a channel shared with another workspace)
 export {
-  STREAM_CONNECTION_STATES,
   StreamConnectionStates,
-  STREAM_CONNECTION_ROLES,
   StreamConnectionRoles,
   StreamConnectionErrorCodes,
   STREAM_CONNECTION_INVITE_TTL_MS,

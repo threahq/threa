@@ -381,7 +381,7 @@ export class ControlPlaneClient {
     hostStreamSlug: string | null
     hostStreamDisplayName: string | null
     invitedByUserId: string
-  }): Promise<{ snapshot: StreamConnectionSnapshot; token: string; superseded: StreamConnectionSnapshot | null }> {
+  }): Promise<z.infer<typeof createdInviteSchema>> {
     const body = await this.postStreamConnection("/internal/stream-connections", params, "create share link")
     return createdInviteSchema.parse(body)
   }
