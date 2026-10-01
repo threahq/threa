@@ -27,6 +27,7 @@ import { preflightRuntimeSession, type RuntimePreflightResult } from "./resume"
 import { shellQuote } from "./shell"
 import {
   CLAUDE_AUTOCOMPACT_WINDOW,
+  claudeModelArgs,
   configuredThreaBaseUrl,
   piLaunchArgs,
   readPiRemoteConfig,
@@ -300,8 +301,7 @@ export function reconstructClaudeCommand(
   if (target.launch.name) words.push("--name", target.launch.name)
   if (target.launch.mcpConfig) words.push("--mcp-config", target.launch.mcpConfig)
   words.push("--autocompact", target.launch.autocompact ?? CLAUDE_AUTOCOMPACT_WINDOW)
-  if (target.launch.choice.model) words.push("--model", target.launch.choice.model)
-  if (target.launch.choice.thinking) words.push("--effort", target.launch.choice.thinking)
+  words.push(...claudeModelArgs(target.launch.choice))
   words.push("--dangerously-load-development-channels", `server:${target.launch.channel}`)
   if (target.launch.skipPermissions) words.push("--dangerously-skip-permissions")
   return words.map(shellQuote).join(" ")

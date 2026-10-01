@@ -108,13 +108,7 @@ describe("parsePiLaunch", () => {
       sessionId: SESSION,
       choice: { model: "openai-codex/gpt-6-astra", thinking: "high" },
     })
-    for (const tail of [
-      "--model",
-      "--model a --model b",
-      "--thinking ultra",
-      "--model --thinking",
-      "--model a extra",
-    ]) {
+    for (const tail of ["--model", "--thinking", "--model a --model b", "--model --thinking", "--model a extra"]) {
       expect(parsePiLaunch(`pi --session-id ${SESSION} ${tail}`)).toBeUndefined()
     }
   })

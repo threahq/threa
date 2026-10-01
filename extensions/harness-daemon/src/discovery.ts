@@ -4,7 +4,6 @@ import { realpathSync } from "node:fs"
 import { readHarnessLinks, type HarnessLink } from "@threahq/harness-client"
 import { identityRecordsFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
 import { output } from "./shell"
-import { runtimeDefinition } from "./runtimes"
 import { deriveClaudeRuntimeIdentity, readThreaChannelConfig, sanitizeId } from "./spawners"
 import type { ManagedAgent, RuntimeModelChoice, ThreaChannelConfig } from "./types"
 
@@ -232,7 +231,7 @@ export function parsePiLaunch(command: string): PiLaunch | undefined {
       if (choice.model || !value || value.startsWith("-")) return undefined
       choice.model = value
     } else if (option === "--thinking") {
-      if (choice.thinking || !value || !runtimeDefinition("pi").thinkingLevels.includes(value)) return undefined
+      if (choice.thinking || !value || value.startsWith("-")) return undefined
       choice.thinking = value
     } else return undefined
   }
@@ -306,7 +305,7 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
       choice.model = value
     } else if (option === "--effort") {
       const value = words[index++]
-      if (choice.thinking || !value || !runtimeDefinition("claude").thinkingLevels.includes(value)) return undefined
+      if (choice.thinking || !value || value.startsWith("-")) return undefined
       choice.thinking = value
     } else return undefined
   }

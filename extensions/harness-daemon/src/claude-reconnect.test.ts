@@ -8,7 +8,7 @@ import {
   type ClaudeRegistryDeps,
 } from "./claude-registry"
 import { reconnectClaude, reconnectRuntime, type ReconnectDeps } from "./reconnect"
-import { deriveClaudeRuntimeIdentity } from "./spawners"
+import { claudeLaunchArgs, claudeLaunchCommand, deriveClaudeRuntimeIdentity } from "./spawners"
 import type { ManagedAgent } from "./types"
 
 const RUNTIME = "ccs-runtime"
@@ -127,12 +127,19 @@ describe("parseClaudeLaunch", () => {
   })
 
   test("round-trips the model and effort a spawn named", () => {
-    expect(parseClaudeLaunch(`${COMMAND} --model opus --effort high`)?.choice).toEqual({
-      model: "opus",
-      thinking: "high",
-    })
+    const launched = claudeLaunchCommand(
+      claudeLaunchArgs({
+        claudeBin: "/opt/claude",
+        name: "feature",
+        channel: "threa-channel",
+        mcpConfig: "/tmp/threa.json",
+        choice: { model: "claude-fable-5[1m]", thinking: "high" },
+      }),
+      { instanceId: "cc-one", runtimeSessionId: RUNTIME }
+    )
+    expect(parseClaudeLaunch(launched)?.choice).toEqual({ model: "claude-fable-5[1m]", thinking: "high" })
     expect(parseClaudeLaunch(COMMAND)?.choice).toEqual({})
-    for (const tail of ["--model", "--model opus --model sonnet", "--effort ultracode", "--model --effort"]) {
+    for (const tail of ["--model", "--effort", "--model opus --model sonnet", "--model --effort"]) {
       expect(parseClaudeLaunch(`${COMMAND} ${tail}`)).toBeUndefined()
     }
   })
