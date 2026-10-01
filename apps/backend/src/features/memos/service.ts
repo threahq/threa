@@ -1376,14 +1376,16 @@ export class MemoService implements MemoServiceLike {
           memoId: newMemoId,
           title: content.title,
           knowledgeType: content.knowledgeType,
-          sourceMessageIds: context.sourceMessageIds,
+          sourceMessageIds: [anchorMessageId],
         })
       }
 
       if (capturedMemos.length > 0) {
         // Visible in situ (INV-69): one broadcast timeline event on the session's
         // stream, carrying the anchor message's conversation so the row can be
-        // placed on the board card and in the conversation panel.
+        // placed on the board card and in the conversation panel. The event and
+        // its landmark carry only the anchor: cited research can sit in threads
+        // or other conversations, where clients would misplace the row.
         const anchorConversation = await ConversationRepository.findPrimaryByMessageId(
           client,
           workspaceId,

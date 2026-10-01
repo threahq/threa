@@ -185,4 +185,36 @@ describe("reflective capture: research sources", () => {
 
     expect(await capturedMemos(session)).toEqual([{ scope: "workspace", sourceMessageIds: [trigger, threadReply] }])
   })
+
+  test("the capture is placed at the session's anchor, not at its cited research", async () => {
+    const channel = await seedStream({ type: "channel", visibility: "public" })
+    const trigger = await seedMessage(channel)
+    const thread = await seedStream({ threadOf: channel, anchorId: trigger })
+    const threadReply = await seedMessage(thread)
+    const session = await seedSession(channel, trigger, [{ streamId: thread, messageId: threadReply }])
+
+    await captureService().capture({ workspaceId: testWorkspaceId, sessionId: session })
+
+    const { rows: events } = await pool.query(
+      `SELECT payload FROM stream_events WHERE stream_id = $1 AND event_type = 'memos:captured'`,
+      [channel]
+    )
+    const { rows: landmarks } = await pool.query(
+      `SELECT i.source_message_id, i.sequence = m.sequence AS at_anchor
+       FROM stream_context_items i
+       JOIN memos memo ON memo.id = i.ref_id
+       JOIN messages m ON m.id = $2
+       WHERE memo.source_session_id = $1`,
+      [session, trigger]
+    )
+    expect({
+      eventSources: events.flatMap((e) =>
+        e.payload.memos.map((m: { sourceMessageIds: string[] }) => m.sourceMessageIds)
+      ),
+      landmarks,
+    }).toEqual({
+      eventSources: [[trigger]],
+      landmarks: [{ source_message_id: trigger, at_anchor: true }],
+    })
+  })
 })
