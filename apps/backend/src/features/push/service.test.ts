@@ -62,6 +62,8 @@ function makeService(
       resolveActivityPush: async () => ({ valid: false, reason: "gone" }),
       resolveFiredReminder: async () => null,
       isRewrapOutstanding: async () => false,
+      findAnalyticsConsentGrant: async () => null,
+      isE2eRootedStream: async () => false,
     },
   })
 }
@@ -143,6 +145,7 @@ describe("PushService delivery options", () => {
     deviceKey: "device1",
     userAgent: null,
     generation: 1,
+    receiptVersion: null,
     createdAt: new Date(),
     updatedAt: new Date(), // fresh re-registration → passes the session-expiry check
   }

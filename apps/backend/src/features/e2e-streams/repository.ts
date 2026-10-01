@@ -93,8 +93,9 @@ export const E2eStreamsRepository = {
    * Threads created before #793 carry no `e2e_streams` row of their own, so
    * they match nothing in {@link filterE2eStreamIds} — this resolves
    * `COALESCE(root_stream_id, id)` first (INV-62) so threads are excluded
-   * alongside their root. Refs with no `streams` row in the paired workspace
-   * drop out.
+   * alongside their root. Refs with no `streams` row in the paired workspace,
+   * or whose root row is missing from it, drop out: an unknown root has no
+   * known encryption policy.
    */
   async excludeE2eRootedStreamIds(db: Querier, refs: StreamRef[]): Promise<string[]> {
     if (refs.length === 0) return []
@@ -103,6 +104,7 @@ export const E2eStreamsRepository = {
       FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.streamId)}::text[])
         AS ref(workspace_id, stream_id)
       JOIN streams s ON s.workspace_id = ref.workspace_id AND s.id = ref.stream_id
+      JOIN streams root ON root.workspace_id = s.workspace_id AND root.id = COALESCE(s.root_stream_id, s.id)
       LEFT JOIN e2e_streams e
         ON e.workspace_id = s.workspace_id AND e.stream_id = COALESCE(s.root_stream_id, s.id)
       WHERE e.stream_id IS NULL

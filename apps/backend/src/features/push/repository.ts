@@ -12,6 +12,7 @@ interface PushSubscriptionRow {
   device_key: string
   user_agent: string | null
   generation: number
+  receipt_version: number | null
   created_at: Date
   updated_at: Date
 }
@@ -27,6 +28,8 @@ export interface PushSubscription {
   userAgent: string | null
   /** Trigger-maintained; bumps only when the device binding (endpoint, keys, device key, owner) changes. */
   generation: number
+  /** Receipt protocol of the device's active service worker at its last handshake; null = unknown, never issued a capability. */
+  receiptVersion: number | null
   createdAt: Date
   /**
    * Bumped on every (idempotent) re-registration via {@link insert}, which is
@@ -45,6 +48,8 @@ export interface InsertPushSubscriptionParams {
   auth: string
   deviceKey: string
   userAgent?: string
+  /** Omitted by old frontends and by handshakes whose active worker predates receipts: stored as unknown. */
+  receiptVersion?: number
 }
 
 function mapRowToSubscription(row: PushSubscriptionRow): PushSubscription {
@@ -58,6 +63,7 @@ function mapRowToSubscription(row: PushSubscriptionRow): PushSubscription {
     deviceKey: row.device_key,
     userAgent: row.user_agent,
     generation: row.generation,
+    receiptVersion: row.receipt_version,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -67,7 +73,9 @@ export const PushSubscriptionRepository = {
   async insert(db: Querier, params: InsertPushSubscriptionParams): Promise<PushSubscription> {
     const id = pushSubscriptionId()
     const result = await db.query<PushSubscriptionRow>(sql`
-      INSERT INTO push_subscriptions (id, workspace_id, user_id, endpoint, p256dh, auth, device_key, user_agent)
+      INSERT INTO push_subscriptions (
+        id, workspace_id, user_id, endpoint, p256dh, auth, device_key, user_agent, receipt_version
+      )
       VALUES (
         ${id},
         ${params.workspaceId},
@@ -76,7 +84,8 @@ export const PushSubscriptionRepository = {
         ${params.p256dh},
         ${params.auth},
         ${params.deviceKey},
-        ${params.userAgent ?? null}
+        ${params.userAgent ?? null},
+        ${params.receiptVersion ?? null}
       )
       ON CONFLICT (workspace_id, user_id, endpoint)
       DO UPDATE SET
@@ -84,6 +93,7 @@ export const PushSubscriptionRepository = {
         auth = EXCLUDED.auth,
         device_key = EXCLUDED.device_key,
         user_agent = EXCLUDED.user_agent,
+        receipt_version = EXCLUDED.receipt_version,
         updated_at = now()
       RETURNING *
     `)

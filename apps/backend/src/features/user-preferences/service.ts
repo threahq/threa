@@ -1,5 +1,5 @@
 import { Pool } from "pg"
-import { withTransaction } from "../../db"
+import { withTransaction, type Querier } from "../../db"
 import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { assertAssignablePersona } from "../agents"
@@ -12,6 +12,8 @@ import {
   type AccessibilityPreferences,
   DEFAULT_USER_PREFERENCES,
   DEFAULT_ACCESSIBILITY,
+  ANALYTICS_CONSENT_KEY,
+  ANALYTICS_CONSENT_GRANTED,
 } from "@threahq/types"
 
 function mergeOverrides(
@@ -147,6 +149,22 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
 
 export class UserPreferencesService {
   constructor(private pool: Pool) {}
+
+  /**
+   * The user's current analytics consent grant: its value generation, which
+   * changes on any withdrawal, reset or re-grant, or null when consent is not
+   * granted (the default is "unset"). Inside a transaction the grant stays
+   * share-locked until it ends, so a change to it commits either before the
+   * read (and is seen) or after the caller's writes.
+   */
+  async findAnalyticsConsentGrant(db: Querier, userId: string): Promise<string | null> {
+    return UserPreferencesRepository.findOverrideGeneration(
+      db,
+      userId,
+      ANALYTICS_CONSENT_KEY,
+      ANALYTICS_CONSENT_GRANTED
+    )
+  }
 
   async getPreferences(workspaceId: string, userId: string): Promise<UserPreferences> {
     // Single query, INV-30

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import type { Pool } from "pg"
 import type { AnalyticsReporter } from "@threahq/backend-common"
-import { AuthorTypes } from "@threahq/types"
+import { ANALYTICS_CONSENT_GRANTED, ANALYTICS_CONSENT_KEY, AuthorTypes } from "@threahq/types"
 import {
   DebouncedOutboxHandler,
   type DebouncedOutboxHandlerConfig,
@@ -13,9 +13,6 @@ import {
 } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { UserPreferencesRepository } from "../user-preferences"
-
-const ANALYTICS_CONSENT_KEY = "analyticsConsent"
-const ANALYTICS_CONSENT_GRANTED = "granted"
 
 interface Candidate {
   actorId: string

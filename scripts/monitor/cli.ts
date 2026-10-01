@@ -18,7 +18,7 @@ import {
 } from "./snapshot"
 import { exitCodeFor, worst, type Level } from "./types"
 
-const SECTIONS: readonly Section[] = ["revision", "liveness", "pipelines", "logs", "resources"]
+const SECTIONS: readonly Section[] = ["revision", "liveness", "pipelines", "push", "logs", "resources"]
 
 const HELP = `monitor — post-launch production checks for Threa (read-only).
 

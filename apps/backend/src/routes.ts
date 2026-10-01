@@ -44,7 +44,7 @@ import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createDraftsHandlers } from "./features/drafts"
 import { createLabelHandlers } from "./features/labels"
-import { createPushHandlers } from "./features/push"
+import { createPushHandlers, pushReceiptBodyParser, pushReceiptErrors } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
 import { createInternalHandlers } from "./handlers/internal-handlers"
 import { createAuthStubHandlers } from "./auth/auth-stub-handlers"
@@ -95,7 +95,7 @@ import {
   requireSandboxOperation,
 } from "./middleware/public-api-auth"
 import { createApiVersionGate } from "./middleware/api-version"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
+import { WORKSPACE_PERMISSION_SCOPES, isPushRequestPath } from "@threahq/types"
 import type { WorkspaceService } from "./features/workspaces"
 import type { StreamService } from "./features/streams"
 import type { EventService } from "./features/messaging"
@@ -1632,6 +1632,25 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     rateLimits.pushTest,
     push.sendTest
   )
+  app.get(
+    "/api/workspaces/:workspaceId/push/test/:testId",
+    ...authed,
+    audit("push.test_progress", "read"),
+    push.getTestProgress
+  )
+  // Service worker receipts. The token in the body is the credential, so no session chain:
+  // a parked account or an expired cookie still reports. The per-IP limit runs before the
+  // route's own capped parser, which the app-wide parser skips (isPushReceiptPath).
+  app.post(
+    "/api/workspaces/:workspaceId/push/receipts",
+    audit.none(
+      "unauthenticated service-worker receipt; reads no workspace data, writes only its own push_receipts row"
+    ),
+    rateLimits.pushReceipt,
+    pushReceiptBodyParser,
+    push.recordReceipt,
+    pushReceiptErrors
+  )
   // Non-workspace-scoped: cleans up all push subscriptions for a browser endpoint (used on logout)
   app.post("/api/push/cleanup-endpoint", auth, audit("push.cleanup_endpoint", "write"), push.cleanupEndpoint)
 
@@ -2239,5 +2258,5 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // ships un-logged access.
   assertAuditCoverage(app)
 
-  app.use(createErrorHandler({ analyticsReporter }))
+  app.use(createErrorHandler({ analyticsReporter, isAnonymous: (req) => isPushRequestPath(req.path) }))
 }

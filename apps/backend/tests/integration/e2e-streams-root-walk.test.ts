@@ -117,6 +117,34 @@ describe("E2eStreamsRepository.excludeE2eRootedStreamIds", () => {
     expect(new Set(reportable)).toEqual(new Set([plainId, otherWsPlainId]))
   })
 
+  test("should drop a thread whose root row is missing or lives in another workspace, and keep a thread under a plaintext root", async () => {
+    const { wsId, plainId, plainThreadId, otherWsPlainId } = await seed()
+    const orphanThreadId = streamId()
+    const foreignRootThreadId = streamId()
+    const owner = (await addTestMember(pool, wsId, userId())).id
+    for (const [id, rootStreamId] of [
+      [orphanThreadId, streamId()],
+      // A plaintext root with this id exists, but in another workspace: never this thread's root.
+      [foreignRootThreadId, otherWsPlainId],
+    ] as const) {
+      await StreamRepository.insert(pool, {
+        id,
+        workspaceId: wsId,
+        type: StreamTypes.THREAD,
+        parentStreamId: plainId,
+        rootStreamId,
+        createdBy: owner,
+      })
+    }
+
+    const reportable = await E2eStreamsRepository.excludeE2eRootedStreamIds(
+      pool,
+      [plainThreadId, orphanThreadId, foreignRootThreadId].map((id) => ({ workspaceId: wsId, streamId: id }))
+    )
+
+    expect(reportable).toEqual([plainThreadId])
+  })
+
   test("should return nothing when no refs are given", async () => {
     expect(await E2eStreamsRepository.excludeE2eRootedStreamIds(pool, [])).toEqual([])
   })

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
-import { Bell, BellOff, CheckCircle2, Loader2, Moon, ServerCrash, TriangleAlert } from "lucide-react"
+import { Bell, BellOff, CheckCircle2, CircleHelp, Loader2, Moon, ServerCrash, TriangleAlert } from "lucide-react"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Button } from "@/components/ui/button"
@@ -11,9 +11,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { CustomDurationPicker } from "@/components/scheduling/custom-duration-picker"
 import { PushActionsSection } from "./push-actions-section"
-import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
-import { getDeviceKey, usePushNotifications } from "@/hooks/use-push-notifications"
+import { usePushNotifications } from "@/hooks/use-push-notifications"
+import { usePushTest, type DeviceReport, type TestOutcome, type TestReports, type TestStatus } from "./use-push-test"
 import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
 import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
@@ -21,7 +21,7 @@ import {
   PREF_NOTIFICATION_LEVEL_OPTIONS,
   type PrefNotificationLevel,
   type PushProviderOutcome,
-  type PushTestResponse,
+  type PushTestDeviceResult,
 } from "@threahq/types"
 
 const NOTIFICATION_LABELS: Record<PrefNotificationLevel, string> = {
@@ -35,26 +35,6 @@ const NOTIFICATION_DESCRIPTIONS: Record<PrefNotificationLevel, string> = {
   mentions: "Get notified for @mentions, DMs, and scratchpad messages",
   none: "Don't send any notifications",
 }
-
-/**
- * A backend that predates per-device results answers only
- * `{ attempted, failed, delivered }`, where `delivered` counts push-service
- * acceptances.
- */
-type TestPushResult =
-  | (Pick<PushTestResponse, "attempted" | "accepted"> & Partial<Pick<PushTestResponse, "devices">>)
-  | Pick<PushTestResponse, "attempted" | "delivered">
-
-interface TestOutcome {
-  result: TestPushResult
-  thisDeviceKey: string | null
-}
-
-type TestStatus =
-  | { kind: "idle" }
-  | { kind: "sending"; previous: TestOutcome | null }
-  | ({ kind: "ok" } & TestOutcome)
-  | { kind: "error"; message: string }
 
 const OUTCOME_TEXT: Record<PushProviderOutcome, string> = {
   accepted: "Accepted by push service",
@@ -86,58 +66,6 @@ function describeUserAgent(userAgent: string | null): string {
   return os ? `${browser} on ${os}` : browser
 }
 
-function useTestPush(workspaceId: string) {
-  const [state, setState] = useState<TestStatus>({ kind: "idle" })
-  // Only an error resets on its own; per-device results stay until the next
-  // test so they can be read. A second click clears a pending reset so a stale
-  // timer can't clobber the new attempt.
-  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Bumped per attempt and on unmount: a completion whose attempt is no longer
-  // current (superseded, unsubscribed, workspace switched) is dropped.
-  const attemptRef = useRef(0)
-
-  useEffect(
-    () => () => {
-      attemptRef.current += 1
-      if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
-    },
-    []
-  )
-
-  async function sendTest() {
-    if (resetTimerRef.current !== null) {
-      clearTimeout(resetTimerRef.current)
-      resetTimerRef.current = null
-    }
-    const attempt = ++attemptRef.current
-    setState((current) => ({
-      kind: "sending",
-      previous: current.kind === "ok" ? { result: current.result, thisDeviceKey: current.thisDeviceKey } : null,
-    }))
-    try {
-      // Backend-driven test: exercises DB → web-push → push service, not just
-      // the local SW path.
-      const [result, thisDeviceKey] = await Promise.all([
-        api.post<TestPushResult>(`/api/workspaces/${workspaceId}/push/test`),
-        getDeviceKey().catch(() => null),
-      ])
-      if (attempt !== attemptRef.current) return
-      setState({ kind: "ok", result, thisDeviceKey })
-    } catch (err) {
-      if (attempt !== attemptRef.current) return
-      console.error("[Push] Test push failed:", err)
-      const message = ApiError.isApiError(err) ? err.message : "Failed to send test"
-      setState({ kind: "error", message })
-      resetTimerRef.current = setTimeout(() => {
-        resetTimerRef.current = null
-        setState({ kind: "idle" })
-      }, 5000)
-    }
-  }
-
-  return { state, sendTest }
-}
-
 function TestPushButton({ state, onSend }: { state: TestStatus; onSend: () => void }) {
   // Fixed label so a long backend message never blows out the button; the
   // message renders in the result area instead.
@@ -147,7 +75,13 @@ function TestPushButton({ state, onSend }: { state: TestStatus; onSend: () => vo
   else buttonLabel = "Send test"
 
   return (
-    <Button onClick={onSend} variant="outline" size="sm" disabled={state.kind === "sending"}>
+    <Button
+      onClick={onSend}
+      variant="outline"
+      size="sm"
+      disabled={state.kind === "sending"}
+      aria-describedby="push-test-reports-disclosure"
+    >
       {state.kind === "sending" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
       {buttonLabel}
     </Button>
@@ -161,8 +95,77 @@ function TestPushResultView({ state }: { state: TestStatus }) {
   return null
 }
 
+type ReportTone = "pending" | "ok" | "failed" | "muted"
+
+interface ReportLine {
+  text: string
+  tone: ReportTone
+  /** The window ended without a terminal report. */
+  unconfirmed?: true
+}
+
+const PROVIDER_REFUSED = new Set<PushProviderOutcome>(["registration_gone", "rejected", "invalid_registration"])
+
+/**
+ * What the device itself said, kept apart from the push service's answer: a
+ * recorded stage shows whatever the provider said, and a missing report is
+ * unconfirmed, never a failure.
+ */
+function resolveReportLine(
+  outcome: PushProviderOutcome,
+  report: DeviceReport | undefined,
+  phase: "waiting" | "settled" | "closed"
+): ReportLine | null {
+  const waiting = phase === "waiting"
+  switch (report?.stage) {
+    case "notification_created":
+      return { text: "Notification created", tone: "ok" }
+    case "creation_failed":
+      return { text: "Device couldn't create the notification", tone: "failed" }
+    case "suppressed":
+      return { text: "Not shown: you were viewing this conversation", tone: "muted" }
+    case "received":
+      return waiting
+        ? { text: "Received by device", tone: "pending" }
+        : { text: "Received, notification not confirmed", tone: "muted", unconfirmed: true }
+  }
+  if (PROVIDER_REFUSED.has(outcome)) return null
+  if (report && !report.expected) return { text: "Device report unavailable", tone: "muted" }
+  return waiting ? { text: "Waiting for device report", tone: "pending" } : UNCONFIRMED
+}
+
+const UNCONFIRMED: ReportLine = { text: "Not confirmed by device", tone: "muted", unconfirmed: true }
+
+const REPORT_TONE_CLASS: Record<ReportTone, string> = {
+  pending: "text-muted-foreground",
+  ok: "text-emerald-700 dark:text-emerald-400",
+  failed: "text-destructive",
+  muted: "text-muted-foreground",
+}
+
+function ReportIcon({ tone }: { tone: ReportTone }) {
+  const className = "h-3 w-3 shrink-0"
+  if (tone === "pending") return <Loader2 aria-hidden className={`${className} animate-spin`} />
+  if (tone === "ok") return <CheckCircle2 aria-hidden className={className} />
+  if (tone === "failed") return <TriangleAlert aria-hidden className={className} />
+  return <CircleHelp aria-hidden className={className} />
+}
+
+function reportsNote(reports: TestReports, devices: PushTestDeviceResult[]): string | null {
+  if (reports.phase === "unavailable")
+    return devices.length > 0 ? "Device reports aren't available for this test." : null
+  if (reports.pollFailed) {
+    return reports.phase === "waiting" ? "Couldn't check device reports. Retrying…" : "Couldn't check device reports."
+  }
+  if (reports.phase !== "closed") return null
+  const unconfirmed = devices.some(
+    (device) => resolveReportLine(device.outcome, reports.devices[device.subscriptionId], "closed")?.unconfirmed
+  )
+  return unconfirmed ? "A device that didn't report within a minute may still have shown the notification." : null
+}
+
 function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome; refreshing?: boolean }) {
-  const { result, thisDeviceKey } = outcome
+  const { result, thisDeviceKey, reports } = outcome
   if (result.attempted === 0) return <p className="text-xs text-muted-foreground">No devices subscribed yet.</p>
 
   const accepted = "accepted" in result ? result.accepted : result.delivered
@@ -171,36 +174,57 @@ function TestOutcomeView({ outcome, refreshing = false }: { outcome: TestOutcome
   // reduced UA share it; claim "This device" only when the match is unique.
   const matches = devices.filter((device) => device.deviceKey === thisDeviceKey)
   const thisSubscriptionId = matches.length === 1 ? matches[0]!.subscriptionId : null
+  const note = reportsNote(reports, devices)
+  // `ph-no-capture` blocks this subtree from session replay: masked text would
+  // still leave each device's row, icon and tone in the recording.
   return (
-    <div className={refreshing ? "space-y-2 opacity-60 transition-opacity" : "space-y-2"} aria-busy={refreshing}>
+    <div
+      className={refreshing ? "ph-no-capture space-y-2 opacity-60 transition-opacity" : "ph-no-capture space-y-2"}
+      aria-busy={refreshing}
+    >
       <p className={accepted === result.attempted ? "text-xs text-muted-foreground" : "text-xs text-destructive"}>
         {`Accepted by push service on ${accepted} of ${result.attempted} device${result.attempted === 1 ? "" : "s"}.`}
       </p>
       {devices.length > 0 && (
-        <ul className="divide-y rounded-md border">
-          {devices.map((device) => (
-            <li
-              key={device.subscriptionId}
-              className="flex flex-col gap-0.5 px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate font-medium">{describeUserAgent(device.userAgent)}</span>
-                {device.subscriptionId === thisSubscriptionId && (
-                  <Badge variant="secondary" className="shrink-0 font-normal">
-                    This device
-                  </Badge>
-                )}
-              </span>
-              <span
-                className={
-                  device.outcome === "accepted" ? "shrink-0 text-muted-foreground" : "shrink-0 text-destructive"
-                }
+        <ul className="divide-y rounded-md border" aria-live="polite">
+          {devices.map((device) => {
+            const report =
+              reports.phase === "unavailable"
+                ? null
+                : resolveReportLine(device.outcome, reports.devices[device.subscriptionId], reports.phase)
+            return (
+              <li
+                key={device.subscriptionId}
+                className="flex flex-col gap-0.5 px-3 py-2 text-xs sm:flex-row sm:items-start sm:justify-between sm:gap-3"
               >
-                {OUTCOME_TEXT[device.outcome]}
-              </span>
-            </li>
-          ))}
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate font-medium">{describeUserAgent(device.userAgent)}</span>
+                  {device.subscriptionId === thisSubscriptionId && (
+                    <Badge variant="secondary" className="shrink-0 font-normal">
+                      This device
+                    </Badge>
+                  )}
+                </span>
+                <span className="flex shrink-0 flex-col gap-0.5 sm:items-end">
+                  <span className={device.outcome === "accepted" ? "text-muted-foreground" : "text-destructive"}>
+                    {OUTCOME_TEXT[device.outcome]}
+                  </span>
+                  {report && (
+                    <span className={`flex items-center gap-1.5 ${REPORT_TONE_CLASS[report.tone]}`}>
+                      <ReportIcon tone={report.tone} />
+                      {report.text}
+                    </span>
+                  )}
+                </span>
+              </li>
+            )
+          })}
         </ul>
+      )}
+      {note && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {note}
+        </p>
       )}
     </div>
   )
@@ -220,15 +244,21 @@ function PushStatusBadge({ info }: { info: StatusInfo }) {
 }
 
 function SubscribedPushControls({ workspaceId, onUnsubscribe }: { workspaceId: string; onUnsubscribe: () => void }) {
-  const testPush = useTestPush(workspaceId)
+  const testPush = usePushTest(workspaceId)
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-2 text-sm">
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <p className="text-muted-foreground">
-          This device is subscribed. Use <span className="font-medium text-foreground">Send test</span> to verify that
-          your phone or other devices actually receive a push.
-        </p>
+        <div className="space-y-1 text-muted-foreground">
+          <p>
+            This device is subscribed. <span className="font-medium text-foreground">Send test</span> pushes a
+            notification to each of your subscribed devices.
+          </p>
+          <p id="push-test-reports-disclosure" className="text-xs">
+            Devices on a current version of Threa report back to Threa whether they created it. Those reports expire
+            after 24 hours and are only shown here.
+          </p>
+        </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <TestPushButton state={testPush.state} onSend={testPush.sendTest} />

@@ -4,6 +4,7 @@ import { displayNameFromWorkos, logger } from "@threahq/backend-common"
 import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { UserRepository, type User, type WorkspaceService } from "../features/workspaces"
 import type { ControlPlaneClient } from "../lib/control-plane-client"
+import { safeErrorCode } from "../lib/errors"
 
 declare global {
   namespace Express {
@@ -84,8 +85,10 @@ async function selfHealMissingUser(params: {
     member = result.member
   } catch (error) {
     // CP unreachable / non-2xx — fail closed rather than fabricate access.
+    // Self-heal logs carry no ids and no CP error text: this chain also guards
+    // push diagnostics, which run with analytics denied.
     logger.error(
-      { err: error, workspaceId, workosUserId },
+      { errorCode: safeErrorCode(error) },
       "Self-heal aborted: could not confirm workspace membership with control plane"
     )
     return null
@@ -102,6 +105,6 @@ async function selfHealMissingUser(params: {
     name: displayNameFromWorkos(authUser),
     role: WORKSPACE_ROLE_SLUGS.MEMBER,
   })
-  logger.info({ workspaceId, workosUserId, userId: user.id }, "Self-healed missing regional user from control plane")
+  logger.info("Self-healed missing regional user from control plane")
   return user
 }

@@ -146,6 +146,7 @@ describe("push source revalidation", () => {
           messageId: message.id,
           contentMarkdown: "edited text",
           encrypted: false,
+          e2eRooted: false,
           streamName: "A thread",
           authorName: author.name,
           authorAvatarUrl: undefined,
@@ -364,7 +365,7 @@ describe("push source revalidation", () => {
 
       expect(await resolve(ws, recipient.id, row.id)).toMatchObject({
         valid: true,
-        source: { contentMarkdown: null, encrypted: true },
+        source: { contentMarkdown: null, encrypted: true, e2eRooted: true },
       })
     })
 
@@ -396,6 +397,7 @@ describe("push source revalidation", () => {
             messageId: null,
             contentMarkdown: null,
             encrypted: false,
+            e2eRooted: false,
             // The calls feature labels a missed call with the display name, else the bare slug.
             streamName: dm.slug,
             authorName: author.name,
@@ -500,10 +502,42 @@ describe("push source revalidation", () => {
         streamName: null,
         contentMarkdown: "remember this, edited",
         unavailableReason: null,
+        e2eRooted: false,
       })
       expect(await resolveReminder(ws, recipient.id, saved.id, generation - 1)).toBeNull()
       expect(await resolveReminder(ws, author.id, saved.id, generation)).toBeNull()
       expect(await resolveReminder(workspaceId(), recipient.id, saved.id, generation)).toBeNull()
+    })
+
+    test("should mark an old plaintext reminder end-to-end rooted once its root, or its thread's root, is sealed", async () => {
+      const { ws, author, recipient, root, message, saved } = await savedMessage()
+      const child = await thread(ws, root, author.id)
+      const threadMessage = await post(ws, child.id, author.id, "remember this thread reply")
+      const threadSaved = await savedService.save({
+        workspaceId: ws,
+        userId: recipient.id,
+        messageId: threadMessage.id,
+        remindAt: IN_AN_HOUR(),
+      })
+      const generation = await fire(saved.id)
+      const threadGeneration = await fire(threadSaved.id)
+      await E2eStreamsRepository.markStreamE2e(pool, {
+        streamId: root.id,
+        workspaceId: ws,
+        ownerUserId: author.id,
+        ownerUserKeyId: "e2ek_owner",
+      })
+
+      const resolved = await Promise.all([
+        resolveReminder(ws, recipient.id, saved.id, generation),
+        resolveReminder(ws, recipient.id, threadSaved.id, threadGeneration),
+      ])
+      expect(
+        resolved.map((r) => ({ streamId: r?.streamId, messageId: r?.messageId, e2eRooted: r?.e2eRooted }))
+      ).toEqual([
+        { streamId: root.id, messageId: message.id, e2eRooted: true },
+        { streamId: child.id, messageId: threadMessage.id, e2eRooted: true },
+      ])
     })
 
     test("should invalidate the fired generation on reschedule, cancel, re-save, status round trip and delete", async () => {
@@ -605,6 +639,7 @@ describe("push source revalidation", () => {
           streamName: null,
           contentMarkdown: null,
           unavailableReason: "deleted",
+          e2eRooted: false,
         },
         {
           savedId: saved.id,
@@ -615,6 +650,7 @@ describe("push source revalidation", () => {
           streamName: null,
           contentMarkdown: null,
           unavailableReason: "access_lost",
+          e2eRooted: false,
         },
       ])
     })
@@ -645,6 +681,7 @@ describe("push source revalidation", () => {
         streamName: null,
         contentMarkdown: null,
         unavailableReason: null,
+        e2eRooted: false,
       })
     })
 

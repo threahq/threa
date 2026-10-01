@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, spyOn } from "bun:test"
 import type { Pool } from "pg"
 import webpush from "web-push"
-import { randomBytes } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import {
   ActivityTypes,
   AuthorTypes,
@@ -14,18 +14,22 @@ import {
   DEFAULT_PUSH_QUICK_REACTION,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
+  ANALYTICS_CONSENT_GRANTED,
+  ANALYTICS_CONSENT_KEY,
   type PrefNotificationLevel,
   type Visibility,
 } from "@threahq/types"
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import {
   PushDeliveryRepository,
+  PushReceiptRepository,
   PushService,
   PushSubscriptionRepository,
   PushTelemetry,
   UserSessionRepository,
   createPushDeliverOnDLQ,
   createPushDeliverWorker,
+  createPushSessionCleanup,
   type PushSourceEvent,
 } from "../../src/features/push"
 import { ActivityRepository, ActivityService, type ActivityPushResolution } from "../../src/features/activity"
@@ -34,10 +38,11 @@ import { StreamMemberRepository, StreamRepository } from "../../src/features/str
 import { EventService } from "../../src/features/messaging"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
+import { UserPreferencesRepository, UserPreferencesService } from "../../src/features/user-preferences"
 import { QueueRepository } from "../../src/lib/queue"
 import type { ActivityCreatedOutboxPayload, SavedReminderFiredOutboxPayload } from "../../src/lib/outbox"
 import { activityId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { setupTestDatabase, addTestMember, testMessageContent } from "./setup"
+import { setupIsolatedTestDatabase, addTestMember, testMessageContent } from "./setup"
 import { drainDuePushJobs, listPushJobs, makeDeliveryDue, runPushJob } from "./push-queue-helpers"
 
 const HOUR_MS = 60 * 60 * 1000
@@ -66,19 +71,23 @@ interface DeliveryRow {
 
 describe("durable push delivery", () => {
   let pool: Pool
+  let cleanupDatabase: () => Promise<void>
   let sendSpy: ReturnType<typeof spyOn>
   /** Scripted push-service answers per endpoint; an endpoint without a script accepts. */
   const scripts = new Map<string, Send[]>()
   let nextEventId = BigInt(Date.now()) * 1000n
 
   beforeAll(async () => {
-    pool = await setupTestDatabase()
+    // Own database: receipt retention and the lock-wait probe are global, not workspace-scoped.
+    const isolated = await setupIsolatedTestDatabase("push_deliver_worker")
+    pool = isolated.pool
+    cleanupDatabase = isolated.cleanup
     sendSpy = spyOn(webpush, "sendNotification")
   })
 
   afterAll(async () => {
     sendSpy.mockRestore()
-    await pool.end()
+    await cleanupDatabase()
   })
 
   beforeEach(() => {
@@ -88,23 +97,31 @@ describe("durable push delivery", () => {
       (scripts.get(sub.endpoint)?.shift() ?? accepted)()) as never)
   })
 
-  function sendsTo(endpoint: string): Array<{ data: Record<string, unknown>; options: Record<string, unknown> }> {
+  function sendsTo(endpoint: string): Array<{
+    data: Record<string, unknown>
+    receipt: { token: string } | undefined
+    options: Record<string, unknown>
+  }> {
     return sendSpy.mock.calls
       .filter((call) => (call[0] as { endpoint: string }).endpoint === endpoint)
-      .map((call) => ({ data: JSON.parse(call[1] as string).data, options: call[2] as Record<string, unknown> }))
+      .map((call) => {
+        const payload = JSON.parse(call[1] as string)
+        return { data: payload.data, receipt: payload.receipt, options: call[2] as Record<string, unknown> }
+      })
   }
 
   function event(createdAt = new Date()): PushSourceEvent {
     return { id: nextEventId++, createdAt }
   }
 
-  async function subscribe(ws: string, uid: string, endpoint: string) {
+  async function subscribe(ws: string, uid: string, endpoint: string, receiptVersion?: number) {
     return PushSubscriptionRepository.insert(pool, {
       workspaceId: ws,
       userId: uid,
       endpoint,
       ...registrationKeys(),
       deviceKey: `device-${endpoint}`,
+      receiptVersion,
     })
   }
 
@@ -151,6 +168,9 @@ describe("durable push delivery", () => {
       onReadPreferences: (() => void) | null
       reminder: FiredReminderSource | null
       rewrapOutstanding: boolean
+      /** The user's current consent grant (a value generation), null when not granted. */
+      consent: string | null | Error
+      onConsent: (() => Promise<void>) | null
     }
     let sources: Sources
     let ws: string
@@ -169,6 +189,8 @@ describe("durable push delivery", () => {
         onReadPreferences: null,
         reminder: null,
         rewrapOutstanding: true,
+        consent: null,
+        onConsent: null,
       }
     })
 
@@ -184,6 +206,7 @@ describe("durable push delivery", () => {
           messageId: "msg_1",
           contentMarkdown,
           encrypted: false,
+          e2eRooted: false,
           streamName: "#general",
           authorName: "Ada",
           emoji: null,
@@ -193,15 +216,17 @@ describe("durable push delivery", () => {
       }
     }
 
-    function createService() {
+    function createService({ enabled = true }: { enabled?: boolean } = {}) {
       return new PushService({
         pool,
         telemetry: new PushTelemetry({ reporter: new DisabledAnalyticsReporter() }),
-        vapidConfig: {
-          publicKey: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
-          privateKey: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
-          subject: "mailto:test@threa.app",
-        },
+        vapidConfig: enabled
+          ? {
+              publicKey: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
+              privateKey: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
+              subject: "mailto:test@threa.app",
+            }
+          : null,
         lookups: {
           getUserPushPreferences: async () => {
             sources.onReadPreferences?.()
@@ -229,6 +254,12 @@ describe("durable push delivery", () => {
           },
           resolveFiredReminder: async () => sources.reminder,
           isRewrapOutstanding: async () => sources.rewrapOutstanding,
+          findAnalyticsConsentGrant: async () => {
+            await sources.onConsent?.()
+            if (sources.consent instanceof Error) throw sources.consent
+            return sources.consent
+          },
+          isE2eRootedStream: async () => false,
         },
       })
     }
@@ -707,6 +738,7 @@ describe("durable push delivery", () => {
             streamName: "#ops",
             contentMarkdown: "**remember** this",
             unavailableReason: null,
+            e2eRooted: false,
           }
           return service.planSavedReminderPush(event(), savedReminderPayload(3))
         },
@@ -1075,14 +1107,686 @@ describe("durable push delivery", () => {
         deliveries: ["pending"],
       })
     })
+
+    describe("receipt capabilities", () => {
+      const hashOf = (token: string) => createHash("sha256").update(token).digest("hex")
+      /** A consent grant's value generation, as the preferences table would hand it out. */
+      const GRANT = "9001"
+      const REGRANT = "9002"
+      const tokensSentTo = (endpoint: string) => sendsTo(endpoint).map((s) => s.receipt?.token ?? null)
+
+      async function receiptRow(deliveryId: string) {
+        const { rows } = await pool.query(
+          `SELECT token_hash, received_at, outcome FROM push_receipts WHERE workspace_id = $1 AND delivery_id = $2`,
+          [ws, deliveryId]
+        )
+        return rows[0] ?? null
+      }
+
+      /** "blocked" once the backend `pid` of this suite's own database waits on a lock, within a few seconds. */
+      async function waitForBlockedBackend(pid: number): Promise<"blocked" | "never"> {
+        for (let i = 0; i < 150; i++) {
+          const { rowCount } = await pool.query(
+            `SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND datname = current_database() AND wait_event_type = 'Lock'`,
+            [pid]
+          )
+          if ((rowCount ?? 0) > 0) return "blocked"
+          await new Promise((resolve) => setTimeout(resolve, 20))
+        }
+        return "never"
+      }
+
+      /** What the ledger says the accepted attempt sent, checked against what the provider stub actually got. */
+      async function recordedSend(deliveryId: string, endpoint: string) {
+        const { rows } = await pool.query(
+          `SELECT sent_topic, sent_with_receipt, sent_claim_version = version - 1 AS by_accepting_claim, sent_at,
+                  sent_endpoint_hash
+             FROM push_deliveries WHERE id = $1`,
+          [deliveryId]
+        )
+        const [sent] = sendsTo(endpoint)
+        return {
+          topicMatchesSend: rows[0].sent_topic !== null && rows[0].sent_topic === sent?.options.topic,
+          endpointMatchesSend: sent !== undefined && rows[0].sent_endpoint_hash === hashOf(endpoint),
+          withReceipt: rows[0].sent_with_receipt,
+          byAcceptingClaim: rows[0].by_accepting_claim,
+          sentAtRecorded: rows[0].sent_at instanceof Date,
+        }
+      }
+
+      /** The armed row's stream and its capability and retention windows, measured from the delivery's expiry. */
+      async function armedRow(deliveryId: string) {
+        const { rows } = await pool.query(
+          `SELECT r.stream_id, r.consent_generation::text AS consent_generation,
+                  ROUND(EXTRACT(EPOCH FROM r.capability_expires_at - p.expires_at) * 1000)::int AS capability_after_expiry_ms,
+                  ROUND(EXTRACT(EPOCH FROM r.retain_until - p.expires_at) * 1000)::int AS retain_after_expiry_ms
+             FROM push_receipts r
+             JOIN push_deliveries d ON d.workspace_id = r.workspace_id AND d.id = r.delivery_id
+             JOIN push_delivery_plans p ON p.workspace_id = d.workspace_id AND p.id = d.plan_id
+            WHERE r.workspace_id = $1 AND r.delivery_id = $2`,
+          [ws, deliveryId]
+        )
+        return rows[0] ?? null
+      }
+
+      async function ledgerIdentity(deliveryId: string) {
+        const { rows } = await pool.query(`SELECT version, attempts, status FROM push_deliveries WHERE id = $1`, [
+          deliveryId,
+        ])
+        return rows[0]
+      }
+
+      function reminderSource(e2eRooted: boolean): FiredReminderSource {
+        return {
+          savedId: "saved_01ABCDEF",
+          messageId: "msg_9",
+          streamId: "stream_01SAVED",
+          conversationId: null,
+          title: null,
+          streamName: "#ops",
+          contentMarkdown: "remember this",
+          unavailableReason: null,
+          e2eRooted,
+        }
+      }
+
+      test("should arm a hash-only receipt and send its token only when consent is granted, the root is not end-to-end encrypted and the active worker supports receipts", async () => {
+        const service = createService()
+        const planActivity = () => service.planActivityPush(event(), activityPayload())
+        const planReminder = () => service.planSavedReminderPush(event(), savedReminderPayload(3))
+        const cases: Array<{
+          name: string
+          setup: () => void
+          plan?: () => Promise<void>
+          receiptVersion?: number
+          armedStream: string | null
+        }> = [
+          {
+            name: "consenting",
+            setup: () => (sources.consent = GRANT),
+            receiptVersion: 1,
+            armedStream: "stream_01PLANNED",
+          },
+          { name: "denied", setup: () => (sources.consent = null), receiptVersion: 1, armedStream: null },
+          { name: "unknown worker", setup: () => (sources.consent = GRANT), armedStream: null },
+          {
+            name: "encrypted",
+            setup: () => {
+              sources.consent = GRANT
+              sources.activity = validActivity("sealed", { encrypted: true, e2eRooted: true })
+            },
+            receiptVersion: 1,
+            armedStream: null,
+          },
+          {
+            name: "plaintext under an end-to-end encrypted root",
+            setup: () => {
+              sources.consent = GRANT
+              sources.activity = validActivity("old plaintext", { encrypted: false, e2eRooted: true })
+            },
+            receiptVersion: 1,
+            armedStream: null,
+          },
+          {
+            name: "reminder under an end-to-end encrypted root",
+            setup: () => {
+              sources.consent = GRANT
+              sources.reminder = reminderSource(true)
+            },
+            plan: planReminder,
+            receiptVersion: 1,
+            armedStream: null,
+          },
+          {
+            name: "consenting reminder",
+            setup: () => {
+              sources.consent = GRANT
+              sources.reminder = reminderSource(false)
+            },
+            plan: planReminder,
+            receiptVersion: 1,
+            armedStream: "stream_01SAVED",
+          },
+          {
+            name: "consent read fails",
+            setup: () => (sources.consent = new Error("statement timeout")),
+            receiptVersion: 1,
+            armedStream: null,
+          },
+        ]
+
+        const observed: Record<string, unknown> = {}
+        for (const c of cases) {
+          ws = workspaceId()
+          sources.activity = validActivity("hello")
+          c.setup()
+          const sub = await subscribe(
+            ws,
+            uid,
+            `https://push.example.com/${encodeURIComponent(c.name)}`,
+            c.receiptVersion
+          )
+          await (c.plan ?? planActivity)()
+          await drainDuePushJobs(pool, service, ws)
+          const [token] = tokensSentTo(sub.endpoint)
+          const delivery = await deliveryFor(ws, sub.id)
+          const row = await receiptRow(delivery.id)
+          observed[c.name] = {
+            sent: sendsTo(sub.endpoint).length,
+            status: delivery.status,
+            armed: token != null,
+            storedHashOnly: token == null ? row === null : row?.token_hash === hashOf(token),
+            armedRow: await armedRow(delivery.id),
+            recorded: await recordedSend(delivery.id, sub.endpoint),
+          }
+        }
+
+        expect(observed).toEqual(
+          Object.fromEntries(
+            cases.map((c) => [
+              c.name,
+              {
+                sent: 1,
+                status: "accepted",
+                armed: c.armedStream !== null,
+                storedHashOnly: true,
+                armedRow:
+                  c.armedStream === null
+                    ? null
+                    : {
+                        stream_id: c.armedStream,
+                        consent_generation: GRANT,
+                        capability_after_expiry_ms: 10 * 60 * SECOND_MS,
+                        retain_after_expiry_ms: 7 * 24 * HOUR_MS,
+                      },
+                recorded: {
+                  topicMatchesSend: true,
+                  endpointMatchesSend: true,
+                  withReceipt: c.armedStream !== null,
+                  byAcceptingClaim: true,
+                  sentAtRecorded: true,
+                },
+              },
+            ])
+          )
+        )
+      })
+
+      test("should send without a capability when arming the receipt fails", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/arm-fails", 1)
+        const arm = spyOn(PushReceiptRepository, "armDelivery").mockRejectedValue(new Error("connection reset"))
+        try {
+          await service.planActivityPush(event(), activityPayload())
+          await drainDuePushJobs(pool, service, ws)
+        } finally {
+          arm.mockRestore()
+        }
+
+        const delivery = await deliveryFor(ws, sub.id)
+        expect({
+          tokens: tokensSentTo(sub.endpoint),
+          status: delivery.status,
+          recorded: await recordedSend(delivery.id, sub.endpoint),
+        }).toEqual({
+          tokens: [null],
+          status: "accepted",
+          recorded: {
+            topicMatchesSend: true,
+            endpointMatchesSend: true,
+            withReceipt: false,
+            byAcceptingClaim: true,
+            sentAtRecorded: true,
+          },
+        })
+      })
+
+      test("should record a receipt without touching the delivery's lease version or attempts", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/version", 1)
+        await service.planActivityPush(event(), activityPayload())
+        await drainDuePushJobs(pool, service, ws)
+        const delivery = await deliveryFor(ws, sub.id)
+        const before = await ledgerIdentity(delivery.id)
+        const [token] = tokensSentTo(sub.endpoint)
+
+        await service.recordReceipt({ workspaceId: ws, token: token!, stage: "received", reason: null })
+        await service.recordReceipt({ workspaceId: ws, token: token!, stage: "notification_created", reason: null })
+
+        expect({ ledger: await ledgerIdentity(delivery.id), receipt: await receiptRow(delivery.id) }).toEqual({
+          ledger: before,
+          receipt: { token_hash: hashOf(token!), received_at: expect.any(Date), outcome: "notification_created" },
+        })
+      })
+
+      test("should rotate the capability on a retry so only the latest attempt's token records", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/rotate", 1)
+        scripts.set(sub.endpoint, [failing(503)])
+        await service.planActivityPush(event(), activityPayload())
+        await drainDuePushJobs(pool, service, ws)
+        const delivery = await deliveryFor(ws, sub.id)
+        await makeDeliveryDue(pool, delivery.id)
+        await drainDuePushJobs(pool, service, ws)
+        const [first, second] = tokensSentTo(sub.endpoint)
+
+        await service.recordReceipt({ workspaceId: ws, token: first!, stage: "received", reason: null })
+        const afterStale = await receiptRow(delivery.id)
+        await service.recordReceipt({ workspaceId: ws, token: second!, stage: "received", reason: null })
+
+        expect({
+          distinct: first !== second,
+          afterStale,
+          afterLatest: await receiptRow(delivery.id),
+        }).toEqual({
+          distinct: true,
+          afterStale: { token_hash: hashOf(second!), received_at: null, outcome: null },
+          afterLatest: { token_hash: hashOf(second!), received_at: expect.any(Date), outcome: null },
+        })
+      })
+
+      test("should rotate the capability after an ambiguous attempt the device reported, keeping its facts and never downgrading them", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/reported-then-retry", 1)
+        scripts.set(sub.endpoint, [failing(503)])
+        await service.planActivityPush(event(), activityPayload())
+        await drainDuePushJobs(pool, service, ws)
+        const delivery = await deliveryFor(ws, sub.id)
+        const [first] = tokensSentTo(sub.endpoint)
+        const beforeReports = await ledgerIdentity(delivery.id)
+        await service.recordReceipt({ workspaceId: ws, token: first!, stage: "received", reason: null })
+        await service.recordReceipt({ workspaceId: ws, token: first!, stage: "notification_created", reason: null })
+        const afterReports = await ledgerIdentity(delivery.id)
+        const { rows: reported } = await pool.query(
+          `SELECT received_at FROM push_receipts WHERE workspace_id = $1 AND delivery_id = $2`,
+          [ws, delivery.id]
+        )
+
+        await makeDeliveryDue(pool, delivery.id)
+        await drainDuePushJobs(pool, service, ws)
+        const [, second] = tokensSentTo(sub.endpoint)
+        await service.recordReceipt({ workspaceId: ws, token: second!, stage: "received", reason: null })
+        await service.recordReceipt({ workspaceId: ws, token: second!, stage: "suppressed", reason: "focused" })
+        const { rows: final } = await pool.query(
+          `SELECT token_hash, received_at, outcome, outcome_reason FROM push_receipts WHERE workspace_id = $1 AND delivery_id = $2`,
+          [ws, delivery.id]
+        )
+
+        const { rows: sent } = await pool.query(`SELECT sent_with_receipt FROM push_deliveries WHERE id = $1`, [
+          delivery.id,
+        ])
+
+        expect({
+          reportsLeftLedger: afterReports,
+          retried: second !== undefined && second !== first,
+          receipt: final[0],
+          firstReceivedKept: final[0].received_at.getTime() === reported[0].received_at.getTime(),
+          recorded: { withReceipt: sent[0].sent_with_receipt, status: (await deliveryFor(ws, sub.id)).status },
+        }).toEqual({
+          reportsLeftLedger: beforeReports,
+          retried: true,
+          receipt: {
+            token_hash: hashOf(second!),
+            received_at: expect.any(Date),
+            outcome: "notification_created",
+            outcome_reason: null,
+          },
+          firstReceivedKept: true,
+          recorded: { withReceipt: true, status: "accepted" },
+        })
+      })
+
+      test("should refuse to re-arm under a different consent grant and revoke the old grant's token and facts", async () => {
+        const service = createService()
+        const observed: Record<string, unknown> = {}
+        for (const [name, retryGrant] of [
+          ["withdrawn", null],
+          ["withdrawn and given again", REGRANT],
+        ] as const) {
+          ws = workspaceId()
+          sources.consent = GRANT
+          const sub = await subscribe(ws, uid, `https://push.example.com/lineage-${encodeURIComponent(name)}`, 1)
+          scripts.set(sub.endpoint, [failing(503)])
+          await service.planActivityPush(event(), activityPayload())
+          await drainDuePushJobs(pool, service, ws)
+          const delivery = await deliveryFor(ws, sub.id)
+          const [first] = tokensSentTo(sub.endpoint)
+          await service.recordReceipt({ workspaceId: ws, token: first!, stage: "received", reason: null })
+
+          sources.consent = retryGrant
+          await makeDeliveryDue(pool, delivery.id)
+          await drainDuePushJobs(pool, service, ws)
+          await service.recordReceipt({ workspaceId: ws, token: first!, stage: "notification_created", reason: null })
+          const { rows } = await pool.query(
+            `SELECT token_hash, consent_generation::text AS consent_generation, received_at IS NOT NULL AS received,
+                    outcome, revoked_at IS NOT NULL AS revoked
+               FROM push_receipts WHERE workspace_id = $1 AND delivery_id = $2`,
+            [ws, delivery.id]
+          )
+          observed[name] = {
+            tokens: tokensSentTo(sub.endpoint).map((t) => t !== null),
+            receipt: rows[0],
+            withReceipt: (
+              await pool.query(`SELECT sent_with_receipt FROM push_deliveries WHERE id = $1`, [delivery.id])
+            ).rows[0].sent_with_receipt,
+          }
+        }
+
+        const refused = {
+          tokens: [true, false],
+          // Revocation erases the stage the old grant allowed; the row stays in its old lineage.
+          receipt: { token_hash: null, consent_generation: GRANT, received: false, outcome: null, revoked: true },
+          withReceipt: false,
+        }
+        expect(observed).toEqual({ withdrawn: refused, "withdrawn and given again": refused })
+      })
+
+      test("should never send when the claim is lost before the arming transaction renews it", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/lost-claim-arm", 1)
+        const renewLease = PushDeliveryRepository.renewLease.bind(PushDeliveryRepository)
+        let calls = 0
+        const renew = spyOn(PushDeliveryRepository, "renewLease").mockImplementation(async (db, params) => {
+          if (calls++ === 0) {
+            // A rival reclaims the lapsed attempt between this worker's reads and its arming.
+            await pool.query(`UPDATE push_deliveries SET version = version + 1 WHERE id = $1`, [params.deliveryId])
+          }
+          return renewLease(db, params)
+        })
+        try {
+          await service.planActivityPush(event(), activityPayload())
+          const [job] = (await listPushJobs(pool, ws)).filter((j) => j.completedAt === null)
+          await runPushJob(pool, service, job!)
+        } finally {
+          renew.mockRestore()
+        }
+        const delivery = await deliveryFor(ws, sub.id)
+        const { rows: sent } = await pool.query(
+          `SELECT sent_at, sent_with_receipt FROM push_deliveries WHERE id = $1`,
+          [delivery.id]
+        )
+
+        expect({
+          sends: sendsTo(sub.endpoint).length,
+          receipt: await receiptRow(delivery.id),
+          status: delivery.status,
+          sent: sent[0],
+        }).toEqual({ sends: 0, receipt: null, status: "pending", sent: { sent_at: null, sent_with_receipt: null } })
+      })
+
+      test("should arm only under the renewed claim, so a competing claim waits until the send's lease is committed", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/arm-under-claim", 1)
+        const armDelivery = PushReceiptRepository.armDelivery.bind(PushReceiptRepository)
+        let competingClaim: string | null = null
+        const arm = spyOn(PushReceiptRepository, "armDelivery").mockImplementation(async (db, params) => {
+          const rival = await pool.connect()
+          try {
+            await rival.query("BEGIN")
+            await rival.query("SET LOCAL lock_timeout = '300ms'")
+            await rival.query("UPDATE push_deliveries SET version = version + 1 WHERE id = $1", [params.deliveryId])
+            await rival.query("COMMIT")
+            competingClaim = "claimed"
+          } catch (err) {
+            await rival.query("ROLLBACK")
+            competingClaim = (err as { code?: string }).code === "55P03" ? "blocked" : String(err)
+          } finally {
+            rival.release()
+          }
+          return armDelivery(db, params)
+        })
+        try {
+          await service.planActivityPush(event(), activityPayload())
+          await drainDuePushJobs(pool, service, ws)
+        } finally {
+          arm.mockRestore()
+        }
+        const delivery = await deliveryFor(ws, sub.id)
+        const [token] = tokensSentTo(sub.endpoint)
+
+        expect({
+          competingClaim,
+          sends: sendsTo(sub.endpoint).length,
+          status: delivery.status,
+          stored: (await receiptRow(delivery.id))?.token_hash === hashOf(token!),
+        }).toEqual({ competingClaim: "blocked", sends: 1, status: "accepted", stored: true })
+      })
+
+      test("should re-assert the lease after a slow arm commits, so a rival cannot reclaim the attempt before the send", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/slow-arm", 1)
+        const renewLease = PushDeliveryRepository.renewLease.bind(PushDeliveryRepository)
+        const armDelivery = PushReceiptRepository.armDelivery.bind(PushReceiptRepository)
+        let renewals = 0
+        const renew = spyOn(PushDeliveryRepository, "renewLease").mockImplementation(async (db, params) =>
+          renewLease(db, renewals++ === 0 ? { ...params, leaseMs: 200 } : params)
+        )
+        let deliveryId: string | null = null
+        const arm = spyOn(PushReceiptRepository, "armDelivery").mockImplementation(async (db, params) => {
+          deliveryId = params.deliveryId
+          await new Promise((resolve) => setTimeout(resolve, 400))
+          return armDelivery(db, params)
+        })
+        let rivalClaimed: boolean | null = null
+        scripts.set(sub.endpoint, [
+          async () => {
+            const rival = await PushDeliveryRepository.claim(pool, {
+              workspaceId: ws,
+              deliveryId: deliveryId!,
+              attempt: 0,
+              leaseMs: 60 * SECOND_MS,
+            })
+            rivalClaimed = rival !== null
+            return accepted()
+          },
+        ])
+        try {
+          await service.planActivityPush(event(), activityPayload())
+          await drainDuePushJobs(pool, service, ws)
+        } finally {
+          renew.mockRestore()
+          arm.mockRestore()
+        }
+
+        expect({
+          rivalClaimed,
+          sends: sendsTo(sub.endpoint).length,
+          status: (await deliveryFor(ws, sub.id)).status,
+        }).toEqual({ rivalClaimed: false, sends: 1, status: "accepted" })
+      })
+
+      test("should serialize a report with a concurrent re-arm: the re-arm waits, then rotates the token and keeps the reported stage", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/report-vs-rearm", 1)
+        await service.planActivityPush(event(), activityPayload())
+        await drainDuePushJobs(pool, service, ws)
+        const delivery = await deliveryFor(ws, sub.id)
+        const [token] = tokensSentTo(sub.endpoint)
+        const rotated = randomBytes(32).toString("base64url")
+        const rearmClient = await pool.connect()
+        let rearm: Promise<boolean> | null = null
+        let rearmWhileChecking: string | null = null
+        try {
+          const { rows } = await rearmClient.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+          sources.onConsent = async () => {
+            sources.onConsent = null
+            rearm = PushReceiptRepository.armDelivery(rearmClient, {
+              workspaceId: ws,
+              userId: uid,
+              deliveryId: delivery.id,
+              subscriptionId: sub.id,
+              streamId: "stream_01PLANNED",
+              tokenHash: hashOf(rotated),
+              consentGeneration: GRANT,
+              capabilityExpiresAt: new Date(Date.now() + HOUR_MS),
+              retainUntil: new Date(Date.now() + HOUR_MS),
+            })
+            rearmWhileChecking = await Promise.race([
+              rearm.then(() => "landed" as const),
+              waitForBlockedBackend(rows[0]!.pid),
+            ])
+          }
+
+          await service.recordReceipt({ workspaceId: ws, token: token!, stage: "received", reason: null })
+          await rearm
+        } finally {
+          rearmClient.release()
+        }
+
+        expect({ rearmWhileChecking, rearmed: await rearm!, receipt: await receiptRow(delivery.id) }).toEqual({
+          rearmWhileChecking: "blocked",
+          rearmed: true,
+          receipt: { token_hash: hashOf(rotated), received_at: expect.any(Date), outcome: null },
+        })
+      })
+
+      test("should lock the receipt before reading consent when a retry re-arms, in the order receipt ingest takes them", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        const sub = await subscribe(ws, uid, "https://push.example.com/rearm-lock-order", 1)
+        scripts.set(sub.endpoint, [failing(503)])
+        await service.planActivityPush(event(), activityPayload())
+        await drainDuePushJobs(pool, service, ws)
+        const delivery = await deliveryFor(ws, sub.id)
+        await makeDeliveryDue(pool, delivery.id)
+
+        const holder = await pool.connect()
+        let consentReached = false
+        sources.onConsent = async () => {
+          consentReached = true
+        }
+        let retry: Promise<void> | null = null
+        let whileHeld: { waiter: "blocked" | "never" | "finished"; consentReached: boolean } | null = null
+        try {
+          const { rows: holderRows } = await holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+          await holder.query("BEGIN")
+          const { rowCount: held } = await holder.query(
+            "SELECT 1 FROM push_receipts WHERE workspace_id = $1 AND delivery_id = $2 FOR UPDATE",
+            [ws, delivery.id]
+          )
+          expect(held).toBe(1)
+
+          retry = drainDuePushJobs(pool, service, ws)
+          const waitForWaiter = async (): Promise<"blocked" | "never"> => {
+            for (let i = 0; i < 150; i++) {
+              const { rowCount } = await pool.query(
+                `SELECT 1 FROM pg_stat_activity
+                  WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`,
+                [holderRows[0]!.pid]
+              )
+              if ((rowCount ?? 0) > 0) return "blocked"
+              await new Promise((resolve) => setTimeout(resolve, 20))
+            }
+            return "never"
+          }
+          const waiter = await Promise.race([retry.then(() => "finished" as const), waitForWaiter()])
+          whileHeld = { waiter, consentReached }
+          await holder.query("COMMIT")
+          await retry
+        } finally {
+          await holder.query("ROLLBACK").catch(() => {})
+          holder.release()
+          await retry?.catch(() => {})
+          sources.onConsent = null
+        }
+        const [first, second] = tokensSentTo(sub.endpoint)
+
+        expect({
+          whileHeld,
+          consentReached,
+          rotated: first !== second,
+          receipt: await receiptRow(delivery.id),
+          status: (await deliveryFor(ws, sub.id)).status,
+        }).toEqual({
+          whileHeld: { waiter: "blocked", consentReached: false },
+          consentReached: true,
+          rotated: true,
+          receipt: { token_hash: hashOf(second!), received_at: null, outcome: null },
+          status: "accepted",
+        })
+      })
+
+      test("should delete receipt rows past retention and keep live ones", async () => {
+        const service = createService()
+        const arm = (deliveryId: string, retainUntil: Date) =>
+          PushReceiptRepository.armDelivery(pool, {
+            workspaceId: ws,
+            userId: uid,
+            deliveryId,
+            subscriptionId: "push_sub_retention",
+            streamId: null,
+            tokenHash: hashOf(randomBytes(32).toString("base64url")),
+            consentGeneration: GRANT,
+            capabilityExpiresAt: new Date(Date.now() - HOUR_MS),
+            retainUntil,
+          })
+        await arm("push_del_expired", new Date(Date.now() - SECOND_MS))
+        await arm("push_del_live", new Date(Date.now() + HOUR_MS))
+
+        await service.cleanupExpiredReceipts()
+
+        const { rows } = await pool.query(`SELECT delivery_id FROM push_receipts WHERE workspace_id = $1`, [ws])
+        expect(rows.map((r) => r.delivery_id)).toEqual(["push_del_live"])
+      })
+
+      test("should delete expired receipts on the cleanup timer while push sending is disabled", async () => {
+        const service = createService({ enabled: false })
+        await PushReceiptRepository.armDelivery(pool, {
+          workspaceId: ws,
+          userId: uid,
+          deliveryId: "push_del_disabled_expired",
+          subscriptionId: "push_sub_disabled",
+          streamId: null,
+          tokenHash: hashOf(randomBytes(32).toString("base64url")),
+          consentGeneration: GRANT,
+          capabilityExpiresAt: new Date(Date.now() - HOUR_MS),
+          retainUntil: new Date(Date.now() - SECOND_MS),
+        })
+        const cleanup = createPushSessionCleanup(service, { intervalMs: 20 })
+        cleanup.start()
+        let remaining = 1
+        try {
+          for (let i = 0; i < 100 && remaining > 0; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 20))
+            remaining = (await pool.query(`SELECT COUNT(*)::int AS n FROM push_receipts WHERE workspace_id = $1`, [ws]))
+              .rows[0].n
+          }
+        } finally {
+          cleanup.stop()
+        }
+
+        expect({ enabled: service.isEnabled(), remaining }).toEqual({ enabled: false, remaining: 0 })
+      })
+
+      test("should reset a device's receipt support to unknown when it re-registers without advertising it", async () => {
+        const endpoint = "https://push.example.com/re-register"
+        const advertised = await subscribe(ws, uid, endpoint, 1)
+        const reregistered = await subscribe(ws, uid, endpoint)
+
+        expect({ advertised: advertised.receiptVersion, reregistered: reregistered.receiptVersion }).toEqual({
+          advertised: 1,
+          reregistered: null,
+        })
+      })
+    })
   })
 
   describe("with real sources", () => {
     let activityService: ActivityService
     let savedService: SavedMessagesService
     let eventService: EventService
+    let preferencesService: UserPreferencesService
 
     beforeAll(() => {
+      preferencesService = new UserPreferencesService(pool)
       activityService = new ActivityService({ pool })
       savedService = new SavedMessagesService({ pool })
       eventService = new EventService(pool)
@@ -1110,6 +1814,9 @@ describe("durable push delivery", () => {
           resolveActivityPush: (params) => activityService.resolvePushSource(params),
           resolveFiredReminder: (params) => savedService.resolveFiredReminder(params),
           isRewrapOutstanding: async () => false,
+          findAnalyticsConsentGrant: (db, userId) => preferencesService.findAnalyticsConsentGrant(db, userId),
+          isE2eRootedStream: async (db, workspaceId, streamId) =>
+            (await E2eStreamsRepository.excludeE2eRootedStreamIds(db, [{ workspaceId, streamId }])).length === 0,
         },
       })
     }
@@ -1235,12 +1942,23 @@ describe("durable push delivery", () => {
     })
 
     describe("saved reminder", () => {
-      async function firedReminder(text = "remember this", e2e = false) {
+      async function firedReminder(text = "remember this", e2e = false, inThread = false) {
         const users = await workspaceWithUsers()
         const root = await channel(users.ws, users.author.id, Visibilities.PUBLIC)
+        const posted = inThread
+          ? await StreamRepository.insert(pool, {
+              id: streamId(),
+              workspaceId: users.ws,
+              type: StreamTypes.THREAD,
+              displayName: "A thread",
+              parentStreamId: root.id,
+              rootStreamId: root.id,
+              createdBy: users.author.id,
+            })
+          : root
         const message = await eventService.createMessage({
           workspaceId: users.ws,
-          streamId: root.id,
+          streamId: posted.id,
           authorId: users.author.id,
           authorType: AuthorTypes.USER,
           ...testMessageContent(text),
@@ -1268,8 +1986,62 @@ describe("durable push delivery", () => {
         )
         const row = outbox.rows[0]
         const source: PushSourceEvent = { id: BigInt(row.id), createdAt: row.created_at }
-        return { ...users, saved, source, payload: row.payload as SavedReminderFiredOutboxPayload }
+        return { ...users, posted, saved, source, payload: row.payload as SavedReminderFiredOutboxPayload }
       }
+
+      test("should arm a receipt for a consenting user's plaintext reminder, never under a root encrypted since, nor for a default user", async () => {
+        const service = createService()
+        const hashOf = (token: string) => createHash("sha256").update(token).digest("hex")
+        const cases = [
+          { name: "consenting plaintext", consent: true, e2e: false, inThread: false },
+          { name: "default consent", consent: false, e2e: false, inThread: false },
+          { name: "old plaintext under an encrypted root", consent: true, e2e: true, inThread: false },
+          { name: "old plaintext in a thread under an encrypted root", consent: true, e2e: true, inThread: true },
+        ]
+        const observed: Record<string, unknown> = {}
+        const expected: Record<string, unknown> = {}
+        for (const c of cases) {
+          const ctx = await firedReminder("remember this", c.e2e, c.inThread)
+          if (c.consent) {
+            await preferencesService.updatePreferences(ctx.ws, ctx.recipient.id, {
+              [ANALYTICS_CONSENT_KEY]: ANALYTICS_CONSENT_GRANTED,
+            })
+          }
+          const sub = await subscribe(ctx.ws, ctx.recipient.id, `https://push.example.com/${ctx.ws}`, 1)
+          await service.planSavedReminderPush(ctx.source, ctx.payload)
+          await drainDuePushJobs(pool, service, ctx.ws)
+          const [sent] = sendsTo(sub.endpoint)
+          const token = sent?.receipt?.token ?? null
+          const { rows } = await pool.query(
+            `SELECT token_hash, stream_id, consent_generation::text AS consent_generation FROM push_receipts WHERE workspace_id = $1`,
+            [ctx.ws]
+          )
+          const grant = await preferencesService.findAnalyticsConsentGrant(pool, ctx.recipient.id)
+          observed[c.name] = {
+            sent: sent !== undefined,
+            tokenInData: JSON.stringify(sent?.data ?? {}).includes(token ?? "no token sent"),
+            receiptInData: "receipt" in (sent?.data ?? {}),
+            receipts: rows,
+          }
+          const armed = c.consent && !c.e2e
+          expected[c.name] = {
+            sent: true,
+            tokenInData: false,
+            receiptInData: false,
+            receipts: armed
+              ? [
+                  {
+                    token_hash: token === null ? "no token sent" : hashOf(token),
+                    stream_id: ctx.posted.id,
+                    consent_generation: grant,
+                  },
+                ]
+              : [],
+          }
+        }
+
+        expect(observed).toEqual(expected)
+      })
 
       test("should push the fired generation and drop the retry once the reminder is cancelled", async () => {
         const service = createService()

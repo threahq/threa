@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
+import { addLogDestination, attachPostHogLogShipping, logger } from "@threahq/backend-common"
 import { createWorkspaceUserMiddleware } from "./workspace"
 import { UserRepository } from "../features/workspaces"
+import { ControlPlaneClient } from "../lib/control-plane-client"
 
 const mockFindAccess = spyOn(UserRepository, "findWorkspaceUserAccess")
 
@@ -176,6 +178,85 @@ describe("createWorkspaceUserMiddleware", () => {
     expect(nextCalled).toBe(true)
     expect(req.user).toEqual(healed as never)
     expect(req.workspaceId).toBe("ws_1")
+  })
+
+  test("logs and ships a self-heal without workspace, user or control-plane response content", async () => {
+    const secrets = {
+      failingWorkspace: "ws_01SECRETFAILING",
+      healedWorkspace: "ws_01SECRETHEALED",
+      workosUserId: "user_01SECRETWORKOS",
+      healedUserId: "usr_01SECRETHEALED",
+      internalKey: "internal-key-SECRET",
+      body: "membership store down",
+    }
+    const controlPlane = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        req.url.includes(secrets.failingWorkspace)
+          ? new Response(`${secrets.body} for ${secrets.workosUserId}`, { status: 503 })
+          : Response.json({ member: true }),
+    })
+    const lines: string[] = []
+    addLogDestination({ level: "debug", stream: { write: (line: string) => void lines.push(line) } })
+    const shipped: string[] = []
+    const levelBefore = logger.level
+    const shipper = attachPostHogLogShipping({
+      config: { projectToken: "phc_test", host: "https://posthog.example.com", logsLevel: "debug" },
+      service: "backend",
+      region: null,
+      environment: "test",
+      flushIntervalMs: 50,
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        shipped.push(String(init.body))
+        return new Response(null, { status: 200 })
+      }) as unknown as typeof fetch,
+    })!
+    mockFindAccess.mockResolvedValue({ workspaceExists: true, user: null })
+    const mw = createWorkspaceUserMiddleware({
+      pool: POOL,
+      workspaceService: provisionedService({ id: secrets.healedUserId, workspaceId: secrets.healedWorkspace }),
+      controlPlaneClient: new ControlPlaneClient(`http://127.0.0.1:${controlPlane.port}`, secrets.internalKey),
+    })
+    const as = (workspaceId: string) =>
+      createReq({ params: { workspaceId } as Request["params"], workosUserId: secrets.workosUserId })
+    let results: Record<string, { status: number | null; nextCalled: boolean }>
+    try {
+      const failed = await runMiddleware(mw, as(secrets.failingWorkspace))
+      const healed = await runMiddleware(mw, as(secrets.healedWorkspace))
+      results = {
+        failed: { status: failed.status, nextCalled: failed.nextCalled },
+        healed: { status: healed.status, nextCalled: healed.nextCalled },
+      }
+    } finally {
+      await controlPlane.stop(true)
+      await shipper.flush()
+      await shipper.shutdown()
+      logger.level = levelBefore
+    }
+    const messages = [
+      "Failed to confirm workspace membership with control plane",
+      "Self-heal aborted: could not confirm workspace membership with control plane",
+      "Self-healed missing regional user from control plane",
+    ]
+    const records = lines
+      .flatMap((line) => line.split("\n"))
+      .filter((line) => line.trim())
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .filter((record) => messages.includes(String(record.msg)))
+      .map(({ time: _t, pid: _p, hostname: _h, ...rest }) => rest)
+    const shippedText = shipped.join("\n")
+
+    expect({ results, records, shipped: messages.map((msg) => shippedText.includes(msg)) }).toEqual({
+      results: { failed: { status: 403, nextCalled: false }, healed: { status: null, nextCalled: true } },
+      records: [
+        { level: 50, status: 503, msg: messages[0] },
+        { level: 50, errorCode: null, msg: messages[1] },
+        { level: 30, msg: messages[2] },
+      ],
+      shipped: [true, true, true],
+    })
+    const everything = [lines.join("\n"), shippedText].join("\n")
+    expect(Object.values(secrets).filter((secret) => everything.includes(secret))).toEqual([])
   })
 
   test("403 when the user is missing and there is no WorkOS identity to provision from", async () => {

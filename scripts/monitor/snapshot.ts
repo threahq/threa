@@ -7,6 +7,7 @@ import { RailwayClient, type RailwayDeployment } from "./railway"
 import { probeLiveness, type LivenessReport } from "./probes/liveness"
 import { probeLogs, type LogReport } from "./probes/logs"
 import { probePipelines, type PipelineReport } from "./probes/pipelines"
+import { probePush, type PushReport } from "./probes/push"
 import { probeResources, type ResourceReport } from "./probes/resources"
 import { buildRevisionReport, summarizeRailway, type RevisionReport } from "./probes/revision"
 import { makeWindow, worst, type Finding, type Level, type Window } from "./types"
@@ -23,7 +24,7 @@ export interface SectionError {
   error: string
 }
 
-export type Section = "revision" | "liveness" | "pipelines" | "logs" | "resources"
+export type Section = "revision" | "liveness" | "pipelines" | "push" | "logs" | "resources"
 
 export interface Snapshot {
   at: string
@@ -33,6 +34,7 @@ export interface Snapshot {
   revision: RevisionReport | null
   liveness: LivenessReport | null
   pipelines: PipelineReport | null
+  push: PushReport | null
   logs: LogReport | null
   resources: ResourceReport | null
   errors: SectionError[]
@@ -161,7 +163,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     }
   }
 
-  const [liveness, pipelines, logs, resources] = await Promise.all([
+  const [liveness, pipelines, push, logs, resources] = await Promise.all([
     guard("liveness", () =>
       probeLiveness({
         fetchImpl: deps.fetchImpl,
@@ -173,6 +175,10 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     guard("pipelines", async () => {
       if (!db) throw new Error("DB_READ_PROXY_URL/SECRET missing; pipelines skipped")
       return probePipelines(db, window)
+    }),
+    guard("push", async () => {
+      if (!db) throw new Error("DB_READ_PROXY_URL/SECRET missing; push skipped")
+      return probePush(db, window)
     }),
     guard("logs", async () => {
       if (!railway) throw new Error("RAILWAY_READONLY_TOKEN missing; logs skipped")
@@ -188,6 +194,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     ...(revision?.findings ?? []),
     ...(liveness?.findings ?? []),
     ...(pipelines?.findings ?? []),
+    ...(push?.findings ?? []),
     ...(logs?.findings ?? []),
     ...(resources?.findings ?? []),
     ...errors.map((sectionError) => ({
@@ -203,6 +210,7 @@ export async function takeSnapshot(deps: Deps, opts: SnapshotOptions): Promise<S
     revision,
     liveness,
     pipelines,
+    push,
     logs,
     resources,
     errors,

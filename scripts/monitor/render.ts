@@ -3,6 +3,15 @@ import type { Finding, Level } from "./types"
 import type { Snapshot } from "./snapshot"
 import type { RevisionReport } from "./probes/revision"
 import type { LogReport } from "./probes/logs"
+import {
+  hasReceiptSample,
+  providerFailed,
+  providerSettled,
+  pct,
+  wilson,
+  type PushReport,
+  type ReceiptCohort,
+} from "./probes/push"
 
 const MARK: Record<Level, string> = { ok: "✓", warn: "!", fail: "✗", pending: "…", skipped: "-" }
 
@@ -44,6 +53,51 @@ export function renderLogs(logs: LogReport, top: number): string[] {
     )
   }
   if (logs.truncated) lines.push("  (fetch capped; counts are lower bounds)")
+  return lines
+}
+
+function renderCohort(label: string, cohort: ReceiptCohort): string {
+  const excluded = Object.entries(cohort.excluded)
+    .filter(([, count]) => count > 0)
+    .map(([cls, count]) => `${cls} ${count}`)
+    .join(", ")
+  const tail = excluded ? `; excluded ${excluded}` : ""
+  if (!hasReceiptSample(cohort))
+    return `  ${pad(label, 9)} insufficient evidence: ${cohort.eligible} eligible (${cohort.confirmed} confirmed), not a health signal${tail}`
+  const bounds = wilson(cohort.confirmed, cohort.eligible)
+  return `  ${pad(label, 9)} ${cohort.confirmed}/${cohort.eligible} confirmed by the device (${pct(cohort.confirmed / cohort.eligible)}, 95% ${pct(bounds.lower)}–${pct(bounds.upper)}): created ${cohort.created}, suppressed ${cohort.suppressed}, creation failed ${cohort.creationFailed}${tail}`
+}
+
+export function renderPush(push: PushReport): string[] {
+  const lines = ["push      durable device deliveries (first-party ledger)"]
+  if (push.outcomes) {
+    const { since, prior } = push.outcomes
+    const settled = providerSettled(since)
+    const rate = settled ? ` (${pct(providerFailed(since) / settled)} of ${settled})` : ""
+    lines.push("  final status per device delivery (one each, not per provider attempt):")
+    lines.push(
+      `    since baseline: accepted ${since.accepted}, rejected ${since.rejected}, unreachable ${since.unreachable}${rate}, registration gone ${since.registrationGone}, worker failed ${since.workerFailed}, not sent ${since.notSent}, needed retries ${since.retried}`
+    )
+    lines.push(
+      `    prior window:   accepted ${prior.accepted}, rejected ${prior.rejected}, unreachable ${prior.unreachable}, registration gone ${prior.registrationGone}, worker failed ${prior.workerFailed}, not sent ${prior.notSent}`
+    )
+  }
+  if (push.backlog) {
+    const oldest = push.backlog.oldestDueSec === null ? "" : `, oldest due ${push.backlog.oldestDueSec}s`
+    lines.push(
+      `  pending right now ${push.backlog.pending} (awaiting retry ${push.backlog.retrying}, overdue ${push.backlog.overdue}${oldest})`
+    )
+  }
+  if (push.receipts.state === "measured") {
+    const hours = Math.round(push.receipts.windowMs / 3_600_000)
+    lines.push(
+      `  receipts: automatic deliveries matured (capability expired) in the last ${hours}h vs the ${hours}h before`
+    )
+    lines.push(renderCohort("current", push.receipts.current))
+    lines.push(renderCohort("baseline", push.receipts.baseline))
+    lines.push("  (a report means the worker got the push; it never proves the OS showed it or anyone saw it)")
+  }
+  for (const { detail } of push.unavailable) lines.push(`  unavailable: ${detail}`)
   return lines
 }
 
@@ -89,6 +143,7 @@ export function renderSnapshot(snapshot: Snapshot, opts: { top?: number } = {}):
           `  ${pad(counter.metric, 30)} ${counter.since}${counter.gauge ? " right now" : ` (prior ${counter.prior})`}`
         )
   }
+  if (snapshot.push) out.push(...renderPush(snapshot.push))
   if (snapshot.logs) out.push(...renderLogs(snapshot.logs, opts.top ?? 5))
   if (snapshot.resources) {
     out.push("resources")

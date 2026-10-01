@@ -1,4 +1,5 @@
-import type { CaptureResult, PostHog, Properties } from "posthog-js"
+import type { CapturedNetworkRequest, CaptureResult, PostHog, Properties } from "posthog-js"
+import { isPushRequestPath } from "@threahq/types"
 
 export type AnalyticsRoot = Pick<PostHog, "init">
 
@@ -82,6 +83,24 @@ export function dropBenignExceptions(event: CaptureResult | null): CaptureResult
     (exception) => typeof exception.value === "string" && BENIGN_EXCEPTION.test(exception.value)
   )
   return benign ? null : event
+}
+
+/**
+ * Push diagnostics stay first-party. The SDK also calls this with page URLs
+ * and preserves blank-URL timing for dropped initial entries. Other URLs use
+ * the event URL policy; the four known payload/header fields are removed too.
+ */
+function maskNetworkRequest(request: CapturedNetworkRequest): CapturedNetworkRequest | null {
+  if (typeof request.name !== "string") return null
+  let url: URL
+  try {
+    url = new URL(request.name, window.location.origin)
+  } catch {
+    return null
+  }
+  if (isPushRequestPath(url.pathname)) return null
+  const { requestBody: _rb, responseBody: _sb, requestHeaders: _rh, responseHeaders: _sh, ...timing } = request
+  return { ...timing, name: sanitizeUrl(url.href) }
 }
 
 export function beforeSend(event: CaptureResult | null): CaptureResult | null {
@@ -174,6 +193,12 @@ export async function startAnalytics(
           // Attachments, avatars and rendered canvases are recorded by `src`,
           // which masking does not touch.
           blockSelector: "img, video, canvas",
+          // Pinned off whatever the project's remote config says: a custom
+          // network mask replaces posthog's keyword scrub of bodies, and a
+          // response body is other people's messages anyway.
+          recordBody: false,
+          recordHeaders: false,
+          maskCapturedNetworkRequestFn: maskNetworkRequest,
         },
         enable_recording_console_log: false,
         capture_exceptions: true,
