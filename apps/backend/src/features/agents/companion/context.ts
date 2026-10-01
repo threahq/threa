@@ -251,6 +251,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   const previousSessionsBlock = await loadEpisodeSummaryPromptBlock(db, {
     streamId: stream.id,
     personaId: persona.id,
+    accessibleStreamIds,
   })
 
   // Durable stream brief (roadmap 4.1): the stream's standing working document,

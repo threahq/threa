@@ -173,6 +173,8 @@ export interface RecentEpisodeSummary {
   summary: string
   sessionCreatedAt: Date
   sessionCompletedAt: Date | null
+  /** Raw `content` of the session's `turn_digest` steps, the research the summary condenses. */
+  turnDigests: unknown[]
 }
 
 // Insert params
@@ -1237,15 +1239,26 @@ export const AgentSessionRepository = {
     db: Querier,
     params: { streamId: string; personaId: string; limit: number }
   ): Promise<RecentEpisodeSummary[]> {
-    const result = await db.query<{ summary: string; created_at: Date; completed_at: Date | null }>(
+    const result = await db.query<{
+      summary: string
+      created_at: Date
+      completed_at: Date | null
+      turn_digests: unknown[]
+    }>(
       sql`
-        SELECT episode_summary AS summary, created_at, completed_at
-        FROM agent_sessions
-        WHERE stream_id = ${params.streamId}
-          AND persona_id = ${params.personaId}
-          AND status = ${SessionStatuses.COMPLETED}
-          AND episode_summary IS NOT NULL
-        ORDER BY created_at DESC, id DESC
+        SELECT
+          s.episode_summary AS summary, s.created_at, s.completed_at,
+          COALESCE(
+            (SELECT jsonb_agg(st.content) FROM agent_session_steps st
+             WHERE st.session_id = s.id AND st.step_type = ${AgentStepTypes.TURN_DIGEST}),
+            '[]'::jsonb
+          ) AS turn_digests
+        FROM agent_sessions s
+        WHERE s.stream_id = ${params.streamId}
+          AND s.persona_id = ${params.personaId}
+          AND s.status = ${SessionStatuses.COMPLETED}
+          AND s.episode_summary IS NOT NULL
+        ORDER BY s.created_at DESC, s.id DESC
         LIMIT ${params.limit}
       `
     )
@@ -1253,6 +1266,7 @@ export const AgentSessionRepository = {
       summary: row.summary,
       sessionCreatedAt: row.created_at,
       sessionCompletedAt: row.completed_at,
+      turnDigests: row.turn_digests,
     }))
   },
 
