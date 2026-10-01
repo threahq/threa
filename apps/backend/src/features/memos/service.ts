@@ -227,6 +227,10 @@ export interface CaptureSessionReflectionParams {
   anchorMessageId: string
   /** Human participants across the session (a memo's `participant_ids`). */
   participantIds: string[]
+  /** Streams the session's research cited. */
+  citedStreamIds: string[]
+  /** Messages the session's research cited; those in the session's root become memo sources after the anchor. */
+  citedMessageIds: string[]
   authorTimezone?: string
 }
 
@@ -1178,7 +1182,17 @@ export class MemoService implements MemoServiceLike {
    * retrieval access is exactly the producing stream's (INV-8/INV-62), never wider.
    */
   async captureSessionReflection(params: CaptureSessionReflectionParams): Promise<CaptureSessionReflectionResult> {
-    const { workspaceId, streamId, sessionId, digest, anchorMessageId, participantIds, authorTimezone } = params
+    const {
+      workspaceId,
+      streamId,
+      sessionId,
+      digest,
+      anchorMessageId,
+      participantIds,
+      citedStreamIds,
+      citedMessageIds,
+      authorTimezone,
+    } = params
     const none = { classified: false, captured: 0, deduped: 0 }
 
     // Phase 1: read the stream's memo context (single connection, no AI held).
@@ -1201,8 +1215,34 @@ export class MemoService implements MemoServiceLike {
       // consistent with the passive extractor. Resolves the root first so a
       // thread-backed session still inherits the scratchpad tier.
       const memoScope = await resolveMemoScopeForStreamId(client, streamId)
-      return { existingMemos, existingTags, memoLanguage, memoScope }
+      // A memo is readable by whoever can read its anchor's root, so research
+      // from any other root (or a cited stream that no longer resolves) has an
+      // audience the memo can't honor.
+      const citedStreams = await StreamRepository.findByIdsInWorkspace(client, workspaceId, citedStreamIds)
+      const inRootStreamIds = citedStreams
+        .filter((s) => (s.rootStreamId ?? s.id) === memoScope.rootStreamId)
+        .map((s) => s.id)
+      const citesOutsideRoot = inRootStreamIds.length < citedStreamIds.length
+      const inRootMessages = await MessageRepository.findByIdsInStreams(
+        client,
+        workspaceId,
+        citedMessageIds,
+        inRootStreamIds
+      )
+      const sourceMessageIds = [
+        anchorMessageId,
+        ...citedMessageIds.filter((id) => id !== anchorMessageId && inRootMessages.has(id)),
+      ]
+      return { existingMemos, existingTags, memoLanguage, memoScope, citesOutsideRoot, sourceMessageIds }
     })
+
+    if (context.memoScope.scope === MemoScopes.WORKSPACE && context.citesOutsideRoot) {
+      logger.info(
+        { sessionId, streamId },
+        "reflective capture skipped — shared memo would cite research from another root"
+      )
+      return none
+    }
 
     // Phase 2: classify the digest. topicSummary is null — the digest's own
     // "Trigger / researched / replied" sections carry the framing, and a session
@@ -1222,8 +1262,8 @@ export class MemoService implements MemoServiceLike {
       return none
     }
 
-    // Phase 3: memorize. `content: []` — a reflective memo's source is the session
-    // anchor, not the digest's cited message ids, so no per-message resolution.
+    // Phase 3: memorize. `content: []` — every reflective memo shares the sources
+    // resolved in phase 1, so there is no per-memo source resolution.
     const contents = (
       await this.memorizer.memorizeConversation(digest, {
         memoryContext: context.existingMemos.map((m) => m.abstract),
@@ -1315,7 +1355,7 @@ export class MemoService implements MemoServiceLike {
           title: content.title,
           abstract: content.abstract,
           keyPoints: content.keyPoints,
-          sourceMessageIds: [anchorMessageId],
+          sourceMessageIds: context.sourceMessageIds,
           participantIds,
           knowledgeType: content.knowledgeType,
           tags: content.tags,
@@ -1336,7 +1376,7 @@ export class MemoService implements MemoServiceLike {
           memoId: newMemoId,
           title: content.title,
           knowledgeType: content.knowledgeType,
-          sourceMessageIds: [anchorMessageId],
+          sourceMessageIds: context.sourceMessageIds,
         })
       }
 
