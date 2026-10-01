@@ -335,17 +335,22 @@ describe("sandbox tokens", () => {
     })
   })
 
-  test("should reject an unknown token, another workspace, an inactive invoker, and a removed one", async () => {
+  test("should reject an unknown token, another workspace, an inactive invoker, a removed one, and an unclaimed one", async () => {
     const results = await Promise.all([
       runMiddleware(sandboxMiddleware(["messages:read"]), sandboxReq("threa_sk_revoked")),
       runMiddleware(sandboxMiddleware(["messages:read"]), sandboxReq("threa_sk_live", "ws_2")),
       runMiddleware(sandboxMiddleware(null), sandboxReq("threa_sk_live")),
       runMiddleware(sandboxMiddleware(["messages:read"], []), sandboxReq("threa_sk_live")),
+      runMiddleware(
+        sandboxMiddleware(["messages:read"], [{ ...invokerRow, workos_user_id: null }]),
+        sandboxReq("threa_sk_live")
+      ),
     ])
 
     expect(results.map((r) => ({ status: r.error?.status, code: r.error?.code }))).toEqual([
       { status: 401, code: "UNAUTHORIZED" },
       { status: 403, code: "FORBIDDEN" },
+      { status: 401, code: "OWNER_INACTIVE" },
       { status: 401, code: "OWNER_INACTIVE" },
       { status: 401, code: "OWNER_INACTIVE" },
     ])

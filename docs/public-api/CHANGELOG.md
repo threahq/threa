@@ -2,6 +2,12 @@
 
 Generated from the version-change modules. Do not edit by hand.
 
+## 2026-10-01
+
+A workspace can list people who have not claimed an account yet. Such a user may have no `email`, so `email` is optional on users. Pins before this version never see a user without an email.
+
+Affected operations: listUsers
+
 ## 2026-08-21
 
 Shared-message and quote references pin a source revision and optional span. `slots` keys carry the reference (`shared:<messageId>[@<version>[:<from>-<to>]]`), `ok` slots gain `version`, `currentRevision` and `range`, and `content` is the revision the reference names rather than the source as it now reads. Pins before this version still get one `shared:<messageId>` key per source, the whole-message slot at the highest version, without the pin fields; a reference to a span of a message is omitted for those pins, since that shape cannot say it is a fragment.

@@ -29,8 +29,8 @@ function pickMirroredRole(slugs: readonly string[] | null, fallback: string): st
 interface UserRow {
   id: string
   workspace_id: string
-  workos_user_id: string
-  email: string
+  workos_user_id: string | null
+  email: string | null
   role: string
   slug: string
   name: string
@@ -59,8 +59,9 @@ interface UserAccessRow extends Partial<UserRow> {
 export interface User {
   id: string
   workspaceId: string
-  workosUserId: string
-  email: string
+  /** Null for a user nobody has claimed yet; such a user cannot sign in. */
+  workosUserId: string | null
+  email: string | null
   role: WorkspaceRoleSlug
   slug: string
   name: string
@@ -81,11 +82,18 @@ export interface User {
   joinedAt: Date
 }
 
+/** A user someone has signed in as. Only claimed users authenticate. */
+export type ClaimedUser = User & { workosUserId: string }
+
+export function isClaimedUser(user: User): user is ClaimedUser {
+  return user.workosUserId !== null
+}
+
 export interface InsertUserParams {
   id: string
   workspaceId: string
-  workosUserId: string
-  email: string
+  workosUserId: string | null
+  email: string | null
   name: string
   role: WorkspaceRoleSlug
   slug: string

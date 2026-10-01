@@ -3,7 +3,7 @@ import type { Pool } from "pg"
 import { HttpError } from "@threahq/backend-common"
 import type { WorkspacePermissionSlug } from "@threahq/types"
 import { BOT_KEY_PREFIX } from "@threahq/types"
-import { UserRepository } from "../features/workspaces"
+import { UserRepository, isClaimedUser } from "../features/workspaces"
 import type { WorkspaceAuthzService } from "../features/workspace-authz"
 import type { UserApiKeyService, ValidatedUserApiKey } from "../features/user-api-keys"
 import type { BotApiKeyService, ValidatedBotApiKey, OperationId } from "../features/public-api"
@@ -70,7 +70,7 @@ export function createPublicApiAuthMiddleware({
 
       // Resolve workspace user for stream access checks
       const user = await UserRepository.findById(pool, workspaceId, validated.userId)
-      if (!user) {
+      if (!user || !isClaimedUser(user)) {
         next(new HttpError("API key does not have access to this workspace", { status: 403, code: "FORBIDDEN" }))
         return
       }
@@ -137,9 +137,10 @@ export function createPublicApiAuthMiddleware({
       }
 
       const invoker = await UserRepository.findById(pool, workspaceId, session.invokingUserId)
-      const invokerPermissions = invoker
-        ? await workspaceAuthzService.resolveActivePermissions(workspaceId, invoker.workosUserId)
-        : null
+      const invokerPermissions =
+        invoker && isClaimedUser(invoker)
+          ? await workspaceAuthzService.resolveActivePermissions(workspaceId, invoker.workosUserId)
+          : null
       if (invokerPermissions === null) {
         next(
           new HttpError("API key owner is no longer an active workspace member", {
