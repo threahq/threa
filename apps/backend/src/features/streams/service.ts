@@ -879,6 +879,7 @@ export class StreamService {
       // row (title) before the anchor row that joins against it.
       const anchorEvent = await StreamEventRepository.insert(client, {
         id: eventId(),
+        workspaceId: params.workspaceId,
         streamId: params.parentStreamId,
         eventType: "aside:anchored",
         payload: {
@@ -951,6 +952,7 @@ export class StreamService {
 
           const eventParams = validMemberIds.map((memberId) => ({
             id: eventId(),
+            workspaceId: params.workspaceId,
             streamId: stream.id,
             eventType: "member_added" as const,
             payload: { addedBy: params.createdBy },
@@ -1349,6 +1351,7 @@ export class StreamService {
     if (!stream) return stream
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId,
       streamId: stream.id,
       eventType: archived ? "stream_archived" : "stream_unarchived",
       payload: archived ? { archivedAt: stream.archivedAt } : {},
@@ -1390,6 +1393,7 @@ export class StreamService {
   ): Promise<void> {
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: stream.workspaceId,
       streamId: stream.id,
       eventType: "description_set",
       payload: { descriptionMarkdown: stream.description } satisfies DescriptionSetEventPayload,
@@ -2201,6 +2205,7 @@ export class StreamService {
       const evtId = eventId()
       const event = await StreamEventRepository.insert(client, {
         id: evtId,
+        workspaceId: stream.workspaceId,
         streamId,
         eventType: "member_joined",
         payload: {},
@@ -2233,6 +2238,7 @@ export class StreamService {
     const evtId = eventId()
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
+      workspaceId: stream.workspaceId,
       streamId: stream.id,
       eventType: "member_added",
       payload: { addedBy: actorId, addedByType: actorType },
@@ -2350,6 +2356,7 @@ export class StreamService {
 
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId,
       streamId: grantStream.id,
       eventType: "member_added",
       payload: { addedBy: actorId },
@@ -2386,6 +2393,7 @@ export class StreamService {
 
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: stream.workspaceId,
       streamId: stream.id,
       eventType: "member_left",
       payload: {},
@@ -2431,6 +2439,7 @@ export class StreamService {
         for (const removedStreamId of removedStreamIds) {
           const threadEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
+            workspaceId: stream.workspaceId,
             streamId: removedStreamId,
             eventType: "member_left",
             payload: {},
@@ -2468,6 +2477,7 @@ export class StreamService {
 
       const event = await StreamEventRepository.insert(client, {
         id: eventId(),
+        workspaceId,
         streamId: grantStream.id,
         eventType: "member_left",
         payload: {},

@@ -166,9 +166,9 @@ describe("stream context read path", () => {
         VALUES (${taskId}, ${wsId}, ${channelId}, 'user', ${memberId}, 'Ship the thing', 'brief')
       `)
       const event = await client.query<{ id: string }>(sql`
-        INSERT INTO stream_events (id, stream_id, sequence, event_type, payload, actor_id, actor_type)
+        INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload, actor_id, actor_type)
         VALUES (
-          ${`event_${taskId}`}, ${channelId}, 9999, 'delegation:created',
+          ${`event_${taskId}`}, ${wsId}, ${channelId}, 9999, 'delegation:created',
           ${JSON.stringify({ delegationId: taskId })}::jsonb, ${memberId}, 'user'
         )
         RETURNING id

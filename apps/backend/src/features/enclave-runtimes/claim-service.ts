@@ -744,6 +744,7 @@ export class EnclaveClaimService {
   ): Promise<void> {
     const startedEvent = await StreamEventRepository.insert(tx, {
       id: eventId(),
+      workspaceId: params.workspaceId,
       streamId: params.stream.id,
       eventType: "agent_session:started",
       payload: {

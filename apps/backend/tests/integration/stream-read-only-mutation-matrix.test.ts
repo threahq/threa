@@ -190,6 +190,7 @@ describe("synchronous stream read-only mutation matrix", () => {
     const root = await seed({ visibility: "public" })
     const anchor = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: root,
       eventType: "delegation:created",
       payload: {},

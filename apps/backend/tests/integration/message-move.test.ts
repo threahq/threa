@@ -93,6 +93,7 @@ describe("message move integration", () => {
     const traceStartedEventId = eventId()
     await StreamEventRepository.insert(pool, {
       id: traceStartedEventId,
+      workspaceId: testWorkspaceId,
       streamId: sourceStreamId,
       eventType: "agent_session:started",
       payload: {
@@ -113,6 +114,7 @@ describe("message move integration", () => {
     const traceCompletedEventId = eventId()
     await StreamEventRepository.insert(pool, {
       id: traceCompletedEventId,
+      workspaceId: testWorkspaceId,
       streamId: sourceStreamId,
       eventType: "agent_session:completed",
       payload: {

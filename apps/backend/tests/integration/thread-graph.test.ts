@@ -625,6 +625,7 @@ describe("Thread Graph", () => {
 
       const event = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: channelId,
         eventType: "delegation:created",
         payload: {},
@@ -651,6 +652,7 @@ describe("Thread Graph", () => {
       const { wsId, ownerId, actorId, channelId } = await seedChannel("event-nonthreadable")
       const event = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: channelId,
         eventType: "member_added",
         payload: {},
@@ -679,6 +681,7 @@ describe("Thread Graph", () => {
       })
       const event = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: other.id,
         eventType: "delegation:created",
         payload: {},
@@ -723,6 +726,7 @@ describe("Thread Graph", () => {
       const { wsId, ownerId, actorId, channelId } = await seedChannel("event-idempotent")
       const event = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: channelId,
         eventType: "delegation:created",
         payload: {},
@@ -842,6 +846,7 @@ describe("Thread Graph", () => {
       const { wsId, ownerId, actorId, channelId } = await seedChannel("proj-event")
       const cardEvent = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: channelId,
         eventType: "delegation:created",
         payload: {},
@@ -906,6 +911,7 @@ describe("Thread Graph", () => {
       // Event-anchored thread with one reply.
       const cardEvent = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: channelId,
         eventType: "delegation:created",
         payload: {},

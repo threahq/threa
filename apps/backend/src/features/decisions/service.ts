@@ -197,6 +197,7 @@ export class DecisionService {
       }
       const event = await StreamEventRepository.insert(client, {
         id: eventId(),
+        workspaceId: decision.workspaceId,
         streamId: decision.streamId,
         eventType: "decision:requested",
         payload,
@@ -340,6 +341,7 @@ export class DecisionService {
     }
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: decision.workspaceId,
       streamId: decision.streamId,
       eventType: "decision:resolved",
       payload,

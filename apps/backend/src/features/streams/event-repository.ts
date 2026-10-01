@@ -50,6 +50,7 @@ export interface StreamEvent {
 
 export interface InsertEventParams {
   id: string
+  workspaceId: string
   streamId: string
   eventType: EventType
   payload: unknown
@@ -118,13 +119,14 @@ export const StreamEventRepository = {
    */
   async allocateSequences(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     counts: { total: number; broadcast: number }
   ): Promise<{ firstSequence: bigint; firstBroadcastSequence: bigint }> {
     const { total, broadcast } = counts
     const result = await db.query<{ first_sequence: string; first_broadcast_sequence: string }>(sql`
-      INSERT INTO stream_sequences (stream_id, next_sequence, next_broadcast_sequence)
-      VALUES (${streamId}, ${total + 1}, ${broadcast + 1})
+      INSERT INTO stream_sequences (workspace_id, stream_id, next_sequence, next_broadcast_sequence)
+      VALUES (${workspaceId}, ${streamId}, ${total + 1}, ${broadcast + 1})
       ON CONFLICT (stream_id) DO UPDATE
         SET next_sequence = stream_sequences.next_sequence + ${total},
             next_broadcast_sequence = stream_sequences.next_broadcast_sequence + ${broadcast}
@@ -144,11 +146,12 @@ export const StreamEventRepository = {
    */
   async getNextSequencePairs(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     count: number
   ): Promise<Array<{ sequence: bigint; broadcastSequence: bigint }>> {
     if (count <= 0) return []
-    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, streamId, {
+    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, workspaceId, streamId, {
       total: count,
       broadcast: count,
     })
@@ -160,17 +163,23 @@ export const StreamEventRepository = {
 
   async insert(db: Querier, params: InsertEventParams): Promise<StreamEvent> {
     const isBroadcast = isTimelineBroadcastEventType(params.eventType)
-    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, params.streamId, {
-      total: 1,
-      broadcast: isBroadcast ? 1 : 0,
-    })
+    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(
+      db,
+      params.workspaceId,
+      params.streamId,
+      {
+        total: 1,
+        broadcast: isBroadcast ? 1 : 0,
+      }
+    )
     const broadcastSequence = isBroadcast ? firstBroadcastSequence : null
     const createdAt = params.createdAt ?? new Date()
 
     const result = await db.query<StreamEventRow>(sql`
-      INSERT INTO stream_events (id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at)
+      INSERT INTO stream_events (id, workspace_id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at)
       VALUES (
         ${params.id},
+        ${params.workspaceId},
         ${params.streamId},
         ${firstSequence.toString()},
         ${broadcastSequence === null ? null : broadcastSequence.toString()},
@@ -187,13 +196,13 @@ export const StreamEventRepository = {
 
   async insertMany(db: Querier, paramsList: InsertEventParams[]): Promise<StreamEvent[]> {
     if (paramsList.length === 0) return []
-    const streamId = paramsList[0].streamId
-    if (paramsList.some((p) => p.streamId !== streamId)) {
-      throw new Error("insertMany requires all events to belong to the same stream")
+    const { streamId, workspaceId } = paramsList[0]
+    if (paramsList.some((p) => p.streamId !== streamId || p.workspaceId !== workspaceId)) {
+      throw new Error("insertMany requires all events to belong to the same stream and workspace")
     }
     const broadcastFlags = paramsList.map((p) => isTimelineBroadcastEventType(p.eventType))
     const broadcastCount = broadcastFlags.filter(Boolean).length
-    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, streamId, {
+    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, workspaceId, streamId, {
       total: paramsList.length,
       broadcast: broadcastCount,
     })
@@ -209,6 +218,7 @@ export const StreamEventRepository = {
     })
 
     const ids = paramsList.map((p) => p.id)
+    const workspaceIds = paramsList.map(() => workspaceId)
     const streamIds = paramsList.map(() => streamId)
     const seqs = paramsList.map((_, i) => (firstSequence + BigInt(i)).toString())
     const eventTypes = paramsList.map((p) => p.eventType)
@@ -217,10 +227,10 @@ export const StreamEventRepository = {
     const actorTypes = paramsList.map((p) => p.actorType ?? null)
 
     const result = await db.query<StreamEventRow>(
-      `INSERT INTO stream_events (id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type)
-       SELECT * FROM unnest($1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::text[], $6::jsonb[], $7::text[], $8::text[])
+      `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::bigint[], $5::bigint[], $6::text[], $7::jsonb[], $8::text[], $9::text[])
        RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at`,
-      [ids, streamIds, seqs, broadcastSeqs, eventTypes, payloads, actorIds, actorTypes]
+      [ids, workspaceIds, streamIds, seqs, broadcastSeqs, eventTypes, payloads, actorIds, actorTypes]
     )
     return result.rows.map(mapRowToEvent)
   },

@@ -393,6 +393,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
 
       const streamEvent = await StreamEventRepository.insert(db, {
         id: eventId(),
+        workspaceId,
         streamId: updated.streamId,
         eventType: "agent_session:deleted",
         payload: {
