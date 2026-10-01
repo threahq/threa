@@ -2025,6 +2025,34 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("returns the revision-merged count from a reconnect whose snapshot is older than IndexedDB", async () => {
+    const current = makeStream("stream_reconnect_count", { messageCount: 12, messageCountRevision: 12 })
+    await db.streams.put({ ...current, _cachedAt: Date.now() })
+    const preview = {
+      authorId: "usr_1",
+      authorType: "user" as const,
+      content: "hi",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    }
+
+    const { workspaceBootstrap } = await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({
+        streams: [{ ...current, messageCount: 9, messageCountRevision: 9, lastMessagePreview: preview }],
+      }),
+      new Map(),
+      new Set(),
+      new Set(),
+      Date.now()
+    )
+
+    const returned = workspaceBootstrap.streams.find((stream) => stream.id === current.id)
+    expect({
+      returned: { count: returned?.messageCount, preview: returned?.lastMessagePreview },
+      stored: (await db.streams.get(current.id))?.messageCount,
+    }).toEqual({ returned: { count: 12, preview }, stored: 12 })
+  })
+
   it("merges a delayed stream:created into cache and IndexedDB without regressing title fields", async () => {
     const queryClient = new QueryClient()
     const current = makeStream("stream_delayed_create", {

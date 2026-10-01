@@ -1646,7 +1646,7 @@ function bindStreamSocketHandlers(
         streams: streamExists
           ? old.streams.map((stream) =>
               stream.id === payload.thread.id
-                ? { ...stream, ...payload.thread, lastMessagePreview: stream.lastMessagePreview }
+                ? { ...mergeStreamByRevision(stream, payload.thread), lastMessagePreview: stream.lastMessagePreview }
                 : stream
             )
           : [...old.streams, { ...payload.thread, lastMessagePreview: null }],

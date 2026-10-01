@@ -3689,6 +3689,13 @@ export async function applyReconnectBootstrapBatch(
   // caller; reflect the preserved local config so it doesn't carry the stale
   // snapshot value.
   finalBootstrap.sidebarConfig = effectiveSidebarConfig
+  // ...and the revision-merged stream rows, so a stale snapshot can't roll the
+  // query cache back past a newer title or count IDB kept.
+  const mergedStreamById = byId(mergedStreams)
+  finalBootstrap.streams = finalBootstrap.streams.map((stream) => {
+    const merged = mergedStreamById.get(stream.id)
+    return merged ? { ...merged, lastMessagePreview: stream.lastMessagePreview } : stream
+  })
 
   // Re-seed the sidebar agent-activity store with the reconnect's running set —
   // the authority that drops any entry whose end signal was missed (INV-53).
