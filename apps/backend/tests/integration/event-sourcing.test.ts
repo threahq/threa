@@ -814,6 +814,7 @@ describe("Event Sourcing", () => {
       // GLOBAL sequence that viewer A never receives.
       await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: testWorkspaceId,
         streamId: testStreamId,
         eventType: "command_dispatched",
         payload: { commandId: "cmd_1", command: "/recap" },
@@ -822,6 +823,7 @@ describe("Event Sourcing", () => {
       })
       await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: testWorkspaceId,
         streamId: testStreamId,
         eventType: "command_completed",
         payload: { commandId: "cmd_1" },
@@ -852,12 +854,14 @@ describe("Event Sourcing", () => {
 
     test("insertMany assigns broadcast slots in list order, skipping non-broadcast types", async () => {
       const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
       const memberA = userId()
       const memberB = userId()
 
       const events = await StreamEventRepository.insertMany(pool, [
         {
           id: eventId(),
+          workspaceId: testWorkspaceId,
           streamId: testStreamId,
           eventType: "member_added",
           payload: {},
@@ -866,6 +870,7 @@ describe("Event Sourcing", () => {
         },
         {
           id: eventId(),
+          workspaceId: testWorkspaceId,
           streamId: testStreamId,
           eventType: "reaction_added",
           payload: {},
@@ -874,6 +879,7 @@ describe("Event Sourcing", () => {
         },
         {
           id: eventId(),
+          workspaceId: testWorkspaceId,
           streamId: testStreamId,
           eventType: "member_added",
           payload: {},
@@ -904,6 +910,7 @@ describe("Event Sourcing", () => {
           // Insert event
           await StreamEventRepository.insert(client, {
             id: "evt_test",
+            workspaceId: testWorkspaceId,
             streamId: testStreamId,
             eventType: "message_created",
             payload: { messageId: "msg_test", content: "Test", contentFormat: "markdown" },

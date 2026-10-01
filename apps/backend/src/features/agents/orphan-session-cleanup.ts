@@ -49,6 +49,7 @@ export async function failSessionWithLifecycleInTransaction(
     const steps = await AgentSessionRepository.findStepsBySession(tx, sessionId)
     const streamEvent = await StreamEventRepository.insert(tx, {
       id: eventId(),
+      workspaceId: stream.workspaceId,
       streamId,
       eventType: "agent_session:failed",
       payload: {

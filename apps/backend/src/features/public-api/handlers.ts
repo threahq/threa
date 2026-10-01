@@ -1742,6 +1742,7 @@ export function createPublicApiHandlers({
           startedInThread = parentActivityTarget(await StreamRepository.findById(client, invocation.responseStreamId))
           const streamEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
+            workspaceId: invocation.workspaceId,
             streamId: invocation.responseStreamId,
             eventType: "agent_session:started",
             payload: {
@@ -2351,6 +2352,7 @@ export function createPublicApiHandlers({
           const steps = await AgentSessionRepository.findStepsBySession(client, session.id)
           const streamEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
+            workspaceId: stream.workspaceId,
             streamId: session.streamId,
             eventType: "agent_session:completed",
             payload: {
@@ -2640,6 +2642,7 @@ export function createPublicApiHandlers({
               const completedAt = finalizedSession.completedAt ?? new Date()
               const streamEvent = await StreamEventRepository.insert(client, {
                 id: eventId(),
+                workspaceId: req.workspaceId!,
                 streamId: completed.responseStreamId,
                 eventType: "agent_session:completed",
                 payload: {

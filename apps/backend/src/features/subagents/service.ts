@@ -122,6 +122,7 @@ export class SubagentService {
       }
       const cardEvent = await StreamEventRepository.insert(client, {
         id: cardEventId,
+        workspaceId: params.workspaceId,
         streamId: params.parentStreamId,
         eventType: "subagent:created",
         payload,
@@ -391,6 +392,7 @@ export class SubagentService {
     }
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: run.workspaceId,
       streamId: run.parentStreamId,
       eventType: "subagent:status_changed",
       payload,

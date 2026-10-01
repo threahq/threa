@@ -182,6 +182,7 @@ describe("inbox hold", () => {
       // is covered separately.
       const evt2 = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wid,
         streamId: sid,
         eventType: "message_created",
         payload: { messageId: "msg_synthetic" },

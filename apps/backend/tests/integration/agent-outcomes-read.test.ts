@@ -181,6 +181,7 @@ describe("agent outcomes read path", () => {
     await withTransaction(pool, async (client) => {
       await StreamEventRepository.insert(client, {
         id: threadFollowUpEventId,
+        workspaceId: wsId,
         streamId: threadId,
         eventType: "agent:follow_up_scheduled",
         payload: { followUpId: threadFollowUpId, note: "Check the thread deploy" },
@@ -494,6 +495,7 @@ describe("agent outcomes subagent arm", () => {
     await withTransaction(pool, async (client) => {
       await StreamEventRepository.insert(client, {
         id: activeCardEventId,
+        workspaceId: wsId,
         streamId: channelId,
         eventType: "subagent:created",
         payload: { subagentId: "subagent_placeholder", title: "Second opinion" },
@@ -641,6 +643,7 @@ describe("agent outcomes subagent arm", () => {
     await withTransaction(pool, async (client) => {
       await StreamEventRepository.insert(client, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: waitingChannel.id,
         eventType: "subagent:status_changed",
         payload: {

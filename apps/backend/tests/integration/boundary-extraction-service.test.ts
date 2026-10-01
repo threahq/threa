@@ -656,6 +656,7 @@ describe("BoundaryExtractionService", () => {
       const cardEvent = await withTransaction(pool, async (client) => {
         return StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: testWorkspaceId,
           streamId: testStreamId,
           eventType: "delegation:created",
           payload: { delegationId: "dlg_x", title: "Do a thing", brief: "b", contextRefs: [] },

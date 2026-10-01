@@ -3236,6 +3236,7 @@ export class CallService {
     }
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: args.call.workspaceId,
       streamId: args.streamId,
       eventType: "call_started",
       payload,
@@ -3295,6 +3296,7 @@ export class CallService {
     }
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: call.workspaceId,
       streamId: call.streamId,
       eventType: "call_ended",
       payload,

@@ -248,6 +248,7 @@ describe("StreamService.joinPublicChannel", () => {
       {},
       {
         id: "evt_1",
+        workspaceId: "ws_1",
         streamId: "stream_1",
         eventType: "member_joined",
         payload: {},
