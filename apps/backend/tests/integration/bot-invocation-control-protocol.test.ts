@@ -47,6 +47,7 @@ describe("bot invocation control protocol", () => {
 
   async function createSource(markdown = "revision one") {
     const message = await MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: stream,
       sequence: BigInt(Date.now()),
@@ -126,6 +127,7 @@ describe("bot invocation control protocol", () => {
     await createSource()
     const claimed = await claim("reply-generation")
     await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: workspace,
       id: claimed!.id,
       streamId: stream,
       personaId: bot,
@@ -368,6 +370,7 @@ describe("bot invocation control protocol", () => {
     const results: Array<Record<string, unknown>> = []
     for (const delivery of ["plaintext", "sealed"] as const) {
       const source = await MessageRepository.insert(pool, {
+        workspaceId: workspace,
         id: messageId(),
         streamId: stream,
         sequence: BigInt(Date.now()) + BigInt(results.length),
@@ -704,6 +707,7 @@ describe("bot invocation control protocol", () => {
     const source = await createSource()
     const claimed = await claim("repair-token")
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: claimed!.id,
       streamId: stream,
       personaId: bot,

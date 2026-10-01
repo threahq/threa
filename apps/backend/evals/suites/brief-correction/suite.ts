@@ -122,7 +122,7 @@ async function setupTestData(
     companionPersonaId: testPersonaId,
     createdBy: ctx.userId,
   })
-  await StreamMemberRepository.insert(pool, testStreamId, ctx.userId)
+  await StreamMemberRepository.insert(pool, ctx.workspaceId, testStreamId, ctx.userId)
 
   const userPreferencesService = new UserPreferencesService(pool)
   await userPreferencesService.updatePreferences(ctx.workspaceId, ctx.userId, { timezone: "UTC" })

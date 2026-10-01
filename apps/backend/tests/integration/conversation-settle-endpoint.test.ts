@@ -57,6 +57,7 @@ describe("settle message endpoint", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id,
         streamId: streamIdForRow,
         sequence: seq++,
@@ -135,7 +136,7 @@ describe("settle message endpoint", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
       // A thread under the private channel: access is inherited from the root
       // (INV-62), so a channel member reaches it without a membership row of
       // its own and an outsider reaches neither.

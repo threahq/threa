@@ -45,6 +45,7 @@ describe("bot invocation canonical source mutations", () => {
 
   async function source(markdown = "one") {
     return MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: stream,
       sequence: ++sourceSequence,
@@ -130,6 +131,7 @@ describe("bot invocation canonical source mutations", () => {
       const message = await source("done")
       const completed = await invocation(message.id, message.revision)
       await AgentSessionRepository.insert(pool, {
+        workspaceId: workspace,
         id: completed.invocation.id,
         streamId: stream,
         personaId: bot,
@@ -205,6 +207,7 @@ describe("bot invocation canonical source mutations", () => {
     )
 
     await MessageVersionRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageVersionId(),
       messageId: message.id,
       contentJson: testContentJson("before"),
@@ -529,6 +532,7 @@ describe("bot invocation canonical source mutations", () => {
     expect(claimed).not.toBeNull()
     expect(
       await AgentSessionRepository.insertRunningOrSkip(pool, {
+        workspaceId: workspace,
         id: claimed!.id,
         streamId: stream,
         personaId: bot,

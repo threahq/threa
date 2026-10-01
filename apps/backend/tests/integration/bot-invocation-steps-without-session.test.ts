@@ -145,6 +145,7 @@ describe("recordSteps against a claim with no agent session", () => {
   test("should reject with INVOCATION_SESSION_MISSING when the session under the claim id belongs to another stream", async () => {
     await seedClaim("binv_sc_other_stream", "active-scratchpad", "tok_sc_other_stream")
     const inserted = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: ws,
       id: "binv_sc_other_stream",
       streamId: otherStream,
       personaId: botId,
@@ -176,6 +177,7 @@ describe("recordSteps against a claim with no agent session", () => {
   test("should reject with INVOCATION_SESSION_MISSING when another session was still running on the stream at claim time", async () => {
     await seedClaim("binv_sc_regular_a", "active-scratchpad", "tok_sc_regular_a")
     const inserted = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: ws,
       id: "binv_sc_regular_a",
       streamId: stream,
       personaId: botId,
@@ -186,6 +188,7 @@ describe("recordSteps against a claim with no agent session", () => {
 
     await seedClaim("binv_sc_regular_b", "active-scratchpad", "tok_sc_regular_b")
     const skipped = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: ws,
       id: "binv_sc_regular_b",
       streamId: stream,
       personaId: botId,

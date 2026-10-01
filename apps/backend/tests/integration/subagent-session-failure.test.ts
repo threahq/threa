@@ -139,6 +139,7 @@ describe("orphaned runtime", () => {
     const channel = await ctx.createChannel({ slug: "orphan" })
     const { run, threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
     const session = await AgentSessionRepository.insert(pool, {
+      workspaceId: ctx.workspaceId,
       id: `sess_orphan_${run.id.slice(-8)}`,
       streamId: threadStreamId,
       personaId: ctx.persona.id,

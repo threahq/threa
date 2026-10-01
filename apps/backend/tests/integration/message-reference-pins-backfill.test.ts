@@ -88,7 +88,7 @@ describe("message-reference-pins backfill", () => {
           slug: `${label}-${id.slice(-8)}`,
           createdBy: author,
         })
-        await StreamMemberRepository.insert(client, id, author)
+        await StreamMemberRepository.insert(client, testWorkspaceId, id, author)
       }
     })
 
@@ -142,6 +142,7 @@ describe("message-reference-pins backfill", () => {
     await withTransaction(pool, async (client) => {
       for (const row of legacyRows) {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: row.id,
           streamId: target,
           sequence: row.sequence,

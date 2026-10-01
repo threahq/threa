@@ -60,6 +60,7 @@ describe("conversation settling", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id,
         streamId: testStreamId,
         sequence: seq++,
@@ -99,7 +100,7 @@ describe("conversation settling", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
     })
 
     extractor = new StubExtractor()

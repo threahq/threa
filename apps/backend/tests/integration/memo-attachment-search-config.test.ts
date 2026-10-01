@@ -65,7 +65,7 @@ describe("Per-row text-search config for memos and attachments", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
     })
 
     return { workspaceId: testWorkspaceId, userId: testUserId, streamId: testStreamId }
@@ -85,6 +85,7 @@ describe("Per-row text-search config for memos and attachments", () => {
       const sourceMessageId = messageId()
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: ws.workspaceId,
           id: sourceMessageId,
           streamId: ws.streamId,
           sequence: BigInt(Date.now()),

@@ -31,7 +31,7 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { defaultCompanionPersonaId: "persona_x" })
 
     expect(findById).toHaveBeenCalledWith({}, "persona_x", WORKSPACE_ID)
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "defaultCompanionPersonaId", value: "persona_x" }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "defaultCompanionPersonaId", value: "persona_x" }])
     expect(bulkDelete).not.toHaveBeenCalled()
     expect(prefs.defaultCompanionPersonaId).toBe("persona_x")
   })
@@ -91,7 +91,7 @@ describe("UserPreferencesService.updatePreferences mobile inline attachments", (
 
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { mobileInlineAttachments: false })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "mobileInlineAttachments", value: false }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "mobileInlineAttachments", value: false }])
     expect(bulkDelete).not.toHaveBeenCalled()
     expect(prefs.mobileInlineAttachments).toBe(false)
   })
@@ -110,7 +110,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
 
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "granted" })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "analyticsConsent", value: "granted" }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "analyticsConsent", value: "granted" }])
     expect(bulkDelete).not.toHaveBeenCalled()
     expect(prefs.analyticsConsent).toBe("granted")
   })
@@ -125,7 +125,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
 
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "denied" })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["sessionReplayOptIn"])
     expect(prefs.sessionReplayOptIn).toBe(false)
   })
@@ -156,7 +156,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
       sessionReplayOptIn: true,
     })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["sessionReplayOptIn"])
     expect(prefs.sessionReplayOptIn).toBe(false)
   })
@@ -177,7 +177,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
       sessionReplayOptIn: true,
     })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [
       { key: "analyticsConsent", value: "granted" },
       { key: "sessionReplayOptIn", value: true },
     ])
@@ -209,7 +209,7 @@ describe("UserPreferencesService.updatePreferences board ledger settings", () =>
       boardMassBadge: "off",
     })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [
       { key: "boardFullTailCount", value: 3 },
       { key: "boardLedgerRows", value: 40 },
       { key: "boardLeadLineLength", value: 200 },
@@ -259,7 +259,7 @@ describe("UserPreferencesService.updatePreferences codeBlockWrapOverrides", () =
     const service = new UserPreferencesService({} as any)
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: { sql: "wrap" } })
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "codeBlockWrapOverrides", value: { sql: "wrap" } }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "codeBlockWrapOverrides", value: { sql: "wrap" } }])
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: {} })
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["codeBlockWrapOverrides"])
@@ -290,7 +290,7 @@ describe("UserPreferencesService.updatePreferences pushQuickReaction", () => {
 
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { pushQuickReaction: "🎉" })
 
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "pushQuickReaction", value: "🎉" }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "pushQuickReaction", value: "🎉" }])
     expect(prefs.pushQuickReaction).toBe("🎉")
   })
 })

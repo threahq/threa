@@ -190,7 +190,7 @@ async function setupTestData(
   })
 
   // Add user as stream member
-  await StreamMemberRepository.insert(pool, testStreamId, ctx.userId)
+  await StreamMemberRepository.insert(pool, ctx.workspaceId, testStreamId, ctx.userId)
 
   // Create event service for message creation
   const eventService = new EventService(pool)

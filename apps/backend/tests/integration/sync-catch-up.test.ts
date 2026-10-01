@@ -30,10 +30,11 @@ describe("SyncLogRepository catch-up reads", () => {
     return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`
   }
 
-  async function addMembership(streamId: string, userId: string): Promise<void> {
+  async function addMembership(workspaceId: string, streamId: string, userId: string): Promise<void> {
     await pool.query(
-      `INSERT INTO stream_members (stream_id, member_id) VALUES ($1, $2) ON CONFLICT (stream_id, member_id) DO NOTHING`,
-      [streamId, userId]
+      `INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)
+       ON CONFLICT (stream_id, member_id) DO NOTHING`,
+      [workspaceId, streamId, userId]
     )
   }
 
@@ -81,8 +82,8 @@ describe("SyncLogRepository catch-up reads", () => {
     const bob = uniqueId("usr")
     const aliceStream = uniqueId("stream")
     const bobStream = uniqueId("stream")
-    await addMembership(aliceStream, alice)
-    await addMembership(bobStream, bob)
+    await addMembership(workspaceId, aliceStream, alice)
+    await addMembership(workspaceId, bobStream, bob)
 
     const workspaceWide = await appendEntry(workspaceId, {
       eventType: "stream:created",
@@ -148,7 +149,7 @@ describe("SyncLogRepository catch-up reads", () => {
       groups: [`stream:${streamId}`, `user:${joiner}`],
       payload: { workspaceId, streamId, memberId: joiner },
     })
-    await addMembership(streamId, joiner)
+    await addMembership(workspaceId, streamId, joiner)
     const postJoin = await appendEntry(workspaceId, {
       eventType: "message:created",
       groups: [`stream:${streamId}`],
@@ -166,7 +167,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const workspaceId = uniqueId("ws")
     const veteran = uniqueId("usr")
     const streamId = uniqueId("stream")
-    await addMembership(streamId, veteran)
+    await addMembership(workspaceId, streamId, veteran)
 
     const entry = await appendEntry(workspaceId, {
       eventType: "message:created",
@@ -187,7 +188,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const channel = uniqueId("stream")
     const thread = uniqueId("stream")
     await addRootStream(workspaceId, channel, "private")
-    await addMembership(channel, me)
+    await addMembership(workspaceId, channel, me)
     await addThread(workspaceId, thread, channel, channel)
 
     const threadMessage = await appendEntry(workspaceId, {
@@ -250,7 +251,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const thread = uniqueId("stream")
     const subThread = uniqueId("stream")
     await addRootStream(workspaceId, channel, "private")
-    await addMembership(channel, me)
+    await addMembership(workspaceId, channel, me)
     await addThread(workspaceId, thread, channel, channel)
     await addThread(workspaceId, subThread, channel, thread)
 
@@ -279,7 +280,7 @@ describe("SyncLogRepository catch-up reads", () => {
     const root = uniqueId("stream") // deliberately left out of `streams` at first
     const thread = uniqueId("stream")
     await addThread(workspaceId, thread, root, root)
-    await addMembership(root, me) // member of the still-missing root
+    await addMembership(workspaceId, root, me) // member of the still-missing root
 
     const threadMessage = await appendEntry(workspaceId, {
       eventType: "message:created",
@@ -316,7 +317,7 @@ describe("SyncLogRepository catch-up reads", () => {
       groups: [`stream:${channel}`, `user:${joiner}`],
       payload: { workspaceId, streamId: channel, memberId: joiner },
     })
-    await addMembership(channel, joiner)
+    await addMembership(workspaceId, channel, joiner)
     const postJoinThreadMessage = await appendEntry(workspaceId, {
       eventType: "message:created",
       groups: [`stream:${thread}`],
@@ -348,7 +349,7 @@ describe("SyncLogRepository catch-up reads", () => {
       groups: [`stream:${streamId}`, `user:${userId}`],
       payload: { workspaceId, streamId, memberId: userId },
     })
-    await addMembership(streamId, userId)
+    await addMembership(workspaceId, streamId, userId)
     const afterRejoin = await appendEntry(workspaceId, {
       eventType: "message:created",
       groups: [`stream:${streamId}`],

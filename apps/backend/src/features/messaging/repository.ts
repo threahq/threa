@@ -86,6 +86,7 @@ export interface InvocationSourceState {
 
 export interface InsertMessageParams {
   id: string
+  workspaceId: string
   streamId: string
   sequence: bigint
   authorId: string
@@ -490,12 +491,13 @@ export const MessageRepository = {
 
     const result = await db.query<MessageRow>(sql`
       INSERT INTO messages (
-        id, stream_id, sequence, author_id, author_type,
+        id, workspace_id, stream_id, sequence, author_id, author_type,
         content_json, content_markdown, search_config, client_message_id, sent_via, metadata,
         conversation_intent, ciphertext, envelope, e2e_version
       )
       VALUES (
         ${params.id},
+        ${params.workspaceId},
         ${params.streamId},
         ${params.sequence.toString()},
         ${params.authorId},
@@ -751,10 +753,16 @@ export const MessageRepository = {
     return this.findById(db, id)
   },
 
-  async addReaction(db: Querier, messageId: string, emoji: string, userId: string): Promise<Message | null> {
+  async addReaction(
+    db: Querier,
+    workspaceId: string,
+    messageId: string,
+    emoji: string,
+    userId: string
+  ): Promise<Message | null> {
     await db.query(sql`
-      INSERT INTO reactions (message_id, user_id, emoji)
-      VALUES (${messageId}, ${userId}, ${emoji})
+      INSERT INTO reactions (workspace_id, message_id, user_id, emoji)
+      VALUES (${workspaceId}, ${messageId}, ${userId}, ${emoji})
       ON CONFLICT DO NOTHING
     `)
     return this.findById(db, messageId)

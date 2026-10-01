@@ -314,7 +314,7 @@ describe("push receipt routes", () => {
     let waitedOnWithdrawal = false
     try {
       await withdrawal.query("BEGIN")
-      await UserPreferencesRepository.bulkSetOverrides(withdrawal, ownerUserId, [
+      await UserPreferencesRepository.bulkSetOverrides(withdrawal, workspaceId, ownerUserId, [
         { key: "analyticsConsent", value: "denied" },
       ])
       reported = report(token, "notification_created")

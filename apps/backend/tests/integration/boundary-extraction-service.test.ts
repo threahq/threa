@@ -120,6 +120,7 @@ describe("BoundaryExtractionService", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(1),
@@ -153,6 +154,7 @@ describe("BoundaryExtractionService", () => {
       // Create existing conversation
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(10),
@@ -171,6 +173,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(11),
@@ -202,6 +205,7 @@ describe("BoundaryExtractionService", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(20),
@@ -211,6 +215,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(21),
@@ -240,6 +245,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, conv2Id, msg2Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg3Id,
           streamId: testStreamId,
           sequence: BigInt(22),
@@ -281,6 +287,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: localStreamId,
           sequence: BigInt(1),
@@ -332,6 +339,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: localStreamId,
           sequence: BigInt(1),
@@ -349,6 +357,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: localStreamId,
           sequence: BigInt(2),
@@ -389,6 +398,7 @@ describe("BoundaryExtractionService", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(100),
@@ -413,6 +423,7 @@ describe("BoundaryExtractionService", () => {
         user2UserId = (await addTestMember(client, testWorkspaceId, user2Id)).id
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(50),
@@ -430,6 +441,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(51),
@@ -462,6 +474,7 @@ describe("BoundaryExtractionService", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(600),
@@ -479,6 +492,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(601),
@@ -542,6 +556,7 @@ describe("BoundaryExtractionService", () => {
       await withTransaction(pool, async (client) => {
         // Parent channel message + conv.
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: parentMsgId,
           streamId: testStreamId,
           sequence: BigInt(700),
@@ -571,6 +586,7 @@ describe("BoundaryExtractionService", () => {
 
         // Thread root message in the thread stream.
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: threadRootMsgId,
           streamId: threadStreamId,
           sequence: BigInt(1),
@@ -640,6 +656,7 @@ describe("BoundaryExtractionService", () => {
       const cardEvent = await withTransaction(pool, async (client) => {
         return StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: testWorkspaceId,
           streamId: testStreamId,
           eventType: "delegation:created",
           payload: { delegationId: "dlg_x", title: "Do a thing", brief: "b", contextRefs: [] },
@@ -653,6 +670,7 @@ describe("BoundaryExtractionService", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: priorMsgId,
           streamId: testStreamId,
           sequence: cardSeq - 1n,
@@ -661,6 +679,7 @@ describe("BoundaryExtractionService", () => {
           ...testMessageContent("Before the card"),
         })
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: triggerMsgId,
           streamId: testStreamId,
           sequence: cardSeq + 1n,
@@ -681,6 +700,7 @@ describe("BoundaryExtractionService", () => {
         })
         await StreamRepository.bumpThreadReplyCount(client, cardThreadStreamId, 1)
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: cardThreadReplyId,
           streamId: cardThreadStreamId,
           sequence: BigInt(1),
@@ -713,6 +733,7 @@ describe("BoundaryExtractionService", () => {
         // convB as a candidate target. Without this, the reassignment to convB
         // would fail the validUpdateTargets check and be silently skipped.
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg0Id,
           streamId: testStreamId,
           sequence: BigInt(299),
@@ -721,6 +742,7 @@ describe("BoundaryExtractionService", () => {
           ...testMessageContent("Topic B opener"),
         })
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(300),
@@ -729,6 +751,7 @@ describe("BoundaryExtractionService", () => {
           ...testMessageContent("Topic A start"),
         })
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(301),
@@ -755,6 +778,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convBId, msg0Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg3Id,
           streamId: testStreamId,
           sequence: BigInt(302),
@@ -797,6 +821,7 @@ describe("BoundaryExtractionService", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(400),
@@ -805,6 +830,7 @@ describe("BoundaryExtractionService", () => {
           ...testMessageContent("Initial"),
         })
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(401),
@@ -823,6 +849,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convAId, msg2Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg3Id,
           streamId: testStreamId,
           sequence: BigInt(402),
@@ -868,6 +895,7 @@ describe("BoundaryExtractionService", () => {
         // msg0 anchors convB inside the surrounding-window so Phase 1 discovers
         // convB as a valid reassignment target.
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg0Id,
           streamId: testStreamId,
           sequence: BigInt(499),
@@ -876,6 +904,7 @@ describe("BoundaryExtractionService", () => {
           ...testMessageContent("Topic B opener"),
         })
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(500),
@@ -899,6 +928,7 @@ describe("BoundaryExtractionService", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convBId, msg0Id, testUserId)
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(501),
@@ -953,6 +983,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: localStreamId,
           sequence: BigInt(1),
@@ -985,6 +1016,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: localStreamId,
           sequence: BigInt(1),
@@ -1003,6 +1035,7 @@ describe("BoundaryExtractionService", () => {
       // Add more messages
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: localStreamId,
           sequence: BigInt(2),
@@ -1012,6 +1045,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg3Id,
           streamId: localStreamId,
           sequence: BigInt(3),
@@ -1054,6 +1088,7 @@ describe("BoundaryExtractionService", () => {
           createdBy: testUserId,
         })
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: localStreamId,
           sequence: BigInt(1),
@@ -1070,6 +1105,7 @@ describe("BoundaryExtractionService", () => {
       await withTransaction(pool, async (client) => {
         await client.query(sql`UPDATE conversations SET status = 'stalled' WHERE id = ${conversationId1}`)
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: localStreamId,
           sequence: BigInt(2),
@@ -1103,6 +1139,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: localStreamId,
           sequence: BigInt(1),
@@ -1135,6 +1172,7 @@ describe("BoundaryExtractionService", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: localStreamId,
           sequence: BigInt(1),

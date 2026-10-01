@@ -59,10 +59,10 @@ export const UserPreferencesRepository = {
     return result.rows[0]?.value_generation ?? null
   },
 
-  async setOverride(db: Querier, userId: string, key: string, value: unknown): Promise<void> {
+  async setOverride(db: Querier, workspaceId: string, userId: string, key: string, value: unknown): Promise<void> {
     await db.query(sql`
-      INSERT INTO user_preference_overrides (user_id, key, value)
-      VALUES (${userId}, ${key}, ${JSON.stringify(value)}::jsonb)
+      INSERT INTO user_preference_overrides (workspace_id, user_id, key, value)
+      VALUES (${workspaceId}, ${userId}, ${key}, ${JSON.stringify(value)}::jsonb)
       ON CONFLICT (user_id, key) DO UPDATE SET
         value = ${JSON.stringify(value)}::jsonb,
         updated_at = NOW()
@@ -79,6 +79,7 @@ export const UserPreferencesRepository = {
 
   async bulkSetOverrides(
     db: Querier,
+    workspaceId: string,
     userId: string,
     overrides: Array<{ key: string; value: unknown }>
   ): Promise<void> {
@@ -89,12 +90,12 @@ export const UserPreferencesRepository = {
     let idx = 1
 
     for (const { key, value } of overrides) {
-      placeholders.push(`($${idx++}, $${idx++}, $${idx++}::jsonb)`)
-      values.push(userId, key, JSON.stringify(value))
+      placeholders.push(`($${idx++}, $${idx++}, $${idx++}, $${idx++}::jsonb)`)
+      values.push(workspaceId, userId, key, JSON.stringify(value))
     }
 
     await db.query(
-      `INSERT INTO user_preference_overrides (user_id, key, value)
+      `INSERT INTO user_preference_overrides (workspace_id, user_id, key, value)
        VALUES ${placeholders.join(", ")}
        ON CONFLICT (user_id, key) DO UPDATE SET
          value = EXCLUDED.value,

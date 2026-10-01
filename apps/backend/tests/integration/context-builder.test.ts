@@ -58,6 +58,7 @@ describe("Context Builder", () => {
         const msg1Id = messageId()
         const msg2Id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msg1Id,
           streamId: scratchpadId,
           sequence: BigInt(1),
@@ -66,6 +67,7 @@ describe("Context Builder", () => {
           ...testMessageContent("Hello world"),
         })
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msg2Id,
           streamId: scratchpadId,
           sequence: BigInt(2),
@@ -206,12 +208,13 @@ describe("Context Builder", () => {
         })
 
         // Add members
-        await StreamMemberRepository.insert(client, channelId, ownerUserId)
-        await StreamMemberRepository.insert(client, channelId, memberUserId)
+        await StreamMemberRepository.insert(client, wsId, channelId, ownerUserId)
+        await StreamMemberRepository.insert(client, wsId, channelId, memberUserId)
 
         // Add a message
         const msgId = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msgId,
           streamId: channelId,
           sequence: BigInt(1),
@@ -264,6 +267,7 @@ describe("Context Builder", () => {
         // Add parent message
         const parentMsgId = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: parentMsgId,
           streamId: channelId,
           sequence: BigInt(1),
@@ -288,6 +292,7 @@ describe("Context Builder", () => {
         // Add thread message
         const threadMsgId = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: threadMsgId,
           streamId: threadId,
           sequence: BigInt(1),
@@ -350,6 +355,7 @@ describe("Context Builder", () => {
 
         const msg1Id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msg1Id,
           streamId: channelId,
           sequence: BigInt(1),
@@ -372,6 +378,7 @@ describe("Context Builder", () => {
 
         const msg2Id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msg2Id,
           streamId: thread1Id,
           sequence: BigInt(1),
@@ -394,6 +401,7 @@ describe("Context Builder", () => {
 
         const msg3Id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msg3Id,
           streamId: thread2Id,
           sequence: BigInt(1),
@@ -447,12 +455,13 @@ describe("Context Builder", () => {
         })
 
         // Add both as members
-        await StreamMemberRepository.insert(client, dmId, member1Id)
-        await StreamMemberRepository.insert(client, dmId, member2Id)
+        await StreamMemberRepository.insert(client, wsId, dmId, member1Id)
+        await StreamMemberRepository.insert(client, wsId, dmId, member2Id)
 
         // Add messages
         const msgId = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: msgId,
           streamId: dmId,
           sequence: BigInt(1),
@@ -501,6 +510,7 @@ describe("Context Builder", () => {
         const body = "x".repeat(100)
         for (let i = 1; i <= 6; i++) {
           await MessageRepository.insert(client, {
+            workspaceId: wsId,
             id: messageId(),
             streamId: scratchpadId,
             sequence: BigInt(i),
@@ -548,6 +558,7 @@ describe("Context Builder", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: messageId(),
           streamId: scratchpadId,
           sequence: BigInt(1),
@@ -587,6 +598,7 @@ describe("Context Builder", () => {
 
         const parentMsgId = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id: parentMsgId,
           streamId: channelId,
           sequence: BigInt(1),
@@ -611,6 +623,7 @@ describe("Context Builder", () => {
         // thread reply, but the anchor (from the channel) must remain pinned.
         for (let i = 1; i <= 3; i++) {
           await MessageRepository.insert(client, {
+            workspaceId: wsId,
             id: messageId(),
             streamId: threadId,
             sequence: BigInt(i),

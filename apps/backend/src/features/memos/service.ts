@@ -804,6 +804,7 @@ export class MemoService implements MemoServiceLike {
           client,
           Array.from(memosByConversation, ([conversationId, memos]) => ({
             id: eventId(),
+            workspaceId,
             streamId,
             eventType: "memos:captured" as const,
             payload: {
@@ -1103,6 +1104,7 @@ export class MemoService implements MemoServiceLike {
         const [captureEvent] = await StreamEventRepository.insertMany(client, [
           {
             id: eventId(),
+            workspaceId,
             streamId,
             eventType: "memos:captured" as const,
             payload: {
@@ -1305,6 +1307,7 @@ export class MemoService implements MemoServiceLike {
         const [captureEvent] = await StreamEventRepository.insertMany(client, [
           {
             id: eventId(),
+            workspaceId,
             streamId,
             eventType: "memos:captured" as const,
             payload: {

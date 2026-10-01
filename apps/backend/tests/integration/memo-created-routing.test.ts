@@ -84,6 +84,7 @@ describe("memo:created delivery", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id,
         streamId: stream,
         sequence: sequence++,
@@ -129,7 +130,7 @@ describe("memo:created delivery", () => {
         slug: `s-${privateChannel.slice(-8)}`,
         createdBy: insider,
       })
-      await StreamMemberRepository.insert(client, privateChannel, insider)
+      await StreamMemberRepository.insert(client, testWorkspaceId, privateChannel, insider)
     })
   })
 

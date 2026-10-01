@@ -26,10 +26,15 @@ export const StreamPersonaParticipantRepository = {
    * Record that a persona has participated in a stream.
    * Idempotent - uses INSERT ON CONFLICT DO NOTHING.
    */
-  async recordParticipation(client: PoolClient, streamId: string, personaId: string): Promise<void> {
+  async recordParticipation(
+    client: PoolClient,
+    workspaceId: string,
+    streamId: string,
+    personaId: string
+  ): Promise<void> {
     await client.query(sql`
-      INSERT INTO stream_persona_participants (stream_id, persona_id)
-      VALUES (${streamId}, ${personaId})
+      INSERT INTO stream_persona_participants (workspace_id, stream_id, persona_id)
+      VALUES (${workspaceId}, ${streamId}, ${personaId})
       ON CONFLICT (stream_id, persona_id) DO NOTHING
     `)
   },

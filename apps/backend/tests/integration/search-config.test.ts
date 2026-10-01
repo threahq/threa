@@ -73,7 +73,7 @@ describe("Per-message text-search config", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
     })
 
     const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, testWorkspaceId, testUserId, {})

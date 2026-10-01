@@ -116,10 +116,10 @@ export const StreamMemberRepository = {
     return result.rows.map(mapRowToMember)
   },
 
-  async insert(db: Querier, streamId: string, memberId: string): Promise<StreamMember> {
+  async insert(db: Querier, workspaceId: string, streamId: string, memberId: string): Promise<StreamMember> {
     const result = await db.query<StreamMemberRow>(sql`
-      INSERT INTO stream_members (stream_id, member_id)
-      VALUES (${streamId}, ${memberId})
+      INSERT INTO stream_members (workspace_id, stream_id, member_id)
+      VALUES (${workspaceId}, ${streamId}, ${memberId})
       ON CONFLICT (stream_id, member_id) DO NOTHING
       RETURNING stream_id, member_id, notification_level, joined_at
     `)
@@ -131,13 +131,13 @@ export const StreamMemberRepository = {
     return mapRowToMember(result.rows[0])
   },
 
-  async insertMany(db: Querier, streamId: string, memberIds: string[]): Promise<StreamMember[]> {
+  async insertMany(db: Querier, workspaceId: string, streamId: string, memberIds: string[]): Promise<StreamMember[]> {
     const uniqueMemberIds = Array.from(new Set(memberIds))
     if (uniqueMemberIds.length === 0) return []
 
     const inserted = await db.query<StreamMemberRow>(sql`
-      INSERT INTO stream_members (stream_id, member_id)
-      SELECT ${streamId}, members.member_id
+      INSERT INTO stream_members (workspace_id, stream_id, member_id)
+      SELECT ${workspaceId}, ${streamId}, members.member_id
       FROM unnest(${uniqueMemberIds}::text[]) AS members(member_id)
       ON CONFLICT (stream_id, member_id) DO NOTHING
       RETURNING stream_id, member_id, notification_level, joined_at

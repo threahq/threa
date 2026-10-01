@@ -1,0 +1,1 @@
+ALTER TABLE messages ALTER COLUMN workspace_id SET NOT NULL;

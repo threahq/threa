@@ -13,7 +13,7 @@ import {
 import { BotRepository, serializeTraceStep } from "../../src/features/public-api"
 import { StreamEventRepository } from "../../src/features/streams"
 import * as streamsModule from "../../src/features/streams"
-import { streamId, sessionId, personaId, messageId, stepId } from "../../src/lib/id"
+import { streamId, sessionId, personaId, messageId, stepId, workspaceId } from "../../src/lib/id"
 import { AgentStepTypes, AgentToolNames, type AgentToolEffect } from "@threahq/types"
 
 const SETTINGS_EFFECTS: AgentToolEffect[] = [
@@ -40,6 +40,7 @@ describe("agent step effects", () => {
   async function seedSession(client: Parameters<typeof AgentSessionRepository.insert>[0], id: string) {
     await AgentSessionRepository.insert(client, {
       id,
+      workspaceId: workspaceId(),
       streamId: streamId(),
       personaId: personaId(),
       triggerMessageId: messageId(),

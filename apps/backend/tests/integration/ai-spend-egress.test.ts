@@ -69,7 +69,7 @@ describe("AI spend limits at the voice and enclave egress points", () => {
         companionMode: "off",
         createdBy: memberId,
       })
-      await StreamMemberRepository.insert(client, target, memberId)
+      await StreamMemberRepository.insert(client, workspace, target, memberId)
     })
     await E2eStreamsRepository.markStreamE2e(pool, {
       streamId: target,
@@ -227,6 +227,7 @@ describe("AI spend limits at the voice and enclave egress points", () => {
     const id = sessionId()
     const token = `enclave_${crypto.randomUUID()}`
     await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: workspace,
       id,
       streamId: target,
       personaId: ARIADNE_AGENT_ID,
