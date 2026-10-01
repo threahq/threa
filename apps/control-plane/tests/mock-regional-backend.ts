@@ -63,6 +63,13 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
+    // POST /internal/stream-connections — snapshot fan-out from stream_connection_sync
+    if (req.method === "POST" && url === "/internal/stream-connections") {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ ok: true }))
+      return
+    }
+
     // Fallback 404
     res.writeHead(404, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "Not found" }))

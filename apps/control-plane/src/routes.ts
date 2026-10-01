@@ -22,6 +22,7 @@ import { createBotConnectHandlers, type BotConnectService } from "./features/bot
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
 import { createFeatureFlagHandlers, type ControlPlaneFeatureFlagService } from "./features/feature-flags"
 import { createAISpendControlsHandlers, type AISpendControlsService } from "./features/ai-spend-controls"
+import { createStreamConnectionHandlers, type StreamConnectionService } from "./features/stream-connections"
 import {
   createBackofficeAuthzAdminHandlers,
   createInternalAuthzAdminHandlers,
@@ -49,6 +50,7 @@ interface Dependencies {
   workosAuthzAdminService: WorkosAuthzAdminService
   featureFlagService: ControlPlaneFeatureFlagService
   aiSpendControlsService: AISpendControlsService
+  streamConnectionService: StreamConnectionService
   authLogService: AuthLogService
   internalApiKey: string
   allowDevAuthRoutes: boolean
@@ -73,6 +75,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workosAuthzAdminService,
     featureFlagService,
     aiSpendControlsService,
+    streamConnectionService,
     authLogService,
     internalApiKey,
     allowDevAuthRoutes,
@@ -145,6 +148,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const backoffice = createBackofficeHandlers({ backofficeService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
   const aiSpendControls = createAISpendControlsHandlers({ aiSpendControlsService })
+  const streamConnections = createStreamConnectionHandlers({ streamConnectionService })
   const backofficeAuthz = createBackofficeAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const internalAuthz = createInternalAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const accounts = createAccountsHandlers({ accountsService })
@@ -229,6 +233,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/invitations/lookup", authLimit, shadow.lookup)
   app.post("/api/invitations/claim", authLimit, shadow.claim)
 
+  app.get("/api/stream-connections/lookup", auth, authLimit, streamConnections.lookup)
+
   // Backoffice app surface. `/me` returns both identity and admin status so
   // the frontend can render a friendly "not authorised" screen; every other
   // backoffice route is gated by requirePlatformAdmin.
@@ -297,6 +303,9 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/internal/invitation-shadows/:id/accepted", internalAuth, shadow.acknowledgeAccepted)
   app.post("/internal/workspaces/:workspaceId/members/:userId/role", internalAuth, internalAuthz.changeRole)
   app.delete("/internal/workspaces/:workspaceId/members/:userId", internalAuth, internalAuthz.removeMember)
+  app.post("/internal/stream-connections", internalAuth, streamConnections.createInvite)
+  app.post("/internal/stream-connections/accept", internalAuth, streamConnections.accept)
+  app.post("/internal/stream-connections/:id/revoke", internalAuth, streamConnections.revokeInvite)
   app.put("/internal/integration-routes", internalAuth, integrationRoutes.register)
   app.delete("/internal/integration-routes", internalAuth, integrationRoutes.unregister)
 

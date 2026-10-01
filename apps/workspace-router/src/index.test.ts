@@ -465,6 +465,20 @@ describe("workspace-router", () => {
       }
     })
 
+    test("proxies the shared-channel invite lookup to control-plane", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        await worker.fetch(
+          makeRequest("/api/stream-connections/lookup?token=abc"),
+          makeEnv({ CONTROL_PLANE_URL: CP_URL })
+        )
+        expect(getProxiedUrl(fn)).toBe("http://localhost:3003/api/stream-connections/lookup?token=abc")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test("proxies POST /api/workspaces to control-plane", async () => {
       const originalFetch = globalThis.fetch
       const fn = mockFetchFn()

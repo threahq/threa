@@ -1,5 +1,5 @@
 import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threahq/backend-common"
-import type { FeatureFlagScope } from "@threahq/types"
+import type { FeatureFlagScope, StreamConnectionSnapshot } from "@threahq/types"
 import type { RegionConfig } from "../config"
 
 const REGIONAL_REQUEST_TIMEOUT_MS = 15_000
@@ -193,6 +193,11 @@ export class RegionalClient {
     data: { workspaceId: string; operatorCeilingUsd: number; operatorAiDisabled: boolean }
   ): Promise<void> {
     await this.postInternal(region, "/internal/ai-spend-controls", data, "Regional AI spend controls sync")
+  }
+
+  /** Push a stream connection's current state. The region projects whichever sides it holds. */
+  async syncStreamConnection(region: string, snapshot: StreamConnectionSnapshot): Promise<void> {
+    await this.postInternal(region, "/internal/stream-connections", snapshot, "Regional stream connection sync")
   }
 
   /**
