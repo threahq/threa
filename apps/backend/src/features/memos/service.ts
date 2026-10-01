@@ -345,7 +345,7 @@ export class MemoService implements MemoServiceLike {
         if (conv) {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, conv.messageIds)
-          conversationMessages.set(convId, msgs)
+          conversationMessages.set(convId, new Map([...msgs].filter(([, message]) => !message.deletedAt)))
           const existingMemos = await MemoRepository.findActiveBySourceConversation(client, convId)
           existingConversationMemos.set(convId, existingMemos)
         }
