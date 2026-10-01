@@ -1732,6 +1732,7 @@ export function createPublicApiHandlers({
           const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
           const session = await AgentSessionRepository.insertRunningOrSkip(client, {
             id: invocation.id,
+            workspaceId: invocation.workspaceId,
             streamId: invocation.responseStreamId,
             personaId: bot.id,
             triggerMessageId: invocation.sourceMessageId,

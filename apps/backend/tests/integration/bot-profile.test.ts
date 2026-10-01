@@ -78,7 +78,7 @@ describe("GET bots/:botId/profile", () => {
           createdBy: owner.id,
         })
       }
-      await StreamMemberRepository.insert(client, privateChannel, owner.id)
+      await StreamMemberRepository.insert(client, ws, privateChannel, owner.id)
 
       await BotRepository.create(client, {
         id: sharedBot,

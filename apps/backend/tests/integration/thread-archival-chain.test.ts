@@ -106,7 +106,7 @@ describe("thread archival chain", () => {
         slug: `chain-${ids.A.slice(-10)}`,
         createdBy: owner,
       })
-      await StreamMemberRepository.insertMany(client, ids.A, [owner, author, bystander])
+      await StreamMemberRepository.insertMany(client, workspace, ids.A, [owner, author, bystander])
       bot = botId()
       await client.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1, $2, $3, 'Chain bot')", [
         bot,
@@ -453,7 +453,7 @@ describe("thread archival chain", () => {
       visibility: Visibilities.PRIVATE,
       createdBy: author,
     })
-    await StreamMemberRepository.insertMany(pool, scratchpad, [author])
+    await StreamMemberRepository.insertMany(pool, workspace, scratchpad, [author])
     const botThread = streamId()
     await insertThread(botThread, ids.A, bot)
 

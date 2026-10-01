@@ -49,7 +49,7 @@ describe("board feed recent window", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
       await ConversationRepository.insert(client, {
         id: convId,
         streamId: testStreamId,

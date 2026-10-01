@@ -44,7 +44,7 @@ describe("agent message reference repair", () => {
           visibility: "private",
           createdBy: actor.id,
         })
-        await StreamMemberRepository.insert(client, id, actor.id)
+        await StreamMemberRepository.insert(client, ws, id, actor.id)
       }
 
       const service = new EventService(client)
@@ -121,7 +121,7 @@ describe("agent message reference repair", () => {
         visibility: "private",
         createdBy: actor.id,
       })
-      await StreamMemberRepository.insert(client, rootId, actor.id)
+      await StreamMemberRepository.insert(client, ws, rootId, actor.id)
       const service = new EventService(client)
       const rootMessage = await service.createMessage({
         workspaceId: ws,

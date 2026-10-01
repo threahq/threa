@@ -184,6 +184,7 @@ describe("an orphaned session's terminal event carries its effects", () => {
       [testStreamId, testWorkspaceId, userId()]
     )
     await AgentSessionRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id: testSessionId,
       streamId: testStreamId,
       personaId: testPersonaId,

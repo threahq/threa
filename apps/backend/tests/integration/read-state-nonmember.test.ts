@@ -120,7 +120,7 @@ describe("read state — non-member unlock", () => {
 
       // An explicit unread-to-zero: the row exists with a NULL watermark, which
       // reads as "before the first message" and never qualifies.
-      await StreamMemberRepository.insert(pool, sid, member)
+      await StreamMemberRepository.insert(pool, wid, sid, member)
       await ReadStateRepository.set(pool, sid, member, null)
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [member], events[0].sequence)
@@ -138,7 +138,7 @@ describe("read state — non-member unlock", () => {
 
       // Membership alone carries no read truth: with no read-state row the member
       // is never-read and does not qualify.
-      await StreamMemberRepository.insert(pool, sid, member)
+      await StreamMemberRepository.insert(pool, wid, sid, member)
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [member], events[1].sequence)
       expect(readThrough).toEqual(new Set())
@@ -162,7 +162,7 @@ describe("read state — non-member unlock", () => {
       await sendMessages(foreignWid, foreignSid, author, 2)
       const foreignEvents = await StreamEventRepository.list(pool, foreignSid)
 
-      await StreamMemberRepository.insert(pool, sid, member)
+      await StreamMemberRepository.insert(pool, wid, sid, member)
       // Corrupt the frontier directly (bypassing validation) to reference the
       // foreign-stream event id.
       await pool.query(
@@ -323,8 +323,20 @@ describe("read state — non-member unlock", () => {
       const unknown = await streamService.markAsRead(wid, sid, viewer, "event_does_not_exist")
       const crossStream = await streamService.markAsRead(wid, sid, viewer, foreign[0].id)
 
-      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null, inboxHeld: null })
-      expect(crossStream).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null, inboxHeld: null })
+      expect(unknown).toEqual({
+        membership: null,
+        readState: null,
+        lastReadOrdinal: null,
+        readMessageIds: null,
+        inboxHeld: null,
+      })
+      expect(crossStream).toEqual({
+        membership: null,
+        readState: null,
+        lastReadOrdinal: null,
+        readMessageIds: null,
+        inboxHeld: null,
+      })
       const row = await ReadStateRepository.get(pool, sid, viewer)
       expect(row?.lastReadEventId).toBe(events[0].id)
       // Only the seeding read emitted — neither no-op did.
@@ -352,7 +364,13 @@ describe("read state — non-member unlock", () => {
       const unknown = await readService.markAsRead(wid, sid, viewer, { messageId: "msg_does_not_exist" })
 
       expect(byMessage.readState?.lastReadEventId).toBe(target.id)
-      expect(unknown).toEqual({ membership: null, readState: null, lastReadOrdinal: null, readMessageIds: null, inboxHeld: null })
+      expect(unknown).toEqual({
+        membership: null,
+        readState: null,
+        lastReadOrdinal: null,
+        readMessageIds: null,
+        inboxHeld: null,
+      })
       expect((await ReadStateRepository.get(pool, sid, viewer))?.lastReadEventId).toBe(target.id)
     })
 

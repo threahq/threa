@@ -418,7 +418,7 @@ describe("Thread Graph", () => {
 
       // The second caller must participate at the effective root before this
       // user operation can resolve the existing thread.
-      await StreamMemberRepository.insert(pool, channel.id, user2Id)
+      await StreamMemberRepository.insert(pool, wsId, channel.id, user2Id)
       const thread2 = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channel.id,
@@ -741,7 +741,7 @@ describe("Thread Graph", () => {
         createdBy: ownerId,
         principal: { kind: "user", userId: ownerId },
       })
-      await StreamMemberRepository.insert(pool, channelId, actorId)
+      await StreamMemberRepository.insert(pool, wsId, channelId, actorId)
       const second = await streamService.createThread({
         workspaceId: wsId,
         parentStreamId: channelId,

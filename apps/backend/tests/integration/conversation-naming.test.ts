@@ -60,7 +60,7 @@ describe("dynamic conversation naming", () => {
         companionMode: "off",
         createdBy: user,
       })
-      await StreamMemberRepository.insert(client, stream, user)
+      await StreamMemberRepository.insert(client, ws, stream, user)
       await ConversationRepository.insert(client, {
         id: conversation,
         streamId: stream,

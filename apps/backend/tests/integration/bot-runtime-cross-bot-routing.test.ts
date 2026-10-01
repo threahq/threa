@@ -79,7 +79,7 @@ describe("cross-bot linked scratchpad routing", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [root, workspace, owner]
     )
-    await StreamMemberRepository.insert(pool, root, owner)
+    await StreamMemberRepository.insert(pool, workspace, root, owner)
     const rootBot = await createBot(workspace, owner, "Root bot")
     const childBot = await createBot(workspace, owner, "Child bot")
     await BotChannelAccessRepository.grantAccess(pool, {
@@ -276,7 +276,7 @@ describe("cross-bot linked scratchpad routing", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [root, workspace, owner]
     )
-    await StreamMemberRepository.insert(pool, root, owner)
+    await StreamMemberRepository.insert(pool, workspace, root, owner)
     const firstBot = await createBot(workspace, owner, "First competitor")
     const secondBot = await createBot(workspace, owner, "Second competitor")
     const anchor = await insertMessage(workspace, root, owner, "contested anchor")

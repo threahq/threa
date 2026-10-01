@@ -117,7 +117,7 @@ describe("sanitizeSyncEntries", () => {
           createdBy: viewer,
         })
       }
-      await StreamMemberRepository.insert(client, citingChannel, viewer)
+      await StreamMemberRepository.insert(client, testWorkspaceId, citingChannel, viewer)
     })
 
     privateMemo = await seedMemo(privatizedSource, "Was public when logged")

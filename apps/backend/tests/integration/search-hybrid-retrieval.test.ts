@@ -98,7 +98,7 @@ describe("Message hybrid search retrieval", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
     })
 
     return { workspaceId: testWorkspaceId, userId: testUserId, streamId: testStreamId }
@@ -316,8 +316,8 @@ describe("Message hybrid search retrieval", () => {
         companionMode: "off",
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, memberChannelId, ownerId)
-      await StreamMemberRepository.insert(client, memberChannelId, memberId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, memberChannelId, ownerId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, memberChannelId, memberId)
 
       // Private channel the searching user is NOT a member of.
       await StreamRepository.insert(client, {
@@ -328,7 +328,7 @@ describe("Message hybrid search retrieval", () => {
         companionMode: "off",
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, outsiderChannelId, ownerId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, outsiderChannelId, ownerId)
     })
 
     const anchorInMemberChannel = await postMessage({

@@ -33,7 +33,7 @@ describe("linked session reply mode", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [root, workspace, owner]
     )
-    await StreamMemberRepository.insert(pool, root, owner)
+    await StreamMemberRepository.insert(pool, workspace, root, owner)
     const bot = `bot_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`
     await BotRepository.create(pool, {
       id: bot,

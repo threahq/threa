@@ -113,7 +113,7 @@ describe("bot webhook management routes", () => {
           createdBy: admin.id,
         })
       }
-      await StreamMemberRepository.insert(client, privateChannel, member.id)
+      await StreamMemberRepository.insert(client, ws, privateChannel, member.id)
 
       await BotRepository.create(client, {
         id: bot,

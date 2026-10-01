@@ -130,7 +130,7 @@ describe("memo:created delivery", () => {
         slug: `s-${privateChannel.slice(-8)}`,
         createdBy: insider,
       })
-      await StreamMemberRepository.insert(client, privateChannel, insider)
+      await StreamMemberRepository.insert(client, testWorkspaceId, privateChannel, insider)
     })
   })
 

@@ -44,7 +44,7 @@ describe("Hybrid search leg limit", () => {
         companionMode: "off",
         createdBy: memberId,
       })
-      await StreamMemberRepository.insert(client, padId, memberId)
+      await StreamMemberRepository.insert(client, wsId, padId, memberId)
     })
 
     const events = new EventService(pool)

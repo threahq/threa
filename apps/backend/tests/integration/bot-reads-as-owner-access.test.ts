@@ -104,7 +104,7 @@ describe("read-as-owner access", () => {
       await insertThread(client, archivedRootThreadId, archivedChannelId)
       await insertChannel(client, publicChannelId, Visibilities.PUBLIC, ownerId)
       for (const memberOf of [privateChannelId, revocableChannelId, e2eRootId, archivedChannelId]) {
-        await StreamMemberRepository.insert(client, memberOf, ownerId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, memberOf, ownerId)
       }
 
       await E2eStreamsRepository.markStreamE2e(client, {

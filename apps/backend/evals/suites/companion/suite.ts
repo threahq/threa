@@ -161,7 +161,7 @@ async function setupTestData(
       companionMode: "off",
       createdBy: ctx.userId,
     })
-    await StreamMemberRepository.insert(pool, hostStreamId, ctx.userId)
+    await StreamMemberRepository.insert(pool, ctx.workspaceId, hostStreamId, ctx.userId)
   }
 
   // Create the stream
@@ -181,7 +181,7 @@ async function setupTestData(
   })
 
   // Add user as stream member
-  await StreamMemberRepository.insert(pool, testStreamId, ctx.userId)
+  await StreamMemberRepository.insert(pool, ctx.workspaceId, testStreamId, ctx.userId)
 
   // A DM is a two-party stream, and the agent's retrieval scope for one is the
   // INTERSECTION of both participants' access (`computeAgentAccessSpec`), which
@@ -200,7 +200,7 @@ async function setupTestData(
       name: "Eval Counterpart",
       role: "member",
     })
-    await StreamMemberRepository.insert(pool, testStreamId, counterpartId)
+    await StreamMemberRepository.insert(pool, ctx.workspaceId, testStreamId, counterpartId)
   }
 
   // Create event service for message creation
@@ -267,7 +267,7 @@ async function setupTestData(
         createdBy: ctx.userId,
       })
 
-      await StreamMemberRepository.insert(pool, contextStreamId, ctx.userId)
+      await StreamMemberRepository.insert(pool, ctx.workspaceId, contextStreamId, ctx.userId)
       await seedConversationHistory(contextStreamId, contextStream.conversationHistory, input.currentTime)
     }
   }
@@ -468,7 +468,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
         rootStreamId: parent?.rootStreamId ?? params.parentStreamId,
         parentAnchorId: params.parentAnchorId,
       })
-      await StreamMemberRepository.insert(ctx.pool, threadId, ctx.userId)
+      await StreamMemberRepository.insert(ctx.pool, ctx.workspaceId, threadId, ctx.userId)
       createdThreadId = threadId
       return { id: threadId }
     }

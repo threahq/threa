@@ -88,7 +88,7 @@ describe("Conversation search results", () => {
         companionMode: "off",
         createdBy: memberId,
       })
-      await StreamMemberRepository.insert(client, padId, memberId)
+      await StreamMemberRepository.insert(client, wsId, padId, memberId)
       await StreamRepository.insert(client, {
         id: privatePadId,
         workspaceId: wsId,
@@ -97,7 +97,7 @@ describe("Conversation search results", () => {
         companionMode: "off",
         createdBy: outsiderId,
       })
-      await StreamMemberRepository.insert(client, privatePadId, outsiderId)
+      await StreamMemberRepository.insert(client, wsId, privatePadId, outsiderId)
     })
 
     events = new EventService(pool)

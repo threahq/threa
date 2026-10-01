@@ -208,8 +208,8 @@ describe("Context Builder", () => {
         })
 
         // Add members
-        await StreamMemberRepository.insert(client, channelId, ownerUserId)
-        await StreamMemberRepository.insert(client, channelId, memberUserId)
+        await StreamMemberRepository.insert(client, wsId, channelId, ownerUserId)
+        await StreamMemberRepository.insert(client, wsId, channelId, memberUserId)
 
         // Add a message
         const msgId = messageId()
@@ -455,8 +455,8 @@ describe("Context Builder", () => {
         })
 
         // Add both as members
-        await StreamMemberRepository.insert(client, dmId, member1Id)
-        await StreamMemberRepository.insert(client, dmId, member2Id)
+        await StreamMemberRepository.insert(client, wsId, dmId, member1Id)
+        await StreamMemberRepository.insert(client, wsId, dmId, member2Id)
 
         // Add messages
         const msgId = messageId()

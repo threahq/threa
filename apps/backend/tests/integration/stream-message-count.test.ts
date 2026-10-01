@@ -33,7 +33,7 @@ describe("Stream all-time message count", () => {
       visibility,
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, sid, actor.id)
+    await StreamMemberRepository.insert(pool, wsId, sid, actor.id)
     return { wsId, sid, actorId: actor.id }
   }
 
