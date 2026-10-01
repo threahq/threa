@@ -3,6 +3,8 @@ import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { withTransaction, withClient, type Querier } from "../../db"
 import {
   assertStreamWritable,
+  findMemoryModeStream,
+  isMemoryAutomationOn,
   StreamStateRepository,
   StreamEventRepository,
   StreamRepository,
@@ -307,6 +309,12 @@ export class MemoService implements MemoServiceLike {
       })
 
       if (pending.length === 0) {
+        return null
+      }
+
+      // Queued before memory was switched off: dropped, not captured.
+      if (!isMemoryAutomationOn(await findMemoryModeStream(client, workspaceId, streamId))) {
+        await PendingItemRepository.markProcessed(client, pending)
         return null
       }
 
@@ -662,8 +670,14 @@ export class MemoService implements MemoServiceLike {
       // commits (INV-20). Transaction-scoped: released on commit/rollback.
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
 
+      // Switched off while the model calls ran: save nothing. Share-locked so
+      // the switch can't commit between this read and the memo writes (INV-20).
+      const memoryOn = isMemoryAutomationOn(
+        await StreamRepository.findByIdForWorkspaceForShare(client, streamId, workspaceId)
+      )
+
       const createdMemos: MemoToCreate[] = []
-      for (const memoData of memosToCreate) {
+      for (const memoData of memoryOn ? memosToCreate : []) {
         // Authoritative dedup (INV-20): under the lock this sees committed
         // memos from other batches AND survivors already inserted earlier in
         // this same transaction (uncommitted rows are visible to it), so it

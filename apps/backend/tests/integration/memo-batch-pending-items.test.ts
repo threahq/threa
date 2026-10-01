@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { ConversationStatuses } from "@threahq/types"
+import { ConversationStatuses, MemoryModes } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
@@ -121,6 +121,10 @@ describe("memo batch: pending items", () => {
       await requeue(client, ids)
       return id
     })
+  }
+
+  async function switchMemoryOff(ids: { streamId: string }) {
+    await StreamRepository.update(pool, ids.streamId, { memoryMode: MemoryModes.OFF })
   }
 
   async function pendingState(convId: string) {
@@ -259,5 +263,39 @@ describe("memo batch: pending items", () => {
       fingerprint: null,
       failedAttempts: 0,
     })
+  })
+
+  test("a stream switched off after its conversations were queued drops them without a model call", async () => {
+    const seeded = await seedQueuedConversation()
+    await switchMemoryOff(seeded)
+    let classifyCalls = 0
+
+    await serviceWith({
+      classify: async () => {
+        classifyCalls++
+        return worthy
+      },
+    }).processBatch(testWorkspaceId, seeded.streamId)
+
+    expect({ classifyCalls, ...(await pendingState(seeded.conversationId)) }).toEqual({
+      classifyCalls: 0,
+      processed: true,
+      fingerprint: null,
+      failedAttempts: 0,
+    })
+  })
+
+  test("switching memory off while the model calls run saves no memos", async () => {
+    const seeded = await seedQueuedConversation()
+
+    await serviceWith({
+      classify: async () => {
+        await switchMemoryOff(seeded)
+        return worthy
+      },
+    }).processBatch(testWorkspaceId, seeded.streamId)
+
+    expect(await memoCount(seeded.conversationId)).toBe(0)
+    expect(await pendingState(seeded.conversationId)).toMatchObject({ processed: true })
   })
 })
