@@ -35,6 +35,12 @@ export interface CreateInviteParams {
   invitedByUserId: string
 }
 
+export interface CreateInviteResult {
+  snapshot: StreamConnectionSnapshot
+  token: string
+  superseded: StreamConnectionSnapshot | null
+}
+
 export interface AcceptParams {
   token: string
   partnerWorkspaceId: string
@@ -79,9 +85,11 @@ export class StreamConnectionService {
 
   /**
    * Mints a new invite link for a channel. A pending invite for the same channel
-   * is revoked in the same transaction, so only the newest link works.
+   * is revoked in the same transaction, so only the newest link works. The
+   * revoked one comes back as `superseded` so the caller's region can project
+   * both at once instead of waiting for the outbox.
    */
-  async createInvite(params: CreateInviteParams): Promise<{ snapshot: StreamConnectionSnapshot; token: string }> {
+  async createInvite(params: CreateInviteParams): Promise<CreateInviteResult> {
     const host = await WorkspaceRegistryRepository.findById(this.pool, params.hostWorkspaceId)
     if (!host) {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
@@ -89,44 +97,50 @@ export class StreamConnectionService {
 
     const id = streamConnectionId()
     const token = randomBytes(32).toString("base64url")
-    try {
-      await withTransaction(this.pool, async (client) => {
-        const live = await StreamConnectionRepository.lockLiveForStream(
-          client,
-          params.hostWorkspaceId,
-          params.hostStreamId
-        )
-        if (live?.state === StreamConnectionStates.ACTIVE) {
-          throw new HttpError("Channel already shared", {
-            status: 409,
-            code: StreamConnectionErrorCodes.ALREADY_SHARED,
-          })
-        }
-        if (live) {
-          await StreamConnectionRepository.revokeInvite(client, live.id)
-          await this.enqueueSync(client, live.id)
-        }
-        await StreamConnectionRepository.insert(client, {
-          id,
-          hostWorkspaceId: params.hostWorkspaceId,
-          hostStreamId: params.hostStreamId,
-          hostStreamSlug: params.hostStreamSlug,
-          hostStreamDisplayName: params.hostStreamDisplayName,
-          tokenHash: hashToken(token),
-          invitedByUserId: params.invitedByUserId,
-          expiresAt: new Date(Date.now() + STREAM_CONNECTION_INVITE_TTL_MS),
+    const supersededId = await withTransaction(this.pool, async (client) => {
+      const live = await StreamConnectionRepository.lockLiveForStream(
+        client,
+        params.hostWorkspaceId,
+        params.hostStreamId
+      )
+      if (live?.state === StreamConnectionStates.ACTIVE) {
+        throw new HttpError("Channel already shared", {
+          status: 409,
+          code: StreamConnectionErrorCodes.ALREADY_SHARED,
         })
-        await this.enqueueSync(client, id)
+      }
+      if (live) {
+        await StreamConnectionRepository.revokeInvite(client, live.id)
+        await this.enqueueSync(client, live.id)
+      }
+      await StreamConnectionRepository.insert(client, {
+        id,
+        hostWorkspaceId: params.hostWorkspaceId,
+        hostStreamId: params.hostStreamId,
+        hostStreamSlug: params.hostStreamSlug,
+        hostStreamDisplayName: params.hostStreamDisplayName,
+        tokenHash: hashToken(token),
+        invitedByUserId: params.invitedByUserId,
+        expiresAt: new Date(Date.now() + STREAM_CONNECTION_INVITE_TTL_MS),
       })
-    } catch (error) {
+      await this.enqueueSync(client, id)
+      return live?.id ?? null
+    }).catch((error: unknown) => {
       // A concurrent create for the same channel committed first.
       if (isUniqueViolation(error, "stream_connections_live_per_stream")) {
-        throw new HttpError("Channel already shared", { status: 409, code: StreamConnectionErrorCodes.ALREADY_SHARED })
+        throw new HttpError("Channel already shared", {
+          status: 409,
+          code: StreamConnectionErrorCodes.ALREADY_SHARED,
+        })
       }
       throw error
-    }
+    })
 
-    return { snapshot: await this.requireSnapshot(id), token }
+    return {
+      snapshot: await this.requireSnapshot(id),
+      token,
+      superseded: supersededId ? await this.requireSnapshot(supersededId) : null,
+    }
   }
 
   /** Revokes a pending invite. Disconnecting an accepted share is a separate operation. */

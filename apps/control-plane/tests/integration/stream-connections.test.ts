@@ -192,9 +192,15 @@ describe("StreamConnectionService", () => {
       code: StreamConnectionErrorCodes.REVOKED,
     })
     expect({
+      superseded: second.superseded,
       lookup: (await service.lookup(second.token)).connectionId,
       firstEvents: await syncEvents(first.snapshot.id),
-    }).toEqual({ lookup: second.snapshot.id, firstEvents: 2 })
+    }).toEqual({
+      superseded: { ...first.snapshot, state: "revoked", revision: 2 },
+      lookup: second.snapshot.id,
+      firstEvents: 2,
+    })
+    expect(first.superseded).toBeNull()
   })
 
   test("should refuse a new link for a channel that is already shared", async () => {
