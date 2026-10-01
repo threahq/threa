@@ -1,6 +1,5 @@
--- workspace_id on user_preference_overrides. The backfill UPDATE leaves
--- (user_id, key, value) as they were, so advance_user_preference_override_generation
--- keeps every row's value_generation.
+-- The backfill UPDATE leaves (user_id, key, value) as they were, so
+-- advance_user_preference_override_generation keeps every row's value_generation.
 ALTER TABLE user_preference_overrides ADD COLUMN workspace_id TEXT;
 
 CREATE TRIGGER user_preference_overrides_workspace_id_bridge
