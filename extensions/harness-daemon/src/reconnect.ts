@@ -28,6 +28,7 @@ import { shellQuote } from "./shell"
 import {
   CLAUDE_AUTOCOMPACT_WINDOW,
   configuredThreaBaseUrl,
+  piLaunchArgs,
   readPiRemoteConfig,
   readPiRemoteSession,
   type PiRemoteConfig,
@@ -143,9 +144,7 @@ export function reconstructPiCommand(target: ReconnectTarget, runtimeSessionId: 
   return [
     "env",
     ...environment.map(({ name, value }) => `${name}=${value}`),
-    target.launch.executable,
-    "--session-id",
-    runtimeSessionId,
+    ...piLaunchArgs(target.launch.executable, runtimeSessionId, target.launch.choice),
   ]
     .map(shellQuote)
     .join(" ")
@@ -301,6 +300,8 @@ export function reconstructClaudeCommand(
   if (target.launch.name) words.push("--name", target.launch.name)
   if (target.launch.mcpConfig) words.push("--mcp-config", target.launch.mcpConfig)
   words.push("--autocompact", target.launch.autocompact ?? CLAUDE_AUTOCOMPACT_WINDOW)
+  if (target.launch.choice.model) words.push("--model", target.launch.choice.model)
+  if (target.launch.choice.thinking) words.push("--effort", target.launch.choice.thinking)
   words.push("--dangerously-load-development-channels", `server:${target.launch.channel}`)
   if (target.launch.skipPermissions) words.push("--dangerously-skip-permissions")
   return words.map(shellQuote).join(" ")

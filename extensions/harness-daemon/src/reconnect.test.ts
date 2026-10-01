@@ -7,7 +7,7 @@ import { parseReconnect } from "./cli"
 import { findLocalPiPane, parsePiLaunch, type LocalTmuxPane } from "./discovery"
 import { reconnectPi, type ReconnectDeps } from "./reconnect"
 import { readInventoryReadonly } from "./inventory"
-import { piResumeCommand } from "./spawners"
+import { piLaunchCommand, piResumeCommand } from "./spawners"
 import type { ManagedAgent } from "./types"
 
 const SESSION = "123e4567-e89b-42d3-a456-426614174000"
@@ -60,6 +60,7 @@ describe("parsePiLaunch", () => {
     expect(parsePiLaunch(`/usr/local/bin/pi --session-id ${SESSION}`)).toEqual({
       executable: "/usr/local/bin/pi",
       sessionId: SESSION,
+      choice: {},
       environment: [],
     })
     expect(parsePiLaunch(pane().startCommand)?.environment).toEqual([
@@ -97,11 +98,38 @@ describe("parsePiLaunch", () => {
     ])
       expect(parsePiLaunch(command)).toBeUndefined()
   })
+
+  test("accepts the model and thinking a spawn named, and nothing else after the session", () => {
+    const launched = piLaunchCommand("/opt/bin/pi", SESSION, "pi-one", {
+      model: "openai-codex/gpt-6-astra",
+      thinking: "high",
+    })
+    expect(parsePiLaunch(launched)).toMatchObject({
+      sessionId: SESSION,
+      choice: { model: "openai-codex/gpt-6-astra", thinking: "high" },
+    })
+    for (const tail of [
+      "--model",
+      "--model a --model b",
+      "--thinking ultra",
+      "--model --thinking",
+      "--model a extra",
+    ]) {
+      expect(parsePiLaunch(`pi --session-id ${SESSION} ${tail}`)).toBeUndefined()
+    }
+  })
 })
 
 test("standalone pane resolution rejects missing and ambiguous matches", () => {
   expect(findLocalPiPane(SESSION, [])).toBeUndefined()
   expect(() => findLocalPiPane(SESSION, [pane(), pane({ paneId: "%9" })])).toThrow("multiple live standalone")
+})
+
+test("a pane launched on a named model resolves as its session's own", () => {
+  const launched = pane({
+    startCommand: piLaunchCommand("/opt/bin/pi", SESSION, "pi-one", { model: "m", thinking: "high" }),
+  })
+  expect(findLocalPiPane(SESSION, [launched])).toBe(launched)
 })
 
 describe("reconnectPi", () => {
@@ -128,6 +156,15 @@ describe("reconnectPi", () => {
         `'env' 'THREA_HARNESSD_ENTRYPOINT=/h/index.ts' 'THREA_HARNESSD_BUN_BIN=/bin/bun' 'THREA_INSTANCE_ID=pi-one' 'THREA_RUNTIME_SESSION_ID=${SESSION}' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/bin/pi' '--session-id' '${SESSION}'`,
       ],
     ])
+  })
+
+  test("respawns on the model and thinking the pane was launched with", async () => {
+    const startCommand = piResumeCommand("/opt/bin/pi", SESSION, "stream_one", { model: "m", thinking: "high" })
+    const d = deps({ panes: () => [pane({ startCommand })] })
+
+    await reconnectPi({ runtimeSessionId: SESSION, rootStreamId: "stream_one" }, d)
+
+    expect(parsePiLaunch(d.calls[0]![2]!)?.choice).toEqual({ model: "m", thinking: "high" })
   })
 
   test("preserves the production resume command root binding", async () => {

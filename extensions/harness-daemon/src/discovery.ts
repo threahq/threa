@@ -4,8 +4,9 @@ import { realpathSync } from "node:fs"
 import { readHarnessLinks, type HarnessLink } from "@threahq/harness-client"
 import { identityRecordsFor, readMintedIdentities, type MintedIdentity } from "./identity-store"
 import { output } from "./shell"
+import { runtimeDefinition } from "./runtimes"
 import { deriveClaudeRuntimeIdentity, readThreaChannelConfig, sanitizeId } from "./spawners"
-import type { ManagedAgent, ThreaChannelConfig } from "./types"
+import type { ManagedAgent, RuntimeModelChoice, ThreaChannelConfig } from "./types"
 
 export interface LocalTmuxPane {
   sessionName: string
@@ -33,12 +34,14 @@ export interface ClaudeLaunch {
   mcpConfig?: string
   autocompact?: string
   skipPermissions: boolean
+  choice: RuntimeModelChoice
   environment: Array<{ name: string; value: string }>
 }
 
 export interface PiLaunch {
   executable: string
   sessionId: string
+  choice: RuntimeModelChoice
   environment: Array<{ name: string; value: string }>
 }
 
@@ -216,15 +219,26 @@ export function parsePiLaunch(command: string): PiLaunch | undefined {
     return undefined
   }
 
-  const executable = words[index]
+  const executable = words[index++]
   if (!executable || basename(executable) !== "pi") return undefined
-  index += 1
-  if (words.length - index !== 2 || words[index] !== "--session-id") return undefined
-  const sessionId = words[index + 1]!
-  if (!UUID_RE.test(sessionId)) return undefined
+  if (words[index++] !== "--session-id") return undefined
+  const sessionId = words[index++]
+  if (!sessionId || !UUID_RE.test(sessionId)) return undefined
+  const choice: RuntimeModelChoice = {}
+  while (index < words.length) {
+    const option = words[index++]
+    const value = words[index++]
+    if (option === "--model") {
+      if (choice.model || !value || value.startsWith("-")) return undefined
+      choice.model = value
+    } else if (option === "--thinking") {
+      if (choice.thinking || !value || !runtimeDefinition("pi").thinkingLevels.includes(value)) return undefined
+      choice.thinking = value
+    } else return undefined
+  }
   const runtimeIdentity = environment.find(({ name }) => name === "THREA_RUNTIME_SESSION_ID")?.value
   if (runtimeIdentity && runtimeIdentity !== sessionId) return undefined
-  return { executable, sessionId, environment }
+  return { executable, sessionId, choice, environment }
 }
 
 export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
@@ -259,6 +273,7 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
   let mcpConfig: string | undefined
   let autocompact: string | undefined
   let skipPermissions = false
+  const choice: RuntimeModelChoice = {}
   while (index < words.length) {
     const option = words[index++]!
     if (option === "--" || option.includes("=")) return undefined
@@ -285,10 +300,18 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
       const value = words[index++]
       if (autocompact || !value?.match(/^(auto|\d+[km]?)$/i)) return undefined
       autocompact = value
+    } else if (option === "--model") {
+      const value = words[index++]
+      if (choice.model || !value || value.startsWith("-")) return undefined
+      choice.model = value
+    } else if (option === "--effort") {
+      const value = words[index++]
+      if (choice.thinking || !value || !runtimeDefinition("claude").thinkingLevels.includes(value)) return undefined
+      choice.thinking = value
     } else return undefined
   }
   return channel
-    ? { executable, name, resumeSessionId, channel, mcpConfig, autocompact, skipPermissions, environment }
+    ? { executable, name, resumeSessionId, channel, mcpConfig, autocompact, skipPermissions, choice, environment }
     : undefined
 }
 
