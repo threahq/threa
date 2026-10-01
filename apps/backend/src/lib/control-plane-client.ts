@@ -1,8 +1,23 @@
 import { logger } from "./logger"
 import { HttpError, INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
-import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threahq/types"
+import {
+  streamConnectionSnapshotSchema,
+  type InvitationStatus,
+  type StreamConnectionSnapshot,
+  type Visibility,
+  type WorkspaceInvitableRole,
+  type WorkspaceRoleSlug,
+} from "@threahq/types"
+import { z } from "zod"
 
 const REQUEST_TIMEOUT_MS = 10_000
+
+const createdInviteSchema = z.object({
+  snapshot: streamConnectionSnapshotSchema,
+  token: z.string(),
+  superseded: streamConnectionSnapshotSchema.nullable(),
+})
+const snapshotResponseSchema = z.object({ snapshot: streamConnectionSnapshotSchema })
 
 // CP's shared error middleware always responds with `{ error, code? }` JSON.
 // Translate that into an HttpError carrying the CP's status + code so the
@@ -354,5 +369,60 @@ export class ControlPlaneClient {
       logger.error({ id, status: res.status, body }, "Failed to revoke invitation shadow")
       throw new Error(`Control-plane returned ${res.status}: ${body}`)
     }
+  }
+
+  /**
+   * Mints a share link for a host channel. `superseded` is the pending invite
+   * this one replaced, so the caller can project it before the new one.
+   */
+  async createStreamConnectionInvite(params: {
+    hostWorkspaceId: string
+    hostStreamId: string
+    hostStreamSlug: string | null
+    hostStreamDisplayName: string | null
+    invitedByUserId: string
+  }): Promise<{ snapshot: StreamConnectionSnapshot; token: string; superseded: StreamConnectionSnapshot | null }> {
+    const body = await this.postStreamConnection("/internal/stream-connections", params, "create share link")
+    return createdInviteSchema.parse(body)
+  }
+
+  async revokeStreamConnectionInvite(params: {
+    connectionId: string
+    hostWorkspaceId: string
+  }): Promise<StreamConnectionSnapshot> {
+    const body = await this.postStreamConnection(
+      `/internal/stream-connections/${encodeURIComponent(params.connectionId)}/revoke`,
+      { hostWorkspaceId: params.hostWorkspaceId },
+      "revoke share link"
+    )
+    return snapshotResponseSchema.parse(body).snapshot
+  }
+
+  async acceptStreamConnection(params: {
+    token: string
+    partnerWorkspaceId: string
+    acceptedByUserId: string
+    visibility: Visibility
+  }): Promise<StreamConnectionSnapshot> {
+    const body = await this.postStreamConnection("/internal/stream-connections/accept", params, "accept share link")
+    return snapshotResponseSchema.parse(body).snapshot
+  }
+
+  private async postStreamConnection(path: string, payload: unknown, action: string): Promise<unknown> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error({ path, status: res.status, body }, `Failed to ${action}`)
+      throw toControlPlaneHttpError(res.status, body, `Failed to ${action}`)
+    }
+    return res.json()
   }
 }

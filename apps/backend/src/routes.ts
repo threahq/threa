@@ -44,6 +44,7 @@ import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createDraftsHandlers } from "./features/drafts"
 import { createLabelHandlers } from "./features/labels"
+import { createStreamConnectionHandlers, type StreamConnectionService } from "./features/stream-connections"
 import { createPushHandlers, pushReceiptBodyParser, pushReceiptErrors } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
 import { createInternalHandlers } from "./handlers/internal-handlers"
@@ -186,6 +187,7 @@ interface Dependencies {
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
   labelMessageService: LabelMessageService
+  streamConnectionService: StreamConnectionService
   pushService: PushService
   perfDiagnosticsService: PerfDiagnosticsService
   s3Config: S3Config
@@ -264,6 +266,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     labelService,
     labelAssignmentService,
     labelMessageService,
+    streamConnectionService,
     pushService,
     perfDiagnosticsService,
     s3Config,
@@ -314,6 +317,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const authed: RequestHandler[] = [auth, audit.boundary, workspaceUser]
 
   const requireWorkspacePermission = createRequireWorkspacePermission()
+  const requireWorkspaceAdmin = requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   const workspaceAuthz = createWorkspaceAuthzHandlers({ workspaceAuthzService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
   const platformAdmin = createPlatformAdminHandlers({ platformAdminService })
@@ -397,6 +401,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const drafts = createDraftsHandlers({ draftsService })
   const label = createLabelHandlers({ labelService, labelAssignmentService, labelMessageService })
+  const streamConnections = createStreamConnectionHandlers({ streamConnectionService })
   const persona = createPersonaConfigHandlers({ personaConfigService, avatarService })
   const agentSession = createAgentSessionHandlers({ pool })
   const agentFollowUps = createAgentFollowUpHandlers({ pool, agentFollowUpService })
@@ -444,6 +449,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/ai-spend-controls", internalAuth, aiUsage.syncOperatorControls)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
     app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
+    app.post("/internal/stream-connections", internalAuth, streamConnections.sync)
   }
 
   // Enclave runtime registry — gated by the dedicated enclave credential
@@ -800,6 +806,35 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     audit("streams.put_brief", "write"),
     streamBrief.put
+  )
+  // Threa Connect: host admins share a channel, partner admins accept.
+  app.get(
+    "/api/workspaces/:workspaceId/streams/:streamId/connections",
+    ...authed,
+    audit("stream_connections.list", "read"),
+    requireWorkspaceAdmin,
+    streamConnections.listForStream
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/streams/:streamId/connection-invites",
+    ...authed,
+    audit("stream_connections.create_invite", "write"),
+    requireWorkspaceAdmin,
+    streamConnections.createInvite
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/stream-connections/accept",
+    ...authed,
+    audit("stream_connections.accept", "write"),
+    requireWorkspaceAdmin,
+    streamConnections.accept
+  )
+  app.post(
+    "/api/workspaces/:workspaceId/stream-connections/:connectionId/revoke",
+    ...authed,
+    audit("stream_connections.revoke", "write"),
+    requireWorkspaceAdmin,
+    streamConnections.revokeInvite
   )
   app.patch(
     "/api/workspaces/:workspaceId/streams/:streamId/companion",
@@ -1719,7 +1754,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
 
   // Workspace integrations — gated on workspace:admin
-  const requireWorkspaceAdmin = requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   app.get(
     "/api/workspaces/:workspaceId/integrations/github",
     ...authed,
