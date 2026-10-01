@@ -45,13 +45,13 @@ function channel(
   } as StreamWithPreview
 }
 
-function stats(streamId: string, memberCount: number, activity: number[], messageCount = 0): StreamDirectoryStats {
-  return { streamId, memberCount, recentMemberIds: ["usr_ana"], messageCount, activity }
+function stats(streamId: string, memberCount: number, activity: number[]): StreamDirectoryStats {
+  return { streamId, memberCount, recentMemberIds: ["usr_ana"], activity }
 }
 
 const STREAMS = [
   channel("stream_general", "general", "2026-09-23T09:00:00.000Z"),
-  channel("stream_design", "design", "2026-09-22T09:00:00.000Z"),
+  channel("stream_design", "design", "2026-09-22T09:00:00.000Z", { messageCount: 6256 }),
   channel("stream_random", "random", "2026-09-20T09:00:00.000Z"),
 ]
 
@@ -67,8 +67,8 @@ function thread(id: string, name: string, rootStreamId: string, lastAt: string):
 }
 
 const STATS = [
-  stats("stream_general", 2, [1, 0, 0], 1),
-  stats("stream_design", 9, [0, 4, 3], 6256),
+  stats("stream_general", 2, [1, 0, 0]),
+  stats("stream_design", 9, [0, 4, 3]),
   stats("stream_random", 5, [0, 0, 0]),
 ]
 
@@ -162,6 +162,14 @@ describe("StreamsPage", () => {
       `${(6256).toLocaleString()} messages`
     )
     expect(within(design).getByRole("img", { name: "7 messages in the last 3 days" })).toBeInTheDocument()
+  })
+
+  it("should leave the all-time count off a card whose stream has not been counted yet", async () => {
+    setup(`/w/${WS}/streams`)
+
+    const strip = await screen.findByRole("region", { name: "Most active" })
+    const general = within(strip).getByRole("link", { name: /#general/ })
+    expect(within(general).queryByText(/messages?$/)).not.toBeInTheDocument()
   })
 
   it("should order rows by member count when the URL asks for it", async () => {

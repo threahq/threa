@@ -22,7 +22,7 @@ describe("StreamDirectoryStatsRepository.listForViewer", () => {
     await pool.end()
   })
 
-  test("should return member, message count and activity stats for every stream the viewer can read", async () => {
+  test("should return member and activity stats for every stream the viewer can read", async () => {
     const wsId = workspaceId()
     const { ownerId, viewerId } = await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
@@ -66,22 +66,6 @@ describe("StreamDirectoryStatsRepository.listForViewer", () => {
       authorType: "user",
       ...testMessageContent("second"),
     })
-    const old = await eventService.createMessage({
-      workspaceId: wsId,
-      streamId: memberPrivate.id,
-      authorId: ownerId,
-      authorType: "user",
-      ...testMessageContent("outside the activity window"),
-    })
-    await pool.query("UPDATE messages SET created_at = NOW() - INTERVAL '30 days' WHERE id = $1", [old.id])
-    const deleted = await eventService.createMessage({
-      workspaceId: wsId,
-      streamId: memberPrivate.id,
-      authorId: ownerId,
-      authorType: "user",
-      ...testMessageContent("deleted"),
-    })
-    await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [deleted.id])
     const thread = await streamService.createThread({
       workspaceId: wsId,
       parentStreamId: memberPrivate.id,
@@ -99,14 +83,12 @@ describe("StreamDirectoryStatsRepository.listForViewer", () => {
       streamId: memberPrivate.id,
       memberCount: 2,
       recentMemberIds: [viewerId, ownerId],
-      messageCount: 3,
       activity: [2, ...idle.slice(1)],
     })
     expect(byId.get(publicChannel.id)).toEqual({
       streamId: publicChannel.id,
       memberCount: 1,
       recentMemberIds: [ownerId],
-      messageCount: 0,
       activity: idle,
     })
   })

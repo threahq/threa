@@ -1,18 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { ApiError } from "@/api"
 import { useStreamService } from "@/contexts"
-import { db } from "@/db"
+import { persistStreamByRevision } from "@/lib/title-merge"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import type { Stream } from "@threahq/types"
 
 const MAX_HYDRATION_ATTEMPTS = 3
-
-async function cacheStreamMetadata(stream: Stream): Promise<void> {
-  await db.transaction("rw", db.streams, async () => {
-    const existing = await db.streams.get(stream.id)
-    await db.streams.put({ ...existing, ...stream, _cachedAt: Date.now() })
-  })
-}
 
 /**
  * Hydrates result streams absent from the workspace cache. Requests are
@@ -52,7 +44,7 @@ export function useEnsureSearchStreams(workspaceId: string, streamIds: readonly 
     for (const streamId of missingIds) {
       void streamService
         .get(workspaceId, streamId)
-        .then(cacheStreamMetadata)
+        .then(persistStreamByRevision)
         .catch((error: unknown) => {
           if (ApiError.isApiError(error) && (error.status === 403 || error.status === 404)) {
             terminalIds.current.add(streamId)

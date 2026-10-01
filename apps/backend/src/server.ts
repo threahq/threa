@@ -76,7 +76,7 @@ import { InvitationService, InvitationShadowSyncHandler } from "./features/invit
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-common"
 import { PartitionMaintenanceWorker } from "@threahq/backend-common"
 import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
-import { StreamService, StreamBriefService } from "./features/streams"
+import { StreamService, StreamBriefService, registerStreamMessageCountBackfill } from "./features/streams"
 import {
   EventService,
   registerMessageReferencePinsBackfill,
@@ -1726,6 +1726,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMentionBackfill()
   registerMessageReferencePinsBackfill()
   registerMessageSearchConfigBackfill()
+  registerStreamMessageCountBackfill()
   registerMemoSearchConfigBackfill()
   registerAttachmentExtractionSearchConfigBackfill()
   registerStreamContextBackfill()

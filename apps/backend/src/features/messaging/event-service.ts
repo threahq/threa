@@ -1,7 +1,13 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient, sql } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
-import { StreamRepository, publishThreadUpdated, type Stream, type ThreadUpdatedSource } from "../streams"
+import {
+  StreamRepository,
+  publishThreadUpdated,
+  adjustStreamMessageCount,
+  type Stream,
+  type ThreadUpdatedSource,
+} from "../streams"
 import {
   StreamMemberRepository,
   SparseReadRepository,
@@ -892,6 +898,9 @@ export class EventService {
       stream?.rootStreamId ?? params.streamId
     )
 
+    // Before the sequence allocation: internal sends hold no stream lock yet.
+    await adjustStreamMessageCount(client, params.workspaceId, params.streamId, 1)
+
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
       streamId: params.streamId,
@@ -1640,6 +1649,9 @@ export class EventService {
           existing
         )
 
+        // Stream row lock before the sequence allocator's, as on send.
+        await adjustStreamMessageCount(client, params.workspaceId, existing.streamId, -1)
+
         await StreamEventRepository.insert(client, {
           id: eventId(),
           streamId: params.streamId,
@@ -1864,6 +1876,10 @@ export class EventService {
         if (left.event.sequence > right.event.sequence) return 1
         return left.event.id.localeCompare(right.event.id)
       })
+
+      // Before either stream's sequence allocation, the order sends take.
+      await adjustStreamMessageCount(client, params.workspaceId, destinationThread.id, uniqueMessageIds.length)
+      await adjustStreamMessageCount(client, params.workspaceId, params.sourceStreamId, -uniqueMessageIds.length)
 
       // Every movable event is a broadcast timeline type (message_created /
       // agent_session:*), so each gets a fresh (sequence, broadcastSequence)

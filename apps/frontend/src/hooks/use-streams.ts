@@ -20,7 +20,7 @@ import type {
 import type { CreateStreamInput, UpdateStreamInput } from "@/api"
 import { workspaceKeys } from "./use-workspaces"
 import { useOptionalSyncEngine, useSyncEngine } from "@/sync/sync-engine"
-import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"
+import { mergeStreamByRevision, persistStreamByRevision } from "@/lib/title-merge"
 
 export const streamKeys = {
   all: ["streams"] as const,
@@ -43,7 +43,7 @@ export function useStreams(workspaceId: string, filters?: { type?: StreamType })
     queryFn: async () => {
       const streams = await streamService.list(workspaceId, filters)
 
-      return Promise.all(streams.map(persistStreamByTitleRevision))
+      return Promise.all(streams.map(persistStreamByRevision))
     },
     enabled: !!workspaceId,
   })
@@ -57,7 +57,7 @@ export function useStream(workspaceId: string, streamId: string) {
     queryFn: async () => {
       const stream = await streamService.get(workspaceId, streamId)
 
-      return persistStreamByTitleRevision(stream)
+      return persistStreamByRevision(stream)
     },
     enabled: !!workspaceId && !!streamId,
   })
@@ -170,7 +170,7 @@ export function useCreateStream(workspaceId: string) {
 
       const now = Date.now()
       await Promise.all([
-        persistStreamByTitleRevision(newStream),
+        persistStreamByRevision(newStream),
         db.streamMemberships.put({
           id: `${workspaceId}:${newStream.id}`,
           workspaceId,
@@ -193,7 +193,7 @@ export function useUpdateStream(workspaceId: string, streamId: string) {
     mutationFn: (data: UpdateStreamInput) => streamService.update(workspaceId, streamId, data),
     onSuccess: async (updatedStream) => {
       queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), (old) =>
-        old ? mergeStreamByTitleRevision(old, updatedStream) : updatedStream
+        old ? mergeStreamByRevision(old, updatedStream) : updatedStream
       )
 
       // Update stream-specific bootstrap cache (preserving events, members, etc.)
@@ -202,7 +202,7 @@ export function useUpdateStream(workspaceId: string, streamId: string) {
         const bootstrap = old as { stream?: Stream }
         return {
           ...bootstrap,
-          stream: bootstrap.stream ? mergeStreamByTitleRevision(bootstrap.stream, updatedStream) : updatedStream,
+          stream: bootstrap.stream ? mergeStreamByRevision(bootstrap.stream, updatedStream) : updatedStream,
         }
       })
 
@@ -213,14 +213,14 @@ export function useUpdateStream(workspaceId: string, streamId: string) {
         if (!bootstrap.streams) return old
         return {
           ...bootstrap,
-          streams: bootstrap.streams.map((s) => (s.id === streamId ? mergeStreamByTitleRevision(s, updatedStream) : s)),
+          streams: bootstrap.streams.map((s) => (s.id === streamId ? mergeStreamByRevision(s, updatedStream) : s)),
         }
       })
 
       // Invalidate lists as fallback
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
-      await persistStreamByTitleRevision(updatedStream)
+      await persistStreamByRevision(updatedStream)
     },
   })
 }
@@ -234,7 +234,7 @@ export function useUpdateCompanionMode(workspaceId: string, streamId: string) {
       streamService.updateCompanionMode(workspaceId, streamId, input),
     onSuccess: async (updatedStream) => {
       queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), (old) =>
-        old ? mergeStreamByTitleRevision(old, updatedStream) : updatedStream
+        old ? mergeStreamByRevision(old, updatedStream) : updatedStream
       )
 
       queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
@@ -242,7 +242,7 @@ export function useUpdateCompanionMode(workspaceId: string, streamId: string) {
         const bootstrap = old as { stream?: Stream }
         return {
           ...bootstrap,
-          stream: bootstrap.stream ? mergeStreamByTitleRevision(bootstrap.stream, updatedStream) : updatedStream,
+          stream: bootstrap.stream ? mergeStreamByRevision(bootstrap.stream, updatedStream) : updatedStream,
         }
       })
 
@@ -252,13 +252,13 @@ export function useUpdateCompanionMode(workspaceId: string, streamId: string) {
           ...old,
           streams: old.streams.map((s) =>
             s.id === streamId
-              ? { ...mergeStreamByTitleRevision(s, updatedStream), lastMessagePreview: s.lastMessagePreview }
+              ? { ...mergeStreamByRevision(s, updatedStream), lastMessagePreview: s.lastMessagePreview }
               : s
           ),
         }
       })
 
-      await persistStreamByTitleRevision(updatedStream)
+      await persistStreamByRevision(updatedStream)
     },
   })
 }

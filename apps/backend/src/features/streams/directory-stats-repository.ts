@@ -10,7 +10,6 @@ interface DirectoryStatsRow {
   stream_id: string
   member_count: number
   recent_member_ids: string[]
-  message_count: number
   activity: [number, number][]
 }
 
@@ -31,13 +30,6 @@ export const StreamDirectoryStatsRepository = {
         JOIN readable r ON r.id = sm.stream_id
         GROUP BY sm.stream_id
       ),
-      totals AS (
-        SELECT m.stream_id, COUNT(*)::int AS message_count
-        FROM messages m
-        JOIN readable r ON r.id = m.stream_id
-        WHERE m.deleted_at IS NULL
-        GROUP BY m.stream_id
-      ),
       activity AS (
         SELECT m.stream_id,
           FLOOR(EXTRACT(EPOCH FROM (NOW() - m.created_at)) / 86400)::int AS days_ago,
@@ -51,14 +43,12 @@ export const StreamDirectoryStatsRepository = {
       SELECT r.id AS stream_id,
         COALESCE(mb.member_count, 0) AS member_count,
         COALESCE(mb.recent_member_ids, ARRAY[]::text[]) AS recent_member_ids,
-        COALESCE(t.message_count, 0) AS message_count,
         COALESCE(
           (SELECT json_agg(json_build_array(a.days_ago, a.n)) FROM activity a WHERE a.stream_id = r.id),
           '[]'::json
         ) AS activity
       FROM readable r
       LEFT JOIN members mb ON mb.stream_id = r.id
-      LEFT JOIN totals t ON t.stream_id = r.id
     `)
     return result.rows.map((row) => {
       const activity = new Array<number>(DIRECTORY_ACTIVITY_DAYS).fill(0)
@@ -69,7 +59,6 @@ export const StreamDirectoryStatsRepository = {
         streamId: row.stream_id,
         memberCount: row.member_count,
         recentMemberIds: row.recent_member_ids,
-        messageCount: row.message_count,
         activity,
       }
     })

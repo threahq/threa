@@ -39,6 +39,9 @@ interface StreamRow {
   root_stream_id: string | null
   reply_count: number
   last_reply_at: Date | null
+  /** NULL until the stream-message-count backfill has counted a pre-existing stream. */
+  message_count: number | null
+  message_count_revision: number
   companion_mode: string
   companion_persona_id: string | null
   memory_mode: string
@@ -129,6 +132,9 @@ export interface Stream {
   replyCount: number
   /** Timestamp of the thread's most recent non-deleted reply, or null. */
   lastReplyAt: Date | null
+  /** All-time live-message count; absent until the backfill counts a pre-existing stream. */
+  messageCount?: number
+  messageCountRevision?: number
   companionMode: CompanionMode
   companionPersonaId: string | null
   /**
@@ -239,6 +245,8 @@ function mapRowToStream(row: StreamRow): Stream {
     rootStreamId: row.root_stream_id,
     replyCount: row.reply_count,
     lastReplyAt: row.last_reply_at,
+    ...(row.message_count !== null && { messageCount: row.message_count }),
+    messageCountRevision: row.message_count_revision,
     companionMode: row.companion_mode as CompanionMode,
     companionPersonaId: row.companion_persona_id,
     memoryMode: row.memory_mode as MemoryMode,
@@ -289,7 +297,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 
 const SELECT_FIELDS = `
   id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
-  parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at,
+  parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at, message_count, message_count_revision,
   companion_mode, companion_persona_id, memory_mode, purpose,
   created_by, created_at, updated_at, archived_at
 `
@@ -299,7 +307,7 @@ const SELECT_FIELDS = `
 // NULL for them) so callers don't have to branch on stream type.
 const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.display_name_source, s.display_name_revision, s.display_name_updated_by_user_id, s.slug, s.description, s.description_json, s.visibility,
-  s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at,
+  s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at, s.message_count, s.message_count_revision,
   s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose,
   s.created_by, s.created_at, s.updated_at, s.archived_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
@@ -313,6 +321,43 @@ const SELECT_FIELDS_WITH_E2E = `
 `
 
 const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
+
+interface MessageCountRow {
+  id: string
+  workspace_id: string
+  root_stream_id: string | null
+  access_visibility: string
+  message_count: number | null
+  message_count_revision: number
+}
+
+/** A stream's new all-time message count plus what routing its event needs. */
+export interface MessageCountChange {
+  streamId: string
+  workspaceId: string
+  rootStreamId: string | null
+  /** Visibility of the stream that grants access: the root for a thread (INV-62). */
+  accessVisibility: Visibility
+  messageCount: number
+  messageCountRevision: number
+}
+
+const MESSAGE_COUNT_RETURNING = `
+  s.id, s.workspace_id, s.root_stream_id, s.message_count, s.message_count_revision,
+  COALESCE((SELECT r.visibility FROM streams r WHERE r.workspace_id = s.workspace_id AND r.id = s.root_stream_id), s.visibility) AS access_visibility
+`
+
+function mapMessageCountRow(row: MessageCountRow | undefined): MessageCountChange | null {
+  if (!row || row.message_count === null) return null
+  return {
+    streamId: row.id,
+    workspaceId: row.workspace_id,
+    rootStreamId: row.root_stream_id,
+    accessVisibility: row.access_visibility as Visibility,
+    messageCount: row.message_count,
+    messageCountRevision: row.message_count_revision,
+  }
+}
 
 /** `SELECT_FIELDS` qualified with the `s` alias, for queries that correlate on `s`. */
 const SELECT_FIELDS_ALIASED = SELECT_FIELDS.split(",")
@@ -1406,6 +1451,52 @@ export const StreamRepository = {
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
+  },
+
+  /**
+   * Apply a live-message delta to a stream's all-time count in place (INV-20:
+   * the row lock serialises concurrent sends). A NULL count stays NULL: the
+   * backfill owns the first count of a pre-existing stream, and the CASE is
+   * there because `GREATEST` ignores NULL and would turn it into 0. Returns the
+   * new count, or null when the stream is missing or not yet counted.
+   */
+  async adjustMessageCount(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    delta: number
+  ): Promise<MessageCountChange | null> {
+    const result = await db.query<MessageCountRow>(sql`
+      UPDATE streams s
+      SET message_count = CASE WHEN s.message_count IS NOT NULL THEN GREATEST(0, s.message_count + ${delta}) END,
+          message_count_revision = s.message_count_revision + 1
+      WHERE s.workspace_id = ${workspaceId} AND s.id = ${streamId}
+      RETURNING ${sql.raw(MESSAGE_COUNT_RETURNING)}
+    `)
+    return mapMessageCountRow(result.rows[0])
+  },
+
+  /**
+   * Recount a stream's live messages from source and store the result when it
+   * differs. Callers run it in a transaction: the row lock is taken by its own
+   * statement first so the count runs on a snapshot that already sees every
+   * send committed before the lock was granted. Returns the change, or null
+   * when the stored count was already right.
+   */
+  async recountMessages(db: Querier, workspaceId: string, streamId: string): Promise<MessageCountChange | null> {
+    await db.query(sql`SELECT id FROM streams WHERE workspace_id = ${workspaceId} AND id = ${streamId} FOR UPDATE`)
+    const result = await db.query<MessageCountRow>(sql`
+      WITH live AS (
+        SELECT count(*)::int AS n FROM messages WHERE stream_id = ${streamId} AND deleted_at IS NULL
+      )
+      UPDATE streams s
+      SET message_count = live.n,
+          message_count_revision = s.message_count_revision + 1
+      FROM live
+      WHERE s.workspace_id = ${workspaceId} AND s.id = ${streamId} AND s.message_count IS DISTINCT FROM live.n
+      RETURNING ${sql.raw(MESSAGE_COUNT_RETURNING)}
+    `)
+    return mapMessageCountRow(result.rows[0])
   },
 
   /**

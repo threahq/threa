@@ -55,6 +55,7 @@ export type OutboxEventType =
   | "stream:inbox_updated"
   | "stream:notification_level_updated"
   | "stream:activity"
+  | "stream:message_count"
   | "attachment:uploaded"
   | "attachment:extraction_completed"
   | "workspace_user:added"
@@ -186,6 +187,7 @@ export type StreamScopedEventType =
   | "call:participants_changed"
   | "call:transport_transfer_changed"
   | "stream:activity"
+  | "stream:message_count"
   | "conversation:created"
   | "conversation:updated"
   | "conversation:message_assigned"
@@ -320,6 +322,14 @@ export interface ThreadUpdatedOutboxPayload extends StreamScopedPayload {
   threadId: string
   replyCount?: number
   threadSummary?: import("@threahq/types").ThreadSummary | null
+}
+
+/** `messageCount` is absolute; `messageCountRevision` lets clients keep the newer copy. */
+export interface StreamMessageCountOutboxPayload extends StreamScopedPayload {
+  rootStreamId: string | null
+  streamVisibility: Visibility
+  messageCount: number
+  messageCountRevision: number
 }
 
 export interface ReactionOutboxPayload extends StreamScopedPayload {
@@ -1389,6 +1399,7 @@ export interface OutboxEventPayloadMap {
   "message:deleted": MessageDeletedOutboxPayload
   "messages:moved": MessagesMovedOutboxPayload
   "thread:updated": ThreadUpdatedOutboxPayload
+  "stream:message_count": StreamMessageCountOutboxPayload
   "reaction:added": ReactionOutboxPayload
   "reaction:removed": ReactionOutboxPayload
   "stream:created": StreamCreatedOutboxPayload
@@ -1567,6 +1578,7 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "call:participants_changed",
   "call:transport_transfer_changed",
   "stream:activity",
+  "stream:message_count",
   "conversation:created",
   "conversation:updated",
   "conversation:message_assigned",

@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest"
-import {
-  mergeConversationByTitleRevision,
-  mergeStreamByTitleRevision,
-  persistStreamByTitleRevision,
-} from "./title-merge"
+import { mergeConversationByTitleRevision, mergeStreamByRevision, persistStreamByRevision } from "./title-merge"
 import { db } from "@/db"
 import type { ConversationWithStaleness, Stream } from "@threahq/types"
 
@@ -32,9 +28,9 @@ const conversation = (revision: number): ConversationWithStaleness =>
 describe("revision-guarded title merges", () => {
   test("a delayed HTTP mutation preserves a newer socket title in atomic IndexedDB persistence", async () => {
     await db.streams.clear()
-    await persistStreamByTitleRevision(stream(5))
+    await persistStreamByRevision(stream(5))
 
-    await persistStreamByTitleRevision({ ...stream(3), description: "delayed mutation fields" })
+    await persistStreamByRevision({ ...stream(3), description: "delayed mutation fields" })
 
     expect(await db.streams.get("stream_1")).toMatchObject({
       displayName: "title-5",
@@ -50,7 +46,7 @@ describe("revision-guarded title merges", () => {
   ])("preserves every stream title field for %s revisions while merging non-title fields", (_label, revision) => {
     const cached = stream(2)
     const incoming = { ...stream(1), displayNameRevision: revision, description: "new description" }
-    expect(mergeStreamByTitleRevision(cached, incoming)).toMatchObject({
+    expect(mergeStreamByRevision(cached, incoming)).toMatchObject({
       displayName: "title-2",
       displayNameSource: "explicit",
       displayNameRevision: 2,
@@ -62,7 +58,17 @@ describe("revision-guarded title merges", () => {
   })
 
   test.each([2, 3])("accepts equal/newer stream title revision %s", (revision) => {
-    expect(mergeStreamByTitleRevision(stream(2), stream(revision)).displayName).toBe(`title-${revision}`)
+    expect(mergeStreamByRevision(stream(2), stream(revision)).displayName).toBe(`title-${revision}`)
+  })
+
+  test.each([7, undefined])("guards the message count by its own revision %s, independent of the title", (revision) => {
+    const cached = { ...stream(2), messageCount: 40, messageCountRevision: 9 }
+    const merged = mergeStreamByRevision(cached, { ...stream(3), messageCount: 38, messageCountRevision: revision })
+    expect({ title: merged.displayName, count: merged.messageCount, revision: merged.messageCountRevision }).toEqual({
+      title: "title-3",
+      count: 40,
+      revision: 9,
+    })
   })
 
   test.each([1, undefined])("guards conversation revision %s while accepting summary", (revision) => {

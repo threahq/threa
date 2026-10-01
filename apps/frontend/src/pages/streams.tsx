@@ -302,12 +302,14 @@ function StreamsPageInner({
                 Most active
               </h2>
               <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {mostActive.map((row) => {
-                  const stats = statsById.get(row.stream.id)
-                  return (
-                    stats && <MostActiveCard key={row.stream.id} workspaceId={workspaceId} row={row} stats={stats} />
-                  )
-                })}
+                {mostActive.map((row) => (
+                  <MostActiveCard
+                    key={row.stream.id}
+                    workspaceId={workspaceId}
+                    row={row}
+                    stats={statsById.get(row.stream.id)}
+                  />
+                ))}
               </ul>
             </section>
           )}
@@ -359,9 +361,10 @@ function MostActiveCard({
 }: {
   workspaceId: string
   row: DirectoryRow<ListedStream>
-  stats: StreamDirectoryStats
+  stats: StreamDirectoryStats | undefined
 }) {
   const Icon = STREAM_ICONS[row.stream.type]
+  const { messageCount } = row.stream
   return (
     <li>
       <Link
@@ -372,12 +375,18 @@ function MostActiveCard({
           <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">{row.name}</span>
         </span>
-        <ActivitySparkline activity={stats.activity} className="h-8 w-full" />
+        {stats && <ActivitySparkline activity={stats.activity} className="h-8 w-full" />}
         <span className="flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
-          <span className="whitespace-nowrap" title={messageCountLabel(stats.messageCount)}>
-            {messageCountLabel(stats.messageCount, COMPACT_COUNT.format(stats.messageCount))}
-          </span>
-          <MemberStack workspaceId={workspaceId} stats={stats} max={3} />
+          {messageCount !== undefined && (
+            <span className="whitespace-nowrap" title={messageCountLabel(messageCount)}>
+              {messageCountLabel(messageCount, COMPACT_COUNT.format(messageCount))}
+            </span>
+          )}
+          {stats && (
+            <span className="ml-auto">
+              <MemberStack workspaceId={workspaceId} stats={stats} max={3} />
+            </span>
+          )}
         </span>
       </Link>
     </li>

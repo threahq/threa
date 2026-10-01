@@ -38,6 +38,7 @@ beforeEach(() => {
   spyOn(StreamContextRepository, "replaceForMessage").mockResolvedValue(0)
   spyOn(StreamContextRepository, "deleteByMessageId").mockResolvedValue(0)
   spyOn(StreamContextRepository, "reparentMessages").mockResolvedValue(0)
+  spyOn(StreamRepository, "adjustMessageCount").mockResolvedValue(null)
   // Default inboxClearMode ("interaction", no override) for every hold/clear
   // site `resolveInboxClearMode` reaches on the shared `{}` fixture client.
   spyOn(UserPreferencesRepository, "findOverride").mockResolvedValue(null)

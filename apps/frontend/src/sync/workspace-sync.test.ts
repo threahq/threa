@@ -1988,6 +1988,43 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("applies live message counts in revision order, so a late lower count never rolls the card back", async () => {
+    const queryClient = new QueryClient()
+    const current = makeStream("stream_count", { messageCount: 10, messageCountRevision: 10 })
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ streams: [{ ...current, lastMessagePreview: null }] })
+    )
+    await db.streams.put({ ...current, _cachedAt: Date.now() })
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    emit("stream:message_count", {
+      workspaceId: "ws_1",
+      streamId: current.id,
+      messageCount: 12,
+      messageCountRevision: 12,
+    })
+    emit("stream:message_count", {
+      workspaceId: "ws_1",
+      streamId: current.id,
+      messageCount: 11,
+      messageCountRevision: 11,
+    })
+    emit("stream:message_count", {
+      workspaceId: "ws_other",
+      streamId: current.id,
+      messageCount: 99,
+      messageCountRevision: 99,
+    })
+
+    expect(
+      queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]?.messageCount
+    ).toBe(12)
+    await vi.waitFor(async () => expect((await db.streams.get(current.id))?.messageCount).toBe(12))
+    cleanup()
+  })
+
   it("merges a delayed stream:created into cache and IndexedDB without regressing title fields", async () => {
     const queryClient = new QueryClient()
     const current = makeStream("stream_delayed_create", {
