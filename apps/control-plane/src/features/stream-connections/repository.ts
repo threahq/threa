@@ -24,8 +24,6 @@ interface SnapshotRow {
   partner_workspace_name: string | null
   partner_region: string | null
   partner_visibility: Visibility | null
-  invited_by_user_id: string
-  accepted_by_user_id: string | null
   expires_at: Date
 }
 
@@ -62,7 +60,7 @@ const SNAPSHOT_SELECT = `
   SELECT sc.id, sc.revision, sc.state, sc.host_workspace_id, hw.name AS host_workspace_name,
          hw.region AS host_region, sc.host_stream_id, sc.host_stream_slug, sc.host_stream_display_name,
          sc.partner_workspace_id, pw.name AS partner_workspace_name, pw.region AS partner_region,
-         sc.partner_visibility, sc.invited_by_user_id, sc.accepted_by_user_id, sc.expires_at
+         sc.partner_visibility, sc.expires_at
   FROM stream_connections sc
   JOIN workspace_registry hw ON hw.id = sc.host_workspace_id
   LEFT JOIN workspace_registry pw ON pw.id = sc.partner_workspace_id`
@@ -93,8 +91,6 @@ function mapSnapshot(row: SnapshotRow): StreamConnectionSnapshot {
     partnerWorkspaceName: row.partner_workspace_name,
     partnerRegion: row.partner_region,
     partnerVisibility: row.partner_visibility,
-    invitedByUserId: row.invited_by_user_id,
-    acceptedByUserId: row.accepted_by_user_id,
     expiresAt: row.expires_at.toISOString(),
   }
 }

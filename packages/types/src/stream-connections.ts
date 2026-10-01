@@ -37,27 +37,27 @@ export type StreamConnectionErrorCode = (typeof StreamConnectionErrorCodes)[keyo
 /** How long an invite link stays valid. */
 export const STREAM_CONNECTION_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
-/** Control plane → region wire format: the full current state of one connection. */
-export const streamConnectionSnapshotSchema = z
-  .object({
-    id: z.string().min(1),
-    revision: z.number().int().positive(),
-    state: z.enum(STREAM_CONNECTION_STATES),
-    hostWorkspaceId: z.string().min(1),
-    hostWorkspaceName: z.string(),
-    hostRegion: z.string().min(1),
-    hostStreamId: z.string().min(1),
-    hostStreamSlug: z.string().nullable(),
-    hostStreamDisplayName: z.string().nullable(),
-    partnerWorkspaceId: z.string().min(1).nullable(),
-    partnerWorkspaceName: z.string().nullable(),
-    partnerRegion: z.string().min(1).nullable(),
-    partnerVisibility: z.enum(VISIBILITY_OPTIONS).nullable(),
-    invitedByUserId: z.string().min(1),
-    acceptedByUserId: z.string().min(1).nullable(),
-    expiresAt: z.iso.datetime(),
-  })
-  .strict()
+/**
+ * Control plane → region wire format: the full current state of one connection.
+ * Unknown keys are dropped rather than rejected, so a control plane that adds a
+ * field ahead of a region's deploy doesn't dead-letter the sync.
+ */
+export const streamConnectionSnapshotSchema = z.object({
+  id: z.string().min(1),
+  revision: z.number().int().positive(),
+  state: z.enum(STREAM_CONNECTION_STATES),
+  hostWorkspaceId: z.string().min(1),
+  hostWorkspaceName: z.string(),
+  hostRegion: z.string().min(1),
+  hostStreamId: z.string().min(1),
+  hostStreamSlug: z.string().nullable(),
+  hostStreamDisplayName: z.string().nullable(),
+  partnerWorkspaceId: z.string().min(1).nullable(),
+  partnerWorkspaceName: z.string().nullable(),
+  partnerRegion: z.string().min(1).nullable(),
+  partnerVisibility: z.enum(VISIBILITY_OPTIONS).nullable(),
+  expiresAt: z.iso.datetime(),
+})
 export type StreamConnectionSnapshot = z.infer<typeof streamConnectionSnapshotSchema>
 
 /** One side's view of a connection, as the regional API returns it. */
@@ -90,22 +90,28 @@ export interface StreamConnectionResponse {
   connection: StreamConnection
 }
 
-export interface AcceptStreamConnectionInput {
-  token: string
-  visibility: Visibility
-}
+export const STREAM_CONNECTION_TOKEN_MAX_LENGTH = 200
+
+export const acceptStreamConnectionSchema = z
+  .object({
+    token: z.string().min(1).max(STREAM_CONNECTION_TOKEN_MAX_LENGTH),
+    visibility: z.enum(VISIBILITY_OPTIONS),
+  })
+  .strict()
+export type AcceptStreamConnectionInput = z.infer<typeof acceptStreamConnectionSchema>
 
 /** What the invite page shows before accepting. Safe for any signed-in user holding the token. */
 export interface StreamConnectionLookupResponse {
   connectionId: string
-  state: StreamConnectionState
+  /** A revoked invite is an error, never a lookup result. */
+  state: Exclude<StreamConnectionState, "revoked">
   hostWorkspaceId: string
   hostWorkspaceName: string
   /** Where the host's data lives. Accepting agrees to the partner's copy being served from there too. */
   hostRegion: string
   streamDisplayName: string | null
   streamSlug: string | null
-  /** Set once accepted, so the partner admin who accepted sees where it went. */
+  /** Set once accepted, and only for a member of the partner workspace. */
   partnerWorkspaceId: string | null
   partnerWorkspaceName: string | null
   expiresAt: string

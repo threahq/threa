@@ -89,8 +89,6 @@ describe("StreamConnectionService", () => {
       partnerWorkspaceName: null,
       partnerRegion: null,
       partnerVisibility: null,
-      invitedByUserId: "usr_host_admin",
-      acceptedByUserId: null,
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       ...overrides,
     }
@@ -105,7 +103,6 @@ describe("StreamConnectionService", () => {
       partnerWorkspaceName: partner.name,
       partnerRegion: "eu",
       partnerVisibility: "private" as const,
-      acceptedByUserId: "usr_partner_admin",
     }
   }
 
@@ -263,6 +260,66 @@ describe("StreamConnectionService", () => {
       state: "revoked",
       sent: [{ path: `/internal/stream-connections/${invited.id}/revoke`, body: { hostWorkspaceId: host.id } }],
       listed: [],
+    })
+  })
+
+  test("should project only the host side when the partner lives in another region", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const remotePartner = { id: workspaceId(), name: "Globex" }
+    const active = { ...activated(snapshot(host, stream.id), remotePartner), partnerRegion: "us" }
+
+    await service.applySnapshot(active)
+
+    expect({
+      host: await StreamConnectionRepository.listLiveForStream(pool, host.id, stream.id),
+      partner: await StreamConnectionRepository.listLiveForStream(pool, remotePartner.id, stream.id),
+    }).toEqual({
+      host: [
+        {
+          id: active.id,
+          role: "host",
+          state: "active",
+          streamId: stream.id,
+          streamSlug: "launch",
+          streamDisplayName: "Launch",
+          remoteWorkspaceId: remotePartner.id,
+          remoteWorkspaceName: "Globex",
+          partnerVisibility: "private",
+          expiresAt: active.expiresAt,
+        },
+      ],
+      partner: [],
+    })
+  })
+
+  test("should project only the partner side when the host lives in another region", async () => {
+    const remoteHost = { id: workspaceId(), name: "Acme" }
+    const partner = await seedWorkspace("Globex")
+    const remoteStreamId = streamId()
+    const active = { ...activated(snapshot(remoteHost, remoteStreamId), partner), hostRegion: "us" }
+
+    await service.applySnapshot(active)
+
+    expect({
+      host: await StreamConnectionRepository.listLiveForStream(pool, remoteHost.id, remoteStreamId),
+      partner: await StreamConnectionRepository.listLiveForStream(pool, partner.id, remoteStreamId),
+    }).toEqual({
+      host: [],
+      partner: [
+        {
+          id: active.id,
+          role: "partner",
+          state: "active",
+          streamId: remoteStreamId,
+          streamSlug: "launch",
+          streamDisplayName: "Launch",
+          remoteWorkspaceId: remoteHost.id,
+          remoteWorkspaceName: "Acme",
+          partnerVisibility: "private",
+          expiresAt: active.expiresAt,
+        },
+      ],
     })
   })
 

@@ -11,6 +11,8 @@ import { usePreferences } from "@/contexts"
 import { formatFutureTime } from "@/lib/dates"
 
 const COPY_CONFIRMATION_MS = 2_000
+/** Picks up the partner's accept while the host has the tab open. */
+const PENDING_INVITE_POLL_MS = 15_000
 
 function connectionsKey(workspaceId: string, streamId: string) {
   return ["stream-connections", workspaceId, streamId] as const
@@ -21,13 +23,22 @@ function errorMessage(error: unknown, fallback: string): string {
   switch (error.code) {
     case StreamConnectionErrorCodes.NOT_SHAREABLE:
       return "Only active, unencrypted channels can be shared."
-    case StreamConnectionErrorCodes.ALREADY_SHARED:
-      return "This channel is already shared."
-    case StreamConnectionErrorCodes.ALREADY_ACCEPTED:
-      return "This invite was already accepted."
     default:
       return fallback
   }
+}
+
+/** The list moved on under us (another admin shared, or the partner accepted): show the new state, not an error. */
+function isStaleState(error: unknown): boolean {
+  return (
+    ApiError.isApiError(error) &&
+    (error.code === StreamConnectionErrorCodes.ALREADY_SHARED ||
+      error.code === StreamConnectionErrorCodes.ALREADY_ACCEPTED)
+  )
+}
+
+function isPendingInvite(connection: StreamConnection | undefined): boolean {
+  return connection?.state === StreamConnectionStates.INVITED && new Date(connection.expiresAt).getTime() > Date.now()
 }
 
 function unshareableReason(stream: Stream): string | null {
@@ -53,6 +64,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
   const connectionsQuery = useQuery({
     queryKey,
     queryFn: () => streamConnectionsApi.list(workspaceId, stream.id),
+    refetchInterval: (query) => (isPendingInvite(query.state.data?.[0]) ? PENDING_INVITE_POLL_MS : false),
   })
 
   const create = useMutation({
@@ -63,10 +75,8 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       setCreated({ connectionId: connection.id, url: streamConnectionInviteUrl(token) })
     },
     onError: (error) => {
-      setActionError(errorMessage(error, "Couldn't create the link. Try again."))
-      if (ApiError.isApiError(error) && error.code === StreamConnectionErrorCodes.ALREADY_SHARED) {
-        void queryClient.invalidateQueries({ queryKey })
-      }
+      if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
+      else setActionError(errorMessage(error, "Couldn't create the link. Try again."))
     },
   })
 
@@ -80,10 +90,8 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       setCreated(null)
     },
     onError: (error) => {
-      setActionError(errorMessage(error, "Couldn't revoke the link. Try again."))
-      if (ApiError.isApiError(error) && error.code === StreamConnectionErrorCodes.ALREADY_ACCEPTED) {
-        void queryClient.invalidateQueries({ queryKey })
-      }
+      if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
+      else setActionError(errorMessage(error, "Couldn't revoke the link. Try again."))
     },
   })
 
@@ -96,7 +104,9 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
     )
   }
 
-  if (connectionsQuery.isError) {
+  // A failed background refetch keeps showing the last list it loaded.
+  const connections = connectionsQuery.data
+  if (connections === undefined) {
     return (
       <div className="space-y-3 p-1">
         <p role="alert" className="text-sm text-destructive">
@@ -109,7 +119,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
     )
   }
 
-  const live = connectionsQuery.data[0] ?? null
+  const live = connections[0] ?? null
   const busy = create.isPending || revoke.isPending
 
   if (live?.state === StreamConnectionStates.ACTIVE) {
@@ -150,6 +160,12 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
   const expiresAt = new Date(live.expiresAt)
   const expired = expiresAt.getTime() <= Date.now()
   const link = created?.connectionId === live.id ? created.url : null
+  const note = [
+    link && "Copy it now, it won't be shown again.",
+    !expired && `Expires ${formatFutureTime(expiresAt, new Date(), { timeFormat: preferences?.timeFormat })}.`,
+  ]
+    .filter(Boolean)
+    .join(" ")
 
   return (
     <div className="space-y-3 p-1">
@@ -161,10 +177,7 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
           {expired ? "This link has expired." : "Waiting for another workspace to accept."}
         </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        {link && "Copy it now, it won't be shown again. "}
-        {!expired && `Expires ${formatFutureTime(expiresAt, new Date(), { timeFormat: preferences?.timeFormat })}.`}
-      </p>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
       <div className="flex flex-wrap gap-2">
         {!blocked && (
           <Button variant="outline" size="sm" onClick={() => create.mutate()} disabled={busy}>

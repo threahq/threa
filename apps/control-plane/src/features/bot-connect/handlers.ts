@@ -1,6 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threahq/backend-common"
+import { parseRequest } from "../../lib/validation"
 import type { BotConnectService } from "./service"
 
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -46,12 +47,6 @@ interface Dependencies {
   botConnectService: BotConnectService
 }
 
-function parse<T>(schema: z.ZodType<T>, value: unknown): T {
-  const parsed = schema.safeParse(value)
-  if (!parsed.success) throw new HttpError("Invalid request", { status: 400, code: "VALIDATION_ERROR" })
-  return parsed.data
-}
-
 function requireUser(req: Request): string {
   if (!req.workosUserId) throw new HttpError("Unauthorized", { status: 401, code: "UNAUTHORIZED" })
   return req.workosUserId
@@ -93,13 +88,13 @@ export function createBotConnectHandlers({ botConnectService }: Dependencies) {
 
     async lookup(req: Request, res: Response) {
       requireUser(req)
-      const query = parse(lookupSchema, req.query)
+      const query = parseRequest(lookupSchema, req.query)
       res.json(await botConnectService.lookup(query.code))
     },
 
     async approve(req: Request, res: Response) {
       const workosUserId = requireUser(req)
-      const body = parse(approveSchema, req.body)
+      const body = parseRequest(approveSchema, req.body)
       await botConnectService.approve({
         rawCode: body.code,
         workosUserId,
@@ -115,7 +110,7 @@ export function createBotConnectHandlers({ botConnectService }: Dependencies) {
 
     async deny(req: Request, res: Response) {
       const workosUserId = requireUser(req)
-      const body = parse(denySchema, req.body)
+      const body = parseRequest(denySchema, req.body)
       await botConnectService.deny({ rawCode: body.code, workosUserId })
       res.json({ ok: true })
     },

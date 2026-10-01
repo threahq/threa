@@ -5,6 +5,7 @@ import { Ban, Check, Hourglass, Link2, SearchX, type LucideIcon } from "lucide-r
 import {
   StreamConnectionErrorCodes,
   StreamConnectionStates,
+  StreamTypes,
   type StreamConnectionErrorCode,
   type StreamConnectionLookupResponse,
   type Visibility,
@@ -20,6 +21,9 @@ import { VisibilityPicker } from "@/components/ui/visibility-picker"
 import { useAuth } from "@/auth"
 import { useWorkspaces } from "@/hooks"
 import { formatRegion } from "@/lib/regions"
+import { streamLabel } from "@/lib/streams"
+
+const LINK_CLASS = "text-sm text-foreground underline-offset-4 hover:underline"
 
 const LOOKUP_ERROR_COPY = {
   [StreamConnectionErrorCodes.NOT_FOUND]: {
@@ -69,8 +73,7 @@ function acceptErrorMessage(error: unknown): string {
 }
 
 function channelLabel(lookup: StreamConnectionLookupResponse): string {
-  if (lookup.streamSlug) return `#${lookup.streamSlug}`
-  return lookup.streamDisplayName ?? "a channel"
+  return streamLabel({ type: StreamTypes.CHANNEL, slug: lookup.streamSlug, displayName: lookup.streamDisplayName })
 }
 
 export function StreamConnectionAcceptPage() {
@@ -87,7 +90,7 @@ export function StreamConnectionAcceptPage() {
           <h1 className="text-2xl font-medium leading-tight">Sign in to connect a shared channel</h1>
           <Button
             className="h-11 w-full text-xs font-medium uppercase tracking-[0.14em]"
-            onClick={() => login(`/connections/${token}`)}
+            onClick={() => login(`/connections/${encodeURIComponent(token)}`)}
           >
             Sign in
           </Button>
@@ -101,7 +104,7 @@ export function StreamConnectionAcceptPage() {
 
 /** Mounted only with a session: the workspace list query would otherwise 401 and bounce to login. */
 function SignedInAccept({ token }: { token: string }) {
-  const { workspaces, isLoading: workspacesLoading } = useWorkspaces()
+  const { workspaces, isLoading: workspacesLoading, refetch: refetchWorkspaces } = useWorkspaces()
   const lookup = useQuery({
     queryKey: ["stream-connection-lookup", token],
     queryFn: () => streamConnectionsApi.lookup(token),
@@ -116,7 +119,9 @@ function SignedInAccept({ token }: { token: string }) {
     )
   }
 
-  if (lookup.isError) {
+  // A failed background refetch keeps the invite it already loaded on screen.
+  const data = lookup.data
+  if (data === undefined) {
     const code = lookupErrorCode(lookup.error)
     if (!code) {
       return (
@@ -138,13 +143,25 @@ function SignedInAccept({ token }: { token: string }) {
           <HaloIcon icon={copy.icon} />
           <h1 className="text-2xl font-medium leading-tight">{copy.title}</h1>
           <p className="text-sm text-muted-foreground">{copy.body}</p>
+          <OpenThreaLink />
         </div>
       </StandalonePage>
     )
   }
 
-  const data = lookup.data
-  const mine = workspaces ?? []
+  if (workspaces === undefined) {
+    return (
+      <StandalonePage>
+        <div className="flex w-full flex-col items-center gap-4 text-center">
+          <HaloIcon icon={SearchX} />
+          <h1 className="text-2xl font-medium leading-tight">Couldn't load your workspaces</h1>
+          <Button variant="outline" className="h-11 w-full" onClick={() => void refetchWorkspaces()}>
+            Try again
+          </Button>
+        </div>
+      </StandalonePage>
+    )
+  }
 
   if (data.state === StreamConnectionStates.ACTIVE) {
     return (
@@ -153,13 +170,13 @@ function SignedInAccept({ token }: { token: string }) {
           channel={channelLabel(data)}
           partnerWorkspaceId={data.partnerWorkspaceId}
           partnerWorkspaceName={data.partnerWorkspaceName}
-          canOpen={mine.some((w) => w.id === data.partnerWorkspaceId)}
+          canOpen={workspaces.some((w) => w.id === data.partnerWorkspaceId)}
         />
       </StandalonePage>
     )
   }
 
-  const candidates = mine.filter((w) => w.id !== data.hostWorkspaceId)
+  const candidates = workspaces.filter((w) => w.id !== data.hostWorkspaceId)
   if (candidates.length === 0) {
     return (
       <StandalonePage>
@@ -169,9 +186,7 @@ function SignedInAccept({ token }: { token: string }) {
           <p className="text-sm text-muted-foreground">
             Accept from a workspace you administer, other than {data.hostWorkspaceName}.
           </p>
-          <Link to="/workspaces" className="text-sm text-foreground underline-offset-4 hover:underline">
-            Create or join one
-          </Link>
+          <OpenThreaLink />
         </div>
       </StandalonePage>
     )
@@ -238,7 +253,14 @@ function AcceptForm({
           >
             Workspace
           </Label>
-          <Select value={workspaceId} onValueChange={setWorkspaceId} disabled={accept.isPending}>
+          <Select
+            value={workspaceId}
+            onValueChange={(id) => {
+              accept.reset()
+              setWorkspaceId(id)
+            }}
+            disabled={accept.isPending}
+          >
             <SelectTrigger id="accept-workspace" className="h-11">
               <SelectValue placeholder="Choose a workspace" />
             </SelectTrigger>
@@ -255,7 +277,14 @@ function AcceptForm({
           <Label className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
             Visibility
           </Label>
-          <VisibilityPicker value={visibility} onChange={setVisibility} disabled={accept.isPending} />
+          <VisibilityPicker
+            value={visibility}
+            onChange={(next) => {
+              accept.reset()
+              setVisibility(next)
+            }}
+            disabled={accept.isPending}
+          />
         </div>
         {accept.isError && (
           <p role="alert" className="text-sm text-destructive">
@@ -291,11 +320,21 @@ function Connected({
       <h1 className="text-2xl font-medium leading-tight">
         <span className="text-primary">{channel}</span> is shared with {partnerWorkspaceName ?? "another workspace"}
       </h1>
-      {canOpen && partnerWorkspaceId && (
-        <Link to={`/w/${partnerWorkspaceId}`} className="text-sm text-foreground underline-offset-4 hover:underline">
+      {canOpen && partnerWorkspaceId ? (
+        <Link to={`/w/${partnerWorkspaceId}`} className={LINK_CLASS}>
           Open {partnerWorkspaceName}
         </Link>
+      ) : (
+        <OpenThreaLink />
       )}
     </div>
+  )
+}
+
+function OpenThreaLink() {
+  return (
+    <Link to="/" className={LINK_CLASS}>
+      Open Threa
+    </Link>
   )
 }

@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { StreamTypes, type Stream, type StreamConnection } from "@threahq/types"
+import { StreamConnectionErrorCodes, StreamTypes, type Stream, type StreamConnection } from "@threahq/types"
 import { render, screen, userEvent, waitFor } from "@/test"
 import { ApiError } from "@/api/client"
 import { streamConnectionsApi } from "@/api/stream-connections"
@@ -46,12 +46,15 @@ function makeConnection(overrides: Partial<StreamConnection> = {}): StreamConnec
 
 function renderTab(stream = makeStream()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <ConnectTab workspaceId="ws_host" stream={stream} />
     </QueryClientProvider>
   )
+  return queryClient
 }
+
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard")
 
 describe("ConnectTab", () => {
   beforeEach(() => {
@@ -59,6 +62,12 @@ describe("ConnectTab", () => {
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: { timeFormat: "24h" },
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard)
+    else Reflect.deleteProperty(navigator, "clipboard")
   })
 
   it("should show the new link once and let the admin copy it when they create an invite", async () => {
@@ -139,13 +148,68 @@ describe("ConnectTab", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValue([makeConnection({ state: "active", remoteWorkspaceName: "Beta" })])
     vi.spyOn(streamConnectionsApi, "createInvite").mockRejectedValue(
-      new ApiError(409, "STREAM_ALREADY_SHARED", "already shared")
+      new ApiError(409, StreamConnectionErrorCodes.ALREADY_SHARED, "already shared")
     )
 
     renderTab()
     await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
 
     expect(await screen.findByText("Beta")).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+  })
+
+  it("should refresh to the shared state when a revoke races an accept", async () => {
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection()])
+      .mockResolvedValue([makeConnection({ state: "active", remoteWorkspaceName: "Beta" })])
+    vi.spyOn(streamConnectionsApi, "revoke").mockRejectedValue(
+      new ApiError(409, StreamConnectionErrorCodes.ALREADY_ACCEPTED, "already accepted")
+    )
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }))
+
+    expect(await screen.findByText("Beta")).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+  })
+
+  it("should show the partner once they accept while the pending invite is open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection()])
+      .mockResolvedValue([makeConnection({ state: "active", remoteWorkspaceName: "Beta" })])
+
+    renderTab()
+    expect(await screen.findByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(await screen.findByText("Beta")).toBeInTheDocument()
+  })
+
+  it("should load the connections again when the admin retries a failed load", async () => {
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockRejectedValueOnce(new ApiError(500, "INTERNAL", "boom"))
+      .mockResolvedValue([])
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Try again" }))
+
+    expect(await screen.findByRole("button", { name: "Create invite link" })).toBeInTheDocument()
+  })
+
+  it("should keep showing the pending invite when a background refresh fails", async () => {
+    const list = vi
+      .spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection()])
+      .mockRejectedValue(new ApiError(500, "INTERNAL", "boom"))
+
+    const queryClient = renderTab()
+    expect(await screen.findByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    await queryClient.refetchQueries()
+
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(screen.getByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 })

@@ -16,6 +16,13 @@ export function redactHookSecret(url: string): string {
   return url.replace(HOOK_SECRET_SEGMENT, "$1[redacted]")
 }
 
+/** Invite-link lookups carry the invite's credential as `?token=`. */
+const TOKEN_QUERY_PARAM = /([?&]token=)[^&#]*/gi
+
+function redactRequestUrl(url: string): string {
+  return redactHookSecret(url).replace(TOKEN_QUERY_PARAM, "$1[redacted]")
+}
+
 /**
  * Default pino-http serializers dump every header, so a new secret header
  * leaks by omission; this allowlist means only these fields ever reach a log.
@@ -25,7 +32,7 @@ export const requestLogSerializers = {
     return {
       id: req.id,
       method: req.method,
-      url: redactHookSecret(req.url),
+      url: redactRequestUrl(req.url),
       userAgent: req.headers["user-agent"],
       origin: req.headers["origin"],
     }

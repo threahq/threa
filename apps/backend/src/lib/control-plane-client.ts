@@ -1,5 +1,5 @@
 import { logger } from "./logger"
-import { HttpError, INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
+import { HttpError, INTERNAL_API_KEY_HEADER, requestLogLevel } from "@threahq/backend-common"
 import {
   streamConnectionSnapshotSchema,
   type InvitationStatus,
@@ -420,7 +420,8 @@ export class ControlPlaneClient {
     })
     if (!res.ok) {
       const body = await res.text().catch(() => "")
-      logger.error({ path, status: res.status, body }, `Failed to ${action}`)
+      // An expired or already-accepted invite is a user outcome, not a fault: log like a request would.
+      logger[requestLogLevel(res.status)]({ path, status: res.status, body }, `Failed to ${action}`)
       throw toControlPlaneHttpError(res.status, body, `Failed to ${action}`)
     }
     return res.json()

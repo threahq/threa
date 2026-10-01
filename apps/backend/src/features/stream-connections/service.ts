@@ -1,7 +1,6 @@
 import type { Pool } from "pg"
 import {
   StreamConnectionErrorCodes,
-  StreamConnectionRoles,
   StreamTypes,
   type CreateStreamConnectionInviteResponse,
   type StreamConnection,
@@ -18,23 +17,6 @@ interface Dependencies {
   pool: Pool
   controlPlaneClient: ControlPlaneClient | null
   featureFlagService: FeatureFlagService
-}
-
-/** One side's view of a snapshot. */
-function toConnection(snapshot: StreamConnectionSnapshot, workspaceId: string): StreamConnection {
-  const isHost = snapshot.hostWorkspaceId === workspaceId
-  return {
-    id: snapshot.id,
-    role: isHost ? StreamConnectionRoles.HOST : StreamConnectionRoles.PARTNER,
-    state: snapshot.state,
-    streamId: snapshot.hostStreamId,
-    streamSlug: snapshot.hostStreamSlug,
-    streamDisplayName: snapshot.hostStreamDisplayName,
-    remoteWorkspaceId: isHost ? snapshot.partnerWorkspaceId : snapshot.hostWorkspaceId,
-    remoteWorkspaceName: isHost ? snapshot.partnerWorkspaceName : snapshot.hostWorkspaceName,
-    partnerVisibility: snapshot.partnerVisibility,
-    expiresAt: snapshot.expiresAt,
-  }
 }
 
 /**
@@ -76,7 +58,7 @@ export class StreamConnectionService {
     })
     if (result.superseded) await this.applySnapshot(result.superseded)
     await this.applySnapshot(result.snapshot)
-    return { connection: toConnection(result.snapshot, params.workspaceId), token: result.token }
+    return { connection: await this.readBack(params.workspaceId, result.snapshot.id), token: result.token }
   }
 
   async revokeInvite(params: { workspaceId: string; connectionId: string }): Promise<StreamConnection> {
@@ -86,7 +68,7 @@ export class StreamConnectionService {
       hostWorkspaceId: params.workspaceId,
     })
     await this.applySnapshot(snapshot)
-    return toConnection(snapshot, params.workspaceId)
+    return this.readBack(params.workspaceId, snapshot.id)
   }
 
   async accept(params: {
@@ -103,7 +85,7 @@ export class StreamConnectionService {
       visibility: params.visibility,
     })
     await this.applySnapshot(snapshot)
-    return toConnection(snapshot, params.workspaceId)
+    return this.readBack(params.workspaceId, snapshot.id)
   }
 
   async listForStream(params: { workspaceId: string; streamId: string; userId: string }): Promise<StreamConnection[]> {
@@ -121,6 +103,13 @@ export class StreamConnectionService {
         code: "WORKSPACE_NOT_FOUND",
       })
     }
+  }
+
+  /** The caller's projected row, which may be newer than the snapshot just applied. */
+  private async readBack(workspaceId: string, connectionId: string): Promise<StreamConnection> {
+    const connection = await StreamConnectionRepository.findById(this.pool, workspaceId, connectionId)
+    if (!connection) throw new Error(`Stream connection ${connectionId} has no projection for ${workspaceId}`)
+    return connection
   }
 
   private async assertEnabled(workspaceId: string): Promise<void> {

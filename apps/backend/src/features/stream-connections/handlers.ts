@@ -1,17 +1,11 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
-import { VISIBILITY_OPTIONS, streamConnectionSnapshotSchema } from "@threahq/types"
+import { acceptStreamConnectionSchema, streamConnectionSnapshotSchema } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { StreamConnectionService } from "./service"
 
 const streamParamsSchema = z.object({ streamId: z.string().min(1) })
 const connectionParamsSchema = z.object({ connectionId: z.string().min(1) })
-const acceptSchema = z
-  .object({
-    token: z.string().min(1).max(200),
-    visibility: z.enum(VISIBILITY_OPTIONS),
-  })
-  .strict()
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -47,7 +41,7 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
     },
 
     async accept(req: Request, res: Response) {
-      const body = validateRequest(acceptSchema, req.body)
+      const body = validateRequest(acceptStreamConnectionSchema, req.body)
       const connection = await streamConnectionService.accept({
         workspaceId: req.workspaceId!,
         userId: req.user!.id,

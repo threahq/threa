@@ -20,6 +20,9 @@ interface StreamConnectionRow {
   expires_at: Date
 }
 
+const COLUMNS = `id, role, state, stream_id, stream_slug, stream_display_name,
+  remote_workspace_id, remote_workspace_name, partner_visibility, expires_at`
+
 function mapRow(row: StreamConnectionRow): StreamConnection {
   return {
     id: row.id,
@@ -78,11 +81,19 @@ export const StreamConnectionRepository = {
     return result.rows[0].local_sides
   },
 
+  async findById(db: Querier, workspaceId: string, id: string): Promise<StreamConnection | null> {
+    const result = await db.query<StreamConnectionRow>(sql`
+      SELECT ${sql.raw(COLUMNS)}
+      FROM stream_connections
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   /** The channel's pending invite or accepted share, newest first. */
   async listLiveForStream(db: Querier, workspaceId: string, streamId: string): Promise<StreamConnection[]> {
     const result = await db.query<StreamConnectionRow>(sql`
-      SELECT id, role, state, stream_id, stream_slug, stream_display_name,
-             remote_workspace_id, remote_workspace_name, partner_visibility, expires_at
+      SELECT ${sql.raw(COLUMNS)}
       FROM stream_connections
       WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND state IN ('invited', 'active')
       ORDER BY created_at DESC

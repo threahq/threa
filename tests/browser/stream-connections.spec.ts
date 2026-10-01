@@ -87,17 +87,19 @@ test.describe("Stream connections", () => {
   test("should share a channel with another workspace when its admin accepts the invite", async ({ browser, page }) => {
     const { host, partner, partnerPage, partnerContext, slug, streamId } = await setUpHostAndPartner(browser, page)
 
-    await page.goto(settingsUrl(host.workspaceId, streamId, "general"))
-    await page
-      .locator('[data-slot="settings-nav"]')
-      .getByRole("button", { name: /Connect/ })
-      .click()
-    const invitePath = await createInviteLink(page)
+    try {
+      await page.goto(settingsUrl(host.workspaceId, streamId, "general"))
+      await page
+        .locator('[data-slot="settings-nav"]')
+        .getByRole("button", { name: /Connect/ })
+        .click()
+      const invitePath = await createInviteLink(page)
 
-    await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
-    await expectSharedWith(page, host.workspaceId, streamId, partner.workspaceName)
-
-    await partnerContext.close()
+      await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
+      await expectSharedWith(page, host.workspaceId, streamId, partner.workspaceName)
+    } finally {
+      await partnerContext.close()
+    }
   })
 
   test.describe("on a phone", () => {
@@ -112,15 +114,17 @@ test.describe("Stream connections", () => {
         hasTouch: true,
       })
 
-      await page.goto(settingsUrl(host.workspaceId, streamId, "general"))
-      await page.getByRole("dialog").getByRole("combobox").first().click()
-      await page.getByRole("option", { name: "Connect" }).click()
-      const invitePath = await createInviteLink(page)
+      try {
+        await page.goto(settingsUrl(host.workspaceId, streamId, "general"))
+        await page.getByRole("dialog").getByRole("combobox").first().click()
+        await page.getByRole("option", { name: "Connect" }).click()
+        const invitePath = await createInviteLink(page)
 
-      await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
-      await expectSharedWith(page, host.workspaceId, streamId, partner.workspaceName)
-
-      await partnerContext.close()
+        await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
+        await expectSharedWith(page, host.workspaceId, streamId, partner.workspaceName)
+      } finally {
+        await partnerContext.close()
+      }
     })
   })
 })

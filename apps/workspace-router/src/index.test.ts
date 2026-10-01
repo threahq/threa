@@ -479,6 +479,26 @@ describe("workspace-router", () => {
       }
     })
 
+    test("should not proxy anything but a GET of the invite lookup", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        const responses = await Promise.all(
+          [
+            makeRequest("/api/stream-connections/lookup?token=abc", "POST"),
+            makeRequest("/api/stream-connections/lookup/extra"),
+            makeRequest("/api/stream-connections/accept", "POST"),
+          ].map((req) => worker.fetch(req, makeEnv({ CONTROL_PLANE_URL: CP_URL })))
+        )
+        expect({ statuses: responses.map((r) => r.status), proxied: fn.mock.calls.length }).toEqual({
+          statuses: [404, 404, 404],
+          proxied: 0,
+        })
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test("proxies POST /api/workspaces to control-plane", async () => {
       const originalFetch = globalThis.fetch
       const fn = mockFetchFn()

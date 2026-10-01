@@ -172,12 +172,15 @@ describe("StreamSettingsDialog", () => {
   })
 
   it.each([
-    { flag: "on", admin: true, shown: true },
-    { flag: "off", admin: true, shown: false },
-    { flag: "on", admin: false, shown: false },
+    { type: StreamTypes.CHANNEL, flag: "on", admin: true, shown: true },
+    { type: StreamTypes.CHANNEL, flag: "off", admin: true, shown: false },
+    { type: StreamTypes.CHANNEL, flag: "on", admin: false, shown: false },
+    { type: StreamTypes.SCRATCHPAD, flag: "on", admin: true, shown: false },
+    { type: StreamTypes.DM, flag: "on", admin: true, shown: false },
+    { type: StreamTypes.THREAD, flag: "on", admin: true, shown: false },
   ] as const)(
-    "should offer Connect on a channel only to an admin with the flag on ($flag, admin $admin)",
-    async ({ flag, admin, shown }) => {
+    "should offer Connect only on a channel, to an admin with the flag on ($type, $flag, admin $admin)",
+    async ({ type, flag, admin, shown }) => {
       useStreamSettingsMock.mockReturnValue({
         isOpen: true,
         activeTab: "connect",
@@ -186,7 +189,7 @@ describe("StreamSettingsDialog", () => {
         setTab,
       })
       useWorkspaceStreamsMock.mockReturnValue([
-        makeStream({ id: "stream_design", type: StreamTypes.CHANNEL, displayName: null, slug: "design" }),
+        makeStream({ id: "stream_design", type, displayName: null, slug: "design" }),
       ])
       vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue(flag as never)
       vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({

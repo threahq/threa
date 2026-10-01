@@ -95,6 +95,29 @@ describe("requestLogSerializers.req hook secret redaction", () => {
   }
 })
 
+describe("requestLogSerializers.req token redaction", () => {
+  const cases: Array<[name: string, url: string, expected: string]> = [
+    [
+      "should replace the token when given an invite lookup url",
+      "/api/stream-connections/lookup?token=tok_S3cr3t-x",
+      "/api/stream-connections/lookup?token=[redacted]",
+    ],
+    [
+      "should keep the other params when the token sits between them",
+      "/api/invitations/lookup?a=1&token=tok_S3cr3t&b=2",
+      "/api/invitations/lookup?a=1&token=[redacted]&b=2",
+    ],
+    ["should leave a param that only ends in token alone", "/api/things?next_token=abc", "/api/things?next_token=abc"],
+  ]
+
+  for (const [name, url, expected] of cases) {
+    it(name, () => {
+      const result = requestLogSerializers.req({ id: "req-1", method: "GET", url, headers: {} })
+      expect(result.url).toBe(expected)
+    })
+  }
+})
+
 describe("requestLogSerializers.res", () => {
   it("should keep only statusCode when headers carry secrets", () => {
     const stdSerializedResponse = {

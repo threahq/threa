@@ -4,13 +4,16 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http"
+import { streamConnectionSnapshotSchema } from "@threahq/types"
 
 export interface MockRegionalBackend {
   url: string
   port: number
   /** All requests received by the mock */
   requests: Array<{ method: string; url: string; body: unknown }>
-  /** Reset recorded requests */
+  /** Status the stream-connection sync endpoint answers a valid snapshot with; 204 by default. */
+  setStreamConnectionStatus: (status: number) => void
+  /** Reset recorded requests and configured statuses */
   reset: () => void
   stop: () => Promise<void>
 }
@@ -32,6 +35,7 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
 
 export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
   const requests: MockRegionalBackend["requests"] = []
+  let streamConnectionStatus = 204
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const body = await parseBody(req)
@@ -63,10 +67,12 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
-    // POST /internal/stream-connections — snapshot fan-out from stream_connection_sync
+    // POST /internal/stream-connections — snapshot fan-out from stream_connection_sync,
+    // validated against the same schema the region applies.
     if (req.method === "POST" && url === "/internal/stream-connections") {
-      res.writeHead(200, { "Content-Type": "application/json" })
-      res.end(JSON.stringify({ ok: true }))
+      const status = streamConnectionSnapshotSchema.safeParse(body).success ? streamConnectionStatus : 400
+      res.writeHead(status)
+      res.end()
       return
     }
 
@@ -91,8 +97,12 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
     url: `http://localhost:${port}`,
     port,
     requests,
+    setStreamConnectionStatus: (status) => {
+      streamConnectionStatus = status
+    },
     reset: () => {
       requests.length = 0
+      streamConnectionStatus = 204
     },
     stop: () =>
       new Promise<void>((resolve) => {

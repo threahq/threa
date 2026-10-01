@@ -99,6 +99,21 @@ export class StreamConnectionService {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
 
+    const { id, token, supersededId } = await this.mint(params).catch((error: unknown) => {
+      // A concurrent create committed between our lock and insert. Retry once:
+      // it now sees that invite and supersedes it, or the share it became.
+      if (isUniqueViolation(error, "stream_connections_live_per_stream")) return this.mint(params)
+      throw error
+    })
+
+    return {
+      snapshot: await this.requireSnapshot(id),
+      token,
+      superseded: supersededId ? await this.requireSnapshot(supersededId) : null,
+    }
+  }
+
+  private async mint(params: CreateInviteParams): Promise<{ id: string; token: string; supersededId: string | null }> {
     const id = streamConnectionId()
     const token = randomBytes(32).toString("base64url")
     const supersededId = await withTransaction(this.pool, async (client) => {
@@ -124,17 +139,8 @@ export class StreamConnectionService {
       })
       await this.enqueueSync(client, id)
       return live?.id ?? null
-    }).catch((error: unknown) => {
-      // A concurrent create for the same channel committed first.
-      if (isUniqueViolation(error, "stream_connections_live_per_stream")) throw alreadyShared()
-      throw error
     })
-
-    return {
-      snapshot: await this.requireSnapshot(id),
-      token,
-      superseded: supersededId ? await this.requireSnapshot(supersededId) : null,
-    }
+    return { id, token, supersededId }
   }
 
   /** Revokes a pending invite. Disconnecting an accepted share is a separate operation. */
@@ -190,14 +196,20 @@ export class StreamConnectionService {
     return this.requireSnapshot(connectionId)
   }
 
-  /** What the invite page shows. Never exposes who created the link. */
-  async lookup(token: string): Promise<StreamConnectionLookupResponse> {
+  /**
+   * What the invite page shows. Never exposes who created the link, and names
+   * the accepting workspace only to its members.
+   */
+  async lookup(token: string, workosUserId: string): Promise<StreamConnectionLookupResponse> {
     const snapshot = await StreamConnectionRepository.findSnapshotByTokenHash(this.pool, hashToken(token))
     if (!snapshot) throw notFound()
     if (snapshot.state === StreamConnectionStates.REVOKED) throw revoked()
     if (snapshot.state === StreamConnectionStates.INVITED && new Date(snapshot.expiresAt) <= new Date()) {
       throw expired()
     }
+    const showPartner =
+      snapshot.partnerWorkspaceId !== null &&
+      (await WorkspaceRegistryRepository.isMember(this.pool, snapshot.partnerWorkspaceId, workosUserId))
     return {
       connectionId: snapshot.id,
       state: snapshot.state,
@@ -206,8 +218,8 @@ export class StreamConnectionService {
       hostRegion: snapshot.hostRegion,
       streamDisplayName: snapshot.hostStreamDisplayName,
       streamSlug: snapshot.hostStreamSlug,
-      partnerWorkspaceId: snapshot.partnerWorkspaceId,
-      partnerWorkspaceName: snapshot.partnerWorkspaceName,
+      partnerWorkspaceId: showPartner ? snapshot.partnerWorkspaceId : null,
+      partnerWorkspaceName: showPartner ? snapshot.partnerWorkspaceName : null,
       expiresAt: snapshot.expiresAt,
     }
   }
@@ -215,6 +227,8 @@ export class StreamConnectionService {
   /**
    * Outbox handler: push the current snapshot, not event-time state, to each
    * side's region. One region holding both sides gets it once and projects both.
+   * Every region is attempted before a failure is raised, so one region being
+   * down doesn't hold back the other.
    */
   async syncToRegions(payload: StreamConnectionSyncPayload): Promise<void> {
     const snapshot = await StreamConnectionRepository.findSnapshot(this.pool, payload.connectionId)
@@ -224,8 +238,12 @@ export class StreamConnectionService {
     }
     const regions = new Set([snapshot.hostRegion])
     if (snapshot.partnerRegion) regions.add(snapshot.partnerRegion)
-    for (const region of regions) {
-      await this.regionalClient.syncStreamConnection(region, snapshot)
+    const results = await Promise.allSettled(
+      [...regions].map((region) => this.regionalClient.syncStreamConnection(region, snapshot))
+    )
+    const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `Stream connection sync failed for ${failures.length} region(s)`)
     }
   }
 

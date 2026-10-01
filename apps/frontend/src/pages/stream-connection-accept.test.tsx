@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { StreamConnection, StreamConnectionLookupResponse, Workspace } from "@threahq/types"
+import {
+  StreamConnectionErrorCodes,
+  type StreamConnection,
+  type StreamConnectionLookupResponse,
+  type Workspace,
+} from "@threahq/types"
 import { render, screen, userEvent, waitFor } from "@/test"
 import { ApiError } from "@/api/client"
 import { streamConnectionsApi } from "@/api/stream-connections"
@@ -10,6 +15,7 @@ import * as hooksModule from "@/hooks"
 import { StreamConnectionAcceptPage } from "./stream-connection-accept"
 
 const login = vi.fn()
+const refetchWorkspaces = vi.fn()
 
 function makeWorkspace(id: string, name: string): Workspace {
   return {
@@ -40,7 +46,7 @@ function makeLookup(overrides: Partial<StreamConnectionLookupResponse> = {}): St
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/connections/tok_1"]}>
         <Routes>
@@ -49,9 +55,10 @@ function renderPage() {
       </MemoryRouter>
     </QueryClientProvider>
   )
+  return queryClient
 }
 
-function mockSession(user: { id: string } | null, workspaces: Workspace[]) {
+function mockSession(user: { id: string } | null, workspaces: Workspace[] | undefined) {
   vi.spyOn(authModule, "useAuth").mockReturnValue({
     user,
     loading: false,
@@ -61,6 +68,7 @@ function mockSession(user: { id: string } | null, workspaces: Workspace[]) {
   vi.spyOn(hooksModule, "useWorkspaces").mockReturnValue({
     workspaces,
     isLoading: false,
+    refetch: refetchWorkspaces,
   } as unknown as ReturnType<typeof hooksModule.useWorkspaces>)
 }
 
@@ -68,6 +76,7 @@ describe("StreamConnectionAcceptPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     login.mockReset()
+    refetchWorkspaces.mockReset()
   })
 
   it("should send a signed-out visitor to sign in and back to the same invite", async () => {
@@ -111,6 +120,8 @@ describe("StreamConnectionAcceptPage", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Only admins of that workspace can accept.")
     expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled()
+    await userEvent.click(screen.getByRole("button", { name: /Public/ }))
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 
   it("should point the viewer elsewhere when the host is their only workspace", async () => {
@@ -123,15 +134,56 @@ describe("StreamConnectionAcceptPage", () => {
     expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument()
   })
 
-  it("should say the invite expired when the lookup reports it", async () => {
+  it.each([
+    { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND, heading: "Invite not found" },
+    { status: 409, code: StreamConnectionErrorCodes.REVOKED, heading: "Invite revoked" },
+    { status: 409, code: StreamConnectionErrorCodes.EXPIRED, heading: "Invite expired" },
+  ])("should say why the link is dead and offer a way out ($code)", async ({ status, code, heading }) => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
-    vi.spyOn(streamConnectionsApi, "lookup").mockRejectedValue(
-      new ApiError(410, "STREAM_CONNECTION_EXPIRED", "expired")
-    )
+    vi.spyOn(streamConnectionsApi, "lookup").mockRejectedValue(new ApiError(status, code, "dead link"))
 
     renderPage()
 
-    expect(await screen.findByRole("heading", { name: "Invite expired" })).toBeInTheDocument()
+    expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Threa" })).toHaveAttribute("href", "/")
+  })
+
+  it("should load the invite again when the viewer retries a failed lookup", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "lookup")
+      .mockRejectedValueOnce(new ApiError(500, "INTERNAL", "boom"))
+      .mockResolvedValue(makeLookup())
+
+    renderPage()
+    await userEvent.click(await screen.findByRole("button", { name: "Try again" }))
+
+    expect(await screen.findByRole("heading", { name: "#design from Acme" })).toBeInTheDocument()
+  })
+
+  it("should keep the form when a background refresh of the invite fails", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    const lookup = vi
+      .spyOn(streamConnectionsApi, "lookup")
+      .mockResolvedValueOnce(makeLookup())
+      .mockRejectedValue(new ApiError(500, "INTERNAL", "boom"))
+
+    const queryClient = renderPage()
+    expect(await screen.findByRole("heading", { name: "#design from Acme" })).toBeInTheDocument()
+    await queryClient.refetchQueries()
+
+    expect(lookup).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled()
+  })
+
+  it("should offer a retry when the viewer's workspaces fail to load", async () => {
+    mockSession({ id: "user_1" }, undefined)
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
+
+    renderPage()
+    await userEvent.click(await screen.findByRole("button", { name: "Try again" }))
+
+    expect(screen.getByRole("heading", { name: "Couldn't load your workspaces" })).toBeInTheDocument()
+    expect(refetchWorkspaces).toHaveBeenCalled()
   })
 
   it("should show where the channel went when the invite was already accepted", async () => {
@@ -144,5 +196,15 @@ describe("StreamConnectionAcceptPage", () => {
 
     expect(await screen.findByRole("heading", { name: "#design is shared with Beta" })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole("link", { name: "Open Beta" })).toHaveAttribute("href", "/w/ws_beta"))
+  })
+
+  it("should not name or link the accepting workspace to a viewer outside it", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_gamma", "Gamma")])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup({ state: "active" }))
+
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "#design is shared with another workspace" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Threa" })).toHaveAttribute("href", "/")
   })
 })
