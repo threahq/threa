@@ -398,7 +398,7 @@ export class WorkspaceService {
 
           let slug: string
 
-          if (preferEmailSlug) {
+          if (preferEmailSlug && currentUser.email) {
             slug = deriveSlugFromEmail(currentUser.email)
           } else if (params.slug) {
             slug = generateSlug(params.slug)
@@ -663,8 +663,8 @@ export class WorkspaceService {
     return WorkspaceRepository.getWorkosOrganizationId(this.pool, workspaceId)
   }
 
-  private async shouldPreferEmailSlug(orgId: string | null, email: string): Promise<boolean> {
-    if (!this.workosOrgService || !orgId) return false
+  private async shouldPreferEmailSlug(orgId: string | null, email: string | null): Promise<boolean> {
+    if (!this.workosOrgService || !orgId || !email) return false
 
     const org = await this.workosOrgService.getOrganization(orgId)
     if (!org || org.domains.length === 0) return false

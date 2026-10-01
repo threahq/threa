@@ -2,7 +2,13 @@ import type { Request, Response, NextFunction } from "express"
 import type { Pool } from "pg"
 import { displayNameFromWorkos, logger } from "@threahq/backend-common"
 import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
-import { UserRepository, type User, type WorkspaceService } from "../features/workspaces"
+import {
+  UserRepository,
+  isClaimedUser,
+  type ClaimedUser,
+  type User,
+  type WorkspaceService,
+} from "../features/workspaces"
 import type { ControlPlaneClient } from "../lib/control-plane-client"
 import { safeErrorCode } from "../lib/errors"
 
@@ -10,7 +16,7 @@ declare global {
   namespace Express {
     interface Request {
       workspaceId?: string
-      user?: User
+      user?: ClaimedUser
     }
   }
 }
@@ -54,7 +60,7 @@ export function createWorkspaceUserMiddleware({ pool, workspaceService, controlP
       })
     }
 
-    if (!user) {
+    if (!user || !isClaimedUser(user)) {
       return res.status(403).json({ error: "Not a user in this workspace" })
     }
 

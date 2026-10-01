@@ -404,7 +404,7 @@ function serializeUser(user: {
   id: string
   name: string
   slug: string
-  email: string
+  email: string | null
   avatarUrl: string | null
   role: string
 }): WireUser {
@@ -412,7 +412,7 @@ function serializeUser(user: {
     id: user.id,
     name: user.name,
     slug: user.slug,
-    email: user.email,
+    ...(user.email != null && { email: user.email }),
     ...(user.avatarUrl != null && { avatarUrl: user.avatarUrl }),
     role: user.role,
   }

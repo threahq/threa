@@ -83,8 +83,9 @@ export interface Workspace {
 export interface User {
   id: string
   workspaceId: string
-  workosUserId: string
-  email: string
+  /** Null for a user nobody has claimed yet; such a user cannot sign in. */
+  workosUserId: string | null
+  email: string | null
   role: WorkspaceRoleSlug
   slug: string
   name: string

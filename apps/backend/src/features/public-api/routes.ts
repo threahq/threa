@@ -301,7 +301,7 @@ const userSchema = z.object({
   id: z.string(),
   name: z.string(),
   slug: z.string(),
-  email: z.string(),
+  email: z.string().optional(),
   avatarUrl: z.string().optional(),
   role: z.string(),
 })
