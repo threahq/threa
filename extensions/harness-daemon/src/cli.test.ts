@@ -90,3 +90,7 @@ test("--thinking is validated against the spawned runtime's own launch flag", ()
   )
   expect(() => parseSpawn(["claude", "--name", "a", "--thinking", "ultracode"])).toThrow("--thinking for claude")
 })
+
+test("a --model that reads as an option is refused, so the launch it names parses back", () => {
+  expect(() => parseSpawn(["pi", "--name", "a", "--cwd", "/tmp", "--model", "-x"])).toThrow(/--model must name a model/)
+})

@@ -8,7 +8,7 @@ import {
   type ClaudeRegistryDeps,
 } from "./claude-registry"
 import { reconnectClaude, reconnectRuntime, type ReconnectDeps } from "./reconnect"
-import { deriveClaudeRuntimeIdentity } from "./spawners"
+import { claudeLaunchArgs, claudeLaunchCommand, deriveClaudeRuntimeIdentity } from "./spawners"
 import type { ManagedAgent } from "./types"
 
 const RUNTIME = "ccs-runtime"
@@ -126,6 +126,24 @@ describe("parseClaudeLaunch", () => {
     expect(parseClaudeLaunch(COMMAND)).toMatchObject({ autocompact: undefined })
   })
 
+  test("round-trips the model and effort a spawn named", () => {
+    const launched = claudeLaunchCommand(
+      claudeLaunchArgs({
+        claudeBin: "/opt/claude",
+        name: "feature",
+        channel: "threa-channel",
+        mcpConfig: "/tmp/threa.json",
+        choice: { model: "claude-fable-5[1m]", thinking: "high" },
+      }),
+      { instanceId: "cc-one", runtimeSessionId: RUNTIME }
+    )
+    expect(parseClaudeLaunch(launched)?.choice).toEqual({ model: "claude-fable-5[1m]", thinking: "high" })
+    expect(parseClaudeLaunch(COMMAND)?.choice).toEqual({})
+    for (const tail of ["--model", "--effort", "--model opus --model sonnet", "--model --effort"]) {
+      expect(parseClaudeLaunch(`${COMMAND} ${tail}`)).toBeUndefined()
+    }
+  })
+
   test("rejects unsupported policy and shell forms", () => {
     for (const command of [
       "claude --dangerously-load-development-channels server:x --unknown",
@@ -241,6 +259,21 @@ describe("reconnectClaude", () => {
       CWD,
       `'env' 'THREA_DISPLAY_NAME=Claude' 'THREA_INSTANCE_ID=cc-one' 'THREA_RUNTIME_SESSION_ID=${RUNTIME}' 'THREA_COLD_START_IF_ARCHIVED=wait' 'THREA_COLD_START_IF_MISSING=error' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/claude' '--resume' '${NATIVE}' '--name' 'threa.feature' '--mcp-config' '/tmp/threa.json' '--autocompact' '200k' '--dangerously-load-development-channels' 'server:threa-channel' '--dangerously-skip-permissions'`,
     ])
+  })
+
+  test("resumes on the model and effort the pane was launched with", async () => {
+    let paneReads = 0
+    const launched = `${COMMAND} --model opus --effort high`
+    const d = deps({
+      panes: () =>
+        ++paneReads < 3
+          ? [pane({ startCommand: launched })]
+          : [pane({ panePid: 5678, startCommand: "claude --resume native" })],
+    })
+
+    await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
+
+    expect(parseClaudeLaunch(d.calls[0]![2]!)?.choice).toEqual({ model: "opus", thinking: "high" })
   })
 
   test("clears the development-channel warning before verifying the native session", async () => {

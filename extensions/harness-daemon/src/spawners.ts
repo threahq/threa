@@ -230,6 +230,14 @@ export function piResumeCommand(
 /** Keep 1M models from postponing ordinary-session compaction past Claude's standard 200k window. */
 export const CLAUDE_AUTOCOMPACT_WINDOW = "200k"
 
+/** The thinking level is actuated as Claude Code's `--effort`. */
+export function claudeModelArgs(choice: RuntimeModelChoice = {}): string[] {
+  const args: string[] = []
+  if (choice.model) args.push("--model", choice.model)
+  if (choice.thinking) args.push("--effort", choice.thinking)
+  return args
+}
+
 export function claudeLaunchArgs(params: {
   claudeBin: string
   name: string
@@ -238,14 +246,12 @@ export function claudeLaunchArgs(params: {
   noYolo?: boolean
   /** Set only by a takeover: continue this native conversation instead of starting one. */
   resumeSessionId?: string
-  /** What the spawn named; the thinking level is actuated as Claude Code's `--effort`. */
   choice?: RuntimeModelChoice
 }): string[] {
   const args = [params.claudeBin]
   if (params.resumeSessionId) args.push("--resume", params.resumeSessionId)
   args.push("--name", `threa.${params.name}`, "--autocompact", CLAUDE_AUTOCOMPACT_WINDOW)
-  if (params.choice?.model) args.push("--model", params.choice.model)
-  if (params.choice?.thinking) args.push("--effort", params.choice.thinking)
+  args.push(...claudeModelArgs(params.choice))
   if (params.mcpConfig) {
     args.push("--mcp-config", params.mcpConfig, "--dangerously-load-development-channels", `server:${params.channel}`)
   }
