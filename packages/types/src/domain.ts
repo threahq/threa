@@ -261,6 +261,14 @@ export interface Stream {
    * none. Absent on legacy cached rows synced before this shipped.
    */
   lastReplyAt?: string | null
+  /**
+   * All-time count of the stream's non-deleted messages, kept live by
+   * `stream:message_count`. Absent until a pre-existing stream has been counted,
+   * and on legacy cached rows — render nothing rather than a guess.
+   */
+  messageCount?: number
+  /** Increments on every `messageCount` write; the newer copy wins on merge. */
+  messageCountRevision?: number
   companionMode: CompanionMode
   companionPersonaId: string | null
   /**

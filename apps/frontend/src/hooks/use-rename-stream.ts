@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import type { Stream } from "@threahq/types"
 import { useStreamService } from "@/contexts"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"
-import { mergeStreamByTitleRevision, persistStreamByTitleRevision } from "@/lib/title-merge"
+import { mergeStreamByRevision, persistStreamByRevision } from "@/lib/title-merge"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useWorkspaceUserId } from "./use-workspaces"
@@ -35,21 +35,20 @@ export function useRenameStream(workspaceId: string, streamId: string, streamOve
           ? await sealStreamRename({ workspaceId, streamId, userId, name })
           : { displayName: name }
         const updated = await service.update(workspaceId, streamId, input)
-        await persistStreamByTitleRevision(updated)
+        await persistStreamByRevision(updated)
         queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), (old) =>
-          old ? mergeStreamByTitleRevision(old, updated) : updated
+          old ? mergeStreamByRevision(old, updated) : updated
         )
         queryClient.setQueriesData<{ stream?: Stream }>(
           { queryKey: streamKeys.bootstrap(workspaceId, streamId) },
-          (old) =>
-            old ? { ...old, stream: old.stream ? mergeStreamByTitleRevision(old.stream, updated) : updated } : old
+          (old) => (old ? { ...old, stream: old.stream ? mergeStreamByRevision(old.stream, updated) : updated } : old)
         )
         queryClient.setQueryData<{ streams?: Stream[] }>(workspaceKeys.bootstrap(workspaceId), (old) =>
           old?.streams
             ? {
                 ...old,
                 streams: old.streams.map((item) =>
-                  item.id === streamId ? mergeStreamByTitleRevision(item, updated) : item
+                  item.id === streamId ? mergeStreamByRevision(item, updated) : item
                 ),
               }
             : old

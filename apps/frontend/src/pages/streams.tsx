@@ -70,6 +70,7 @@ const MEMBERSHIP_LABELS: Record<Exclude<DirectoryMembership, "any">, string> = {
 const VALID_TABS = new Set<string>(DIRECTORY_TABS)
 const MOST_ACTIVE_LIMIT = 4
 const EMPTY_STATS: StreamDirectoryStats[] = []
+const COMPACT_COUNT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 })
 
 type ListedStream = Stream & { lastMessagePreview?: LastMessagePreview | null }
 
@@ -172,7 +173,7 @@ function StreamsPageInner({
     () =>
       archived || query.trim() !== ""
         ? []
-        : pickMostActive(rows, (id) => messageTotal(statsById.get(id)), MOST_ACTIVE_LIMIT),
+        : pickMostActive(rows, (id) => recentMessageTotal(statsById.get(id)), MOST_ACTIVE_LIMIT),
     [archived, query, rows, statsById]
   )
 
@@ -335,12 +336,12 @@ function StreamsPageInner({
   )
 }
 
-function messageTotal(stats: StreamDirectoryStats | undefined): number {
+function recentMessageTotal(stats: StreamDirectoryStats | undefined): number {
   return stats ? stats.activity.reduce((sum, count) => sum + count, 0) : 0
 }
 
-function messageCountLabel(count: number): string {
-  return count === 1 ? "1 message" : `${count} messages`
+function messageCountLabel(count: number, formatted = count.toLocaleString()): string {
+  return count === 1 ? "1 message" : `${formatted} messages`
 }
 
 function directoryEmptyText(state: { failed: boolean; loading: boolean; empty: boolean; searching: boolean }) {
@@ -363,7 +364,7 @@ function MostActiveCard({
   stats: StreamDirectoryStats | undefined
 }) {
   const Icon = STREAM_ICONS[row.stream.type]
-  const total = messageTotal(stats)
+  const { messageCount } = row.stream
   return (
     <li>
       <Link
@@ -376,8 +377,16 @@ function MostActiveCard({
         </span>
         {stats && <ActivitySparkline activity={stats.activity} className="h-8 w-full" />}
         <span className="flex items-center justify-between gap-2 text-[11px] tabular-nums text-muted-foreground">
-          <span>{messageCountLabel(total)}</span>
-          {stats && <MemberStack workspaceId={workspaceId} stats={stats} max={3} />}
+          {messageCount !== undefined && (
+            <span className="whitespace-nowrap" title={messageCountLabel(messageCount)}>
+              {messageCountLabel(messageCount, COMPACT_COUNT.format(messageCount))}
+            </span>
+          )}
+          {stats && (
+            <span className="ml-auto">
+              <MemberStack workspaceId={workspaceId} stats={stats} max={3} />
+            </span>
+          )}
         </span>
       </Link>
     </li>

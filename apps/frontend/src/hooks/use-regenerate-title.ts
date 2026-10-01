@@ -11,11 +11,7 @@ import {
 import { conversationsApi } from "@/api/conversations"
 import { streamsApi } from "@/api/streams"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"
-import {
-  mergeConversationByTitleRevision,
-  mergeStreamByTitleRevision,
-  persistStreamByTitleRevision,
-} from "@/lib/title-merge"
+import { mergeConversationByTitleRevision, mergeStreamByRevision, persistStreamByRevision } from "@/lib/title-merge"
 import { mergeBoardConversation } from "@/stores/board-store"
 import { conversationKeys } from "./use-conversations"
 import { streamKeys } from "./use-streams"
@@ -52,9 +48,9 @@ export function useRegenerateTitle(workspaceId: string, target: RegenerationTarg
             })
           : undefined
         const result = await streamsApi.regenerateTitle(workspaceId, target.stream.id, sealed)
-        await persistStreamByTitleRevision(result.stream)
+        await persistStreamByRevision(result.stream)
         queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, target.stream.id), (old) =>
-          old ? mergeStreamByTitleRevision(old, result.stream) : result.stream
+          old ? mergeStreamByRevision(old, result.stream) : result.stream
         )
         queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
         if (result.deferred) toast.info("Title will regenerate after Ariadne's next reply")

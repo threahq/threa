@@ -1,5 +1,5 @@
 import { db, getActiveDb, sequenceToNum, type CachedEvent, type ThreaDatabase, type AccountWriteContext } from "@/db"
-import { mergeStreamByTitleRevision } from "@/lib/title-merge"
+import { mergeStreamByRevision, persistStreamByRevision } from "@/lib/title-merge"
 import { getAccountGeneration, isNoOpRewrite, putEventsBounded } from "@/db/event-writes"
 import {
   StreamTypes,
@@ -529,9 +529,7 @@ async function writeBootstrapEventsAndStream(
     _cachedAt: now,
   }
   const cachedStream = await db.streams.get(stream.id)
-  const fullStreamData = cachedStream
-    ? mergeStreamByTitleRevision(cachedStream, incomingStreamData)
-    : incomingStreamData
+  const fullStreamData = cachedStream ? mergeStreamByRevision(cachedStream, incomingStreamData) : incomingStreamData
 
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
   if (isDmWithNullName) {
@@ -1622,11 +1620,9 @@ function bindStreamSocketHandlers(
         await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
       }
 
-      const streamUpdate = { ...payload.thread, _cachedAt: now }
-      const updated = await db.streams.update(payload.thread.id, streamUpdate)
-      if (updated === 0) {
-        await db.streams.put(streamUpdate)
-      }
+      const cachedThread = await db.streams.get(payload.thread.id)
+      const thread = cachedThread ? mergeStreamByRevision(cachedThread, payload.thread) : payload.thread
+      await db.streams.put({ ...thread, _cachedAt: now })
     })
 
     // Re-home the moved messages' context rows onto the thread. Gated on the
@@ -1650,7 +1646,7 @@ function bindStreamSocketHandlers(
         streams: streamExists
           ? old.streams.map((stream) =>
               stream.id === payload.thread.id
-                ? { ...stream, ...payload.thread, lastMessagePreview: stream.lastMessagePreview }
+                ? { ...mergeStreamByRevision(stream, payload.thread), lastMessagePreview: stream.lastMessagePreview }
                 : stream
             )
           : [...old.streams, { ...payload.thread, lastMessagePreview: null }],
@@ -1740,7 +1736,7 @@ function bindStreamSocketHandlers(
       threadId: stream.id,
     }))
 
-    await db.streams.put({ ...stream, _cachedAt: Date.now() })
+    await persistStreamByRevision(stream)
 
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
@@ -1750,7 +1746,7 @@ function bindStreamSocketHandlers(
         streams: streamExists
           ? old.streams.map((existing) =>
               existing.id === stream.id
-                ? { ...existing, ...stream, lastMessagePreview: existing.lastMessagePreview }
+                ? { ...mergeStreamByRevision(existing, stream), lastMessagePreview: existing.lastMessagePreview }
                 : existing
             )
           : [...old.streams, { ...stream, lastMessagePreview: null }],

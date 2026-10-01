@@ -110,6 +110,9 @@ export interface CachedStream {
    * before this shipped — treat missing as 0.
    */
   replyCount?: number
+  /** All-time non-deleted message count; absent until the server has counted the stream. */
+  messageCount?: number
+  messageCountRevision?: number
   /** Timestamp of the thread's most recent non-deleted reply, or null when none. */
   lastReplyAt?: string | null
   companionMode: "off" | "on"

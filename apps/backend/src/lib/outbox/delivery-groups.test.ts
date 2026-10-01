@@ -315,6 +315,33 @@ describe("resolveDeliveryGroups — call ring lifecycle", () => {
   })
 })
 
+describe("resolveDeliveryGroups — stream:message_count", () => {
+  const count = (payload: Record<string, unknown>) =>
+    new Set(
+      resolveDeliveryGroups(
+        event("stream:message_count", { workspaceId: "ws_1", messageCount: 3, messageCountRevision: 3, ...payload })
+      )
+    )
+
+  it("fans a public channel's count to its room and the whole workspace", () => {
+    expect(count({ streamId: "stream_pub", rootStreamId: null, streamVisibility: Visibilities.PUBLIC })).toEqual(
+      new Set([streamGroup("stream_pub"), WORKSPACE_GROUP])
+    )
+  })
+
+  it("keeps a private thread's count to its own room and its root's room", () => {
+    expect(
+      count({ streamId: "stream_t", rootStreamId: "stream_root", streamVisibility: Visibilities.PRIVATE })
+    ).toEqual(new Set([streamGroup("stream_t"), streamGroup("stream_root")]))
+  })
+
+  it("fans a public channel's thread count to its room, its root's room and the workspace", () => {
+    expect(count({ streamId: "stream_t", rootStreamId: "stream_root", streamVisibility: Visibilities.PUBLIC })).toEqual(
+      new Set([streamGroup("stream_t"), streamGroup("stream_root"), WORKSPACE_GROUP])
+    )
+  })
+})
+
 describe("resolveDeliveryGroups — call lifecycle (roadmap 1.4)", () => {
   for (const eventType of ["stream:call_started", "stream:call_ended"] as const) {
     it(`fans ${eventType} on a PUBLIC channel to the stream room AND the workspace (sidebar dot)`, () => {

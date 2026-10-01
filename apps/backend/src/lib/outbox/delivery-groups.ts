@@ -36,6 +36,7 @@ import {
   type AgentConfigUpdatedOutboxPayload,
   type StreamCallStartedOutboxPayload,
   type StreamCallEndedOutboxPayload,
+  type StreamMessageCountOutboxPayload,
 } from "./repository"
 
 /**
@@ -333,6 +334,17 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     } else {
       for (const userId of payload.memberUserIds) groups.push(userGroup(userId))
     }
+    return groups
+  }
+
+  // The Streams page shows counts for public channels the viewer never joined,
+  // so a public access root fans workspace-wide; otherwise the stream's room
+  // plus, for a thread, its root's room (members of the root see the thread).
+  if (isOutboxEventType(event, "stream:message_count")) {
+    const { streamId, rootStreamId, streamVisibility } = event.payload as StreamMessageCountOutboxPayload
+    const groups = [streamGroup(streamId)]
+    if (rootStreamId && rootStreamId !== streamId) groups.push(streamGroup(rootStreamId))
+    if (streamVisibility === Visibilities.PUBLIC) groups.push(WORKSPACE_GROUP)
     return groups
   }
 
