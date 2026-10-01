@@ -2027,7 +2027,8 @@ describe("registerWorkspaceSocketHandlers", () => {
 
   it("returns the revision-merged count from a reconnect whose snapshot is older than IndexedDB", async () => {
     const current = makeStream("stream_reconnect_count", { messageCount: 12, messageCountRevision: 12 })
-    await db.streams.put({ ...current, _cachedAt: Date.now() })
+    const fetchStartedAt = Date.now()
+    await db.streams.put({ ...current, _cachedAt: fetchStartedAt - 1000 })
     const preview = {
       authorId: "usr_1",
       authorType: "user" as const,
@@ -2043,7 +2044,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       new Map(),
       new Set(),
       new Set(),
-      Date.now()
+      fetchStartedAt
     )
 
     const returned = workspaceBootstrap.streams.find((stream) => stream.id === current.id)
