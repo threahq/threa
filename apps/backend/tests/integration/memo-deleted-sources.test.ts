@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
 import {
   ConversationStatuses,
@@ -148,6 +148,34 @@ describe("memo sources: deleted and edited messages", () => {
     } as unknown as OutboxEvent)
   }
 
+  /** A batch whose memorizer captures one memo citing every message it was shown. */
+  function capturingService(classify: () => Promise<ConversationClassification> = async () => worthy): MemoService {
+    return new MemoService({
+      pool,
+      classifier: { classifyConversation: classify },
+      memorizer: {
+        memorizeConversation: async (_formatted: string, context: { content: { id: string }[] }) => [
+          {
+            title: "Rollout plan",
+            abstract: "The rollout starts on Monday with the flag off.",
+            keyPoints: [],
+            sourceMessageIds: context.content.map((m) => m.id),
+            knowledgeType: "decision",
+            tags: [],
+          },
+        ],
+      } as never,
+      embeddingService: {
+        embedBatch: async () => [Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : 0))],
+      } as never,
+      messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
+    })
+  }
+
+  async function activeMemosCiting(id: string): Promise<number> {
+    return (await MemoRepository.findActiveCitingMessage(pool, testWorkspaceId, id)).length
+  }
+
   async function memoStatus(id: string): Promise<string | undefined> {
     return (await MemoRepository.findById(pool, id))?.status
   }
@@ -267,6 +295,48 @@ describe("memo sources: deleted and edited messages", () => {
     expect({ status: await memoStatus(memo), queued: await isQueued(seeded) }).toEqual({
       status: MemoStatuses.SUPERSEDED,
       queued: false,
+    })
+  })
+
+  test("a message deleted while the model calls run is not cited by the saved memos", async () => {
+    const seeded = await seedConversation()
+    await withTransaction(pool, (client) => queue(client, seeded))
+    const [deletedId] = seeded.messageIds
+
+    await capturingService(async () => {
+      await deleteMessage(seeded, deletedId)
+      return worthy
+    }).processBatch(testWorkspaceId, seeded.streamId)
+
+    expect({ citing: await activeMemosCiting(deletedId), queued: await isQueued(seeded) }).toEqual({
+      citing: 0,
+      queued: true,
+    })
+  })
+
+  test("a message deleted while a batch saves retires the memo that batch saved", async () => {
+    const seeded = await seedConversation()
+    await withTransaction(pool, (client) => queue(client, seeded))
+    const [deletedId] = seeded.messageIds
+    const findNearDuplicate = MemoRepository.findNearDuplicate
+    let deletion: Promise<void> | undefined
+    const spy = spyOn(MemoRepository, "findNearDuplicate").mockImplementation(async (...args) => {
+      deletion ??= deleteMessage(seeded, deletedId)
+      // Give the deletion time to commit and its handler time to run if nothing holds it back.
+      await Bun.sleep(200)
+      return findNearDuplicate(...args)
+    })
+
+    try {
+      await capturingService().processBatch(testWorkspaceId, seeded.streamId)
+      await deletion
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect({ citing: await activeMemosCiting(deletedId), queued: await isQueued(seeded) }).toEqual({
+      citing: 0,
+      queued: true,
     })
   })
 

@@ -568,6 +568,14 @@ export const MemoRepository = {
     return result.rows.map(mapRowToMemo)
   },
 
+  /**
+   * Serializes, per stream, memo saves (batch, save_memo, reflective capture)
+   * with each other and with retirement when a source message is deleted.
+   */
+  async lockStreamSaves(db: Querier, streamId: string): Promise<void> {
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+  },
+
   /** Active memos citing `messageId`, each flagged with whether any of its sources is still undeleted. */
   async findActiveCitingMessage(
     db: Querier,

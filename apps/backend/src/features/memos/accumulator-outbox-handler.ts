@@ -98,6 +98,11 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
 
     await withTransaction(this.db, async (client) => {
       if (event.eventType === "message:deleted") {
+        // Held by every memo save in the stream: a memo saved concurrently
+        // either commits before the lookup below, or sees the deletion.
+        const memoStream = await findMemoryModeStream(client, workspaceId, streamId)
+        if (memoStream) await MemoRepository.lockStreamSaves(client, memoStream.id)
+
         const citing = await MemoRepository.findActiveCitingMessage(client, workspaceId, messageId)
         await MemoRepository.archiveMany(
           client,
