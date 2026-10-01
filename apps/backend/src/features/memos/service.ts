@@ -850,7 +850,12 @@ export class MemoService implements MemoServiceLike {
       }
 
       const givenUp = (
-        await PendingItemRepository.recordFailedAttempts(client, [...failedItemIds], MEMO_MAX_FAILED_ATTEMPTS)
+        await PendingItemRepository.recordFailedAttempts(
+          client,
+          workspaceId,
+          [...failedItemIds],
+          MEMO_MAX_FAILED_ATTEMPTS
+        )
       ).filter((p) => p.processedAt !== null)
       if (givenUp.length > 0) {
         logger.error(
