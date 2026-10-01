@@ -133,6 +133,7 @@ describe("ConversationService.reassignMessage", () => {
         [msg2Id, 3, "Ambiguous follow-up"],
       ] as const) {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id,
           streamId: testStreamId,
           sequence: BigInt(seq),
@@ -243,6 +244,7 @@ describe("ConversationService.reassignMessage", () => {
 
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: orphanMsgId,
         streamId: testStreamId,
         sequence: BigInt(10),
@@ -375,6 +377,7 @@ describe("ConversationService.reassignMessage", () => {
       })
       await StreamMemberRepository.insert(client, otherStreamId, testUserId)
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: foreignMsgId,
         streamId: otherStreamId,
         sequence: BigInt(1),
@@ -415,6 +418,7 @@ describe("ConversationService.reassignMessage", () => {
         rootStreamId: testStreamId,
       })
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: threadMsgId,
         streamId: threadStreamId,
         sequence: BigInt(1),

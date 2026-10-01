@@ -893,6 +893,7 @@ describe("Event Sourcing", () => {
   describe("Transaction Atomicity", () => {
     test("should rollback all changes on failure", async () => {
       const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
       const testUserId = userId()
 
       // The PRODUCTION wrapper, which commits on success — `withTestTransaction`
@@ -912,6 +913,7 @@ describe("Event Sourcing", () => {
 
           // Insert message
           await MessageRepository.insert(client, {
+            workspaceId: testWorkspaceId,
             id: "msg_test",
             streamId: testStreamId,
             sequence: 1n,

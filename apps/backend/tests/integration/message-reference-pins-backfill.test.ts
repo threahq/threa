@@ -142,6 +142,7 @@ describe("message-reference-pins backfill", () => {
     await withTransaction(pool, async (client) => {
       for (const row of legacyRows) {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: row.id,
           streamId: target,
           sequence: row.sequence,

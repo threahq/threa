@@ -60,6 +60,7 @@ describe("conversation settling", () => {
     const id = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id,
         streamId: testStreamId,
         sequence: seq++,

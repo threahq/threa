@@ -108,6 +108,7 @@ describe("Message hybrid search retrieval", () => {
     const sequence = nextSequenceByStream.get(params.streamId) ?? 1n
     nextSequenceByStream.set(params.streamId, sequence + 1n)
     return MessageRepository.insert(pool, {
+      workspaceId: params.workspaceId,
       id: messageId(),
       streamId: params.streamId,
       sequence,

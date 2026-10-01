@@ -63,6 +63,7 @@ describe("sanitizeSyncEntries", () => {
     const msgId = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: msgId,
         streamId: sourceStreamId,
         sequence: sequence++,
@@ -128,6 +129,7 @@ describe("sanitizeSyncEntries", () => {
     readableSharedMsg = messageId()
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: privateSharedMsg,
         streamId: privatizedSource,
         sequence: sequence++,
@@ -136,6 +138,7 @@ describe("sanitizeSyncEntries", () => {
         ...testMessageContent("shared while public"),
       })
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: readableSharedMsg,
         streamId: citingChannel,
         sequence: sequence++,
@@ -222,6 +225,7 @@ describe("sanitizeSyncEntries", () => {
     const pinned = testMessageContent("body when it was shared")
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: pinnedSource,
         streamId: citingChannel,
         sequence: sequence++,
@@ -231,6 +235,7 @@ describe("sanitizeSyncEntries", () => {
       })
     })
     await MessageVersionRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id: messageVersionId(),
       messageId: pinnedSource,
       versionNumber: 1,

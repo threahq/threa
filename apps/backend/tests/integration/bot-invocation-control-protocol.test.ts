@@ -47,6 +47,7 @@ describe("bot invocation control protocol", () => {
 
   async function createSource(markdown = "revision one") {
     const message = await MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: stream,
       sequence: BigInt(Date.now()),
@@ -368,6 +369,7 @@ describe("bot invocation control protocol", () => {
     const results: Array<Record<string, unknown>> = []
     for (const delivery of ["plaintext", "sealed"] as const) {
       const source = await MessageRepository.insert(pool, {
+        workspaceId: workspace,
         id: messageId(),
         streamId: stream,
         sequence: BigInt(Date.now()) + BigInt(results.length),

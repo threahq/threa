@@ -222,6 +222,7 @@ export function testContentJson(text: string) {
  * @example
  * await MessageRepository.insert(client, {
  *   id: msgId,
+ *   workspaceId,
  *   streamId,
  *   sequence: BigInt(1),
  *   authorId,
