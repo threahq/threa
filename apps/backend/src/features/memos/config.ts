@@ -51,6 +51,14 @@ export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
 export const MEMO_ACTIVE_CONVERSATION_QUIET_MS = 30 * 60 * 1000
 
 /**
+ * Batches in which a conversation may fail classification, memorizing or
+ * embedding before it is given up until its next requeue. Retries run on the
+ * next batch cycles, so this rides out a brief provider error without paying
+ * for a conversation that fails every time.
+ */
+export const MEMO_MAX_FAILED_ATTEMPTS = 3
+
+/**
  * Upper bound on memos extracted from a single conversation. A conversation can
  * settle several unrelated things, but a runaway count usually means the model is
  * transcribing turns instead of extracting durable knowledge — the cap keeps the

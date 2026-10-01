@@ -42,6 +42,7 @@ import {
   MEMO_GEM_CONFIDENCE_FLOOR,
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
   MEMO_ACTIVE_CONVERSATION_QUIET_MS,
+  MEMO_MAX_FAILED_ATTEMPTS,
   MEMO_DEDUP_DISTANCE,
   MEMO_SUPERSEDE_DISTANCE,
   MEMO_REFLECTIVE_MAX_MEMOS,
@@ -411,10 +412,10 @@ export class MemoService implements MemoServiceLike {
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
     const memosToCreate: MemoToCreate[] = []
     const deferredItemIds = new Set<string>()
+    const failedItemIds = new Set<string>()
     const classifiedFingerprints: Array<{ id: string; fingerprint: string }> = []
     let memosCreated = 0
     let memosDeduped = 0
-    let itemsFailed = 0
 
     const convItems = fetchedData.pending.filter((p) => p.itemType === "conversation")
     for (const item of convItems) {
@@ -629,15 +630,16 @@ export class MemoService implements MemoServiceLike {
           "Conversation memos generated"
         )
       } catch (error) {
-        // Blocked by a spend limit: leave the item pending and unfingerprinted so
-        // it is asked again once spend allows, instead of being marked done.
+        // Unfingerprinted, so the retry asks the model again instead of
+        // skipping the conversation as unchanged.
+        const fingerprintIndex = classifiedFingerprints.findIndex((entry) => entry.id === item.id)
+        if (fingerprintIndex !== -1) classifiedFingerprints.splice(fingerprintIndex, 1)
+        // Blocked by a spend limit: retried once spend allows, with no cap.
         if (error instanceof AISpendDeniedError) {
           deferredItemIds.add(item.id)
-          const fingerprintIndex = classifiedFingerprints.findIndex((entry) => entry.id === item.id)
-          if (fingerprintIndex !== -1) classifiedFingerprints.splice(fingerprintIndex, 1)
           continue
         }
-        itemsFailed++
+        failedItemIds.add(item.id)
         logger.error(
           { error, conversationId: item.itemId, workspaceId, streamId },
           "Failed to process conversation for memo"
@@ -645,9 +647,9 @@ export class MemoService implements MemoServiceLike {
       }
     }
 
-    if (itemsFailed > 0) {
+    if (failedItemIds.size > 0) {
       logger.warn(
-        { workspaceId, streamId, itemsFailed, totalItems: fetchedData.pending.length },
+        { workspaceId, streamId, itemsFailed: failedItemIds.size, totalItems: fetchedData.pending.length },
         "Some items failed during memo batch processing"
       )
     }
@@ -839,7 +841,7 @@ export class MemoService implements MemoServiceLike {
       // this pass can be recognised as unchanged on the next one.
       await PendingItemRepository.recordClassifiedFingerprints(client, classifiedFingerprints)
 
-      const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id))
+      const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id) && !failedItemIds.has(p.id))
       if (itemsToMark.length > 0) {
         await PendingItemRepository.markProcessed(
           client,
@@ -847,10 +849,25 @@ export class MemoService implements MemoServiceLike {
         )
       }
 
+      const givenUp = (
+        await PendingItemRepository.recordFailedAttempts(client, [...failedItemIds], MEMO_MAX_FAILED_ATTEMPTS)
+      ).filter((p) => p.processedAt !== null)
+      if (givenUp.length > 0) {
+        logger.error(
+          {
+            workspaceId,
+            streamId,
+            conversationIds: givenUp.map((p) => p.itemId),
+            maxAttempts: MEMO_MAX_FAILED_ATTEMPTS,
+          },
+          "Memo capture gave up on conversations after repeated failures"
+        )
+      }
+
       await StreamStateRepository.markProcessed(client, workspaceId, streamId)
     })
 
-    const processed = fetchedData.pending.length - deferredItemIds.size
+    const processed = fetchedData.pending.length - deferredItemIds.size - failedItemIds.size
     logger.info(
       { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated, memosDeduped },
       "Memo batch processed"
