@@ -2587,7 +2587,8 @@ export class EventService {
   private async refreshMemoEmbeds(
     messagesMap: Map<string, Message>,
     messageIdsWithKey: Set<string>,
-    scope?: { workspaceId: string; streamId: string }
+    sourceStreamByMessage: ReadonlyMap<string, string>,
+    scope?: { workspaceId: string } & ({ streamId: string } | { streamIds: string[] })
   ): Promise<Map<string, MemoEmbedSummary[]>> {
     const refreshed = new Map<string, MemoEmbedSummary[]>()
     if (!scope) return refreshed
@@ -2612,18 +2613,30 @@ export class EventService {
 
     const byMessage = new Map([...edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const), ...citing])
     const editedIds = new Set(edited.map((m) => m.id))
-    const allIds = [...new Set([...byMessage.values()].flat())]
-
-    const summaries =
-      allIds.length > 0
-        ? await MemoRepository.findEmbedSummaries(
-            this.pool,
-            scope.workspaceId,
-            allIds,
-            (await StreamRepository.findById(this.pool, scope.streamId))?.rootStreamId ?? scope.streamId
-          )
-        : new Map<string, MemoEmbedSummary>()
+    const streamIds = "streamIds" in scope ? scope.streamIds : [scope.streamId]
+    const streams = await StreamRepository.findByIdsInWorkspace(this.pool, scope.workspaceId, streamIds)
+    const rootByStream = new Map(streams.map((stream) => [stream.id, stream.rootStreamId ?? stream.id]))
+    const idsByRoot = new Map<string, Set<string>>()
     for (const [messageId, ids] of byMessage) {
+      const root = rootByStream.get(sourceStreamByMessage.get(messageId)!)
+      if (!root) throw new Error("Memo embed message is outside bootstrap stream scope")
+      const rootIds = idsByRoot.get(root) ?? new Set<string>()
+      for (const id of ids) rootIds.add(id)
+      idsByRoot.set(root, rootIds)
+    }
+    const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
+    await Promise.all(
+      [...idsByRoot].map(async ([root, ids]) => {
+        summariesByRoot.set(
+          root,
+          ids.size > 0
+            ? await MemoRepository.findEmbedSummaries(this.pool, scope.workspaceId, [...ids], root)
+            : new Map<string, MemoEmbedSummary>()
+        )
+      })
+    )
+    for (const [messageId, ids] of byMessage) {
+      const summaries = summariesByRoot.get(rootByStream.get(sourceStreamByMessage.get(messageId)!)!)!
       const resolved = ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
       const mustSet = editedIds.has(messageId) || messageIdsWithKey.has(messageId)
       if (!mustSet && resolved.length === 0) continue
@@ -2645,7 +2658,7 @@ export class EventService {
     events: StreamEvent[],
     threadDataMap: Map<string, { threadId: string; replyCount: number }>,
     threadSummaryMap: Map<string, ThreadSummary> = new Map(),
-    memoEmbedScope?: { workspaceId: string; streamId: string }
+    memoEmbedScope?: { workspaceId: string } & ({ streamId: string } | { streamIds: string[] })
   ): Promise<StreamEvent[]> {
     const messageCreatedEvents = events.filter((e) => e.eventType === "message_created")
     const messageIds = messageCreatedEvents.map((e) => (e.payload as MessageCreatedPayload).messageId)
@@ -2713,7 +2726,15 @@ export class EventService {
         .filter((e) => (e.payload as MessageCreatedPayload).memoEmbeds !== undefined)
         .map((e) => (e.payload as MessageCreatedPayload).messageId)
     )
-    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsWithKey, memoEmbedScope)
+    const sourceStreamByMessage = new Map(
+      messageCreatedEvents.map((event) => [(event.payload as MessageCreatedPayload).messageId, event.streamId])
+    )
+    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(
+      messagesMap,
+      messageIdsWithKey,
+      sourceStreamByMessage,
+      memoEmbedScope
+    )
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")

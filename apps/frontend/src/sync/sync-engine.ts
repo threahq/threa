@@ -14,6 +14,7 @@ import {
 } from "./workspace-sync"
 import {
   applyStreamBootstrap,
+  applyStreamPreviewHistories,
   registerStreamSocketHandlers,
   getLatestPersistedSequence,
   toCachedStreamBootstrap,
@@ -36,7 +37,11 @@ import { scheduledKeys } from "@/hooks/use-scheduled"
 import { activityKeys } from "@/hooks/use-activity"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { isServerStreamId } from "@/lib/stream-ids"
-import type { WorkspaceBootstrap } from "@threahq/types"
+import {
+  STREAM_PREVIEW_HISTORY_MAX_STREAMS,
+  type WorkspaceBootstrap,
+  type StreamPreviewHistoryBatchResponse,
+} from "@threahq/types"
 
 type BootstrapOutcome = { status: "success" } | { status: "cancelled" } | { status: "error"; error: unknown }
 
@@ -51,6 +56,11 @@ interface SyncEngineDeps {
     ) => Promise<WorkspaceBootstrap>
   }
   streamService: {
+    previewHistory: (
+      workspaceId: string,
+      streamIds: string[],
+      signal?: AbortSignal
+    ) => Promise<StreamPreviewHistoryBatchResponse>
     bootstrap: (
       workspaceId: string,
       streamId: string,
@@ -99,6 +109,20 @@ const CATCHUP_PAGE_LIMIT = 500
 /** Max in-flight board card stream catch-ups. Bounds the bootstrap-fetch burst
  *  when the board opens onto many unsynced thread/public streams at once. */
 const BOARD_SYNC_CONCURRENCY = 6
+
+async function mapBounded<T, R>(items: T[], map: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let cursor = 0
+  await Promise.all(
+    Array.from({ length: Math.min(BOARD_SYNC_CONCURRENCY, items.length) }, async () => {
+      while (cursor < items.length) {
+        const index = cursor++
+        results[index] = await map(items[index])
+      }
+    })
+  )
+  return results
+}
 
 /**
  * Above this many missed entries on the first catch-up page, heal the whole
@@ -252,12 +276,12 @@ export class SyncEngine {
    *  the single board slot). Same lifecycle as board streams — caught up + joined
    *  here, re-asserted across reconnects, never torn down per-card. */
   private panelStreamIds = new Set<string>()
-  /** Streams whose hover cards read local history, declared by every surface
-   *  that shows one. Timeline events heal only through a per-stream bootstrap,
-   *  never the workspace catch-up, so each is refreshed after every connect: a
-   *  window persisted by an earlier load and a reconnect's disconnect gap are the
-   *  same hole. Between connects the room join keeps it live. */
-  private warmStreamIds = new Set<string>()
+  private warmStreamIds = new Map<string, number>()
+  private recoveryGeneration = 0
+  private previewDrain: Promise<void> | null = null
+  private boardDrain: Promise<unknown> = Promise.resolve()
+  private previewScheduled = false
+  private previewAbort: AbortController | null = null
   /** Refreshed (or in flight) since the last connect; a refresh that doesn't land
    *  leaves the set so the next declaration or connect retries it. */
   private refreshedWarmStreamIds = new Set<string>()
@@ -372,16 +396,104 @@ export class SyncEngine {
     if (toSync.length > 0) void this.syncBoardStreams(toSync)
   }
 
-  /** Declare streams whose hover cards read local history. Additive and idempotent. */
-  warmStreams(ids: Iterable<string>): void {
-    for (const id of ids) if (isServerStreamId(id)) this.warmStreamIds.add(id)
-    if (!this.warmStreamsOpen) return
-    const toSync = [...this.warmStreamIds].filter((id) => !this.refreshedWarmStreamIds.has(id))
-    for (const id of toSync) this.refreshedWarmStreamIds.add(id)
-    if (toSync.length === 0) return
-    void this.syncBoardStreams(toSync, { refreshPersisted: true }).then((missed) => {
-      for (const id of missed) this.refreshedWarmStreamIds.delete(id)
+  warmStreams(ids: Iterable<string>): () => void {
+    const declared = new Set([...ids].filter(isServerStreamId))
+    for (const id of declared) this.warmStreamIds.set(id, (this.warmStreamIds.get(id) ?? 0) + 1)
+    this.schedulePreviewDrain()
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      for (const id of declared) {
+        const count = this.warmStreamIds.get(id) ?? 0
+        if (count <= 1) this.warmStreamIds.delete(id)
+        else this.warmStreamIds.set(id, count - 1)
+      }
+    }
+  }
+
+  private canRecoverPreview(generation: number): boolean {
+    return (
+      this.isAccountCurrent() &&
+      generation === this.recoveryGeneration &&
+      this.warmStreamsOpen &&
+      !!this.socket?.connected &&
+      navigator.onLine
+    )
+  }
+
+  private previewCandidates(): string[] {
+    const active = new Set(this.getVisibleServerStreamIds())
+    return [...this.warmStreamIds.keys()].filter((id) => !active.has(id) && !this.refreshedWarmStreamIds.has(id))
+  }
+
+  private schedulePreviewDrain(): void {
+    if (this.previewScheduled || this.previewDrain || !this.canRecoverPreview(this.recoveryGeneration)) return
+    this.previewScheduled = true
+    queueMicrotask(() => {
+      this.previewScheduled = false
+      if (this.previewDrain || !this.canRecoverPreview(this.recoveryGeneration)) return
+      const generation = this.recoveryGeneration
+      const drain = this.drainPreviewHistories(generation).finally(() => {
+        this.previewDrain = null
+        if (generation !== this.recoveryGeneration) this.schedulePreviewDrain()
+      })
+      this.previewDrain = drain
     })
+  }
+
+  private async drainPreviewHistories(generation: number): Promise<void> {
+    const attempted = new Set<string>()
+    while (this.canRecoverPreview(generation)) {
+      const selected = this.previewCandidates()
+        .filter((id) => !attempted.has(id))
+        .slice(0, STREAM_PREVIEW_HISTORY_MAX_STREAMS)
+      if (!selected.length) return
+      for (const id of selected) attempted.add(id)
+      try {
+        await Promise.all(selected.map((id) => this.joinStreamForCatchUp(id)))
+      } catch {
+        return
+      }
+      if (!this.canRecoverPreview(generation)) return
+      const candidates = new Set(this.previewCandidates())
+      const ids = selected.filter((id) => candidates.has(id))
+      if (!ids.length) continue
+      const controller = new AbortController()
+      this.previewAbort = controller
+      const fetchStartedAt = Date.now()
+      try {
+        const response = await this.deps.streamService.previewHistory(this.workspaceId, ids, controller.signal)
+        if (!this.canRecoverPreview(generation)) return
+        const eligible = (id: string) => this.warmStreamIds.has(id) && !this.getVisibleServerStreamIds().includes(id)
+        const results = response.results.filter((result) => ids.includes(result.streamId) && eligible(result.streamId))
+        const histories = results.flatMap((result) => (result.status === 200 ? [result.history] : []))
+        await applyStreamPreviewHistories(
+          this.workspaceId,
+          histories,
+          { database: this.accountDatabase, generation: this.accountGeneration },
+          () => this.canRecoverPreview(generation) && histories.every((history) => eligible(history.stream.id)),
+          fetchStartedAt
+        )
+        if (!this.canRecoverPreview(generation)) return
+        for (const result of results) {
+          if (!eligible(result.streamId)) continue
+          this.refreshedWarmStreamIds.add(result.streamId)
+          if (result.status !== 200)
+            this.applyReconnectStreamError(result.streamId, new ApiError(result.status, result.code, result.code))
+        }
+      } catch {
+        // A whole-request error says nothing about any individual stream's access.
+      } finally {
+        if (this.previewAbort === controller) this.previewAbort = null
+      }
+    }
+  }
+
+  private replaceRecoveryGeneration(): void {
+    this.recoveryGeneration += 1
+    this.previewAbort?.abort()
+    this.refreshedWarmStreamIds.clear()
   }
 
   /** Update the current auth user (called from React when auth state settles). */
@@ -406,6 +518,7 @@ export class SyncEngine {
     // window would make catch-up skip the very disconnect gap it heals.
     // This cycle's catch-up run reopens live flow when it completes.
     this.eventGate?.attach(socket)
+    this.replaceRecoveryGeneration()
     this.beginCatchUpCycle()
 
     try {
@@ -469,9 +582,8 @@ export class SyncEngine {
         const pending = [...this.boardStreamIds, ...this.panelStreamIds].filter(isServerStreamId)
         if (pending.length > 0) void this.syncBoardStreams([...new Set(pending)])
       }
-      this.refreshedWarmStreamIds.clear()
       this.warmStreamsOpen = true
-      this.warmStreams([])
+      this.schedulePreviewDrain()
 
       // Process pending offline operations (edits, deletes, reactions, drafts)
       this.kickOperationQueue()
@@ -500,6 +612,7 @@ export class SyncEngine {
     if (this.isDestroyed) return
     // Same pause-before-bootstrap rule as onConnect: the catch-up position
     // must not move between this trigger and the catch-up fetch.
+    this.replaceRecoveryGeneration()
     this.beginCatchUpCycle()
     // Resume is a reconnect-shaped trigger: when the cursor is active the slim
     // path (per-stream deltas for visible streams) plus the catch-up replay
@@ -510,6 +623,7 @@ export class SyncEngine {
     // re-forces full when the cursor has dropped beneath the retained
     // sync-log floor.
     await this.runBootstrap(true)
+    this.schedulePreviewDrain()
     void this.runCatchUp("resume")
   }
 
@@ -524,6 +638,7 @@ export class SyncEngine {
    */
   async refreshAfterPull(): Promise<void> {
     if (this.isDestroyed) return
+    this.replaceRecoveryGeneration()
     this.beginCatchUpCycle()
     await this.runBootstrap(true, { forceFull: true })
     await this.runCatchUp("pull")
@@ -582,6 +697,7 @@ export class SyncEngine {
    * Called when the socket disconnects.
    */
   onDisconnect(): void {
+    this.replaceRecoveryGeneration()
     this.deps.syncStatus.setAllStale()
   }
 
@@ -807,6 +923,7 @@ export class SyncEngine {
    */
   destroy(): void {
     this.isDestroyed = true
+    this.replaceRecoveryGeneration()
     this.settleColdSweep()
     this.liveCommitBatch.destroy()
     this.cleanupAllHandlers()
@@ -904,22 +1021,20 @@ export class SyncEngine {
         const stopFetch = getPerfCapture().time("bootstrap.fetch")
         const [workspaceBootstrap, streamResults] = await Promise.all([
           workspaceService.bootstrap(workspaceId, { fresh }),
-          Promise.all(
-            visibleStreamIds.map(async (streamId) => {
-              try {
-                // A reconnect appends from the cursor. A first connect without a
-                // cached bootstrap is a fresh open, not a catch-up: fetch the
-                // full latest window instead (same rule as performStreamRefresh).
-                const cursor = catchupCursors.get(streamId) ?? null
-                const after =
-                  _isReconnect || queryClient.getQueryData(streamKeys.bootstrap(workspaceId, streamId)) ? cursor : null
-                const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
-                return { streamId, bootstrap }
-              } catch (error) {
-                return { streamId, error }
-              }
-            })
-          ),
+          mapBounded(visibleStreamIds, async (streamId) => {
+            try {
+              // A reconnect appends from the cursor. A first connect without a
+              // cached bootstrap is a fresh open, not a catch-up: fetch the
+              // full latest window instead (same rule as performStreamRefresh).
+              const cursor = catchupCursors.get(streamId) ?? null
+              const after =
+                _isReconnect || queryClient.getQueryData(streamKeys.bootstrap(workspaceId, streamId)) ? cursor : null
+              const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
+              return { streamId, bootstrap }
+            } catch (error) {
+              return { streamId, error }
+            }
+          }),
         ])
         stopFetch()
         if (!this.isAccountCurrent()) return { status: "cancelled" }
@@ -1185,17 +1300,31 @@ export class SyncEngine {
     // stale (cached data is already on screen on a reconnect) and returns;
     // catch-up still runs and the next reconnect bootstrap closes the gap.
     try {
-      if (this.socket) {
+      if (this.socket?.connected) {
         await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
       }
       if (!this.isAccountCurrent()) return { status: "cancelled" }
 
-      // Per-stream message deltas: each refresh owns its own status + error
-      // handling, and they run in parallel.
-      await Promise.all(this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)))
+      if (this.socket?.connected) {
+        await this.syncBoardStreams(this.getVisibleServerStreamIds(), { refreshPersisted: true })
+      } else {
+        const generation = this.recoveryGeneration
+        const activeIds = [
+          ...new Set(
+            [...(this.currentStreamId ? [this.currentStreamId] : []), ...this.visibleStreamIds].filter(isServerStreamId)
+          ),
+        ]
+        let cursor = 0
+        const worker = async () => {
+          while (cursor < activeIds.length && this.isAccountCurrent() && generation === this.recoveryGeneration) {
+            await this.refreshStreamAfterNavigation(activeIds[cursor++])
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(BOARD_SYNC_CONCURRENCY, activeIds.length) }, worker))
+      }
       if (!this.isAccountCurrent()) return { status: "cancelled" }
 
-      await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
+      if (this.socket?.connected) await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
       if (!this.isAccountCurrent()) return { status: "cancelled" }
 
       this.lastWorkspaceError = null
@@ -1292,17 +1421,31 @@ export class SyncEngine {
    * board open across dozens of unsynced streams doesn't saturate the network on
    * a spotty connection. Reuses refreshStreamAfterNavigation — the same
    * cursor-before-join → bootstrap → applyStreamBootstrap path opening a stream
-   * runs — which dedupes in-flight refreshes and, while the socket is down,
-   * degrades to the display-only HTTP warm fetch (delta-only, so cards with no
-   * persisted window skip instead of fetching). Resolves to the streams whose
+   * runs — which dedupes in-flight refreshes. Queued work stops when its
+   * connection generation ends; direct timeline refreshes retain HTTP recovery.
+   * Resolves to the streams whose
    * refresh didn't land.
    */
-  private async syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<string[]> {
+  private syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<string[]> {
+    const generation = this.recoveryGeneration
+    const drain = this.boardDrain.then(() => this.performBoardSync(streamIds, generation, options))
+    this.boardDrain = drain.catch(() => undefined)
+    return drain
+  }
+
+  private async performBoardSync(
+    streamIds: string[],
+    generation: number,
+    options?: { refreshPersisted?: boolean }
+  ): Promise<string[]> {
+    const current = () => this.isAccountCurrent() && generation === this.recoveryGeneration && !!this.socket?.connected
+    const declared = (id: string) => this.getVisibleServerStreamIds().includes(id)
     const missed: string[] = []
     let cursor = 0
     const worker = async (): Promise<void> => {
-      while (cursor < streamIds.length && !this.isDestroyed) {
+      while (cursor < streamIds.length && current()) {
         const streamId = streamIds[cursor++]
+        if (!declared(streamId)) continue
         // "Subscribed" means the room is joined, not that history is local:
         // subscribeMemberStreams joins every member stream at bootstrap, so on
         // a fresh device a member stream is subscribed with an EMPTY events
@@ -1319,7 +1462,9 @@ export class SyncEngine {
           (await getLatestPersistedSequence(streamId)) !== null
         )
           continue
-        if (!(await this.refreshStreamAfterNavigation(streamId))) missed.push(streamId)
+        if (!current()) return
+        if (!declared(streamId)) continue
+        if (!(await this.refreshStreamAfterNavigation(streamId, generation))) missed.push(streamId)
       }
     }
     const lanes = Math.min(BOARD_SYNC_CONCURRENCY, streamIds.length)
@@ -1385,7 +1530,7 @@ export class SyncEngine {
   }
 
   /** Resolves true only when a socket-backed refresh landed. */
-  private refreshStreamAfterNavigation(streamId: string): Promise<boolean> {
+  private refreshStreamAfterNavigation(streamId: string, recoveryGeneration?: number): Promise<boolean> {
     if (this.isDestroyed || !isServerStreamId(streamId)) return Promise.resolve(false)
     // Until the first-connect sweep has run it owns the first window of every
     // stream it fetches; a refresh here would apply a second, separate state.
@@ -1406,7 +1551,7 @@ export class SyncEngine {
     const existing = this.activeStreamRefreshes.get(streamId)
     if (existing) return existing
 
-    const refresh = this.performStreamRefresh(streamId).finally(() => {
+    const refresh = this.performStreamRefresh(streamId, recoveryGeneration).finally(() => {
       if (this.activeStreamRefreshes.get(streamId) === refresh) {
         this.activeStreamRefreshes.delete(streamId)
       }
@@ -1415,7 +1560,7 @@ export class SyncEngine {
     return refresh
   }
 
-  private async performStreamRefresh(streamId: string): Promise<boolean> {
+  private async performStreamRefresh(streamId: string, recoveryGeneration?: number): Promise<boolean> {
     const { workspaceId, syncStatus, streamService, queryClient } = this.deps
     const key = `stream:${streamId}`
 
@@ -1427,6 +1572,13 @@ export class SyncEngine {
       const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
       const cursor = await this.joinStreamForCatchUp(streamId)
       if (this.isDestroyed) return false
+      if (
+        recoveryGeneration !== undefined &&
+        (recoveryGeneration !== this.recoveryGeneration ||
+          !this.socket?.connected ||
+          !this.getVisibleServerStreamIds().includes(streamId))
+      )
+        return false
       // Without a cached bootstrap this is a fresh open, not a catch-up —
       // fetch the full latest window instead of an append from the cursor.
       const after = previousBootstrap ? cursor : null

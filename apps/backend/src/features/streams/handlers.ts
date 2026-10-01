@@ -3,23 +3,16 @@ import type { Request, Response } from "express"
 import type { StreamService } from "./service"
 import type { StreamReadService } from "./read-service"
 import type { EventService } from "../messaging"
-import { collectSharedMessageRefs, hydrateSharedMessageRefs, toDualSlotMaps, type DualSlotMaps } from "../messaging"
+import { collectThreadAnchorIds, enrichEventsWithLinkPreviews, hydrateSlotsForEvents } from "./bootstrap-enrichment"
+import { StreamPreviewHistoryService, previewHistorySchema } from "./preview-history-service"
 import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
 import { serializeBotRuntimePresence, type BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import { setAuditSubjects, type AuditSubjectRef } from "../access-log"
-import type { StreamEvent } from "./event-repository"
-import type {
-  EventType,
-  JSONContent,
-  LinkPreviewSummary,
-  StreamType,
-  E2eKeyWrapsResponse,
-  ToolPrivacyPolicy,
-  ToolPrivacyCategory,
-} from "@threahq/types"
+import { EVENTS_DEFAULT_LIMIT, type StreamEvent } from "./event-repository"
+import type { EventType, StreamType, E2eKeyWrapsResponse, ToolPrivacyPolicy, ToolPrivacyCategory } from "@threahq/types"
 import {
   ARIADNE_PERSONA_SLUG,
   ContextIntents,
@@ -27,13 +20,11 @@ import {
   StreamTypes,
   SLUG_PATTERN,
   CompanionModes,
-  THREAD_ANCHORABLE_EVENT_TYPES,
   E2E_ACTOR_KINDS,
   E2E_KEY_WRAP_RECIPIENT_KINDS,
   TOOL_PRIVACY_CATEGORIES,
   threaDocumentSchema,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
-  type SharedMessageRef,
 } from "@threahq/types"
 import type { Pool } from "pg"
 import {
@@ -351,28 +342,16 @@ const actorRewrapSchema = z.object({
     .max(64),
 })
 
-/** Default number of events returned in bootstrap and event list queries. */
-const EVENTS_DEFAULT_LIMIT = 50
-
-export function collectThreadAnchorIds(events: readonly StreamEvent[]): string[] {
-  return events
-    .map((event) => {
-      if (event.eventType === "message_created") return (event.payload as { messageId?: string }).messageId
-      if (THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) return event.id
-      return undefined
-    })
-    .filter((id): id is string => !!id)
-}
-
 /** Audit ref for a range read: the stream plus the min/max sequence loaded. */
-function streamSequenceRangeRef(streamId: string, events: readonly StreamEvent[]): AuditSubjectRef {
+function streamSequenceRangeRef(streamId: string, events: readonly { sequence: string | bigint }[]): AuditSubjectRef {
   const ref: AuditSubjectRef = { type: "stream", id: streamId }
   if (events.length === 0) return ref
-  let min = events[0].sequence
-  let max = events[0].sequence
+  let min = BigInt(events[0].sequence)
+  let max = min
   for (const event of events) {
-    if (event.sequence < min) min = event.sequence
-    if (event.sequence > max) max = event.sequence
+    const sequence = BigInt(event.sequence)
+    if (sequence < min) min = sequence
+    if (sequence > max) max = sequence
   }
   ref.fromSeq = Number(min)
   ref.toSeq = Number(max)
@@ -475,116 +454,6 @@ interface Dependencies {
   callService?: import("../calls").CallService
 }
 
-/**
- * Scan event payloads for `sharedMessage` node references and fetch the
- * hydrated content + metadata for each source message. Returns the dual-publish
- * envelope — canonical namespaced `slots` plus the temporary bare-key
- * `sharedMessages` — derived from one hydration result, that the frontend
- * overlays onto pointer node renders.
- */
-async function hydrateSlotsForEvents(
-  pool: Pool,
-  workspaceId: string,
-  viewerId: string,
-  events: StreamEvent[]
-): Promise<DualSlotMaps> {
-  const refs = new Map<string, SharedMessageRef>()
-  for (const event of events) {
-    if (event.eventType === "message_created" || event.eventType === "message_edited") {
-      const payload = event.payload as { contentJson?: JSONContent }
-      if (payload.contentJson) collectSharedMessageRefs(payload.contentJson, refs)
-    }
-  }
-  if (refs.size === 0) return { slots: {}, sharedMessages: {} }
-  return toDualSlotMaps(await hydrateSharedMessageRefs(pool, workspaceId, viewerId, refs.values()))
-}
-
-function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, next: LinkPreviewSummary[]): boolean {
-  if (!current) return next.length === 0
-  if (current.length !== next.length) return false
-
-  return current.every((preview, index) => {
-    const nextPreview = next[index]
-    return (
-      preview.id === nextPreview.id &&
-      preview.url === nextPreview.url &&
-      preview.title === nextPreview.title &&
-      preview.description === nextPreview.description &&
-      preview.imageUrl === nextPreview.imageUrl &&
-      preview.faviconUrl === nextPreview.faviconUrl &&
-      preview.siteName === nextPreview.siteName &&
-      preview.contentType === nextPreview.contentType &&
-      preview.position === nextPreview.position &&
-      // The stored payload carries no per-viewer `inAppData`; the enriched copy
-      // does, so this difference must register or the override is skipped and the
-      // card loses its synchronous data.
-      isInAppDataEqual(preview.inAppData, nextPreview.inAppData)
-    )
-  })
-}
-
-function isInAppDataEqual(current: LinkPreviewSummary["inAppData"], next: LinkPreviewSummary["inAppData"]): boolean {
-  if (current === next) return true
-  if (!current || !next) return false
-  return JSON.stringify(current) === JSON.stringify(next)
-}
-
-export function applyLinkPreviewStateToEvents(
-  events: StreamEvent[],
-  previewMap: Map<string, LinkPreviewSummary[]>,
-  dismissals: Set<string>
-): StreamEvent[] {
-  if (previewMap.size === 0 && dismissals.size === 0) return events
-
-  let changed = false
-  const nextEvents = events.map((event) => {
-    if (event.eventType !== "message_created") return event
-
-    const payload = event.payload as { messageId?: string; linkPreviews?: LinkPreviewSummary[] }
-    if (!payload.messageId) return event
-
-    const previews = previewMap.get(payload.messageId) ?? payload.linkPreviews
-    if (!previews) return event
-
-    const visiblePreviews = previews.filter((preview) => !dismissals.has(`${payload.messageId}:${preview.id}`))
-    if (areLinkPreviewArraysEqual(payload.linkPreviews, visiblePreviews)) {
-      return event
-    }
-
-    changed = true
-    return {
-      ...event,
-      payload: {
-        ...payload,
-        linkPreviews: visiblePreviews,
-      },
-    }
-  })
-
-  return changed ? nextEvents : events
-}
-
-async function enrichEventsWithLinkPreviews(
-  linkPreviewService: LinkPreviewService,
-  workspaceId: string,
-  userId: string,
-  events: StreamEvent[]
-): Promise<StreamEvent[]> {
-  const messageIds = events
-    .filter((event) => event.eventType === "message_created")
-    .map((event) => (event.payload as { messageId?: string }).messageId)
-    .filter((messageId): messageId is string => !!messageId)
-
-  if (messageIds.length === 0) return events
-
-  const [previewMap, dismissals] = await Promise.all([
-    linkPreviewService.getPreviewsForMessages(workspaceId, userId, messageIds),
-    linkPreviewService.getDismissals(workspaceId, userId, messageIds),
-  ])
-
-  return applyLinkPreviewStateToEvents(events, previewMap, dismissals)
-}
-
 function presenceMatchesRuntimeSessionLink(
   presence: Awaited<ReturnType<BotRuntimeService["findLatestPresence"]>>,
   link: { instanceId: string; runtimeSessionId: string } | null | undefined
@@ -606,7 +475,20 @@ export function createStreamHandlers({
   workspaceIntegrationService,
   callService,
 }: Dependencies) {
+  const previewHistoryService = new StreamPreviewHistoryService({ pool, eventService, linkPreviewService })
   return {
+    async previewHistory(req: Request, res: Response) {
+      const { streamIds } = validateRequest(previewHistorySchema, req.body)
+      const result = await previewHistoryService.get(req.workspaceId!, req.user!.id, streamIds)
+      setAuditSubjects(
+        res,
+        result.results.map((entry) =>
+          streamSequenceRangeRef(entry.streamId, entry.status === 200 ? entry.history.events : [])
+        )
+      )
+      res.json(result)
+    },
+
     async list(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!

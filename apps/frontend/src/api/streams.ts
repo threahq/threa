@@ -7,6 +7,7 @@ import type {
   StreamMember,
   StreamType,
   StreamBootstrap,
+  StreamPreviewHistoryBatchResponse,
   EventsAroundResponse,
   EventsAroundDateResponse,
   CreateStreamInput,
@@ -62,6 +63,14 @@ export const streamsApi = {
     // Raw carrier fields (`slots` / temporary legacy `sharedMessages`) pass
     // through to the write owner; the slot store normalizes them (Amendment A2).
     return res.data
+  },
+
+  previewHistory(
+    workspaceId: string,
+    streamIds: string[],
+    signal?: AbortSignal
+  ): Promise<StreamPreviewHistoryBatchResponse> {
+    return api.post(`/api/workspaces/${workspaceId}/streams/preview-history`, { streamIds }, { signal })
   },
 
   async create(workspaceId: string, data: CreateStreamInput): Promise<Stream> {
@@ -175,7 +184,9 @@ export const streamsApi = {
   },
 
   async directoryStats(workspaceId: string): Promise<StreamDirectoryStats[]> {
-    const res = await api.get<{ stats: StreamDirectoryStats[] }>(`/api/workspaces/${workspaceId}/streams/directory-stats`)
+    const res = await api.get<{ stats: StreamDirectoryStats[] }>(
+      `/api/workspaces/${workspaceId}/streams/directory-stats`
+    )
     return res.stats
   },
 

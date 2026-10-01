@@ -8,6 +8,8 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
+  type StreamPreviewHistory,
+  type StreamPreviewHistoryBatchResponse,
 } from "@threahq/types"
 
 type EventHandler = (...args: unknown[]) => void
@@ -215,6 +217,32 @@ export function makeDeps() {
     syncStatus: new SyncStatusStore(),
     queryClient: new QueryClient(),
     workspaceService: { bootstrap: workspaceBootstrap },
-    streamService: { bootstrap: streamBootstrap },
+    streamService: {
+      bootstrap: streamBootstrap,
+      previewHistory: vi.fn(
+        async (
+          _workspaceId: string,
+          streamIds: string[],
+          _signal?: AbortSignal
+        ): Promise<StreamPreviewHistoryBatchResponse> => ({
+          results: streamIds.map((streamId) => {
+            const full = makeStreamBootstrap(streamId)
+            const history: StreamPreviewHistory = {
+              stream: full.stream,
+              events: full.events.map((event) => ({
+                ...event,
+                id: `evt_${streamId}_${event.sequence}`,
+                payload: { ...(event.payload as object), messageId: `msg_${streamId}_${event.sequence}` },
+              })),
+              latestSequence: full.latestSequence,
+              hasOlderEvents: full.hasOlderEvents,
+              snapshotAt: new Date().toISOString(),
+              syncMode: "replace",
+            }
+            return { streamId, status: 200 as const, history }
+          }),
+        })
+      ),
+    },
   }
 }

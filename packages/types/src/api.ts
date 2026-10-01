@@ -234,6 +234,22 @@ export interface BotProfile {
   canManage: boolean
 }
 
+export const STREAM_PREVIEW_HISTORY_MAX_STREAMS = 25
+
+export type StreamPreviewHistory = Pick<
+  StreamBootstrap,
+  "stream" | "events" | "latestSequence" | "hasOlderEvents" | "snapshotAt" | "slots" | "sharedMessages"
+> & { syncMode: "replace" }
+
+export type StreamPreviewHistoryResult =
+  | { streamId: string; status: 200; history: StreamPreviewHistory }
+  | { streamId: string; status: 403; code: "FORBIDDEN" }
+  | { streamId: string; status: 404; code: "NOT_FOUND" }
+
+export interface StreamPreviewHistoryBatchResponse {
+  results: StreamPreviewHistoryResult[]
+}
+
 export interface StreamBootstrap {
   stream: Stream
   events: StreamEvent[]

@@ -985,8 +985,9 @@ describe("SyncEngine.warmStreams", () => {
     engine.warmStreams(["stream_member"])
     await primeConnectedEngine(engine, new MockSocket())
 
-    await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+    await vi.waitFor(async () => {
+      expect(deps.streamService.previewHistory).toHaveBeenCalledWith("ws_1", ["stream_member"], expect.any(AbortSignal))
+      expect(await db.events.get("evt_stream_member_2")).toBeTruthy()
     })
   })
 
@@ -997,7 +998,7 @@ describe("SyncEngine.warmStreams", () => {
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     await primeConnectedEngine(engine, socket)
-    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+    const warmCalls = () => deps.streamService.previewHistory.mock.calls
 
     engine.warmStreams(["stream_member"])
     await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
@@ -1016,9 +1017,9 @@ describe("SyncEngine.warmStreams", () => {
     await persistMessage("stream_member", 3)
     const engine = new SyncEngine(deps)
     await primeConnectedEngine(engine, new MockSocket())
-    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+    const warmCalls = () => deps.streamService.previewHistory.mock.calls
 
-    deps.streamService.bootstrap.mockRejectedValueOnce(new Error("network"))
+    deps.streamService.previewHistory.mockRejectedValueOnce(new Error("network"))
     engine.warmStreams(["stream_member"])
     await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -2573,14 +2574,46 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
    *  settle (one page), so heartbeat-triggered calls are distinguishable. */
   async function connectSettledEngine(catchUp: ReturnType<typeof vi.fn>) {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     await engine.onConnect(asSocket(socket))
     await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
     // Drain the connect catch-up's remaining microtasks (gate resume).
     await new Promise((resolve) => setTimeout(resolve, 0))
-    return { engine, socket }
+    return { engine, socket, deps }
   }
+
+  it("should finish queued cold board history when heartbeat catch-up runs during the first fetches", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket, deps } = await connectSettledEngine(catchUp)
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const bootstrap = deps.streamService.bootstrap
+    bootstrap.mockImplementation(async (_workspaceId, streamId) => {
+      await held
+      const result = makeStreamBootstrap(streamId)
+      result.events[0].id = `evt_${streamId}`
+      return result
+    })
+    const ids = Array.from({ length: 12 }, (_, index) => `stream_heartbeat_board_${index}`)
+    try {
+      engine.setBoardStreamIds(ids)
+      await vi.waitFor(() => expect(bootstrap).toHaveBeenCalledTimes(6))
+      const before = catchUp.mock.calls.length
+      catchUp.mockResolvedValue(emptyPage("11"))
+      socket.trigger("sync:heartbeat", heartbeat("11"))
+      await vi.waitFor(() => expect(catchUp.mock.calls.length).toBeGreaterThan(before), { timeout: 3500 })
+      release()
+      await vi.waitFor(() => expect(bootstrap.mock.calls.map((call) => call[1])).toEqual(ids))
+      await vi.waitFor(async () => expect(await db.events.get(`evt_${ids[11]}`)).toBeTruthy())
+    } finally {
+      release()
+      engine.destroy()
+    }
+  }, 10_000)
 
   it("ignores a head already covered by max(cursor, lastSeenHead) — including invisible-entry inflation", async () => {
     // Connect catch-up reports head 12 with nothing visible: the cursor stays
