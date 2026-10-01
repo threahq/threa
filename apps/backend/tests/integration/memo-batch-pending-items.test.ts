@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
 import { ConversationStatuses, MemoryModes } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
@@ -297,5 +297,35 @@ describe("memo batch: pending items", () => {
 
     expect(await memoCount(seeded.conversationId)).toBe(0)
     expect(await pendingState(seeded.conversationId)).toMatchObject({ processed: true })
+  })
+
+  test("switching memory off cannot commit while a save that passed the memory gate is writing", async () => {
+    const seeded = await seedQueuedConversation()
+    const findNearDuplicate = MemoRepository.findNearDuplicate
+    let switchError: { code?: string } | undefined
+    const spy = spyOn(MemoRepository, "findNearDuplicate").mockImplementation(async (...args) => {
+      const client = await pool.connect()
+      try {
+        await client.query("SET lock_timeout = '200ms'")
+        await StreamRepository.update(client, seeded.streamId, { memoryMode: MemoryModes.OFF })
+      } catch (error) {
+        switchError = error as { code?: string }
+      } finally {
+        await client.query("RESET lock_timeout")
+        client.release()
+      }
+      return findNearDuplicate(...args)
+    })
+
+    try {
+      await serviceWith({}).processBatch(testWorkspaceId, seeded.streamId)
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect({ switchError: switchError?.code, memos: await memoCount(seeded.conversationId) }).toEqual({
+      switchError: "55P03",
+      memos: 1,
+    })
   })
 })
