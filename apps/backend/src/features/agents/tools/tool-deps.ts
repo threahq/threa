@@ -18,6 +18,12 @@ export interface WorkspaceToolDeps {
   workspaceId: string
   accessibleStreamIds: string[]
   invokingUserId: string
+  /**
+   * Whose user-scoped memos this turn may read: the invoking user when the
+   * turn's audience is only them, `undefined` otherwise. A tool's output reaches
+   * everyone in the stream, so this is not `invokingUserId`.
+   */
+  memoViewerUserId: string | undefined
   /** The invoking user's resolved `search` flag; "off" keeps the pre-rework tool prompt and ranking. */
   searchFlag: FeatureFlagValue<"search">
   searchService: SearchService

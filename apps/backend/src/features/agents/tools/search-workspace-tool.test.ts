@@ -14,6 +14,7 @@ function makeTool(searchFlag: FeatureFlagValue<"search">) {
     workspaceId: "ws_1",
     accessibleStreamIds: ["stream_1"],
     invokingUserId: "usr_1",
+    memoViewerUserId: undefined,
     searchFlag,
     searchService: { search } as unknown as WorkspaceToolDeps["searchService"],
     storage: {} as WorkspaceToolDeps["storage"],
@@ -29,6 +30,7 @@ function makeDeps(searchFlag: FeatureFlagValue<"search">, searchService?: unknow
     workspaceId: "ws_1",
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_1",
+    memoViewerUserId: undefined,
     searchFlag,
     searchService: (searchService ?? {
       search: async () => ({ results: [], conversations: [], excludedE2eStreamCount: 0 }),

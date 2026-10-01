@@ -30,7 +30,7 @@ import { loadConversationHighlight } from "./conversation-highlight"
 import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStitch } from "./cross-surface-stitch"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
-import { computeAgentAccessSpec } from "../researcher/access-spec"
+import { computeAgentAccessSpec, resolveMemoViewer } from "../researcher/access-spec"
 import type { TurnPurpose } from "../turn-purpose"
 import { SearchRepository } from "../../search"
 import { logger } from "../../../lib/logger"
@@ -112,6 +112,7 @@ export interface AgentContext {
    * semantics.
    */
   accessibleStreamIds: Set<string> | null
+  memoViewerUserId: string | undefined
   /**
    * The stream's durable brief as read for this turn (roadmap 4.2), off the
    * effective root (threads inherit — INV-62). `null` when none exists yet. The
@@ -211,10 +212,12 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // below and by the workspace-tool deps wiring in persona-agent.ts. Bot turns
   // (no invoking user) get `null`; downstream consumers decide how to treat it.
   let accessibleStreamIds: Set<string> | null = null
+  let memoViewerUserId: string | undefined
   if (invokingUserId) {
     const accessSpec = await computeAgentAccessSpec(db, { stream, invokingUserId })
     const ids = await SearchRepository.getAccessibleStreamsForAgent(db, accessSpec, workspaceId)
     accessibleStreamIds = new Set(ids)
+    memoViewerUserId = resolveMemoViewer(accessSpec)
   }
 
   const streamContext = await buildStreamContext(db, stream, {
@@ -525,6 +528,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     authorNames,
     streamContext,
     accessibleStreamIds,
+    memoViewerUserId,
     streamBrief,
   }
 }

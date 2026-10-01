@@ -1104,6 +1104,7 @@ export class PersonaAgent {
             workspaceId,
             accessibleStreamIds: [...agentContext.accessibleStreamIds],
             invokingUserId: agentContext.invokingUserId,
+            memoViewerUserId: agentContext.memoViewerUserId,
             searchFlag,
             searchService,
             attachmentService,
