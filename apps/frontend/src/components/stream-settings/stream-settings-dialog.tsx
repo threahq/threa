@@ -13,14 +13,23 @@ import { useStreamSettings, STREAM_SETTINGS_TABS, type StreamSettingsTab } from 
 import { GeneralTab } from "./general-tab"
 import { CompanionTab } from "./companion-tab"
 import { MembersTab } from "./members-tab"
-import { streamKeys } from "@/hooks"
+import { ConnectTab } from "./connect-tab"
+import { streamKeys, useFeatureFlag } from "@/hooks"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { hasPermission } from "@/lib/permissions"
 import {
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,
   useWorkspaceUsers,
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
-import { StreamTypes, type Stream, type StreamBootstrap, type NotificationLevel } from "@threahq/types"
+import {
+  StreamTypes,
+  WORKSPACE_PERMISSION_SCOPES,
+  type Stream,
+  type StreamBootstrap,
+  type NotificationLevel,
+} from "@threahq/types"
 import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
 
@@ -28,6 +37,7 @@ const TAB_CONFIG: Record<StreamSettingsTab, { label: string; description: string
   general: { label: "General", description: "Notifications and stream details" },
   companion: { label: "Companion", description: "AI instructions and behavior" },
   members: { label: "Members", description: "People and bot access" },
+  connect: { label: "Connect", description: "Share with another workspace" },
 }
 
 interface StreamSettingsDialogProps {
@@ -72,6 +82,11 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
   const currentNotificationLevel: NotificationLevel | null = currentMembership?.notificationLevel ?? null
 
+  const workspaceBootstrap = useCachedWorkspaceBootstrap(workspaceId)
+  const canConnect =
+    useFeatureFlag(workspaceId, "streamConnections") === "on" &&
+    hasPermission(workspaceBootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+
   const workspaceUsers = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
 
@@ -89,6 +104,7 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
     if (!resolvedStream) return STREAM_SETTINGS_TABS
     switch (resolvedStream.type) {
       case StreamTypes.CHANNEL:
+        return canConnect ? ["general", "companion", "members", "connect"] : ["general", "companion", "members"]
       case StreamTypes.SCRATCHPAD:
       case StreamTypes.DM:
       case StreamTypes.THREAD:
@@ -97,7 +113,7 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
       default:
         return ["general"]
     }
-  }, [resolvedStream])
+  }, [resolvedStream, canConnect])
 
   const effectiveTab = (availableTabs as readonly string[]).includes(activeTab) ? activeTab : availableTabs[0]
 
@@ -161,6 +177,9 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
                 </TabsContent>
                 <TabsContent value="members" className="mt-0">
                   <MembersTab workspaceId={workspaceId} streamId={streamId} currentUserId={currentUserId} />
+                </TabsContent>
+                <TabsContent value="connect" className="mt-0">
+                  <ConnectTab workspaceId={workspaceId} stream={resolvedStream} />
                 </TabsContent>
               </div>
             </div>

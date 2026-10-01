@@ -69,6 +69,16 @@ export const router = createBrowserRouter([
         errorElement: <ErrorBoundary />,
       },
       {
+        // Shared-channel invite. Needs a session but no workspace bootstrap:
+        // the partner admin picks which of their workspaces accepts.
+        path: "/connections/:token",
+        HydrateFallback: FallbackLoader,
+        lazy: async () => ({
+          Component: (await import("@/pages/stream-connection-accept")).StreamConnectionAcceptPage,
+        }),
+        errorElement: <ErrorBoundary />,
+      },
+      {
         // Setup page lives outside WorkspaceLayout — it's a lightweight form that
         // doesn't need the full workspace bootstrap (socket, sidebar, etc.)
         path: "/w/:workspaceId/setup",

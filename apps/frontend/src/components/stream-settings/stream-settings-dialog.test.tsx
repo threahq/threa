@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { StreamTypes, type Stream, type StreamBootstrap } from "@threahq/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamBootstrap } from "@threahq/types"
+import * as hooksModule from "@/hooks"
 import { streamKeys } from "@/hooks"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import { StreamSettingsDialog } from "./stream-settings-dialog"
 import * as useStreamSettingsModule from "./use-stream-settings"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as generalTabModule from "./general-tab"
 import * as companionTabModule from "./companion-tab"
 import * as membersTabModule from "./members-tab"
+import * as connectTabModule from "./connect-tab"
 import * as useCurrentWorkspaceUserIdModule from "@/hooks/use-current-workspace-user-id"
 
 const useStreamSettingsMock = vi.fn()
@@ -167,6 +170,43 @@ describe("StreamSettingsDialog", () => {
     expect(await screen.findByText("General panel")).toBeVisible()
     expect(screen.queryByText(/Loading stream settings/i)).not.toBeInTheDocument()
   })
+
+  it.each([
+    { flag: "on", admin: true, shown: true },
+    { flag: "off", admin: true, shown: false },
+    { flag: "on", admin: false, shown: false },
+  ] as const)(
+    "should offer Connect on a channel only to an admin with the flag on ($flag, admin $admin)",
+    async ({ flag, admin, shown }) => {
+      useStreamSettingsMock.mockReturnValue({
+        isOpen: true,
+        activeTab: "connect",
+        streamId: "stream_design",
+        closeStreamSettings,
+        setTab,
+      })
+      useWorkspaceStreamsMock.mockReturnValue([
+        makeStream({ id: "stream_design", type: StreamTypes.CHANNEL, displayName: null, slug: "design" }),
+      ])
+      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue(flag as never)
+      vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
+        viewerPermissions: admin ? [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN] : [],
+      } as unknown as ReturnType<typeof useWorkspacesModule.useCachedWorkspaceBootstrap>)
+      vi.spyOn(connectTabModule, "ConnectTab").mockImplementation((() => (
+        <div>Connect panel</div>
+      )) as unknown as typeof connectTabModule.ConnectTab)
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StreamSettingsDialog workspaceId="ws_1" />
+        </QueryClientProvider>
+      )
+
+      expect(await screen.findByRole("button", { name: /General/i })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /Connect/i }) !== null).toBe(shown)
+      expect(screen.queryByText(shown ? "Connect panel" : "General panel")).toBeVisible()
+    }
+  )
 
   it("titles a DM with the resolved peer name when the stream row has no displayName", async () => {
     // Raw DM rows arrive with displayName: null (viewer-specific names aren't

@@ -5,7 +5,7 @@ import { Ban, Hourglass, Mail, RefreshCw, SearchX, UsersRound, type LucideIcon }
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ThreaLogo } from "@/components/threa-logo"
+import { HaloIcon, StandalonePage } from "@/components/standalone-page"
 import { ApiError } from "@/api/client"
 import {
   invitationsApi,
@@ -75,40 +75,6 @@ function resolveClaimErrorMessage(code: LookupErrorCode | null, err: unknown): s
   return null
 }
 
-/**
- * Centred shell shared by every state on the join page. A warm radial halo
- * behind the column picks up Threa's amber primary so the page feels arrived-at,
- * not like a fallback. Mirrors the LoginPage / WorkspaceSelectPage layout.
- */
-function JoinShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,hsl(var(--primary)/0.10),transparent_55%)]"
-      />
-      <div className="relative flex w-full max-w-md flex-col items-center gap-10 p-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-        <ThreaLogo size="lg" />
-        {children}
-      </div>
-    </div>
-  )
-}
-
-/** Soft halo'd icon used in success/error hero blocks. */
-function HaloIcon({ icon: Icon, tone = "muted" }: { icon: LucideIcon; tone?: "primary" | "muted" }) {
-  const haloClass = tone === "primary" ? "bg-primary/15" : "bg-muted/60"
-  const iconClass = tone === "primary" ? "text-primary" : "text-muted-foreground"
-  return (
-    <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
-      <div aria-hidden className={`absolute inset-1 rounded-full ${haloClass} blur-xl`} />
-      <div className="relative flex h-14 w-14 items-center justify-center rounded-full border bg-background">
-        <Icon className={`h-6 w-6 ${iconClass}`} />
-      </div>
-    </div>
-  )
-}
-
 export function JoinPage() {
   const { token } = useParams<{ token: string }>()
   const [email, setEmail] = useState("")
@@ -140,29 +106,29 @@ export function JoinPage() {
 
   if (!token) {
     return (
-      <JoinShell>
+      <StandalonePage>
         <ErrorState code={INVITATION_ERROR_CODES.NOT_FOUND} />
-      </JoinShell>
+      </StandalonePage>
     )
   }
 
   if (lookupQuery.isLoading) {
     return (
-      <JoinShell>
+      <StandalonePage>
         <div className="text-center">
           <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Resolving invitation</span>
           <p className="mt-3 text-sm text-muted-foreground">Just a moment…</p>
         </div>
-      </JoinShell>
+      </StandalonePage>
     )
   }
 
   if (lookupQuery.isError) {
     const code = getErrorCode(lookupQuery.error) ?? INVITATION_ERROR_CODES.NOT_FOUND
     return (
-      <JoinShell>
+      <StandalonePage>
         <ErrorState code={code} />
-      </JoinShell>
+      </StandalonePage>
     )
   }
 
@@ -170,13 +136,13 @@ export function JoinPage() {
 
   if (submittedEmail) {
     return (
-      <JoinShell>
+      <StandalonePage>
         <SubmittedState
           email={submittedEmail}
           workspaceName={data.workspaceName}
           alreadyMember={!!alreadyMemberWorkspaceId}
         />
-      </JoinShell>
+      </StandalonePage>
     )
   }
 
@@ -188,7 +154,7 @@ export function JoinPage() {
   const canSubmit = !!trimmedEmail && !claimMutation.isPending
 
   return (
-    <JoinShell>
+    <StandalonePage>
       <div className="w-full space-y-8">
         <div className="flex flex-col items-center gap-3 text-center">
           <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Workspace invitation</span>
@@ -245,7 +211,7 @@ export function JoinPage() {
           </Link>
         </p>
       </div>
-    </JoinShell>
+    </StandalonePage>
   )
 }
 
