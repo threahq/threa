@@ -783,7 +783,7 @@ describe("Memo Repositories", () => {
         })
 
         const tags = await withTransaction(pool, async (client) => {
-          return MemoRepository.getAllTags(client, localWorkspaceId)
+          return MemoRepository.getAllTags(client, localWorkspaceId, null)
         })
 
         expect(tags).toContain("architecture")
@@ -860,7 +860,7 @@ describe("Memo Repositories", () => {
         })
 
         const memos = await withTransaction(pool, async (client) => {
-          return MemoRepository.findByStream(client, localStreamId, { status: "active" })
+          return MemoRepository.findByStream(client, localStreamId, { scopeUserId: null, status: "active" })
         })
 
         const memo1Index = memos.findIndex((m) => m.id === memo1Id)
@@ -909,7 +909,7 @@ describe("Memo Repositories", () => {
         })
 
         const memos = await withTransaction(pool, async (client) => {
-          return MemoRepository.findByStream(client, localStreamId, { limit: 3 })
+          return MemoRepository.findByStream(client, localStreamId, { scopeUserId: null, limit: 3 })
         })
 
         expect(memos.length).toBe(3)

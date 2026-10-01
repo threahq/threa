@@ -322,18 +322,19 @@ export class MemoService implements MemoServiceLike {
         return null
       }
 
+      // The visibility tier for everything extracted this batch depends only on
+      // the (top-level) stream — memos from a private scratchpad are the owner's
+      // private tier (roadmap 6.4). The model sees only memos in that tier.
+      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
+
       const existingMemos = await MemoRepository.findByStream(client, streamId, {
+        scopeUserId: memoScope.scopeUserId,
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
       })
 
-      // The visibility tier for everything extracted this batch depends only on
-      // the (top-level) stream — memos from a private scratchpad are the owner's
-      // private tier (roadmap 6.4).
-      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
-
-      const existingTags = await MemoRepository.getAllTags(client, workspaceId)
+      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope.scopeUserId)
 
       const conversationItemIds = pending.filter((p) => p.itemType === "conversation").map((p) => p.itemId)
       const conversations = new Map<string, NonNullable<Awaited<ReturnType<typeof ConversationRepository.findById>>>>()
@@ -1209,12 +1210,19 @@ export class MemoService implements MemoServiceLike {
 
     // Phase 1: read the stream's memo context (single connection, no AI held).
     const context = await withClient(this.pool, async (client) => {
+      // A reflective memo inherits the session stream's visibility tier — research
+      // residue in a private scratchpad is the owner's private tier (roadmap 6.4),
+      // consistent with the passive extractor. Resolves the root first so a
+      // thread-backed session still inherits the scratchpad tier. The model sees
+      // only memos in that tier.
+      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
       const existingMemos = await MemoRepository.findByStream(client, streamId, {
+        scopeUserId: memoScope.scopeUserId,
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
       })
-      const existingTags = await MemoRepository.getAllTags(client, workspaceId)
+      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope.scopeUserId)
       // Only the explicit workspace setting is honored here (no participant-locale
       // fallback): a session's participants are usually just the invoking user, too
       // thin a sample to infer a canonical language from.
@@ -1222,11 +1230,6 @@ export class MemoService implements MemoServiceLike {
       const settingLanguage = overrides.find((o) => o.key === "memoLanguage")?.value
       const memoLanguage =
         typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
-      // A reflective memo inherits the session stream's visibility tier — research
-      // residue in a private scratchpad is the owner's private tier (roadmap 6.4),
-      // consistent with the passive extractor. Resolves the root first so a
-      // thread-backed session still inherits the scratchpad tier.
-      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
       // A memo is readable by whoever can read its anchor's root, so research
       // from any other root (or a cited stream that no longer resolves) has an
       // audience the memo can't honor.
