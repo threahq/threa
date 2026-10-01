@@ -265,6 +265,60 @@ describe("memo batch: pending items", () => {
     })
   })
 
+  test("a batch started while another runs on the same stream makes no model call", async () => {
+    const seeded = await seedQueuedConversation()
+    let classifyCalls = 0
+    let firstEntered!: () => void
+    const entered = new Promise<void>((resolve) => (firstEntered = resolve))
+    let releaseFirst!: () => void
+    const held = new Promise<void>((resolve) => (releaseFirst = resolve))
+    const service = serviceWith({
+      classify: async () => {
+        if (++classifyCalls === 1) {
+          firstEntered()
+          await held
+        }
+        throw new Error("provider unavailable")
+      },
+    })
+
+    const first = service.processBatch(testWorkspaceId, seeded.streamId)
+    await entered
+    await service.processBatch(testWorkspaceId, seeded.streamId)
+    releaseFirst()
+    await first
+
+    expect({ classifyCalls, ...(await pendingState(seeded.conversationId)) }).toEqual({
+      classifyCalls: 1,
+      processed: false,
+      fingerprint: null,
+      failedAttempts: 1,
+    })
+  })
+
+  test("a batch whose claim lapsed and was taken over saves nothing", async () => {
+    const seeded = await seedQueuedConversation()
+    let classifyCalls = 0
+    const slow = serviceWith({
+      classify: async () => {
+        if (++classifyCalls === 1) {
+          await pool.query(`UPDATE memo_stream_state SET batch_claim_expires_at = NOW() WHERE stream_id = $1`, [
+            seeded.streamId,
+          ])
+          await serviceWith({}).processBatch(testWorkspaceId, seeded.streamId)
+        }
+        return worthy
+      },
+    })
+
+    const result = await slow.processBatch(testWorkspaceId, seeded.streamId)
+
+    expect({ result, memos: await memoCount(seeded.conversationId) }).toEqual({
+      result: { processed: 0, memosCreated: 0 },
+      memos: 1,
+    })
+  })
+
   test("a stream switched off after its conversations were queued drops them without a model call", async () => {
     const seeded = await seedQueuedConversation()
     await switchMemoryOff(seeded)

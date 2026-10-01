@@ -49,6 +49,43 @@ export const StreamStateRepository = {
     `)
   },
 
+  /** Claims the stream for one batch unless another batch holds a live claim. */
+  async claimBatch(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    token: string,
+    leaseSeconds: number
+  ): Promise<boolean> {
+    const result = await db.query(sql`
+      INSERT INTO memo_stream_state (workspace_id, stream_id, batch_claim_token, batch_claim_expires_at)
+      VALUES (${workspaceId}, ${streamId}, ${token}, NOW() + INTERVAL '1 second' * ${leaseSeconds})
+      ON CONFLICT (workspace_id, stream_id) DO UPDATE
+      SET batch_claim_token = EXCLUDED.batch_claim_token, batch_claim_expires_at = EXCLUDED.batch_claim_expires_at
+      WHERE memo_stream_state.batch_claim_token IS NULL OR memo_stream_state.batch_claim_expires_at <= NOW()
+      RETURNING stream_id
+    `)
+    return result.rows.length > 0
+  },
+
+  /** Row-locked, so a takeover can't commit while the holder is saving. */
+  async holdsBatchClaim(db: Querier, workspaceId: string, streamId: string, token: string): Promise<boolean> {
+    const result = await db.query(sql`
+      SELECT 1 FROM memo_stream_state
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND batch_claim_token = ${token}
+      FOR UPDATE
+    `)
+    return result.rows.length > 0
+  },
+
+  async releaseBatchClaim(db: Querier, workspaceId: string, streamId: string, token: string): Promise<void> {
+    await db.query(sql`
+      UPDATE memo_stream_state
+      SET batch_claim_token = NULL, batch_claim_expires_at = NULL
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND batch_claim_token = ${token}
+    `)
+  },
+
   async markProcessed(db: Querier, workspaceId: string, streamId: string): Promise<void> {
     await db.query(sql`
       INSERT INTO memo_stream_state (workspace_id, stream_id, last_processed_at, last_activity_at)
