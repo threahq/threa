@@ -120,7 +120,35 @@ describe("memo sources: deleted and edited messages", () => {
     ])
   }
 
-  async function deleteMessage(seeded: Seeded, id: string): Promise<void> {
+  /** A thread under the conversation's first message, holding one reply. */
+  async function seedThreadReply(seeded: Seeded): Promise<{ threadId: string; replyId: string }> {
+    const threadId = streamId()
+    const replyId = messageId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: threadId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.THREAD,
+        visibility: Visibilities.PUBLIC,
+        parentStreamId: seeded.streamId,
+        rootStreamId: seeded.streamId,
+        parentAnchorId: seeded.messageIds[0],
+        createdBy: testUserId,
+        memoryMode: MemoryModes.AUTO,
+      })
+      await MessageRepository.insert(client, {
+        id: replyId,
+        streamId: threadId,
+        sequence: 1n,
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("the flag flips on Wednesday"),
+      })
+    })
+    return { threadId, replyId }
+  }
+
+  async function deleteMessage(seeded: { streamId: string }, id: string): Promise<void> {
     const deleted = await MessageRepository.softDelete(pool, id)
     await handler.run({
       id: 1n,
@@ -337,6 +365,85 @@ describe("memo sources: deleted and edited messages", () => {
     expect({ citing: await activeMemosCiting(deletedId), queued: await isQueued(seeded) }).toEqual({
       citing: 0,
       queued: true,
+    })
+  })
+
+  test("a thread message deleted while save_memo saves in that thread retires the memo", async () => {
+    const seeded = await seedConversation()
+    const { threadId, replyId } = await seedThreadReply(seeded)
+    const findNearDuplicate = MemoRepository.findNearDuplicate
+    let deletion: Promise<void> | undefined
+    const spy = spyOn(MemoRepository, "findNearDuplicate").mockImplementation(async (...args) => {
+      deletion ??= deleteMessage({ streamId: threadId }, replyId)
+      await Bun.sleep(200)
+      return findNearDuplicate(...args)
+    })
+
+    try {
+      await capturingService().saveMemo({
+        workspaceId: testWorkspaceId,
+        streamId: threadId,
+        sessionId: null,
+        sourceStreamIds: [threadId, seeded.streamId],
+        title: "Flag flip",
+        abstract: "The flag flips on Wednesday.",
+        keyPoints: [],
+        tags: [],
+        knowledgeType: "decision",
+        sourceMessageIds: [replyId],
+      })
+      await deletion
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(await activeMemosCiting(replyId)).toBe(0)
+  })
+
+  describe("reflective capture", () => {
+    async function capture(
+      seeded: Seeded,
+      cited: { streamId: string; messageId: string },
+      onClassify: () => Promise<void>
+    ): Promise<string[][]> {
+      const session = `session_${seeded.conversationId}`
+      await capturingService(async () => {
+        await onClassify()
+        return worthy
+      }).captureSessionReflection({
+        workspaceId: testWorkspaceId,
+        streamId: seeded.streamId,
+        sessionId: session,
+        digest: "Trigger: when does the flag flip?",
+        anchorMessageId: seeded.messageIds[0],
+        participantIds: [testUserId],
+        citedStreamIds: [cited.streamId],
+        citedMessageIds: [cited.messageId],
+      })
+      const { rows } = await pool.query(`SELECT source_message_ids FROM memos WHERE source_session_id = $1`, [session])
+      return rows.map((row) => row.source_message_ids)
+    }
+
+    test("research deleted while the model calls run is not saved as a source", async () => {
+      const seeded = await seedConversation()
+      const { threadId, replyId } = await seedThreadReply(seeded)
+
+      const sources = await capture(seeded, { streamId: threadId, messageId: replyId }, () =>
+        deleteMessage({ streamId: threadId }, replyId)
+      )
+
+      expect(sources).toEqual([[seeded.messageIds[0]]])
+    })
+
+    test("an anchor deleted while the model calls run captures nothing", async () => {
+      const seeded = await seedConversation()
+      const { threadId, replyId } = await seedThreadReply(seeded)
+
+      const sources = await capture(seeded, { streamId: threadId, messageId: replyId }, () =>
+        deleteMessage(seeded, seeded.messageIds[0])
+      )
+
+      expect(sources).toEqual([])
     })
   })
 

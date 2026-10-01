@@ -1030,6 +1030,14 @@ export class MemoService implements MemoServiceLike {
         await assertStreamWritable(client, { workspaceId, streamId, principal })
       }
 
+      // Resolves the root so a thread-backed save inherits the scratchpad tier.
+      const natural = await resolveMemoScopeForStreamId(client, streamId)
+
+      // Serialize against the passive batch, other saves and source deletions
+      // in this root (same lock key) before the sources are read, so neither the
+      // dedup gate nor a source's liveness can be read stale (INV-20).
+      await MemoRepository.lockStreamSaves(client, natural.rootStreamId)
+
       // Resolve the cited source messages scoped to the turn's own stream family
       // (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id outside this
       // family — another workspace, an inaccessible stream, or a broader stream
@@ -1064,8 +1072,6 @@ export class MemoService implements MemoServiceLike {
       // matching passive extraction; an explicit tool `scope` overrides. A `user`
       // override needs an invoking human to own it — with none, fall back to the
       // natural tier rather than mint an ownerless (CHECK-violating) user memo.
-      // Resolves the root so a thread-backed save inherits the scratchpad tier.
-      const natural = await resolveMemoScopeForStreamId(client, streamId)
       let resolvedScope = natural.scope
       let resolvedScopeUserId = natural.scopeUserId
       if (scopeOverride === MemoScopes.WORKSPACE) {
@@ -1091,10 +1097,6 @@ export class MemoService implements MemoServiceLike {
       // event there. Passive/reflective capture never hit this: they only produce
       // `user` scope in a private scratchpad, whose audience already equals the owner.
       const captureLeaksToStream = resolvedScope === MemoScopes.USER && natural.scope !== MemoScopes.USER
-
-      // Serialize against the passive batch and other save_memo calls for this
-      // stream (same lock key) so the dedup gate can't be read stale (INV-20).
-      await MemoRepository.lockStreamSaves(client, streamId)
 
       const duplicate = await MemoRepository.findNearDuplicate(client, {
         workspaceId,
@@ -1313,9 +1315,10 @@ export class MemoService implements MemoServiceLike {
       )
     }
 
-    // Phase 4: save under the same per-stream lock the batch/save_memo use, so
-    // the dedup gate can't be read stale (INV-20). Memo rows, their outbox
-    // events, and the memos:captured timeline event commit atomically (INV-7/62).
+    // Phase 4: save under the same per-root lock the batch/save_memo and source
+    // deletions use, so neither the dedup gate nor a source's liveness can be
+    // read stale (INV-20). Memo rows, their outbox events, and the
+    // memos:captured timeline event commit atomically (INV-7/62).
     return withTransaction(this.pool, async (client) => {
       // Memory switched off while the model calls ran: save nothing. Same
       // share-locked gate and lock order as the passive batch.
@@ -1329,7 +1332,13 @@ export class MemoService implements MemoServiceLike {
         return { classified: true, captured: 0, deduped: 0 }
       }
 
-      await MemoRepository.lockStreamSaves(client, streamId)
+      await MemoRepository.lockStreamSaves(client, context.memoScope.rootStreamId)
+
+      const sources = await MessageRepository.findByIds(client, context.sourceMessageIds)
+      if (sources.get(anchorMessageId)?.deletedAt) {
+        return { classified: true, captured: 0, deduped: 0 }
+      }
+      const sourceMessageIds = context.sourceMessageIds.filter((id) => !sources.get(id)?.deletedAt)
 
       const capturedMemos: MemosCapturedEventPayload["memos"] = []
       let deduped = 0
@@ -1365,7 +1374,7 @@ export class MemoService implements MemoServiceLike {
           title: content.title,
           abstract: content.abstract,
           keyPoints: content.keyPoints,
-          sourceMessageIds: context.sourceMessageIds,
+          sourceMessageIds,
           participantIds,
           knowledgeType: content.knowledgeType,
           tags: content.tags,

@@ -569,11 +569,13 @@ export const MemoRepository = {
   },
 
   /**
-   * Serializes, per stream, memo saves (batch, save_memo, reflective capture)
-   * with each other and with retirement when a source message is deleted.
+   * Serializes, per top-level stream, memo saves (batch, save_memo, reflective
+   * capture) with each other and with retirement when a source message is
+   * deleted. Keyed by the root so a save in a thread and a deletion in its
+   * channel take the same lock.
    */
-  async lockStreamSaves(db: Querier, streamId: string): Promise<void> {
-    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+  async lockStreamSaves(db: Querier, rootStreamId: string): Promise<void> {
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${rootStreamId}`])
   },
 
   /** Active memos citing `messageId`, each flagged with whether any of its sources is still undeleted. */
