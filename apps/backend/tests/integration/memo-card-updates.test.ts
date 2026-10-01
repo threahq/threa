@@ -307,7 +307,7 @@ describe("memo:updated", () => {
     })
 
     const { StreamMemberRepository } = await import("../../src/features/streams")
-    await StreamMemberRepository.insert(pool, publicChannel, testUserId)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, publicChannel, testUserId)
 
     const target = await eventService.createMessage({
       workspaceId: testWorkspaceId,

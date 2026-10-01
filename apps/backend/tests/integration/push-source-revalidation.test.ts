@@ -118,7 +118,7 @@ describe("push source revalidation", () => {
     test("should grant a non-member of a thread inside a private root they belong to, with current content", async () => {
       const { ws, author, recipient } = await workspaceWithUsers()
       const root = await channel(ws, author.id, Visibilities.PRIVATE, "secret")
-      await StreamMemberRepository.insertMany(pool, root.id, [author.id, recipient.id])
+      await StreamMemberRepository.insertMany(pool, ws, root.id, [author.id, recipient.id])
       const child = await thread(ws, root, author.id)
       const message = await post(ws, child.id, author.id, "original text")
       const row = await activity({
@@ -159,10 +159,10 @@ describe("push source revalidation", () => {
     test("should deny the same thread once the user is removed from the private root", async () => {
       const { ws, author, recipient } = await workspaceWithUsers()
       const root = await channel(ws, author.id, Visibilities.PRIVATE)
-      await StreamMemberRepository.insertMany(pool, root.id, [author.id, recipient.id])
+      await StreamMemberRepository.insertMany(pool, ws, root.id, [author.id, recipient.id])
       const child = await thread(ws, root, author.id)
       // A direct thread row must not keep access alive without the root (INV-62).
-      await StreamMemberRepository.insert(pool, child.id, recipient.id)
+      await StreamMemberRepository.insert(pool, ws, child.id, recipient.id)
       const message = await post(ws, child.id, author.id, "hi")
       const row = await activity({
         ws,
@@ -254,7 +254,7 @@ describe("push source revalidation", () => {
     test("should report a mention moved into a thread as moved, even though its activity row followed the message", async () => {
       const { ws, author, recipient } = await workspaceWithUsers()
       const root = await channel(ws, author.id, Visibilities.PUBLIC)
-      await StreamMemberRepository.insertMany(pool, root.id, [author.id, recipient.id])
+      await StreamMemberRepository.insertMany(pool, ws, root.id, [author.id, recipient.id])
       const anchor = await post(ws, root.id, author.id, "anchor")
       const mentioned = await post(ws, root.id, author.id, "ping")
       const row = await activity({
@@ -372,7 +372,7 @@ describe("push source revalidation", () => {
     test("should keep a missed call valid with its mode until stream access is lost", async () => {
       const { ws, author, recipient } = await workspaceWithUsers()
       const dm = await channel(ws, author.id, Visibilities.PRIVATE)
-      await StreamMemberRepository.insertMany(pool, dm.id, [author.id, recipient.id])
+      await StreamMemberRepository.insertMany(pool, ws, dm.id, [author.id, recipient.id])
       const row = await activity({
         ws,
         userId: recipient.id,
@@ -614,7 +614,7 @@ describe("push source revalidation", () => {
 
       const { ws, author, recipient } = await workspaceWithUsers()
       const priv = await channel(ws, author.id, Visibilities.PRIVATE)
-      await StreamMemberRepository.insertMany(pool, priv.id, [author.id, recipient.id])
+      await StreamMemberRepository.insertMany(pool, ws, priv.id, [author.id, recipient.id])
       const message = await post(ws, priv.id, author.id, "private note")
       const saved = await savedService.save({
         workspaceId: ws,

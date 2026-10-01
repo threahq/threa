@@ -158,6 +158,7 @@ describe("subagent thread in a channel", () => {
   test("a session already running in the thread still suppresses the dispatch", async () => {
     const { threadStreamId } = await subagentThreadInChannel("wake-running")
     await AgentSessionRepository.insert(pool, {
+      workspaceId: ctx.workspaceId,
       id: sessionId(),
       streamId: threadStreamId,
       personaId: ctx.persona.id,

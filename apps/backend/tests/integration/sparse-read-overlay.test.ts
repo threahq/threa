@@ -50,7 +50,7 @@ describe("Sparse read overlay", () => {
         `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
         [sid, wid, authorId]
       )
-      for (const m of memberIds) await StreamMemberRepository.insert(client, sid, m)
+      for (const m of memberIds) await StreamMemberRepository.insert(client, wid, sid, m)
     })
     return { wid, sid, authorId }
   }

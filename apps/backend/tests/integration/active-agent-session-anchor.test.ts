@@ -52,6 +52,7 @@ describe("listRunningByWorkspace anchors", () => {
     )
 
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: rootSession,
       streamId: rootStream,
       personaId: persona,
@@ -60,6 +61,7 @@ describe("listRunningByWorkspace anchors", () => {
       serverId: "test-server",
     })
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: threadSession,
       streamId: threadStream,
       personaId: persona,
@@ -68,6 +70,7 @@ describe("listRunningByWorkspace anchors", () => {
       serverId: "test-server",
     })
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: asideSession,
       streamId: asideStream,
       personaId: persona,
@@ -76,6 +79,7 @@ describe("listRunningByWorkspace anchors", () => {
       serverId: "test-server",
     })
     await AgentSessionRepository.insert(pool, {
+      workspaceId: otherWorkspace,
       id: otherWorkspaceSession,
       streamId: otherWorkspaceStream,
       personaId: persona,

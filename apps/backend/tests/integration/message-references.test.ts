@@ -100,7 +100,7 @@ describe("message reference resolution", () => {
           slug: `${label}-${id.slice(-8)}`,
           createdBy: author,
         })
-        await StreamMemberRepository.insert(client, id, author)
+        await StreamMemberRepository.insert(client, testWorkspaceId, id, author)
       }
     })
   })
@@ -287,7 +287,7 @@ describe("message reference resolution", () => {
         slug: `walled-${walled.slice(-8)}`,
         createdBy: stranger,
       })
-      await StreamMemberRepository.insert(client, walled, stranger)
+      await StreamMemberRepository.insert(client, testWorkspaceId, walled, stranger)
     })
     const secret = await eventService.createMessage({
       workspaceId: testWorkspaceId,

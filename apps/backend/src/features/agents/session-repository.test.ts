@@ -49,6 +49,7 @@ describe("AgentSessionRepository.insertRunningOrSkip", () => {
 
     await AgentSessionRepository.insertRunningOrSkip(db, {
       id: "binv_1",
+      workspaceId: "ws_1",
       streamId: "stream_1",
       personaId: "bot_1",
       triggerMessageId: "msg_1",

@@ -119,6 +119,7 @@ export async function withCompanionSession(
 
     const session = await AgentSessionRepository.insertRunningOrSkip(db, {
       id: sessionId(),
+      workspaceId,
       streamId,
       personaId,
       triggerMessageId,

@@ -547,7 +547,7 @@ export class StreamService {
       }
 
       if (created) {
-        await StreamMemberRepository.insertMany(client, stream.id, [userAId, userBId])
+        await StreamMemberRepository.insertMany(client, params.workspaceId, stream.id, [userAId, userBId])
         await OutboxRepository.insert(client, "stream:created", {
           workspaceId: params.workspaceId,
           streamId: stream.id,
@@ -697,7 +697,7 @@ export class StreamService {
       return { stream, created }
     }
 
-    await StreamMemberRepository.insert(db, id, params.createdBy)
+    await StreamMemberRepository.insert(db, params.workspaceId, id, params.createdBy)
 
     // Attach optional context bag in the same transaction as the stream +
     // outbox event so the pre-compute handler (which fires on stream:created)
@@ -845,7 +845,7 @@ export class StreamService {
         createdBy: params.createdBy,
       })
 
-      await StreamMemberRepository.insert(client, stream.id, params.createdBy)
+      await StreamMemberRepository.insert(client, params.workspaceId, stream.id, params.createdBy)
 
       if (params.contextBag) {
         await ContextBagRepository.insert(client, {
@@ -922,7 +922,7 @@ export class StreamService {
         createdBy: params.createdBy,
       })
 
-      await StreamMemberRepository.insert(client, id, params.createdBy)
+      await StreamMemberRepository.insert(client, params.workspaceId, id, params.createdBy)
 
       await OutboxRepository.insert(client, "stream:created", {
         workspaceId: params.workspaceId,
@@ -948,7 +948,7 @@ export class StreamService {
 
         if (validMemberIds.length > 0) {
           // INV-56: batch insert members, events, and outbox entries
-          await StreamMemberRepository.insertMany(client, stream.id, validMemberIds)
+          await StreamMemberRepository.insertMany(client, params.workspaceId, stream.id, validMemberIds)
 
           const eventParams = validMemberIds.map((memberId) => ({
             id: eventId(),
@@ -1159,7 +1159,7 @@ export class StreamService {
     if (params.createdByType !== "bot") {
       const isMember = await StreamMemberRepository.isMember(client, stream.id, params.createdBy)
       if (!isMember) {
-        await StreamMemberRepository.insert(client, stream.id, params.createdBy)
+        await StreamMemberRepository.insert(client, params.workspaceId, stream.id, params.createdBy)
       }
     }
 
@@ -2200,7 +2200,7 @@ export class StreamService {
       }
 
       await StreamMemberRepository.lockMemberships(client, [stream.id], memberId)
-      const membership = await StreamMemberRepository.insert(client, streamId, memberId)
+      const membership = await StreamMemberRepository.insert(client, workspaceId, streamId, memberId)
 
       const evtId = eventId()
       const event = await StreamEventRepository.insert(client, {
@@ -2233,7 +2233,7 @@ export class StreamService {
     const existing = await StreamMemberRepository.findByStreamAndMember(client, stream.id, memberId)
     if (existing) return existing
 
-    const membership = await StreamMemberRepository.insert(client, stream.id, memberId)
+    const membership = await StreamMemberRepository.insert(client, stream.workspaceId, stream.id, memberId)
 
     const evtId = eventId()
     const event = await StreamEventRepository.insert(client, {

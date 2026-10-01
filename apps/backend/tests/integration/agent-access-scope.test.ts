@@ -57,8 +57,8 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, sharedDmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, sharedDmId, secondMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedDmId, secondMember.id)
 
       await StreamRepository.insert(client, {
         id: sharedPrivateChannelId,
@@ -67,8 +67,8 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, sharedPrivateChannelId, ownerMember.id)
-      await StreamMemberRepository.insert(client, sharedPrivateChannelId, secondMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedPrivateChannelId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedPrivateChannelId, secondMember.id)
 
       await StreamRepository.insert(client, {
         id: publicChannelId,
@@ -85,7 +85,7 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, ownerScratchpadId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerScratchpadId, ownerMember.id)
 
       await StreamRepository.insert(client, {
         id: secondScratchpadId,
@@ -94,7 +94,7 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: secondMember.id,
       })
-      await StreamMemberRepository.insert(client, secondScratchpadId, secondMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, secondScratchpadId, secondMember.id)
 
       await StreamRepository.insert(client, {
         id: ownerOutsiderDmId,
@@ -103,8 +103,8 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, ownerOutsiderDmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, ownerOutsiderDmId, outsiderMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerOutsiderDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerOutsiderDmId, outsiderMember.id)
 
       const sharedDm = await StreamRepository.findById(client, sharedDmId)
       expect(sharedDm).not.toBeNull()
@@ -264,8 +264,8 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, sharedDmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, sharedDmId, secondMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedDmId, secondMember.id)
 
       await StreamRepository.insert(client, {
         id: sharedPrivateChannelId,
@@ -274,8 +274,8 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, sharedPrivateChannelId, ownerMember.id)
-      await StreamMemberRepository.insert(client, sharedPrivateChannelId, secondMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedPrivateChannelId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedPrivateChannelId, secondMember.id)
 
       await StreamRepository.insert(client, {
         id: publicChannelId,
@@ -292,7 +292,7 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, ownerScratchpadId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerScratchpadId, ownerMember.id)
 
       await StreamRepository.insert(client, {
         id: secondScratchpadId,
@@ -301,7 +301,7 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: secondMember.id,
       })
-      await StreamMemberRepository.insert(client, secondScratchpadId, secondMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, secondScratchpadId, secondMember.id)
 
       await StreamRepository.insert(client, {
         id: ownerOutsiderDmId,
@@ -310,8 +310,8 @@ describe("Agent Access Scope", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, ownerOutsiderDmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, ownerOutsiderDmId, outsiderMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerOutsiderDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerOutsiderDmId, outsiderMember.id)
 
       const sharedFilenameAttachmentId = attachmentId()
       const sharedSummaryAttachmentId = attachmentId()

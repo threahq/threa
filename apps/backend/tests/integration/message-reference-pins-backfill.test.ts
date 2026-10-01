@@ -88,7 +88,7 @@ describe("message-reference-pins backfill", () => {
           slug: `${label}-${id.slice(-8)}`,
           createdBy: author,
         })
-        await StreamMemberRepository.insert(client, id, author)
+        await StreamMemberRepository.insert(client, testWorkspaceId, id, author)
       }
     })
 

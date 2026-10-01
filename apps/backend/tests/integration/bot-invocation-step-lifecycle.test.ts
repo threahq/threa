@@ -69,6 +69,7 @@ describe("recordSteps plaintext tool step lifecycle", () => {
       [invocationId, instanceId, claimToken]
     )
     await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: ws,
       id: invocationId,
       streamId: stream,
       personaId: botId,

@@ -127,6 +127,7 @@ describe("bot invocation control protocol", () => {
     await createSource()
     const claimed = await claim("reply-generation")
     await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: workspace,
       id: claimed!.id,
       streamId: stream,
       personaId: bot,
@@ -706,6 +707,7 @@ describe("bot invocation control protocol", () => {
     const source = await createSource()
     const claimed = await claim("repair-token")
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: claimed!.id,
       streamId: stream,
       personaId: bot,

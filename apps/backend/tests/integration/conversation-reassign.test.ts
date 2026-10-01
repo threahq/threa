@@ -49,7 +49,7 @@ describe("ConversationService.reassignMessage", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
     })
 
     service = new ConversationService(pool)
@@ -375,7 +375,7 @@ describe("ConversationService.reassignMessage", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, otherStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, otherStreamId, testUserId)
       await MessageRepository.insert(client, {
         workspaceId: testWorkspaceId,
         id: foreignMsgId,

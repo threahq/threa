@@ -81,12 +81,14 @@ async function insertMessages(
 
 async function insertCompletedSession(
   client: PoolClient,
+  wsIdArg: string,
   streamIdArg: string,
   lastSeenSequence: bigint
 ): Promise<void> {
   const id = sessionId()
   await AgentSessionRepository.insert(client, {
     id,
+    workspaceId: wsIdArg,
     streamId: streamIdArg,
     personaId: TEST_PERSONA_ID,
     triggerMessageId: messageId(),
@@ -145,7 +147,7 @@ describe("resolveContextWindowPolicy", () => {
       const { workspaceId: wsId, memberId } = await setupWorkspaceMember(client)
       const dm = await insertStream(client, wsId, memberId, StreamTypes.DM)
       await insertMessages(client, wsId, dm.id, memberId, 5) // budget 3 → window floor is sequence 3
-      await insertCompletedSession(client, dm.id, BigInt(4)) // 4 >= 3, inside
+      await insertCompletedSession(client, wsId, dm.id, BigInt(4)) // 4 >= 3, inside
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
@@ -163,7 +165,7 @@ describe("resolveContextWindowPolicy", () => {
       const { workspaceId: wsId, memberId } = await setupWorkspaceMember(client)
       const dm = await insertStream(client, wsId, memberId, StreamTypes.DM)
       await insertMessages(client, wsId, dm.id, memberId, 5) // budget 3 → window floor is sequence 3
-      await insertCompletedSession(client, dm.id, BigInt(2)) // 2 < 3, outside → gap > window
+      await insertCompletedSession(client, wsId, dm.id, BigInt(2)) // 2 < 3, outside → gap > window
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
@@ -181,7 +183,7 @@ describe("resolveContextWindowPolicy", () => {
       const { workspaceId: wsId, memberId } = await setupWorkspaceMember(client)
       const dm = await insertStream(client, wsId, memberId, StreamTypes.DM)
       await insertMessages(client, wsId, dm.id, memberId, 2) // fewer than budget 3 → no floor
-      await insertCompletedSession(client, dm.id, BigInt(1))
+      await insertCompletedSession(client, wsId, dm.id, BigInt(1))
 
       const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 3 })
 
@@ -199,11 +201,12 @@ describe("resolveContextWindowPolicy", () => {
       const { workspaceId: wsId, memberId } = await setupWorkspaceMember(client)
       const dm = await insertStream(client, wsId, memberId, StreamTypes.DM)
       await insertMessages(client, wsId, dm.id, memberId, 5)
-      await insertCompletedSession(client, dm.id, BigInt(4)) // prior episode, cursor inside
+      await insertCompletedSession(client, wsId, dm.id, BigInt(4)) // prior episode, cursor inside
 
       // The current turn's RUNNING session (no lastSeenSequence yet) must not
       // shadow the prior completed session's cursor.
       await AgentSessionRepository.insert(client, {
+        workspaceId: wsId,
         id: sessionId(),
         streamId: dm.id,
         personaId: TEST_PERSONA_ID,
@@ -228,7 +231,7 @@ describe("resolveContextWindowPolicy", () => {
       const { workspaceId: wsId, memberId } = await setupWorkspaceMember(client)
       const dm = await insertStream(client, wsId, memberId, StreamTypes.DM)
       await insertMessages(client, wsId, dm.id, memberId, 5)
-      await insertCompletedSession(client, dm.id, BigInt(4))
+      await insertCompletedSession(client, wsId, dm.id, BigInt(4))
 
       // 0 clamps to 1: the window is the single newest message (sequence 5), and
       // the prior cursor (4) sits outside it → fresh. Without the clamp a 0

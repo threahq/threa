@@ -222,7 +222,7 @@ export class UserPreferencesService {
       if (sharingOff) await UserDeviceContextRepository.lockUser(client, workspaceId, userId)
 
       if (toSet.length > 0) {
-        await UserPreferencesRepository.bulkSetOverrides(client, userId, toSet)
+        await UserPreferencesRepository.bulkSetOverrides(client, workspaceId, userId, toSet)
       }
       if (toDelete.length > 0) {
         await UserPreferencesRepository.bulkDeleteOverrides(client, userId, toDelete)

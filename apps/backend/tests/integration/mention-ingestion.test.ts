@@ -53,7 +53,7 @@ describe("mention ingestion", () => {
         slug: channel.slug,
         createdBy: author.id,
       })
-      await StreamMemberRepository.insert(client, channel.id, author.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, channel.id, author.id)
     })
   })
 

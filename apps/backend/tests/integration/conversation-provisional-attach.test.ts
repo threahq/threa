@@ -139,7 +139,7 @@ describe("provisional conversation attach", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
       await StreamRepository.insert(client, {
         id: scratchpadId,
         workspaceId: testWorkspaceId,
@@ -148,7 +148,7 @@ describe("provisional conversation attach", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, scratchpadId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, scratchpadId, testUserId)
     })
 
     eventService = new EventService(pool, conversationAssigner)

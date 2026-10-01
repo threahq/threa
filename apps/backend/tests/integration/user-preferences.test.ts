@@ -261,8 +261,8 @@ describe("User Preferences - Sparse Override Pattern", () => {
       const userA = userId()
       const userB = userId()
       const userC = userId()
-      await UserPreferencesRepository.setOverride(pool, userA, "analyticsConsent", "granted")
-      await UserPreferencesRepository.setOverride(pool, userB, "analyticsConsent", "denied")
+      await UserPreferencesRepository.setOverride(pool, testWorkspaceId, userA, "analyticsConsent", "granted")
+      await UserPreferencesRepository.setOverride(pool, testWorkspaceId, userB, "analyticsConsent", "denied")
 
       const result = await UserPreferencesRepository.findOverrideForUsers(
         pool,
@@ -310,9 +310,15 @@ describe("User Preferences - Sparse Override Pattern", () => {
       seen.granted = await grant()
       await setConsent("granted")
       seen.regrantedNoOp = await grant()
-      await UserPreferencesRepository.setOverride(pool, testUserId, ANALYTICS_CONSENT_KEY, ANALYTICS_CONSENT_GRANTED)
+      await UserPreferencesRepository.setOverride(
+        pool,
+        testWorkspaceId,
+        testUserId,
+        ANALYTICS_CONSENT_KEY,
+        ANALYTICS_CONSENT_GRANTED
+      )
       seen.setOverrideNoOp = await grant()
-      await UserPreferencesRepository.bulkSetOverrides(pool, testUserId, [
+      await UserPreferencesRepository.bulkSetOverrides(pool, testWorkspaceId, testUserId, [
         { key: ANALYTICS_CONSENT_KEY, value: ANALYTICS_CONSENT_GRANTED },
         { key: "theme", value: "dark" },
       ])
@@ -329,11 +335,17 @@ describe("User Preferences - Sparse Override Pattern", () => {
       await setConsent("granted")
       seen.afterUnset = await grant()
       await UserPreferencesRepository.deleteOverride(pool, testUserId, ANALYTICS_CONSENT_KEY)
-      await UserPreferencesRepository.setOverride(pool, testUserId, ANALYTICS_CONSENT_KEY, ANALYTICS_CONSENT_GRANTED)
+      await UserPreferencesRepository.setOverride(
+        pool,
+        testWorkspaceId,
+        testUserId,
+        ANALYTICS_CONSENT_KEY,
+        ANALYTICS_CONSENT_GRANTED
+      )
       seen.afterDelete = await grant()
       await UserPreferencesRepository.deleteAllOverrides(pool, testUserId)
       seen.reset = await grant()
-      await UserPreferencesRepository.bulkSetOverrides(pool, testUserId, [
+      await UserPreferencesRepository.bulkSetOverrides(pool, testWorkspaceId, testUserId, [
         { key: ANALYTICS_CONSENT_KEY, value: ANALYTICS_CONSENT_GRANTED },
       ])
       seen.afterReset = await grant()
@@ -375,9 +387,9 @@ describe("User Preferences - Sparse Override Pattern", () => {
 
       // A replica that predates the column: its statements never name it.
       await pool.query(
-        `INSERT INTO user_preference_overrides (user_id, key, value) VALUES ($1, $2, $3::jsonb)
-         ON CONFLICT (user_id, key) DO UPDATE SET value = $3::jsonb, updated_at = NOW()`,
-        [testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted")]
+        `INSERT INTO user_preference_overrides (workspace_id, user_id, key, value) VALUES ($1, $2, $3, $4::jsonb)
+         ON CONFLICT (user_id, key) DO UPDATE SET value = $4::jsonb, updated_at = NOW()`,
+        [testWorkspaceId, testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted")]
       )
       seen.legacyInsert = await rowGeneration()
       await pool.query("UPDATE user_preference_overrides SET updated_at = NOW() WHERE user_id = $1 AND key = $2", [
@@ -400,8 +412,8 @@ describe("User Preferences - Sparse Override Pattern", () => {
       seen.explicitUpdate = await rowGeneration()
       await pool.query("DELETE FROM user_preference_overrides WHERE user_id = $1", [testUserId])
       await pool.query(
-        "INSERT INTO user_preference_overrides (user_id, key, value, value_generation) VALUES ($1, $2, $3::jsonb, $4)",
-        [testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted"), seen.legacyInsert]
+        "INSERT INTO user_preference_overrides (workspace_id, user_id, key, value, value_generation) VALUES ($1, $2, $3, $4::jsonb, $5)",
+        [testWorkspaceId, testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted"), seen.legacyInsert]
       )
       seen.explicitInsert = await rowGeneration()
 

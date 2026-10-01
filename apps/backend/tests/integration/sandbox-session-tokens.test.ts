@@ -94,10 +94,10 @@ describe("sandbox session tokens", () => {
       await insertStream(client, e2eThread, StreamTypes.THREAD, invokerId, e2eRoot)
 
       for (const id of [channel, uncaptured, revocable, e2eRoot]) {
-        await StreamMemberRepository.insert(client, id, invokerId)
+        await StreamMemberRepository.insert(client, ws, id, invokerId)
       }
-      await StreamMemberRepository.insert(client, otherDm, otherId)
-      await StreamMemberRepository.insert(client, otherDm, thirdId)
+      await StreamMemberRepository.insert(client, ws, otherDm, otherId)
+      await StreamMemberRepository.insert(client, ws, otherDm, thirdId)
 
       await E2eStreamsRepository.markStreamE2e(client, {
         streamId: e2eRoot,

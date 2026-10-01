@@ -438,7 +438,7 @@ describe("Dynamic plaintext stream naming", () => {
         companionMode: "off",
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, rootId, ownerId)
+      await StreamMemberRepository.insert(client, wsId, rootId, ownerId)
       await MessageRepository.insert(client, {
         workspaceId: wsId,
         id: anchorId,

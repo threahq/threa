@@ -307,7 +307,7 @@ export class WorkspaceService {
       workspaceId: params.workspaceId,
       createdBy: user.id,
     })
-    await StreamMemberRepository.insert(client, sId, user.id)
+    await StreamMemberRepository.insert(client, params.workspaceId, sId, user.id)
     await OutboxRepository.insert(client, "stream:created", {
       workspaceId: params.workspaceId,
       streamId: sId,

@@ -60,8 +60,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmId, peerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, peerMember.id)
 
       const ownerTool = createSearchStreamsTool({
         db: client as unknown as Pool,
@@ -166,7 +166,7 @@ describe("search_streams DM matching", () => {
         createdBy: ownerMember.id,
         displayName: "My Scratchpad",
       })
-      await StreamMemberRepository.insert(client, scratchpadId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, scratchpadId, ownerMember.id)
 
       const dmWithPeerId = streamId()
       await StreamRepository.insert(client, {
@@ -176,8 +176,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmWithPeerId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmWithPeerId, peerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmWithPeerId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmWithPeerId, peerMember.id)
 
       const dmWithOutsiderId = streamId()
       await StreamRepository.insert(client, {
@@ -187,8 +187,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmWithOutsiderId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmWithOutsiderId, outsider.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmWithOutsiderId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmWithOutsiderId, outsider.id)
 
       const otherPrivateScratchpadId = streamId()
       await StreamRepository.insert(client, {
@@ -199,7 +199,7 @@ describe("search_streams DM matching", () => {
         createdBy: outsider.id,
         displayName: "Outsider Scratchpad",
       })
-      await StreamMemberRepository.insert(client, otherPrivateScratchpadId, outsider.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, otherPrivateScratchpadId, outsider.id)
 
       const scratchpad = await StreamRepository.findById(client, scratchpadId)
       expect(scratchpad).not.toBeNull()
@@ -284,8 +284,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmId, unicodePeer.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, unicodePeer.id)
 
       const tool = createSearchStreamsTool({
         db: client as unknown as Pool,
@@ -354,8 +354,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmId, peerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, peerMember.id)
 
       const tool = createSearchStreamsTool({
         db: client as unknown as Pool,
@@ -415,8 +415,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmId, testPeer.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, testPeer.id)
 
       const channelIds: string[] = []
       for (let index = 0; index < 12; index += 1) {
@@ -497,8 +497,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, dmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, dmId, peerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, dmId, peerMember.id)
 
       const peers = await StreamRepository.listDmPeersForMember(client, testWorkspaceId, ownerMember.id, {
         streamIds: [],
@@ -557,8 +557,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, targetDmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, targetDmId, targetPeer.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, targetDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, targetDmId, targetPeer.id)
 
       const shortSlugDmId = streamId()
       await StreamRepository.insert(client, {
@@ -568,8 +568,8 @@ describe("search_streams DM matching", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerMember.id,
       })
-      await StreamMemberRepository.insert(client, shortSlugDmId, ownerMember.id)
-      await StreamMemberRepository.insert(client, shortSlugDmId, shortSlugPeer.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, shortSlugDmId, ownerMember.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, shortSlugDmId, shortSlugPeer.id)
 
       const tool = createSearchStreamsTool({
         db: client as unknown as Pool,

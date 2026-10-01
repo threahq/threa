@@ -73,6 +73,7 @@ describe("bot invocation source revisions migration", () => {
     )
     await AgentSessionRepository.insertRunningOrSkip(pool, {
       id: "binv_deleted",
+      workspaceId: "ws_migration",
       streamId: "stream_migration",
       personaId: "bot_1",
       triggerMessageId: "msg_deleted",

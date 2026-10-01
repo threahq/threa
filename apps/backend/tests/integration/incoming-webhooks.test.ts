@@ -59,7 +59,7 @@ describe("IncomingWebhookService", () => {
           slug: `s-${id.slice(-10)}`,
           createdBy: owner.id,
         })
-        await StreamMemberRepository.insert(client, id, owner.id)
+        await StreamMemberRepository.insert(client, ws, id, owner.id)
       }
 
       await StreamRepository.insert(client, {
@@ -211,7 +211,7 @@ describe("IncomingWebhookService", () => {
     expect((await service.listByBot(ws, personalBot)).map((h) => h.id)).toEqual([])
     expect(await BotChannelAccessRepository.getGrantedStreamIds(pool, ws, personalBot)).not.toContain(publicChannel)
 
-    await withTransaction(pool, (client) => StreamMemberRepository.insert(client, publicChannel, owner.id))
+    await withTransaction(pool, (client) => StreamMemberRepository.insert(client, ws, publicChannel, owner.id))
 
     const { row } = await create()
     expect(row).toMatchObject({ botId: personalBot, streamId: publicChannel, name: "Personal hook" })
@@ -265,7 +265,7 @@ describe("IncomingWebhookService", () => {
       streamId: channel,
     })
 
-    await withTransaction(pool, (client) => StreamMemberRepository.insert(client, publicChannel, owner.id))
+    await withTransaction(pool, (client) => StreamMemberRepository.insert(client, ws, publicChannel, owner.id))
     expect(await move()).toMatchObject({ id: row.id, streamId: publicChannel })
   })
 
@@ -280,7 +280,7 @@ describe("IncomingWebhookService", () => {
         slug: `s-${otherChannel.slice(-10)}`,
         createdBy: owner.id,
       })
-      await StreamMemberRepository.insert(client, otherChannel, owner.id)
+      await StreamMemberRepository.insert(client, ws, otherChannel, owner.id)
     })
 
     const { row, secret } = await service.create({
@@ -397,7 +397,7 @@ describe("IncomingWebhookService", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: owner.id,
       })
-      await StreamMemberRepository.insert(client, systemStream, owner.id)
+      await StreamMemberRepository.insert(client, ws, systemStream, owner.id)
     })
     expect(
       await capture(() =>
