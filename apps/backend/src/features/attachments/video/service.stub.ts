@@ -18,10 +18,11 @@ export class StubVideoTranscodingService implements VideoTranscodingServiceLike 
     await withTransaction(this.pool, async (client) => {
       await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.SKIPPED)
       const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
+      if (!att) return
       await OutboxRepository.insert(client, "attachment:transcoded", {
         workspaceId,
-        ...(att?.streamId && { streamId: att.streamId }),
-        ...(att?.messageId && { messageId: att.messageId }),
+        ...(att.streamId && { streamId: att.streamId }),
+        ...(att.messageId && { messageId: att.messageId }),
         attachmentId,
         processingStatus: ProcessingStatuses.SKIPPED,
       })

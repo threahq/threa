@@ -147,10 +147,9 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
       `SELECT DISTINCT workspace_id FROM pdf_page_extractions WHERE attachment_id = $1 ORDER BY workspace_id`,
       [id]
     )
-    // Only events addressed to workspace A: a stub may still announce a missing attachment into the caller's own workspace.
     const events = await pool.query(
-      `SELECT event_type, payload FROM outbox WHERE payload->>'attachmentId' = $1 AND payload->>'workspaceId' = $2 ORDER BY id`,
-      [id, wsA]
+      `SELECT event_type, payload FROM outbox WHERE payload->>'attachmentId' = $1 ORDER BY id`,
+      [id]
     )
     return {
       processingStatus: attachment.rows[0].processing_status,
@@ -639,7 +638,7 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
       })
     })
 
-    test("should leave workspace A's attachment and video job untouched and announce nothing in A when the video hook gets a workspace B job with their id", async () => {
+    test("should leave workspace A's attachment and video job untouched and announce nothing when the video hook gets a workspace B job with their id", async () => {
       const id = await seedVideo()
 
       await runDlq(createVideoTranscodeOnDLQ("Moved to DLQ in scope test"), { workspaceId: wsB, attachmentId: id })
