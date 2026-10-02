@@ -19,12 +19,7 @@ export function collectThreadAnchorIds(events: readonly StreamEvent[]): string[]
     .filter((id): id is string => !!id)
 }
 
-export async function hydrateSlotsForEvents(
-  pool: Pool,
-  workspaceId: string,
-  viewerId: string,
-  events: StreamEvent[]
-): Promise<DualSlotMaps> {
+export function collectEventSharedRefs(events: readonly StreamEvent[]): Map<string, SharedMessageRef> {
   const refs = new Map<string, SharedMessageRef>()
   for (const event of events) {
     if (event.eventType === "message_created" || event.eventType === "message_edited") {
@@ -32,6 +27,16 @@ export async function hydrateSlotsForEvents(
       if (payload.contentJson) collectSharedMessageRefs(payload.contentJson, refs)
     }
   }
+  return refs
+}
+
+export async function hydrateSlotsForEvents(
+  pool: Pool,
+  workspaceId: string,
+  viewerId: string,
+  events: StreamEvent[]
+): Promise<DualSlotMaps> {
+  const refs = collectEventSharedRefs(events)
   if (refs.size === 0) return { slots: {}, sharedMessages: {} }
   return toDualSlotMaps(await hydrateSharedMessageRefs(pool, workspaceId, viewerId, refs.values()))
 }
@@ -52,6 +57,9 @@ function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, ne
       preview.siteName === nextPreview.siteName &&
       preview.contentType === nextPreview.contentType &&
       preview.position === nextPreview.position &&
+      // The stored payload carries no per-viewer `inAppData`; the enriched copy
+      // does, so this difference must register or the override is skipped and the
+      // card loses its synchronous data.
       isInAppDataEqual(preview.inAppData, nextPreview.inAppData)
     )
   })

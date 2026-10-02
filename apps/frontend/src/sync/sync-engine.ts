@@ -43,10 +43,9 @@ import {
   type StreamPreviewHistoryBatchResponse,
 } from "@threahq/types"
 
-interface FullSweepRoot {
-  readonly taskId: symbol
+interface FullSweep {
   readonly generation: number
-  readonly controller: AbortController
+  readonly controllers: ReadonlyMap<string, AbortController>
 }
 
 interface StreamRefresh {
@@ -57,22 +56,10 @@ interface StreamRefresh {
 
 function awaitRecovery<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
-    const abort = () => {
-      signal.removeEventListener("abort", abort)
-      reject(signal.reason)
-    }
+    const abort = () => reject(signal.reason)
     signal.addEventListener("abort", abort, { once: true })
     if (signal.aborted) abort()
-    promise.then(
-      (value) => {
-        signal.removeEventListener("abort", abort)
-        resolve(value)
-      },
-      (error) => {
-        signal.removeEventListener("abort", abort)
-        reject(error)
-      }
-    )
+    void promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
   })
 }
 
@@ -208,7 +195,7 @@ export class SyncEngine {
    *  queued upgrades the queued run rather than being collapsed away. */
   private queuedReconnectForceFull = false
   private activeStreamRefreshes = new Map<string, StreamRefresh>()
-  private fullSweepRoots = new Map<string, FullSweepRoot>()
+  private fullSweep: FullSweep | null = null
   /** Single-flighted display-only HTTP warm fetches (see warmStreamOverHttp).
    *  Kept separate from activeStreamRefreshes: a warm fetch performs no room
    *  join, so it must never satisfy a reconnect-path refresh that needs one. */
@@ -311,13 +298,11 @@ export class SyncEngine {
    *  the single board slot). Same lifecycle as board streams — caught up + joined
    *  here, re-asserted across reconnects, never torn down per-card. */
   private panelStreamIds = new Set<string>()
-  private warmStreamIds = new Map<string, number>()
+  private warmStreamDeclarations = new Set<ReadonlySet<string>>()
   private recoveryGeneration = 0
   private previewDrain: Promise<void> | null = null
   private boardDrain: Promise<unknown> = Promise.resolve()
-  private boardAbort = new AbortController()
-  private previewScheduled = false
-  private previewAbort: AbortController | null = null
+  private recoveryAbort = new AbortController()
   /** Refreshed (or in flight) since the last connect; a refresh that doesn't land
    *  leaves the set so the next declaration or connect retries it. */
   private refreshedWarmStreamIds = new Set<string>()
@@ -438,17 +423,10 @@ export class SyncEngine {
 
   warmStreams(ids: Iterable<string>): () => void {
     const declared = new Set([...ids].filter(isServerStreamId))
-    for (const id of declared) this.warmStreamIds.set(id, (this.warmStreamIds.get(id) ?? 0) + 1)
+    this.warmStreamDeclarations.add(declared)
     this.schedulePreviewDrain()
-    let released = false
     return () => {
-      if (released) return
-      released = true
-      for (const id of declared) {
-        const count = this.warmStreamIds.get(id) ?? 0
-        if (count <= 1) this.warmStreamIds.delete(id)
-        else this.warmStreamIds.set(id, count - 1)
-      }
+      this.warmStreamDeclarations.delete(declared)
     }
   }
 
@@ -464,25 +442,23 @@ export class SyncEngine {
 
   private previewCandidates(): string[] {
     const active = new Set(this.getVisibleServerStreamIds())
-    return [...this.warmStreamIds.keys()].filter((id) => !active.has(id) && !this.refreshedWarmStreamIds.has(id))
+    const declared = new Set([...this.warmStreamDeclarations].flatMap((ids) => [...ids]))
+    return [...declared].filter((id) => !active.has(id) && !this.refreshedWarmStreamIds.has(id))
   }
 
   private schedulePreviewDrain(): void {
-    if (this.previewScheduled || this.previewDrain || !this.canRecoverPreview(this.recoveryGeneration)) return
-    this.previewScheduled = true
-    queueMicrotask(() => {
-      this.previewScheduled = false
-      if (this.previewDrain || !this.canRecoverPreview(this.recoveryGeneration)) return
-      const generation = this.recoveryGeneration
-      const drain = this.drainPreviewHistories(generation).finally(() => {
-        this.previewDrain = null
-        if (generation !== this.recoveryGeneration) this.schedulePreviewDrain()
-      })
-      this.previewDrain = drain
+    if (this.previewDrain || !this.canRecoverPreview(this.recoveryGeneration)) return
+    const generation = this.recoveryGeneration
+    this.previewDrain = this.drainPreviewHistories(generation).finally(() => {
+      this.previewDrain = null
+      if (generation !== this.recoveryGeneration) this.schedulePreviewDrain()
     })
   }
 
   private async drainPreviewHistories(generation: number): Promise<void> {
+    const signal = this.recoveryAbort.signal
+    // Coalesce this effect flush's declarations before selecting the first batch.
+    await Promise.resolve()
     const attempted = new Set<string>()
     while (this.canRecoverPreview(generation)) {
       const selected = this.previewCandidates()
@@ -499,13 +475,13 @@ export class SyncEngine {
       const candidates = new Set(this.previewCandidates())
       const ids = selected.filter((id) => candidates.has(id))
       if (!ids.length) continue
-      const controller = new AbortController()
-      this.previewAbort = controller
       const fetchStartedAt = Date.now()
       try {
-        const response = await this.deps.streamService.previewHistory(this.workspaceId, ids, controller.signal)
+        const response = await this.deps.streamService.previewHistory(this.workspaceId, ids, signal)
         if (!this.canRecoverPreview(generation)) return
-        const eligible = (id: string) => this.warmStreamIds.has(id) && !this.getVisibleServerStreamIds().includes(id)
+        const eligible = (id: string) =>
+          [...this.warmStreamDeclarations].some((declared) => declared.has(id)) &&
+          !this.getVisibleServerStreamIds().includes(id)
         const results = response.results.filter((result) => ids.includes(result.streamId) && eligible(result.streamId))
         const histories = results.flatMap((result) => (result.status === 200 ? [result.history] : []))
         const applied = await applyStreamPreviewHistories(
@@ -525,34 +501,33 @@ export class SyncEngine {
         }
       } catch {
         // A whole-request error says nothing about any individual stream's access.
-      } finally {
-        if (this.previewAbort === controller) this.previewAbort = null
       }
     }
   }
 
-  private fullSweepRootNeeded(streamId: string, root: FullSweepRoot): boolean {
+  private fullSweepRootNeeded(streamId: string, sweep: FullSweep): boolean {
     return (
       this.isAccountCurrent() &&
-      !root.controller.signal.aborted &&
-      (root.generation === this.recoveryGeneration ||
+      !sweep.controllers.get(streamId)!.signal.aborted &&
+      (sweep.generation === this.recoveryGeneration ||
         this.coldSweepClaims.has(streamId) ||
         this.getVisibleServerStreamIds().includes(streamId))
     )
   }
 
   private retireFullSweepRoots(): void {
-    for (const [streamId, root] of this.fullSweepRoots) {
-      if (!this.fullSweepRootNeeded(streamId, root)) root.controller.abort()
+    const sweep = this.fullSweep
+    if (!sweep) return
+    for (const [streamId, controller] of sweep.controllers) {
+      if (!this.fullSweepRootNeeded(streamId, sweep)) controller.abort()
     }
   }
 
   private replaceRecoveryGeneration(): void {
     this.recoveryGeneration += 1
     this.retireFullSweepRoots()
-    this.previewAbort?.abort()
-    this.boardAbort.abort()
-    this.boardAbort = new AbortController()
+    this.recoveryAbort.abort()
+    this.recoveryAbort = new AbortController()
     // Retained timeline requests are foreground demand, not cold queue permits.
     // Exclusive cold transports are aborted before another generation can launch.
     this.boardDrain = Promise.resolve()
@@ -1053,18 +1028,11 @@ export class SyncEngine {
       new Set([...this.getVisibleServerStreamIds(), ...(_isReconnect ? [] : this.coldSweepClaims.keys())])
     )
     if (!_isReconnect) this.coldSweepStreamIds = new Set(visibleStreamIds)
-    const taskId = Symbol("full-sweep")
-    const roots = new Map(
-      visibleStreamIds.map((streamId) => {
-        const root: FullSweepRoot = {
-          taskId,
-          generation: this.recoveryGeneration,
-          controller: new AbortController(),
-        }
-        this.fullSweepRoots.set(streamId, root)
-        return [streamId, root] as const
-      })
-    )
+    const sweep: FullSweep = {
+      generation: this.recoveryGeneration,
+      controllers: new Map(visibleStreamIds.map((streamId) => [streamId, new AbortController()])),
+    }
+    this.fullSweep = sweep
     // Only the streams whose window actually landed count as swept; a stream
     // whose fetch failed keeps its deferred refresh so settle retries it.
     let sweptStreamIds: ReadonlySet<string> = new Set()
@@ -1103,15 +1071,12 @@ export class SyncEngine {
         const catchupCursors = new Map<string, string | null>()
         await Promise.all(
           visibleStreamIds.map(async (streamId) => {
-            const root = roots.get(streamId)!
+            const controller = sweep.controllers.get(streamId)!
             try {
-              if (!this.fullSweepRootNeeded(streamId, root)) return
-              catchupCursors.set(
-                streamId,
-                await awaitRecovery(this.joinStreamForCatchUp(streamId), root.controller.signal)
-              )
+              if (!this.fullSweepRootNeeded(streamId, sweep)) return
+              catchupCursors.set(streamId, await awaitRecovery(this.joinStreamForCatchUp(streamId), controller.signal))
             } catch (error) {
-              if (!root.controller.signal.aborted) throw error
+              if (!controller.signal.aborted) throw error
             }
           })
         )
@@ -1120,8 +1085,8 @@ export class SyncEngine {
         const [workspaceBootstrap, streamResults] = await Promise.all([
           workspaceService.bootstrap(workspaceId, { fresh }),
           mapBounded(visibleStreamIds, async (streamId) => {
-            const root = roots.get(streamId)!
-            if (!this.fullSweepRootNeeded(streamId, root)) return { streamId, cancelled: true }
+            const controller = sweep.controllers.get(streamId)!
+            if (!this.fullSweepRootNeeded(streamId, sweep)) return { streamId, cancelled: true }
             try {
               // A reconnect appends from the cursor. A first connect without a
               // cached bootstrap is a fresh open, not a catch-up: fetch the
@@ -1129,14 +1094,14 @@ export class SyncEngine {
               const cursor = catchupCursors.get(streamId) ?? null
               const after =
                 _isReconnect || queryClient.getQueryData(streamKeys.bootstrap(workspaceId, streamId)) ? cursor : null
-              const params = { ...(after ? { after } : {}), signal: root.controller.signal }
+              const params = { ...(after ? { after } : {}), signal: controller.signal }
               const bootstrap = await awaitRecovery(
                 streamService.bootstrap(workspaceId, streamId, params),
-                root.controller.signal
+                controller.signal
               )
               return { streamId, bootstrap }
             } catch (error) {
-              if (root.controller.signal.aborted) return { streamId, cancelled: true }
+              if (controller.signal.aborted) return { streamId, cancelled: true }
               return { streamId, error }
             }
           }),
@@ -1152,7 +1117,7 @@ export class SyncEngine {
         const terminalStreamIds = new Set<string>()
         const cancelledStreamIds = new Set<string>()
         for (const result of streamResults) {
-          if ("cancelled" in result || roots.get(result.streamId)!.controller.signal.aborted) {
+          if ("cancelled" in result || sweep.controllers.get(result.streamId)!.signal.aborted) {
             cancelledStreamIds.add(result.streamId)
             staleStreamIds.add(result.streamId)
           } else if ("bootstrap" in result && result.bootstrap) {
@@ -1305,6 +1270,8 @@ export class SyncEngine {
       if (!this.isAccountCurrent()) return { status: "cancelled" }
       return { status: "success" }
     } catch (error) {
+      // A rejected snapshot can leave Promise.all's sibling fetches running.
+      for (const controller of sweep.controllers.values()) controller.abort()
       if (!this.isAccountCurrent()) return { status: "cancelled" }
       this.lastWorkspaceError = error
       console.error("Workspace bootstrap failed", { workspaceId, isReconnect: _isReconnect, forceFull, error })
@@ -1333,9 +1300,7 @@ export class SyncEngine {
       }
       return !this.isAccountCurrent() ? { status: "cancelled" } : { status: "error", error }
     } finally {
-      for (const [streamId, root] of this.fullSweepRoots) {
-        if (root.taskId === taskId) this.fullSweepRoots.delete(streamId)
-      }
+      if (this.fullSweep === sweep) this.fullSweep = null
       // Whatever the sweep did not hand over, the query layer now fetches itself.
       if (!_isReconnect) this.settleColdSweep(sweptStreamIds, landedBootstrap)
     }
@@ -1423,19 +1388,12 @@ export class SyncEngine {
       if (this.socket?.connected) {
         await this.syncBoardStreams(this.getVisibleServerStreamIds(), { refreshPersisted: true })
       } else {
-        const generation = this.recoveryGeneration
-        const activeIds = [
-          ...new Set(
-            [...(this.currentStreamId ? [this.currentStreamId] : []), ...this.visibleStreamIds].filter(isServerStreamId)
-          ),
-        ]
-        let cursor = 0
-        const worker = async () => {
-          while (cursor < activeIds.length && this.isAccountCurrent() && generation === this.recoveryGeneration) {
-            await this.refreshStreamAfterNavigation(activeIds[cursor++])
+        await mapBounded(
+          this.getVisibleServerStreamIds().filter((id) => this.isForegroundStream(id)),
+          async (streamId) => {
+            if (current()) await this.refreshStreamAfterNavigation(streamId)
           }
-        }
-        await Promise.all(Array.from({ length: Math.min(BOARD_SYNC_CONCURRENCY, activeIds.length) }, worker))
+        )
       }
       if (!current()) return { status: "cancelled" }
 
@@ -1547,7 +1505,7 @@ export class SyncEngine {
    */
   private syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<string[]> {
     const generation = this.recoveryGeneration
-    const signal = this.boardAbort.signal
+    const signal = this.recoveryAbort.signal
     const drain = this.boardDrain.then(async () => {
       try {
         return await awaitRecovery(this.performBoardSync(streamIds, generation, options), signal)
@@ -1568,34 +1526,27 @@ export class SyncEngine {
     const current = () => this.isAccountCurrent() && generation === this.recoveryGeneration && !!this.socket?.connected
     const declared = (id: string) => this.getVisibleServerStreamIds().includes(id)
     const missed: string[] = []
-    let cursor = 0
-    const worker = async (): Promise<void> => {
-      while (cursor < streamIds.length && current()) {
-        const streamId = streamIds[cursor++]
-        if (!declared(streamId)) continue
-        // "Subscribed" means the room is joined, not that history is local:
-        // subscribeMemberStreams joins every member stream at bootstrap, so on
-        // a fresh device a member stream is subscribed with an EMPTY events
-        // store — skipping it here left board branch groups bodiless ("N more
-        // replies") until the stream was opened. Skip only when a persisted
-        // window exists; the room join plus the workspace catch-up cursor keep
-        // that window current, so re-fetching it would be redundant network.
-        // Reading the sequence as an emptiness probe is safe outside
-        // joinStreamForCatchUp's cursor-before-join rule: nothing is ordered
-        // against a join, and the refresh below re-derives its own cursor.
-        if (
-          !options?.refreshPersisted &&
-          this.subscribedStreams.has(streamId) &&
-          (await getLatestPersistedSequence(streamId)) !== null
-        )
-          continue
-        if (!current()) return
-        if (!declared(streamId)) continue
-        if (!(await this.refreshStreamAfterNavigation(streamId, generation))) missed.push(streamId)
-      }
-    }
-    const lanes = Math.min(BOARD_SYNC_CONCURRENCY, streamIds.length)
-    await Promise.all(Array.from({ length: lanes }, () => worker()))
+    await mapBounded(streamIds, async (streamId) => {
+      if (!current() || !declared(streamId)) return
+      // "Subscribed" means the room is joined, not that history is local:
+      // subscribeMemberStreams joins every member stream at bootstrap, so on
+      // a fresh device a member stream is subscribed with an EMPTY events
+      // store — skipping it here left board branch groups bodiless ("N more
+      // replies") until the stream was opened. Skip only when a persisted
+      // window exists; the room join plus the workspace catch-up cursor keep
+      // that window current, so re-fetching it would be redundant network.
+      // Reading the sequence as an emptiness probe is safe outside
+      // joinStreamForCatchUp's cursor-before-join rule: nothing is ordered
+      // against a join, and the refresh below re-derives its own cursor.
+      if (
+        !options?.refreshPersisted &&
+        this.subscribedStreams.has(streamId) &&
+        (await getLatestPersistedSequence(streamId)) !== null
+      )
+        return
+      if (!current() || !declared(streamId)) return
+      if (!(await this.refreshStreamAfterNavigation(streamId, generation))) missed.push(streamId)
+    })
     return missed
   }
 

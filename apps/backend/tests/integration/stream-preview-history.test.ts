@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import { AUTHOR_SCOPED_EVENT_TYPES, STREAM_PREVIEW_HISTORY_MAX_STREAMS, type JSONContent } from "@threahq/types"
+import {
+  AUTHOR_SCOPED_EVENT_TYPES,
+  STREAM_PREVIEW_HISTORY_MAX_STREAMS,
+  type JSONContent,
+  type StreamPreviewHistoryResult,
+} from "@threahq/types"
 import { setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import {
   streamId,
@@ -62,21 +67,64 @@ describe("batched preview history", () => {
     return { id, event }
   }
 
-  async function seedPublicStream() {
-    const id = streamId()
+  async function seedChannel(
+    visibility: "public" | "private",
+    { id = streamId(), inWorkspace = workspace }: { id?: string; inWorkspace?: string } = {}
+  ) {
     await StreamRepository.insert(pool, {
       id,
-      workspaceId: workspace,
+      workspaceId: inWorkspace,
       type: "channel",
-      visibility: "public",
+      visibility,
       slug: `preview-${id}`,
       createdBy: other,
     })
     return id
   }
 
+  async function seedThread(
+    root: string,
+    parentAnchorId: string,
+    { id = streamId(), createdBy = other }: { id?: string; createdBy?: string } = {}
+  ) {
+    await StreamRepository.insert(pool, {
+      id,
+      workspaceId: workspace,
+      type: "thread",
+      parentStreamId: root,
+      rootStreamId: root,
+      parentAnchorId,
+      createdBy,
+    })
+    return id
+  }
+
+  async function seedMemo(sourceMessageId: string, title: string, abstract: string) {
+    const id = memoId()
+    await MemoRepository.insert(pool, {
+      id,
+      workspaceId: workspace,
+      memoType: "message",
+      sourceMessageId,
+      sourceMessageIds: [sourceMessageId],
+      participantIds: [viewer],
+      title,
+      abstract,
+      keyPoints: [],
+      knowledgeType: "decision",
+      tags: [],
+      status: "active",
+    })
+    return id
+  }
+
+  function okHistory(result: StreamPreviewHistoryResult) {
+    if (result.status !== 200) throw new Error(`expected history for ${result.streamId}, got ${result.status}`)
+    return result
+  }
+
   test("should retain only reachable recursive slots including descendant placeholders", async () => {
-    const [a, b, c] = await Promise.all([seedPublicStream(), seedPublicStream(), seedPublicStream()])
+    const [a, b, c] = await Promise.all([seedChannel("public"), seedChannel("public"), seedChannel("public")])
     const leaf = await seedMessage(c, "uncached leaf")
     const deleted = await seedMessage(c, "deleted leaf")
     await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [deleted.id])
@@ -90,8 +138,7 @@ describe("batched preview history", () => {
     await seedMessage(a, "outer", refs(middle.id))
     const sibling = await seedMessage(c, "sibling only")
     await seedMessage(b, "sibling pointer", refs(sibling.id))
-    const [outer, middleHistory] = (await service.get(workspace, viewer, [a, b])).results
-    if (outer.status !== 200 || middleHistory.status !== 200) throw new Error("expected histories")
+    const [outer, middleHistory] = (await service.get(workspace, viewer, [a, b])).results.map(okHistory)
     expect(
       Object.fromEntries(Object.entries(outer.history.sharedMessages!).map(([id, slot]) => [id, slot.state]))
     ).toEqual({
@@ -109,43 +156,12 @@ describe("batched preview history", () => {
   })
 
   test("should pin memo authorization to creation scope during a same-root projection move", async () => {
-    const moveRoot = await seedPublicStream()
+    const moveRoot = await seedChannel("public")
     const moveAnchor = (await seedMessage(moveRoot, "memo source")).id
-    const moveSource = streamId()
-    await StreamRepository.insert(pool, {
-      id: moveSource,
-      workspaceId: workspace,
-      type: "thread",
-      parentStreamId: moveRoot,
-      rootStreamId: moveRoot,
-      parentAnchorId: moveAnchor,
-      createdBy: viewer,
-    })
-    const memo = memoId()
-    await MemoRepository.insert(pool, {
-      id: memo,
-      workspaceId: workspace,
-      memoType: "message",
-      sourceMessageId: moveAnchor,
-      sourceMessageIds: [moveAnchor],
-      participantIds: [viewer],
-      title: "Pinned root",
-      abstract: "root",
-      keyPoints: [],
-      knowledgeType: "decision",
-      tags: [],
-      status: "active",
-    })
-    const destination = streamId()
-    await StreamRepository.insert(pool, {
-      id: destination,
-      workspaceId: workspace,
-      type: "thread",
-      parentStreamId: moveRoot,
-      rootStreamId: moveRoot,
-      parentAnchorId: (await seedMessage(moveRoot, "move destination anchor")).id,
-      createdBy: viewer,
-    })
+    const moveSource = await seedThread(moveRoot, moveAnchor, { createdBy: viewer })
+    const memo = await seedMemo(moveAnchor, "Pinned root", "root")
+    const destinationAnchor = (await seedMessage(moveRoot, "move destination anchor")).id
+    const destination = await seedThread(moveRoot, destinationAnchor, { createdBy: viewer })
     const body: JSONContent = { type: "doc", content: [{ type: "memoEmbed", attrs: { memoId: memo } }] }
     const citing = await seedMessage(moveSource, "moving citation", body)
     const events = new EventService(pool)
@@ -160,8 +176,7 @@ describe("batched preview history", () => {
         eventService: events,
         linkPreviewService: previews,
       })
-      const [result] = (await movingService.get(workspace, viewer, [moveSource])).results
-      if (result.status !== 200) throw new Error("expected history")
+      const [result] = (await movingService.get(workspace, viewer, [moveSource])).results.map(okHistory)
       expect(result.history.events.find((event) => event.id === citing.event.id)?.payload).toMatchObject({
         memoEmbeds: [{ memoId: memo, title: "Pinned root" }],
       })
@@ -185,32 +200,16 @@ describe("batched preview history", () => {
       eventService: new EventService(pool),
       linkPreviewService: previews,
     })
-    for (const id of [memberRoot, publicRoot, deniedRoot, foreign, empty, windowStream]) {
-      await StreamRepository.insert(pool, {
-        id,
-        workspaceId: id === foreign ? workspaceId() : workspace,
-        type: "channel",
-        visibility: [publicRoot, empty, windowStream].includes(id) ? "public" : "private",
-        slug: `preview-${id}`,
-        createdBy: other,
-      })
-    }
+    await seedChannel("private", { id: memberRoot })
+    await seedChannel("public", { id: publicRoot })
+    await seedChannel("private", { id: deniedRoot })
+    await seedChannel("private", { id: foreign, inWorkspace: workspaceId() })
+    await seedChannel("public", { id: empty })
+    await seedChannel("public", { id: windowStream })
     await StreamMemberRepository.insert(pool, memberRoot, viewer)
     anchor = (await seedMessage(memberRoot, "anchor")).id
-    for (const [id, root] of [
-      [thread, memberRoot],
-      [deniedThread, deniedRoot],
-    ]) {
-      await StreamRepository.insert(pool, {
-        id,
-        workspaceId: workspace,
-        type: "thread",
-        parentStreamId: root,
-        rootStreamId: root,
-        parentAnchorId: root === memberRoot ? anchor : messageId(),
-        createdBy: other,
-      })
-    }
+    await seedThread(memberRoot, anchor, { id: thread })
+    await seedThread(deniedRoot, messageId(), { id: deniedThread })
     await seedMessage(thread, "latest reply")
     await StreamRepository.bumpThreadReplyCount(pool, thread, 1)
     await seedMessage(publicRoot, "public preview")
@@ -256,16 +255,14 @@ describe("batched preview history", () => {
       { streamId: missing, status: 404, code: "NOT_FOUND" },
       { streamId: empty, status: 200, texts: [] },
     ])
-    const result = response.results[2]
-    if (result.status !== 200) throw new Error("expected authorized root")
+    const result = okHistory(response.results[2])
     expect(result.history.events[0].payload).toMatchObject({
       messageId: anchor,
       threadId: thread,
       replyCount: 1,
       threadSummary: { latestReply: { contentMarkdown: "latest reply" } },
     })
-    const emptyResult = response.results[7]
-    if (emptyResult.status !== 200) throw new Error("expected empty public stream")
+    const emptyResult = okHistory(response.results[7])
     expect(emptyResult.history).toMatchObject({
       latestSequence: "0",
       hasOlderEvents: false,
@@ -355,8 +352,7 @@ describe("batched preview history", () => {
       eventType: "message_deleted",
       payload: { messageId: deleted.id },
     })
-    const [result] = (await service.get(workspace, viewer, [publicRoot])).results
-    if (result.status !== 200) throw new Error("expected public history")
+    const [result] = (await service.get(workspace, viewer, [publicRoot])).results.map(okHistory)
     const payloads = new Map(result.history.events.map((event) => [event.id, event.payload]))
     expect({
       edited: payloads.get(edited.event.id),
@@ -376,21 +372,7 @@ describe("batched preview history", () => {
   })
 
   test("should keep memo summaries isolated by citing room root even when the viewer can read both rooms", async () => {
-    const memo = memoId()
-    await MemoRepository.insert(pool, {
-      id: memo,
-      workspaceId: workspace,
-      memoType: "message",
-      sourceMessageId: anchor,
-      sourceMessageIds: [anchor],
-      participantIds: [viewer],
-      title: "Private room decision",
-      abstract: "private",
-      keyPoints: [],
-      knowledgeType: "decision",
-      tags: [],
-      status: "active",
-    })
+    const memo = await seedMemo(anchor, "Private room decision", "private")
     const body: JSONContent = {
       type: "doc",
       content: [{ type: "paragraph", content: [{ type: "memoEmbed", attrs: { memoId: memo, title: "stale" } }] }],
@@ -417,8 +399,7 @@ describe("batched preview history", () => {
     } finally {
       batchSpy.mockRestore()
     }
-    const summaries = results.map((result, index) => {
-      if (result.status !== 200) throw new Error("expected accessible history")
+    const summaries = results.map(okHistory).map((result, index) => {
       const id = index === 0 ? ownCitation.event.id : otherCitation.event.id
       return (result.history.events.find((event) => event.id === id)!.payload as { memoEmbeds: unknown }).memoEmbeds
     })
@@ -480,8 +461,7 @@ describe("batched preview history", () => {
       await LinkPreviewRepository.linkToMessage(pool, workspace, citing.id, id, 0)
     }
     await previews.dismiss(workspace, viewer, citing.id, dismissed)
-    const [result, rootResult] = (await service.get(workspace, viewer, [publicRoot, memberRoot])).results
-    if (result.status !== 200 || rootResult.status !== 200) throw new Error("expected accessible histories")
+    const [result, rootResult] = (await service.get(workspace, viewer, [publicRoot, memberRoot])).results.map(okHistory)
     const payload = result.history.events.find((event) => event.id === citing.event.id)!.payload
     expect(payload).toMatchObject({
       reactions: { "👍": [viewer] },
@@ -502,7 +482,7 @@ describe("batched preview history", () => {
   })
 
   test("should refresh a message when a patch-only tail fills the history window", async () => {
-    const patchStream = await seedPublicStream()
+    const patchStream = await seedChannel("public")
     const message = await seedMessage(patchStream, "before patch flood")
     const content = testMessageContent("after patch flood")
     await pool.query("UPDATE messages SET content_json = $2, content_markdown = $3, edited_at = NOW() WHERE id = $1", [
@@ -520,8 +500,7 @@ describe("batched preview history", () => {
         payload: { messageId: message.id, ...content },
       })
     }
-    const result = (await service.get(workspace, viewer, [patchStream])).results[0]
-    if (result.status !== 200) throw new Error("expected accessible history")
+    const result = okHistory((await service.get(workspace, viewer, [patchStream])).results[0])
     expect(result.history.events.find((event) => event.id === message.event.id)?.payload).toMatchObject({
       contentMarkdown: "after patch flood",
       editedAt: expect.any(String),
@@ -529,7 +508,7 @@ describe("batched preview history", () => {
   })
 
   test("should retain creation anchors and projection state behind reaction and deletion tails", async () => {
-    const stream = await seedPublicStream()
+    const stream = await seedChannel("public")
     const reacting = await seedMessage(stream, "reacted message")
     const deleted = await seedMessage(stream, "deleted message")
     await MessageRepository.addReaction(pool, reacting.id, "👍", viewer)
@@ -544,8 +523,7 @@ describe("batched preview history", () => {
         actorId: viewer,
       }))
     )
-    const [result] = (await service.get(workspace, viewer, [stream])).results
-    if (result.status !== 200) throw new Error("expected history")
+    const [result] = (await service.get(workspace, viewer, [stream])).results.map(okHistory)
     expect({
       events: result.history.events.map((event) => ({
         id: event.id,
@@ -572,25 +550,8 @@ describe("batched preview history", () => {
   })
 
   test("should deny a local thread whose public root belongs to another workspace", async () => {
-    const foreignRoot = streamId()
-    const localThread = streamId()
-    await StreamRepository.insert(pool, {
-      id: foreignRoot,
-      workspaceId: workspaceId(),
-      type: "channel",
-      visibility: "public",
-      slug: `preview-${foreignRoot}`,
-      createdBy: other,
-    })
-    await StreamRepository.insert(pool, {
-      id: localThread,
-      workspaceId: workspace,
-      type: "thread",
-      parentStreamId: foreignRoot,
-      rootStreamId: foreignRoot,
-      parentAnchorId: messageId(),
-      createdBy: other,
-    })
+    const foreignRoot = await seedChannel("public", { inWorkspace: workspaceId() })
+    const localThread = await seedThread(foreignRoot, messageId())
     await seedMessage(localThread, "must not be disclosed")
     expect(await service.get(workspace, viewer, [localThread])).toEqual({
       results: [{ streamId: localThread, status: 403, code: "FORBIDDEN" }],
@@ -598,18 +559,8 @@ describe("batched preview history", () => {
   })
 
   test("should retain a hidden-only head and order sequences beyond JS integer precision", async () => {
-    const hiddenOnly = streamId()
-    const largeSequences = streamId()
-    for (const id of [hiddenOnly, largeSequences]) {
-      await StreamRepository.insert(pool, {
-        id,
-        workspaceId: workspace,
-        type: "channel",
-        visibility: "public",
-        slug: `preview-${id}`,
-        createdBy: other,
-      })
-    }
+    const hiddenOnly = await seedChannel("public")
+    const largeSequences = await seedChannel("public")
     const hidden = await StreamEventRepository.insert(pool, {
       id: eventId(),
       streamId: hiddenOnly,
@@ -632,8 +583,7 @@ describe("batched preview history", () => {
         (9007199254740992n + BigInt(index)).toString(),
       ])
     }
-    const results = (await service.get(workspace, viewer, [hiddenOnly, largeSequences])).results
-    if (results[0].status !== 200 || results[1].status !== 200) throw new Error("expected public histories")
+    const results = (await service.get(workspace, viewer, [hiddenOnly, largeSequences])).results.map(okHistory)
     expect({
       hidden: {
         events: results[0].history.events,
@@ -660,8 +610,7 @@ describe("batched preview history", () => {
       return (original as (...args: unknown[]) => unknown)(...args)
     }) as typeof pool.query)
     try {
-      const [result] = (await service.get(workspace, viewer, [publicRoot])).results
-      if (result.status !== 200) throw new Error("expected public history")
+      const [result] = (await service.get(workspace, viewer, [publicRoot])).results.map(okHistory)
       expect(Date.parse(result.history.snapshotAt!) <= firstReadAt!).toBe(true)
     } finally {
       spy.mockRestore()

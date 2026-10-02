@@ -22,6 +22,7 @@ import {
 import {
   MockSocket,
   asSocket,
+  deferred,
   makeWorkspaceBootstrap,
   makeStreamBootstrap,
   makeDeps,
@@ -72,6 +73,15 @@ async function seedRevealableWorkspace(workspaceId: string): Promise<void> {
   ])
 }
 
+/** Lets the first cursor load finish, then holds connection setup behind `gate`. */
+function holdCursorLoad(gate?: Promise<void>) {
+  const load = SyncLogCursor.prototype.load
+  return vi.spyOn(SyncLogCursor.prototype, "load").mockImplementationOnce(async function (this: SyncLogCursor) {
+    await load.call(this)
+    if (gate) await gate
+  })
+}
+
 describe("SyncEngine connection setup", () => {
   it.each([
     ["cursor", "disconnect"],
@@ -88,20 +98,13 @@ describe("SyncEngine connection setup", () => {
       syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
       draftsService: { list: vi.fn(async () => ({ drafts: [] })), upsert: vi.fn(), resolve: vi.fn(), delete: vi.fn() },
     }
-    let release!: () => void
-    const held = new Promise<void>((resolve) => {
-      release = resolve
-    })
+    const held = deferred<void>()
     const snapshot = { ...makeWorkspaceBootstrap(), syncHead: "10" }
     deps.workspaceService.bootstrap.mockImplementation(async () => {
-      if (boundary === "snapshot") await held
+      if (boundary === "snapshot") await held.promise
       return snapshot
     })
-    const load = SyncLogCursor.prototype.load
-    const spy = vi.spyOn(SyncLogCursor.prototype, "load").mockImplementationOnce(async function (this: SyncLogCursor) {
-      await load.call(this)
-      if (boundary === "cursor") await held
-    })
+    const spy = holdCursorLoad(boundary === "cursor" ? held.promise : undefined)
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     const older = engine.onConnect(asSocket(socket))
@@ -119,7 +122,7 @@ describe("SyncEngine connection setup", () => {
           newer = engine.onConnect(asSocket(socket))
         }
       }
-      release()
+      held.resolve()
       await Promise.all([older, newer])
       if (newer) {
         await vi.waitFor(() => expect(deps.draftsService.list).toHaveBeenCalledExactlyOnceWith("ws_1"))
@@ -135,7 +138,7 @@ describe("SyncEngine connection setup", () => {
         expect(deps.draftsService.list).not.toHaveBeenCalled()
       }
     } finally {
-      release()
+      held.resolve()
       await Promise.all([older, newer])
       spy.mockRestore()
       engine.destroy()
@@ -157,23 +160,14 @@ describe("SyncEngine connection setup", () => {
       deps.workspaceService.bootstrap.mockResolvedValue({ ...makeWorkspaceBootstrap(), syncHead: "10" })
       const engine = new SyncEngine(deps)
       const socket = new MockSocket()
-      let release!: () => void
-      const held = new Promise<void>((resolve) => {
-        release = resolve
-      })
-      const load = SyncLogCursor.prototype.load
-      const spy = vi.spyOn(SyncLogCursor.prototype, "load").mockImplementationOnce(async function (
-        this: SyncLogCursor
-      ) {
-        await load.call(this)
-        await held
-      })
+      const held = deferred<void>()
+      const spy = holdCursorLoad(held.promise)
       const connecting = engine.onConnect(asSocket(socket))
       let recovery: Promise<void> | undefined
       try {
         recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
         await recovery
-        release()
+        held.resolve()
         await connecting
         await db.streams.put({ ...makeStreamBootstrap("stream_setup").stream, _cachedAt: 1 })
         socket.trigger("workspace_user:added", {
@@ -195,7 +189,7 @@ describe("SyncEngine connection setup", () => {
           }).toEqual({ user: "Recovered", stream: "Recovered stream", query: "Recovered stream" })
         )
       } finally {
-        release()
+        held.resolve()
         await Promise.all([connecting, recovery])
         spy.mockRestore()
         engine.destroy()
@@ -2727,13 +2721,10 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
   it("should finish queued cold board history when heartbeat catch-up runs during the first fetches", async () => {
     const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
     const { engine, socket, deps } = await connectSettledEngine(catchUp)
-    let release!: () => void
-    const held = new Promise<void>((resolve) => {
-      release = resolve
-    })
+    const held = deferred<void>()
     const bootstrap = deps.streamService.bootstrap
     bootstrap.mockImplementation(async (_workspaceId, streamId) => {
-      await held
+      await held.promise
       const result = makeStreamBootstrap(streamId)
       result.events[0].id = `evt_${streamId}`
       return result
@@ -2746,11 +2737,11 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
       catchUp.mockResolvedValue(emptyPage("11"))
       socket.trigger("sync:heartbeat", heartbeat("11"))
       await vi.waitFor(() => expect(catchUp.mock.calls.length).toBeGreaterThan(before), { timeout: 3500 })
-      release()
+      held.resolve()
       await vi.waitFor(() => expect(bootstrap.mock.calls.map((call) => call[1])).toEqual(ids))
       await vi.waitFor(async () => expect(await db.events.get(`evt_${ids[11]}`)).toBeTruthy())
     } finally {
-      release()
+      held.resolve()
       engine.destroy()
     }
   }, 10_000)

@@ -2,7 +2,6 @@ import { z } from "zod"
 import type { Pool } from "pg"
 import {
   STREAM_PREVIEW_HISTORY_MAX_STREAMS,
-  type JSONContent,
   type SlotMap,
   type SharedMessageRef,
   type StreamPreviewHistoryBatchResponse,
@@ -12,7 +11,12 @@ import type { LinkPreviewService } from "../link-previews"
 import { listAccessibleStreamIds } from "./access"
 import { StreamRepository } from "./repository"
 import { StreamEventRepository, type StreamEvent } from "./event-repository"
-import { collectThreadAnchorIds, enrichEventsWithLinkPreviews, hydrateSlotsForEvents } from "./bootstrap-enrichment"
+import {
+  collectEventSharedRefs,
+  collectThreadAnchorIds,
+  enrichEventsWithLinkPreviews,
+  hydrateSlotsForEvents,
+} from "./bootstrap-enrichment"
 
 export const previewHistorySchema = z
   .object({
@@ -82,12 +86,7 @@ export class StreamPreviewHistoryService {
         if (!accessible.has(streamId)) return { streamId, status: 403, code: "FORBIDDEN" }
         const window = windows.get(streamId)!
         const streamEvents = eventsByStream.get(streamId) ?? []
-        const refs = new Map<string, SharedMessageRef>()
-        for (const event of streamEvents) {
-          if (event.eventType !== "message_created" && event.eventType !== "message_edited") continue
-          const payload = event.payload as { contentJson?: JSONContent }
-          if (payload.contentJson) collectSharedMessageRefs(payload.contentJson, refs)
-        }
+        const refs = collectEventSharedRefs(streamEvents)
         const reachable: Record<string, HydratedSharedMessage> = {}
         const visited = new Set<string>()
         const pending = [...refs.keys()]

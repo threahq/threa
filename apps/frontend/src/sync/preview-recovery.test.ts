@@ -10,11 +10,21 @@ import { useStreamWarmup } from "@/hooks/use-stream-warmup"
 import { SyncEngine, SyncEngineContext } from "./sync-engine"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { applyWorkspaceBootstrap } from "./workspace-sync"
-import { MockSocket, asSocket, makeDeps, makeStreamBootstrap } from "@/test/fixtures/sync-engine"
-import type { Draft, StreamPreviewHistoryBatchResponse } from "@threahq/types"
+import {
+  MockSocket,
+  asSocket,
+  deferred,
+  makeDeps,
+  makeStreamBootstrap,
+  makeWorkspaceBootstrap,
+} from "@/test/fixtures/sync-engine"
+import type { Draft, StreamPreviewHistoryBatchResponse, WorkspaceBootstrap } from "@threahq/types"
 import { enqueueOperation } from "./operation-queue"
 
 const engines: SyncEngine[] = []
+const releases: Array<() => void> = []
+const tracked: Array<Promise<unknown>> = []
+const spies: Array<{ mockRestore: () => void }> = []
 beforeEach(async () => {
   resetRevealGate()
   await Promise.all([
@@ -30,9 +40,16 @@ beforeEach(async () => {
     db.sidebarConfigs.clear(),
     db.userPreferences.clear(),
     db.streamReadState.clear(),
+    db.pendingOperations.clear(),
+    db.drafts.clear(),
   ])
 })
-afterEach(() => {
+// Order is load-bearing: held responses are released and in-flight work settles
+// against a live engine. Destroying first would change what late responses hit.
+afterEach(async () => {
+  for (const release of releases.splice(0)) release()
+  await Promise.allSettled(tracked.splice(0))
+  for (const spy of spies.splice(0)) spy.mockRestore()
   cleanup()
   for (const engine of engines.splice(0)) engine.destroy()
 })
@@ -43,27 +60,91 @@ function PreviewSurface({ streamIds }: { streamIds: string[] }) {
 function surface(engine: SyncEngine, streamIds: string[]) {
   return createElement(SyncEngineContext.Provider, { value: engine }, createElement(PreviewSurface, { streamIds }))
 }
-async function setup() {
-  const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "0" })) } }
+const depsAtHead = (head: string) => ({
+  ...makeDeps(),
+  syncService: { catchUp: vi.fn(async () => ({ entries: [], head })) },
+})
+function createEngine(deps: ConstructorParameters<typeof SyncEngine>[0]) {
   const engine = new SyncEngine(deps)
   engines.push(engine)
+  return engine
+}
+async function setup() {
+  const deps = depsAtHead("0")
+  const engine = createEngine(deps)
   const socket = new MockSocket()
   await engine.onConnect(asSocket(socket))
   return { deps, engine, socket }
 }
+function disconnect(engine: SyncEngine, socket: MockSocket) {
+  socket.connected = false
+  engine.onDisconnect()
+}
 const pause = () => new Promise((resolve) => setTimeout(resolve, 30))
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
-    resolve = done
+function track<T>(work: Promise<T>) {
+  tracked.push(work)
+  return work
+}
+function hold<T = void>(fallback?: T) {
+  const gate = deferred<T>()
+  releases.push(() => gate.resolve(fallback as T))
+  return gate
+}
+function holdSnapshot(deps: Pick<ReturnType<typeof makeDeps>, "workspaceService">, { once }: { once: boolean }) {
+  const workspace: WorkspaceBootstrap = { ...makeWorkspaceBootstrap(), syncHead: "10" }
+  const snapshot = hold(workspace)
+  const bootstrap = deps.workspaceService.bootstrap
+  if (once) bootstrap.mockImplementationOnce(() => snapshot.promise).mockResolvedValue(workspace)
+  else bootstrap.mockImplementation(() => snapshot.promise)
+  return { snapshot, workspace }
+}
+function holdBootstraps(deps: Pick<ReturnType<typeof makeDeps>, "streamService">, gate: { promise: Promise<void> }) {
+  const original = deps.streamService.bootstrap.getMockImplementation()!
+  const lanes = { active: 0, peak: 0 }
+  deps.streamService.bootstrap.mockImplementation(async (...args) => {
+    lanes.active++
+    lanes.peak = Math.max(lanes.peak, lanes.active)
+    await gate.promise
+    lanes.active--
+    return original(...args)
   })
-  return { promise, resolve }
+  return lanes
+}
+function holdAbortableBootstraps(
+  deps: Pick<ReturnType<typeof makeDeps>, "streamService">,
+  gate: { promise: Promise<void> }
+) {
+  const original = deps.streamService.bootstrap.getMockImplementation()!
+  const lanes = { active: 0, peak: 0 }
+  const signals: AbortSignal[] = []
+  deps.streamService.bootstrap.mockImplementation(async (...args) => {
+    const signal = args[2]!.signal!
+    signals.push(signal)
+    lanes.active++
+    lanes.peak = Math.max(lanes.peak, lanes.active)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => reject(signal.reason)
+        signal.addEventListener("abort", abort, { once: true })
+        gate.promise.then(() => {
+          signal.removeEventListener("abort", abort)
+          resolve()
+        })
+      })
+      const response = await original(...args)
+      response.events = response.events.map((event) => ({ ...event, id: `${event.id}_${args[1]}` }))
+      return response
+    } finally {
+      lanes.active--
+    }
+  })
+  return { lanes, signals }
 }
 
 function interceptPreviewWrite(onWrite: () => void) {
   const put = eventWrites.putEventsBounded
   let triggered = false
-  return vi.spyOn(eventWrites, "putEventsBounded").mockImplementation((table, rows) => {
+  const spy = vi.spyOn(eventWrites, "putEventsBounded").mockImplementation((table, rows) => {
     return put(table, rows).then(() => {
       if (triggered || !rows.some((event) => event.id === "evt_stream_a_2")) return
       triggered = true
@@ -83,13 +164,14 @@ function interceptPreviewWrite(onWrite: () => void) {
         })
     })
   })
+  spies.push(spy)
+  return spy
 }
 
 describe("preview history recovery", () => {
   it.each(["resume", "pull"])(
     "should finish preview, operation and draft setup when %s overlaps the cold snapshot",
     async (trigger) => {
-      await Promise.all([db.pendingOperations.clear(), db.drafts.clear()])
       const draft: Draft = {
         id: "draft_setup",
         workspaceId: "ws_1",
@@ -114,8 +196,7 @@ describe("preview history recovery", () => {
         updatedAt: new Date(1000).toISOString(),
       }
       const deps = {
-        ...makeDeps(),
-        syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
+        ...depsAtHead("10"),
         messageService: { update: vi.fn(), delete: vi.fn(async () => {}) },
         draftsService: {
           list: vi.fn(async () => ({ drafts: [draft] })),
@@ -124,105 +205,71 @@ describe("preview history recovery", () => {
           delete: vi.fn(),
         },
       }
-      const workspace = await deps.workspaceService.bootstrap()
-      const snapshot = deferred<typeof workspace>()
-      deps.workspaceService.bootstrap.mockClear()
-      deps.workspaceService.bootstrap.mockImplementationOnce(() => snapshot.promise)
-      deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
+      const { snapshot, workspace } = holdSnapshot(deps, { once: true })
       await db.streams.put({ ...makeStreamBootstrap("stream_a").stream, _cachedAt: 1 })
       await enqueueOperation("ws_1", "delete_message", { messageId: "msg_offline" })
-      const engine = new SyncEngine(deps)
-      engines.push(engine)
+      const engine = createEngine(deps)
       engine.warmStreams(["stream_a"])
-      const connecting = engine.onConnect(asSocket(new MockSocket()))
-      let recovery: Promise<void> | undefined
-      try {
-        await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
-        recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
-        snapshot.resolve({ ...workspace, syncHead: "10" })
-        await Promise.all([connecting, recovery])
-        await vi.waitFor(async () =>
-          expect({
-            preview: (await db.events.get("evt_stream_a_2"))?.streamId,
-            pending: await db.pendingOperations.toArray(),
-            draft: (await db.drafts.get(draft.id))?.contentJson,
-          }).toEqual({ preview: "stream_a", pending: [], draft: draft.contentJson })
-        )
-        expect(deps.messageService.delete).toHaveBeenCalledWith("ws_1", "msg_offline")
-        expect(deps.draftsService.list).toHaveBeenCalledExactlyOnceWith("ws_1")
-        expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1])).toEqual([["stream_a"]])
-      } finally {
-        snapshot.resolve({ ...workspace, syncHead: "10" })
-        await Promise.all([connecting, recovery])
-        engine.destroy()
-        await Promise.all([db.pendingOperations.clear(), db.drafts.clear()])
-      }
+      const connecting = track(engine.onConnect(asSocket(new MockSocket())))
+      await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
+      const recovery = track(trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull())
+      snapshot.resolve(workspace)
+      await Promise.all([connecting, recovery])
+      await vi.waitFor(async () =>
+        expect({
+          preview: (await db.events.get("evt_stream_a_2"))?.streamId,
+          pending: await db.pendingOperations.toArray(),
+          draft: (await db.drafts.get(draft.id))?.contentJson,
+        }).toEqual({ preview: "stream_a", pending: [], draft: draft.contentJson })
+      )
+      expect(deps.messageService.delete).toHaveBeenCalledWith("ws_1", "msg_offline")
+      expect(deps.draftsService.list).toHaveBeenCalledExactlyOnceWith("ws_1")
+      expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1])).toEqual([["stream_a"]])
     }
   )
 
   it.each(["resume", "pull"])(
     "should keep the newer %s gate paused when same-connection setup finishes",
     async (trigger) => {
-      const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
-      const workspace = await deps.workspaceService.bootstrap()
-      const snapshot = deferred<typeof workspace>()
-      const required = deferred<void>()
-      deps.workspaceService.bootstrap.mockClear()
-      deps.workspaceService.bootstrap.mockImplementationOnce(() => snapshot.promise)
-      deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
-      const original = deps.streamService.bootstrap.getMockImplementation()!
-      deps.streamService.bootstrap.mockImplementation(async (...args) => {
-        await required.promise
-        return original(...args)
-      })
-      const engine = new SyncEngine(deps)
-      engines.push(engine)
+      const deps = depsAtHead("10")
+      const { snapshot, workspace } = holdSnapshot(deps, { once: true })
+      const required = hold()
+      holdBootstraps(deps, required)
+      const engine = createEngine(deps)
       const socket = new MockSocket()
-      const connecting = engine.onConnect(asSocket(socket))
-      let recovery: Promise<void> | undefined
-      try {
-        await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
-        engine.setCurrentStreamId("stream_required")
-        recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
-        snapshot.resolve({ ...workspace, syncHead: "10" })
-        await connecting
-        await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalled())
-        socket.trigger("workspace_user:added", {
-          workspaceId: "ws_1",
-          syncId: "11",
-          user: { id: "user_after_setup", workspaceId: "ws_1", name: "After setup" },
-        })
-        await pause()
-        expect({
-          catchUp: deps.syncService.catchUp.mock.calls,
-          user: await db.workspaceUsers.get("user_after_setup"),
-        }).toEqual({ catchUp: [], user: undefined })
-        required.resolve()
-        await recovery
-        await vi.waitFor(async () =>
-          expect(await db.workspaceUsers.get("user_after_setup")).toMatchObject({ name: "After setup" })
-        )
-      } finally {
-        snapshot.resolve({ ...workspace, syncHead: "10" })
-        required.resolve()
-        await Promise.all([connecting, recovery])
-        engine.destroy()
-      }
+      const connecting = track(engine.onConnect(asSocket(socket)))
+      await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
+      engine.setCurrentStreamId("stream_required")
+      const recovery = track(trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull())
+      snapshot.resolve(workspace)
+      await connecting
+      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalled())
+      socket.trigger("workspace_user:added", {
+        workspaceId: "ws_1",
+        syncId: "11",
+        user: { id: "user_after_setup", workspaceId: "ws_1", name: "After setup" },
+      })
+      await pause()
+      expect({
+        catchUp: deps.syncService.catchUp.mock.calls,
+        user: await db.workspaceUsers.get("user_after_setup"),
+      }).toEqual({ catchUp: [], user: undefined })
+      required.resolve()
+      await recovery
+      await vi.waitFor(async () =>
+        expect(await db.workspaceUsers.get("user_after_setup")).toMatchObject({ name: "After setup" })
+      )
     }
   )
 
   it.each(["body", "terminal error"])(
     "should retire obsolete full-sweep roots before their %s settles without losing the cold snapshot",
     async (late) => {
-      const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
-      const workspace = await deps.workspaceService.bootstrap()
-      deps.workspaceService.bootstrap.mockClear()
-      const snapshot = deferred<typeof workspace>()
-      deps.workspaceService.bootstrap.mockImplementation(() => snapshot.promise)
-      const engine = new SyncEngine(deps)
-      engines.push(engine)
+      const deps = depsAtHead("10")
+      const { snapshot, workspace } = holdSnapshot(deps, { once: false })
+      const engine = createEngine(deps)
       const ids = Array.from({ length: 12 }, (_, i) => `stream_full_old_${i}`)
-      const held = deferred<void>()
+      const held = hold()
       const original = deps.streamService.bootstrap.getMockImplementation()!
       deps.streamService.bootstrap.mockImplementation(async (...args) => {
         if (ids.includes(args[1])) {
@@ -233,410 +280,337 @@ describe("preview history recovery", () => {
         result.events = result.events.map((event) => ({ ...event, id: `${event.id}_${args[1]}` }))
         return result
       })
-      let first: Promise<void> | undefined
-      let next: Promise<void> | undefined
-      try {
-        engine.setBoardStreamIds(ids)
-        const socket = new MockSocket()
-        first = engine.onConnect(asSocket(socket))
-        const claim = engine.claimWorkspaceBootstrap()
-        await vi.waitFor(() =>
-          expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual(ids.slice(0, 6))
-        )
-        socket.connected = false
-        engine.onDisconnect()
-        engine.setBoardStreamIds([])
-        engine.setCurrentStreamId("stream_new_current")
-        const newest = new MockSocket()
-        next = engine.onConnect(asSocket(newest))
-        await pause()
-        expect({ cursor: engine.getSyncCursor(), catchUp: deps.syncService.catchUp.mock.calls.length }).toEqual({
-          cursor: null,
-          catchUp: 0,
-        })
-        snapshot.resolve({ ...workspace, syncHead: "10" })
-        await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce(), { timeout: 700 })
-        await Promise.all([first, next])
-        expect(await claim).toMatchObject({ workspace: { id: "ws_1" }, syncHead: "10" })
-        expect({
-          ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
-          aborted: deps.streamService.bootstrap.mock.calls.slice(0, 6).map((call) => call[2]?.signal?.aborted),
-          cursor: engine.getSyncCursor(),
-          workspace: deps.syncStatus.get("workspace:ws_1"),
-          errors: ids.map((id) => deps.syncStatus.getError(`stream:${id}`)),
-        }).toEqual({
-          ids: [...ids.slice(0, 6), "stream_new_current"],
-          aborted: Array(6).fill(true),
-          cursor: "10",
-          workspace: "synced",
-          errors: ids.map(() => null),
-        })
-        newest.trigger("workspace_user:added", {
-          workspaceId: "ws_1",
-          syncId: "11",
-          user: { id: "user_after_full_retirement", workspaceId: "ws_1", name: "Recovered" },
-        })
-        await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_after_full_retirement")).toBeTruthy())
-        held.resolve()
-        await pause()
-        expect({
-          streams: await db.streams.bulkGet(ids),
-          events: await db.events.bulkGet(ids.map((id) => `evt_2_${id}`)),
-          errors: ids.map((id) => deps.syncStatus.getError(`stream:${id}`)),
-          cursor: engine.getSyncCursor(),
-          workspace: deps.syncStatus.get("workspace:ws_1"),
-        }).toEqual({
-          streams: ids.map(() => undefined),
-          events: ids.map(() => undefined),
-          errors: ids.map(() => null),
-          cursor: "11",
-          workspace: "synced",
-        })
-      } finally {
-        snapshot.resolve({ ...workspace, syncHead: "10" })
-        held.resolve()
-        await Promise.all([first, next])
-        engine.destroy()
-      }
+      engine.setBoardStreamIds(ids)
+      const socket = new MockSocket()
+      const first = track(engine.onConnect(asSocket(socket)))
+      const claim = engine.claimWorkspaceBootstrap()
+      await vi.waitFor(() =>
+        expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual(ids.slice(0, 6))
+      )
+      disconnect(engine, socket)
+      engine.setBoardStreamIds([])
+      engine.setCurrentStreamId("stream_new_current")
+      const newest = new MockSocket()
+      const next = track(engine.onConnect(asSocket(newest)))
+      await pause()
+      expect({ cursor: engine.getSyncCursor(), catchUp: deps.syncService.catchUp.mock.calls.length }).toEqual({
+        cursor: null,
+        catchUp: 0,
+      })
+      snapshot.resolve(workspace)
+      await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce(), { timeout: 700 })
+      await Promise.all([first, next])
+      expect(await claim).toMatchObject({ workspace: { id: "ws_1" }, syncHead: "10" })
+      expect({
+        ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
+        aborted: deps.streamService.bootstrap.mock.calls.slice(0, 6).map((call) => call[2]?.signal?.aborted),
+        cursor: engine.getSyncCursor(),
+        workspace: deps.syncStatus.get("workspace:ws_1"),
+        errors: ids.map((id) => deps.syncStatus.getError(`stream:${id}`)),
+      }).toEqual({
+        ids: [...ids.slice(0, 6), "stream_new_current"],
+        aborted: Array(6).fill(true),
+        cursor: "10",
+        workspace: "synced",
+        errors: ids.map(() => null),
+      })
+      newest.trigger("workspace_user:added", {
+        workspaceId: "ws_1",
+        syncId: "11",
+        user: { id: "user_after_full_retirement", workspaceId: "ws_1", name: "Recovered" },
+      })
+      await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_after_full_retirement")).toBeTruthy())
+      held.resolve()
+      await pause()
+      expect({
+        streams: await db.streams.bulkGet(ids),
+        events: await db.events.bulkGet(ids.map((id) => `evt_2_${id}`)),
+        errors: ids.map((id) => deps.syncStatus.getError(`stream:${id}`)),
+        cursor: engine.getSyncCursor(),
+        workspace: deps.syncStatus.get("workspace:ws_1"),
+      }).toEqual({
+        streams: ids.map(() => undefined),
+        events: ids.map(() => undefined),
+        errors: ids.map(() => null),
+        cursor: "11",
+        workspace: "synced",
+      })
     }
   )
 
   it.each(["current", "URL-visible", "claimed", "board", "panel"])(
     "should retain a full-sweep root shared with %s demand across recovery generations",
     async (owner) => {
-      const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
-      const workspace = await deps.workspaceService.bootstrap()
-      deps.workspaceService.bootstrap.mockClear()
-      deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
-      const engine = new SyncEngine(deps)
-      engines.push(engine)
-      const held = deferred<void>()
+      const deps = depsAtHead("10")
+      deps.workspaceService.bootstrap.mockResolvedValue({ ...makeWorkspaceBootstrap(), syncHead: "10" })
+      const engine = createEngine(deps)
+      const held = hold()
       const original = deps.streamService.bootstrap.getMockImplementation()!
       deps.streamService.bootstrap.mockImplementation(async (...args) => {
         if (args[1] === "stream_full_shared") await held.promise
         return original(...args)
       })
-      let first: Promise<void> | undefined
-      let next: Promise<void> | undefined
-      try {
-        engine.setBoardStreamIds(["stream_full_shared"])
-        const socket = new MockSocket()
-        first = engine.onConnect(asSocket(socket))
-        const workspaceClaim = engine.claimWorkspaceBootstrap()
-        await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-        const signal = deps.streamService.bootstrap.mock.calls[0][2]?.signal
-        let streamClaim: ReturnType<SyncEngine["claimStreamBootstrap"]> = null
-        if (owner === "current") engine.setCurrentStreamId("stream_full_shared")
-        if (owner === "URL-visible") engine.setVisibleStreamIds(["stream_full_shared"])
-        if (owner === "claimed") streamClaim = engine.claimStreamBootstrap("stream_full_shared")
-        if (owner === "panel") engine.setPanelStreamIds(["stream_full_shared"])
-        socket.connected = false
-        engine.onDisconnect()
-        if (owner !== "board") engine.setBoardStreamIds([])
-        next = engine.onConnect(asSocket(new MockSocket()))
-        await pause()
-        expect({
-          aborted: signal?.aborted,
-          calls: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
-          cursor: engine.getSyncCursor(),
-          catchUp: deps.syncService.catchUp.mock.calls.length,
-        }).toEqual({
-          aborted: false,
-          calls: ["stream_full_shared"],
-          cursor: null,
-          catchUp: 0,
-        })
-        held.resolve()
-        await Promise.all([first, next])
-        if (streamClaim) await expect(streamClaim).resolves.toMatchObject({ stream: { id: "stream_full_shared" } })
-        expect(await workspaceClaim).toMatchObject({ syncHead: "10" })
-        await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
-        expect({
-          cursor: engine.getSyncCursor(),
-          stream: (await db.streams.get("stream_full_shared"))?.id,
-          error: deps.syncStatus.getError("stream:stream_full_shared"),
-        }).toEqual({ cursor: "10", stream: "stream_full_shared", error: null })
-      } finally {
-        held.resolve()
-        await Promise.all([first, next])
-        engine.destroy()
-      }
+      engine.setBoardStreamIds(["stream_full_shared"])
+      const socket = new MockSocket()
+      const first = track(engine.onConnect(asSocket(socket)))
+      const workspaceClaim = engine.claimWorkspaceBootstrap()
+      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+      const signal = deps.streamService.bootstrap.mock.calls[0][2]?.signal
+      let streamClaim: ReturnType<SyncEngine["claimStreamBootstrap"]> = null
+      if (owner === "current") engine.setCurrentStreamId("stream_full_shared")
+      if (owner === "URL-visible") engine.setVisibleStreamIds(["stream_full_shared"])
+      if (owner === "claimed") streamClaim = engine.claimStreamBootstrap("stream_full_shared")
+      if (owner === "panel") engine.setPanelStreamIds(["stream_full_shared"])
+      disconnect(engine, socket)
+      if (owner !== "board") engine.setBoardStreamIds([])
+      const next = track(engine.onConnect(asSocket(new MockSocket())))
+      await pause()
+      expect({
+        aborted: signal?.aborted,
+        calls: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
+        cursor: engine.getSyncCursor(),
+        catchUp: deps.syncService.catchUp.mock.calls.length,
+      }).toEqual({
+        aborted: false,
+        calls: ["stream_full_shared"],
+        cursor: null,
+        catchUp: 0,
+      })
+      held.resolve()
+      await Promise.all([first, next])
+      if (streamClaim) await expect(streamClaim).resolves.toMatchObject({ stream: { id: "stream_full_shared" } })
+      expect(await workspaceClaim).toMatchObject({ syncHead: "10" })
+      await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
+      expect({
+        cursor: engine.getSyncCursor(),
+        stream: (await db.streams.get("stream_full_shared"))?.id,
+        error: deps.syncStatus.getError("stream:stream_full_shared"),
+      }).toEqual({ cursor: "10", stream: "stream_full_shared", error: null })
     }
   )
 
   it("should stop waiting for an exclusively obsolete full-sweep room join", async () => {
-    const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
-    const workspace = await deps.workspaceService.bootstrap()
-    deps.workspaceService.bootstrap.mockClear()
-    deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
-    const joined = deferred<void>()
+    const deps = depsAtHead("10")
+    deps.workspaceService.bootstrap.mockResolvedValue({ ...makeWorkspaceBootstrap(), syncHead: "10" })
+    const engine = createEngine(deps)
+    const joined = hold()
     const socket = new MockSocket()
     socket.joinInterceptor = async (room) => {
       if (room === "ws:ws_1:stream:stream_full_join") await joined.promise
     }
     engine.setBoardStreamIds(["stream_full_join"])
-    const first = engine.onConnect(asSocket(socket))
-    let next: Promise<void> | undefined
-    try {
-      await vi.waitFor(() =>
-        expect(
-          socket.emittedEvents.some(
-            ({ event, args }) => event === "join" && args[0] === "ws:ws_1:stream:stream_full_join"
-          )
-        ).toBe(true)
-      )
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds([])
-      next = engine.onConnect(asSocket(new MockSocket()))
-      await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce(), { timeout: 700 })
-      await Promise.all([first, next])
-      expect({ requests: deps.streamService.bootstrap.mock.calls, cursor: engine.getSyncCursor() }).toEqual({
-        requests: [],
-        cursor: "10",
-      })
-    } finally {
-      joined.resolve()
-      await Promise.all([first, next])
-      engine.destroy()
-    }
+    const first = track(engine.onConnect(asSocket(socket)))
+    await vi.waitFor(() =>
+      expect(
+        socket.emittedEvents.some(
+          ({ event, args }) => event === "join" && args[0] === "ws:ws_1:stream:stream_full_join"
+        )
+      ).toBe(true)
+    )
+    disconnect(engine, socket)
+    engine.setBoardStreamIds([])
+    const next = track(engine.onConnect(asSocket(new MockSocket())))
+    await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce(), { timeout: 700 })
+    await Promise.all([first, next])
+    expect({ requests: deps.streamService.bootstrap.mock.calls, cursor: engine.getSyncCursor() }).toEqual({
+      requests: [],
+      cursor: "10",
+    })
   })
 
   it("should preserve a cancelled full root's cached metadata rather than treating it as missing", async () => {
-    const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
-    const workspace = await deps.workspaceService.bootstrap()
-    const snapshot = deferred<typeof workspace>()
-    deps.workspaceService.bootstrap.mockImplementation(() => snapshot.promise)
+    const deps = depsAtHead("10")
+    const { snapshot, workspace } = holdSnapshot(deps, { once: false })
     const cached = { ...makeStreamBootstrap("stream_full_cached").stream, displayName: "cached title", _cachedAt: 1 }
     await db.streams.put(cached)
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
+    const engine = createEngine(deps)
     engine.setBoardStreamIds([cached.id])
     const socket = new MockSocket()
-    const first = engine.onConnect(asSocket(socket))
-    let next: Promise<void> | undefined
-    try {
-      await vi.waitFor(() => expect(deps.streamService.bootstrap.mock.results[0]?.type).toBe("return"))
-      await deps.streamService.bootstrap.mock.results[0].value
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds([])
-      next = engine.onConnect(asSocket(new MockSocket()))
-      snapshot.resolve({ ...workspace, syncHead: "10" })
-      await Promise.all([first, next])
-      expect({
-        name: (await db.streams.get(cached.id))?.displayName,
-        event: await db.events.get("evt_2"),
-        query: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", cached.id)),
-        error: deps.syncStatus.getError(`stream:${cached.id}`),
-      }).toEqual({ name: "cached title", event: undefined, query: undefined, error: null })
-    } finally {
-      snapshot.resolve({ ...workspace, syncHead: "10" })
-      await Promise.all([first, next])
-      engine.destroy()
-    }
+    const first = track(engine.onConnect(asSocket(socket)))
+    await vi.waitFor(() => expect(deps.streamService.bootstrap.mock.results[0]?.type).toBe("return"))
+    await deps.streamService.bootstrap.mock.results[0].value
+    disconnect(engine, socket)
+    engine.setBoardStreamIds([])
+    const next = track(engine.onConnect(asSocket(new MockSocket())))
+    snapshot.resolve(workspace)
+    await Promise.all([first, next])
+    expect({
+      name: (await db.streams.get(cached.id))?.displayName,
+      event: await db.events.get("evt_2"),
+      query: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", cached.id)),
+      error: deps.syncStatus.getError(`stream:${cached.id}`),
+    }).toEqual({ name: "cached title", event: undefined, query: undefined, error: null })
   })
 
   it("should exclude a full root retired while completed responses wait for the cached reveal", async () => {
-    const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
+    const deps = depsAtHead("10")
     const workspace = await deps.workspaceService.bootstrap()
     await applyWorkspaceBootstrap("ws_1", workspace)
     deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
+    releases.push(() => markInitialRevealComplete("ws_1"))
+    const engine = createEngine(deps)
     engine.setBoardStreamIds(["stream_full_reveal"])
     const socket = new MockSocket()
-    const first = engine.onConnect(asSocket(socket))
-    let next: Promise<void> | undefined
-    try {
-      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-      await deps.streamService.bootstrap.mock.results[0].value
-      await pause()
-      expect(await db.events.get("evt_2")).toBeUndefined()
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds([])
-      next = engine.onConnect(asSocket(new MockSocket()))
-      markInitialRevealComplete("ws_1")
-      await Promise.all([first, next])
-      expect({
-        stream: await db.streams.get("stream_full_reveal"),
-        event: await db.events.get("evt_2"),
-        query: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_full_reveal")),
-        error: deps.syncStatus.getError("stream:stream_full_reveal"),
-        cursor: engine.getSyncCursor(),
-      }).toEqual({ stream: undefined, event: undefined, query: undefined, error: null, cursor: "10" })
-    } finally {
-      markInitialRevealComplete("ws_1")
-      await Promise.all([first, next])
-      engine.destroy()
-    }
+    const first = track(engine.onConnect(asSocket(socket)))
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    await deps.streamService.bootstrap.mock.results[0].value
+    await pause()
+    expect(await db.events.get("evt_2")).toBeUndefined()
+    disconnect(engine, socket)
+    engine.setBoardStreamIds([])
+    const next = track(engine.onConnect(asSocket(new MockSocket())))
+    markInitialRevealComplete("ws_1")
+    await Promise.all([first, next])
+    expect({
+      stream: await db.streams.get("stream_full_reveal"),
+      event: await db.events.get("evt_2"),
+      query: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_full_reveal")),
+      error: deps.syncStatus.getError("stream:stream_full_reveal"),
+      cursor: engine.getSyncCursor(),
+    }).toEqual({ stream: undefined, event: undefined, query: undefined, error: null, cursor: "10" })
   })
 
   it("should keep six cancellable cold transports across serialized full-sweep generations", async () => {
     const deps = makeDeps()
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
-    const held = deferred<void>()
-    const original = deps.streamService.bootstrap.getMockImplementation()!
-    let active = 0
-    let peak = 0
-    deps.streamService.bootstrap.mockImplementation(async (...args) => {
-      const signal = args[2]!.signal!
-      active++
-      peak = Math.max(peak, active)
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const abort = () => reject(signal.reason)
-          signal.addEventListener("abort", abort, { once: true })
-          held.promise.then(() => {
-            signal.removeEventListener("abort", abort)
-            resolve()
-          })
-        })
-        const result = await original(...args)
-        result.events = result.events.map((event) => ({ ...event, id: `${event.id}_${args[1]}` }))
-        return result
-      } finally {
-        active--
-      }
+    const engine = createEngine(deps)
+    const held = hold()
+    const { lanes } = holdAbortableBootstraps(deps, held)
+    const oldIds = Array.from({ length: 12 }, (_, i) => `stream_full_transport_old_${i}`)
+    const newIds = Array.from({ length: 12 }, (_, i) => `stream_full_transport_new_${i}`)
+    engine.setBoardStreamIds(oldIds)
+    const socket = new MockSocket()
+    const first = track(engine.onConnect(asSocket(socket)))
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual(oldIds.slice(0, 6))
+    )
+    disconnect(engine, socket)
+    engine.setBoardStreamIds(newIds)
+    const next = track(engine.onConnect(asSocket(new MockSocket())))
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual([
+        ...oldIds.slice(0, 6),
+        ...newIds.slice(0, 6),
+      ])
+    )
+    expect({ ...lanes, workspaceCalls: deps.workspaceService.bootstrap.mock.calls.length }).toEqual({
+      active: 6,
+      peak: 6,
+      workspaceCalls: 2,
     })
-    let first: Promise<void> | undefined
-    let next: Promise<void> | undefined
-    try {
-      const oldIds = Array.from({ length: 12 }, (_, i) => `stream_full_transport_old_${i}`)
-      const newIds = Array.from({ length: 12 }, (_, i) => `stream_full_transport_new_${i}`)
-      engine.setBoardStreamIds(oldIds)
-      const socket = new MockSocket()
-      first = engine.onConnect(asSocket(socket))
-      await vi.waitFor(() =>
-        expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual(oldIds.slice(0, 6))
-      )
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds(newIds)
-      next = engine.onConnect(asSocket(new MockSocket()))
-      await vi.waitFor(() =>
-        expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual([
-          ...oldIds.slice(0, 6),
-          ...newIds.slice(0, 6),
-        ])
-      )
-      expect({ active, peak, workspaceCalls: deps.workspaceService.bootstrap.mock.calls.length }).toEqual({
-        active: 6,
-        peak: 6,
-        workspaceCalls: 2,
+    held.resolve()
+    await Promise.all([first, next])
+    expect({ ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]), ...lanes }).toEqual({
+      ids: [...oldIds.slice(0, 6), ...newIds],
+      active: 0,
+      peak: 6,
+    })
+    expect((await db.streams.bulkGet(newIds)).map((stream) => stream?.id)).toEqual(newIds)
+  })
+
+  it("should abort failed-sweep transports before admitting replacement board recovery", async () => {
+    const deps = depsAtHead("10")
+    const failedSnapshot = hold()
+    deps.workspaceService.bootstrap.mockImplementationOnce(async () => {
+      await failedSnapshot.promise
+      throw new Error("Workspace snapshot failed")
+    })
+    const held = hold()
+    const { lanes, signals } = holdAbortableBootstraps(deps, held)
+    const engine = createEngine(deps)
+    const oldIds = Array.from({ length: 12 }, (_, i) => `stream_failed_sweep_${i}`)
+    const newIds = Array.from({ length: 12 }, (_, i) => `stream_after_failure_${i}`)
+    engine.setBoardStreamIds(oldIds)
+    const connecting = track(engine.onConnect(asSocket(new MockSocket())))
+    await vi.waitFor(() => expect(signals).toHaveLength(6))
+    engine.setBoardStreamIds([])
+    const fallbackRead = hold()
+    const fallbackStarted = hold()
+    const workspaces = getActiveDb().workspaces
+    const getWorkspace = workspaces.get.bind(workspaces)
+    spies.push(
+      vi.spyOn(workspaces, "get").mockImplementationOnce((key) => {
+        fallbackStarted.resolve()
+        return Dexie.Promise.resolve(fallbackRead.promise).then(() => getWorkspace(key))
       })
-      held.resolve()
-      await Promise.all([first, next])
-      expect({ ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]), active, peak }).toEqual({
-        ids: [...oldIds.slice(0, 6), ...newIds],
-        active: 0,
-        peak: 6,
-      })
-      expect((await db.streams.bulkGet(newIds)).map((stream) => stream?.id)).toEqual(newIds)
-    } finally {
-      held.resolve()
-      await Promise.all([first, next])
-      engine.destroy()
-    }
+    )
+    failedSnapshot.resolve()
+    await fallbackStarted.promise
+    expect(signals.map((signal) => signal.aborted)).toEqual(Array(6).fill(true))
+    fallbackRead.resolve()
+    await connecting
+    engine.setBoardStreamIds(newIds)
+    await vi.waitFor(() => expect(signals).toHaveLength(12))
+    expect(lanes).toEqual({ active: 6, peak: 6 })
+    held.resolve()
+    await vi.waitFor(async () => expect((await db.streams.bulkGet(newIds)).map((stream) => stream?.id)).toEqual(newIds))
+    expect({ ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]), ...lanes }).toEqual({
+      ids: [...oldIds.slice(0, 6), ...newIds],
+      active: 0,
+      peak: 6,
+    })
+    expect(await db.events.bulkGet(oldIds.map((id) => `evt_2_${id}`))).toEqual(oldIds.map(() => undefined))
   })
 
   it("should preserve a queued force-full upgrade after retiring an obsolete cold sweep", async () => {
-    const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
-    const workspace = await deps.workspaceService.bootstrap()
-    deps.workspaceService.bootstrap.mockClear()
-    const snapshot = deferred<typeof workspace>()
-    deps.workspaceService.bootstrap.mockImplementationOnce(() => snapshot.promise)
-    deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
-    const held = deferred<void>()
-    const original = deps.streamService.bootstrap.getMockImplementation()!
-    deps.streamService.bootstrap.mockImplementation(async (...args) => {
-      await held.promise
-      return original(...args)
-    })
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
-    let first: Promise<void> | undefined
-    let next: Promise<void> | undefined
-    let pull: Promise<void> | undefined
-    try {
-      engine.setBoardStreamIds(["stream_full_upgrade_old"])
-      const socket = new MockSocket()
-      first = engine.onConnect(asSocket(socket))
-      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds([])
-      next = engine.onConnect(asSocket(new MockSocket()))
-      await pause()
-      pull = engine.refreshAfterPull()
-      snapshot.resolve({ ...workspace, syncHead: "10" })
-      await vi.waitFor(() =>
-        expect(deps.workspaceService.bootstrap.mock.calls).toEqual([
-          ["ws_1", { fresh: false }],
-          ["ws_1", { fresh: true }],
-        ])
-      )
-      await Promise.all([first, next, pull])
-      expect({
-        ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
-        cursor: engine.getSyncCursor(),
-        error: deps.syncStatus.getError("stream:stream_full_upgrade_old"),
-      }).toEqual({ ids: ["stream_full_upgrade_old"], cursor: "10", error: null })
-    } finally {
-      snapshot.resolve({ ...workspace, syncHead: "10" })
-      held.resolve()
-      await Promise.all([first, next, pull])
-      engine.destroy()
-    }
+    const deps = depsAtHead("10")
+    const { snapshot, workspace } = holdSnapshot(deps, { once: true })
+    const held = hold()
+    holdBootstraps(deps, held)
+    const engine = createEngine(deps)
+    engine.setBoardStreamIds(["stream_full_upgrade_old"])
+    const socket = new MockSocket()
+    const first = track(engine.onConnect(asSocket(socket)))
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    disconnect(engine, socket)
+    engine.setBoardStreamIds([])
+    const next = track(engine.onConnect(asSocket(new MockSocket())))
+    await pause()
+    const pull = track(engine.refreshAfterPull())
+    snapshot.resolve(workspace)
+    await vi.waitFor(() =>
+      expect(deps.workspaceService.bootstrap.mock.calls).toEqual([
+        ["ws_1", { fresh: false }],
+        ["ws_1", { fresh: true }],
+      ])
+    )
+    await Promise.all([first, next, pull])
+    expect({
+      ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
+      cursor: engine.getSyncCursor(),
+      error: deps.syncStatus.getError("stream:stream_full_upgrade_old"),
+    }).toEqual({ ids: ["stream_full_upgrade_old"], cursor: "10", error: null })
   })
 
   it.each(["destroy", "account change"])("should fence late full-sweep responses after %s", async (change) => {
     const deps = makeDeps()
     const workspace = await deps.workspaceService.bootstrap()
-    const snapshot = deferred<typeof workspace>()
+    const snapshot = hold(workspace)
     deps.workspaceService.bootstrap.mockImplementation(() => snapshot.promise)
-    const held = deferred<void>()
-    const original = deps.streamService.bootstrap.getMockImplementation()!
-    deps.streamService.bootstrap.mockImplementation(async (...args) => {
-      await held.promise
-      return original(...args)
-    })
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
+    const held = hold()
+    holdBootstraps(deps, held)
+    const engine = createEngine(deps)
     engine.setBoardStreamIds(["stream_full_teardown"])
-    const first = engine.onConnect(asSocket(new MockSocket()))
+    const first = track(engine.onConnect(asSocket(new MockSocket())))
     const claim = engine.claimWorkspaceBootstrap()
-    try {
-      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-      if (change === "destroy") engine.destroy()
-      else eventWrites.bumpAccountGeneration()
-      snapshot.resolve(workspace)
-      held.resolve()
-      await first
-      await pause()
-      expect({
-        workspace: await db.workspaces.get("ws_1"),
-        stream: await db.streams.get("stream_full_teardown"),
-        cache: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_full_teardown")),
-        claim: await claim,
-      }).toEqual({ workspace: undefined, stream: undefined, cache: undefined, claim: null })
-    } finally {
-      snapshot.resolve(workspace)
-      held.resolve()
-      await first
-      engine.destroy()
-    }
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    if (change === "destroy") engine.destroy()
+    else eventWrites.bumpAccountGeneration()
+    snapshot.resolve(workspace)
+    held.resolve()
+    await first
+    await pause()
+    expect({
+      workspace: await db.workspaces.get("ws_1"),
+      stream: await db.streams.get("stream_full_teardown"),
+      cache: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_full_teardown")),
+      claim: await claim,
+    }).toEqual({ workspace: undefined, stream: undefined, cache: undefined, claim: null })
   })
 
   it("should recover a new current stream and deliver live updates before obsolete board requests settle", async () => {
-    const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
+    const deps = depsAtHead("10")
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
+    const engine = createEngine(deps)
     const firstSocket = new MockSocket()
     const held = deferred<void>()
     const oldIds = Array.from({ length: 6 }, (_, i) => `stream_obsolete_${i}`)
@@ -656,8 +630,7 @@ describe("preview history recovery", () => {
       })
       engine.setBoardStreamIds(oldIds)
       await vi.waitFor(() => expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toEqual(oldIds))
-      firstSocket.connected = false
-      engine.onDisconnect()
+      disconnect(engine, firstSocket)
       engine.setBoardStreamIds([])
       engine.setCurrentStreamId("stream_new_current")
       deps.syncService.catchUp.mockClear()
@@ -695,6 +668,7 @@ describe("preview history recovery", () => {
       await pause()
       expect(await db.streams.bulkGet(oldIds)).toEqual(oldIds.map(() => undefined))
     } finally {
+      // Obsolete bodies must settle against a live engine before destruction.
       held.resolve()
       await reconnect
       await pause()
@@ -705,63 +679,52 @@ describe("preview history recovery", () => {
   it("should keep the newer reconnect gate paused when an older reconnect retires", async () => {
     const { deps, engine, socket } = await setup()
     await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalled())
-    const oldHeld = deferred<void>()
-    const currentHeld = deferred<void>()
+    const currentHeld = hold()
+    const oldHeld = hold()
     const original = deps.streamService.bootstrap.getMockImplementation()!
     deps.streamService.bootstrap.mockImplementation(async (...args) => {
       await (args[1] === "stream_required" ? currentHeld.promise : oldHeld.promise)
       return original(...args)
     })
-    let older: Promise<void> | undefined
-    let newer: Promise<void> | undefined
     const live = { ...makeStreamBootstrap("stream_live").stream, displayName: "before" }
     deps.queryClient.setQueryData(streamKeys.detail("ws_1", "stream_live"), live)
-    try {
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds(Array.from({ length: 12 }, (_, i) => `stream_retiring_${i}`))
-      const middleSocket = new MockSocket()
-      older = engine.onConnect(asSocket(middleSocket))
-      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(6))
-      middleSocket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds([])
-      engine.setCurrentStreamId("stream_required")
-      deps.syncService.catchUp.mockClear()
-      const newestSocket = middleSocket
-      newestSocket.connected = true
-      newer = engine.onConnect(asSocket(newestSocket))
-      await vi.waitFor(() =>
-        expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toContain("stream_required")
-      )
-      newestSocket.trigger("stream:updated", {
-        workspaceId: "ws_1",
-        syncId: "11",
-        stream: { ...live, displayName: "after" },
-      })
-      await older
-      await pause()
+    disconnect(engine, socket)
+    engine.setBoardStreamIds(Array.from({ length: 12 }, (_, i) => `stream_retiring_${i}`))
+    const middleSocket = new MockSocket()
+    const older = track(engine.onConnect(asSocket(middleSocket)))
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(6))
+    disconnect(engine, middleSocket)
+    engine.setBoardStreamIds([])
+    engine.setCurrentStreamId("stream_required")
+    deps.syncService.catchUp.mockClear()
+    const newestSocket = middleSocket
+    newestSocket.connected = true
+    const newer = track(engine.onConnect(asSocket(newestSocket)))
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toContain("stream_required")
+    )
+    newestSocket.trigger("stream:updated", {
+      workspaceId: "ws_1",
+      syncId: "11",
+      stream: { ...live, displayName: "after" },
+    })
+    await older
+    await pause()
+    expect({
+      catchUp: deps.syncService.catchUp.mock.calls.length,
+      live: deps.queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", "stream_live"))
+        ?.displayName,
+      workspace: deps.syncStatus.get("workspace:ws_1"),
+    }).toEqual({ catchUp: 0, live: "before", workspace: "syncing" })
+    currentHeld.resolve()
+    await newer
+    await vi.waitFor(() =>
       expect({
         catchUp: deps.syncService.catchUp.mock.calls.length,
         live: deps.queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", "stream_live"))
           ?.displayName,
-        workspace: deps.syncStatus.get("workspace:ws_1"),
-      }).toEqual({ catchUp: 0, live: "before", workspace: "syncing" })
-      currentHeld.resolve()
-      await newer
-      await vi.waitFor(() =>
-        expect({
-          catchUp: deps.syncService.catchUp.mock.calls.length,
-          live: deps.queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", "stream_live"))
-            ?.displayName,
-        }).toEqual({ catchUp: 1, live: "after" })
-      )
-    } finally {
-      currentHeld.resolve()
-      oldHeld.resolve()
-      await Promise.all([older, newer])
-      engine.destroy()
-    }
+      }).toEqual({ catchUp: 1, live: "after" })
+    )
   })
 
   it.each(["current", "URL-visible"])(
@@ -769,7 +732,7 @@ describe("preview history recovery", () => {
     async (surface) => {
       const { deps, engine, socket } = await setup()
       await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalled())
-      const held = deferred<void>()
+      const held = hold()
       const original = deps.streamService.bootstrap.getMockImplementation()!
       deps.streamService.bootstrap.mockImplementation(async (...args) => {
         if (args[1] === "stream_shared") await held.promise
@@ -777,156 +740,103 @@ describe("preview history recovery", () => {
         response.events = response.events.map((event) => ({ ...event, id: `${event.id}_${args[1]}` }))
         return response
       })
-      let reconnect: Promise<void> | undefined
-      try {
-        engine.setBoardStreamIds(["stream_shared"])
-        await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-        const signal = deps.streamService.bootstrap.mock.calls[0][2]!.signal!
-        if (surface === "current") engine.setCurrentStreamId("stream_shared")
-        else engine.setVisibleStreamIds(["stream_shared"])
-        socket.connected = false
-        engine.onDisconnect()
-        engine.setBoardStreamIds(["stream_other"])
-        deps.syncService.catchUp.mockClear()
-        reconnect = engine.onConnect(asSocket(new MockSocket()))
-        await vi.waitFor(async () => expect(await db.streams.get("stream_other")).toBeTruthy())
-        expect({
-          aborted: signal.aborted,
-          sharedRequests: deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_shared").length,
-          catchUp: deps.syncService.catchUp.mock.calls.length,
-        }).toEqual({ aborted: false, sharedRequests: 1, catchUp: 0 })
-        held.resolve()
-        await reconnect
-        await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
-        expect({
-          stream: (await db.streams.get("stream_shared"))?.id,
-          status: deps.syncStatus.get("stream:stream_shared"),
-          workspace: deps.syncStatus.get("workspace:ws_1"),
-        }).toEqual({ stream: "stream_shared", status: "synced", workspace: "synced" })
-      } finally {
-        held.resolve()
-        await reconnect
-        engine.destroy()
-      }
+      engine.setBoardStreamIds(["stream_shared"])
+      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+      const signal = deps.streamService.bootstrap.mock.calls[0][2]!.signal!
+      if (surface === "current") engine.setCurrentStreamId("stream_shared")
+      else engine.setVisibleStreamIds(["stream_shared"])
+      disconnect(engine, socket)
+      engine.setBoardStreamIds(["stream_other"])
+      deps.syncService.catchUp.mockClear()
+      const reconnect = track(engine.onConnect(asSocket(new MockSocket())))
+      await vi.waitFor(async () => expect(await db.streams.get("stream_other")).toBeTruthy())
+      expect({
+        aborted: signal.aborted,
+        sharedRequests: deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_shared").length,
+        catchUp: deps.syncService.catchUp.mock.calls.length,
+      }).toEqual({ aborted: false, sharedRequests: 1, catchUp: 0 })
+      held.resolve()
+      await reconnect
+      await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
+      expect({
+        stream: (await db.streams.get("stream_shared"))?.id,
+        status: deps.syncStatus.get("stream:stream_shared"),
+        workspace: deps.syncStatus.get("workspace:ws_1"),
+      }).toEqual({ stream: "stream_shared", status: "synced", workspace: "synced" })
     }
   )
 
   it("should retry the same board ID without borrowing or applying its retired response", async () => {
     const { deps, engine, socket } = await setup()
-    const held = deferred<ReturnType<typeof makeStreamBootstrap>>()
+    const held = hold(makeStreamBootstrap("stream_retry"))
     deps.streamService.bootstrap.mockImplementationOnce(() => held.promise)
-    let reconnect: Promise<void> | undefined
-    try {
-      engine.setBoardStreamIds(["stream_retry"])
-      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-      const signal = deps.streamService.bootstrap.mock.calls[0][2]!.signal!
-      socket.connected = false
-      engine.onDisconnect()
-      reconnect = engine.onConnect(asSocket(new MockSocket()))
-      await vi.waitFor(async () => expect(await db.streams.get("stream_retry")).toBeTruthy())
-      await reconnect
-      expect({ aborted: signal.aborted, requests: deps.streamService.bootstrap.mock.calls.length }).toEqual({
-        aborted: true,
-        requests: 2,
-      })
-      const stale = makeStreamBootstrap("stream_retry", "99")
-      stale.stream.displayName = "obsolete"
-      held.resolve(stale)
-      await pause()
-      expect({
-        name: (await db.streams.get("stream_retry"))?.displayName,
-        obsoleteEvent: await db.events.get("evt_99"),
-        cacheName: deps.queryClient.getQueryData<ReturnType<typeof makeStreamBootstrap>>(
-          streamKeys.bootstrap("ws_1", "stream_retry")
-        )?.stream.displayName,
-        status: deps.syncStatus.get("stream:stream_retry"),
-      }).toEqual({ name: null, obsoleteEvent: undefined, cacheName: null, status: "synced" })
-    } finally {
-      held.resolve(makeStreamBootstrap("stream_retry"))
-      await reconnect
-      engine.destroy()
-    }
+    engine.setBoardStreamIds(["stream_retry"])
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    const signal = deps.streamService.bootstrap.mock.calls[0][2]!.signal!
+    disconnect(engine, socket)
+    const reconnect = track(engine.onConnect(asSocket(new MockSocket())))
+    await vi.waitFor(async () => expect(await db.streams.get("stream_retry")).toBeTruthy())
+    await reconnect
+    expect({ aborted: signal.aborted, requests: deps.streamService.bootstrap.mock.calls.length }).toEqual({
+      aborted: true,
+      requests: 2,
+    })
+    const stale = makeStreamBootstrap("stream_retry", "99")
+    stale.stream.displayName = "obsolete"
+    held.resolve(stale)
+    await pause()
+    expect({
+      name: (await db.streams.get("stream_retry"))?.displayName,
+      obsoleteEvent: await db.events.get("evt_99"),
+      cacheName: deps.queryClient.getQueryData<ReturnType<typeof makeStreamBootstrap>>(
+        streamKeys.bootstrap("ws_1", "stream_retry")
+      )?.stream.displayName,
+      status: deps.syncStatus.get("stream:stream_retry"),
+    }).toEqual({ name: null, obsoleteEvent: undefined, cacheName: null, status: "synced" })
   })
 
   it("should abort exclusive transports before restarting six cold lanes and discard queued old roots", async () => {
     const { deps, engine, socket } = await setup()
-    const held = deferred<void>()
-    const original = deps.streamService.bootstrap.getMockImplementation()!
-    let active = 0
-    let peak = 0
-    const signals: AbortSignal[] = []
-    deps.streamService.bootstrap.mockImplementation(async (...args) => {
-      const signal = args[2]!.signal!
-      signals.push(signal)
-      active++
-      peak = Math.max(peak, active)
-      try {
-        await new Promise<void>((resolve, reject) => {
-          const abort = () => reject(signal.reason)
-          signal.addEventListener("abort", abort, { once: true })
-          held.promise.then(() => {
-            signal.removeEventListener("abort", abort)
-            resolve()
-          })
-        })
-        const response = await original(...args)
-        response.events = response.events.map((event) => ({ ...event, id: `${event.id}_${args[1]}` }))
-        return response
-      } finally {
-        active--
-      }
+    const held = hold()
+    const { lanes, signals } = holdAbortableBootstraps(deps, held)
+    const oldIds = Array.from({ length: 20 }, (_, i) => `stream_old_${i}`)
+    const newIds = Array.from({ length: 12 }, (_, i) => `stream_next_${i}`)
+    engine.setBoardStreamIds(oldIds)
+    engine.setPanelStreamIds(["stream_old_queued_panel"])
+    await vi.waitFor(() => expect(signals).toHaveLength(6))
+    disconnect(engine, socket)
+    engine.setBoardStreamIds(newIds)
+    engine.setPanelStreamIds([])
+    const reconnect = track(engine.onConnect(asSocket(new MockSocket())))
+    await vi.waitFor(() => expect(signals).toHaveLength(12))
+    expect({ aborted: signals.slice(0, 6).map((signal) => signal.aborted), ...lanes }).toEqual({
+      aborted: Array(6).fill(true),
+      active: 6,
+      peak: 6,
     })
-    let reconnect: Promise<void> | undefined
-    try {
-      const oldIds = Array.from({ length: 20 }, (_, i) => `stream_old_${i}`)
-      const newIds = Array.from({ length: 12 }, (_, i) => `stream_next_${i}`)
-      engine.setBoardStreamIds(oldIds)
-      engine.setPanelStreamIds(["stream_old_queued_panel"])
-      await vi.waitFor(() => expect(signals).toHaveLength(6))
-      socket.connected = false
-      engine.onDisconnect()
-      engine.setBoardStreamIds(newIds)
-      engine.setPanelStreamIds([])
-      reconnect = engine.onConnect(asSocket(new MockSocket()))
-      await vi.waitFor(() => expect(signals).toHaveLength(12))
-      expect({ aborted: signals.slice(0, 6).map((signal) => signal.aborted), active, peak }).toEqual({
-        aborted: Array(6).fill(true),
-        active: 6,
-        peak: 6,
-      })
-      held.resolve()
-      await reconnect
-      expect({ ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]), peak, active }).toEqual({
-        ids: [...oldIds.slice(0, 6), ...newIds],
-        peak: 6,
-        active: 0,
-      })
-    } finally {
-      held.resolve()
-      await reconnect
-      engine.destroy()
-    }
+    held.resolve()
+    await reconnect
+    expect({ ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]), ...lanes }).toEqual({
+      ids: [...oldIds.slice(0, 6), ...newIds],
+      peak: 6,
+      active: 0,
+    })
   })
 
   it("should ignore a delayed full board response after its account generation changes", async () => {
     const { deps, engine } = await setup()
-    const held = deferred<ReturnType<typeof makeStreamBootstrap>>()
+    const held = hold(makeStreamBootstrap("stream_old_account"))
     deps.streamService.bootstrap.mockImplementationOnce(() => held.promise)
-    try {
-      engine.setBoardStreamIds(["stream_old_account"])
-      await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
-      eventWrites.bumpAccountGeneration()
-      held.resolve(makeStreamBootstrap("stream_old_account"))
-      await pause()
-      expect({
-        stream: await db.streams.get("stream_old_account"),
-        event: await db.events.get("evt_2"),
-        cache: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_old_account")),
-      }).toEqual({ stream: undefined, event: undefined, cache: undefined })
-    } finally {
-      held.resolve(makeStreamBootstrap("stream_old_account"))
-      engine.destroy()
-    }
+    engine.setBoardStreamIds(["stream_old_account"])
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    eventWrites.bumpAccountGeneration()
+    held.resolve(makeStreamBootstrap("stream_old_account"))
+    await pause()
+    expect({
+      stream: await db.streams.get("stream_old_account"),
+      event: await db.events.get("evt_2"),
+      cache: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_old_account")),
+    }).toEqual({ stream: undefined, event: undefined, cache: undefined })
   })
 
   it("should persist 120 eager histories in five bounded batches with one request in flight", async () => {
@@ -962,13 +872,22 @@ describe("preview history recovery", () => {
     await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
     mounted.unmount()
     deps.streamService.previewHistory.mockClear()
-    socket.connected = false
-    engine.onDisconnect()
+    disconnect(engine, socket)
     expect((await db.events.get("evt_stream_a_2"))?.payload).toMatchObject({ contentMarkdown: "new" })
     socket.connected = true
     await engine.onConnect(asSocket(socket))
     await pause()
     expect(deps.streamService.previewHistory).not.toHaveBeenCalled()
+  })
+
+  it("should coalesce declarations into the new generation when resume replaces it in the same task", async () => {
+    const { deps, engine } = await setup()
+    engine.warmStreams(["stream_same_task"])
+    await track(engine.refreshAfterConnectivityResume())
+    await vi.waitFor(async () => expect(await db.events.get("evt_stream_same_task_2")).toBeTruthy())
+    expect(
+      deps.streamService.previewHistory.mock.calls.map((call) => ({ ids: call[1], aborted: call[2]?.aborted }))
+    ).toEqual([{ ids: ["stream_same_task"], aborted: false }])
   })
 
   it("should share declarations and make owner cleanup idempotent", async () => {
@@ -1004,8 +923,7 @@ describe("preview history recovery", () => {
     engine.warmStreams(ids)
     await vi.waitFor(() => expect(deps.streamService.previewHistory).toHaveBeenCalledOnce())
     const signal = deps.streamService.previewHistory.mock.calls[0][2]!
-    socket.connected = false
-    engine.onDisconnect()
+    disconnect(engine, socket)
     await pause()
     expect(signal.aborted).toBe(true)
     expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
@@ -1086,26 +1004,18 @@ describe("preview history recovery", () => {
     async (change) => {
       const { deps, engine, socket } = await setup()
       let changed = false
-      const spy = interceptPreviewWrite(() => {
+      interceptPreviewWrite(() => {
         changed = true
         if (change === "account changes") eventWrites.bumpAccountGeneration()
-        else {
-          socket.connected = false
-          engine.onDisconnect()
-        }
+        else disconnect(engine, socket)
       })
-      try {
-        engine.warmStreams(["stream_a", "stream_b"])
-        await vi.waitFor(() => expect(changed).toBe(true))
-        expect({
-          events: await db.events.bulkGet(["evt_stream_a_2", "evt_stream_b_2"]),
-          streams: await db.streams.bulkGet(["stream_a", "stream_b"]),
-        }).toEqual({ events: [undefined, undefined], streams: [undefined, undefined] })
-        expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
-      } finally {
-        spy.mockRestore()
-        engine.destroy()
-      }
+      engine.warmStreams(["stream_a", "stream_b"])
+      await vi.waitFor(() => expect(changed).toBe(true))
+      expect({
+        events: await db.events.bulkGet(["evt_stream_a_2", "evt_stream_b_2"]),
+        streams: await db.streams.bulkGet(["stream_a", "stream_b"]),
+      }).toEqual({ events: [undefined, undefined], streams: [undefined, undefined] })
+      expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
     }
   )
 
@@ -1126,23 +1036,13 @@ describe("preview history recovery", () => {
   it("should cap board reconnect recovery at six and retire queued work on disconnect", async () => {
     const { deps, engine, socket } = await setup()
     const held = deferred<void>()
-    let active = 0
-    let peak = 0
-    const original = deps.streamService.bootstrap.getMockImplementation()!
-    deps.streamService.bootstrap.mockImplementation(async (...args) => {
-      active++
-      peak = Math.max(peak, active)
-      await held.promise
-      active--
-      return original(...args)
-    })
+    const lanes = holdBootstraps(deps, held)
     engine.setBoardStreamIds(Array.from({ length: 20 }, (_, i) => `stream_board_${i}`))
     await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(6))
-    socket.connected = false
-    engine.onDisconnect()
+    disconnect(engine, socket)
     held.resolve()
     await pause()
-    expect({ calls: deps.streamService.bootstrap.mock.calls.length, peak }).toEqual({ calls: 6, peak: 6 })
+    expect({ calls: deps.streamService.bootstrap.mock.calls.length, peak: lanes.peak }).toEqual({ calls: 6, peak: 6 })
     engine.setBoardStreamIds([])
     socket.connected = true
     await engine.onConnect(asSocket(socket))
@@ -1152,27 +1052,17 @@ describe("preview history recovery", () => {
 
   it("should cap cold visible recovery at six and fetch the current stream first", async () => {
     const deps = makeDeps()
-    const engine = new SyncEngine(deps)
-    engines.push(engine)
+    const engine = createEngine(deps)
     engine.setCurrentStreamId("stream_current")
     engine.setVisibleStreamIds(Array.from({ length: 19 }, (_, i) => `stream_cold_${i}`))
     const held = deferred<void>()
-    const original = deps.streamService.bootstrap.getMockImplementation()!
-    let active = 0
-    let peak = 0
-    deps.streamService.bootstrap.mockImplementation(async (...args) => {
-      active++
-      peak = Math.max(peak, active)
-      await held.promise
-      active--
-      return original(...args)
-    })
+    const lanes = holdBootstraps(deps, held)
     const connect = engine.onConnect(asSocket(new MockSocket()))
     await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(6))
     expect(deps.streamService.bootstrap.mock.calls[0][1]).toBe("stream_current")
     held.resolve()
     await connect
-    expect({ calls: deps.streamService.bootstrap.mock.calls.length, peak }).toEqual({ calls: 20, peak: 6 })
+    expect({ calls: deps.streamService.bootstrap.mock.calls.length, peak: lanes.peak }).toEqual({ calls: 20, peak: 6 })
   })
 
   it("should preserve metadata and standalone read/counter state omitted by histories", async () => {
@@ -1309,8 +1199,7 @@ describe("preview history recovery", () => {
     const missed = makeStreamBootstrap("stream_current", "2")
     missed.events[0].payload = { messageId: "msg_missed", contentMarkdown: "HTTP recovered" }
     deps.streamService.bootstrap.mockResolvedValueOnce(missed)
-    socket.connected = false
-    engine.onDisconnect()
+    disconnect(engine, socket)
     await engine.refreshAfterConnectivityResume()
     expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_current", { after: "1" })
     expect((await db.events.get("evt_2"))?.payload).toMatchObject({ contentMarkdown: "HTTP recovered" })
@@ -1321,8 +1210,7 @@ describe("preview history recovery", () => {
     deps.streamService.bootstrap.mockResolvedValueOnce(makeStreamBootstrap("stream_panel", "1"))
     engine.setVisibleStreamIds(["stream_panel"])
     await vi.waitFor(async () => expect(await db.events.get("evt_1")).toBeTruthy())
-    socket.connected = false
-    engine.onDisconnect()
+    disconnect(engine, socket)
     engine.setBoardStreamIds(["stream_background"])
     engine.setPanelStreamIds(["stream_conversation_root"])
     deps.streamService.bootstrap.mockClear()
