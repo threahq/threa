@@ -174,7 +174,7 @@ export class UserApiKeyService {
     if (!match) return null
 
     // Fire-and-forget last_used_at update — non-critical, don't block response
-    UserApiKeyRepository.touchLastUsed(this.pool, match.id).catch(() => {})
+    UserApiKeyRepository.touchLastUsed(this.pool, match.workspaceId, match.id).catch(() => {})
 
     return {
       id: match.id,

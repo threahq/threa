@@ -25,7 +25,7 @@ export const BotChannelAccessRepository = {
   async getGrantedStreamIds(db: Querier, workspaceId: string, botId: string): Promise<string[]> {
     const result = await db.query<{ stream_id: string }>(sql`
       SELECT a.stream_id FROM bot_channel_access a
-      JOIN streams s ON s.id = a.stream_id
+      JOIN streams s ON s.id = a.stream_id AND s.workspace_id = a.workspace_id
       WHERE a.workspace_id = ${workspaceId}
         AND a.bot_id = ${botId}
         AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
@@ -133,7 +133,7 @@ export const BotChannelAccessRepository = {
   async getGrantedBotIds(db: Querier, workspaceId: string, streamId: string): Promise<string[]> {
     const result = await db.query<{ bot_id: string }>(sql`
       SELECT a.bot_id FROM bot_channel_access a
-      JOIN bots b ON b.id = a.bot_id
+      JOIN bots b ON b.id = a.bot_id AND b.workspace_id = a.workspace_id
       WHERE a.workspace_id = ${workspaceId}
         AND a.stream_id = ${streamId}
         AND b.archived_at IS NULL
@@ -149,7 +149,7 @@ export const BotChannelAccessRepository = {
     const result = await db.query<{ stream_id: string; granted_by: string; granted_at: Date }>(sql`
       SELECT a.stream_id, a.granted_by, a.granted_at
       FROM bot_channel_access a
-      JOIN streams s ON s.id = a.stream_id
+      JOIN streams s ON s.id = a.stream_id AND s.workspace_id = a.workspace_id
       WHERE a.workspace_id = ${workspaceId}
         AND a.bot_id = ${botId}
         AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
