@@ -850,7 +850,7 @@ export function createStreamHandlers({
 
       const types = type ? ((Array.isArray(type) ? type : [type]) as EventType[]) : undefined
 
-      const events = await eventService.listEvents(streamId, {
+      const events = await eventService.listEvents(workspaceId, streamId, {
         types,
         limit,
         afterSequence: after ? BigInt(after) : undefined,
@@ -880,7 +880,7 @@ export function createStreamHandlers({
       let result: Awaited<ReturnType<typeof eventService.listEventsAround>>
       let anchorMessageId: string | null | undefined
       if (date) {
-        const dateResult = await eventService.listEventsAroundDate(streamId, new Date(date), {
+        const dateResult = await eventService.listEventsAroundDate(workspaceId, streamId, new Date(date), {
           limit,
           viewerId: userId,
         })
@@ -888,7 +888,7 @@ export function createStreamHandlers({
         result = dateResult
       } else {
         const targetId = (eventId ?? messageId)!
-        result = await eventService.listEventsAround(streamId, targetId, {
+        result = await eventService.listEventsAround(workspaceId, streamId, targetId, {
           idType: eventId ? "event" : "message",
           limit,
           viewerId: userId,
@@ -1083,7 +1083,7 @@ export function createStreamHandlers({
           streamService.getBotMemberIds(workspaceId, streamId),
           streamService.getMembership(streamId, userId),
           streamService.getViewerReadState(streamId, userId),
-          eventService.getLatestSequence(streamId),
+          eventService.getLatestSequence(workspaceId, streamId),
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
           // Archiving writes only the target row, so a stream's own
           // `archivedAt` cannot tell the client it is sealed by an ancestor.
@@ -1113,18 +1113,22 @@ export function createStreamHandlers({
       // Read frontier for EVERY viewer with access (non-member unlock): sourced
       // solely from stream_read_state; an access-without-membership viewer (INV-62)
       // with no row reads as never-read (everything unread).
-      const { unreadCount, totalCount: messageCount } = await streamService.getEffectiveUnreadSummary(streamId, userId)
+      const { unreadCount, totalCount: messageCount } = await streamService.getEffectiveUnreadSummary(
+        workspaceId,
+        streamId,
+        userId
+      )
       // The viewer's frontier rides the per-stream response so non-member legs
       // resolve theirs on open (the workspace bootstrap stays member-keyed).
       // Sequence resolved off the watermark event, same as the workspace
       // bootstrap's streamReadState map.
       const readStateSequence = viewerReadState?.lastReadEventId
-        ? ((await streamService.getSequencesByEventIds([viewerReadState.lastReadEventId])).get(
+        ? ((await streamService.getSequencesByEventIds(workspaceId, [viewerReadState.lastReadEventId])).get(
             viewerReadState.lastReadEventId
           ) ?? null)
         : null
 
-      let events = await eventService.listEvents(streamId, {
+      let events = await eventService.listEvents(workspaceId, streamId, {
         limit: afterSequence !== undefined ? EVENTS_DEFAULT_LIMIT + 1 : EVENTS_DEFAULT_LIMIT,
         afterSequence,
         viewerId: userId,
@@ -1134,7 +1138,7 @@ export function createStreamHandlers({
 
       if (afterSequence !== undefined && events.length > EVENTS_DEFAULT_LIMIT) {
         syncMode = "replace"
-        events = await eventService.listEvents(streamId, { limit: EVENTS_DEFAULT_LIMIT, viewerId: userId })
+        events = await eventService.listEvents(workspaceId, streamId, { limit: EVENTS_DEFAULT_LIMIT, viewerId: userId })
         hasOlderEvents = true
       } else if (afterSequence === undefined) {
         hasOlderEvents = events.length === EVENTS_DEFAULT_LIMIT

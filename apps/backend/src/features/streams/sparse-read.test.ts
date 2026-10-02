@@ -27,18 +27,24 @@ describe("applySparseRead", () => {
       userId: "usr_1",
       lastReadEventId: "evt_old",
     } as never)
-    spyOn(StreamEventRepository, "getMessageOrdinalForEvent").mockResolvedValue({ sequence: 10n } as never)
+    const ordinalForEvent = spyOn(StreamEventRepository, "getMessageOrdinalForEvent").mockResolvedValue({
+      sequence: 10n,
+    } as never)
     spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue({
       eventId: "evt_new",
       sequence: 20n,
     } as never)
     spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
-    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
+    const countThrough = spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
     const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
 
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
     expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new", { holdInInbox: true })
+    expect({ ordinal: ordinalForEvent.mock.calls[0], count: countThrough.mock.calls[0] }).toEqual({
+      ordinal: [db, "ws_1", "stream_1", "evt_old"],
+      count: [db, "ws_1", "stream_1", 20n],
+    })
   })
 
   it("writes no read state when compaction leaves the watermark unchanged", async () => {

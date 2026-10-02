@@ -457,6 +457,7 @@ describe("ActivityService born-read for already-read recipients", () => {
 
     expect(captured.userIds).toEqual([TARGET_USER_ID, BEHIND_USER_ID])
     expect(captured.readUserIds && [...captured.readUserIds]).toEqual([TARGET_USER_ID])
+    expect(StreamEventRepository.findByMessageId).toHaveBeenCalledWith({}, WORKSPACE_ID, STREAM_ID, MESSAGE_ID)
     expect(streamsBarrel.usersReadThroughEffective).toHaveBeenCalledWith(
       {},
       WORKSPACE_ID,

@@ -773,7 +773,7 @@ export class StreamService {
             throw new MessageNotFoundError()
           }
         } else if (anchorId.startsWith("event_")) {
-          const anchorEvent = await StreamEventRepository.findById(client, anchorId)
+          const anchorEvent = await StreamEventRepository.findById(client, params.workspaceId, anchorId)
           if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
             throw new HttpError("Aside anchor event not found", { status: 404, code: "ANCHOR_NOT_FOUND" })
           }
@@ -1019,7 +1019,7 @@ export class StreamService {
       anchorActorType = parentMessage.authorType
       anchorMessage = parentMessage
     } else if (anchorId.startsWith("event_")) {
-      const anchorEvent = await StreamEventRepository.findById(client, anchorId)
+      const anchorEvent = await StreamEventRepository.findById(client, params.workspaceId, anchorId)
       if (!anchorEvent || anchorEvent.streamId !== params.parentStreamId) {
         throw new HttpError("Thread anchor event not found", { status: 404, code: "ANCHOR_NOT_FOUND" })
       }
@@ -2571,7 +2571,7 @@ export class StreamService {
     // COALESCE(sequence, 0)), so every message — including the author's own —
     // reports unread until the watermark is overwritten. Resolve first, no-op on
     // a miss rather than corrupting the pointer.
-    const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
+    const position = await StreamEventRepository.getMessageOrdinalForEvent(client, workspaceId, streamId, eventId)
     if (!position) {
       logger.warn({ workspaceId, streamId, memberId, eventId }, "Ignored mark-as-read: event not found in stream")
       // Explicit no-op: a null readState tells the caller nothing was written,
@@ -2602,6 +2602,7 @@ export class StreamService {
     if (postWrite?.lastReadEventId && postWrite.lastReadEventId !== eventId) {
       const resolved = await StreamEventRepository.getMessageOrdinalForEvent(
         client,
+        workspaceId,
         streamId,
         postWrite.lastReadEventId
       )
@@ -2662,13 +2663,18 @@ export class StreamService {
     messageId: string
   ): Promise<MarkUnreadResult> {
     return withTransaction(this.pool, async (client) => {
-      const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
+      const messageEvent = await StreamEventRepository.findByMessageId(client, workspaceId, streamId, messageId)
       if (!messageEvent) throw new MessageNotFoundError()
 
-      const previous = await StreamEventRepository.findPreviousMessageEvent(client, streamId, messageEvent.sequence)
+      const previous = await StreamEventRepository.findPreviousMessageEvent(
+        client,
+        workspaceId,
+        streamId,
+        messageEvent.sequence
+      )
       const lastReadEventId = previous?.id ?? null
       const lastReadOrdinal = previous
-        ? await StreamEventRepository.countMessagesThrough(client, streamId, previous.sequence)
+        ? await StreamEventRepository.countMessagesThrough(client, workspaceId, streamId, previous.sequence)
         : 0
 
       // The regress runs for every viewer with access (membership is fetched
@@ -2725,7 +2731,7 @@ export class StreamService {
   }> {
     if (streamIds.length === 0) return { updatedStreamIds: [], frontiers: [] }
 
-    const latestEventIds = await StreamEventRepository.getLatestEventIdByStreamBatch(client, streamIds)
+    const latestEventIds = await StreamEventRepository.getLatestEventIdByStreamBatch(client, workspaceId, streamIds)
 
     // Advance only streams whose read frontier sits below the latest event —
     // read state is the sole source, so a stream already at its latest event
@@ -2764,7 +2770,11 @@ export class StreamService {
     const watermarkEventIds = advancedStates
       .map((state) => state.lastReadEventId)
       .filter((id): id is string => id !== null)
-    const sequencesByEventId = await StreamEventRepository.getSequencesByEventIds(client, watermarkEventIds)
+    const sequencesByEventId = await StreamEventRepository.getSequencesByEventIds(
+      client,
+      workspaceId,
+      watermarkEventIds
+    )
     // Count through each stored frontier, not the stream's current total: a
     // message committed after the latest-event lookup must not inflate the
     // ordinal past the watermark (READ COMMITTED gives each query its own snapshot).
@@ -2773,7 +2783,7 @@ export class StreamService {
       const sequence = state.lastReadEventId ? sequencesByEventId.get(state.lastReadEventId) : undefined
       if (sequence) sequenceByStream.set(state.streamId, sequence)
     }
-    const messageCounts = await StreamEventRepository.countMessagesThroughBatch(client, sequenceByStream)
+    const messageCounts = await StreamEventRepository.countMessagesThroughBatch(client, workspaceId, sequenceByStream)
     const frontiers: StreamReadFrontierSnapshot[] = advancedStates.map((state) => ({
       streamId: state.streamId,
       lastReadEventId: state.lastReadEventId,
@@ -2861,14 +2871,10 @@ export class StreamService {
   }
 
   async getUnreadCounts(
+    workspaceId: string,
     memberships: Array<{ streamId: string; memberId: string; lastReadEventId: string | null }>
   ): Promise<Map<string, { unreadCount: number; totalCount: number }>> {
-    return StreamEventRepository.countUnreadByStreamBatch(this.pool, memberships)
-  }
-
-  async getUnreadCount(streamId: string, memberId: string, lastReadEventId: string | null): Promise<number> {
-    const unreadCounts = await this.getUnreadCounts([{ streamId, memberId, lastReadEventId }])
-    return unreadCounts.get(streamId)?.unreadCount ?? 0
+    return StreamEventRepository.countUnreadByStreamBatch(this.pool, workspaceId, memberships)
   }
 
   /**
@@ -2887,11 +2893,12 @@ export class StreamService {
    * no special case.
    */
   async getEffectiveUnreadSummary(
+    workspaceId: string,
     streamId: string,
     userId: string
   ): Promise<{ unreadCount: number; totalCount: number }> {
     const effective = await getEffectiveReadState(this.pool, userId, [streamId])
-    const counts = await this.getUnreadCounts([
+    const counts = await this.getUnreadCounts(workspaceId, [
       { streamId, memberId: userId, lastReadEventId: effective.get(streamId)?.lastReadEventId ?? null },
     ])
     return counts.get(streamId) ?? { unreadCount: 0, totalCount: 0 }
@@ -2908,8 +2915,8 @@ export class StreamService {
   }
 
   /** Resolve watermark event ids to per-stream sequences (bootstrap `streamReadState.lastReadSequence`). */
-  async getSequencesByEventIds(eventIds: string[]): Promise<Map<string, string>> {
-    return StreamEventRepository.getSequencesByEventIds(this.pool, eventIds)
+  async getSequencesByEventIds(workspaceId: string, eventIds: string[]): Promise<Map<string, string>> {
+    return StreamEventRepository.getSequencesByEventIds(this.pool, workspaceId, eventIds)
   }
 
   /**

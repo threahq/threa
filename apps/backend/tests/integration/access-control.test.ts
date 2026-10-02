@@ -864,14 +864,14 @@ describe("Access Control", () => {
       })
 
       // User A should see all events including command events
-      const userAEvents = await eventService.listEvents(channel.id, { viewerId: userAId })
+      const userAEvents = await eventService.listEvents(wsId, channel.id, { viewerId: userAId })
       const userAEventTypes = userAEvents.map((e) => e.eventType)
       expect(userAEventTypes).toContain("message_created")
       expect(userAEventTypes).toContain("command_dispatched")
       expect(userAEventTypes).toContain("command_completed")
 
       // User B should only see message events, NOT command events
-      const userBEvents = await eventService.listEvents(channel.id, { viewerId: userBId })
+      const userBEvents = await eventService.listEvents(wsId, channel.id, { viewerId: userBId })
       const userBEventTypes = userBEvents.map((e) => e.eventType)
       expect(userBEventTypes).toContain("message_created")
       expect(userBEventTypes).not.toContain("command_dispatched")
@@ -936,13 +936,13 @@ describe("Access Control", () => {
       })
 
       // User A should see failed command events
-      const userAEvents = await eventService.listEvents(channel.id, { viewerId: userAId })
+      const userAEvents = await eventService.listEvents(wsId, channel.id, { viewerId: userAId })
       const userAEventTypes = userAEvents.map((e) => e.eventType)
       expect(userAEventTypes).toContain("command_dispatched")
       expect(userAEventTypes).toContain("command_failed")
 
       // User B should NOT see failed command events
-      const userBEvents = await eventService.listEvents(channel.id, { viewerId: userBId })
+      const userBEvents = await eventService.listEvents(wsId, channel.id, { viewerId: userBId })
       const userBEventTypes = userBEvents.map((e) => e.eventType)
       expect(userBEventTypes).not.toContain("command_dispatched")
       expect(userBEventTypes).not.toContain("command_failed")

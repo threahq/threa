@@ -78,9 +78,9 @@ describe("Sparse read overlay", () => {
     return result.rows.map((r) => r.payload)
   }
 
-  async function effectiveUnread(sid: string, memberId: string): Promise<number> {
+  async function effectiveUnread(wid: string, sid: string, memberId: string): Promise<number> {
     const readState = await ReadStateRepository.get(pool, sid, memberId)
-    const counts = await streamService.getUnreadCounts([
+    const counts = await streamService.getUnreadCounts(wid, [
       { streamId: sid, memberId, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
     return counts.get(sid)?.unreadCount ?? 0
@@ -105,7 +105,7 @@ describe("Sparse read overlay", () => {
       lastReadOrdinal: 0,
       markedMessageIds: [msg3],
     })
-    expect(await effectiveUnread(sid, reader)).toBe(2)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(2)
 
     const emitted = await outboxFor("stream:read_messages", sid)
     expect(emitted).toEqual([
@@ -126,7 +126,7 @@ describe("Sparse read overlay", () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Read the hole first (msg3), then the run below it (msg1, msg2): the whole
@@ -148,7 +148,7 @@ describe("Sparse read overlay", () => {
       markedMessageIds: [msg1, msg2],
     })
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
-    expect(await effectiveUnread(sid, reader)).toBe(0)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(0)
   })
 
   test("a non-member thread leg compacts into its own standalone read-state row — never into membership", async () => {
@@ -172,7 +172,7 @@ describe("Sparse read overlay", () => {
 
     // The contiguous run above the null watermark compacted into the leg's own
     // frontier: watermark at the last read event, absorbed overlay rows pruned.
-    const threadEvents = await StreamEventRepository.list(pool, threadId)
+    const threadEvents = await StreamEventRepository.list(pool, wid, threadId)
     const lastEvent = threadEvents[threadEvents.length - 1]
     expect(snapshot.lastReadEventId).toBe(lastEvent.id)
     expect(snapshot.lastReadSequence).toBe(lastEvent.sequence.toString())
@@ -218,15 +218,15 @@ describe("Sparse read overlay", () => {
     )
     expect(row.rows).toEqual([{ workspace_id: wid, member_id: reader }])
     // The other member's count is untouched by reader's overlay.
-    expect(await effectiveUnread(sid, other)).toBe(3)
-    expect(await effectiveUnread(sid, reader)).toBe(2)
+    expect(await effectiveUnread(wid, sid, other)).toBe(3)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(2)
   })
 
   test("markAsRead advancing past a hole prunes it and reports the empty overlay", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [, , msg3] = await sendMessages(wid, sid, authorId, 3)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     await withTransaction(pool, (client) =>
@@ -238,14 +238,14 @@ describe("Sparse read overlay", () => {
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     const readPayloads = await outboxFor("stream:read", sid)
     expect(readPayloads.at(-1)?.readMessageIds).toEqual([])
-    expect(await effectiveUnread(sid, reader)).toBe(0)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(0)
   })
 
   test("mark-unread from a message regresses the watermark and clears overlay at/above it", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Read everything, then a conversation-style unread from msg2 via the stream
@@ -260,14 +260,14 @@ describe("Sparse read overlay", () => {
     expect(readState?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     // msg2, msg3 unread again.
-    expect(await effectiveUnread(sid, reader)).toBe(2)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(2)
   })
 
   test("a deleted message inside the run counts as covered — the tide rises over sunken rocks", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // msg2 deleted: nobody can ever read it, so it must not hold the watermark
@@ -279,14 +279,14 @@ describe("Sparse read overlay", () => {
 
     expect(snapshot.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
     expect(snapshot.readMessageIds).toEqual([])
-    expect(await effectiveUnread(sid, reader)).toBe(0)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(0)
   })
 
   test("a trailing deleted run above the last read is absorbed into the watermark", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // msg2 and msg3 deleted AFTER msg1 is the only live content: reading msg1
@@ -302,14 +302,14 @@ describe("Sparse read overlay", () => {
     expect(snapshot.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
     expect(snapshot.readMessageIds).toEqual([])
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
-    expect(await effectiveUnread(sid, reader)).toBe(0)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(0)
   })
 
   test("members at/below the watermark never survive in the overlay (no double-subtract)", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, msg2, , msg4] = await sendMessages(wid, sid, authorId, 4)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Timeline read through msg2, then a conversation whose members straddle the
@@ -330,14 +330,14 @@ describe("Sparse read overlay", () => {
     )
     expect(belowWatermark.rows).toEqual([])
     // msg3 is the one genuinely unread message.
-    expect(await effectiveUnread(sid, reader)).toBe(1)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(1)
   })
 
   test("mark-unread that ADVANCES the watermark past overlay holes clears them too", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, , msg3, msg4] = await sendMessages(wid, sid, authorId, 4)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Watermark at msg1, board-read hole at msg3. Mark-unread from msg4 lands the
@@ -353,7 +353,7 @@ describe("Sparse read overlay", () => {
     const readState = await ReadStateRepository.get(pool, sid, reader)
     expect(readState?.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
-    expect(await effectiveUnread(sid, reader)).toBe(1)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(1)
   })
 
   test("removing a member purges their overlay so a born-read rejoin can't undercount", async () => {
@@ -374,14 +374,14 @@ describe("Sparse read overlay", () => {
 
     expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
     // The other member's overlay state is untouched by reader's removal.
-    expect(await effectiveUnread(sid, other)).toBe(3)
+    expect(await effectiveUnread(wid, sid, other)).toBe(3)
   })
 
   test("applySparseUnread drops the affected ids and regresses when the watermark is past them", async () => {
     const reader = userId()
     const { wid, sid, authorId } = await seedChannel([reader])
     const [msg1, msg2, msg3] = await sendMessages(wid, sid, authorId, 3)
-    const events = await StreamEventRepository.list(pool, sid)
+    const events = await StreamEventRepository.list(pool, wid, sid)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg3)!.id)
@@ -399,6 +399,6 @@ describe("Sparse read overlay", () => {
     })
     const setPayloads = await outboxFor("stream:read_set", sid)
     expect(setPayloads.at(-1)?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
-    expect(await effectiveUnread(sid, reader)).toBe(2)
+    expect(await effectiveUnread(wid, sid, reader)).toBe(2)
   })
 })

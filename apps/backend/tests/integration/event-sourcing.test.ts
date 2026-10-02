@@ -54,7 +54,7 @@ describe("Event Sourcing", () => {
       expect(message.sequence).toBe(1n)
 
       // Verify event was created
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
 
       expect(events).toHaveLength(1)
       expect(events[0]).toMatchObject({
@@ -104,7 +104,7 @@ describe("Event Sourcing", () => {
       expect(msg3.sequence).toBe(3n)
 
       // Verify events have matching sequences
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       expect(events.map((e) => e.sequence)).toEqual([1n, 2n, 3n])
     })
 
@@ -168,7 +168,7 @@ describe("Event Sourcing", () => {
       expect(message.authorId).toBe(personaId)
       expect(message.authorType).toBe("persona")
 
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       expect(events[0].actorType).toBe("persona")
     })
 
@@ -237,7 +237,7 @@ describe("Event Sourcing", () => {
       expect(edited!.editedAt).not.toBeNull()
 
       // Both events should exist
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
 
       expect(events).toHaveLength(2)
       expect(events[0].eventType).toBe("message_created")
@@ -334,7 +334,7 @@ describe("Event Sourcing", () => {
       expect(deleted!.deletedAt).not.toBeNull()
 
       // Delete event should exist
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
 
       expect(events).toHaveLength(2)
       expect(events[1].eventType).toBe("message_deleted")
@@ -439,7 +439,7 @@ describe("Event Sourcing", () => {
       })
 
       // Reaction event should exist
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       const reactionEvent = events.find((e) => e.eventType === "reaction_added")
 
       expect(reactionEvent).toBeDefined()
@@ -529,7 +529,7 @@ describe("Event Sourcing", () => {
       expect(afterRemove!.reactions["👍"]).toBeUndefined()
 
       // Both events should exist (add and remove)
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       const eventTypes = events.map((e) => e.eventType)
 
       expect(eventTypes).toContain("reaction_added")
@@ -647,7 +647,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("Third"),
       })
 
-      const events = await eventService.listEvents(testStreamId)
+      const events = await eventService.listEvents(testWorkspaceId, testStreamId)
 
       expect(events).toHaveLength(3)
       expect(events[0].sequence).toBe(1n)
@@ -685,7 +685,7 @@ describe("Event Sourcing", () => {
       })
 
       // Filter to only message events
-      const messageEvents = await eventService.listEvents(testStreamId, {
+      const messageEvents = await eventService.listEvents(testWorkspaceId, testStreamId, {
         types: ["message_created", "message_edited"],
       })
 
@@ -709,7 +709,7 @@ describe("Event Sourcing", () => {
       }
 
       // Get events after sequence 2
-      const events = await eventService.listEvents(testStreamId, {
+      const events = await eventService.listEvents(testWorkspaceId, testStreamId, {
         afterSequence: 2n,
       })
 
@@ -734,7 +734,7 @@ describe("Event Sourcing", () => {
         })
       }
 
-      const events = await eventService.listEvents(testStreamId, { limit: 3 })
+      const events = await eventService.listEvents(testWorkspaceId, testStreamId, { limit: 3 })
 
       expect(events).toHaveLength(3)
     })
@@ -781,7 +781,7 @@ describe("Event Sourcing", () => {
         actorId: testUserId,
       })
 
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       const byType = new Map(events.map((event) => [event.eventType, event]))
 
       // Edits/deletes/reactions arrive at clients as payload patches, not
@@ -838,7 +838,7 @@ describe("Event Sourcing", () => {
         ...testMessageContent("after"),
       })
 
-      const viewerAEvents = await StreamEventRepository.list(pool, testStreamId, { viewerId: viewerA })
+      const viewerAEvents = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId, { viewerId: viewerA })
       // Global sequences have a hole for viewer A (the command events), but
       // the broadcast chain is dense — exactly what lets the client treat
       // any missing broadcast number as a real gap.
@@ -847,7 +847,7 @@ describe("Event Sourcing", () => {
       expect(viewerAEvents[1].sequence - viewerAEvents[0].sequence > 1n).toBe(true)
 
       // Command events themselves never consume broadcast slots.
-      const viewerBEvents = await StreamEventRepository.list(pool, testStreamId, { viewerId: viewerB })
+      const viewerBEvents = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId, { viewerId: viewerB })
       const commandEvents = viewerBEvents.filter((event) => event.eventType === "command_dispatched")
       expect(commandEvents.map((event) => event.broadcastSequence)).toEqual([null])
     })

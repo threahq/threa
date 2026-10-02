@@ -81,7 +81,7 @@ describe("Aside anchor event", () => {
 
   /** The anchor rows one viewer gets back from the host stream's events fetch. */
   async function anchorRowsFor(hostStreamId: string, viewerId: string) {
-    const events = await StreamEventRepository.list(pool, hostStreamId, { viewerId })
+    const events = await StreamEventRepository.list(pool, wsId, hostStreamId, { viewerId })
     return events.filter((event) => event.eventType === "aside:anchored")
   }
 
@@ -158,7 +158,7 @@ describe("Aside anchor event", () => {
 
     const rows = await anchorRowsFor(channel.id, creator)
     expect(rows.map((row) => row.payload)).toEqual([{ asideId: aside.id, anchorId: null }])
-    const all = await StreamEventRepository.list(pool, channel.id, { viewerId: creator })
+    const all = await StreamEventRepository.list(pool, wsId, channel.id, { viewerId: creator })
     expect(all[all.length - 1].id).toBe(rows[0].id)
   })
 

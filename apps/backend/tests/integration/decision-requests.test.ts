@@ -81,7 +81,7 @@ describe("decision requests", () => {
       version: 1,
     })
 
-    const requestedEvents = await StreamEventRepository.list(pool, stream, { types: ["decision:requested"] })
+    const requestedEvents = await StreamEventRepository.list(pool, workspace, stream, { types: ["decision:requested"] })
     expect(requestedEvents.map((event) => event.payload)).toContainEqual(
       expect.objectContaining({ decisionId: decision.id })
     )
@@ -100,7 +100,7 @@ describe("decision requests", () => {
       resolution: expect.objectContaining({ optionId: "yes", note: "green build", decidedBy: author }),
     })
 
-    const patchEvents = await StreamEventRepository.list(pool, stream, { types: ["decision:resolved"] })
+    const patchEvents = await StreamEventRepository.list(pool, workspace, stream, { types: ["decision:resolved"] })
     expect(patchEvents.map((event) => event.payload)).toContainEqual(
       expect.objectContaining({ decisionId: decision.id, status: "resolved", version: 2 })
     )

@@ -25,6 +25,7 @@ describe("StreamEventRepository.findFirstMessageOnOrAfter", () => {
 
     const event = await StreamEventRepository.findFirstMessageOnOrAfter(
       db,
+      "ws_1",
       "stream_1",
       new Date("2026-06-16T00:00:00.000Z")
     )
@@ -36,7 +37,7 @@ describe("StreamEventRepository.findFirstMessageOnOrAfter", () => {
 
   test("returns null when no message lands on or after the date", async () => {
     const db = makeDb([])
-    const event = await StreamEventRepository.findFirstMessageOnOrAfter(db, "stream_1", new Date())
+    const event = await StreamEventRepository.findFirstMessageOnOrAfter(db, "ws_1", "stream_1", new Date())
     expect(event).toBeNull()
     expect(db._query).toHaveBeenCalledTimes(1)
   })
