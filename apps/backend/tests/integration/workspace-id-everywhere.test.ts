@@ -1,19 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
+import { workspaceIdExemptTables } from "../../../../eslint/threa-plugin.js"
 import { setupIsolatedTestDatabase } from "./setup"
-
-/** Tables with no workspace_id column, each with the reason it is workspace-agnostic. */
-const WORKSPACE_ID_EXEMPT_TABLES: Record<string, string> = {
-  workspaces: "the root: its id is the workspace id",
-  umzug_migrations: "migration runner metadata",
-  outbox: "global delivery log; the workspace rides in the event payload",
-  outbox_dead_letters: "outbox delivery failures, keyed by listener and outbox event id",
-  outbox_listeners: "per-listener outbox cursors, keyed by listener id",
-  backfill_chunks: "keyed by run_id; backfill_runs carries the workspace_id",
-  socket_io_attachments: "Socket.IO postgres adapter payload spill table",
-  sync_log_sweep_state: "singleton cursor of the outbox reconciliation sweep",
-  enclave_runtimes: "global infra: enclave instances serve every workspace (INV-8 auth/infra exception)",
-}
 
 /** Tables whose workspace_id may be NULL, each with the rows that legitimately have none. */
 const WORKSPACE_ID_NULLABLE_TABLES: Record<string, string> = {
@@ -35,7 +23,7 @@ interface Violation {
 }
 
 function problemWith(row: TableRow): string | null {
-  if (row.table in WORKSPACE_ID_EXEMPT_TABLES) {
+  if (row.table in workspaceIdExemptTables) {
     return row.hasWorkspaceId ? "exempt table carries workspace_id; remove it from the exempt list" : null
   }
   if (!row.hasWorkspaceId) return "missing workspace_id"
@@ -83,7 +71,7 @@ describe("workspace_id on every table", () => {
         const problem = problemWith(row)
         return problem ? [{ table: row.table, problem }] : []
       }),
-      ...[...Object.keys(WORKSPACE_ID_EXEMPT_TABLES), ...Object.keys(WORKSPACE_ID_NULLABLE_TABLES)]
+      ...[...Object.keys(workspaceIdExemptTables), ...Object.keys(WORKSPACE_ID_NULLABLE_TABLES)]
         .filter((table) => !existing.has(table))
         .map((table) => ({ table, problem: "allowlisted table does not exist" })),
     ]
