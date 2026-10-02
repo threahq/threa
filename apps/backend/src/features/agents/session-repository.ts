@@ -299,11 +299,13 @@ const STEP_SELECT_FIELDS = `
 
 // A runtime that dies between a step's start and finish leaves the row open;
 // ending the session closes it so the trace never spins on a finished session.
+// eslint-disable-next-line threa/workspace-scoped-sql -- spliced into statements whose updated CTE pins workspace_id
 const CLOSE_OPEN_STEPS_CTE = `closed_steps AS (
   UPDATE agent_session_steps step
   SET completed_at = updated.completed_at
   FROM updated
   WHERE step.session_id = updated.id
+    AND step.workspace_id = updated.workspace_id
     AND step.completed_at IS NULL
     AND updated.completed_at IS NOT NULL
 )`
@@ -385,8 +387,21 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
-  async findById(db: Querier, id: string): Promise<AgentSession | null> {
+  async findById(db: Querier, workspaceId: string, id: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
+      sql`
+        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
+        FROM agent_sessions
+        WHERE workspace_id = ${workspaceId}
+          AND id = ${id}
+      `
+    )
+    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  async findByIdForCallback(db: Querier, id: string): Promise<AgentSession | null> {
+    const result = await db.query<SessionRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- enclave callbacks carry only the session id; session ids are minted per workspace and never copied
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
@@ -397,12 +412,13 @@ export const AgentSessionRepository = {
   },
 
   /** Pin after the invocation lock so completion, supersede, and delete share one lock order (INV-20). */
-  async findByIdForUpdate(db: Querier, id: string): Promise<AgentSession | null> {
+  async findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId}
+          AND id = ${id}
         FOR UPDATE
       `
     )
@@ -411,6 +427,7 @@ export const AgentSessionRepository = {
 
   async findByTriggerMessage(
     db: Querier,
+    workspaceId: string,
     triggerMessageId: string,
     cursor?: AgentSessionCursor
   ): Promise<AgentSession | null> {
@@ -418,7 +435,8 @@ export const AgentSessionRepository = {
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE trigger_message_id = ${triggerMessageId}
+        WHERE workspace_id = ${workspaceId}
+          AND trigger_message_id = ${triggerMessageId}
           AND (${cursor?.createdAt ?? null}::timestamptz IS NULL OR (created_at, id) < (${cursor?.createdAt ?? null}, ${cursor?.id ?? null}))
         ORDER BY created_at DESC, id DESC
         LIMIT 1
@@ -427,12 +445,13 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
-  async listByTriggerMessage(db: Querier, triggerMessageId: string): Promise<AgentSession[]> {
+  async listByTriggerMessage(db: Querier, workspaceId: string, triggerMessageId: string): Promise<AgentSession[]> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE trigger_message_id = ${triggerMessageId}
+        WHERE workspace_id = ${workspaceId}
+          AND trigger_message_id = ${triggerMessageId}
         ORDER BY created_at DESC
       `
     )
@@ -441,6 +460,7 @@ export const AgentSessionRepository = {
 
   async findProgressSnapshotsByIds(
     db: Querier,
+    workspaceId: string,
     sessionIds: string[]
   ): Promise<Map<string, AgentSessionProgressSnapshot>> {
     if (sessionIds.length === 0) return new Map()
@@ -452,8 +472,9 @@ export const AgentSessionRepository = {
           COUNT(st.id) AS step_count,
           COALESCE(array_length(s.sent_message_ids, 1), 0) AS message_count
         FROM agent_sessions s
-        LEFT JOIN agent_session_steps st ON st.session_id = s.id
-        WHERE s.id = ANY(${sessionIds})
+        LEFT JOIN agent_session_steps st ON st.session_id = s.id AND st.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ${workspaceId}
+          AND s.id = ANY(${sessionIds})
           AND s.status = ${SessionStatuses.RUNNING}
         GROUP BY s.id, s.current_step_type, s.sent_message_ids
       `
@@ -471,21 +492,9 @@ export const AgentSessionRepository = {
     )
   },
 
-  async findLatestBySupersedesSession(db: Querier, supersedesSessionId: string): Promise<AgentSession | null> {
-    const result = await db.query<SessionRow>(
-      sql`
-        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
-        FROM agent_sessions
-        WHERE supersedes_session_id = ${supersedesSessionId}
-        ORDER BY created_at DESC
-        LIMIT 1
-      `
-    )
-    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
-  },
-
   async updateStatus(
     db: Querier,
+    workspaceId: string,
     id: string,
     status: SessionStatus,
     extras?: {
@@ -520,16 +529,17 @@ export const AgentSessionRepository = {
       extras?.error ?? null,
       shouldClearCurrentStepType,
       completedAt,
+      workspaceId,
       id,
     ]
 
-    let whereClause = "WHERE id = $9"
+    let statusClause = ""
     if (extras?.onlyIfStatusIn && extras.onlyIfStatusIn.length > 0) {
       values.push(extras.onlyIfStatusIn)
-      whereClause += ` AND status = ANY($${values.length})`
+      statusClause = ` AND status = ANY($${values.length})`
     } else if (extras?.onlyIfStatus) {
       values.push(extras.onlyIfStatus)
-      whereClause += ` AND status = $${values.length}`
+      statusClause = ` AND status = $${values.length}`
     }
 
     const query = `
@@ -544,7 +554,7 @@ export const AgentSessionRepository = {
         error = COALESCE($6, error),
         current_step_type = CASE WHEN $7 THEN NULL ELSE current_step_type END,
         completed_at = $8
-      ${whereClause}
+      WHERE workspace_id = $9 AND id = $10${statusClause}
       RETURNING ${SESSION_SELECT_FIELDS}
       ), ${CLOSE_OPEN_STEPS_CTE}
       SELECT * FROM updated
@@ -561,23 +571,23 @@ export const AgentSessionRepository = {
    * session has nothing left to abort. Idempotent: a second request keeps the
    * original timestamp.
    */
-  async requestAbort(db: Querier, id: string): Promise<boolean> {
+  async requestAbort(db: Querier, workspaceId: string, id: string): Promise<boolean> {
     const result = await db.query(
       sql`
         UPDATE agent_sessions
         SET abort_requested_at = COALESCE(abort_requested_at, NOW())
-        WHERE id = ${id} AND status = ${SessionStatuses.RUNNING}
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND status = ${SessionStatuses.RUNNING}
       `
     )
     return (result.rowCount ?? 0) > 0
   },
 
-  async updateHeartbeat(db: Querier, id: string): Promise<void> {
+  async updateHeartbeat(db: Querier, workspaceId: string, id: string): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET heartbeat_at = NOW()
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `
     )
   },
@@ -590,7 +600,8 @@ export const AgentSessionRepository = {
       UPDATE agent_sessions session
       SET reply_key_generation = ${params.replyKeyGeneration}
       FROM bot_invocations invocation
-      WHERE session.id = ${params.invocationId}
+      WHERE session.workspace_id = ${params.workspaceId}
+        AND session.id = ${params.invocationId}
         AND session.status = ${SessionStatuses.RUNNING}
         AND invocation.id = session.id
         AND invocation.workspace_id = ${params.workspaceId}
@@ -599,26 +610,16 @@ export const AgentSessionRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  async updateCurrentStep(db: Querier, id: string, stepNumber: number): Promise<void> {
-    await db.query(
-      sql`
-        UPDATE agent_sessions
-        SET current_step = ${stepNumber}, heartbeat_at = NOW()
-        WHERE id = ${id}
-      `
-    )
-  },
-
   /**
    * Update the current step type for a session.
    * Used for cross-stream activity display ("Ariadne is thinking...").
    */
-  async updateCurrentStepType(db: Querier, id: string, stepType: StepType | null): Promise<void> {
+  async updateCurrentStepType(db: Querier, workspaceId: string, id: string, stepType: StepType | null): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET current_step_type = ${stepType}, heartbeat_at = NOW()
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `
     )
   },
@@ -630,6 +631,7 @@ export const AgentSessionRepository = {
    */
   async findOrphaned(db: Querier, staleThresholdSeconds: number = 60): Promise<AgentSession[]> {
     const result = await db.query<SessionRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- the orphan sweeper scans every workspace
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
@@ -638,6 +640,7 @@ export const AgentSessionRepository = {
           AND NOT EXISTS (
             SELECT 1 FROM bot_invocations
             WHERE bot_invocations.id = agent_sessions.id
+              AND bot_invocations.workspace_id = agent_sessions.workspace_id
               AND bot_invocations.status = ${BotInvocationStatuses.CLAIMED}
               AND bot_invocations.claim_expires_at > NOW()
           )
@@ -659,12 +662,13 @@ export const AgentSessionRepository = {
    * absent (returns null), so a caller racing an in-flight invocation simply skips
    * the stamp rather than blocking — best-effort by design.
    */
-  async findRunningByStream(db: Querier, streamId: string): Promise<AgentSession | null> {
+  async findRunningByStream(db: Querier, workspaceId: string, streamId: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND status = ${SessionStatuses.RUNNING}
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -674,13 +678,14 @@ export const AgentSessionRepository = {
   },
 
   /** RUNNING sessions across many streams; at most one per stream (partial unique index). */
-  async findRunningByStreams(db: Querier, streamIds: readonly string[]): Promise<AgentSession[]> {
+  async findRunningByStreams(db: Querier, workspaceId: string, streamIds: readonly string[]): Promise<AgentSession[]> {
     if (streamIds.length === 0) return []
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE stream_id = ANY(${streamIds as string[]})
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ANY(${streamIds as string[]})
           AND status = ${SessionStatuses.RUNNING}
       `
     )
@@ -690,6 +695,7 @@ export const AgentSessionRepository = {
   /** Step and message counts per session, counted the way the live trace emitter counts them. */
   async countStepsBySessions(
     db: Querier,
+    workspaceId: string,
     sessionIds: readonly string[]
   ): Promise<Map<string, { stepCount: number; messageCount: number }>> {
     if (sessionIds.length === 0) return new Map()
@@ -702,7 +708,8 @@ export const AgentSessionRepository = {
             WHERE step_type IN (${StepTypes.MESSAGE_SENT}, ${StepTypes.MESSAGE_EDITED})
           ) AS message_count
         FROM agent_session_steps
-        WHERE session_id = ANY(${sessionIds as string[]})
+        WHERE workspace_id = ${workspaceId}
+          AND session_id = ANY(${sessionIds as string[]})
         GROUP BY session_id
       `
     )
@@ -721,11 +728,10 @@ export const AgentSessionRepository = {
    * timeline row a thread session hangs off. Anchors are reported for threads
    * only: an aside carries `parent_anchor_id` too, and its companion is not the
    * anchor row's reply — same rule as `parentActivityTarget`, which is what the
-   * socket path applies. Set-based single query (INV-56),
-   * workspace-scoped through the streams join (INV-8; `agent_sessions` has no
-   * `workspace_id` column). Seeds the bootstrap `activeAgentSessions`; the caller
-   * access-filters by the viewer's accessible root set (INV-62). `personaId` is a
-   * persona or bot id — the caller resolves the display name.
+   * socket path applies. Set-based single query (INV-56). Seeds the bootstrap
+   * `activeAgentSessions`; the caller access-filters by the viewer's accessible
+   * root set (INV-62). `personaId` is a persona or bot id — the caller resolves
+   * the display name.
    */
   async listRunningByWorkspace(
     db: Querier,
@@ -763,8 +769,8 @@ export const AgentSessionRepository = {
           se.created_at AS started_at,
           se.current_step_type
         FROM agent_sessions se
-        JOIN streams st ON st.id = se.stream_id
-        WHERE st.workspace_id = ${workspaceId}
+        JOIN streams st ON st.id = se.stream_id AND st.workspace_id = se.workspace_id
+        WHERE se.workspace_id = ${workspaceId}
           AND se.status = ${SessionStatuses.RUNNING}
       `
     )
@@ -787,12 +793,13 @@ export const AgentSessionRepository = {
    * the PRIOR episode's `lastSeenSequence` (DM episode recency) rather than the
    * current session's.
    */
-  async findLatestCompletedByStream(db: Querier, streamId: string): Promise<AgentSession | null> {
+  async findLatestCompletedByStream(db: Querier, workspaceId: string, streamId: string): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND status = ${SessionStatuses.COMPLETED}
         ORDER BY created_at DESC, id DESC
         LIMIT 1
@@ -805,12 +812,18 @@ export const AgentSessionRepository = {
    * Find the most recent session for a stream (regardless of status).
    * Used to check lastSeenSequence when deciding whether to dispatch a new job.
    */
-  async findLatestByStream(db: Querier, streamId: string, cursor?: AgentSessionCursor): Promise<AgentSession | null> {
+  async findLatestByStream(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    cursor?: AgentSessionCursor
+  ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
         FROM agent_sessions
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND (${cursor?.createdAt ?? null}::timestamptz IS NULL OR (created_at, id) < (${cursor?.createdAt ?? null}, ${cursor?.id ?? null}))
         ORDER BY created_at DESC, id DESC
         LIMIT 1
@@ -819,12 +832,12 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
   },
 
-  async updateContextMessageIds(db: Querier, id: string, messageIds: string[]): Promise<void> {
+  async updateContextMessageIds(db: Querier, workspaceId: string, id: string, messageIds: string[]): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET context_message_ids = ${messageIds}
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `
     )
   },
@@ -835,12 +848,12 @@ export const AgentSessionRepository = {
    * already-written summary — the first write wins, later ones no-op (INV-20).
    * Returns whether this call wrote the summary.
    */
-  async setEpisodeSummary(db: Querier, id: string, summary: string): Promise<boolean> {
+  async setEpisodeSummary(db: Querier, workspaceId: string, id: string, summary: string): Promise<boolean> {
     const result = await db.query(
       sql`
         UPDATE agent_sessions
         SET episode_summary = ${summary}
-        WHERE id = ${id} AND episode_summary IS NULL
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND episode_summary IS NULL
       `
     )
     return (result.rowCount ?? 0) > 0
@@ -852,12 +865,12 @@ export const AgentSessionRepository = {
    * once — the first claim wins, later ones no-op (INV-20). Returns whether this
    * call won the claim; the caller only does capture work when it did.
    */
-  async setReflectiveCaptured(db: Querier, id: string, at: Date): Promise<boolean> {
+  async setReflectiveCaptured(db: Querier, workspaceId: string, id: string, at: Date): Promise<boolean> {
     const result = await db.query(
       sql`
         UPDATE agent_sessions
         SET reflective_captured_at = ${at}
-        WHERE id = ${id} AND reflective_captured_at IS NULL
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND reflective_captured_at IS NULL
       `
     )
     return (result.rowCount ?? 0) > 0
@@ -872,12 +885,12 @@ export const AgentSessionRepository = {
    * committed nothing). Only the delivery that won the claim calls this, so the
    * reset can't stomp a peer's in-flight claim.
    */
-  async clearReflectiveCaptured(db: Querier, id: string): Promise<void> {
+  async clearReflectiveCaptured(db: Querier, workspaceId: string, id: string): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET reflective_captured_at = NULL
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `
     )
   },
@@ -889,12 +902,12 @@ export const AgentSessionRepository = {
    * (roadmap 2.3). Single idempotent UPDATE from the worker that owns the
    * running session (INV-20).
    */
-  async markResponseValidationFailed(db: Querier, id: string): Promise<void> {
+  async markResponseValidationFailed(db: Querier, workspaceId: string, id: string): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET response_validation_failed = TRUE
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `
     )
   },
@@ -903,12 +916,12 @@ export const AgentSessionRepository = {
    * Update the last seen sequence for a session.
    * Called during agent loop when new messages are processed.
    */
-  async updateLastSeenSequence(db: Querier, id: string, sequence: bigint): Promise<void> {
+  async updateLastSeenSequence(db: Querier, workspaceId: string, id: string, sequence: bigint): Promise<void> {
     await db.query(
       sql`
         UPDATE agent_sessions
         SET last_seen_sequence = ${sequence.toString()}, heartbeat_at = NOW()
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `
     )
   },
@@ -919,6 +932,7 @@ export const AgentSessionRepository = {
    */
   async completeSession(
     db: Querier,
+    workspaceId: string,
     id: string,
     params: {
       lastSeenSequence: bigint
@@ -951,7 +965,8 @@ export const AgentSessionRepository = {
           current_step_type = NULL,
           error = NULL,
           completed_at = NOW()
-        WHERE id = ${id}
+        WHERE workspace_id = ${workspaceId}
+          AND id = ${id}
           AND status = ANY(${allowedStatuses})
         RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
         ), ${sql.raw(CLOSE_OPEN_STEPS_CTE)}
@@ -971,14 +986,13 @@ export const AgentSessionRepository = {
    * unique-key collisions retry until one insert wins instead of clobbering an
    * existing step (INV-20).
    */
-  async appendStep(db: Querier, params: AppendStepParams): Promise<AgentSessionStep> {
-    const session = await db.query<{ workspace_id: string }>(
-      sql`SELECT workspace_id FROM agent_sessions WHERE id = ${params.sessionId}`
+  async appendStep(db: Querier, workspaceId: string, params: AppendStepParams): Promise<AgentSessionStep> {
+    const session = await db.query(
+      sql`SELECT 1 FROM agent_sessions WHERE workspace_id = ${workspaceId} AND id = ${params.sessionId}`
     )
     if (session.rowCount === 0) {
       throw new Error(`agent_sessions row not found for session id ${params.sessionId}`)
     }
-    const workspaceId = session.rows[0].workspace_id
 
     while (true) {
       const result = await db.query<StepRow>(
@@ -1004,7 +1018,8 @@ export const AgentSessionRepository = {
               ${params.completedAt ?? null},
               ${params.clientStepId ?? null}
             FROM agent_session_steps
-            WHERE session_id = ${params.sessionId}
+            WHERE workspace_id = ${workspaceId}
+              AND session_id = ${params.sessionId}
             ON CONFLICT DO NOTHING
             RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
           `
@@ -1018,28 +1033,34 @@ export const AgentSessionRepository = {
         const existing = await db.query<StepRow>(
           sql`
               SELECT ${sql.raw(STEP_SELECT_FIELDS)} FROM agent_session_steps
-              WHERE session_id = ${params.sessionId} AND client_step_id = ${params.clientStepId}
+              WHERE workspace_id = ${workspaceId}
+                AND session_id = ${params.sessionId}
+                AND client_step_id = ${params.clientStepId}
             `
         )
         if (existing.rows[0]) return mapRowToStep(existing.rows[0])
       }
       // A caller-supplied id that already exists would conflict on every retry.
-      const sameId = await db.query(sql`SELECT 1 FROM agent_session_steps WHERE id = ${params.id}`)
+      const sameId = await db.query(
+        // eslint-disable-next-line threa/workspace-scoped-sql -- the primary key is global: another workspace's row under this id conflicts the insert on every retry, so the probe must see it to end the loop
+        sql`SELECT 1 FROM agent_session_steps WHERE id = ${params.id}`
+      )
       if ((sameId.rowCount ?? 0) > 0) {
         throw new Error(`agent_session_steps row already exists for step id ${params.id}`)
       }
     }
   },
 
-  async upsertStep(db: Querier, params: UpsertStepParams): Promise<AgentSessionStep> {
+  async upsertStep(db: Querier, workspaceId: string, params: UpsertStepParams): Promise<AgentSessionStep> {
     const result = await db.query<StepRow>(
       sql`
         INSERT INTO agent_session_steps (
           id, workspace_id, session_id, step_number, step_type, content, sources,
           message_id, tokens_used, started_at, completed_at
-        ) VALUES (
+        )
+        SELECT
           ${params.id},
-          (SELECT workspace_id FROM agent_sessions WHERE id = ${params.sessionId}),
+          ${workspaceId},
           ${params.sessionId},
           ${params.stepNumber},
           ${params.stepType},
@@ -1049,7 +1070,9 @@ export const AgentSessionRepository = {
           ${params.tokensUsed ?? null},
           ${params.startedAt},
           ${params.completedAt ?? null}
-        )
+        FROM agent_sessions
+        WHERE workspace_id = ${workspaceId}
+          AND id = ${params.sessionId}
         ON CONFLICT (session_id, step_number) DO UPDATE
         SET
           step_type = EXCLUDED.step_type,
@@ -1072,6 +1095,9 @@ export const AgentSessionRepository = {
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
       `
     )
+    if (!result.rows[0]) {
+      throw new Error(`agent_sessions row not found for session id ${params.sessionId}`)
+    }
     return mapRowToStep(result.rows[0])
   },
 
@@ -1082,6 +1108,7 @@ export const AgentSessionRepository = {
    */
   async finalizeStepByClientStepId(
     db: Querier,
+    workspaceId: string,
     params: {
       sessionId: string
       clientStepId: string
@@ -1101,7 +1128,8 @@ export const AgentSessionRepository = {
           content = ${JSON.stringify(params.content)},
           completed_at = ${params.completedAt},
           started_at = COALESCE(${startedAt}::timestamptz, started_at)
-        WHERE session_id = ${params.sessionId}
+        WHERE workspace_id = ${workspaceId}
+          AND session_id = ${params.sessionId}
           AND client_step_id = ${params.clientStepId}
           AND completed_at IS NULL
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
@@ -1110,22 +1138,9 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToStep(result.rows[0]) : null
   },
 
-  async completeStep(db: Querier, stepId: string, tokensUsed?: number): Promise<AgentSessionStep | null> {
-    const result = await db.query<StepRow>(
-      sql`
-        UPDATE agent_session_steps
-        SET
-          completed_at = NOW(),
-          tokens_used = COALESCE(${tokensUsed ?? null}, tokens_used)
-        WHERE id = ${stepId}
-        RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
-      `
-    )
-    return result.rows[0] ? mapRowToStep(result.rows[0]) : null
-  },
-
   async updateStep(
     db: Querier,
+    workspaceId: string,
     stepId: string,
     params: {
       content?: unknown
@@ -1176,7 +1191,8 @@ export const AgentSessionRepository = {
           verification_reason = COALESCE(${params.verification?.reason ?? null}, verification_reason),
           effects = COALESCE(${params.effects ? JSON.stringify(params.effects) : null}, effects),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
-        WHERE id = ${stepId}
+        WHERE workspace_id = ${workspaceId}
+          AND id = ${stepId}
           AND (${params.sessionId ?? null}::text IS NULL OR session_id = ${params.sessionId ?? null})
           ${sql.raw(params.requireRunning ? "AND completed_at IS NULL" : "")}
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
@@ -1185,12 +1201,18 @@ export const AgentSessionRepository = {
     return result.rows[0] ? mapRowToStep(result.rows[0]) : null
   },
 
-  async findStepsBySession(db: Querier, sessionId: string, limit: number = 500): Promise<AgentSessionStep[]> {
+  async findStepsBySession(
+    db: Querier,
+    workspaceId: string,
+    sessionId: string,
+    limit: number = 500
+  ): Promise<AgentSessionStep[]> {
     const result = await db.query<StepRow>(
       sql`
         SELECT ${sql.raw(STEP_SELECT_FIELDS)}
         FROM agent_session_steps
-        WHERE session_id = ${sessionId}
+        WHERE workspace_id = ${workspaceId}
+          AND session_id = ${sessionId}
         ORDER BY step_number ASC
         LIMIT ${limit}
       `
@@ -1208,6 +1230,7 @@ export const AgentSessionRepository = {
    */
   async findRecentDigestStepsByStream(
     db: Querier,
+    workspaceId: string,
     params: { streamId: string; personaId: string; limit: number }
   ): Promise<RecentDigestStep[]> {
     const result = await db.query<StepRow & { session_created_at: Date; session_completed_at: Date | null }>(
@@ -1219,8 +1242,9 @@ export const AgentSessionRepository = {
           s.created_at AS session_created_at,
           s.completed_at AS session_completed_at
         FROM agent_session_steps st
-        JOIN agent_sessions s ON s.id = st.session_id
-        WHERE s.stream_id = ${params.streamId}
+        JOIN agent_sessions s ON s.id = st.session_id AND st.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ${workspaceId}
+          AND s.stream_id = ${params.streamId}
           AND s.persona_id = ${params.personaId}
           AND s.status = ${SessionStatuses.COMPLETED}
           AND st.step_type = ${AgentStepTypes.TURN_DIGEST}
@@ -1246,13 +1270,15 @@ export const AgentSessionRepository = {
    */
   async findRecentEpisodeSummariesByStream(
     db: Querier,
+    workspaceId: string,
     params: { streamId: string; personaId: string; limit: number }
   ): Promise<RecentEpisodeSummary[]> {
     const result = await db.query<{ summary: string; created_at: Date; completed_at: Date | null }>(
       sql`
         SELECT episode_summary AS summary, created_at, completed_at
         FROM agent_sessions
-        WHERE stream_id = ${params.streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${params.streamId}
           AND persona_id = ${params.personaId}
           AND status = ${SessionStatuses.COMPLETED}
           AND episode_summary IS NOT NULL
@@ -1265,18 +1291,5 @@ export const AgentSessionRepository = {
       sessionCreatedAt: row.created_at,
       sessionCompletedAt: row.completed_at,
     }))
-  },
-
-  async findLatestStep(db: Querier, sessionId: string): Promise<AgentSessionStep | null> {
-    const result = await db.query<StepRow>(
-      sql`
-        SELECT ${sql.raw(STEP_SELECT_FIELDS)}
-        FROM agent_session_steps
-        WHERE session_id = ${sessionId}
-        ORDER BY step_number DESC
-        LIMIT 1
-      `
-    )
-    return result.rows[0] ? mapRowToStep(result.rows[0]) : null
   },
 }

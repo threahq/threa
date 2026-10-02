@@ -258,7 +258,7 @@ describe("ActivityService author name resolution", () => {
 
     expect(capturedContext?.authorName).toBe("Ada")
     expect(capturedContext?.authorAvatarUrl).toBeUndefined()
-    expect(PersonaRepository.findById).toHaveBeenCalled()
+    expect(PersonaRepository.findById).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, personaId)
   })
 
   it("gives Ariadne the hosted icon as her push avatar when no avatar is uploaded", async () => {

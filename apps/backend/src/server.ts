@@ -738,13 +738,13 @@ export async function startServer(): Promise<ServerInstance> {
     // Same routing as the Stop button (`socket.ts` `agent_session:research:abort`):
     // ownership is read off the session row, because an enclave-owned turn has
     // no inbound cancel route and consumes the flag on its next heartbeat.
-    stopThreadSession: async ({ threadStreamId }) => {
-      const session = await AgentSessionRepository.findLatestByStream(pool, threadStreamId)
+    stopThreadSession: async ({ workspaceId, threadStreamId }) => {
+      const session = await AgentSessionRepository.findLatestByStream(pool, workspaceId, threadStreamId)
       if (!session || (session.status !== SessionStatuses.RUNNING && session.status !== SessionStatuses.PENDING)) {
         return false
       }
       return session.callbackTokenHash
-        ? AgentSessionRepository.requestAbort(pool, session.id)
+        ? AgentSessionRepository.requestAbort(pool, workspaceId, session.id)
         : sessionAbortRegistry.abort(session.id, "user_abort")
     },
   })

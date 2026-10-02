@@ -199,7 +199,7 @@ export const PersonaAttachmentRepository = {
         LENGTH(e.summary) AS summary_chars
       FROM persona_attachments pa
       JOIN attachments a ON a.id = pa.attachment_id AND a.workspace_id = pa.workspace_id
-      LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id
+      LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id AND e.workspace_id = pa.workspace_id
       WHERE pa.workspace_id = ${workspaceId} AND pa.persona_id = ${personaId}
       ORDER BY pa.position ASC
     `)
@@ -230,7 +230,7 @@ export const PersonaAttachmentRepository = {
         (e.attachment_id IS NOT NULL) AS has_extraction
       FROM persona_attachments pa
       JOIN attachments a ON a.id = pa.attachment_id AND a.workspace_id = pa.workspace_id
-      LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id
+      LEFT JOIN attachment_extractions e ON e.attachment_id = pa.attachment_id AND e.workspace_id = pa.workspace_id
       WHERE pa.workspace_id = ${workspaceId} AND pa.persona_id = ${personaId}
       ORDER BY pa.position ASC
     `)

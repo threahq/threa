@@ -176,6 +176,7 @@ describe("AgentMessageMutationHandler", () => {
     expect(findLatestVersion).toHaveBeenCalledWith({}, "ws_1", "msg_invoke_1")
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "session_old",
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({ error: "Superseded by invoking message edit" })
@@ -262,6 +263,7 @@ describe("AgentMessageMutationHandler", () => {
 
     expect(updateStatusSpy).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "session_old",
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({
@@ -506,6 +508,7 @@ describe("AgentMessageMutationHandler", () => {
 
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "session_failed",
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({ error: "Superseded by invoking message edit" })
@@ -741,6 +744,7 @@ describe("AgentMessageMutationHandler", () => {
     expect(findLatestVersion).toHaveBeenCalledWith({}, "ws_1", "msg_referenced_1")
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "session_latest",
       SessionStatuses.SUPERSEDED,
       expect.objectContaining({ error: "Superseded by referenced message edit" })
@@ -1025,13 +1029,14 @@ describe("AgentMessageMutationHandler", () => {
     handler.handle()
     await waitForDebounce()
 
-    expect(find.mock.calls.map((call) => call[2])).toEqual([
-      undefined,
-      { createdAt: newestBot.createdAt, id: newestBot.id },
-      { createdAt: olderBot.createdAt, id: olderBot.id },
+    expect(find.mock.calls.map((call) => [call[1], call[3]])).toEqual([
+      ["ws_1", undefined],
+      ["ws_1", { createdAt: newestBot.createdAt, id: newestBot.id }],
+      ["ws_1", { createdAt: olderBot.createdAt, id: olderBot.id }],
     ])
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
+      "ws_1",
       persona.id,
       SessionStatuses.SUPERSEDED,
       expect.any(Object)
@@ -1078,13 +1083,14 @@ describe("AgentMessageMutationHandler", () => {
     handler.handle()
     await waitForDebounce()
 
-    expect(find.mock.calls.map((call) => call[2])).toEqual([
-      undefined,
-      { createdAt: newestBot.createdAt, id: newestBot.id },
-      { createdAt: olderBot.createdAt, id: olderBot.id },
+    expect(find.mock.calls.map((call) => [call[1], call[3]])).toEqual([
+      ["ws_1", undefined],
+      ["ws_1", { createdAt: newestBot.createdAt, id: newestBot.id }],
+      ["ws_1", { createdAt: olderBot.createdAt, id: olderBot.id }],
     ])
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
+      "ws_1",
       persona.id,
       SessionStatuses.SUPERSEDED,
       expect.any(Object)
@@ -1233,7 +1239,7 @@ describe("AgentMessageMutationHandler", () => {
       },
     ])
 
-    spyOn(AgentSessionRepository, "updateStatus").mockImplementation(async (_db, id) => ({
+    spyOn(AgentSessionRepository, "updateStatus").mockImplementation(async (_db, _workspaceId, id) => ({
       id,
       workspaceId: "ws_1",
       streamId: "stream_thread_1",
@@ -1289,6 +1295,7 @@ describe("AgentMessageMutationHandler", () => {
 
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       expect.anything(),
+      "ws_1",
       "session_1",
       SessionStatuses.DELETED,
       expect.objectContaining({

@@ -60,15 +60,15 @@ export class AgentSessionMetricsCollector {
     // Reset gauge before updating (to handle sessions that no longer exist)
     agentSessionsActive.reset()
 
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the metrics scan covers every workspace
     const countResult = await this.pool.query<SessionCountRow>(sql`
       SELECT
-        s.workspace_id,
+        a.workspace_id,
         a.status,
         COUNT(*)::text as count
       FROM agent_sessions a
-      JOIN streams s ON a.stream_id = s.id
       WHERE a.created_at > NOW() - INTERVAL '24 hours'
-      GROUP BY s.workspace_id, a.status
+      GROUP BY a.workspace_id, a.status
     `)
 
     for (const row of countResult.rows) {
@@ -76,13 +76,13 @@ export class AgentSessionMetricsCollector {
     }
 
     if (this.lastCollectedAt) {
+      // eslint-disable-next-line threa/workspace-scoped-sql -- the metrics scan covers every workspace
       const durationResult = await this.pool.query<CompletedSessionRow>(sql`
         SELECT
-          s.workspace_id,
+          a.workspace_id,
           a.status,
           EXTRACT(EPOCH FROM (a.completed_at - a.created_at)) as duration_seconds
         FROM agent_sessions a
-        JOIN streams s ON a.stream_id = s.id
         WHERE a.completed_at IS NOT NULL
           AND a.completed_at > ${this.lastCollectedAt}
           AND a.status IN ('completed', 'failed', 'deleted', 'superseded')

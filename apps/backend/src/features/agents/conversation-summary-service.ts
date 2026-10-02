@@ -42,7 +42,7 @@ export class ConversationSummaryService {
     if (keptMessages.length === 0) return null
 
     const oldestKeptSequence = keptMessages[0].sequence
-    const existing = await ConversationSummaryRepository.findByStreamAndPersona(db, streamId, personaId)
+    const existing = await ConversationSummaryRepository.findByStreamAndPersona(db, workspaceId, streamId, personaId)
 
     if (existing?.sealed) {
       // A sealed row is owned by the enclave/E2E path, which computes its rolling

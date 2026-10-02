@@ -28,7 +28,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
       // Promise.all below would fire five queries on a single client (pg warns
       // today and pg@9 will throw). No transaction is needed; these are reads.
       const result = await (async () => {
-        const session = await AgentSessionRepository.findById(pool, sessionId)
+        const session = await AgentSessionRepository.findById(pool, workspaceId, sessionId)
         if (!session) {
           return { error: "Session not found", status: 404 }
         }
@@ -39,9 +39,9 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         // DM/channel members who never got their own thread membership row.
         const [stream, persona, bot, steps] = await Promise.all([
           checkStreamAccess(pool, session.streamId, workspaceId, userId),
-          PersonaRepository.findById(pool, session.personaId, workspaceId),
+          PersonaRepository.findById(pool, workspaceId, session.personaId),
           BotRepository.findById(pool, workspaceId, session.personaId),
-          AgentSessionRepository.findStepsBySession(pool, sessionId),
+          AgentSessionRepository.findStepsBySession(pool, workspaceId, sessionId),
         ])
 
         if (!stream) {
@@ -58,7 +58,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         }
 
         const relatedSessions = (
-          await AgentSessionRepository.listByTriggerMessage(pool, session.triggerMessageId)
+          await AgentSessionRepository.listByTriggerMessage(pool, workspaceId, session.triggerMessageId)
         ).filter((relatedSession) => relatedSession.streamId === session.streamId)
         const sessionIds = [...new Set([session.id, ...relatedSessions.map((relatedSession) => relatedSession.id)])]
         const rerunContextBySessionId = await StreamEventRepository.listRerunContextBySessionIds(

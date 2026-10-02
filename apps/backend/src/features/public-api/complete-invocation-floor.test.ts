@@ -47,6 +47,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
   let stepNumber = 0
   const appendStep = spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (
     _db: unknown,
+    _workspaceId: string,
     p: { id: string; sessionId: string; stepType: string; content: string; messageId?: string }
   ) => ({
     id: p.id,
@@ -166,8 +167,9 @@ describe("completeBotInvocation synthesized-trace floor", () => {
     await handlers.completeBotInvocation(req, createResponse())
 
     expect(appendStep).toHaveBeenCalledTimes(2)
+    expect(appendStep.mock.calls.map((c) => c[1])).toEqual(["ws_1", "ws_1"])
     const contextContent = JSON.parse(
-      (appendStep.mock.calls[0]?.[1] as unknown as { content: string }).content
+      (appendStep.mock.calls[0]?.[2] as unknown as { content: string }).content
     ) as Record<string, unknown>
     expect(contextContent.synthesized).toBe(true)
     expect(contextContent.messages).toEqual([
@@ -292,7 +294,8 @@ describe("completeBotInvocation orphan recovery", () => {
     await handlers.completeBotInvocation(req, createResponse())
 
     expect(completeSession).toHaveBeenCalledTimes(1)
-    expect(completeSession.mock.calls[0]?.[2]).toMatchObject({ recoverFromFailed: true })
+    expect(completeSession.mock.calls[0]?.slice(1, 3)).toEqual(["ws_1", "binv_1"])
+    expect(completeSession.mock.calls[0]?.[3]).toMatchObject({ recoverFromFailed: true })
     expect(emitted.some((e) => e.event === "agent_session:completed")).toBe(true)
   })
 })

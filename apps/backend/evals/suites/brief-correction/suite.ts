@@ -99,7 +99,7 @@ async function setupTestData(
   const pool = ctx.pool
   const modelConfig = getModelConfig(ctx)
 
-  const templatePersona = await PersonaRepository.findById(pool, ARIADNE_AGENT_ID, ctx.workspaceId)
+  const templatePersona = await PersonaRepository.findById(pool, ctx.workspaceId, ARIADNE_AGENT_ID)
   if (!templatePersona?.systemPrompt) {
     throw new Error(`Could not resolve built-in companion persona ${ARIADNE_AGENT_ID} (see built-in-agents.ts)`)
   }

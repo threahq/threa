@@ -1231,7 +1231,7 @@ describe("PersonaConfigService.forkPersona", () => {
 
   it("copies a custom source's free-text slots verbatim", async () => {
     setupTransaction()
-    spyOn(PersonaRepository, "findById").mockResolvedValue(
+    const findById = spyOn(PersonaRepository, "findById").mockResolvedValue(
       customPersona({ tonePrompt: "Be blunt.", brevityPrompt: "Be terse." })
     )
     const insert = spyOn(PersonaRepository, "insertWorkspacePersona").mockResolvedValue(customPersona())
@@ -1240,6 +1240,7 @@ describe("PersonaConfigService.forkPersona", () => {
 
     await makeService().forkPersona(WORKSPACE_ID, "persona_custom_1", "Helper 2", "workspace", CALLER)
 
+    expect(findById).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "persona_custom_1")
     const insertArg = insert.mock.calls[0]![1] as { config: { tonePrompt: string; brevityPrompt: string } }
     expect(insertArg.config.tonePrompt).toBe("Be blunt.")
     expect(insertArg.config.brevityPrompt).toBe("Be terse.")

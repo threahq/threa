@@ -366,7 +366,7 @@ export class AgentFollowUpService {
     return withTransaction(this.pool, async (client) => {
       const pending = await AgentFollowUpRepository.findById(client, params.workspaceId, params.followUpId)
       if (!pending) return { fired: false }
-      const sourceSession = await AgentSessionRepository.findById(client, pending.sessionId)
+      const sourceSession = await AgentSessionRepository.findById(client, params.workspaceId, pending.sessionId)
       const triggerMessage = sourceSession
         ? await MessageRepository.findById(client, params.workspaceId, sourceSession.triggerMessageId)
         : null

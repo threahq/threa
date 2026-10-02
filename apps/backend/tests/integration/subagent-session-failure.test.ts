@@ -175,7 +175,9 @@ describe("orphaned runtime", () => {
       sweep.stop()
     }
 
-    expect(await AgentSessionRepository.findById(pool, session.id)).toMatchObject({ status: SessionStatuses.FAILED })
+    expect(await AgentSessionRepository.findById(pool, ctx.workspaceId, session.id)).toMatchObject({
+      status: SessionStatuses.FAILED,
+    })
     expect(await subagentService.getById({ workspaceId: ctx.workspaceId, id: run.id })).toMatchObject({
       status: SubagentStatuses.FAILED,
       statusNote: SubagentFailureReasons.SESSION_ORPHANED,

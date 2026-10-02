@@ -104,7 +104,7 @@ export class CompanionHandler extends DebouncedOutboxHandler {
     let persona: Awaited<ReturnType<typeof PersonaRepository.findById>> = null
 
     if (activeSubagent) {
-      persona = await PersonaRepository.findById(this.db, activeSubagent.personaId, workspaceId)
+      persona = await PersonaRepository.findById(this.db, workspaceId, activeSubagent.personaId)
       if (!persona || persona.status !== "active") {
         logger.warn(
           { streamId, subagentId: activeSubagent.id, personaId: activeSubagent.personaId },
@@ -133,7 +133,7 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       }
 
       persona = companionSource.companionPersonaId
-        ? await PersonaRepository.findById(this.db, companionSource.companionPersonaId!, companionSource.workspaceId)
+        ? await PersonaRepository.findById(this.db, companionSource.workspaceId, companionSource.companionPersonaId!)
         : null
 
       if (!persona || persona.status !== "active") {
@@ -150,7 +150,7 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       }
     }
 
-    const lastSession = await AgentSessionRepository.findLatestByStream(this.db, streamId)
+    const lastSession = await AgentSessionRepository.findLatestByStream(this.db, workspaceId, streamId)
 
     if (lastSession) {
       const messageSequence = BigInt(messageEvent.sequence)
