@@ -316,6 +316,8 @@ describe("memo batch: pending items", () => {
       digest: "Trigger: where do we start? Replied: with the auth service.",
       anchorMessageId,
       participantIds: [testUserId],
+      citedStreamIds: [],
+      citedMessageIds: [],
     })
 
     const { rows } = await pool.query(`SELECT id FROM memos WHERE source_session_id = $1`, [sessionId])
