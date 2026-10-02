@@ -172,12 +172,11 @@ async function resolveRoutes(db: Querier, source: InvocationSourceState): Promis
   // already made the invocation that runs it, and a route here would hand the
   // runtime the same text a second time as an ordinary turn.
   if (source.metadata[MESSAGE_METADATA_COMMAND_KEY]) return []
-  const stream = await StreamRepository.findByIdForWorkspace(db, source.streamId, source.workspaceId)
-  if (!stream || stream.workspaceId !== source.workspaceId) return []
+  const stream = await StreamRepository.findById(db, source.workspaceId, source.streamId)
+  if (!stream) return []
   if (await StreamRepository.isEffectivelyArchived(db, source.workspaceId, stream.id)) return []
   const rootId = stream.rootStreamId ?? stream.id
-  const root =
-    rootId === stream.id ? stream : await StreamRepository.findByIdForWorkspace(db, rootId, source.workspaceId)
+  const root = rootId === stream.id ? stream : await StreamRepository.findById(db, source.workspaceId, rootId)
   const userAuthored = source.authorType === AuthorTypes.USER
   const refs = userAuthored ? collectMentionActorRefs(source.contentJson) : []
   const mentionedBotIds = refs.filter((ref) => ref.actorType === "bot").map((ref) => ref.actorId)
@@ -280,7 +279,7 @@ async function resolveReplyStream(
     link?.replyMode === RuntimeReplyModes.THREAD || source.metadata[MESSAGE_METADATA_REPLY_IN_THREAD_KEY] === "true"
   if (!threaded || link?.activeStreamId !== stream.id) return flat
   if (stream.rootStreamId && stream.rootStreamId !== stream.id) return flat
-  const thread = await StreamRepository.findByAnchor(db, stream.id, source.messageId)
+  const thread = await StreamRepository.findByAnchor(db, source.workspaceId, stream.id, source.messageId)
   if (thread) return { responseStreamId: thread.id, replyThreadAnchorId: null }
   return { responseStreamId: stream.id, replyThreadAnchorId: source.messageId }
 }

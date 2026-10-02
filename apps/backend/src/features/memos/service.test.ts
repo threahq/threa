@@ -130,8 +130,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   )
   spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
-  spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(fakeStream())
-  spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockResolvedValue(fakeStream())
+  spyOn(StreamRepository, "findByIdForShare").mockResolvedValue(fakeStream())
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
@@ -506,7 +505,7 @@ describe("MemoService.processBatch — memo scope write policy (roadmap 6.4)", (
     // The batch's stream is a thread; its root is the owner's private scratchpad.
     // Without root resolution the thread's own type (not SCRATCHPAD) would fall
     // through to workspace scope, leaking the private memo.
-    spyOn(StreamRepository, "findById").mockImplementation((async (_db: unknown, id: string) =>
+    spyOn(StreamRepository, "findById").mockImplementation((async (_db: unknown, _workspaceId: string, id: string) =>
       id === STREAM_ID
         ? fakeStream({ type: "thread", rootStreamId: "stream_root" })
         : fakeStream({
@@ -973,7 +972,7 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
   }
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
-  spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockResolvedValue(fakeStream())
+  spyOn(StreamRepository, "findByIdForShare").mockResolvedValue(fakeStream())
   const trigger = new Map([
     [
       "msg_trigger",

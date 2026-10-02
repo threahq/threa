@@ -107,7 +107,7 @@ describe("draft stream promotion", () => {
     })
 
     expect(otherStream.id).not.toBe(ownerStream.id)
-    expect(await StreamRepository.findById(pool, otherStream.id)).toEqual(
+    expect(await StreamRepository.findById(pool, wsId, otherStream.id)).toEqual(
       expect.objectContaining({ id: otherStream.id, createdBy: otherUser, type: "scratchpad" })
     )
   })

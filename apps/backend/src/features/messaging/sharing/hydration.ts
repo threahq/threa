@@ -318,7 +318,7 @@ async function hydrateSharedMessageRefsWithResolvers(
 
   if (privateBuckets.size > 0) {
     const directIds = [...new Set([...privateBuckets.values()].map((entry) => entry.streamId))]
-    const streams = await StreamRepository.findByIds(db, directIds)
+    const streams = await StreamRepository.findByIds(db, workspaceId, directIds)
     const byStreamId = new Map(streams.map((s) => [s.id, s]))
     const rootIds = [
       ...new Set(
@@ -328,7 +328,7 @@ async function hydrateSharedMessageRefsWithResolvers(
       ),
     ]
     if (rootIds.length > 0) {
-      const roots = await StreamRepository.findByIds(db, rootIds)
+      const roots = await StreamRepository.findByIds(db, workspaceId, rootIds)
       for (const r of roots) byStreamId.set(r.id, r)
     }
     for (const [key, { messageId, streamId }] of privateBuckets) {

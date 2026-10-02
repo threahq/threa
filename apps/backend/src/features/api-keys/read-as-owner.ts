@@ -32,7 +32,7 @@ export async function isStreamReadableAsOwner(
   const ownerUserId = await BotChannelAccessRepository.getReadAsOwnerDelegate(db, workspaceId, botId)
   if (!ownerUserId) return false
 
-  const stream = await StreamRepository.findByIdForWorkspace(db, streamId, workspaceId)
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
   if (!stream) return false
   // Archived anywhere up the parent chain counts: the owner can still read a
   // sealed thread, this arm must not.

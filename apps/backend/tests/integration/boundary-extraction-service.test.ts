@@ -698,7 +698,7 @@ describe("BoundaryExtractionService", () => {
           parentStreamId: testStreamId,
           parentAnchorId: cardEvent.id,
         })
-        await StreamRepository.bumpThreadReplyCount(client, cardThreadStreamId, 1)
+        await StreamRepository.bumpThreadReplyCount(client, testWorkspaceId, cardThreadStreamId, 1)
         await MessageRepository.insert(client, {
           workspaceId: testWorkspaceId,
           id: cardThreadReplyId,

@@ -116,7 +116,7 @@ describe("ThreadResolver.assertAccess", () => {
   it("inherits visibility from the root stream for nested threads", async () => {
     const thread = makeStream({ id: "stream_thread", type: "thread", rootStreamId: "stream_root" })
     const rootPublic = makeStream({ id: "stream_root", visibility: Visibilities.PUBLIC })
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
       if (id === "stream_thread") return thread
       if (id === "stream_root") return rootPublic
       return null
@@ -134,7 +134,7 @@ describe("ThreadResolver.assertAccess", () => {
   })
 
   it("rejects when the source stream is in a different workspace", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(makeStream({ workspaceId: "ws_other" }))
+    const findStream = spyOn(StreamRepository, "findById").mockResolvedValue(null)
 
     // We collapse both "missing" and "wrong workspace" into FORBIDDEN so the
     // error never confirms the existence of streams the caller can't see.
@@ -146,6 +146,7 @@ describe("ThreadResolver.assertAccess", () => {
         "ws_1"
       )
     ).rejects.toMatchObject({ code: "CONTEXT_SOURCE_FORBIDDEN" })
+    expect(findStream).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_source")
   })
 })
 
@@ -153,17 +154,24 @@ describe("ThreadResolver.fetch", () => {
   afterEach(() => mock.restore())
 
   it("produces a fingerprint that changes when contentMarkdown changes", async () => {
-    spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
+    const findStream = spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Author" }] as any)
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
 
     const listMock = spyOn(MessageRepository, "list")
     listMock.mockResolvedValueOnce([makeMessage({ contentMarkdown: "v1" })])
-    const first = await ThreadResolver.fetch({} as any, { kind: ContextRefKinds.THREAD, streamId: "stream_source" })
+    const first = await ThreadResolver.fetch({} as any, "ws_1", {
+      kind: ContextRefKinds.THREAD,
+      streamId: "stream_source",
+    })
 
     listMock.mockResolvedValueOnce([makeMessage({ contentMarkdown: "v2" })])
-    const second = await ThreadResolver.fetch({} as any, { kind: ContextRefKinds.THREAD, streamId: "stream_source" })
+    const second = await ThreadResolver.fetch({} as any, "ws_1", {
+      kind: ContextRefKinds.THREAD,
+      streamId: "stream_source",
+    })
 
+    expect(findStream).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_source")
     expect(first.fingerprint).not.toBe(second.fingerprint)
     expect(first.inputs[0].contentFingerprint).not.toBe(second.inputs[0].contentFingerprint)
   })
@@ -176,8 +184,8 @@ describe("ThreadResolver.fetch", () => {
     const listMock = spyOn(MessageRepository, "list")
     listMock.mockResolvedValue([makeMessage({ contentMarkdown: "stable" })])
 
-    const a = await ThreadResolver.fetch({} as any, { kind: ContextRefKinds.THREAD, streamId: "stream_source" })
-    const b = await ThreadResolver.fetch({} as any, { kind: ContextRefKinds.THREAD, streamId: "stream_source" })
+    const a = await ThreadResolver.fetch({} as any, "ws_1", { kind: ContextRefKinds.THREAD, streamId: "stream_source" })
+    const b = await ThreadResolver.fetch({} as any, "ws_1", { kind: ContextRefKinds.THREAD, streamId: "stream_source" })
 
     expect(a.fingerprint).toBe(b.fingerprint)
   })
@@ -191,7 +199,7 @@ describe("ThreadResolver.fetch", () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(null)
 
     await expect(
-      ThreadResolver.fetch({} as any, {
+      ThreadResolver.fetch({} as any, "ws_1", {
         kind: ContextRefKinds.THREAD,
         streamId: "stream_source",
         fromMessageId: "msg_gone",
@@ -210,7 +218,7 @@ describe("ThreadResolver.fetch", () => {
     spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage({ id: "msg_old", streamId: "stream_source" }))
 
     await expect(
-      ThreadResolver.fetch({} as any, {
+      ThreadResolver.fetch({} as any, "ws_1", {
         kind: ContextRefKinds.THREAD,
         streamId: "stream_source",
         fromMessageId: "msg_old",
@@ -233,7 +241,7 @@ describe("ThreadResolver.fetch", () => {
     )
 
     await expect(
-      ThreadResolver.fetch({} as any, {
+      ThreadResolver.fetch({} as any, "ws_1", {
         kind: ContextRefKinds.THREAD,
         streamId: "stream_source",
         fromMessageId: "msg_gone",
@@ -251,7 +259,7 @@ describe("ThreadResolver.fetch", () => {
     )
 
     await expect(
-      ThreadResolver.fetch({} as any, {
+      ThreadResolver.fetch({} as any, "ws_1", {
         kind: ContextRefKinds.THREAD,
         streamId: "stream_source",
         fromMessageId: "msg_elsewhere",
@@ -285,7 +293,7 @@ describe("ThreadResolver.fetch", () => {
       })
     )
 
-    const result = await ThreadResolver.fetch({} as any, {
+    const result = await ThreadResolver.fetch({} as any, "ws_1", {
       kind: ContextRefKinds.THREAD,
       streamId: "stream_thread",
     })
@@ -309,7 +317,7 @@ describe("ThreadResolver.fetch", () => {
     // findThreadRoot returns null for soft-deleted parents.
     spyOn(MessageRepository, "findThreadRoot").mockResolvedValue(null)
 
-    const result = await ThreadResolver.fetch({} as any, {
+    const result = await ThreadResolver.fetch({} as any, "ws_1", {
       kind: ContextRefKinds.THREAD,
       streamId: "stream_thread",
     })
@@ -327,7 +335,7 @@ describe("ThreadResolver.fetch", () => {
     // root lookup never runs for a scratchpad/channel.
     const findThreadRoot = spyOn(MessageRepository, "findThreadRoot").mockResolvedValue(null)
 
-    const result = await ThreadResolver.fetch({} as any, {
+    const result = await ThreadResolver.fetch({} as any, "ws_1", {
       kind: ContextRefKinds.THREAD,
       streamId: "stream_source",
     })
@@ -349,7 +357,7 @@ describe("ThreadResolver.fetch", () => {
       makeMessage({ id: "msg_d", sequence: 4n }),
     ])
 
-    const result = await ThreadResolver.fetch({} as any, {
+    const result = await ThreadResolver.fetch({} as any, "ws_1", {
       kind: ContextRefKinds.THREAD,
       streamId: "stream_source",
       fromMessageId: "msg_b",
@@ -387,6 +395,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source", originMessageId: "msg_focal" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -416,6 +425,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source", originMessageId: "msg_focal" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -441,6 +451,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -464,6 +475,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source", originMessageId: "msg_unknown" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -488,6 +500,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       {
         kind: ContextRefKinds.THREAD,
         streamId: "stream_source",
@@ -525,6 +538,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_thread", originMessageId: "msg_root" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -551,6 +565,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -587,6 +602,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )
@@ -620,6 +636,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
 
     const result = await ThreadResolver.fetch(
       {} as any,
+      "ws_1",
       { kind: ContextRefKinds.THREAD, streamId: "stream_source", originMessageId: "msg_deleted" },
       { intent: ContextIntents.DISCUSS_THREAD }
     )

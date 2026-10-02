@@ -73,6 +73,7 @@ function req(
 
 const SESSION = {
   id: "session_1",
+  workspaceId: "ws_1",
   streamId: "stream_1",
   personaId: "persona_ariadne",
   status: SessionStatuses.RUNNING,
@@ -209,13 +210,14 @@ describe("createEnclaveSessionHandlers.message", () => {
 
   it("writes the streamed sealed reply and 204s", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
-    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const findStream = spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const { handlers, createMessage } = makeHandlers()
     const res = fakeRes()
 
     await handlers.message(req("session_1", MESSAGE_BODY), res)
 
     expect(res.statusCode).toBe(204)
+    expect(findStream).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1")
     expect(createMessage).toHaveBeenCalledTimes(1)
     expect(createMessage.mock.calls[0]![0]).toMatchObject({
       id: "msg_a",

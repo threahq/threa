@@ -53,15 +53,16 @@ export function assertRefAccess(db: Querier, ref: ContextRef, userId: string, wo
 /** Materialize the ref's current messages + inputs manifest. */
 export function fetchRef(
   db: Querier,
+  workspaceId: string,
   ref: ContextRef,
   options?: ResolverFetchOptions
 ): Promise<Omit<ResolvedRef, "ref">> {
   switch (ref.kind) {
     case ContextRefKinds.THREAD:
-      return ThreadResolver.fetch(db, ref, options)
+      return ThreadResolver.fetch(db, workspaceId, ref, options)
     case ContextRefKinds.CONVERSATION:
-      return ConversationResolver.fetch(db, ref, options)
+      return ConversationResolver.fetch(db, workspaceId, ref, options)
     case ContextRefKinds.VIEWPORT:
-      return ViewportResolver.fetch(db, ref, options)
+      return ViewportResolver.fetch(db, workspaceId, ref, options)
   }
 }

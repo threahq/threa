@@ -71,44 +71,36 @@ export function createStalenessSweepWorker(
       })
       if (transitioned.length === 0) return 0
 
-      // Route each event by its conversation's own access root (INV-62).
-      // Streams are batch-fetched and delivery resolved once per distinct
-      // stream; the events land in one insertMany (INV-56) so the transaction
-      // holds the connection for two round-trips plus thread-parent lookups,
-      // not one insert per row.
-      const streamIds = [...new Set(transitioned.map((c) => c.streamId))]
-      const streams = await StreamRepository.findByIds(client, streamIds)
-      const streamById = new Map(streams.map((s) => [s.id, s]))
-      const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
-      for (const id of streamIds) {
-        deliveryByStreamId.set(id, await resolveConversationDelivery(client, streamById.get(id) ?? null))
-      }
-      // The sweep spans workspaces, and the settling read is workspace-scoped
-      // (INV-8), so it runs once per workspace present in the batch.
-      const settlingByConversation = new Map<string, string[]>()
-      const idsByWorkspace = new Map<string, string[]>()
+      // Route each event by its conversation's own access root (INV-62). The sweep
+      // spans workspaces and reads are workspace-scoped (INV-8), so each
+      // workspace's streams and settling are batch reads (INV-56), delivery is
+      // resolved once per distinct stream, and the events land in one insertMany.
+      const conversationsByWorkspace = new Map<string, typeof transitioned>()
       for (const conv of transitioned) {
-        const ids = idsByWorkspace.get(conv.workspaceId)
-        if (ids) ids.push(conv.id)
-        else idsByWorkspace.set(conv.workspaceId, [conv.id])
+        const group = conversationsByWorkspace.get(conv.workspaceId)
+        if (group) group.push(conv)
+        else conversationsByWorkspace.set(conv.workspaceId, [conv])
       }
-      for (const [wsId, ids] of idsByWorkspace) {
-        for (const [convId, messageIds] of await MessageConversationStateRepository.listSettlingByConversationIds(
-          client,
-          wsId,
-          ids
-        )) {
-          settlingByConversation.set(convId, messageIds)
+      const events = []
+      for (const [workspaceId, conversations] of conversationsByWorkspace) {
+        const streamIds = [...new Set(conversations.map((c) => c.streamId))]
+        const streams = await StreamRepository.findByIds(client, workspaceId, streamIds)
+        const streamById = new Map(streams.map((s) => [s.id, s]))
+        const deliveryByStreamId = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
+        for (const id of streamIds) {
+          deliveryByStreamId.set(id, await resolveConversationDelivery(client, streamById.get(id) ?? null))
         }
-      }
-      await OutboxRepository.insertMany(
-        client,
-        transitioned.map((conv) => {
+        const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
+          client,
+          workspaceId,
+          conversations.map((c) => c.id)
+        )
+        for (const conv of conversations) {
           const delivery = deliveryByStreamId.get(conv.streamId)
-          return {
+          events.push({
             eventType: "conversation:updated" as const,
             payload: {
-              workspaceId: conv.workspaceId,
+              workspaceId,
               streamId: conv.streamId,
               conversationId: conv.id,
               conversation: addStalenessFields(conv),
@@ -117,9 +109,10 @@ export function createStalenessSweepWorker(
               settlingMessageIds: settlingByConversation.get(conv.id) ?? [],
               origin: "staleness-sweep" as const,
             },
-          }
-        })
-      )
+          })
+        }
+      }
+      await OutboxRepository.insertMany(client, events)
       return transitioned.length
     })
 

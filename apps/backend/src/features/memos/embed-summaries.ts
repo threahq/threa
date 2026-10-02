@@ -56,7 +56,7 @@ export async function resolveMemoSummariesByStream(
   if (memoIdsByStreamId.size === 0) return result
 
   const streamIds = [...memoIdsByStreamId.keys()]
-  const streams = await StreamRepository.findByIdsInWorkspace(db, workspaceId, streamIds)
+  const streams = await StreamRepository.findByIds(db, workspaceId, streamIds)
   const rootByStreamId = new Map(streams.map((s) => [s.id, s.rootStreamId ?? s.id]))
 
   const idsByRoot = new Map<string, Set<string>>()

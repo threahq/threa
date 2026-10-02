@@ -22,6 +22,7 @@ const REPLY_ENVELOPE = { v: 2, keyGeneration: 3, iv: "aXY=", aad: "YWFk" }
 
 const session: AgentSession = {
   id: "binv_1",
+  workspaceId: "ws_1",
   streamId: "stream_thread",
   personaId: "bot_1",
   triggerMessageId: "msg_trigger",

@@ -7,7 +7,7 @@ import type { BotAccessRequestService } from "./service"
  * injected as a narrow interface so the handlers stay decoupled (INV-12).
  */
 export interface StreamMemberChecker {
-  isMember(streamId: string, memberId: string): Promise<boolean>
+  isMember(workspaceId: string, streamId: string, memberId: string): Promise<boolean>
 }
 
 interface Dependencies {
@@ -34,7 +34,7 @@ export function createBotAccessRequestHandlers({ botAccessRequestService, stream
     if (!request) {
       throw new HttpError("Bot access request not found", { status: 404, code: "BOT_ACCESS_REQUEST_NOT_FOUND" })
     }
-    if (!(await streamService.isMember(request.streamId, userId))) {
+    if (!(await streamService.isMember(workspaceId, request.streamId, userId))) {
       throw new HttpError("Bot access request not found", { status: 404, code: "BOT_ACCESS_REQUEST_NOT_FOUND" })
     }
     return { userId, workspaceId, id, streamId: request.streamId }

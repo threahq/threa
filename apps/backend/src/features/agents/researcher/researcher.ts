@@ -254,7 +254,7 @@ export class WorkspaceAgent {
 
     // Phase 1: Fetch all setup data with withClient (no transaction, fast reads ~100-200ms)
     const fetchedData = await withClient(pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) {
         return { stream: null, accessSpec: null, accessibleStreamIds: null }
       }

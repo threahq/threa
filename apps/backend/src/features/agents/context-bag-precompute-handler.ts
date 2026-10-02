@@ -92,8 +92,8 @@ export function createContextBagPrecomputeWorker(
     const { workspaceId, streamId, bagId } = job.data
     logger.info({ jobId: job.id, streamId, bagId }, "Processing context-bag precompute job")
 
-    const stream = await StreamRepository.findById(pool, streamId)
-    if (!stream || stream.workspaceId !== workspaceId) {
+    const stream = await StreamRepository.findById(pool, workspaceId, streamId)
+    if (!stream) {
       logger.warn({ streamId }, "context-bag precompute: stream missing, skipping")
       return
     }

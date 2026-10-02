@@ -106,7 +106,7 @@ describe("Agent Access Scope", () => {
       await StreamMemberRepository.insert(client, testWorkspaceId, ownerOutsiderDmId, ownerMember.id)
       await StreamMemberRepository.insert(client, testWorkspaceId, ownerOutsiderDmId, outsiderMember.id)
 
-      const sharedDm = await StreamRepository.findById(client, sharedDmId)
+      const sharedDm = await StreamRepository.findById(client, testWorkspaceId, sharedDmId)
       expect(sharedDm).not.toBeNull()
 
       const accessSpec = await computeAgentAccessSpec(client, {
@@ -416,7 +416,7 @@ describe("Agent Access Scope", () => {
         fullText: "artifact-permission-check appears in the owner-outsider DM attachment text",
       })
 
-      const sharedDm = await StreamRepository.findById(client, sharedDmId)
+      const sharedDm = await StreamRepository.findById(client, testWorkspaceId, sharedDmId)
       expect(sharedDm).not.toBeNull()
 
       const accessSpec = await computeAgentAccessSpec(client, {

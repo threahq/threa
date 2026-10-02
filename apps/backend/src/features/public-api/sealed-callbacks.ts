@@ -52,7 +52,7 @@ export async function authorizeSealedCallback(
   else if (opts.acceptFailedSession) assertSessionRunningOrFailed(session)
   else assertSessionRunning(session)
   verifyCallbackToken(session, params.callbackToken)
-  const stream = await StreamRepository.findById(pool, session.streamId)
+  const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
   if (!stream || stream.workspaceId !== params.workspaceId) {
     throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
   }

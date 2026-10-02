@@ -257,7 +257,7 @@ export class StreamConnectionService {
 
     const audiences = new Map<string, { visibility: Visibility; adminMemberUserIds: string[] }>()
     for (const [workspaceId, ids] of streamIdsByWorkspace) {
-      const streams = await StreamRepository.findByIdsInWorkspace(client, workspaceId, [...ids])
+      const streams = await StreamRepository.findByIds(client, workspaceId, [...ids])
       const privateIds = streams.filter((s) => s.visibility !== Visibilities.PUBLIC).map((s) => s.id)
       const members = privateIds.length > 0 ? await StreamMemberRepository.list(client, { streamIds: privateIds }) : []
       const users = await UserRepository.findByIds(client, workspaceId, [...new Set(members.map((m) => m.memberId))])

@@ -55,7 +55,7 @@ describe("thread archival chain", () => {
       rootStreamId: ids.A,
       createdBy,
     })
-    if (archived) await StreamRepository.update(pool, id, { archivedAt: new Date() })
+    if (archived) await StreamRepository.update(pool, workspace, id, { archivedAt: new Date() })
   }
 
   function archivedAtByIds() {

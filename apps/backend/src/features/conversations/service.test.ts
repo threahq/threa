@@ -129,7 +129,7 @@ describe("ConversationService.markRead/markUnread — conversation boundary", ()
     expect(applyUnread).not.toHaveBeenCalled()
   })
 
-  test("rejects a stale/corrupt member pointing at a foreign-stream before any sparse write", async () => {
+  test("should reject a member whose stream is not found in the workspace before any sparse write", async () => {
     spyOn(ConversationRepository, "findById").mockResolvedValue(
       fakeConversation({ messageIds: ["m1", "m2"], secondaryMessageIds: [] })
     )
@@ -140,17 +140,17 @@ describe("ConversationService.markRead/markUnread — conversation boundary", ()
       workspaceId: "ws_1",
     } as never)
     // m1 (the target) lives in the conversation's stream; m2 is a corrupt member
-    // whose stream sits in another workspace. m2 is earlier so the read cutoff
-    // (<= target.createdAt) includes it — its stream reaches the boundary guard.
+    // whose stream the workspace-scoped lookup doesn't return. m2 is earlier so
+    // the read cutoff (<= target.createdAt) includes it — its stream reaches the
+    // boundary guard.
     spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["m1", fakeMessage("m1", "stream_1", "2026-01-02T00:00:00.000Z")],
         ["m2", fakeMessage("m2", "stream_foreign", "2026-01-01T00:00:00.000Z")],
       ])
     )
-    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+    const findStreams = spyOn(StreamRepository, "findByIds").mockResolvedValue([
       { id: "stream_1", rootStreamId: null, workspaceId: "ws_1" } as never,
-      { id: "stream_foreign", rootStreamId: null, workspaceId: "ws_OTHER" } as never,
     ])
     const applyRead = spyOn(streamsModule, "applySparseRead").mockResolvedValue({} as never)
     const applyUnread = spyOn(streamsModule, "applySparseUnread").mockResolvedValue({} as never)
@@ -167,6 +167,7 @@ describe("ConversationService.markRead/markUnread — conversation boundary", ()
 
     expect(applyRead).not.toHaveBeenCalled()
     expect(applyUnread).not.toHaveBeenCalled()
+    expect(findStreams).toHaveBeenCalledWith(expect.anything(), "ws_1", ["stream_1", "stream_foreign"])
   })
 
   test("rejects a member stream that resolves to a different effective root (INV-62)", async () => {

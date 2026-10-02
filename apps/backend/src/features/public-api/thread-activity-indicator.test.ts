@@ -106,7 +106,7 @@ function arrangeClaim(params: { responseStream: typeof THREAD | typeof ROOT; ins
     actorHasGrant: false,
     externalSealedDelivery: false,
   })
-  spyOn(StreamRepository, "findById").mockImplementation((async (_db: unknown, id: string) =>
+  spyOn(StreamRepository, "findById").mockImplementation((async (_db: unknown, _workspaceId: string, id: string) =>
     id === THREAD.id ? THREAD : ROOT) as never)
   spyOn(MessageRepository, "findSurrounding").mockResolvedValue([] as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([] as never)

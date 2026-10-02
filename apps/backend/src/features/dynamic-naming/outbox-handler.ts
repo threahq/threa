@@ -194,8 +194,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     const payload = parseMessagePayload(event.payload)
     if (!payload || payload.event.actorType !== AuthorTypes.USER || !payload.event.actorId) return
 
-    const stream = await StreamRepository.findById(this.db, payload.streamId)
-    if (!stream || stream.workspaceId !== payload.workspaceId || stream.archivedAt) return
+    const stream = await StreamRepository.findById(this.db, payload.workspaceId, payload.streamId)
+    if (!stream || stream.archivedAt) return
     if (
       stream.type !== StreamTypes.SCRATCHPAD &&
       stream.type !== StreamTypes.THREAD &&
@@ -228,8 +228,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
   private async isEligibleConversation(workspaceId: string, conversationId: string): Promise<boolean> {
     const conversation = await ConversationRepository.findById(this.db, conversationId)
     if (!conversation || conversation.workspaceId !== workspaceId) return false
-    const stream = await StreamRepository.findById(this.db, conversation.streamId)
-    if (!stream || stream.workspaceId !== workspaceId) return false
+    const stream = await StreamRepository.findById(this.db, workspaceId, conversation.streamId)
+    if (!stream) return false
     if (stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return false
     if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, conversation.streamId)) return false
     const source = conversation.topicSummarySource ?? (conversation.topicSummary ? TitleSources.LEGACY : null)

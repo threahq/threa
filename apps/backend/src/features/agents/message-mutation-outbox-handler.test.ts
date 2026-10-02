@@ -27,6 +27,7 @@ function mockCursorLock(onRun?: (result: ProcessResult) => void) {
 function makeSession(overrides: Partial<AgentSession> = {}): AgentSession {
   return {
     id: "session_persona",
+    workspaceId: "ws_1",
     streamId: "stream_1",
     personaId: "persona_1",
     triggerMessageId: "msg_trigger",
@@ -113,6 +114,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_old",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -140,6 +142,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({
       id: "session_old",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -222,6 +225,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_old",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -292,6 +296,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_old",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -361,6 +366,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_old",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -438,6 +444,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_failed",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -465,6 +472,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({
       id: "session_failed",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -546,6 +554,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_old",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -606,6 +615,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
       id: "session_newest",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",
@@ -667,6 +677,7 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue({
       id: "session_latest",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_latest",
@@ -694,6 +705,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({
       id: "session_latest",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_latest",
@@ -777,6 +789,7 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue({
       id: "session_latest",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_latest",
@@ -838,6 +851,7 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue({
       id: "session_legacy",
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_latest",
@@ -1162,6 +1176,7 @@ describe("AgentMessageMutationHandler", () => {
     spyOn(AgentSessionRepository, "listByTriggerMessage").mockResolvedValue([
       {
         id: "session_1",
+        workspaceId: "ws_1",
         streamId: "stream_thread_1",
         personaId: "persona_1",
         triggerMessageId: "msg_invoke_1",
@@ -1188,6 +1203,7 @@ describe("AgentMessageMutationHandler", () => {
       },
       {
         id: "session_2",
+        workspaceId: "ws_1",
         streamId: "stream_thread_1",
         personaId: "persona_1",
         triggerMessageId: "msg_invoke_1",
@@ -1216,6 +1232,7 @@ describe("AgentMessageMutationHandler", () => {
 
     spyOn(AgentSessionRepository, "updateStatus").mockImplementation(async (_db, id) => ({
       id,
+      workspaceId: "ws_1",
       streamId: "stream_thread_1",
       personaId: "persona_1",
       triggerMessageId: "msg_invoke_1",

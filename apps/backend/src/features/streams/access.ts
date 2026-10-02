@@ -13,6 +13,7 @@ import { StreamMemberRepository } from "./member-repository"
  */
 export interface AccessResolvable {
   id: string
+  workspaceId: string
   rootStreamId: string | null
 }
 
@@ -38,7 +39,7 @@ export async function resolveEffectiveAccessStream<T extends AccessResolvable>(
   stream: T
 ): Promise<T | Stream> {
   if (!stream.rootStreamId) return stream
-  const root = await StreamRepository.findById(db, stream.rootStreamId)
+  const root = await StreamRepository.findById(db, stream.workspaceId, stream.rootStreamId)
   return root ?? stream
 }
 
@@ -47,14 +48,14 @@ export interface EffectiveAccessStreamFact<T extends AccessResolvable> {
   root: Stream
 }
 
-export async function resolveEffectiveAccessStreams<T extends AccessResolvable & { workspaceId: string }>(
+export async function resolveEffectiveAccessStreams<T extends AccessResolvable>(
   db: Querier,
   workspaceId: string,
   streams: readonly T[]
 ): Promise<EffectiveAccessStreamFact<T>[]> {
   if (streams.length === 0) return []
   const rootIds = [...new Set(streams.map((stream) => stream.rootStreamId ?? stream.id))]
-  const roots = await StreamRepository.findByIdsInWorkspace(db, workspaceId, rootIds)
+  const roots = await StreamRepository.findByIds(db, workspaceId, rootIds)
   const rootsById = new Map(roots.map((root) => [root.id, root]))
 
   return streams.flatMap((target) => {
@@ -97,8 +98,8 @@ export async function checkStreamAccess(
   workspaceId: string,
   userId: string
 ): Promise<Stream | null> {
-  const stream = await StreamRepository.findById(db, streamId)
-  if (!stream || stream.workspaceId !== workspaceId) return null
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
+  if (!stream) return null
 
   const effective = await resolveEffectiveAccessStream(db, stream)
   // A thread whose root is missing collapses back to the thread itself —
