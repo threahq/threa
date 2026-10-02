@@ -505,7 +505,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
         const personaIds = [...new Set(messages.filter((m) => m.authorType === "persona").map((m) => m.authorId))]
         const [members, personas] = await Promise.all([
           userIds.length > 0 ? UserRepository.findByIds(db, workspaceId, userIds) : Promise.resolve([]),
-          personaIds.length > 0 ? PersonaRepository.findByIds(db, personaIds, workspaceId) : Promise.resolve([]),
+          personaIds.length > 0 ? PersonaRepository.findByIds(db, workspaceId, personaIds) : Promise.resolve([]),
         ])
 
         const memberMap = new Map(members.map((m) => [m.id, m.name]))

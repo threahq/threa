@@ -22,6 +22,7 @@ const SETTINGS_EFFECTS: AgentToolEffect[] = [
 ]
 
 describe("agent step effects", () => {
+  const testWorkspaceId = workspaceId()
   let pool: Pool
 
   beforeAll(async () => {
@@ -40,7 +41,7 @@ describe("agent step effects", () => {
   async function seedSession(client: Parameters<typeof AgentSessionRepository.insert>[0], id: string) {
     await AgentSessionRepository.insert(client, {
       id,
-      workspaceId: workspaceId(),
+      workspaceId: testWorkspaceId,
       streamId: streamId(),
       personaId: personaId(),
       triggerMessageId: messageId(),
@@ -54,7 +55,7 @@ describe("agent step effects", () => {
 
     await withClient(pool, async (client) => {
       await seedSession(client, testSessionId)
-      await AgentSessionRepository.upsertStep(client, {
+      await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
         id: testStepId,
         sessionId: testSessionId,
         stepNumber: 1,
@@ -62,12 +63,14 @@ describe("agent step effects", () => {
         startedAt: new Date("2026-07-28T09:00:00Z"),
       })
 
-      const patched = await AgentSessionRepository.updateStep(client, testStepId, { effects: SETTINGS_EFFECTS })
+      const patched = await AgentSessionRepository.updateStep(client, testWorkspaceId, testStepId, {
+        effects: SETTINGS_EFFECTS,
+      })
       expect(patched!.effects).toEqual(SETTINGS_EFFECTS)
 
       // Read back through a fresh SELECT, not the RETURNING row — the column has
       // to be in STEP_SELECT_FIELDS or the value exists but never loads.
-      const [reloaded] = await AgentSessionRepository.findStepsBySession(client, testSessionId)
+      const [reloaded] = await AgentSessionRepository.findStepsBySession(client, testWorkspaceId, testSessionId)
       expect(reloaded!.effects).toEqual(SETTINGS_EFFECTS)
     })
   })
@@ -77,7 +80,7 @@ describe("agent step effects", () => {
 
     await withClient(pool, async (client) => {
       await seedSession(client, testSessionId)
-      await AgentSessionRepository.upsertStep(client, {
+      await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
         id: stepId(),
         sessionId: testSessionId,
         stepNumber: 1,
@@ -85,7 +88,7 @@ describe("agent step effects", () => {
         startedAt: new Date(),
       })
 
-      const [step] = await AgentSessionRepository.findStepsBySession(client, testSessionId)
+      const [step] = await AgentSessionRepository.findStepsBySession(client, testWorkspaceId, testSessionId)
       expect(step!.effects).toBeUndefined()
     })
   })
@@ -99,16 +102,16 @@ describe("agent step effects", () => {
 
     await withClient(pool, async (client) => {
       await seedSession(client, testSessionId)
-      await AgentSessionRepository.upsertStep(client, {
+      await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
         id: testStepId,
         sessionId: testSessionId,
         stepNumber: 1,
         stepType: AgentStepTypes.TOOL_CALL,
         startedAt: new Date("2026-07-28T09:00:00Z"),
       })
-      await AgentSessionRepository.updateStep(client, testStepId, { effects: SETTINGS_EFFECTS })
+      await AgentSessionRepository.updateStep(client, testWorkspaceId, testStepId, { effects: SETTINGS_EFFECTS })
 
-      const retried = await AgentSessionRepository.upsertStep(client, {
+      const retried = await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
         id: stepId(),
         sessionId: testSessionId,
         stepNumber: 1,
@@ -126,16 +129,18 @@ describe("agent step effects", () => {
 
     await withClient(pool, async (client) => {
       await seedSession(client, testSessionId)
-      await AgentSessionRepository.upsertStep(client, {
+      await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
         id: testStepId,
         sessionId: testSessionId,
         stepNumber: 1,
         stepType: AgentStepTypes.TOOL_CALL,
         startedAt: new Date(),
       })
-      await AgentSessionRepository.updateStep(client, testStepId, { effects: SETTINGS_EFFECTS })
+      await AgentSessionRepository.updateStep(client, testWorkspaceId, testStepId, { effects: SETTINGS_EFFECTS })
 
-      const completed = await AgentSessionRepository.updateStep(client, testStepId, { completedAt: new Date() })
+      const completed = await AgentSessionRepository.updateStep(client, testWorkspaceId, testStepId, {
+        completedAt: new Date(),
+      })
       expect(completed!.effects).toEqual(SETTINGS_EFFECTS)
     })
   })
@@ -155,25 +160,25 @@ describe("agent step effects", () => {
       const testSessionId = sessionId()
       const testStepId = stepId()
       await seedSession(pool, testSessionId)
-      await AgentSessionRepository.upsertStep(pool, {
+      await AgentSessionRepository.upsertStep(pool, testWorkspaceId, {
         id: testStepId,
         sessionId: testSessionId,
         stepNumber: 1,
         stepType: AgentStepTypes.TOOL_CALL,
         startedAt: new Date("2026-07-28T09:00:00Z"),
       })
-      await AgentSessionRepository.updateStep(pool, testStepId, {
+      await AgentSessionRepository.updateStep(pool, testWorkspaceId, testStepId, {
         content: "done",
         effects: SETTINGS_EFFECTS,
         completedAt: new Date("2026-07-28T09:00:02Z"),
       })
-      const [step] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
+      const [step] = await AgentSessionRepository.findStepsBySession(pool, testWorkspaceId, testSessionId)
       return { sessionId: testSessionId, stepId: testStepId, step: step! }
     }
 
     test("getSession serializes them", async () => {
       const { sessionId: seededSessionId, step } = await seedStepWithEffects()
-      spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      const findSession = spyOn(AgentSessionRepository, "findById").mockResolvedValue({
         id: seededSessionId,
         streamId: "thread_1",
         personaId: "persona_1",
@@ -196,7 +201,7 @@ describe("agent step effects", () => {
       spyOn(StreamEventRepository, "listRerunContextBySessionIds").mockResolvedValue(new Map())
       spyOn(streamsModule, "checkStreamAccess").mockResolvedValue({
         id: "thread_1",
-        workspaceId: "ws_1",
+        workspaceId: testWorkspaceId,
         rootStreamId: "stream_1",
       } as never)
 
@@ -213,10 +218,11 @@ describe("agent step effects", () => {
         },
       }
       await createAgentSessionHandlers({ pool }).getSession(
-        { user: { id: "usr_viewer" }, workspaceId: "ws_1", params: { sessionId: seededSessionId } } as never,
+        { user: { id: "usr_viewer" }, workspaceId: testWorkspaceId, params: { sessionId: seededSessionId } } as never,
         res as never
       )
 
+      expect(findSession).toHaveBeenCalledWith(pool, testWorkspaceId, seededSessionId)
       const [serialized] = (res.body as { steps: unknown[] }).steps
       expect(serialized).toEqual({
         id: step.id,
@@ -273,17 +279,17 @@ describe("agent step effects", () => {
 
       const trace = new TraceEmitter({ io, pool }).forSession({
         sessionId: testSessionId,
-        workspaceId: "ws_1",
+        workspaceId: testWorkspaceId,
         streamId: "stream_1",
         triggerMessageId: "msg_1",
         personaName: "Ariadne",
       })
       const active = await trace.startStep({ stepType: AgentStepTypes.TOOL_CALL })
-      const [started] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
-      await AgentSessionRepository.updateStep(pool, started!.id, { effects: SETTINGS_EFFECTS })
+      const [started] = await AgentSessionRepository.findStepsBySession(pool, testWorkspaceId, testSessionId)
+      await AgentSessionRepository.updateStep(pool, testWorkspaceId, started!.id, { effects: SETTINGS_EFFECTS })
       await active.complete({ content: "done" })
 
-      const [reloaded] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
+      const [reloaded] = await AgentSessionRepository.findStepsBySession(pool, testWorkspaceId, testSessionId)
       const completed = emits.find((e) => e.event === "agent_session:step:completed")
       expect(completed?.payload).toEqual({
         sessionId: testSessionId,
@@ -318,7 +324,7 @@ describe("agent step effects", () => {
 
       const trace = new TraceEmitter({ io, pool }).forSession({
         sessionId: testSessionId,
-        workspaceId: "ws_1",
+        workspaceId: testWorkspaceId,
         streamId: "stream_1",
         triggerMessageId: "msg_1",
         personaName: "Ariadne",
@@ -342,7 +348,7 @@ describe("agent step effects", () => {
         trace: { stepType: AgentStepTypes.TOOL_CALL, content: "done", effects: SETTINGS_EFFECTS },
       })
 
-      const [persisted] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
+      const [persisted] = await AgentSessionRepository.findStepsBySession(pool, testWorkspaceId, testSessionId)
       expect(persisted!.effects).toEqual(SETTINGS_EFFECTS)
 
       const completed = emits.find((e) => e.event === "agent_session:step:completed")
@@ -356,7 +362,7 @@ describe("agent step effects", () => {
       const io = { to: () => io, emit: () => {} } as unknown as Server
       const trace = new TraceEmitter({ io, pool }).forSession({
         sessionId: testSessionId,
-        workspaceId: "ws_1",
+        workspaceId: testWorkspaceId,
         streamId: "stream_1",
         triggerMessageId: "msg_1",
         personaName: "Ariadne",
@@ -378,7 +384,7 @@ describe("agent step effects", () => {
         durationMs: 10,
       })
 
-      const [persisted] = await AgentSessionRepository.findStepsBySession(pool, testSessionId)
+      const [persisted] = await AgentSessionRepository.findStepsBySession(pool, testWorkspaceId, testSessionId)
       expect(persisted!.effects).toBeUndefined()
     })
   })

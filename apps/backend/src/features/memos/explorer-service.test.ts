@@ -219,13 +219,19 @@ describe("MemoExplorerService.getById — agent provenance (roadmap 6.6)", () =>
     spyOn(MemoRepository, "findById").mockResolvedValue(
       fakeMemo({ authoredByKind: "agent", sourceSessionId: "agsess_1" })
     )
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ personaId: "persona_1" } as never)
-    spyOn(PersonaRepository, "findByIds").mockResolvedValue([{ id: "persona_1", name: "Ariadne" }] as never)
+    const sessionLookup = spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      personaId: "persona_1",
+    } as never)
+    const personaLookup = spyOn(PersonaRepository, "findByIds").mockResolvedValue([
+      { id: "persona_1", name: "Ariadne" },
+    ] as never)
 
     const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
 
     expect(result?.memo.authoredByKind).toBe("agent")
     expect(result?.capturedByPersonaName).toBe("Ariadne")
+    expect(sessionLookup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "agsess_1")
+    expect(personaLookup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, ["persona_1"])
   })
 
   it("skips the session lookup entirely for a pipeline-authored memo", async () => {

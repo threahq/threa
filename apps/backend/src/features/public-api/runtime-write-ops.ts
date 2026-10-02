@@ -275,7 +275,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         throw error
       }
     })
-    await AgentSessionRepository.updateHeartbeat(pool, params.invocationId)
+    await AgentSessionRepository.updateHeartbeat(pool, params.workspaceId, params.invocationId)
     return result
   }
 
@@ -316,7 +316,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         errorMessage: terminalError,
       })
       if (!failedClaim) return null
-      const session = await AgentSessionRepository.findById(tx, claim.id)
+      const session = await AgentSessionRepository.findById(tx, params.workspaceId, claim.id)
       if (!session || session.status !== SessionStatuses.RUNNING) return null
       const stream = await StreamRepository.findById(tx, session.workspaceId, session.streamId)
       const won = await failSessionWithLifecycleInTransaction(tx, session, stream, terminalError)
@@ -355,7 +355,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         }
         // A claim can lack an agent_sessions row two ways: session-control never
         // inserts one, or a second claim on a stream with a RUNNING session skips it.
-        const session = await AgentSessionRepository.findById(tx, params.invocationId)
+        const session = await AgentSessionRepository.findById(tx, params.workspaceId, params.invocationId)
         if (!session || session.streamId !== snapshot.responseStreamId) {
           throw new HttpError("Invocation has no agent session; steps are not recorded", {
             status: 409,
@@ -497,7 +497,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
         // long chatty turn is never falsely orphan-failed. No presence touch: the
         // header-auth model carries no instanceId to key a presence row by, and the
         // harness's own presence loop covers it.
-        await AgentSessionRepository.updateHeartbeat(tx, ctx.session.id)
+        await AgentSessionRepository.updateHeartbeat(tx, params.workspaceId, ctx.session.id)
         return { invocationId: ctx.session.id, sessionId: ctx.session.id, steps: recorded }
       })
     } catch (error) {

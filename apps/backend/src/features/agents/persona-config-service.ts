@@ -1037,7 +1037,7 @@ export class PersonaConfigService {
     // workspace-scoped and returns personal rows unconditionally (it serves
     // dispatch), so filter another user's personal persona out here — it must
     // 404 as a source, never leak its config (user-scoped-personas).
-    const source = await PersonaRepository.findById(this.pool, sourcePersonaId, workspaceId)
+    const source = await PersonaRepository.findById(this.pool, workspaceId, sourcePersonaId)
     if (!source || (source.managedBy === "user" && source.ownerUserId !== caller.userId)) {
       throw new HttpError("Source persona not found", { status: 404, code: "PERSONA_SOURCE_NOT_FOUND" })
     }

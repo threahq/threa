@@ -197,7 +197,6 @@ export type {
 } from "./session-repository"
 
 export { StreamPersonaParticipantRepository } from "./stream-persona-participant-repository"
-export type { StreamPersonaParticipant } from "./stream-persona-participant-repository"
 
 export { ConversationSummaryRepository } from "./conversation-summary-repository"
 export type {

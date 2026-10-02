@@ -42,7 +42,8 @@ describe("failSessionWithLifecycle", () => {
 
     expect(won).toBe(true)
     // Conditional transition: never clobbers a session that already left RUNNING.
-    expect(update.mock.calls[0]![3]).toMatchObject({ error: ERROR, onlyIfStatus: SessionStatuses.RUNNING })
+    expect(update.mock.calls[0]!.slice(1, 4)).toEqual(["ws_1", "session_1", SessionStatuses.FAILED])
+    expect(update.mock.calls[0]![4]).toMatchObject({ error: ERROR, onlyIfStatus: SessionStatuses.RUNNING })
     // The lifecycle event is what unblocks the inline indicator + keeps refresh consistent.
     expect(insertEvent.mock.calls[0]![1]).toMatchObject({
       streamId: "stream_1",

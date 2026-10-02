@@ -111,7 +111,11 @@ export async function resolveContextWindowPolicy(
     return { episode: { kind: "stream" }, maxMessages, maxChars, carryDigests: true }
   }
 
-  const priorSession = await AgentSessionRepository.findLatestCompletedByStream(db, params.stream.id)
+  const priorSession = await AgentSessionRepository.findLatestCompletedByStream(
+    db,
+    params.stream.workspaceId,
+    params.stream.id
+  )
 
   // No prior completed session → there are no digests to carry; start fresh.
   if (!priorSession || priorSession.lastSeenSequence === null) {

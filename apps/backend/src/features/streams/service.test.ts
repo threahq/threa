@@ -2582,6 +2582,7 @@ describe("StreamService.updateCompanionMode persona validation", () => {
         code: "PERSONA_NOT_AVAILABLE",
       }
     )
+    expect(mockPersonaFindById).toHaveBeenCalledWith(expect.anything(), "ws_1", "persona_gone")
     expect(mockUpdate).not.toHaveBeenCalled()
   })
 
@@ -2597,7 +2598,7 @@ describe("StreamService.updateCompanionMode persona validation", () => {
     mockPersonaFindById.mockResolvedValue({ id: "persona_x", status: "active" } as never)
     await service.updateCompanionMode("stream_1", "ws_1", "on", "persona_x", "user_1")
     expect(mockUpdate).toHaveBeenCalled()
-    expect(mockPersonaFindById).toHaveBeenCalledWith(expect.anything(), "persona_x", "ws_1")
+    expect(mockPersonaFindById).toHaveBeenCalledWith(expect.anything(), "ws_1", "persona_x")
   })
 
   test("clearing (null) skips persona validation", async () => {

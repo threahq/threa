@@ -87,7 +87,7 @@ describe("listRunningByWorkspace anchors", () => {
       status: SessionStatuses.RUNNING,
       serverId: "test-server",
     })
-    await AgentSessionRepository.updateCurrentStepType(pool, threadSession, AgentStepTypes.THINKING)
+    await AgentSessionRepository.updateCurrentStepType(pool, workspace, threadSession, AgentStepTypes.THINKING)
   })
 
   afterAll(async () => {

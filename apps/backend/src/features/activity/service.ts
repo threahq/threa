@@ -625,7 +625,7 @@ export class ActivityService {
         return { authorName: bot?.name ?? null, authorAvatarUrl: getBotAvatarUrl(workspaceId, bot?.avatarUrl, 64) }
       }
       case AuthorTypes.PERSONA: {
-        const persona = await PersonaRepository.findById(client, actorId, workspaceId)
+        const persona = await PersonaRepository.findById(client, workspaceId, actorId)
         // Ariadne ships without an uploaded avatar; the app draws her SVG, the OS
         // notification needs a real image, so the hosted PNG stands in.
         const uploaded = getPersonaAvatarUrl(workspaceId, persona?.avatarUrl, 64)

@@ -187,7 +187,7 @@ async function runSupersedeRerun(params: {
   spyOn(dbModule, "withClient").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback: any) => callback(emptyDb))
 
-  spyOn(PersonaRepository, "findById").mockResolvedValue({ ...persona, ...params.personaOverride })
+  const findPersona = spyOn(PersonaRepository, "findById").mockResolvedValue({ ...persona, ...params.personaOverride })
   if (params.triggerAuthorUserId) {
     spyOn(MessageRepository, "findById").mockResolvedValue(
       makeTriggerMessage(params.triggerAuthorUserId) as unknown as never
@@ -208,7 +208,7 @@ async function runSupersedeRerun(params: {
 
   spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
   spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(runningSession)
-  spyOn(AgentSessionRepository, "findById").mockImplementation(async (_db, id: string) =>
+  spyOn(AgentSessionRepository, "findById").mockImplementation(async (_db, _workspaceId: string, id: string) =>
     id === SUPERSEDED_SESSION_ID ? supersededSession : runningSession
   )
   spyOn(AgentSessionRepository, "updateContextMessageIds").mockResolvedValue(undefined as any)
@@ -216,7 +216,7 @@ async function runSupersedeRerun(params: {
     makeSession({ status: SessionStatuses.COMPLETED, completedAt: new Date() })
   )
   const upsertStep = spyOn(AgentSessionRepository, "upsertStep").mockImplementation(
-    async (_db, input: any) =>
+    async (_db, _workspaceId: string, input: any) =>
       ({
         id: input.id,
         sessionId: input.sessionId,
@@ -348,7 +348,7 @@ async function runSupersedeRerun(params: {
       } as const),
   })
 
-  const escalationSteps = upsertStep.mock.calls.filter(([, input]: any[]) => input.stepType === "model_escalated")
+  const escalationSteps = upsertStep.mock.calls.filter(([, , input]: any[]) => input.stepType === "model_escalated")
   return {
     result,
     researchInputs,
@@ -365,6 +365,7 @@ async function runSupersedeRerun(params: {
     updateStatus,
     assertInitiatorWritable,
     getCurrentRevision,
+    findPersona,
   }
 }
 
@@ -578,18 +579,25 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
   })
 
   it("runs the escalation model when the superseded attempt failed response validation", async () => {
-    const { result, capturedModelStrings, escalationSteps, markResponseValidationFailed, getCurrentRevision } =
-      await runSupersedeRerun({
-        supersededFailedValidation: true,
-      })
+    const {
+      result,
+      capturedModelStrings,
+      escalationSteps,
+      markResponseValidationFailed,
+      getCurrentRevision,
+      findPersona,
+    } = await runSupersedeRerun({
+      supersededFailedValidation: true,
+    })
 
     expect(result.status).toBe("completed")
+    expect(findPersona).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, PERSONA_ID)
     expect(getCurrentRevision).toHaveBeenCalledWith(emptyDb, WORKSPACE_ID, TRIGGER_MESSAGE_ID)
     expect(result.messagesSent).toBe(1)
     expect(capturedModelStrings).toEqual([OPUS])
     // The escalation is visible in the trace with its provenance.
     expect(escalationSteps).toHaveLength(1)
-    expect(JSON.parse((escalationSteps[0][1] as { content: string }).content)).toEqual({
+    expect(JSON.parse((escalationSteps[0][2] as { content: string }).content)).toEqual({
       fromModel: SONNET,
       toModel: OPUS,
       cause: "previous_attempt_failed_validation",
@@ -670,9 +678,15 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
 
     expect(createThread).toHaveBeenCalledTimes(1)
     expect(updateStatus).toHaveBeenCalledTimes(1)
-    expect(updateStatus).toHaveBeenCalledWith(expect.anything(), RUNNING_SESSION_ID, SessionStatuses.FAILED, {
-      error: "HttpError: read only",
-    })
+    expect(updateStatus).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      RUNNING_SESSION_ID,
+      SessionStatuses.FAILED,
+      {
+        error: "HttpError: read only",
+      }
+    )
     expect(result).toMatchObject({ status: "failed", retryable: false, messagesSent: 0, sentMessageIds: [] })
     expect(capturedModelStrings).toEqual([])
     expect(createMessage).not.toHaveBeenCalled()

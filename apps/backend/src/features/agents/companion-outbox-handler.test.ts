@@ -151,13 +151,15 @@ describe("CompanionHandler", () => {
       if (id === "stream_scratchpad_root") return rootScratchpad
       return null
     })
-    spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
-    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const personaLookup = spyOn(PersonaRepository, "findById").mockResolvedValue(activePersona)
+    const sessionLookup = spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
     const { handler, jobQueue } = createHandler()
     handler.handle()
     await waitForDebounce()
 
+    expect(personaLookup).toHaveBeenCalledWith(expect.anything(), "ws_1", "persona_scratchpad")
+    expect(sessionLookup).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_thread_nested")
     expect(jobQueue.send).toHaveBeenCalledWith("persona.agent", {
       workspaceId: "ws_1",
       streamId: "stream_thread_nested",
@@ -456,7 +458,10 @@ describe("CompanionHandler", () => {
       personaId: "persona_delegated",
       status: "active",
     } as any)
-    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_delegated", status: "active" } as any)
+    const personaLookup = spyOn(PersonaRepository, "findById").mockResolvedValue({
+      id: "persona_delegated",
+      status: "active",
+    } as any)
     spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
 
     const { handler, jobQueue } = createHandler()
@@ -470,6 +475,7 @@ describe("CompanionHandler", () => {
       personaId: "persona_delegated",
       triggeredBy: "usr_author",
     })
+    expect(personaLookup).toHaveBeenCalledWith(expect.anything(), "ws_1", "persona_delegated")
   })
 
   it("stops waking a subagent thread once the run is terminal", async () => {

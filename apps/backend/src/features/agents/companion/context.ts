@@ -303,6 +303,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // past. Single pooled read (INV-30); the in-flight session has no summary yet
   // so it's excluded by construction.
   const previousSessionsBlock = await loadEpisodeSummaryPromptBlock(db, {
+    workspaceId,
     streamId: stream.id,
     personaId: persona.id,
     accessibleStreamIds,
@@ -525,6 +526,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // (`policy.carryDigests` is true for them).
   const turnDigestBlock = policy.carryDigests
     ? await loadTurnDigestPromptBlock(db, {
+        workspaceId,
         streamId: stream.id,
         personaId: persona.id,
         accessibleStreamIds,

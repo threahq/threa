@@ -448,11 +448,11 @@ export class MemoExplorerService {
     if (memo.authoredByKind !== "agent" || !memo.sourceSessionId) {
       return null
     }
-    const session = await AgentSessionRepository.findById(this.pool, memo.sourceSessionId)
+    const session = await AgentSessionRepository.findById(this.pool, workspaceId, memo.sourceSessionId)
     if (!session) {
       return null
     }
-    const [persona] = await PersonaRepository.findByIds(this.pool, [session.personaId], workspaceId)
+    const [persona] = await PersonaRepository.findByIds(this.pool, workspaceId, [session.personaId])
     return persona?.name ?? null
   }
 
@@ -530,7 +530,7 @@ export class MemoExplorerService {
 
     const [members, personas, streams] = await Promise.all([
       userIds.size > 0 ? UserRepository.findByIds(this.pool, workspaceId, [...userIds]) : Promise.resolve([]),
-      personaIds.size > 0 ? PersonaRepository.findByIds(this.pool, [...personaIds], workspaceId) : Promise.resolve([]),
+      personaIds.size > 0 ? PersonaRepository.findByIds(this.pool, workspaceId, [...personaIds]) : Promise.resolve([]),
       StreamRepository.findByIds(this.pool, workspaceId, [...streamIds]),
     ])
 

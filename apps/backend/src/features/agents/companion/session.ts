@@ -93,7 +93,7 @@ export async function withCompanionSession(
 
   // Phase 1: Session setup (short-lived transaction)
   const setupResult = await withTransaction(pool, async (db) => {
-    const existingSession = await AgentSessionRepository.findByTriggerMessage(db, triggerMessageId)
+    const existingSession = await AgentSessionRepository.findByTriggerMessage(db, workspaceId, triggerMessageId)
 
     if (existingSession) {
       if (existingSession.status === SessionStatuses.COMPLETED) {
@@ -106,10 +106,16 @@ export async function withCompanionSession(
         existingSession.status === SessionStatuses.PENDING ||
         existingSession.status === SessionStatuses.FAILED
       ) {
-        const session = await AgentSessionRepository.updateStatus(db, existingSession.id, SessionStatuses.RUNNING, {
-          serverId,
-          onlyIfStatusIn: [SessionStatuses.RUNNING, SessionStatuses.PENDING, SessionStatuses.FAILED],
-        })
+        const session = await AgentSessionRepository.updateStatus(
+          db,
+          workspaceId,
+          existingSession.id,
+          SessionStatuses.RUNNING,
+          {
+            serverId,
+            onlyIfStatusIn: [SessionStatuses.RUNNING, SessionStatuses.PENDING, SessionStatuses.FAILED],
+          }
+        )
         if (!session) {
           return { status: "skipped" as const, sessionId: null, reason: "failed to resume session" }
         }
@@ -172,7 +178,7 @@ export async function withCompanionSession(
   try {
     heartbeatInterval = setInterval(async () => {
       try {
-        await AgentSessionRepository.updateHeartbeat(pool, session.id)
+        await AgentSessionRepository.updateHeartbeat(pool, workspaceId, session.id)
       } catch (err) {
         logger.warn({ err, sessionId: session.id }, "Heartbeat update failed")
       }
@@ -184,7 +190,7 @@ export async function withCompanionSession(
     let completionCommitted = false
     try {
       await withTransaction(pool, async (db) => {
-        const completed = await AgentSessionRepository.completeSession(db, session.id, {
+        const completed = await AgentSessionRepository.completeSession(db, workspaceId, session.id, {
           lastSeenSequence,
           responseMessageId: sentMessageIds[0] ?? null,
           sentMessageIds,
@@ -195,7 +201,7 @@ export async function withCompanionSession(
           return
         }
 
-        const steps = await AgentSessionRepository.findStepsBySession(db, session.id)
+        const steps = await AgentSessionRepository.findStepsBySession(db, workspaceId, session.id)
         const completedAt = completed.completedAt ?? new Date()
         const duration = completedAt.getTime() - session.createdAt.getTime()
 
@@ -230,7 +236,7 @@ export async function withCompanionSession(
     }
 
     if (!completionCommitted) {
-      const latestSession = await AgentSessionRepository.findById(pool, session.id)
+      const latestSession = await AgentSessionRepository.findById(pool, workspaceId, session.id)
       if (latestSession?.status === SessionStatuses.DELETED || latestSession?.status === SessionStatuses.SUPERSEDED) {
         return {
           status: "skipped" as const,
@@ -258,7 +264,7 @@ export async function withCompanionSession(
   } catch (err) {
     logger.error({ err, sessionId: session.id }, "Session failed")
 
-    const latestSession = await AgentSessionRepository.findById(pool, session.id)
+    const latestSession = await AgentSessionRepository.findById(pool, workspaceId, session.id)
     if (latestSession?.status === SessionStatuses.DELETED || latestSession?.status === SessionStatuses.SUPERSEDED) {
       return {
         status: "skipped" as const,
@@ -289,11 +295,11 @@ export async function withCompanionSession(
     const willRetry = retryable && attempt !== undefined && maxAttempts !== undefined && attempt + 1 < maxAttempts
 
     await withTransaction(pool, async (db) => {
-      const failed = await AgentSessionRepository.updateStatus(db, session.id, SessionStatuses.FAILED, {
+      const failed = await AgentSessionRepository.updateStatus(db, workspaceId, session.id, SessionStatuses.FAILED, {
         error: String(err),
       })
       if (failed) {
-        const steps = await AgentSessionRepository.findStepsBySession(db, session.id)
+        const steps = await AgentSessionRepository.findStepsBySession(db, workspaceId, session.id)
 
         if (willRetry) {
           const streamEvent = await StreamEventRepository.insert(db, {

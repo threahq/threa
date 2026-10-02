@@ -137,7 +137,7 @@ describe("MessageFormatter", () => {
 
     // Verify batch efficiency: only 1 call per author type despite 3 messages
     expect(mockFindUsersByIds).toHaveBeenCalledWith(mockClient, "ws_test", ["usr_123"])
-    expect(mockFindPersonasByIds).toHaveBeenCalledWith(mockClient, ["persona_456"], "ws_test")
+    expect(mockFindPersonasByIds).toHaveBeenCalledWith(mockClient, "ws_test", ["persona_456"])
 
     expect(result).toBe(
       "<messages>\n" +

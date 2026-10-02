@@ -84,13 +84,15 @@ const SELECT_FIELDS = `
 export const ConversationSummaryRepository = {
   async findByStreamAndPersona(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     personaId: string
   ): Promise<AgentConversationSummary | null> {
     const result = await db.query<ConversationSummaryRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)}
       FROM agent_conversation_summaries
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND persona_id = ${personaId}
       LIMIT 1
     `)

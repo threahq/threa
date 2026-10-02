@@ -38,7 +38,7 @@ describe("resolveDefaultPersona", () => {
     const result = await resolveDefaultPersona(db, WORKSPACE_ID, OWNER_ID)
 
     expect(result).toEqual(persona("persona_user"))
-    expect(findById).toHaveBeenCalledWith(db, "persona_user", WORKSPACE_ID)
+    expect(findById).toHaveBeenCalledWith(db, WORKSPACE_ID, "persona_user")
     expect(systemDefault).not.toHaveBeenCalled()
   })
 
@@ -55,7 +55,7 @@ describe("resolveDefaultPersona", () => {
     const result = await resolveDefaultPersona(db, WORKSPACE_ID, OWNER_ID)
 
     expect(result).toEqual(personal)
-    expect(findById).toHaveBeenCalledWith(db, "persona_personal", WORKSPACE_ID)
+    expect(findById).toHaveBeenCalledWith(db, WORKSPACE_ID, "persona_personal")
     expect(systemDefault).not.toHaveBeenCalled()
   })
 
@@ -68,7 +68,7 @@ describe("resolveDefaultPersona", () => {
     const result = await resolveDefaultPersona(db, WORKSPACE_ID, OWNER_ID)
 
     expect(result).toEqual(persona("persona_workspace"))
-    expect(findById).toHaveBeenCalledWith(db, "persona_workspace", WORKSPACE_ID)
+    expect(findById).toHaveBeenCalledWith(db, WORKSPACE_ID, "persona_workspace")
     expect(systemDefault).not.toHaveBeenCalled()
   })
 
@@ -88,7 +88,7 @@ describe("resolveDefaultPersona", () => {
   it("degrades a user preference pointing at an archived persona to the workspace setting", async () => {
     stubUserOverride("persona_user_archived")
     stubWorkspaceOverride("persona_workspace")
-    spyOn(PersonaRepository, "findById").mockImplementation(async (_db: any, id: string) =>
+    spyOn(PersonaRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) =>
       id === "persona_user_archived" ? persona("persona_user_archived", "archived") : persona("persona_workspace")
     )
     const systemDefault = spyOn(PersonaRepository, "getSystemDefault")
@@ -114,7 +114,7 @@ describe("resolveDefaultPersona", () => {
   it("degrades a user preference pointing at a no-longer-resolving persona to the workspace setting", async () => {
     stubUserOverride("persona_gone")
     stubWorkspaceOverride("persona_workspace")
-    spyOn(PersonaRepository, "findById").mockImplementation(async (_db: any, id: string) =>
+    spyOn(PersonaRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) =>
       id === "persona_gone" ? null : persona("persona_workspace")
     )
 

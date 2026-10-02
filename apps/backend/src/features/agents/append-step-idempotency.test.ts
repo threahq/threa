@@ -63,7 +63,7 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
       { rows: [existing] }, // SELECT by (session_id, client_step_id)
     ])
 
-    const result = await AgentSessionRepository.appendStep(db, { ...baseParams, clientStepId: "key-1" })
+    const result = await AgentSessionRepository.appendStep(db, "ws_1", { ...baseParams, clientStepId: "key-1" })
 
     expect({ id: result.id, stepNumber: result.stepNumber }).toEqual({ id: "step_orig", stepNumber: 5 })
   })
@@ -71,7 +71,7 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
   it("returns the freshly inserted row on the happy path", async () => {
     const db = makeDb([{ rowCount: 1, rows: [{}] }, { rows: [stepRow({ id: "step_new", step_number: 2 })] }])
 
-    const result = await AgentSessionRepository.appendStep(db, { ...baseParams, clientStepId: "key-1" })
+    const result = await AgentSessionRepository.appendStep(db, "ws_1", { ...baseParams, clientStepId: "key-1" })
 
     expect({ id: result.id, stepNumber: result.stepNumber }).toEqual({ id: "step_new", stepNumber: 2 })
   })
@@ -83,6 +83,6 @@ describe("AgentSessionRepository.appendStep — client_step_id idempotency", () 
       { rowCount: 1, rows: [{}] }, // the supplied step id already exists
     ])
 
-    await expect(AgentSessionRepository.appendStep(db, baseParams)).rejects.toThrow("already exists")
+    await expect(AgentSessionRepository.appendStep(db, "ws_1", baseParams)).rejects.toThrow("already exists")
   })
 })

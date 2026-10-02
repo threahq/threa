@@ -144,7 +144,7 @@ describe("bot invocation control protocol", () => {
       invocationId: claimed!.id,
       replyKeyGeneration: 2,
     })
-    const session = await AgentSessionRepository.findById(pool, claimed!.id)
+    const session = await AgentSessionRepository.findById(pool, workspace, claimed!.id)
 
     expect({ transitioned, generation: session?.replyKeyGeneration }).toEqual({ transitioned: true, generation: 2 })
     expect(() => assertReplyKeyGeneration(session!, { keyGeneration: 2 })).not.toThrow()
@@ -723,7 +723,7 @@ describe("bot invocation control protocol", () => {
 
     expect(await service().repairDeletedSourceSession({ workspaceId: workspace, sessionId: claimed!.id })).toBe(true)
 
-    const session = await AgentSessionRepository.findById(pool, claimed!.id)
+    const session = await AgentSessionRepository.findById(pool, workspace, claimed!.id)
     const after = (await controlOutbox()).filter((event) => event.event_type === "bot_invocation:cancelled").length
     expect({ status: session?.status, newCancellationHints: after - before }).toEqual({
       status: "deleted",

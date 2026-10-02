@@ -85,7 +85,7 @@ export class MentionInvokeHandler extends DebouncedOutboxHandler {
       return
     }
 
-    const personas = await PersonaRepository.findByIds(this.db, personaIds, workspaceId)
+    const personas = await PersonaRepository.findByIds(this.db, workspaceId, personaIds)
 
     for (const persona of personas) {
       if (persona.status !== "active") {

@@ -107,7 +107,7 @@ describe("message move integration", () => {
       actorId: traceSession.personaId,
       actorType: "persona",
     })
-    await AgentSessionRepository.completeSession(pool, traceSession.id, {
+    await AgentSessionRepository.completeSession(pool, testWorkspaceId, traceSession.id, {
       lastSeenSequence: movedB.sequence,
       responseMessageId: movedB.id,
       sentMessageIds: [movedA.id, movedB.id],
@@ -169,7 +169,7 @@ describe("message move integration", () => {
     const threadMessageIds = threadEvents.map((event) => (event.payload as { messageId: string }).messageId)
     expect(threadMessageIds).toEqual([movedA.id, movedB.id])
 
-    const movedTraceSession = await AgentSessionRepository.findById(pool, traceSession.id)
+    const movedTraceSession = await AgentSessionRepository.findById(pool, testWorkspaceId, traceSession.id)
     expect(movedTraceSession?.streamId).toBe(result.thread.id)
     expect(result.removedEventIds).toEqual(expect.arrayContaining([traceStartedEventId, traceCompletedEventId]))
 

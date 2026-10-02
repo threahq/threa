@@ -1,6 +1,7 @@
-import { describe, expect, it } from "bun:test"
-import type { RecentEpisodeSummary } from "../session-repository"
-import { buildEpisodeSummaryPromptBlock } from "./episode-summaries"
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { AgentSessionRepository, type RecentEpisodeSummary } from "../session-repository"
+import { EPISODE_SUMMARY_INJECT_COUNT } from "./config"
+import { buildEpisodeSummaryPromptBlock, loadEpisodeSummaryPromptBlock } from "./episode-summaries"
 
 function row(summary: string, createdAt: string, completedAt: string | null): RecentEpisodeSummary {
   return {
@@ -39,5 +40,26 @@ describe("buildEpisodeSummaryPromptBlock", () => {
   it("falls back to the created time when a session has no completion time", () => {
     const block = buildEpisodeSummaryPromptBlock([row("A summary.", "2026-06-10T09:00:00.000Z", null)], null)
     expect(block).toContain("[2026-06-10T09:00:00.000Z]")
+  })
+})
+
+describe("loadEpisodeSummaryPromptBlock", () => {
+  afterEach(() => mock.restore())
+
+  it("should read summaries inside the caller's workspace", async () => {
+    const find = spyOn(AgentSessionRepository, "findRecentEpisodeSummariesByStream").mockResolvedValue([])
+
+    await loadEpisodeSummaryPromptBlock({} as never, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      personaId: "persona_1",
+      accessibleStreamIds: null,
+    })
+
+    expect(find).toHaveBeenCalledWith(expect.anything(), "ws_1", {
+      streamId: "stream_1",
+      personaId: "persona_1",
+      limit: EPISODE_SUMMARY_INJECT_COUNT,
+    })
   })
 })
