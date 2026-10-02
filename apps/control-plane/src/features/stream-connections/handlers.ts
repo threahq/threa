@@ -10,8 +10,8 @@ const idSchema = z.string().min(1).max(64)
 const createInviteSchema = z.object({
   hostWorkspaceId: idSchema,
   hostStreamId: idSchema,
-  hostStreamSlug: z.string().max(200).nullable(),
-  hostStreamDisplayName: z.string().max(200).nullable(),
+  hostStreamSlug: z.string().nullable(),
+  hostStreamDisplayName: z.string().nullable(),
 })
 const revokeSchema = z.object({ hostWorkspaceId: idSchema })
 const acceptSchema = z.object({
