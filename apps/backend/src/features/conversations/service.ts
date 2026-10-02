@@ -360,7 +360,7 @@ export class ConversationService {
     }
     const memberIds = [...memberIdsToFetch]
     const messageById: Map<string, Message> =
-      memberIds.length > 0 ? await MessageRepository.findByIds(this.pool, memberIds) : new Map()
+      memberIds.length > 0 ? await MessageRepository.findByIds(this.pool, workspaceId, memberIds) : new Map()
 
     const planByConversation = new Map<
       string,
@@ -513,7 +513,7 @@ export class ConversationService {
   async getBoardMessages(workspaceId: string, conversationId: string): Promise<BoardPostMessage[]> {
     const conversation = await ConversationRepository.findById(this.pool, conversationId)
     if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return []
-    const messagesMap = await MessageRepository.findByIds(this.pool, conversation.messageIds)
+    const messagesMap = await MessageRepository.findByIds(this.pool, workspaceId, conversation.messageIds)
     const ordered = conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => Boolean(m))
     const hydratedById = await this.hydrateBoardMessages(workspaceId, ordered)
     // Flattened-chronological across the root + its threads (the conversation can
@@ -529,12 +529,12 @@ export class ConversationService {
     return conversations.map(addStalenessFields)
   }
 
-  async getMessages(conversationId: string): Promise<Message[]> {
+  async getMessages(workspaceId: string, conversationId: string): Promise<Message[]> {
     return withClient(this.pool, async (client) => {
       const conversation = await ConversationRepository.findById(client, conversationId)
       if (!conversation || conversation.messageIds.length === 0) return []
 
-      const messagesMap = await MessageRepository.findByIds(client, conversation.messageIds)
+      const messagesMap = await MessageRepository.findByIds(client, workspaceId, conversation.messageIds)
 
       return conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => m !== undefined)
     })
@@ -566,7 +566,7 @@ export class ConversationService {
             throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
           }
 
-          const messageSnapshot = await MessageRepository.findById(client, messageId)
+          const messageSnapshot = await MessageRepository.findById(client, workspaceId, messageId)
           attemptedStreamId = messageSnapshot?.streamId ?? null
           if (!messageSnapshot) {
             throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
@@ -576,7 +576,7 @@ export class ConversationService {
             streamIds: [messageSnapshot.streamId, target.streamId],
             principal: { kind: "user", userId },
           })
-          const message = await MessageRepository.findByIdForUpdate(client, messageId)
+          const message = await MessageRepository.findByIdForUpdate(client, workspaceId, messageId)
           if (!message) throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
           if (message.streamId !== messageSnapshot.streamId) throw new StaleMessagePlacementError()
           // One-root rule, same as the assigner's `existing` directive: same stream
@@ -714,7 +714,7 @@ export class ConversationService {
       } catch (error) {
         if (attempt === 2) throw error
         if (error instanceof StaleMessagePlacementError) continue
-        const current = await MessageRepository.findById(this.pool, messageId)
+        const current = await MessageRepository.findById(this.pool, workspaceId, messageId)
         if (!current || current.streamId === attemptedStreamId) throw error
       }
     }
@@ -744,7 +744,7 @@ export class ConversationService {
             throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
           }
 
-          const message = await MessageRepository.findById(client, messageId)
+          const message = await MessageRepository.findById(client, workspaceId, messageId)
           attemptedStreamId = message?.streamId ?? null
           if (!message || !conversation.messageIds.includes(messageId)) {
             throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
@@ -755,7 +755,7 @@ export class ConversationService {
             streamId: message.streamId,
             principal: { kind: "user", userId },
           })
-          const lockedMessage = await MessageRepository.findByIdForUpdate(client, messageId)
+          const lockedMessage = await MessageRepository.findByIdForUpdate(client, workspaceId, messageId)
           if (!lockedMessage || lockedMessage.streamId !== message.streamId) throw new StaleMessagePlacementError()
           const lockedConversation = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
           if (!lockedConversation || !lockedConversation.messageIds.includes(messageId)) {
@@ -791,7 +791,7 @@ export class ConversationService {
       } catch (error) {
         if (attempt === 2) throw error
         if (error instanceof StaleMessagePlacementError) continue
-        const current = await MessageRepository.findById(this.pool, messageId)
+        const current = await MessageRepository.findById(this.pool, workspaceId, messageId)
         if (!current || current.streamId === attemptedStreamId) throw error
       }
     }
@@ -1023,7 +1023,7 @@ export class ConversationService {
       // descendant threads (deeper sub-topics move with it). One recursive query
       // for the subtree (INV-56), then filter members by their own stream.
       const subtreeIds = new Set(await StreamRepository.listSelfAndDescendantIds(client, workspaceId, threadStreamId))
-      const memberMessages = await MessageRepository.findByIds(client, source.messageIds)
+      const memberMessages = await MessageRepository.findByIds(client, workspaceId, source.messageIds)
       const moveIds = source.messageIds.filter((id) => {
         const streamId = memberMessages.get(id)?.streamId
         return streamId != null && subtreeIds.has(streamId)
@@ -1037,7 +1037,7 @@ export class ConversationService {
 
       // Lock the moving rows (INV-20) in a deterministic order — the batch
       // counterpart to reassign's single-row `FOR UPDATE`.
-      await MessageRepository.findByIdsForUpdate(client, moveIds)
+      await MessageRepository.findByIdsForUpdate(client, workspaceId, moveIds)
 
       const movedSet = new Set(moveIds)
       const remainingIds = source.messageIds.filter((id) => !movedSet.has(id))
@@ -1218,7 +1218,7 @@ export class ConversationService {
 
       // Now lock the moving rows; `findByIdsForUpdate` returns them in `sequence`
       // order — also the timeline order we preserve when appending to the dest.
-      const lockedMessages = await MessageRepository.findByIdsForUpdate(client, uniqueIds)
+      const lockedMessages = await MessageRepository.findByIdsForUpdate(client, workspaceId, uniqueIds)
       if (lockedMessages.length !== uniqueIds.length) {
         throw new HttpError("Some selected messages were not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
@@ -1302,7 +1302,7 @@ export class ConversationService {
       const authorLookupIds = new Set<string>(moveIds)
       for (const row of sourceRows.values()) for (const id of row.messageIds) authorLookupIds.add(id)
       for (const id of destination.messageIds) authorLookupIds.add(id)
-      const memberMessages = await MessageRepository.findByIds(client, [...authorLookupIds])
+      const memberMessages = await MessageRepository.findByIds(client, workspaceId, [...authorLookupIds])
 
       // Remove moved ids from each source, recomputing that source's remaining
       // participants; resolve a source the move empties.
@@ -1491,7 +1491,7 @@ export class ConversationService {
       }
 
       const allIds = [...new Set(groups.flatMap((g) => g.messageIds))]
-      const lockedMessages = await MessageRepository.findByIdsForUpdate(client, allIds)
+      const lockedMessages = await MessageRepository.findByIdsForUpdate(client, workspaceId, allIds)
       if (lockedMessages.length !== allIds.length) {
         throw new HttpError("Some selected messages were not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
@@ -1543,7 +1543,7 @@ export class ConversationService {
       // Authors for the participant recompute: everything staying in the source
       // plus every moved message (each mint SETs its own participant list).
       const authorLookupIds = new Set<string>([...source.messageIds, ...movingIds])
-      const memberMessages = await MessageRepository.findByIds(client, [...authorLookupIds])
+      const memberMessages = await MessageRepository.findByIds(client, workspaceId, [...authorLookupIds])
 
       // Strip movers from the source, recompute its remaining participants, and
       // (when the whole source was analyzed) re-title it to the kept group; resolve
@@ -1808,7 +1808,7 @@ export class ConversationService {
       throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
     }
 
-    const messagesMap = await MessageRepository.findByIds(client, [...memberSet])
+    const messagesMap = await MessageRepository.findByIds(client, workspaceId, [...memberSet])
 
     const target = messagesMap.get(targetMessageId)
     if (!target) {

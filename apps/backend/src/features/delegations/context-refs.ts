@@ -88,7 +88,7 @@ export async function validateDelegationContextRefs(
 
   const [messageMap, memoMap, attachments] = await Promise.all([
     messageIds.size > 0
-      ? MessageRepository.findByIdsInWorkspace(pool, workspaceId, [...messageIds])
+      ? MessageRepository.findByIds(pool, workspaceId, [...messageIds])
       : new Map<string, { streamId: string }>(),
     memoIds.size > 0
       ? MemoRepository.findByIdsInWorkspace(pool, workspaceId, [...memoIds])

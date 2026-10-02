@@ -196,7 +196,7 @@ describe("claimBotInvocation context handle", () => {
     await handlers.claimBotInvocation(req, res)
 
     // The window mirrors the enclave's assignment cap (30 before the trigger).
-    expect(findSurrounding.mock.calls[0]?.slice(1)).toEqual(["msg_trigger", "stream_thread", 30, 0])
+    expect(findSurrounding.mock.calls[0]?.slice(1)).toEqual(["ws_1", "msg_trigger", "stream_thread", 30, 0])
     const data = (payloads[0] as { data: Record<string, unknown> }).data
     expect(data.context).toEqual({
       kind: "inline",

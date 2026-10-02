@@ -52,7 +52,7 @@ export async function processChunk(
 ): Promise<{ processed: number }> {
   if (chunk.ids.length === 0) return { processed: 0 }
 
-  const byId = await MessageRepository.findByIds(ctx.pool, chunk.ids)
+  const byId = await MessageRepository.findByIds(ctx.pool, workspaceId, chunk.ids)
 
   // Recheck ELIGIBLE_PREDICATE at process time, workspace-scoped (INV-8): a
   // message that lost eligibility since `plan` (deleted, its stream sealed)
@@ -70,7 +70,7 @@ export async function processChunk(
     .map((id) => byId.get(id))
     .filter((message): message is Message => message !== undefined && eligibleIds.has(message.id))
 
-  const storedHashes = await MessageRepository.findEmbeddingSourceHashes(ctx.pool, chunk.ids)
+  const storedHashes = await MessageRepository.findEmbeddingSourceHashes(ctx.pool, workspaceId, chunk.ids)
   const withText: Array<{ message: Message; text: string; sourceHash: string; expectedSourceHash: string | null }> = []
   for (const message of messages) {
     const text = await loadMessageEmbeddingText(ctx.pool, workspaceId, message)
@@ -96,6 +96,7 @@ export async function processChunk(
     )
     processed += await MessageRepository.updateEmbeddings(
       ctx.pool,
+      workspaceId,
       sub.map((entry, index) => ({
         id: entry.message.id,
         embedding: embeddings[index]!,

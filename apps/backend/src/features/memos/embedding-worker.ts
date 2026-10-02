@@ -23,7 +23,7 @@ export function createEmbeddingWorker(deps: EmbeddingWorkerDeps): JobHandler<Emb
 
     logger.info({ jobId: job.id, messageId, workspaceId }, "Processing embedding job")
 
-    const message = await MessageRepository.findById(pool, messageId)
+    const message = await MessageRepository.findById(pool, workspaceId, messageId)
 
     if (!message) {
       logger.warn({ messageId }, "Message not found for embedding generation")

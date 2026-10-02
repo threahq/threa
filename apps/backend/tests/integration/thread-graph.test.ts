@@ -472,7 +472,7 @@ describe("Thread Graph", () => {
       })
 
       // Verify initial reply count is 0
-      const initialMessage = await eventService.getMessageById(parentMessage.id)
+      const initialMessage = await eventService.getMessageById(wsId, parentMessage.id)
       expect(initialMessage?.replyCount).toBe(0)
 
       // Create a thread from the parent message
@@ -494,7 +494,7 @@ describe("Thread Graph", () => {
       })
 
       // Verify reply count is now 1
-      const updatedMessage1 = await eventService.getMessageById(parentMessage.id)
+      const updatedMessage1 = await eventService.getMessageById(wsId, parentMessage.id)
       expect(updatedMessage1?.replyCount).toBe(1)
 
       // Send another message in the thread
@@ -507,7 +507,7 @@ describe("Thread Graph", () => {
       })
 
       // Verify reply count is now 2
-      const updatedMessage2 = await eventService.getMessageById(parentMessage.id)
+      const updatedMessage2 = await eventService.getMessageById(wsId, parentMessage.id)
       expect(updatedMessage2?.replyCount).toBe(2)
     })
 
@@ -560,7 +560,7 @@ describe("Thread Graph", () => {
       })
 
       // Channel message should have 1 reply
-      const afterThread1Msg = await eventService.getMessageById(channelMessage.id)
+      const afterThread1Msg = await eventService.getMessageById(wsId, channelMessage.id)
       expect(afterThread1Msg?.replyCount).toBe(1)
 
       // Create nested thread from thread1 message
@@ -582,11 +582,11 @@ describe("Thread Graph", () => {
       })
 
       // Channel message should STILL have 1 reply (not 2)
-      const afterThread2Msg = await eventService.getMessageById(channelMessage.id)
+      const afterThread2Msg = await eventService.getMessageById(wsId, channelMessage.id)
       expect(afterThread2Msg?.replyCount).toBe(1)
 
       // Thread 1 message should have 1 reply
-      const thread1MsgUpdated = await eventService.getMessageById(thread1Message.id)
+      const thread1MsgUpdated = await eventService.getMessageById(wsId, thread1Message.id)
       expect(thread1MsgUpdated?.replyCount).toBe(1)
     })
   })

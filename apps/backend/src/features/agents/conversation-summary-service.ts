@@ -58,7 +58,7 @@ export class ConversationSummaryService {
       return null
     }
 
-    const olderMessages = await MessageRepository.list(db, streamId, {
+    const olderMessages = await MessageRepository.list(db, workspaceId, streamId, {
       limit: 1,
       beforeSequence: oldestKeptSequence,
     })
@@ -79,9 +79,16 @@ export class ConversationSummaryService {
     let batchesProcessed = 0
 
     while (cursor <= maxSequenceToSummarize && batchesProcessed < ROLLING_SUMMARY_MAX_BATCHES) {
-      const batch = await MessageRepository.listBySequenceRange(db, streamId, cursor, maxSequenceToSummarize, {
-        limit: ROLLING_SUMMARY_BATCH_SIZE,
-      })
+      const batch = await MessageRepository.listBySequenceRange(
+        db,
+        workspaceId,
+        streamId,
+        cursor,
+        maxSequenceToSummarize,
+        {
+          limit: ROLLING_SUMMARY_BATCH_SIZE,
+        }
+      )
       if (batch.length === 0) break
 
       const enrichedBatch = await enrichMessagesWithLinkPreviews(db, workspaceId, batch)

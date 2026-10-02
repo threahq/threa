@@ -231,7 +231,7 @@ describe("claimBotInvocation sealed delivery", () => {
     await handlers.claimBotInvocation(req, res)
 
     // The window is read from the thread (activeStreamId), trigger excluded.
-    expect(findSurrounding.mock.calls[0]?.slice(1)).toEqual(["msg_trigger", "stream_thread", 30, 0])
+    expect(findSurrounding.mock.calls[0]?.slice(1)).toEqual(["ws_1", "msg_trigger", "stream_thread", 30, 0])
 
     const data = (payloads[0] as { data: Record<string, unknown> }).data
     expect("context" in data).toBe(false)

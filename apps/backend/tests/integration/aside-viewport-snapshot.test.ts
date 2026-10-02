@@ -147,7 +147,7 @@ describe("Aside viewport snapshot", () => {
   test("a deleted visible id drops out; with none left the agent is told and the chip shows an empty snapshot", async () => {
     const channel = await createChannel("viewport-deleted", "public")
     const ids = await insertMessages(channel.id, other, 20)
-    await withTransaction(pool, (client) => MessageRepository.softDelete(client, ids[10]))
+    await withTransaction(pool, (client) => MessageRepository.softDelete(client, wsId, ids[10]))
 
     const aside = await createAsideWithBag(channel.id, [viewportRef(channel.id, [ids[10], ids[11]])])
     const resolved = await resolve(aside.id)

@@ -172,10 +172,10 @@ export const ShareService = {
     // the platform must look identical to "doesn't exist" — otherwise
     // probing distinct error codes (`MESSAGE_NOT_FOUND` vs the cross-
     // workspace and stream-mismatch paths below) leaks message-existence
-    // across workspaces. `findByIdsInWorkspace` collapses every cross-
+    // across workspaces. `findByIds` collapses every cross-
     // workspace ref into the not-found bucket up-front.
     const uniqueSourceMessageIds = [...new Set(references.map((r) => r.sourceMessageId))]
-    const sourceMessagesById = await MessageRepository.findByIdsInWorkspace(
+    const sourceMessagesById = await MessageRepository.findByIds(
       params.client,
       params.workspaceId,
       uniqueSourceMessageIds

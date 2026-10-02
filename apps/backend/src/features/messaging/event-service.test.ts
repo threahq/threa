@@ -1636,7 +1636,7 @@ describe("EventService sharedMessages wire enrichment", () => {
     // itself is not stubbed).
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         [
           "msg_source",

@@ -551,7 +551,7 @@ describe("ActivityService.processReactionAdded", () => {
     const service = setupService()
     const stream = fakeStream({ type: StreamTypes.CHANNEL, visibility: Visibilities.PUBLIC })
 
-    spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage() as any)
+    const findMessage = spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage() as any)
     spyOn(StreamRepository, "findById").mockResolvedValue(stream)
     spyOn(UserRepository, "findById").mockResolvedValue({
       id: REACTOR_ID,
@@ -589,6 +589,7 @@ describe("ActivityService.processReactionAdded", () => {
 
     expect(activities.length).toBe(2)
     expect(calls).toHaveLength(2)
+    expect(findMessage).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, MESSAGE_ID)
     expect(findAuthorMember).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, STREAM_ID, MESSAGE_AUTHOR_ID)
 
     const authorCall = calls.find((c) => c.userIds[0] === MESSAGE_AUTHOR_ID)

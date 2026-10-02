@@ -149,7 +149,7 @@ describe("ConversationResolver.fetch", () => {
       makeConversation({ messageIds: ["msg_a", "msg_b", "msg_deleted"] }),
     ])
     // Returned out of order, spanning root + a thread, with one soft-deleted.
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["msg_b", makeMessage({ id: "msg_b", streamId: "stream_thread", createdAt: new Date("2026-04-22T10:00:00Z") })],
         ["msg_a", makeMessage({ id: "msg_a", streamId: "stream_root", createdAt: new Date("2026-04-22T09:00:00Z") })],
@@ -170,7 +170,7 @@ describe("ConversationResolver.fetch", () => {
 
   it("marks the focal message when originMessageId is a member", async () => {
     spyOn(ConversationRepository, "findByIds").mockResolvedValue([makeConversation()])
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["msg_a", makeMessage({ id: "msg_a", createdAt: new Date("2026-04-22T09:00:00Z") })],
         ["msg_b", makeMessage({ id: "msg_b", createdAt: new Date("2026-04-22T10:00:00Z") })],

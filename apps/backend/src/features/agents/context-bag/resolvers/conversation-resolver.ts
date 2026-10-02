@@ -82,7 +82,7 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
     // Member messages can span the root + its threads. Fetch them workspace-
     // scoped, drop soft-deleted rows, and order by wall-clock time since
     // per-stream `sequence` is not comparable across streams.
-    const byId = await MessageRepository.findByIdsInWorkspace(db, workspaceId, candidateIds)
+    const byId = await MessageRepository.findByIds(db, workspaceId, candidateIds)
     const ordered = [...byId.values()]
       .filter((m) => m.deletedAt === null)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))

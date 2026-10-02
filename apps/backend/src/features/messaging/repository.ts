@@ -181,6 +181,7 @@ export const REPLY_COUNT_SUBQUERY = (messageAlias: string) => `
     SELECT t.reply_count FROM streams t
     WHERE t.parent_stream_id = ${messageAlias}.stream_id
       AND t.parent_anchor_id = ${messageAlias}.id
+      AND t.workspace_id = ${messageAlias}.workspace_id
       AND t.type = 'thread'
   ), 0) AS reply_count`
 
@@ -206,11 +207,10 @@ export const MessageRepository = {
     params: { workspaceId: string; messageId: string }
   ): Promise<InvocationSourceState | null> {
     const result = await db.query<MessageRow & { workspace_id: string }>(sql`
-      SELECT m.*, s.workspace_id, 0 AS reply_count
+      SELECT m.*, 0 AS reply_count
       FROM messages m
-      JOIN streams s ON s.id = m.stream_id
-      WHERE m.id = ${params.messageId}
-        AND s.workspace_id = ${params.workspaceId}
+      WHERE m.workspace_id = ${params.workspaceId}
+        AND m.id = ${params.messageId}
       FOR SHARE OF m
     `)
     const row = result.rows[0]
@@ -231,54 +231,61 @@ export const MessageRepository = {
     }
   },
 
-  async findByClientMessageId(db: Querier, streamId: string, clientMessageId: string): Promise<Message | null> {
+  async findByClientMessageId(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    clientMessageId: string
+  ): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-      WHERE stream_id = ${streamId} AND client_message_id = ${clientMessageId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND client_message_id = ${clientMessageId}
     `)
     if (!result.rows[0]) return null
 
     const reactionsResult = await db.query<ReactionRow>(
-      sql`SELECT message_id, user_id, emoji FROM reactions WHERE message_id = ${result.rows[0].id}`
+      sql`SELECT message_id, user_id, emoji FROM reactions WHERE workspace_id = ${workspaceId} AND message_id = ${result.rows[0].id}`
     )
     const reactions = aggregateReactions(reactionsResult.rows)
 
     return mapRowToMessage(result.rows[0], reactions)
   },
 
-  async findByIdForUpdate(db: Querier, id: string): Promise<Message | null> {
+  async findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM messages WHERE id = ${id} FOR UPDATE`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM messages WHERE workspace_id = ${workspaceId} AND id = ${id} FOR UPDATE`
     )
     if (!result.rows[0]) return null
     return mapRowToMessage(result.rows[0])
   },
 
-  async findById(db: Querier, id: string): Promise<Message | null> {
-    const result = await db.query<MessageRow>(sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM messages WHERE id = ${id}`)
+  async findById(db: Querier, workspaceId: string, id: string): Promise<Message | null> {
+    const result = await db.query<MessageRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM messages WHERE workspace_id = ${workspaceId} AND id = ${id}`
+    )
     if (!result.rows[0]) return null
 
     const reactionsResult = await db.query<ReactionRow>(
-      sql`SELECT message_id, user_id, emoji FROM reactions WHERE message_id = ${id}`
+      sql`SELECT message_id, user_id, emoji FROM reactions WHERE workspace_id = ${workspaceId} AND message_id = ${id}`
     )
     const reactions = aggregateReactions(reactionsResult.rows)
 
     return mapRowToMessage(result.rows[0], reactions)
   },
 
-  async findByIds(db: Querier, ids: string[]): Promise<Map<string, Message>> {
+  async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Map<string, Message>> {
     if (ids.length === 0) return new Map()
 
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-      WHERE id = ANY(${ids})
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
     `)
 
     if (result.rows.length === 0) return new Map()
 
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${ids})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${ids})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -294,20 +301,20 @@ export const MessageRepository = {
    * check needs (resolve the stream, then gate on it) without paying for the
    * full message + reactions hydration. Unknown ids are simply absent.
    */
-  async findStreamIdsByIds(db: Querier, ids: string[]): Promise<Map<string, string>> {
+  async findStreamIdsByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Map<string, string>> {
     if (ids.length === 0) return new Map()
     const result = await db.query<{ id: string; stream_id: string }>(sql`
-      SELECT id, stream_id FROM messages WHERE id = ANY(${ids})
+      SELECT id, stream_id FROM messages WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
     `)
     return new Map(result.rows.map((row) => [row.id, row.stream_id]))
   },
 
-  async findByIdsForUpdate(db: Querier, ids: string[]): Promise<Message[]> {
+  async findByIdsForUpdate(db: Querier, workspaceId: string, ids: string[]): Promise<Message[]> {
     if (ids.length === 0) return []
 
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-      WHERE id = ANY(${ids})
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
       ORDER BY sequence ASC
       FOR UPDATE
     `)
@@ -317,7 +324,7 @@ export const MessageRepository = {
     const messageIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -325,45 +332,10 @@ export const MessageRepository = {
   },
 
   /**
-   * Fetch messages by ID scoped to a workspace. The messages table has no
-   * direct `workspace_id` column so the filter joins through `streams`. Used
-   * by callers whose input ids come from untrusted sources (e.g. a pointer
-   * messageId pulled from contentJson) where trusting the caller's implicit
-   * workspace boundary would violate INV-8.
-   */
-  async findByIdsInWorkspace(db: Querier, workspaceId: string, ids: string[]): Promise<Map<string, Message>> {
-    if (ids.length === 0) return new Map()
-
-    const result = await db.query<MessageRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)}
-      FROM messages
-      WHERE id = ANY(${ids})
-        AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
-    `)
-
-    if (result.rows.length === 0) return new Map()
-
-    const foundIds = result.rows.map((r) => r.id)
-    const reactionsResult = await db.query<ReactionRow>(sql`
-      SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${foundIds})
-    `)
-    const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
-
-    const map = new Map<string, Message>()
-    for (const row of result.rows) {
-      map.set(row.id, mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
-    }
-    return map
-  },
-
-  /**
    * Fetch messages by ID, scoped to a workspace AND a set of accessible streams,
    * excluding soft-deleted rows. Used by quote-reply resolution where the quoted
    * message ID comes from untrusted client content (`content_json.attrs.messageId`)
-   * and must be filtered against the caller's access scope. The explicit
-   * `workspace_id` predicate (joined through `streams`) satisfies INV-8 even if a
-   * caller passes a stream id outside the workspace.
+   * and must be filtered against the caller's access scope.
    */
   async findByIdsInStreams(
     db: Querier,
@@ -375,9 +347,9 @@ export const MessageRepository = {
 
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-      WHERE id = ANY(${ids})
+      WHERE workspace_id = ${workspaceId}
+        AND id = ANY(${ids})
         AND stream_id = ANY(${streamIds})
-        AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
         AND deleted_at IS NULL
     `)
 
@@ -386,7 +358,7 @@ export const MessageRepository = {
     const foundIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${foundIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${foundIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -413,15 +385,20 @@ export const MessageRepository = {
    *   3. The soft-delete filter — `findById` doesn't filter `deletedAt IS NULL`,
    *      so without this guard a user's deleted root would still reach the AI.
    */
-  async findThreadRoot(db: Querier, stream: { parentAnchorId?: string | null }): Promise<Message | null> {
+  async findThreadRoot(
+    db: Querier,
+    workspaceId: string,
+    stream: { parentAnchorId?: string | null }
+  ): Promise<Message | null> {
     if (!stream.parentAnchorId?.startsWith("msg_")) return null
-    const parent = await MessageRepository.findById(db, stream.parentAnchorId)
+    const parent = await MessageRepository.findById(db, workspaceId, stream.parentAnchorId)
     if (!parent || parent.deletedAt) return null
     return parent
   },
 
   async list(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     filters?: { limit?: number; beforeSequence?: bigint; afterSequence?: bigint }
   ): Promise<Message[]> {
@@ -431,7 +408,8 @@ export const MessageRepository = {
     if (filters?.afterSequence) {
       const result = await db.query<MessageRow>(sql`
         SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND sequence > ${filters.afterSequence.toString()}
           AND deleted_at IS NULL
         ORDER BY sequence ASC
@@ -441,7 +419,8 @@ export const MessageRepository = {
     } else if (filters?.beforeSequence) {
       const result = await db.query<MessageRow>(sql`
         SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND sequence < ${filters.beforeSequence.toString()}
           AND deleted_at IS NULL
         ORDER BY sequence DESC
@@ -451,7 +430,8 @@ export const MessageRepository = {
     } else {
       const result = await db.query<MessageRow>(sql`
         SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND deleted_at IS NULL
         ORDER BY sequence DESC
         LIMIT ${limit}
@@ -464,7 +444,7 @@ export const MessageRepository = {
     const messageIds = messageRows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -519,7 +499,7 @@ export const MessageRepository = {
 
     // If ON CONFLICT swallowed the insert, the duplicate already exists — fetch it.
     if (!result.rows[0] && clientMessageId) {
-      const existing = await this.findByClientMessageId(db, params.streamId, clientMessageId)
+      const existing = await this.findByClientMessageId(db, params.workspaceId, params.streamId, clientMessageId)
       if (existing) return existing
       throw new Error(`Insert conflict but no existing message found for clientMessageId ${clientMessageId}`)
     }
@@ -529,6 +509,7 @@ export const MessageRepository = {
 
   async moveToStream(
     db: Querier,
+    workspaceId: string,
     destinationStreamId: string,
     updates: MoveMessageSequenceUpdate[]
   ): Promise<Message[]> {
@@ -543,9 +524,9 @@ export const MessageRepository = {
        FROM (
          SELECT * FROM unnest($2::text[], $3::bigint[]) AS u(id, new_sequence)
        ) updates
-       WHERE m.id = updates.id
+       WHERE m.workspace_id = $4 AND m.id = updates.id
        RETURNING ${QUALIFIED_SELECT_FIELDS}`,
-      [destinationStreamId, messageIds, sequences]
+      [destinationStreamId, messageIds, sequences, workspaceId]
     )
 
     if (result.rows.length === 0) return []
@@ -553,7 +534,7 @@ export const MessageRepository = {
     const movedIds = result.rows.map((row) => row.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${movedIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${movedIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -641,7 +622,8 @@ export const MessageRepository = {
     await db.query(sql`
       UPDATE agent_sessions
       SET stream_id = ${params.destinationStreamId}
-      WHERE stream_id = ${params.sourceStreamId}
+      WHERE workspace_id = ${params.workspaceId}
+        AND stream_id = ${params.sourceStreamId}
         AND (
           response_message_id = ANY(${params.messageIds})
           OR sent_message_ids && ${params.messageIds}
@@ -651,14 +633,15 @@ export const MessageRepository = {
 
   async findAgentSessionIdsForMessages(
     db: Querier,
-    params: { sourceStreamId: string; messageIds: string[] }
+    params: { workspaceId: string; sourceStreamId: string; messageIds: string[] }
   ): Promise<string[]> {
     if (params.messageIds.length === 0) return []
 
     const result = await db.query<{ id: string }>(sql`
       SELECT id
       FROM agent_sessions
-      WHERE stream_id = ${params.sourceStreamId}
+      WHERE workspace_id = ${params.workspaceId}
+        AND stream_id = ${params.sourceStreamId}
         AND (
           response_message_id = ANY(${params.messageIds})
           OR sent_message_ids && ${params.messageIds}
@@ -679,6 +662,7 @@ export const MessageRepository = {
   async findByMetadata(
     db: Querier,
     params: {
+      workspaceId: string
       streamIds: string[]
       filter: Record<string, string>
       streamId?: string
@@ -702,7 +686,8 @@ export const MessageRepository = {
 
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-      WHERE stream_id = ANY(${effectiveStreams})
+      WHERE workspace_id = ${params.workspaceId}
+        AND stream_id = ANY(${effectiveStreams})
         AND deleted_at IS NULL
         AND metadata @> ${JSON.stringify(params.filter)}::jsonb
       ORDER BY created_at DESC, id DESC
@@ -714,7 +699,7 @@ export const MessageRepository = {
     const messageIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
+      WHERE workspace_id = ${params.workspaceId} AND message_id = ANY(${messageIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -723,6 +708,7 @@ export const MessageRepository = {
 
   async updateContent(
     db: Querier,
+    workspaceId: string,
     id: string,
     contentJson: JSONContent,
     contentMarkdown: string
@@ -733,24 +719,27 @@ export const MessageRepository = {
           search_config = ${detectSearchConfig(contentMarkdown)}, edited_at = NOW(),
           revision = GREATEST(
             revision + 1,
-            (SELECT COALESCE(MAX(version_number), 0) + 1 FROM message_versions WHERE message_id = messages.id)
+            (
+              SELECT COALESCE(MAX(version_number), 0) + 1 FROM message_versions
+              WHERE workspace_id = ${workspaceId} AND message_id = messages.id
+            )
           )
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null
-    return this.findById(db, id)
+    return this.findById(db, workspaceId, id)
   },
 
-  async softDelete(db: Querier, id: string): Promise<Message | null> {
+  async softDelete(db: Querier, workspaceId: string, id: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
       SET deleted_at = NOW(), revision = revision + 1
-      WHERE id = ${id} AND deleted_at IS NULL
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND deleted_at IS NULL
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null
-    return this.findById(db, id)
+    return this.findById(db, workspaceId, id)
   },
 
   async addReaction(
@@ -765,37 +754,36 @@ export const MessageRepository = {
       VALUES (${workspaceId}, ${messageId}, ${userId}, ${emoji})
       ON CONFLICT DO NOTHING
     `)
-    return this.findById(db, messageId)
+    return this.findById(db, workspaceId, messageId)
   },
 
-  async removeReaction(db: Querier, messageId: string, emoji: string, userId: string): Promise<Message | null> {
+  async removeReaction(
+    db: Querier,
+    workspaceId: string,
+    messageId: string,
+    emoji: string,
+    userId: string
+  ): Promise<Message | null> {
     await db.query(sql`
       DELETE FROM reactions
-      WHERE message_id = ${messageId}
+      WHERE workspace_id = ${workspaceId}
+        AND message_id = ${messageId}
         AND user_id = ${userId}
         AND emoji = ${emoji}
     `)
-    return this.findById(db, messageId)
+    return this.findById(db, workspaceId, messageId)
   },
 
-  /**
-   * Count non-deleted messages in a stream. Used by surfaces that label a
-   * stream by its size (e.g. context-bag chip strips: "12 messages in #intro").
-   */
-  async countByStream(db: Querier, streamId: string): Promise<number> {
-    const result = await db.query<{ count: string }>(sql`
-      SELECT COUNT(*)::text AS count FROM messages
-      WHERE stream_id = ${streamId}
-        AND deleted_at IS NULL
-    `)
-    return Number(result.rows[0]?.count ?? 0)
-  },
-
-  async getNamingStats(db: Querier, streamId: string): Promise<{ count: number; latestMessageAt: Date | null }> {
+  async getNamingStats(
+    db: Querier,
+    workspaceId: string,
+    streamId: string
+  ): Promise<{ count: number; latestMessageAt: Date | null }> {
     const result = await db.query<{ count: string; latest_message_at: Date | null }>(sql`
       SELECT COUNT(*)::text AS count, MAX(created_at) AS latest_message_at
       FROM messages
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND deleted_at IS NULL
     `)
     return {
@@ -805,16 +793,17 @@ export const MessageRepository = {
   },
 
   /**
-   * Batched variant of `countByStream` — returns a Map keyed by streamId so a
-   * caller fanning over N refs (context-bag, sidebar previews) can avoid an
-   * N-query loop. Streams with no messages are absent from the map; callers
-   * default to 0. INV-56.
+   * Count non-deleted messages per stream, keyed by streamId, so a caller
+   * fanning over N refs (context-bag, sidebar previews) avoids an N-query loop.
+   * Streams with no messages are absent from the map; callers default to 0.
+   * INV-56.
    */
-  async countByStreams(db: Querier, streamIds: string[]): Promise<Map<string, number>> {
+  async countByStreams(db: Querier, workspaceId: string, streamIds: string[]): Promise<Map<string, number>> {
     if (streamIds.length === 0) return new Map()
     const result = await db.query<{ stream_id: string; count: string }>(sql`
       SELECT stream_id, COUNT(*)::text AS count FROM messages
-      WHERE stream_id = ANY(${streamIds})
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
         AND deleted_at IS NULL
       GROUP BY stream_id
     `)
@@ -833,11 +822,17 @@ export const MessageRepository = {
    * window policy to decide whether a prior session's cursor is still inside
    * the window about to be built (DM episode recency, INV-30 single query).
    */
-  async findWindowFloorSequence(db: Querier, streamId: string, windowSize: number): Promise<bigint | null> {
+  async findWindowFloorSequence(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    windowSize: number
+  ): Promise<bigint | null> {
     if (windowSize < 1) return null
     const result = await db.query<{ sequence: string }>(sql`
       SELECT sequence::text AS sequence FROM messages
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND deleted_at IS NULL
       ORDER BY sequence DESC
       OFFSET ${windowSize - 1} LIMIT 1
@@ -845,10 +840,14 @@ export const MessageRepository = {
     return result.rows[0] ? BigInt(result.rows[0].sequence) : null
   },
 
-  async findEmbeddingSourceHashes(db: Querier, ids: string[]): Promise<Map<string, string | null>> {
+  async findEmbeddingSourceHashes(
+    db: Querier,
+    workspaceId: string,
+    ids: string[]
+  ): Promise<Map<string, string | null>> {
     if (ids.length === 0) return new Map()
     const result = await db.query<{ id: string; embedding_source_hash: string | null }>(sql`
-      SELECT id, embedding_source_hash FROM messages WHERE id = ANY(${ids}::text[])
+      SELECT id, embedding_source_hash FROM messages WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
     `)
     return new Map(result.rows.map((row) => [row.id, row.embedding_source_hash]))
   },
@@ -862,6 +861,7 @@ export const MessageRepository = {
    */
   async updateEmbeddings(
     db: Querier,
+    workspaceId: string,
     rows: Array<{ id: string; embedding: number[]; sourceHash: string; expectedSourceHash: string | null }>
   ): Promise<number> {
     if (rows.length === 0) return 0
@@ -874,7 +874,8 @@ export const MessageRepository = {
       SET embedding = v.embedding::vector, embedding_source_hash = v.source_hash
       FROM UNNEST(${ids}::text[], ${embeddingLiterals}::text[], ${hashes}::text[], ${expected}::text[])
         AS v(id, embedding, source_hash, expected_hash)
-      WHERE m.id = v.id
+      WHERE m.workspace_id = ${workspaceId}
+        AND m.id = v.id
         AND m.embedding_source_hash IS NOT DISTINCT FROM v.expected_hash
         AND m.embedding_source_hash IS DISTINCT FROM v.source_hash
     `)
@@ -882,13 +883,17 @@ export const MessageRepository = {
   },
 
   /** Rows whose config was set in the meantime (an edit re-detects) are left alone (INV-20). */
-  async fillMissingSearchConfigs(db: Querier, rows: Array<{ id: string; searchConfig: string }>): Promise<number> {
+  async fillMissingSearchConfigs(
+    db: Querier,
+    workspaceId: string,
+    rows: Array<{ id: string; searchConfig: string }>
+  ): Promise<number> {
     if (rows.length === 0) return 0
     const result = await db.query(sql`
       UPDATE messages m
       SET search_config = v.search_config
       FROM UNNEST(${rows.map((row) => row.id)}::text[], ${rows.map((row) => row.searchConfig)}::text[]) AS v(id, search_config)
-      WHERE m.id = v.id AND m.search_config IS NULL
+      WHERE m.workspace_id = ${workspaceId} AND m.id = v.id AND m.search_config IS NULL
     `)
     return result.rowCount ?? 0
   },
@@ -898,7 +903,7 @@ export const MessageRepository = {
    * anchorId in chronological order. Anchors may be message ids (`msg_…`) or
    * card event ids (`event_…`).
    */
-  async findThreadMessages(db: Querier, anchorIds: string[]): Promise<Map<string, Message[]>> {
+  async findThreadMessages(db: Querier, workspaceId: string, anchorIds: string[]): Promise<Map<string, Message[]>> {
     if (anchorIds.length === 0) return new Map()
 
     const result = await db.query<MessageRow & { parent_anchor_id: string }>(sql`
@@ -906,8 +911,9 @@ export const MessageRepository = {
         ${sql.raw(QUALIFIED_SELECT_FIELDS)},
         s.parent_anchor_id
       FROM messages m
-      JOIN streams s ON m.stream_id = s.id
-      WHERE s.parent_anchor_id = ANY(${anchorIds})
+      JOIN streams s ON m.stream_id = s.id AND s.workspace_id = ${workspaceId}
+      WHERE m.workspace_id = ${workspaceId}
+        AND s.parent_anchor_id = ANY(${anchorIds})
         AND s.type = 'thread'
         AND m.deleted_at IS NULL
       ORDER BY m.created_at ASC, m.id ASC
@@ -918,7 +924,7 @@ export const MessageRepository = {
     const messageIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
@@ -940,13 +946,14 @@ export const MessageRepository = {
    */
   async findSurrounding(
     db: Querier,
+    workspaceId: string,
     messageId: string,
     streamId: string,
     messagesBefore: number,
     messagesAfter: number
   ): Promise<Message[]> {
     const targetResult = await db.query<{ sequence: string }>(
-      sql`SELECT sequence FROM messages WHERE id = ${messageId} AND stream_id = ${streamId}`
+      sql`SELECT sequence FROM messages WHERE workspace_id = ${workspaceId} AND id = ${messageId} AND stream_id = ${streamId}`
     )
     if (!targetResult.rows[0]) return []
     const targetSequence = targetResult.rows[0].sequence
@@ -954,7 +961,8 @@ export const MessageRepository = {
     const result = await db.query<MessageRow>(sql`
       (
         SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND sequence < ${targetSequence}
           AND deleted_at IS NULL
         ORDER BY sequence DESC
@@ -963,7 +971,8 @@ export const MessageRepository = {
       UNION ALL
       (
         SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
+        WHERE workspace_id = ${workspaceId}
+          AND stream_id = ${streamId}
           AND sequence >= ${targetSequence}
           AND deleted_at IS NULL
         ORDER BY sequence ASC
@@ -977,65 +986,17 @@ export const MessageRepository = {
     const messageIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 
     return result.rows.map((row) => mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
   },
 
-  /**
-   * List messages after a given sequence number. Used by agents to check for
-   * new messages during their loop.
-   */
-  async listSince(
-    db: Querier,
-    streamId: string,
-    sinceSequence: bigint,
-    options?: { excludeAuthorId?: string; limit?: number }
-  ): Promise<Message[]> {
-    const limit = options?.limit ?? 50
-    const excludeAuthorId = options?.excludeAuthorId
-
-    let messageRows: MessageRow[]
-    if (excludeAuthorId) {
-      const result = await db.query<MessageRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
-          AND sequence > ${sinceSequence.toString()}
-          AND author_id != ${excludeAuthorId}
-          AND deleted_at IS NULL
-        ORDER BY sequence ASC
-        LIMIT ${limit}
-      `)
-      messageRows = result.rows
-    } else {
-      const result = await db.query<MessageRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-        WHERE stream_id = ${streamId}
-          AND sequence > ${sinceSequence.toString()}
-          AND deleted_at IS NULL
-        ORDER BY sequence ASC
-        LIMIT ${limit}
-      `)
-      messageRows = result.rows
-    }
-
-    if (messageRows.length === 0) return []
-
-    const messageIds = messageRows.map((r) => r.id)
-    const reactionsResult = await db.query<ReactionRow>(sql`
-      SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
-    `)
-    const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
-
-    return messageRows.map((row) => mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
-  },
-
   /** List messages in an inclusive sequence range, in chronological order. */
   async listBySequenceRange(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     startSequence: bigint,
     endSequence: bigint,
@@ -1046,7 +1007,8 @@ export const MessageRepository = {
     const limit = options?.limit ?? 200
     const result = await db.query<MessageRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM messages
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND sequence >= ${startSequence.toString()}
         AND sequence <= ${endSequence.toString()}
         AND deleted_at IS NULL
@@ -1059,7 +1021,7 @@ export const MessageRepository = {
     const messageIds = result.rows.map((r) => r.id)
     const reactionsResult = await db.query<ReactionRow>(sql`
       SELECT message_id, user_id, emoji FROM reactions
-      WHERE message_id = ANY(${messageIds})
+      WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})
     `)
     const reactionsByMessage = aggregateReactionsByMessage(reactionsResult.rows)
 

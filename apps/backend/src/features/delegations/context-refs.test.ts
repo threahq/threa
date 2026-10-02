@@ -17,9 +17,7 @@ describe("validateDelegationContextRefs", () => {
   afterEach(() => mock.restore())
 
   it("accepts a shared-message ref whose message exists in-workspace, in its claimed stream, in scope", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_1", { streamId: "stream_1" }]]) as never
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_1", { streamId: "stream_1" }]]) as never)
 
     const result = await run(["shared-message:stream_1/msg_1"])
 
@@ -27,7 +25,7 @@ describe("validateDelegationContextRefs", () => {
   })
 
   it("drops shared-message refs that are missing, stream-mismatched, or out of the user's scope — in ONE batched lookup", async () => {
-    const findByIds = spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(
+    const findByIds = spyOn(MessageRepository, "findByIds").mockImplementation(
       async (_db, _ws, ids) =>
         new Map(
           (ids as string[])
@@ -50,6 +48,7 @@ describe("validateDelegationContextRefs", () => {
     ])
     // Batched per kind (the strip-inaccessible-refs shape) — never one round trip per ref.
     expect(findByIds).toHaveBeenCalledTimes(1)
+    expect(findByIds).toHaveBeenCalledWith(pool, WS, ["msg_missing", "msg_elsewhere", "msg_private"])
   })
 
   it("accepts active memos and drops missing/retired ones (LLMs hallucinate ids)", async () => {
@@ -100,7 +99,7 @@ describe("validateDelegationContextRefs", () => {
   })
 
   it("drops unsupported schemes and malformed pointer URLs without touching the DB", async () => {
-    const messages = spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map() as never)
+    const messages = spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map() as never)
 
     const result = await run(["https://example.com/doc", "quote:stream_1/msg_1", "shared-message:only-one-segment"])
 

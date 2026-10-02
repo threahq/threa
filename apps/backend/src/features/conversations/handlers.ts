@@ -267,7 +267,7 @@ export function createConversationHandlers({
       // validateStreamAccess handles public visibility + thread root membership
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
 
-      const messages = await conversationService.getMessages(conversationId)
+      const messages = await conversationService.getMessages(workspaceId, conversationId)
       setAuditSubjects(res, [
         { type: "conversation", id: conversationId },
         { type: "stream", id: conversation.streamId },
