@@ -130,6 +130,7 @@ import {
   createMemoBatchProcessWorker,
   registerMessageEmbeddingBackfill,
   registerMemoSearchConfigBackfill,
+  registerMemoDeletedSourcesBackfill,
 } from "./features/memos"
 import {
   ConversationService,
@@ -1728,6 +1729,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerMessageSearchConfigBackfill()
   registerStreamMessageCountBackfill()
   registerMemoSearchConfigBackfill()
+  registerMemoDeletedSourcesBackfill()
   registerAttachmentExtractionSearchConfigBackfill()
   registerStreamContextBackfill()
   registerMessageEmbeddingBackfill({ embeddingService })

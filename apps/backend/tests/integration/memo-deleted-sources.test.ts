@@ -20,6 +20,7 @@ import {
 } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
 import { MessageRepository, type Message } from "../../src/features/messaging"
+import { plan, processChunk } from "../../src/features/memos/deleted-sources-backfill"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import type { OutboxEvent } from "../../src/lib/outbox"
@@ -493,5 +494,34 @@ describe("memo sources: deleted and edited messages", () => {
     await editMessage(seeded, seeded.messageIds[0])
 
     expect(await isQueued(seeded)).toBe(true)
+  })
+
+  test("the backfill retires memos whose sources were deleted before deletes retired them", async () => {
+    const seeded = await seedConversation()
+    const [deletedId, liveId] = seeded.messageIds
+    const onlyDeleted = await seedMemo(seeded, [deletedId])
+    const partlyDeleted = await seedMemo(seeded, [deletedId, liveId])
+    await MessageRepository.softDelete(pool, deletedId)
+
+    const planned = (await plan({ pool }, testWorkspaceId)).flatMap((chunk) => chunk.ids)
+    const firstRun = await processChunk({ pool }, testWorkspaceId, { ids: [deletedId] })
+    const queued = await isQueued(seeded)
+    const secondRun = await processChunk({ pool }, testWorkspaceId, { ids: [deletedId] })
+
+    expect({
+      planned: planned.includes(deletedId),
+      firstRun,
+      secondRun,
+      queued,
+      onlyDeleted: await memoStatus(onlyDeleted),
+      partlyDeleted: await memoStatus(partlyDeleted),
+    }).toEqual({
+      planned: true,
+      firstRun: { processed: 2 },
+      secondRun: { processed: 0 },
+      queued: true,
+      onlyDeleted: MemoStatuses.ARCHIVED,
+      partlyDeleted: MemoStatuses.SUPERSEDED,
+    })
   })
 })
