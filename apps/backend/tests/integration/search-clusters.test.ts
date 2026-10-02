@@ -230,6 +230,7 @@ describe("Search result clusters", () => {
 
   test("messagesByIds should return only readable, non-deleted messages in posting order with rank 0", async () => {
     const messages = await SearchRepository.messagesByIds(pool, {
+      workspaceId: wsId,
       ids: [hiddenId, postmortemId, deletedId, rollbackId],
       streamIds: [padId],
     })

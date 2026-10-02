@@ -118,7 +118,10 @@ function mapRowToActivity(row: ActivityRow): Activity {
  * stream (standalone saved reminders) always pass.
  */
 const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXISTS (
-  SELECT 1 FROM streams s WHERE s.id = user_activity.stream_id AND ${effectivelyArchivedSql("s")}
+  SELECT 1 FROM streams s
+  WHERE s.id = user_activity.stream_id
+    AND s.workspace_id = user_activity.workspace_id
+    AND ${effectivelyArchivedSql("s")}
 ))`)
 
 /**
