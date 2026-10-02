@@ -47,7 +47,7 @@ describe("conversationAssigner — threadFromMessage", () => {
     emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
     findByIdForUpdate = spyOn(ConversationRepository, "findByIdForUpdate")
     spyOn(streams.StreamRepository, "findById").mockImplementation(
-      async (_client: unknown, id: string) => (STREAMS[id] ?? null) as never
+      async (_client: unknown, _workspaceId: string, id: string) => (STREAMS[id] ?? null) as never
     )
     checkStreamAccess = spyOn(streams, "checkStreamAccess").mockResolvedValue({ id: "chan_1" } as never)
   })
@@ -223,7 +223,7 @@ describe("conversationAssigner — existing (same-root guard)", () => {
     emitAssignmentEvents = spyOn(assignmentEvents, "emitAssignmentEvents").mockResolvedValue(undefined as never)
     findByIdForUpdate = spyOn(ConversationRepository, "findByIdForUpdate")
     spyOn(streams.StreamRepository, "findById").mockImplementation(
-      async (_client: unknown, id: string) => (STREAMS[id] ?? null) as never
+      async (_client: unknown, _workspaceId: string, id: string) => (STREAMS[id] ?? null) as never
     )
   })
 
@@ -285,7 +285,7 @@ describe("conversationAssigner — new (client-minted id)", () => {
     // The mint reads the send's stream so a card-anchored thread (a subagent's)
     // records the conversation it branches from.
     spyOn(streams.StreamRepository, "findById").mockImplementation(
-      async (_client: unknown, id: string) => (STREAMS[id] ?? null) as never
+      async (_client: unknown, _workspaceId: string, id: string) => (STREAMS[id] ?? null) as never
     )
   })
 

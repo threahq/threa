@@ -121,7 +121,7 @@ describe("viewer projection", () => {
     const root = stream({ visibility: "private" })
     const thread = stream({ id: "stream_thread", type: "thread", rootStreamId: root.id, visibility: "private" })
     const original = structuredClone(thread)
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([root])
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([root])
     const memberships = spyOn(StreamMemberRepository, "findByStreamsAndMember").mockResolvedValue([
       { streamId: root.id, memberId: "usr_1", notificationLevel: null, joinedAt: new Date(0) },
     ])
@@ -145,7 +145,7 @@ describe("viewer projection", () => {
     const privateRoot = stream({ id: "stream_private", visibility: "private" })
     const publicThread = stream({ id: "stream_thread", type: "thread", rootStreamId: publicRoot.id })
     const privateThread = stream({ id: "stream_private_thread", type: "thread", rootStreamId: privateRoot.id })
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([publicRoot, privateRoot])
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([publicRoot, privateRoot])
     const memberships = spyOn(StreamMemberRepository, "findByStreamsAndMember").mockResolvedValue([])
 
     const result = await projectStreamsForUser(db, {
@@ -164,7 +164,7 @@ describe("viewer projection", () => {
   test("batch bot descendant is writable when only its effective root is granted", async () => {
     const root = stream({ visibility: "private" })
     const thread = stream({ id: "stream_thread", type: "thread", rootStreamId: root.id })
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([root])
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([root])
     const grants = spyOn(BotChannelAccessRepository, "filterGrantedStreamIds").mockResolvedValue(new Set([root.id]))
     const memberships = spyOn(StreamMemberRepository, "findByStreamsAndMember")
 
@@ -181,7 +181,7 @@ describe("viewer projection", () => {
 
   test("batch skips dangling roots before participation reads", async () => {
     const thread = stream({ id: "stream_thread", type: "thread", rootStreamId: "stream_missing" })
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([])
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([])
     const memberships = spyOn(StreamMemberRepository, "findByStreamsAndMember")
 
     expect(await projectStreamsForUser(db, { workspaceId: "ws_1", streams: [thread], userId: "usr_1" })).toEqual([])
@@ -193,7 +193,7 @@ describe("viewer projection", () => {
     const parent = stream({ id: "stream_parent", type: "thread", parentStreamId: root.id, rootStreamId: root.id })
     const thread = stream({ id: "stream_thread", type: "thread", parentStreamId: parent.id, rootStreamId: root.id })
     spyOn(StreamRepository, "findById").mockResolvedValue(root)
-    spyOn(StreamRepository, "findByIdsInWorkspace").mockResolvedValue([root])
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([root])
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     spyOn(StreamMemberRepository, "findByStreamsAndMember").mockResolvedValue([
       { streamId: root.id, memberId: "usr_1", notificationLevel: null, joinedAt: new Date(0) },

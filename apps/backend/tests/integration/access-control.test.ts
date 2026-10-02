@@ -695,8 +695,8 @@ describe("Access Control", () => {
 
       // Channel member should be able to post to thread even without direct thread membership
       // This is the exact scenario: user mentions @ariadne, ariadne creates thread, user should be able to respond
-      expect(await streamService.isMember(thread.id, channelMemberWorkspaceId)).toBe(true)
-      expect(await streamService.isMember(thread.id, channelOwnerId)).toBe(true)
+      expect(await streamService.isMember(wsId, thread.id, channelMemberWorkspaceId)).toBe(true)
+      expect(await streamService.isMember(wsId, thread.id, channelOwnerId)).toBe(true)
     })
 
     test("adding member to thread adds them to root stream", async () => {
@@ -742,15 +742,15 @@ describe("Access Control", () => {
       })
 
       // Initially not a member of either
-      expect(await streamService.isMember(channel.id, newMemberWorkspaceId)).toBe(false)
-      expect(await streamService.isMember(thread.id, newMemberWorkspaceId)).toBe(false)
+      expect(await streamService.isMember(wsId, channel.id, newMemberWorkspaceId)).toBe(false)
+      expect(await streamService.isMember(wsId, thread.id, newMemberWorkspaceId)).toBe(false)
 
       // Add them to the thread
       await streamService.addMember(thread.id, newMemberWorkspaceId, wsId, ownerId)
 
       // Should now be member of both thread AND root channel
-      expect(await streamService.isMember(thread.id, newMemberWorkspaceId)).toBe(true)
-      expect(await streamService.isMember(channel.id, newMemberWorkspaceId)).toBe(true)
+      expect(await streamService.isMember(wsId, thread.id, newMemberWorkspaceId)).toBe(true)
+      expect(await streamService.isMember(wsId, channel.id, newMemberWorkspaceId)).toBe(true)
     })
   })
 
@@ -785,13 +785,13 @@ describe("Access Control", () => {
       await streamService.addMember(channel.id, memberWorkspaceId, wsId, ownerId)
 
       // Owner is member (auto-added on create)
-      expect(await streamService.isMember(channel.id, ownerId)).toBe(true)
+      expect(await streamService.isMember(wsId, channel.id, ownerId)).toBe(true)
 
       // Explicitly added member is member
-      expect(await streamService.isMember(channel.id, memberWorkspaceId)).toBe(true)
+      expect(await streamService.isMember(wsId, channel.id, memberWorkspaceId)).toBe(true)
 
       // Non-member is not member
-      expect(await streamService.isMember(channel.id, nonMemberWorkspaceId)).toBe(false)
+      expect(await streamService.isMember(wsId, channel.id, nonMemberWorkspaceId)).toBe(false)
     })
   })
 

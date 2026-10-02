@@ -258,7 +258,7 @@ describe("loadCrossSurfaceStitch", () => {
   test("returns null for a stream that is not a spawned thread", async () => {
     await withTestTransaction(pool, async (client) => {
       const { wsId, channelId, ownerId } = await seedChannel(client)
-      const channel = await StreamRepository.findById(client, channelId)
+      const channel = await StreamRepository.findById(client, wsId, channelId)
 
       const stitch = await loadCrossSurfaceStitch(client, {
         workspaceId: wsId,

@@ -20,7 +20,12 @@ import type { SavedMessage } from "./repository"
  * snapshot as the row writes (INV-4/7). Pool also satisfies Querier for the
  * standalone read path.
  */
-export async function resolveSavedView(db: Querier, userId: string, rows: SavedMessage[]): Promise<SavedMessageView[]> {
+export async function resolveSavedView(
+  db: Querier,
+  workspaceId: string,
+  userId: string,
+  rows: SavedMessage[]
+): Promise<SavedMessageView[]> {
   if (rows.length === 0) return []
 
   // Standalone (message-less) rows need no message fetch or access check —
@@ -32,7 +37,7 @@ export async function resolveSavedView(db: Querier, userId: string, rows: SavedM
   // streams for threads; fetch those in a second pass.
   const [messages, streams] = await Promise.all([
     MessageRepository.findByIds(db, messageIds),
-    StreamRepository.findByIds(db, streamIds),
+    StreamRepository.findByIds(db, workspaceId, streamIds),
   ])
 
   const streamById = new Map<string, Stream>()
@@ -43,7 +48,7 @@ export async function resolveSavedView(db: Querier, userId: string, rows: SavedM
     if (s.rootStreamId && !streamById.has(s.rootStreamId)) rootIds.add(s.rootStreamId)
   }
   if (rootIds.size > 0) {
-    const rootStreams = await StreamRepository.findByIds(db, Array.from(rootIds))
+    const rootStreams = await StreamRepository.findByIds(db, workspaceId, Array.from(rootIds))
     for (const s of rootStreams) streamById.set(s.id, s)
   }
 

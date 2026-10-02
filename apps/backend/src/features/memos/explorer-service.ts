@@ -314,7 +314,7 @@ export class MemoExplorerService {
     const citingStreamIds = await MemoRepository.findCitingStreamIds(client, workspaceId, memo.id)
     if (citingStreamIds.length === 0) return
 
-    const streams = await StreamRepository.findByIds(client, citingStreamIds)
+    const streams = await StreamRepository.findByIds(client, workspaceId, citingStreamIds)
     for (const stream of streams) {
       const root = stream.rootStreamId ?? stream.id
       const allowed = await MemoRepository.findEmbedSummaries(client, workspaceId, [memo.id], root)
@@ -482,13 +482,13 @@ export class MemoExplorerService {
       return { sourceStream: null, rootStream: null }
     }
 
-    const sourceStream = await StreamRepository.findById(this.pool, sourceStreamId)
+    const sourceStream = await StreamRepository.findById(this.pool, memo.workspaceId, sourceStreamId)
     if (!sourceStream) {
       return { sourceStream: null, rootStream: null }
     }
 
     const rootStream = sourceStream.rootStreamId
-      ? await StreamRepository.findById(this.pool, sourceStream.rootStreamId)
+      ? await StreamRepository.findById(this.pool, memo.workspaceId, sourceStream.rootStreamId)
       : null
     return { sourceStream, rootStream }
   }
@@ -528,7 +528,7 @@ export class MemoExplorerService {
     const [members, personas, streams] = await Promise.all([
       userIds.size > 0 ? UserRepository.findByIds(this.pool, workspaceId, [...userIds]) : Promise.resolve([]),
       personaIds.size > 0 ? PersonaRepository.findByIds(this.pool, [...personaIds], workspaceId) : Promise.resolve([]),
-      StreamRepository.findByIds(this.pool, [...streamIds]),
+      StreamRepository.findByIds(this.pool, workspaceId, [...streamIds]),
     ])
 
     const memberMap = new Map(members.map((member) => [member.id, member]))

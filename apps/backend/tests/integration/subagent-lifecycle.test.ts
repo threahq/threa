@@ -115,7 +115,7 @@ describe("subagent create", () => {
     // real timeline gap (INV-61).
     expect(cards[0].broadcastSequence).not.toBeNull()
 
-    const thread = await StreamRepository.findById(pool, threadStreamId)
+    const thread = await StreamRepository.findById(pool, ctx.workspaceId, threadStreamId)
     expect(thread).toMatchObject({
       id: threadStreamId,
       workspaceId: ctx.workspaceId,

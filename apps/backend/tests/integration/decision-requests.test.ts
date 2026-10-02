@@ -359,7 +359,7 @@ describe("decision requests", () => {
        VALUES ($1, $2, 'thread', 'private', $3, $4)`,
       [thread, workspace, author, channel]
     )
-    expect(await StreamRepository.findByIdForWorkspace(pool, thread, workspace)).not.toBeNull()
+    expect(await StreamRepository.findById(pool, workspace, thread)).not.toBeNull()
 
     const decision = await DecisionRequestRepository.insert(pool, {
       id: `dreq_${crypto.randomUUID().replaceAll("-", "").slice(0, 26)}`,

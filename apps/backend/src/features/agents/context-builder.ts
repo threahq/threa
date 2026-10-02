@@ -469,7 +469,7 @@ async function buildThreadPath(db: Querier, stream: Stream): Promise<ThreadPathE
     })
 
     if (current.parentStreamId) {
-      current = await StreamRepository.findById(db, current.parentStreamId)
+      current = await StreamRepository.findById(db, current.workspaceId, current.parentStreamId)
     } else {
       current = null
     }

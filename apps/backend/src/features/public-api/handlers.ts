@@ -326,10 +326,14 @@ function serializeConversation(conversation: Conversation, stream: Stream | unde
  * Map each conversation's anchor stream to its effective root
  * (`COALESCE(root_stream_id, id)`, INV-62) for the wire `rootStreamId`.
  */
-async function resolveConversationStreams(pool: Pool, conversations: Conversation[]): Promise<Map<string, Stream>> {
+async function resolveConversationStreams(
+  pool: Pool,
+  workspaceId: string,
+  conversations: Conversation[]
+): Promise<Map<string, Stream>> {
   const streamIds = [...new Set(conversations.map((c) => c.streamId))]
   if (streamIds.length === 0) return new Map()
-  const streams = await StreamRepository.findByIds(pool, streamIds)
+  const streams = await StreamRepository.findByIds(pool, workspaceId, streamIds)
   return new Map(streams.map((stream) => [stream.id, stream]))
 }
 
@@ -517,7 +521,7 @@ function serializeAttachmentDetail(
  * Batch-fetch parent streams for threads that need display name context.
  * Only fetches when there are unnamed threads in the result set.
  */
-async function resolveParentStreams(pool: Pool, streams: Stream[]): Promise<Map<string, Stream>> {
+async function resolveParentStreams(pool: Pool, workspaceId: string, streams: Stream[]): Promise<Map<string, Stream>> {
   const parentIds = [
     ...new Set(
       streams
@@ -526,7 +530,7 @@ async function resolveParentStreams(pool: Pool, streams: Stream[]): Promise<Map<
     ),
   ]
   if (parentIds.length === 0) return new Map()
-  const parents = await StreamRepository.findByIds(pool, parentIds)
+  const parents = await StreamRepository.findByIds(pool, workspaceId, parentIds)
   return new Map(parents.map((p) => [p.id, p]))
 }
 
@@ -588,7 +592,7 @@ const CLAIM_CONTEXT_MAX_MESSAGES = 30
  * context (threads carry no membership of their own; access resolves through
  * the root), and standing grants are the wrong axis anyway.
  *
- * Returns `undefined` when context is WITHHELD (stream gone, cross-workspace,
+ * Returns `undefined` when context is WITHHELD (stream not found in the workspace,
  * or any non-plaintext verdict — plaintext history never leaves the enclave/
  * sealed path). An empty conversation instead yields an explicit empty inline
  * handle, so the runner can tell "nothing came before" from "context unavailable".
@@ -604,8 +608,8 @@ async function buildClaimContext(
   verdict: DeliveryVerdict
 ): Promise<ExternalContextHandle | undefined> {
   if (verdict.delivery !== "plaintext") return undefined
-  const stream = await StreamRepository.findById(pool, invocation.activeStreamId)
-  if (!stream || stream.workspaceId !== invocation.workspaceId) return undefined
+  const stream = await StreamRepository.findById(pool, invocation.workspaceId, invocation.activeStreamId)
+  if (!stream) return undefined
 
   const surrounding = await MessageRepository.findSurrounding(
     pool,
@@ -887,7 +891,7 @@ export function createPublicApiHandlers({
   /** A nameless thread borrows its parent's name on the wire, so serializing one needs the parent row. */
   async function displayNameContext(stream: Stream): Promise<DisplayNameContext | undefined> {
     if (stream.type !== StreamTypes.THREAD || stream.displayName !== null || !stream.parentStreamId) return undefined
-    const parent = await StreamRepository.findById(pool, stream.parentStreamId)
+    const parent = await StreamRepository.findById(pool, stream.workspaceId, stream.parentStreamId)
     return parent ? { parentStream: parent } : undefined
   }
 
@@ -1740,7 +1744,9 @@ export function createPublicApiHandlers({
             ...callbackBinding,
           })
           if (!session) return
-          startedInThread = parentActivityTarget(await StreamRepository.findById(client, invocation.responseStreamId))
+          startedInThread = parentActivityTarget(
+            await StreamRepository.findById(client, invocation.workspaceId, invocation.responseStreamId)
+          )
           const streamEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
             workspaceId: invocation.workspaceId,
@@ -1975,7 +1981,11 @@ export function createPublicApiHandlers({
       }).catch(async (error) => {
         const denial = error as { code?: string }
         if (denialSession && (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND")) {
-          const responseStream = await StreamRepository.findById(pool, denialSession.streamId)
+          const responseStream = await StreamRepository.findById(
+            pool,
+            denialSession.workspaceId,
+            denialSession.streamId
+          )
           if (responseStream?.workspaceId === workspaceId) {
             await terminalizeBotDenial({
               error,
@@ -2670,7 +2680,11 @@ export function createPublicApiHandlers({
       ).catch(async (error) => {
         const denial = error as { code?: string }
         if (denialSession && (denial.code === "STREAM_READ_ONLY" || denial.code === "STREAM_NOT_FOUND")) {
-          const responseStream = await StreamRepository.findById(pool, denialSession.streamId)
+          const responseStream = await StreamRepository.findById(
+            pool,
+            denialSession.workspaceId,
+            denialSession.streamId
+          )
           if (responseStream) {
             await terminalizeBotDenial({
               error,
@@ -2757,7 +2771,7 @@ export function createPublicApiHandlers({
 
         const session = await AgentSessionRepository.findById(client, failed.id)
         if (!session || session.status !== AgentSessionStatuses.RUNNING) return { failed, sessionFailed: false }
-        const stream = await StreamRepository.findById(client, session.streamId)
+        const stream = await StreamRepository.findById(client, session.workspaceId, session.streamId)
         const sessionFailed = await failSessionWithLifecycleInTransaction(client, session, stream, data.errorMessage)
         return { failed, sessionFailed }
       })
@@ -3021,7 +3035,7 @@ export function createPublicApiHandlers({
       const hasMore = streams.length > limit
       const page = hasMore ? streams.slice(0, limit) : streams
 
-      const parentStreamMap = await resolveParentStreams(pool, page)
+      const parentStreamMap = await resolveParentStreams(pool, req.workspaceId!, page)
 
       const lastStream = page[page.length - 1]
       res.json({
@@ -3041,7 +3055,7 @@ export function createPublicApiHandlers({
       // the payload's archivedAt tells the caller. Only list hides them.
       await assertStreamAccessible(req, streamId, { allowArchived: true })
 
-      const stream = await StreamRepository.findById(pool, streamId)
+      const stream = await StreamRepository.findById(pool, req.workspaceId!, streamId)
       if (!stream) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -3196,7 +3210,7 @@ export function createPublicApiHandlers({
       const pageMessageIds = page.map((m) => m.id)
       const [authorNames, threadMap, attachmentsByMessage, slots] = await Promise.all([
         resolveAuthorDisplayNames(pool, req.workspaceId!, page),
-        StreamRepository.findThreadsForMessageIds(pool, streamId, pageMessageIds),
+        StreamRepository.findThreadsForMessageIds(pool, req.workspaceId!, streamId, pageMessageIds),
         AttachmentRepository.findByMessageIds(pool, pageMessageIds),
         resolveSlots(
           req,
@@ -3229,7 +3243,7 @@ export function createPublicApiHandlers({
       let scopeRootIds: string[] | undefined
       if (streamId) {
         await assertStreamAccessible(req, streamId)
-        const stream = await StreamRepository.findByIdForWorkspace(pool, streamId, workspaceId)
+        const stream = await StreamRepository.findById(pool, workspaceId, streamId)
         if (!stream) {
           throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
         }
@@ -3261,7 +3275,7 @@ export function createPublicApiHandlers({
 
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
-      const streamsById = await resolveConversationStreams(pool, page)
+      const streamsById = await resolveConversationStreams(pool, req.workspaceId!, page)
       const last = page[page.length - 1]
 
       res.json({
@@ -3273,7 +3287,7 @@ export function createPublicApiHandlers({
 
     async getConversation(req: Request, res: Response) {
       const conversation = await resolveAccessibleConversation(req, req.params.conversationId)
-      const streamsById = await resolveConversationStreams(pool, [conversation])
+      const streamsById = await resolveConversationStreams(pool, req.workspaceId!, [conversation])
       res.json({
         data: serializeConversation(conversation, streamsById.get(conversation.streamId)),
       })
@@ -3317,7 +3331,9 @@ export function createPublicApiHandlers({
       const [authorNames, threadMaps, attachmentsByMessage, slots] = await Promise.all([
         resolveAuthorDisplayNames(pool, workspaceId, page),
         Promise.all(
-          [...byStream.entries()].map(([sid, ids]) => StreamRepository.findThreadsForMessageIds(pool, sid, ids))
+          [...byStream.entries()].map(([sid, ids]) =>
+            StreamRepository.findThreadsForMessageIds(pool, workspaceId, sid, ids)
+          )
         ),
         AttachmentRepository.findByMessageIds(pool, pageMessageIds),
         resolveSlots(
@@ -3553,7 +3569,7 @@ export function createPublicApiHandlers({
       }
 
       const [thread, slots] = await Promise.all([
-        StreamRepository.findByAnchor(pool, updated.streamId, messageId),
+        StreamRepository.findByAnchor(pool, req.workspaceId!, updated.streamId, messageId),
         resolveSlots(req, [updated.contentJson]),
       ])
       res.json({

@@ -68,7 +68,7 @@ function setup(options: {
     fn(fakeClient)) as typeof dbModule.withTransaction)
 
   spyOn(StreamRepository, "findById").mockImplementation(
-    async (_c: unknown, id: string) => (STREAMS[id] ?? null) as never
+    async (_c: unknown, _workspaceId: string, id: string) => (STREAMS[id] ?? null) as never
   )
   spyOn(streamsModule, "assertStreamsWritable").mockImplementation(async (_c, params) => {
     const denied = params.streamIds

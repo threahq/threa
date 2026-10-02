@@ -11,6 +11,7 @@ const MODEL_ID = "openrouter:openai/gpt-5.6-luna"
 function makeSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
     id: "session_1",
+    workspaceId: "ws_1",
     streamId: "stream_1",
     personaId: "persona_1",
     triggerMessageId: "msg_trigger_1",

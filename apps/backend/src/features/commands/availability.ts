@@ -204,7 +204,7 @@ async function isServerCommandAvailableInStream(name: string, stream: Stream, db
   if (name !== "invite") return true
   if (stream.type === StreamTypes.CHANNEL) return true
   if (stream.type !== StreamTypes.THREAD || !stream.rootStreamId) return false
-  const root = await StreamRepository.findById(db, stream.rootStreamId)
+  const root = await StreamRepository.findById(db, stream.workspaceId, stream.rootStreamId)
   return root?.type === StreamTypes.CHANNEL
 }
 
@@ -232,7 +232,8 @@ async function resolveRuntimeCommandTarget(
 ): Promise<RuntimeTargetInternal | null> {
   const { workspaceId, stream } = params
   const rootStreamId = stream.rootStreamId ?? stream.id
-  const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(db, rootStreamId)
+  const rootStream =
+    rootStreamId === stream.id ? stream : await StreamRepository.findById(db, workspaceId, rootStreamId)
 
   if (!rootStream || rootStream.workspaceId !== workspaceId) return null
   if (rootStream.type !== StreamTypes.SCRATCHPAD) return null

@@ -80,7 +80,7 @@ export class BotChannelService {
     streamId: string,
     options: { allowArchived?: boolean } = {}
   ): Promise<boolean> {
-    const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
+    const stream = await StreamRepository.findById(this.pool, workspaceId, streamId)
     if (!stream) return false
     if (!options.allowArchived && (await StreamRepository.isEffectivelyArchived(this.pool, workspaceId, stream.id))) {
       return false

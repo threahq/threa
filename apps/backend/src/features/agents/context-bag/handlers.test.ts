@@ -135,7 +135,7 @@ describe("createContextBagHandlers.getStreamBag", () => {
 
   function stubAccessOk() {
     spyOn(StreamRepository, "findById").mockImplementation(
-      async (_db, id: string) =>
+      async (_db, _workspaceId: string, id: string) =>
         ({
           id,
           workspaceId: "ws_1",

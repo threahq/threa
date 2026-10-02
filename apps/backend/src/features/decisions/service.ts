@@ -106,7 +106,7 @@ export class DecisionService {
     }
 
     return withTransaction(this.pool, async (client) => {
-      const stream = await StreamRepository.findByIdForWorkspace(client, params.streamId, params.workspaceId)
+      const stream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
       if (!stream) {
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }

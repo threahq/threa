@@ -59,8 +59,8 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
     }
   },
 
-  async fetch(db, ref) {
-    const conversation = await ConversationRepository.findById(db, ref.conversationId)
+  async fetch(db, workspaceId, ref) {
+    const [conversation] = await ConversationRepository.findByIds(db, workspaceId, [ref.conversationId])
     if (!conversation) {
       throw new HttpError("Context source conversation not found", {
         status: 404,
@@ -80,10 +80,9 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
     const candidateIds = windowAround(orderedIds, focalIdIdx, CONVERSATION_WINDOW_TOTAL * 2)
 
     // Member messages can span the root + its threads. Fetch them workspace-
-    // scoped (derive the workspace from the loaded row — `fetch` has no
-    // workspaceId), drop soft-deleted rows, and order by wall-clock time since
+    // scoped, drop soft-deleted rows, and order by wall-clock time since
     // per-stream `sequence` is not comparable across streams.
-    const byId = await MessageRepository.findByIdsInWorkspace(db, conversation.workspaceId, candidateIds)
+    const byId = await MessageRepository.findByIdsInWorkspace(db, workspaceId, candidateIds)
     const ordered = [...byId.values()]
       .filter((m) => m.deletedAt === null)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
@@ -91,7 +90,7 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
     const focalIdx = ref.originMessageId ? ordered.findIndex((m) => m.id === ref.originMessageId) : -1
     const windowed = windowAround(ordered, focalIdx, CONVERSATION_WINDOW_TOTAL)
 
-    const hydrated = await hydrateRenderableItems(db, conversation.workspaceId, windowed)
+    const hydrated = await hydrateRenderableItems(db, workspaceId, windowed)
     const tail = hydrated.items[hydrated.items.length - 1]
     const focalMessageId =
       ref.originMessageId && windowed.some((m) => m.id === ref.originMessageId) ? ref.originMessageId : null
@@ -103,7 +102,7 @@ export const ConversationResolver: Resolver<ConversationContextRef> = {
       viewport: null,
       // Enrich the chip from the conversation's OWN root, never the client-
       // supplied `ref.streamId` (which access-checks nothing) — otherwise an
-      // arbitrary/cross-workspace stream's metadata would leak (INV-8).
+      // arbitrary inaccessible stream's metadata would leak.
       sourceStreamId: conversation.streamId,
     }
   },

@@ -60,8 +60,8 @@ export const ThreadResolver: Resolver<ThreadRef> = {
     }
   },
 
-  async fetch(db, ref, options) {
-    const stream = await StreamRepository.findById(db, ref.streamId)
+  async fetch(db, workspaceId, ref, options) {
+    const stream = await StreamRepository.findById(db, workspaceId, ref.streamId)
     if (!stream) {
       throw new HttpError("Context source stream not found", { status: 404, code: "CONTEXT_SOURCE_NOT_FOUND" })
     }

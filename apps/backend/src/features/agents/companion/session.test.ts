@@ -11,6 +11,7 @@ import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../s
 function makeRunningSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
     id: "session_1",
+    workspaceId: "ws_1",
     streamId: "stream_1",
     personaId: "persona_1",
     triggerMessageId: "msg_trigger_1",

@@ -115,13 +115,14 @@ export class SavedMessagesService {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
 
-      const stream = await StreamRepository.findById(client, message.streamId)
-      if (!stream || stream.workspaceId !== params.workspaceId) {
+      const stream = await StreamRepository.findById(client, params.workspaceId, message.streamId)
+      if (!stream) {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
 
       const accessStreamId = stream.rootStreamId ?? stream.id
       await ensureStreamAccess(client, {
+        workspaceId: params.workspaceId,
         accessStreamId,
         userId: params.userId,
         directStreamVisibility: stream.visibility,
@@ -165,7 +166,7 @@ export class SavedMessagesService {
       // acted on stops being provisional (same transaction, INV-4/7).
       await settleMessagesOnEngagement(client, params.workspaceId, [params.messageId])
 
-      const [view] = await resolveSavedView(client, params.userId, [finalRow])
+      const [view] = await resolveSavedView(client, params.workspaceId, params.userId, [finalRow])
 
       await OutboxRepository.insert(client, "saved:upserted", {
         workspaceId: params.workspaceId,
@@ -198,7 +199,7 @@ export class SavedMessagesService {
         ? await enqueueReminder(client, { saved: inserted, remindAt: clampedRemindAt })
         : inserted
 
-      const [view] = await resolveSavedView(client, params.userId, [finalRow])
+      const [view] = await resolveSavedView(client, params.workspaceId, params.userId, [finalRow])
 
       await OutboxRepository.insert(client, "saved:upserted", {
         workspaceId: params.workspaceId,
@@ -228,7 +229,7 @@ export class SavedMessagesService {
         throw new HttpError("Saved item not found", { status: 404, code: "SAVED_NOT_FOUND" })
       }
 
-      const [view] = await resolveSavedView(client, params.userId, [updated])
+      const [view] = await resolveSavedView(client, params.workspaceId, params.userId, [updated])
 
       await OutboxRepository.insert(client, "saved:upserted", {
         workspaceId: params.workspaceId,
@@ -265,7 +266,7 @@ export class SavedMessagesService {
         await QueueRepository.cancelById(client, existing.reminderQueueMessageId)
       }
 
-      const [view] = await resolveSavedView(client, params.userId, [updated])
+      const [view] = await resolveSavedView(client, params.workspaceId, params.userId, [updated])
 
       await OutboxRepository.insert(client, "saved:upserted", {
         workspaceId: params.workspaceId,
@@ -312,7 +313,7 @@ export class SavedMessagesService {
         ? await enqueueReminder(client, { saved: updated, remindAt: clampedRemindAt })
         : updated
 
-      const [view] = await resolveSavedView(client, params.userId, [finalRow])
+      const [view] = await resolveSavedView(client, params.workspaceId, params.userId, [finalRow])
 
       await OutboxRepository.insert(client, "saved:upserted", {
         workspaceId: params.workspaceId,
@@ -371,7 +372,7 @@ export class SavedMessagesService {
       const updated = await SavedMessagesRepository.markReminderSent(client, params.savedId, now)
       if (!updated) return { fired: false }
 
-      const [view] = await resolveSavedView(client, row.userId, [updated])
+      const [view] = await resolveSavedView(client, row.workspaceId, row.userId, [updated])
 
       await OutboxRepository.insert(client, "saved_reminder:fired", {
         workspaceId: row.workspaceId,
@@ -407,7 +408,7 @@ export class SavedMessagesService {
     ) {
       return null
     }
-    const [view] = await resolveSavedView(this.pool, params.userId, [row])
+    const [view] = await resolveSavedView(this.pool, params.workspaceId, params.userId, [row])
     const e2eRooted = row.streamId
       ? (
           await E2eStreamsRepository.excludeE2eRootedStreamIds(this.pool, [
@@ -440,7 +441,7 @@ export class SavedMessagesService {
     const pageRows = hasMore ? rows.slice(0, limit) : rows
     const nextCursor = hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null
 
-    const saved = await resolveSavedView(this.pool, params.userId, pageRows)
+    const saved = await resolveSavedView(this.pool, params.workspaceId, params.userId, pageRows)
     return { saved, nextCursor }
   }
 
@@ -508,7 +509,7 @@ async function resolveConversationOrigin(
   if (!params.conversationId) return null
   const [conversation] = await ConversationRepository.findByIds(client, params.workspaceId, [params.conversationId])
   if (!conversation) return null
-  const conversationStream = await StreamRepository.findById(client, conversation.streamId)
+  const conversationStream = await StreamRepository.findById(client, conversation.workspaceId, conversation.streamId)
   const conversationRoot = conversationStream?.rootStreamId ?? conversation.streamId
   if (conversationRoot !== params.accessStreamId) return null
   return conversation.id
@@ -523,6 +524,7 @@ function clampRemindAt(remindAt: Date | null): Date | null {
 async function ensureStreamAccess(
   client: import("pg").PoolClient,
   params: {
+    workspaceId: string
     accessStreamId: string
     userId: string
     /** Visibility of the message's direct stream. Used only when `isThread` is false. */
@@ -535,7 +537,7 @@ async function ensureStreamAccess(
   // stream's visibility.
   let visibility = params.directStreamVisibility
   if (params.isThread) {
-    const root = await StreamRepository.findById(client, params.accessStreamId)
+    const root = await StreamRepository.findById(client, params.workspaceId, params.accessStreamId)
     if (!root) {
       throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
     }

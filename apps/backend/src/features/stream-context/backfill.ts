@@ -475,7 +475,7 @@ async function processMemosChunk(
   // Same suppression `MemoService.saveMemo` applies: a `user`-scoped memo filed
   // into a stream whose own tier is wider would leak its title to every member
   // through the projection row, so it is never indexed there.
-  const natural = await resolveMemoScopeForStreamId(ctx.pool, chunk.streamId)
+  const natural = await resolveMemoScopeForStreamId(ctx.pool, workspaceId, chunk.streamId)
   const indexable =
     natural.scope === MemoScopes.USER ? memos.rows : memos.rows.filter((memo) => memo.scope !== MemoScopes.USER)
   if (indexable.length === 0) return []

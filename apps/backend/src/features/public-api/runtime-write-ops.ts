@@ -318,7 +318,7 @@ export function createBotRuntimeWriteOps(deps: BotRuntimeWriteOpsDeps): BotRunti
       if (!failedClaim) return null
       const session = await AgentSessionRepository.findById(tx, claim.id)
       if (!session || session.status !== SessionStatuses.RUNNING) return null
-      const stream = await StreamRepository.findById(tx, session.streamId)
+      const stream = await StreamRepository.findById(tx, session.workspaceId, session.streamId)
       const won = await failSessionWithLifecycleInTransaction(tx, session, stream, terminalError)
       return won && stream
         ? {

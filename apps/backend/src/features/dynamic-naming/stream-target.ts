@@ -43,8 +43,8 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
     // A contended title row is delayed work, not a protected/missing target.
     // Block inside this short DB-only claim/apply phase so SKIP LOCKED cannot
     // acknowledge and permanently lose an eligible checkpoint.
-    const stream = await StreamRepository.findByIdForUpdateBlocking(client, params.targetId)
-    if (!stream || stream.workspaceId !== params.workspaceId || stream.archivedAt) return null
+    const stream = await StreamRepository.findByIdForUpdateBlocking(client, params.workspaceId, params.targetId)
+    if (!stream || stream.archivedAt) return null
     if (
       stream.type !== StreamTypes.SCRATCHPAD &&
       stream.type !== StreamTypes.THREAD &&
@@ -74,8 +74,8 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
 
   async loadContext(target: DynamicNamingTargetSnapshot): Promise<DynamicNamingTargetContext | null> {
     const fetched = await withClient(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, target.targetId)
-      if (!stream || stream.workspaceId !== target.workspaceId) return null
+      const stream = await StreamRepository.findById(client, target.workspaceId, target.targetId)
+      if (!stream) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, target.targetId)) return null
       const replies = await MessageRepository.list(client, stream.id, { limit: DYNAMIC_NAMING_MAX_MESSAGES })
       const messages = await prependThreadNamingAnchor(client, stream, replies)
