@@ -48,6 +48,7 @@ export const SandboxSessionTokenRepository = {
   },
 
   async findLiveByHash(db: Querier, tokenHash: string): Promise<SandboxSessionTokenRow | null> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the token hash discovers the workspace; token rows are never copied
     const result = await db.query<Record<string, unknown>>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)}
       FROM sandbox_session_tokens
@@ -65,6 +66,7 @@ export const SandboxSessionTokenRepository = {
   },
 
   async deleteExpiredBefore(db: Querier, cutoffSec: number): Promise<void> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the expiry sweep covers every workspace
     await db.query(sql`
       DELETE FROM sandbox_session_tokens
       WHERE expires_at < NOW() - make_interval(secs => ${cutoffSec})

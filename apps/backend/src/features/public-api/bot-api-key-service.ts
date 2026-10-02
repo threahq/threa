@@ -183,7 +183,7 @@ export class BotApiKeyService {
     if (!match) return null
 
     // Fire-and-forget last_used_at update — non-critical, don't block response
-    BotApiKeyRepository.touchLastUsed(this.pool, match.id).catch(() => {})
+    BotApiKeyRepository.touchLastUsed(this.pool, match.workspaceId, match.id).catch(() => {})
 
     return {
       id: match.id,
