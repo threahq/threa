@@ -16,11 +16,10 @@ export const MENTION_BACKFILL_NAME = "mention-actor-refs"
  * channelLink ids (INV-64). Each entry knows how to list its candidate ids and
  * how to read/write a row's `content_json`.
  *
- * `message_versions` has no `workspace_id` of its own, so it scopes (and skips
- * E2E) through its parent `messages` row. The other tables carry their own
- * `workspace_id`; E2E rows are excluded by `e2e_version IS NULL` (messages) or
- * by `content_json IS NULL` (drafts null it when sealed). `scheduled_messages`
- * has no E2E variant, so `content_json` is always plaintext there.
+ * E2E rows are excluded by `e2e_version IS NULL` (messages, and
+ * `message_versions` through its parent message) or by `content_json IS NULL`
+ * (drafts null it when sealed). `scheduled_messages` has no E2E variant, so
+ * `content_json` is always plaintext there.
  */
 type BackfillTable = "messages" | "message_versions" | "scheduled_messages" | "drafts"
 
@@ -39,16 +38,14 @@ function listIdsQuery(table: BackfillTable, workspaceId: string) {
     case "messages":
       return sql`
         SELECT id FROM messages
-        WHERE stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
-          AND content_json IS NOT NULL AND e2e_version IS NULL
+        WHERE workspace_id = ${workspaceId} AND content_json IS NOT NULL AND e2e_version IS NULL
         ORDER BY id
       `
     case "message_versions":
       return sql`
         SELECT v.id FROM message_versions v
-        JOIN messages m ON m.id = v.message_id
-        JOIN streams s ON s.id = m.stream_id
-        WHERE s.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
+        JOIN messages m ON m.id = v.message_id AND m.workspace_id = v.workspace_id
+        WHERE v.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
         ORDER BY v.id
       `
     case "scheduled_messages":
@@ -70,19 +67,17 @@ function selectRowsQuery(table: BackfillTable, workspaceId: string, ids: string[
   if (table === "message_versions") {
     return sql`
       SELECT v.id, v.content_json FROM message_versions v
-      JOIN messages m ON m.id = v.message_id
-      JOIN streams s ON s.id = m.stream_id
-      WHERE s.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
+      JOIN messages m ON m.id = v.message_id AND m.workspace_id = v.workspace_id
+      WHERE v.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
     `
   }
   if (table === "messages") {
     return sql`
       SELECT id, content_json FROM messages
-      WHERE id = ANY(${ids})
-        AND content_json IS NOT NULL
-        AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}) AND content_json IS NOT NULL
     `
   }
+  // eslint-disable-next-line threa/workspace-scoped-sql -- table is a BackfillTable; pinned by workspace_id below
   return sql`
     SELECT id, content_json FROM ${sql.raw(table)}
     WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}) AND content_json IS NOT NULL
@@ -152,12 +147,13 @@ async function processChunk(
     const updateIds = updates.map((u) => u.id)
     const updateJson = updates.map((u) => JSON.stringify(u.contentJson))
     const updateMarkdown = updates.map((u) => u.contentMarkdown)
+    // eslint-disable-next-line threa/workspace-scoped-sql -- table is a BackfillTable; pinned by workspace_id below
     await ctx.pool.query(sql`
       UPDATE ${sql.raw(table)} AS t
       SET content_json = data.content_json::jsonb, content_markdown = data.content_markdown
       FROM unnest(${updateIds}::text[], ${updateJson}::text[], ${updateMarkdown}::text[])
         AS data(id, content_json, content_markdown)
-      WHERE t.id = data.id
+      WHERE t.workspace_id = ${workspaceId} AND t.id = data.id
     `)
   }
 
