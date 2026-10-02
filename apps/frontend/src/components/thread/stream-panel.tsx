@@ -11,6 +11,7 @@ import {
   Settings,
   Tag,
   Link2,
+  PanelRight,
 } from "lucide-react"
 import {
   SidePanel,
@@ -57,6 +58,8 @@ import {
   AgentActivityHeaderChip,
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
+import { StreamContextOverlay, useStreamContextOpen } from "@/components/stream-context"
+import { cn } from "@/lib/utils"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
@@ -90,6 +93,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
+  const [isContextOpen, setContextOpen] = useStreamContextOpen()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const isMainViewStream = (streamId: string) => {
@@ -258,6 +262,16 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   }, [panelId])
 
   const panelMenuActions: SidebarActionItem[] = []
+  // Desktop shows this as a header icon, as the page header does.
+  if (isMobile) {
+    panelMenuActions.push({
+      id: "stream-context",
+      label: "In this stream",
+      description: "Links, files & memories",
+      icon: PanelRight,
+      onSelect: () => setContextOpen(true),
+    })
+  }
   panelMenuActions.push({
     id: "stream-settings",
     label: "Settings",
@@ -559,6 +573,19 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             className="flex-shrink-0"
           />
         )}
+        {!isDraft && stream && !isMobile && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className={cn("h-8 w-8 flex-shrink-0", isContextOpen && "bg-accent text-accent-foreground")}
+            title="In this stream — links, files & memories"
+            aria-label="In this stream"
+            aria-pressed={isContextOpen}
+            onClick={() => setContextOpen(!isContextOpen)}
+          >
+            <PanelRight className="h-4 w-4" />
+          </Button>
+        )}
         {!isDraft &&
           stream &&
           !stream.archivedAt &&
@@ -737,6 +764,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           onOpenChange={setLabelPickerOpen}
         />
       )}
+      {!isDraft && stream && panelId && <StreamContextOverlay workspaceId={workspaceId} streamId={panelId} />}
     </SidePanel>
   )
 }

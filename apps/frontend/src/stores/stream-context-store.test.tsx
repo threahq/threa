@@ -191,7 +191,9 @@ describe("stream-context-store", () => {
       serverItem({ key: "link:z:msg_3", refId: "z", groupKey: "z", sourceMessageId: "msg_3" }),
     ])
 
-    const { result } = renderHook(() => useStreamContextOccurrences(WORKSPACE_ID, ROOT, "link:https://example.com/a"))
+    const { result } = renderHook(() =>
+      useStreamContextOccurrences(WORKSPACE_ID, ROOT, ROOT, "tree", "link:https://example.com/a")
+    )
     await waitFor(() => expect(result.current).toBeDefined())
     expect(result.current?.map((r) => r.key)).toEqual(["link:a:msg_2", "link:a:msg_1"])
   })
@@ -203,9 +205,24 @@ describe("stream-context-store", () => {
       serverItem({ key: "link:a:msg_root2", streamId: "stream_other_root" }),
     ])
 
-    const { result } = renderHook(() => useStreamContextOccurrences(WORKSPACE_ID, ROOT, "link:https://example.com/a"))
+    const { result } = renderHook(() =>
+      useStreamContextOccurrences(WORKSPACE_ID, ROOT, ROOT, "tree", "link:https://example.com/a")
+    )
     await waitFor(() => expect(result.current).toBeDefined())
     expect(result.current?.map((r) => r.key)).toEqual(["link:a:msg_1"])
+  })
+
+  it("narrows occurrences to one thread under stream scope", async () => {
+    await seedStreamContextItems(WORKSPACE_ID, ROOT, [
+      serverItem({ key: "link:a:msg_1" }),
+      serverItem({ key: "link:a:msg_t", sourceMessageId: "msg_t", streamId: "stream_thread" }),
+    ])
+
+    const { result } = renderHook(() =>
+      useStreamContextOccurrences(WORKSPACE_ID, "stream_thread", ROOT, "stream", "link:https://example.com/a")
+    )
+    await waitFor(() => expect(result.current).toBeDefined())
+    expect(result.current?.map((r) => r.key)).toEqual(["link:a:msg_t"])
   })
 
   it("keeps a thread landmark anchored on an edited message", async () => {

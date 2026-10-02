@@ -7,6 +7,7 @@ import { collapseContextRows } from "@/lib/stream-context/filter"
 import { contextItemFromCached } from "@/lib/stream-context/from-cached"
 import type { ContextItem } from "@/lib/stream-context/types"
 import { useStreamContextGalleryItems } from "./use-stream-gallery-items"
+import { useStreamContextScope } from "./use-stream-context-scope"
 
 interface StreamContextGalleryProps {
   workspaceId: string
@@ -33,14 +34,14 @@ export function StreamContextGallery({
 }: StreamContextGalleryProps) {
   const events = useStreamEvents(streamId)
   const stream = useStreamFromStore(streamId)
-  const rootStreamId = stream?.rootStreamId ?? streamId
-  // The panel's rows come from the server index under `scope: "tree"`, so they
-  // routinely point at attachments outside the loaded event window (older, or in
-  // a thread). Deriving here would leave those rows opening nothing, so the
-  // gallery reads the same set the panel rendered. Sealed streams have no index
-  // rows and stay on the derive path, as the panel does.
+  const { rootStreamId, scope } = useStreamContextScope(streamId)
+  // The panel's rows come from the server index, so they routinely point at
+  // attachments outside the loaded event window (older, or in a thread).
+  // Deriving here would leave those rows opening nothing, so the gallery reads
+  // the same set the panel rendered. Sealed streams have no index rows and stay
+  // on the derive path, as the panel does.
   const indexed = !stream?.e2eEnabled
-  const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
+  const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, scope)
   // Derive only while the gallery is open — this mount lives for the whole
   // stream view. Gate on the boolean, not `selectedKey`: the key changes on
   // every prev/next step, which would re-run the O(events) scan each time.

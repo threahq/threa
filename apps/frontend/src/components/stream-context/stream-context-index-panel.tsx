@@ -33,6 +33,7 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { StreamContextRow } from "./stream-context-row"
 import { useStreamContextFeed } from "./use-stream-context-feed"
+import { useStreamContextScope } from "./use-stream-context-scope"
 import {
   chipsFromCounts,
   ContextChipRow,
@@ -79,7 +80,7 @@ const MAX_JUMP_PAGES = 10
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const { workspaceId, streamId, onClose, onJumpToMessage, onOpenThread, onOpenMemo, onOpenGallery } = props
   const stream = useStreamFromStore(streamId)
-  const rootStreamId = stream?.rootStreamId ?? streamId
+  const { rootStreamId, scope } = useStreamContextScope(streamId)
   const rootStream = useStreamFromStore(rootStreamId)
   const isOnline = useIsOnline()
   const users = useWorkspaceUsers(workspaceId)
@@ -128,7 +129,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
 
   const categories = useMemo(() => filterCategories(effectiveFilter), [effectiveFilter])
   const feed = useStreamContextFeed(workspaceId, streamId, rootStreamId, {
-    scope: "tree",
+    scope,
     categories,
     q: debounced.parsed.text || undefined,
     from: debounced.authorId ?? undefined,
@@ -137,7 +138,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   })
   const { authorId, before, after, searchTerms, supported } = live
 
-  const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
+  const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, scope)
 
   // Who `from:` can meaningfully name here: this stream's members, plus the
   // viewer (a public root grants read without a membership row — INV-62 — so
@@ -248,7 +249,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       let more = feed.hasNextPage
       for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && more; page += 1) {
         more = (await feed.fetchNextPage()).hasNextPage
-        const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
+        const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, scope)
         const rebuilt = collapseContextRows(
           filterContextRows(fresh, {
             categories,
@@ -278,7 +279,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       // keep tabbing from where they landed.
       scrollerRef.current?.focus({ preventScroll: true })
     },
-    [items, feed, workspaceId, streamId, rootStreamId, categories, searchTerms, authorId, before, after]
+    [items, feed, workspaceId, streamId, rootStreamId, scope, categories, searchTerms, authorId, before, after]
   )
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {
@@ -614,7 +615,8 @@ function OccurrenceList({
   onOpenThread: (threadId: string) => void
 }) {
   const groupRef = contextGroupRef(row)
-  const occurrences = useStreamContextOccurrences(workspaceId, row.rootStreamId, groupRef)
+  const { scope } = useStreamContextScope(streamId)
+  const occurrences = useStreamContextOccurrences(workspaceId, streamId, row.rootStreamId, scope, groupRef)
   const { formatRelative } = useFormattedDate()
   const { q, from, before, after } = filters
 
@@ -624,7 +626,7 @@ function OccurrenceList({
       .occurrences(workspaceId, streamId, {
         category: row.category,
         groupKey: row.groupKey,
-        scope: "tree",
+        scope,
         q,
         from,
         before,
@@ -641,7 +643,7 @@ function OccurrenceList({
     return () => {
       cancelled = true
     }
-  }, [workspaceId, streamId, row.category, row.groupKey, row.rootStreamId, q, from, before, after])
+  }, [workspaceId, streamId, scope, row.category, row.groupKey, row.rootStreamId, q, from, before, after])
 
   // IDB holds every occurrence ever seeded for the group, including ones an
   // earlier unfiltered fetch brought in, so the text filter has to be applied

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react"
 import { toast } from "sonner"
-import { useParams, useSearchParams, useNavigate } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 import {
   ListChecks,
   MoreHorizontal,
@@ -63,15 +63,14 @@ import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
 import { PanelHost } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
-import { CONTEXT_COVER, CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
+import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
-import { StreamContextSurface, StreamContextGallery, useStreamGallery } from "@/components/stream-context"
-import { memoDeepLink } from "@/lib/memo-url"
+import { StreamContextOverlay, useStreamContextOpen } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -79,7 +78,6 @@ import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
@@ -150,71 +148,22 @@ export function StreamPage() {
     })
   }
 
-  // "In this stream" overview panel. The `context` param doubles as open-state
-  // (present ⇒ open) and the selected category filter ("all" by default); the
-  // panel reads/writes the filter value.
-  const isContextOpen = searchParams.get("context") !== null
-
-  const closeContext = useCoverClose(CONTEXT_COVER)
-  const setContextOpen = (open: boolean) => {
-    if (!open) {
-      closeContext()
+  // "In this stream" overview. While a panel is open, `?context` is the panel's.
+  const [isContextOpen, setContextOpen] = useStreamContextOpen()
+  const isPageContextOpen = isContextOpen && !isPanelOpen
+  // The page's own overview takes the right edge back from an open panel.
+  const togglePageContext = () => {
+    if (!isPanelOpen) {
+      setContextOpen(!isContextOpen)
       return
     }
     setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
+      newParams.delete("panel")
       newParams.set("context", "all")
       return newParams
     })
   }
-
-  // A thread opens in the same right-edge panel slot, so the context overlay
-  // must yield it — and its `?context` param must not outlive the thread, or it
-  // silently reopens when the thread closes. Opening a thread from the panel
-  // already clears it (openThreadFromContext); this covers opening one from the
-  // timeline while the panel is open.
-  useEffect(() => {
-    if (!isPanelOpen || !isContextOpen) return
-    setSearchParams(
-      (prev) => {
-        const newParams = new URLSearchParams(prev)
-        newParams.delete("context")
-        return newParams
-      },
-      { replace: true }
-    )
-  }, [isPanelOpen, isContextOpen, setSearchParams])
-
-  // Jump to a source message from the panel: scroll the timeline to it and
-  // dismiss the overlay so the message is visible underneath. A fresh push
-  // gives StreamContent's `?m=` effect a new location key to act on.
-  const jumpToMessageFromContext = (messageId: string) => {
-    setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      newParams.set("m", messageId)
-      newParams.delete("context")
-      return newParams
-    })
-  }
-
-  // Opening a thread reuses the thread/stream panel slot, so the context
-  // overlay must yield it the right edge.
-  const openThreadFromContext = (threadId: string) => {
-    setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      newParams.delete("context")
-      newParams.set("panel", threadId)
-      return newParams
-    })
-  }
-
-  const openMemoFromContext = (memoId: string) => {
-    navigate(memoDeepLink(workspaceId!, memoId))
-  }
-
-  // The in-stream media gallery (links/media/files opened from the panel), keyed
-  // off `?smedia=` — separate from the per-message gallery's `?media=`.
-  const streamGallery = useStreamGallery()
 
   const { openUserProfile } = useUserProfile()
   const { openStreamSettings } = useStreamSettings()
@@ -428,7 +377,7 @@ export function StreamPage() {
         onSelect: () => openUserProfile(dmPeerUserId),
       })
     }
-    if (!isThread) {
+    if (!isDraft) {
       sheetViewActions.push({
         id: "stream-context",
         label: "In this stream",
@@ -753,15 +702,15 @@ export function StreamPage() {
               <Search className="h-4 w-4" />
             </Button>
           )}
-          {stream && !isThread && !isDraft && !isMobile && (
+          {stream && !isDraft && !isMobile && (
             <Button
               variant="ghost"
               size="icon"
-              className={cn("h-8 w-8", isContextOpen && "bg-accent text-accent-foreground")}
+              className={cn("h-8 w-8", isPageContextOpen && "bg-accent text-accent-foreground")}
               title="In this stream — links, files & memories"
               aria-label="In this stream"
-              aria-pressed={isContextOpen}
-              onClick={() => setContextOpen(!isContextOpen)}
+              aria-pressed={isPageContextOpen}
+              onClick={togglePageContext}
             >
               <PanelRight className="h-4 w-4" />
             </Button>
@@ -915,26 +864,9 @@ export function StreamPage() {
     </>
   )
 
-  const streamContextSurface = stream && !isThread && !isDraft && (
-    <>
-      <StreamContextSurface
-        workspaceId={workspaceId}
-        streamId={streamId}
-        open={isContextOpen}
-        onClose={() => setContextOpen(false)}
-        onJumpToMessage={jumpToMessageFromContext}
-        onOpenThread={openThreadFromContext}
-        onOpenMemo={openMemoFromContext}
-        onOpenGallery={streamGallery.openGallery}
-      />
-      <StreamContextGallery
-        workspaceId={workspaceId}
-        streamId={streamId}
-        selectedKey={streamGallery.selectedKey}
-        onSelect={streamGallery.openGallery}
-        onClose={streamGallery.closeGallery}
-      />
-    </>
+  // The panel mounts its own overlay while it is open.
+  const streamContextOverlay = stream && !isDraft && !isPanelOpen && (
+    <StreamContextOverlay workspaceId={workspaceId!} streamId={streamId!} />
   )
 
   // On mobile the panel takes over the full screen, but the timeline stays mounted
@@ -986,14 +918,11 @@ export function StreamPage() {
         )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
       </div>
-      {/* Both are `fixed` overlays that would paint over a fullscreen panel, so a
-          takeover keeps them out of the tree entirely rather than merely closed —
-          the effect that clears `?context` runs after paint, so an already-open
-          surface would flash for a frame. The old early-return branch excluded the
-          context surface structurally; this preserves that. Their `?convView` /
-          `?context` state survives in the URL and returns when the panel closes. */}
+      {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover
+          keeps it out of the tree entirely rather than merely closed. Its
+          `?convView` state survives in the URL and returns when the panel closes. */}
       {!mobileTakeover && conversationPanel}
-      {!mobileTakeover && streamContextSurface}
+      {streamContextOverlay}
     </>
   )
 }

@@ -4,7 +4,8 @@
  * (`useCoverClose`). Each list is the params the cover owns, its identity
  * first; the others ride along and are cleared with it.
  */
-export const PANEL_COVER = ["panel"] as const
+// `context` is the panel's own overview while one is open (`useStreamContextOpen`).
+export const PANEL_COVER = ["panel", "context"] as const
 export const MEDIA_COVER = ["media"] as const
 export const TRACE_COVER = ["trace", "highlight"] as const
 export const SETTINGS_COVER = ["settings"] as const

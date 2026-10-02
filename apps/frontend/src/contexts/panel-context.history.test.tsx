@@ -144,4 +144,24 @@ describe("panel history", () => {
     await back()
     expect(loc()).toBe(STREAM)
   })
+
+  it("drops the overview it opened over, which belonged to the stream underneath", async () => {
+    const user = userEvent.setup()
+    const { back, loc } = mount(["/s/stream_1?context=links"])
+
+    await user.click(screen.getByRole("button", { name: "open a" }))
+    expect(loc()).toBe("/s/stream_1?panel=conv%3Aa")
+
+    // Back returns to the page with its overview still open, as it was left.
+    await back()
+    expect(loc()).toBe("/s/stream_1?context=links")
+  })
+
+  it("drops the open panel's overview when a link inside it opens another panel", async () => {
+    const user = userEvent.setup()
+    const { loc } = mount(["/s/stream_1?panel=conv%3Aa&context=all"])
+
+    await user.click(screen.getByRole("link", { name: "link to c" }))
+    expect(loc()).toBe("/s/stream_1?panel=conv%3Ac")
+  })
 })

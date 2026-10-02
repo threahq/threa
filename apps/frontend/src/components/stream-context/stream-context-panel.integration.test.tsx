@@ -87,6 +87,7 @@ function LocationProbe() {
 function renderPanel(
   options: {
     entry?: string
+    streamId?: string
     memberIds?: string[]
     outcomes?: AgentOutcomeSummary[]
     delegations?: DelegationSummary[]
@@ -111,7 +112,7 @@ function renderPanel(
       <LocationProbe />
       <StreamContextIndexPanel
         workspaceId={WS}
-        streamId={STREAM}
+        streamId={options.streamId ?? STREAM}
         onClose={vi.fn()}
         onJumpToMessage={onJumpToMessage}
         onOpenThread={onOpenThread}
@@ -784,6 +785,28 @@ describe("StreamContextPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Go to message" }))
     expect(onOpenThread).toHaveBeenCalledWith(THREAD)
     expect(onJumpToMessage).toHaveBeenCalledWith("msg_t")
+  })
+
+  it("lists only a thread's own rows when opened on the thread", async () => {
+    await db.streams.put({ id: THREAD, workspaceId: WS, type: "thread", rootStreamId: STREAM } as never)
+    await db.streamContextItems.bulkPut([
+      cachedRow(serverItem({ category: "link", refId: "https://root.example", detail: { title: "OnRoot" } })),
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://inthread.example",
+          streamId: THREAD,
+          detail: { title: "InThread" },
+        })
+      ),
+    ])
+    const list = vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse())
+
+    renderPanel({ streamId: THREAD })
+
+    expect(await screen.findByText("InThread")).toBeInTheDocument()
+    expect(screen.queryByText("OnRoot")).not.toBeInTheDocument()
+    await waitFor(() => expect(list).toHaveBeenCalledWith(WS, THREAD, expect.objectContaining({ scope: "stream" })))
   })
 
   it("falls back to the local path with a note when the stream is sealed", async () => {
