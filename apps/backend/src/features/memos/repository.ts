@@ -588,6 +588,7 @@ export const MemoRepository = {
       SELECT ${sql.raw(SELECT_FIELDS)},
         EXISTS (
           SELECT 1 FROM messages
+          JOIN streams ON streams.id = messages.stream_id AND streams.workspace_id = memos.workspace_id
           WHERE messages.id = ANY(memos.source_message_ids) AND messages.deleted_at IS NULL
         ) AS has_live_source
       FROM memos

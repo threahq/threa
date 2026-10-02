@@ -163,6 +163,24 @@ describe("memo sources: deleted and edited messages", () => {
     } as unknown as OutboxEvent)
   }
 
+  /** Resolves once `deletion` has finished, or is waiting on the stream's memo save lock. */
+  async function finishedOrBlocked(deletion: Promise<void>, rootStreamId: string): Promise<void> {
+    let finished = false
+    void deletion.finally(() => {
+      finished = true
+    })
+    while (!finished) {
+      const { rows } = await pool.query(
+        `SELECT 1 FROM pg_locks
+         WHERE locktype = 'advisory' AND NOT granted
+           AND objid::bigint = hashtext($1)::bigint & 4294967295`,
+        [`memo-batch:${rootStreamId}`]
+      )
+      if (rows.length > 0) return
+      await Bun.sleep(10)
+    }
+  }
+
   async function editMessage(seeded: Seeded, id: string): Promise<void> {
     await handler.run({
       id: 1n,
@@ -302,6 +320,29 @@ describe("memo sources: deleted and edited messages", () => {
     })
   })
 
+  test("deleting one of several sources of a saved memo supersedes it", async () => {
+    const seeded = await seedConversation()
+    const memo = memoId()
+    await MemoRepository.insert(pool, {
+      id: memo,
+      workspaceId: testWorkspaceId,
+      memoType: "message",
+      sourceMessageId: seeded.messageIds[0],
+      title: "Rollout plan",
+      abstract: "The rollout starts on Monday with the flag off.",
+      keyPoints: [],
+      sourceMessageIds: seeded.messageIds,
+      participantIds: [testUserId],
+      knowledgeType: "decision",
+      tags: [],
+      status: MemoStatuses.ACTIVE,
+    })
+
+    await deleteMessage(seeded, seeded.messageIds[1])
+
+    expect(await memoStatus(memo)).toBe(MemoStatuses.SUPERSEDED)
+  })
+
   test("deleting a message no memo cites leaves memos alone and requeues its conversation", async () => {
     const seeded = await seedConversation()
     const memo = await seedMemo(seeded, [seeded.messageIds[1]])
@@ -350,8 +391,7 @@ describe("memo sources: deleted and edited messages", () => {
     let deletion: Promise<void> | undefined
     const spy = spyOn(MemoRepository, "findNearDuplicate").mockImplementation(async (...args) => {
       deletion ??= deleteMessage(seeded, deletedId)
-      // Give the deletion time to commit and its handler time to run if nothing holds it back.
-      await Bun.sleep(200)
+      await finishedOrBlocked(deletion, seeded.streamId)
       return findNearDuplicate(...args)
     })
 
@@ -375,7 +415,7 @@ describe("memo sources: deleted and edited messages", () => {
     let deletion: Promise<void> | undefined
     const spy = spyOn(MemoRepository, "findNearDuplicate").mockImplementation(async (...args) => {
       deletion ??= deleteMessage({ streamId: threadId }, replyId)
-      await Bun.sleep(200)
+      await finishedOrBlocked(deletion, seeded.streamId)
       return findNearDuplicate(...args)
     })
 
@@ -424,7 +464,7 @@ describe("memo sources: deleted and edited messages", () => {
       return rows.map((row) => row.source_message_ids)
     }
 
-    test("research deleted while the model calls run is not saved as a source", async () => {
+    test("research deleted while the model calls run captures nothing", async () => {
       const seeded = await seedConversation()
       const { threadId, replyId } = await seedThreadReply(seeded)
 
@@ -432,7 +472,7 @@ describe("memo sources: deleted and edited messages", () => {
         deleteMessage({ streamId: threadId }, replyId)
       )
 
-      expect(sources).toEqual([[seeded.messageIds[0]]])
+      expect(sources).toEqual([])
     })
 
     test("an anchor deleted while the model calls run captures nothing", async () => {

@@ -74,8 +74,9 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
    * An edit or delete changes what memos drawn from the message may say, so its
    * conversations go back through the batch. A delete also retires the memos
    * citing it straight away, whatever the stream's memory mode: archived when
-   * none of their sources survive, superseded when the requeued batch can
-   * re-extract from the rest.
+   * none of their sources survive, otherwise superseded. A conversation memo is
+   * re-extracted from the rest by the requeued batch; a saved or reflective
+   * memo has no conversation to re-extract from, so it is gone.
    */
   private async handleMessageMutation(event: OutboxEvent): Promise<void> {
     const payload = event.payload as unknown as Record<string, unknown>
@@ -112,7 +113,7 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
         await MemoRepository.markSuperseded(
           client,
           workspaceId,
-          citing.filter((c) => c.hasLiveSource && c.memo.sourceConversationId).map((c) => c.memo.id),
+          citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id),
           "A source message was deleted"
         )
       }

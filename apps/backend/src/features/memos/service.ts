@@ -1334,11 +1334,13 @@ export class MemoService implements MemoServiceLike {
 
       await MemoRepository.lockStreamSaves(client, context.memoScope.rootStreamId)
 
+      // A source deleted while the model calls ran: the memos were written from
+      // it, so dropping only the citation would keep its content.
       const sources = await MessageRepository.findByIds(client, context.sourceMessageIds)
-      if (sources.get(anchorMessageId)?.deletedAt) {
+      if (context.sourceMessageIds.some((id) => !sources.get(id) || sources.get(id)?.deletedAt)) {
+        logger.info({ sessionId, streamId }, "reflective capture — a source was deleted before save")
         return { classified: true, captured: 0, deduped: 0 }
       }
-      const sourceMessageIds = context.sourceMessageIds.filter((id) => !sources.get(id)?.deletedAt)
 
       const capturedMemos: MemosCapturedEventPayload["memos"] = []
       let deduped = 0
@@ -1374,7 +1376,7 @@ export class MemoService implements MemoServiceLike {
           title: content.title,
           abstract: content.abstract,
           keyPoints: content.keyPoints,
-          sourceMessageIds,
+          sourceMessageIds: context.sourceMessageIds,
           participantIds,
           knowledgeType: content.knowledgeType,
           tags: content.tags,

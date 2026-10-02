@@ -926,22 +926,23 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockResolvedValue(fakeStream())
-  spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-    new Map([
-      [
-        "msg_trigger",
-        {
-          id: "msg_trigger",
-          workspaceId: WORKSPACE_ID,
-          streamId: STREAM_ID,
-          authorId: "usr_1",
-          authorType: "user",
-          sequence: 5n,
-          createdAt: new Date("2026-07-01T11:00:00.000Z"),
-        } as unknown as Message,
-      ],
-    ])
-  )
+  const trigger = new Map([
+    [
+      "msg_trigger",
+      {
+        id: "msg_trigger",
+        workspaceId: WORKSPACE_ID,
+        streamId: STREAM_ID,
+        authorId: "usr_1",
+        authorType: "user",
+        sequence: 5n,
+        createdAt: new Date("2026-07-01T11:00:00.000Z"),
+        deletedAt: null,
+      } as unknown as Message,
+    ],
+  ])
+  spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(trigger)
+  spyOn(MessageRepository, "findByIds").mockResolvedValue(trigger)
   const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
   const classifyConversation = mock(async () => ({
