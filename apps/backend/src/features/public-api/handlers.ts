@@ -3212,7 +3212,7 @@ export function createPublicApiHandlers({
 
       const cursor = afterCursor ? decodeCursor(afterCursor) : undefined
 
-      const members = await StreamMemberRepository.listPaginated(pool, streamId, {
+      const members = await StreamMemberRepository.listPaginated(pool, workspaceId, streamId, {
         limit: limit + 1,
         cursorJoinedAt: cursor?.sortKey,
         cursorMemberId: cursor?.id,

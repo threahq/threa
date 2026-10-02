@@ -195,7 +195,7 @@ export const SyncLogRepository = {
         JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
         LEFT JOIN join_bounds jb ON jb.stream_id = root.id
         WHERE s.workspace_id = ${workspaceId}
-          AND ${rootReadableConditionSql(userId, "root")}
+          AND ${rootReadableConditionSql(workspaceId, userId, "root")}
       )
       SELECT l.sync_id, l.event_type, l.payload, l.created_at
       FROM sync_log l

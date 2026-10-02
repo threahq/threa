@@ -966,9 +966,9 @@ export function createStreamHandlers({
 
       const [members, botMemberIds, membership, viewerReadState, latestSequence, activityCounts, archivedAncestor] =
         await Promise.all([
-          streamService.getMembers(streamId),
+          streamService.getMembers(workspaceId, streamId),
           streamService.getBotMemberIds(workspaceId, streamId),
-          streamService.getMembership(streamId, userId),
+          streamService.getMembership(workspaceId, streamId, userId),
           streamService.getViewerReadState(streamId, userId),
           eventService.getLatestSequence(workspaceId, streamId),
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),

@@ -143,7 +143,7 @@ describe("ConversationService read/unread", () => {
     expect(threadSnap.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
     expect(threadSnap.lastReadSequence).toBe(threadEvents.get(tmsg1)!.sequence.toString())
     expect(threadSnap.readMessageIds).toEqual([])
-    expect(await StreamMemberRepository.findByStreamAndMember(pool, thread, reader)).toBeNull()
+    expect(await StreamMemberRepository.findByStreamAndMember(pool, wid, thread, reader)).toBeNull()
     expect((await ReadStateRepository.get(pool, thread, reader))?.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
   })
 
@@ -256,7 +256,7 @@ describe("ConversationService read/unread", () => {
     expect(byStream.get(thread)!.lastReadEventId).toBeNull()
     expect(byStream.get(thread)!.readMessageIds).toEqual([])
     expect(await ReadStateRepository.get(pool, thread, reader)).toMatchObject({ lastReadEventId: null })
-    expect(await StreamMemberRepository.findByStreamAndMember(pool, thread, reader)).toBeNull()
+    expect(await StreamMemberRepository.findByStreamAndMember(pool, wid, thread, reader)).toBeNull()
 
     // Effective root unread: msg2 is unread again (msg1 read).
     const readState = await ReadStateRepository.get(pool, root, reader)

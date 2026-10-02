@@ -558,7 +558,7 @@ describe("ActivityService.processReactionAdded", () => {
       name: "Bob",
       avatarUrl: `avatars/${WORKSPACE_ID}/${REACTOR_ID}/1700`,
     } as any)
-    spyOn(StreamMemberRepository, "findByStreamAndMember").mockResolvedValue({
+    const findAuthorMember = spyOn(StreamMemberRepository, "findByStreamAndMember").mockResolvedValue({
       memberId: MESSAGE_AUTHOR_ID,
     } as any)
     const resolveModule = await import("../streams")
@@ -589,6 +589,7 @@ describe("ActivityService.processReactionAdded", () => {
 
     expect(activities.length).toBe(2)
     expect(calls).toHaveLength(2)
+    expect(findAuthorMember).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, STREAM_ID, MESSAGE_AUTHOR_ID)
 
     const authorCall = calls.find((c) => c.userIds[0] === MESSAGE_AUTHOR_ID)
     expect(authorCall).toBeDefined()
@@ -989,6 +990,35 @@ describe("ActivityService mention extraction", () => {
 
     expect(activities).toHaveLength(0)
     expect(insertBatch).not.toHaveBeenCalled()
+  })
+
+  it("should notify only stream members when a private-stream mention names a non-member", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: TARGET_USER_ID }, { id: "usr_outsider" }] as any)
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+    const filterMemberIds = spyOn(StreamMemberRepository, "filterMemberIds").mockResolvedValue(
+      new Set([TARGET_USER_ID])
+    )
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
+      fakeActivity(params.context)
+    )
+
+    await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hey @target and @outsider",
+      contentJson: mentionDoc(TARGET_USER_ID, "usr_outsider"),
+    })
+
+    expect(filterMemberIds).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, STREAM_ID, [
+      TARGET_USER_ID,
+      "usr_outsider",
+    ])
+    expect(insertBatch.mock.calls[0][1]).toMatchObject({ userIds: [TARGET_USER_ID] })
   })
 
   it("notifies only user mention nodes, ignoring persona and bot mentions", async () => {

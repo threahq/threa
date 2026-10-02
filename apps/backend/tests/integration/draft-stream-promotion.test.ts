@@ -65,7 +65,7 @@ describe("draft stream promotion", () => {
       `draft:${owner}:${clientDraft}`,
     ])
     expect(rows.rows.map((row) => row.id)).toEqual([first.id])
-    const members = await StreamMemberRepository.list(pool, { streamId: first.id })
+    const members = await StreamMemberRepository.list(pool, wsId, { streamId: first.id })
     expect(members.map((member) => member.memberId)).toEqual([owner])
     const created = (await OutboxRepository.fetchAfterId(pool, baseline)).filter(
       (event) => event.eventType === "stream:created"

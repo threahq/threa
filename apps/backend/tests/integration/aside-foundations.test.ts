@@ -170,13 +170,13 @@ describe("Aside foundations", () => {
       createdBy: member,
       principal: { kind: "user", userId: member },
     })
-    expect(await StreamMemberRepository.isMember(pool, thread.id, member)).toBe(true)
+    expect(await StreamMemberRepository.isMember(pool, wsId, thread.id, member)).toBe(true)
 
     await streamService.removeMember(channel.id, member, wsId, creator)
 
-    expect(await StreamMemberRepository.isMember(pool, channel.id, member)).toBe(false)
-    expect(await StreamMemberRepository.isMember(pool, thread.id, member)).toBe(false)
-    expect(await StreamMemberRepository.isMember(pool, aside.id, member)).toBe(true)
+    expect(await StreamMemberRepository.isMember(pool, wsId, channel.id, member)).toBe(false)
+    expect(await StreamMemberRepository.isMember(pool, wsId, thread.id, member)).toBe(false)
+    expect(await StreamMemberRepository.isMember(pool, wsId, aside.id, member)).toBe(true)
   })
 
   test("memo scope for an aside is the creator's user tier", async () => {
