@@ -18,7 +18,7 @@ import {
   makeStreamBootstrap,
   makeWorkspaceBootstrap,
 } from "@/test/fixtures/sync-engine"
-import type { Draft, StreamPreviewHistoryBatchResponse, WorkspaceBootstrap } from "@threahq/types"
+import type { Draft, StreamPreviewHistoryBatchResponse, SyncCatchUpEntry, WorkspaceBootstrap } from "@threahq/types"
 import { enqueueOperation } from "./operation-queue"
 
 const engines: SyncEngine[] = []
@@ -765,6 +765,117 @@ describe("preview history recovery", () => {
       }).toEqual({ stream: "stream_shared", status: "synced", workspace: "synced" })
     }
   )
+
+  it.each(
+    ["reconnect", "resume"].flatMap((trigger) =>
+      ["current", "URL-visible", "board to current", "board to URL-visible"].map((demand) => [trigger, demand])
+    )
+  )("should recover %s with retained %s demand when initial cursor seeding failed", async (trigger, demand) => {
+    const streamId = "stream_retained_gap"
+    let gapCommitted = false
+    const gap: SyncCatchUpEntry = {
+      syncId: "11",
+      eventType: "message:created",
+      payload: { workspaceId: "ws_1", streamId, event: makeStreamBootstrap(streamId, "3").events[0] },
+      createdAt: new Date().toISOString(),
+    }
+    const deps = {
+      ...makeDeps(),
+      syncService: {
+        catchUp: vi
+          .fn(async (_workspaceId: string, params: { after: string }) => ({
+            entries: gapCommitted && BigInt(params.after) < 11n ? [gap] : [],
+            head: gapCommitted ? "11" : "10",
+          }))
+          .mockRejectedValueOnce(new Error("Initial sync head unavailable")),
+      },
+    }
+    deps.workspaceService.bootstrap
+      .mockRejectedValueOnce(new Error("Initial workspace snapshot unavailable"))
+      .mockImplementation(async () => ({ ...makeWorkspaceBootstrap(), syncHead: gapCommitted ? "11" : "10" }))
+    const held = hold()
+    const lanes = { active: 0, peak: 0 }
+    deps.streamService.bootstrap.mockImplementation(async (_workspaceId, id, params) => {
+      const response = makeStreamBootstrap(id, params?.after ? "3" : "2")
+      lanes.active++
+      lanes.peak = Math.max(lanes.peak, lanes.active)
+      try {
+        if (!params?.after) await held.promise
+        return response
+      } finally {
+        lanes.active--
+      }
+    })
+    const engine = createEngine(deps)
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
+    expect(engine.getSyncCursor()).toBeNull()
+    if (demand.startsWith("board")) engine.setBoardStreamIds([streamId])
+    else if (demand === "current") engine.setCurrentStreamId(streamId)
+    else engine.setVisibleStreamIds([streamId])
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    if (demand === "board to current") engine.setCurrentStreamId(streamId)
+    if (demand === "board to URL-visible") engine.setVisibleStreamIds([streamId])
+    if (trigger === "reconnect") disconnect(engine, socket)
+    gapCommitted = true
+    const recovery = track(
+      trigger === "reconnect" ? engine.onConnect(asSocket(new MockSocket())) : engine.refreshAfterConnectivityResume()
+    )
+    await vi.waitFor(() => expect(deps.syncStatus.get("workspace:ws_1")).toBe("syncing"))
+    expect(deps.streamService.bootstrap).toHaveBeenCalledOnce()
+    held.resolve()
+    await recovery
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("11"))
+    expect({
+      sequences: (await db.events.where("streamId").equals(streamId).sortBy("_sequenceNum")).map(
+        (event) => event.sequence
+      ),
+      cursors: deps.streamService.bootstrap.mock.calls.map((call) => call[2]?.after ?? null),
+      status: deps.syncStatus.get(`stream:${streamId}`),
+      ...lanes,
+    }).toEqual({ sequences: ["2", "3"], cursors: [null, "2"], status: "synced", active: 0, peak: 1 })
+  })
+
+  it("should leave a demoted navigation follow-up to cancellable board recovery", async () => {
+    const streamId = "stream_demoted"
+    const deps = depsAtHead("10")
+    const engine = createEngine(deps)
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+    const oldBody = hold<ReturnType<typeof makeStreamBootstrap>>()
+    const freshBody = hold<ReturnType<typeof makeStreamBootstrap>>()
+    deps.streamService.bootstrap
+      .mockImplementationOnce(() => oldBody.promise)
+      .mockImplementation(() => freshBody.promise)
+    engine.setCurrentStreamId(streamId)
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
+    engine.setBoardStreamIds([streamId])
+    disconnect(engine, socket)
+    const newSocket = new MockSocket()
+    const reconnect = track(engine.onConnect(asSocket(newSocket)))
+    engine.setVisibleStreamIds([streamId])
+    engine.setCurrentStreamId(undefined)
+    engine.setVisibleStreamIds([])
+    await vi.waitFor(() => expect(deps.syncStatus.get("workspace:ws_1")).toBe("syncing"))
+    oldBody.resolve(makeStreamBootstrap(streamId, "2"))
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(2))
+    const params = deps.streamService.bootstrap.mock.calls[1][2]
+    expect({ after: params?.after, cancellable: params?.signal instanceof AbortSignal }).toEqual({
+      after: "2",
+      cancellable: true,
+    })
+    engine.setBoardStreamIds([])
+    disconnect(engine, newSocket)
+    freshBody.resolve(makeStreamBootstrap(streamId, "3"))
+    await reconnect
+    expect({
+      aborted: params?.signal?.aborted,
+      sequences: (await db.events.where("streamId").equals(streamId).sortBy("_sequenceNum")).map(
+        (event) => event.sequence
+      ),
+    }).toEqual({ aborted: true, sequences: ["2"] })
+  })
 
   it("should retry the same board ID without borrowing or applying its retired response", async () => {
     const { deps, engine, socket } = await setup()

@@ -52,6 +52,7 @@ interface StreamRefresh {
   promise: Promise<boolean>
   controller: AbortController
   generation?: number
+  readonly startedGeneration: number
 }
 
 function awaitRecovery<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -1628,6 +1629,21 @@ export class SyncEngine {
 
     const existing = this.activeStreamRefreshes.get(streamId)
     if (existing) {
+      if (existing.startedGeneration !== this.recoveryGeneration) {
+        // The follow-up must read its cursor before joining for this recovery.
+        return existing.promise.then(() => {
+          if (
+            !this.isAccountCurrent() ||
+            !this.socket?.connected ||
+            (recoveryGeneration === undefined
+              ? !this.isForegroundStream(streamId)
+              : !this.getVisibleServerStreamIds().includes(streamId)) ||
+            (recoveryGeneration !== undefined && recoveryGeneration !== this.recoveryGeneration)
+          )
+            return false
+          return this.refreshStreamAfterNavigation(streamId, recoveryGeneration)
+        })
+      }
       return recoveryGeneration === undefined
         ? existing.promise
         : this.joinStreamForCatchUp(streamId).then(() => existing.promise)
@@ -1637,6 +1653,7 @@ export class SyncEngine {
       promise: Promise.resolve(false),
       controller: new AbortController(),
       generation: this.isForegroundStream(streamId) ? undefined : recoveryGeneration,
+      startedGeneration: this.recoveryGeneration,
     }
     refresh.promise = this.performStreamRefresh(streamId, refresh).finally(() => {
       if (this.activeStreamRefreshes.get(streamId) === refresh) {
