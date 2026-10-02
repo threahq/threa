@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AgentStepTypes } from "@threahq/types"
-import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
+import { AgentSessionRepository, SessionStatuses, type SessionStatus } from "../../src/features/agents"
 import { loadEpisodeSummaryPromptBlock } from "../../src/features/agents/companion/episode-summaries"
 import { messageId, personaId, sessionId, stepId, streamId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
@@ -17,19 +17,26 @@ describe("episode summaries: source stream access", () => {
     await pool.end()
   })
 
-  /** A stream with three summarized sessions: one cited a shared channel, one a private one, one researched nothing. */
+  /**
+   * A stream with three summarized sessions: one cited a shared channel, one a private one, one researched
+   * nothing. Decoys that must never be injected: another stream's, another persona's, a running session's.
+   */
   async function seedSessions() {
     const ids = { streamId: streamId(), personaId: personaId(), shared: streamId(), private: streamId() }
     await seedSession(ids, "Answered from the shared channel.", [[ids.shared]])
     await seedSession(ids, "Answered from the private channel.", [[ids.shared], [ids.private]])
     await seedSession(ids, "Answered without research.", [])
+    await seedSession({ ...ids, streamId: streamId() }, "Another stream's session.", [])
+    await seedSession({ ...ids, personaId: personaId() }, "Another persona's session.", [])
+    await seedSession(ids, "A session still running.", [], SessionStatuses.RUNNING)
     return ids
   }
 
   async function seedSession(
     ids: { streamId: string; personaId: string },
     summary: string,
-    digestSourceStreamIds: string[][]
+    digestSourceStreamIds: string[][],
+    status: SessionStatus = SessionStatuses.COMPLETED
   ) {
     const id = sessionId()
     await AgentSessionRepository.insert(pool, {
@@ -37,7 +44,7 @@ describe("episode summaries: source stream access", () => {
       streamId: ids.streamId,
       personaId: ids.personaId,
       triggerMessageId: messageId(),
-      status: SessionStatuses.COMPLETED,
+      status,
     })
     for (const [stepNumber, sourceStreamIds] of digestSourceStreamIds.entries()) {
       await AgentSessionRepository.upsertStep(pool, {
