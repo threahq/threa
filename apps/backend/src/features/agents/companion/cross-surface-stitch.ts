@@ -65,12 +65,14 @@ export async function loadCrossSurfaceStitch(
   // The spawning message lives in the parent stream — the bridge into the
   // discussion this thread was pulled from. `findThreadRoot` filters soft-deleted
   // roots and returns null for non-threads.
-  const spawningMessage = await MessageRepository.findThreadRoot(db, thread)
+  const spawningMessage = await MessageRepository.findThreadRoot(db, workspaceId, thread)
   if (!spawningMessage) return null
 
   // Recency-fallback window: the parent stream's most recent messages, scanned
   // only when the spawning message's own conversation isn't eligible.
-  const recent = await MessageRepository.list(db, spawningMessage.streamId, { limit: FALLBACK_WINDOW_MESSAGES })
+  const recent = await MessageRepository.list(db, workspaceId, spawningMessage.streamId, {
+    limit: FALLBACK_WINDOW_MESSAGES,
+  })
   const conversation = await resolveEligibleConversation(db, {
     workspaceId,
     preferMessageId: spawningMessage.id,
@@ -84,7 +86,7 @@ export async function loadCrossSurfaceStitch(
   const memberIds = conversation.messageIds.filter((id) => id !== spawningMessage.id)
   if (memberIds.length === 0) return null
 
-  const byId = await MessageRepository.findByIdsInWorkspace(db, workspaceId, memberIds)
+  const byId = await MessageRepository.findByIds(db, workspaceId, memberIds)
   const members = memberIds
     .map((id) => byId.get(id))
     .filter((m): m is Message => m !== undefined && !m.deletedAt)

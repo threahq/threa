@@ -1,20 +1,17 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
 import { withClient } from "./setup"
-import { EventService, MessageRepository } from "../../src/features/messaging"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
-import { streamId, userId, workspaceId, sessionId, personaId, messageId, stepId } from "../../src/lib/id"
+import { streamId, workspaceId, sessionId, personaId, messageId, stepId } from "../../src/lib/id"
 import { AgentStepTypes } from "@threahq/types"
-import { setupTestDatabase, testMessageContent } from "./setup"
+import { setupTestDatabase } from "./setup"
 
 describe("Agent Session Repository", () => {
   const testWorkspaceId = workspaceId()
   let pool: Pool
-  let eventService: EventService
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
-    eventService = new EventService(pool)
   })
 
   afterAll(async () => {
@@ -209,219 +206,6 @@ describe("Agent Session Repository", () => {
         expect(session!.heartbeatAt!.getTime()).toBeGreaterThan(initialHeartbeat!.getTime())
       })
     })
-  })
-})
-
-describe("Message Repository - listSince", () => {
-  let pool: Pool
-  let eventService: EventService
-
-  beforeAll(async () => {
-    pool = await setupTestDatabase()
-    eventService = new EventService(pool)
-  })
-
-  afterAll(async () => {
-    await pool.end()
-  })
-
-  beforeEach(async () => {
-    await pool.query("DELETE FROM reactions")
-    await pool.query("DELETE FROM messages")
-    await pool.query("DELETE FROM stream_events")
-    await pool.query("DELETE FROM stream_sequences")
-  })
-
-  test("should return messages after given sequence", async () => {
-    const testStreamId = streamId()
-    const testWorkspaceId = workspaceId()
-    const testUserId = userId()
-
-    const msg1 = await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("First"),
-    })
-
-    const msg2 = await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Second"),
-    })
-
-    const msg3 = await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Third"),
-    })
-
-    const messages = await MessageRepository.listSince(pool, testStreamId, BigInt(1))
-
-    expect(messages).toHaveLength(2)
-    expect(messages[0].id).toBe(msg2.id)
-    expect(messages[1].id).toBe(msg3.id)
-  })
-
-  test("should return empty array when no messages after sequence", async () => {
-    const testStreamId = streamId()
-    const testWorkspaceId = workspaceId()
-    const testUserId = userId()
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Only message"),
-    })
-
-    const messages = await MessageRepository.listSince(pool, testStreamId, BigInt(100))
-
-    expect(messages).toHaveLength(0)
-  })
-
-  test("should exclude messages from specified author", async () => {
-    const testStreamId = streamId()
-    const testWorkspaceId = workspaceId()
-    const user1Id = userId()
-    const user2Id = userId()
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: user1Id,
-      authorType: "user",
-      ...testMessageContent("From user 1"),
-    })
-
-    const msg2 = await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: user2Id,
-      authorType: "user",
-      ...testMessageContent("From user 2"),
-    })
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: user1Id,
-      authorType: "user",
-      ...testMessageContent("From user 1 again"),
-    })
-
-    const messages = await MessageRepository.listSince(pool, testStreamId, BigInt(0), {
-      excludeAuthorId: user1Id,
-    })
-
-    expect(messages).toHaveLength(1)
-    expect(messages[0].id).toBe(msg2.id)
-  })
-
-  test("should order by sequence ascending (oldest first)", async () => {
-    const testStreamId = streamId()
-    const testWorkspaceId = workspaceId()
-    const testUserId = userId()
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("First"),
-    })
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Second"),
-    })
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Third"),
-    })
-
-    const messages = await MessageRepository.listSince(pool, testStreamId, BigInt(0))
-
-    expect(messages[0].contentMarkdown).toBe("First")
-    expect(messages[1].contentMarkdown).toBe("Second")
-    expect(messages[2].contentMarkdown).toBe("Third")
-  })
-
-  test("should not include deleted messages", async () => {
-    const testStreamId = streamId()
-    const testWorkspaceId = workspaceId()
-    const testUserId = userId()
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("First"),
-    })
-
-    const msg2 = await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Second - will be deleted"),
-    })
-
-    await eventService.createMessage({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      authorId: testUserId,
-      authorType: "user",
-      ...testMessageContent("Third"),
-    })
-
-    await eventService.deleteMessageInternal({
-      workspaceId: testWorkspaceId,
-      streamId: testStreamId,
-      messageId: msg2.id,
-      actorId: testUserId,
-    })
-
-    const messages = await MessageRepository.listSince(pool, testStreamId, BigInt(0))
-
-    expect(messages).toHaveLength(2)
-    expect(messages.find((m) => m.id === msg2.id)).toBeUndefined()
-  })
-
-  test("should respect limit parameter", async () => {
-    const testStreamId = streamId()
-    const testWorkspaceId = workspaceId()
-    const testUserId = userId()
-
-    for (let i = 0; i < 10; i++) {
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: testStreamId,
-        authorId: testUserId,
-        authorType: "user",
-        ...testMessageContent(`Message ${i + 1}`),
-      })
-    }
-
-    const messages = await MessageRepository.listSince(pool, testStreamId, BigInt(0), {
-      limit: 3,
-    })
-
-    expect(messages).toHaveLength(3)
   })
 })
 

@@ -118,7 +118,12 @@ export async function resolveContextWindowPolicy(
     return { episode: { kind: "dm-recency", continues: false }, maxMessages, maxChars, carryDigests: false }
   }
 
-  const windowFloor = await MessageRepository.findWindowFloorSequence(db, params.stream.id, maxMessages)
+  const windowFloor = await MessageRepository.findWindowFloorSequence(
+    db,
+    params.stream.workspaceId,
+    params.stream.id,
+    maxMessages
+  )
   // `null` floor → the stream has fewer than `maxMessages` messages, so the
   // window covers everything and any prior cursor is inside it (continue).
   const continues = windowFloor === null || priorSession.lastSeenSequence >= windowFloor

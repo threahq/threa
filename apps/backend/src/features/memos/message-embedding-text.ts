@@ -78,7 +78,7 @@ export async function loadMessageEmbeddingText(
 
   let anchor: string | null = null
   if (stream.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
-    const anchorMessage = await MessageRepository.findById(pool, stream.parentAnchorId)
+    const anchorMessage = await MessageRepository.findById(pool, workspaceId, stream.parentAnchorId)
     anchor = anchorMessage && !anchorMessage.deletedAt ? anchorMessage.contentMarkdown : null
   }
 
@@ -90,7 +90,7 @@ export async function loadMessageEmbeddingText(
 
   if (conversation) {
     const precedingIds = conversation.messageIds.filter((id) => id < message.id).slice(-PRECEDING_MAX_COUNT)
-    const byId = await MessageRepository.findByIds(pool, precedingIds)
+    const byId = await MessageRepository.findByIds(pool, workspaceId, precedingIds)
     preceding = precedingIds
       .map((id) => byId.get(id))
       .filter(
@@ -124,9 +124,9 @@ export async function embedMessageWithContext(
     subject: message.id,
     loadText: () => loadMessageEmbeddingText(pool, workspaceId, message),
     readExpectedHash: async () =>
-      (await MessageRepository.findEmbeddingSourceHashes(pool, [message.id])).get(message.id) ?? null,
+      (await MessageRepository.findEmbeddingSourceHashes(pool, workspaceId, [message.id])).get(message.id) ?? null,
     embed: (text) => embeddingService.embed(text, { workspaceId, functionId: "message-embedding" }),
-    write: (row) => MessageRepository.updateEmbeddings(pool, [{ id: message.id, ...row }]),
+    write: (row) => MessageRepository.updateEmbeddings(pool, workspaceId, [{ id: message.id, ...row }]),
   })
 
   if (outcome === "text-missing") {

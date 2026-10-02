@@ -111,7 +111,7 @@ describe("ConversationSummaryService", () => {
 
     expect(summary).toBe("Updated summary with key decisions and pending task")
     expect(mockGenerateText).toHaveBeenCalledTimes(1)
-    expect(listByRangeSpy).toHaveBeenCalledWith({}, "stream_1", 1n, 20n, { limit: 40 })
+    expect(listByRangeSpy).toHaveBeenCalledWith({}, "ws_1", "stream_1", 1n, 20n, { limit: 40 })
     expect(upsertSummarySpy).toHaveBeenCalledWith(
       {},
       expect.objectContaining({
@@ -158,7 +158,7 @@ describe("ConversationSummaryService", () => {
       keptMessages,
     })
 
-    expect(listByRangeSpy).toHaveBeenCalledWith({}, "stream_1", 51n, 79n, { limit: 40 })
+    expect(listByRangeSpy).toHaveBeenCalledWith({}, "ws_1", "stream_1", 51n, 79n, { limit: 40 })
     // The fold carries the cost-attribution context and telemetry through to the
     // shared `generateTextWithTools` call, and folds the prior summary in (so the
     // running memory accumulates rather than restarting each batch).

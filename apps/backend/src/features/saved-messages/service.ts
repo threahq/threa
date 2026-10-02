@@ -110,7 +110,7 @@ export class SavedMessagesService {
     const clampedRemindAt = clampRemindAt(params.remindAt)
 
     return withTransaction(this.pool, async (client) => {
-      const message = await MessageRepository.findById(client, params.messageId)
+      const message = await MessageRepository.findById(client, params.workspaceId, params.messageId)
       if (!message || message.deletedAt !== null) {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }

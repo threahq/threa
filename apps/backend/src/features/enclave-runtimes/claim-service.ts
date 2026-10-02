@@ -190,7 +190,7 @@ export class EnclaveClaimService {
         })
         if (!candidate) return { kind: "none" as const }
 
-        const trigger = await MessageRepository.findById(tx, candidate.messageId)
+        const trigger = await MessageRepository.findById(tx, candidate.workspaceId, candidate.messageId)
         if (!trigger || trigger.authorType !== AuthorTypes.USER) {
           const claimed = await EnclaveInvocationsRepository.claimNext(tx, {
             keyId,
@@ -392,13 +392,13 @@ export class EnclaveClaimService {
     const persona = getBuiltInAgentConfig(ARIADNE_AGENT_ID)
     if (!persona) return completeAsNoOp("persona config missing")
 
-    const trigger = await MessageRepository.findById(pool, triggerId)
+    const trigger = await MessageRepository.findById(pool, workspaceId, triggerId)
     if (!trigger || !trigger.ciphertext) return completeAsNoOp("trigger message gone or not E2E")
 
     // The session row carries the trigger's author, so the claim-time guard
     // re-reads it under the transaction rather than trusting this snapshot.
     const ensureTriggerWritable = async (tx: PoolClient): Promise<boolean> => {
-      const currentTrigger = await MessageRepository.findById(tx, triggerId)
+      const currentTrigger = await MessageRepository.findById(tx, workspaceId, triggerId)
       if (!currentTrigger || currentTrigger.authorType !== "user") {
         await EnclaveInvocationsRepository.failClaimed(tx, {
           id: invocation.id,
@@ -501,7 +501,7 @@ export class EnclaveClaimService {
       // from `CONTEXT_WINDOW_CANDIDATE_CEILING` rather than a parallel literal;
       // referenced here (request time) not at module load to avoid the agents-barrel
       // import cycle's TDZ. The enclave schema's own history cap must stay ≥ this.
-      MessageRepository.findSurrounding(pool, triggerId, streamId, CONTEXT_WINDOW_CANDIDATE_CEILING, 0),
+      MessageRepository.findSurrounding(pool, workspaceId, triggerId, streamId, CONTEXT_WINDOW_CANDIDATE_CEILING, 0),
       triggerStream.rootStreamId
         ? StreamRepository.findById(pool, workspaceId, triggerStream.rootStreamId)
         : Promise.resolve(triggerStream),
@@ -655,7 +655,7 @@ export class EnclaveClaimService {
         const locked = await StreamRepository.findByIdForUpdateBlocking(tx, workspaceId, triggerStream.id)
         const source = locked?.displayNameSource ?? (locked?.displayName ? TitleSources.LEGACY : null)
         if (locked && !locked.archivedAt && (source === null || source === TitleSources.GENERATED)) {
-          const stats = await MessageRepository.getNamingStats(tx, locked.id)
+          const stats = await MessageRepository.getNamingStats(tx, workspaceId, locked.id)
           // The session has not written its reply yet, but naming runs only after
           // at least one reply is durably streamed. Reserve against that first
           // reply so checkpoint 6 is not missed at a pre-turn count of 5; extra

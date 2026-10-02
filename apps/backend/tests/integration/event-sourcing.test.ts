@@ -371,7 +371,7 @@ describe("Event Sourcing", () => {
         actorId: testUserId,
       })
 
-      const messages = await eventService.getMessages(testStreamId)
+      const messages = await eventService.getMessages(testWorkspaceId, testStreamId)
 
       expect(messages).toHaveLength(1)
       expect(messages[0].id).toBe(msg1.id)
@@ -488,7 +488,7 @@ describe("Event Sourcing", () => {
         userId: user1,
       })
 
-      const updated = await eventService.getMessageById(message.id)
+      const updated = await eventService.getMessageById(testWorkspaceId, message.id)
 
       expect(updated!.reactions["👍"]).toHaveLength(2)
       expect(updated!.reactions["👍"]).toContain(user1)
@@ -566,7 +566,7 @@ describe("Event Sourcing", () => {
         userId: testUserId,
       })
 
-      const final = await eventService.getMessageById(message.id)
+      const final = await eventService.getMessageById(testWorkspaceId, message.id)
 
       // Only one entry for this user
       expect(final!.reactions["👍"]).toEqual([testUserId])

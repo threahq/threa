@@ -62,7 +62,7 @@ describe("Message metadata", () => {
 
     expect(msg.metadata).toEqual(metadata)
 
-    const refetched = await MessageRepository.findById(pool, msg.id)
+    const refetched = await MessageRepository.findById(pool, testWorkspaceId, msg.id)
     expect(refetched?.metadata).toEqual(metadata)
   })
 
@@ -104,6 +104,7 @@ describe("Message metadata", () => {
     })
 
     const hits = await MessageRepository.findByMetadata(pool, {
+      workspaceId: testWorkspaceId,
       streamIds: [testStreamId, otherStreamId],
       filter: { "github.pr.id": prId, "github.event": "opened" },
     })
@@ -126,6 +127,7 @@ describe("Message metadata", () => {
     })
 
     const hits = await MessageRepository.findByMetadata(pool, {
+      workspaceId: testWorkspaceId,
       streamIds: [testStreamId], // otherStreamId NOT included
       filter: { "github.pr.id": prId },
     })
@@ -155,6 +157,7 @@ describe("Message metadata", () => {
     })
 
     const hits = await MessageRepository.findByMetadata(pool, {
+      workspaceId: testWorkspaceId,
       streamIds: [testStreamId, otherStreamId],
       filter: { "github.pr.id": prId },
       streamId: testStreamId,
@@ -176,9 +179,10 @@ describe("Message metadata", () => {
       metadata: { "github.pr.id": prId },
     })
 
-    await MessageRepository.softDelete(pool, msg.id)
+    await MessageRepository.softDelete(pool, testWorkspaceId, msg.id)
 
     const hits = await MessageRepository.findByMetadata(pool, {
+      workspaceId: testWorkspaceId,
       streamIds: [testStreamId],
       filter: { "github.pr.id": prId },
     })
@@ -187,10 +191,12 @@ describe("Message metadata", () => {
 
   test("findByMetadata returns [] for empty input (filter or accessible streams)", async () => {
     const a = await MessageRepository.findByMetadata(pool, {
+      workspaceId: testWorkspaceId,
       streamIds: [testStreamId],
       filter: {},
     })
     const b = await MessageRepository.findByMetadata(pool, {
+      workspaceId: testWorkspaceId,
       streamIds: [],
       filter: { "github.pr.id": "x" },
     })

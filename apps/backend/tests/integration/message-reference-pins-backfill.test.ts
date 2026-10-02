@@ -196,7 +196,7 @@ describe("message-reference-pins backfill", () => {
   }
 
   test("a legacy quote pins to the revision its snippet came from, with a re-derived body", async () => {
-    const stored = await MessageRepository.findById(pool, locatableQuoteId)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, locatableQuoteId)
     const range = { from: 1, to: 6 }
     expect(referenceAttrs(stored?.contentJson, "quoteReply")).toEqual({
       messageId: sourceMessageId,
@@ -210,7 +210,7 @@ describe("message-reference-pins backfill", () => {
   })
 
   test("a legacy quote whose snippet is in no revision stays unpinned", async () => {
-    const stored = await MessageRepository.findById(pool, unlocatableQuoteId)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, unlocatableQuoteId)
 
     expect(referenceAttrs(stored?.contentJson, "quoteReply")).toEqual({
       messageId: sourceMessageId,
@@ -222,7 +222,7 @@ describe("message-reference-pins backfill", () => {
   })
 
   test("a legacy share pins to the source's current revision, whole", async () => {
-    const stored = await MessageRepository.findById(pool, shareId)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, shareId)
 
     expect(referenceAttrs(stored?.contentJson, "sharedMessage")).toEqual({
       messageId: sourceMessageId,
@@ -243,11 +243,11 @@ describe("message-reference-pins backfill", () => {
 
   test("re-running the backfill changes nothing", async () => {
     const ids = [locatableQuoteId, unlocatableQuoteId, shareId]
-    const before = await Promise.all(ids.map((id) => MessageRepository.findById(pool, id)))
+    const before = await Promise.all(ids.map((id) => MessageRepository.findById(pool, testWorkspaceId, id)))
 
     await runBackfill()
 
-    const after = await Promise.all(ids.map((id) => MessageRepository.findById(pool, id)))
+    const after = await Promise.all(ids.map((id) => MessageRepository.findById(pool, testWorkspaceId, id)))
     expect(after.map((m) => ({ contentJson: m?.contentJson, contentMarkdown: m?.contentMarkdown }))).toEqual(
       before.map((m) => ({ contentJson: m?.contentJson, contentMarkdown: m?.contentMarkdown }))
     )

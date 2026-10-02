@@ -54,8 +54,8 @@ describe("Message hybrid search retrieval", () => {
   let pool: Pool
   const nextSequenceByStream = new Map<string, bigint>()
 
-  function seedEmbedding(messageId: string, embedding: number[]) {
-    return MessageRepository.updateEmbeddings(pool, [
+  function seedEmbedding(wsId: string, messageId: string, embedding: number[]) {
+    return MessageRepository.updateEmbeddings(pool, wsId, [
       { id: messageId, embedding, sourceHash: "seed", expectedSourceHash: null },
     ])
   }
@@ -161,7 +161,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "banana weather forecast",
     })
-    await seedEmbedding(semanticOnly.id, unit(0))
+    await seedEmbedding(wsId, semanticOnly.id, unit(0))
     return { keywordOnly, semanticOnly }
   }
 
@@ -192,7 +192,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "purple bicycles wander quietly at dusk",
     })
-    await seedEmbedding(semanticMatch.id, unit(1))
+    await seedEmbedding(wsId, semanticMatch.id, unit(1))
 
     const service = makeService(pool)
     const { results } = await service.search({
@@ -218,7 +218,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "acme project rollout status update",
     })
-    await seedEmbedding(both.id, blend(0, 1, 0.6))
+    await seedEmbedding(wsId, both.id, blend(0, 1, 0.6))
 
     // Semantic leg only: perfect embedding match, no shared words.
     const semanticOnly = await postMessage({
@@ -227,7 +227,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "banana weather forecast",
     })
-    await seedEmbedding(semanticOnly.id, unit(0))
+    await seedEmbedding(wsId, semanticOnly.id, unit(0))
 
     // Keyword leg only: partial term match, embedding orthogonal to the query.
     const keywordOnly = await postMessage({
@@ -236,7 +236,7 @@ describe("Message hybrid search retrieval", () => {
       authorId: uid,
       text: "acme project kickoff",
     })
-    await seedEmbedding(keywordOnly.id, unit(5))
+    await seedEmbedding(wsId, keywordOnly.id, unit(5))
 
     // 4 tokens, no digits -> "general" intent (keywordWeight 0.4, semanticWeight 0.6).
     const service = makeService(pool)

@@ -93,7 +93,7 @@ describe("mention ingestion", () => {
       contentMarkdown: `@${author.slug} and **@nobody** in #${channel.slug} not #nowhere`,
     })
 
-    const stored = await MessageRepository.findById(pool, message.id)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, message.id)
     expect({ contentJson: stored!.contentJson, contentMarkdown: stored!.contentMarkdown }).toEqual({
       contentJson: {
         type: "doc",

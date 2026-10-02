@@ -144,7 +144,7 @@ export function createDelegationPublicApiHandlers({
 
   async function findResultThreadId(delegation: DelegatedTask): Promise<string | undefined> {
     if (!delegation.resultMessageId) return undefined
-    const resultMessage = await MessageRepository.findById(pool, delegation.resultMessageId)
+    const resultMessage = await MessageRepository.findById(pool, delegation.workspaceId, delegation.resultMessageId)
     if (resultMessage && resultMessage.streamId !== delegation.streamId) return resultMessage.streamId
     return (
       await StreamRepository.findByAnchor(pool, delegation.workspaceId, delegation.streamId, delegation.resultMessageId)

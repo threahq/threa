@@ -231,7 +231,7 @@ async function processChunk(
   }
   if (sourceIds.size === 0) return { processed: 0 }
 
-  const sourcesById = await MessageRepository.findByIdsInWorkspace(ctx.pool, workspaceId, [...sourceIds])
+  const sourcesById = await MessageRepository.findByIds(ctx.pool, workspaceId, [...sourceIds])
   // Ids come out of stored content, so they are whatever an author once wrote.
   // `sourcesById` is already workspace-resolved; anything it does not name is
   // not this workspace's to read (INV-8).

@@ -83,7 +83,7 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (this.lifecycle) {
       await Promise.all(
         [...structural.values()].map(async ({ ref, eventId, messageId, initiatingUserId }) => {
-          const authorityUserId = await this.resolveInitiatingUserId(messageId, initiatingUserId)
+          const authorityUserId = await this.resolveInitiatingUserId(ref.workspaceId, messageId, initiatingUserId)
           if (!authorityUserId) {
             logger.debug(
               { workspaceId: ref.workspaceId, targetKind: ref.targetKind, targetId: ref.targetId, messageId },
@@ -127,7 +127,11 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
       const payload = event.payload
       if (!payload.isPrimary || !(await this.isEligibleConversation(payload.workspaceId, payload.conversationId)))
         return
-      const initiatingUserId = await this.resolveInitiatingUserId(payload.messageId, payload.initiatingUserId)
+      const initiatingUserId = await this.resolveInitiatingUserId(
+        payload.workspaceId,
+        payload.messageId,
+        payload.initiatingUserId
+      )
       if (!initiatingUserId) {
         logger.debug(
           {
@@ -154,7 +158,11 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (isOutboxEventType(event, "conversation:message_reassigned")) {
       if (!this.lifecycle) return
       const payload = event.payload
-      const initiatingUserId = await this.resolveInitiatingUserId(payload.messageId, payload.initiatingUserId)
+      const initiatingUserId = await this.resolveInitiatingUserId(
+        payload.workspaceId,
+        payload.messageId,
+        payload.initiatingUserId
+      )
       if (!initiatingUserId) {
         logger.debug(
           {
@@ -219,9 +227,13 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     )
   }
 
-  private async resolveInitiatingUserId(messageId: string, explicitUserId?: string): Promise<string | null> {
+  private async resolveInitiatingUserId(
+    workspaceId: string,
+    messageId: string,
+    explicitUserId?: string
+  ): Promise<string | null> {
     if (explicitUserId) return explicitUserId
-    const message = await MessageRepository.findById(this.db, messageId)
+    const message = await MessageRepository.findById(this.db, workspaceId, messageId)
     return message?.authorType === AuthorTypes.USER ? message.authorId : null
   }
 

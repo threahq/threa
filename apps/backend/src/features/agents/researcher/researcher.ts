@@ -1088,7 +1088,7 @@ Each query must have:
           const surroundingBatches = await Promise.all(
             filteredSearchResults
               .slice(0, 3)
-              .map((result) => MessageRepository.findSurrounding(client, result.id, result.streamId, 1, 1))
+              .map((result) => MessageRepository.findSurrounding(client, workspaceId, result.id, result.streamId, 1, 1))
           )
 
           for (const surrounding of surroundingBatches) {
@@ -1114,7 +1114,7 @@ Each query must have:
 
           const topStreamIds = [...new Set(filteredSearchResults.slice(0, 2).map((result) => result.streamId))]
           const recentMessagesByStream = await Promise.all(
-            topStreamIds.map((streamId) => MessageRepository.list(client, streamId, { limit: 5 }))
+            topStreamIds.map((streamId) => MessageRepository.list(client, workspaceId, streamId, { limit: 5 }))
           )
           for (const streamMessages of recentMessagesByStream) {
             for (const message of streamMessages) {
