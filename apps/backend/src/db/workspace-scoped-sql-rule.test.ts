@@ -178,6 +178,17 @@ ruleTester.run("workspace-scoped-sql", rule, {
       ].join("\n"),
     },
     {
+      name: "a scoped join appended to an inlined statement",
+      code: [
+        "const BASE = sql`SELECT m.id FROM messages m WHERE m.workspace_id = $1`",
+        "const query = sql`${BASE} JOIN streams s ON s.id = m.stream_id AND s.workspace_id = m.workspace_id`",
+      ].join("\n"),
+    },
+    {
+      name: "prose opening with an interpolation is not SQL",
+      code: "const prompt = `${intro}\nFetch from their workspace and do not guess.`",
+    },
+    {
       name: "a '--' inside a string literal does not start a comment",
       code: sqlTag(`SELECT * FROM streams WHERE name = '--' AND workspace_id = $1`),
     },
@@ -337,6 +348,19 @@ ruleTester.run("workspace-scoped-sql", rule, {
       name: "a table behind an unresolved interpolation is reported, and so is the join",
       code: sqlTag(`SELECT * FROM ${"${sql.raw(table)}"} t JOIN streams s ON s.id = t.stream_id`),
       errors: [hiddenTable, unscoped("streams s", "s.workspace_id")],
+    },
+    {
+      name: "a join appended to an inlined statement is checked",
+      code: [
+        "const BASE = sql`SELECT m.id FROM messages m WHERE m.workspace_id = $1`",
+        "const query = sql`${BASE} JOIN streams s ON s.id = m.stream_id`",
+      ].join("\n"),
+      errors: [unscoped("streams s", "s.workspace_id")],
+    },
+    {
+      name: "a join appended to an unresolved statement is checked",
+      code: sqlTag(`${"${base}"} JOIN streams s ON s.id = m.stream_id`),
+      errors: [unscoped("streams s", "s.workspace_id")],
     },
     {
       name: "an INSERT target behind an unresolved interpolation",
