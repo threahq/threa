@@ -207,6 +207,7 @@ export const DynamicNamingStateRepository = {
   async advanceOwnedClaimObservation(
     db: Querier,
     params: {
+      workspaceId: string
       ownerId: string
       token: string
       expectedVersion: number
@@ -218,7 +219,7 @@ export const DynamicNamingStateRepository = {
       UPDATE dynamic_naming_state SET
         claim_checkpoint = ${params.checkpoint}, claim_message_count = ${params.messageCount},
         version = version + 1, updated_at = NOW()
-      WHERE claim_owner_id = ${params.ownerId} AND claim_token = ${params.token}
+      WHERE workspace_id = ${params.workspaceId} AND claim_owner_id = ${params.ownerId} AND claim_token = ${params.token}
         AND version = ${params.expectedVersion} AND claim_expires_at > NOW()
         AND claim_checkpoint <= ${params.checkpoint} AND claim_message_count <= ${params.messageCount}
       RETURNING ${sql.raw(COLUMNS)}
@@ -226,20 +227,23 @@ export const DynamicNamingStateRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  async renewOwnedClaimLease(db: Querier, params: { ownerId: string; leaseSeconds: number }): Promise<number> {
+  async renewOwnedClaimLease(
+    db: Querier,
+    params: { workspaceId: string; ownerId: string; leaseSeconds: number }
+  ): Promise<number> {
     const result = await db.query(sql`
       UPDATE dynamic_naming_state SET
         claim_expires_at = NOW() + (${params.leaseSeconds} || ' seconds')::interval,
         updated_at = NOW()
-      WHERE claim_owner_id = ${params.ownerId} AND claim_token IS NOT NULL
+      WHERE workspace_id = ${params.workspaceId} AND claim_owner_id = ${params.ownerId} AND claim_token IS NOT NULL
     `)
     return result.rowCount ?? 0
   },
 
-  async releaseOwnedClaim(db: Querier, ownerId: string): Promise<number> {
+  async releaseOwnedClaim(db: Querier, workspaceId: string, ownerId: string): Promise<number> {
     const result = await db.query(sql`
       UPDATE dynamic_naming_state SET ${clearClaim}, version = version + 1, updated_at = NOW()
-      WHERE claim_owner_id = ${ownerId} AND claim_token IS NOT NULL
+      WHERE workspace_id = ${workspaceId} AND claim_owner_id = ${ownerId} AND claim_token IS NOT NULL
     `)
     return result.rowCount ?? 0
   },
@@ -312,7 +316,7 @@ export const DynamicNamingStateRepository = {
         last_evaluated_structure_version = CASE WHEN claim_reason IN ('structural', 'regenerate') THEN claim_structure_version ELSE last_evaluated_structure_version END,
         regeneration_pending = CASE WHEN claim_reason = 'regenerate' THEN FALSE ELSE regeneration_pending END,
         ${clearClaim}, version = version + 1, updated_at = NOW()
-      FROM consumed WHERE s.id = consumed.id
+      FROM consumed WHERE s.id = consumed.id AND s.workspace_id = ${params.workspaceId}
       RETURNING ${sql.raw(QUALIFIED_COLUMNS)}
       )
       SELECT updated.*, consumed.consumed_claim_checkpoint, consumed.consumed_claim_message_count,
@@ -329,20 +333,6 @@ export const DynamicNamingStateRepository = {
         reason: row.consumed_claim_reason as DynamicNamingClaimReason,
       },
     }
-  },
-
-  async recoverExpiredClaims(db: Querier, workspaceId: string, limit: number): Promise<number> {
-    const result = await db.query(sql`
-      WITH expired AS (
-        SELECT id FROM dynamic_naming_state
-        WHERE workspace_id = ${workspaceId} AND claim_token IS NOT NULL AND claim_expires_at <= NOW()
-        ORDER BY claim_expires_at, target_kind, target_id
-        LIMIT ${limit} FOR UPDATE SKIP LOCKED
-      )
-      UPDATE dynamic_naming_state s SET ${clearClaim}, version = version + 1, updated_at = NOW()
-      FROM expired WHERE s.id = expired.id
-    `)
-    return result.rowCount ?? 0
   },
 
   async recordStructuralEvent(
@@ -373,20 +363,5 @@ export const DynamicNamingStateRepository = {
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
-  },
-
-  async cleanupOrphans(db: Querier, workspaceId: string, limit: number): Promise<number> {
-    const result = await db.query(sql`
-      WITH orphans AS (
-        SELECT s.id FROM dynamic_naming_state s
-        WHERE s.workspace_id = ${workspaceId} AND s.claim_token IS NULL AND (
-          (s.target_kind = 'stream' AND NOT EXISTS (SELECT 1 FROM streams t WHERE t.workspace_id = s.workspace_id AND t.id = s.target_id)) OR
-          (s.target_kind = 'conversation' AND NOT EXISTS (SELECT 1 FROM conversations t WHERE t.workspace_id = s.workspace_id AND t.id = s.target_id))
-        )
-        ORDER BY s.target_kind, s.target_id LIMIT ${limit} FOR UPDATE OF s SKIP LOCKED
-      )
-      DELETE FROM dynamic_naming_state s USING orphans WHERE s.id = orphans.id
-    `)
-    return result.rowCount ?? 0
   },
 }
