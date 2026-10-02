@@ -14,6 +14,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<M
     SELECT DISTINCT msg.id
     FROM memos m
     JOIN messages msg ON msg.id = ANY(m.source_message_ids)
+    JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
     WHERE m.workspace_id = ${workspaceId} AND m.status = 'active' AND msg.deleted_at IS NOT NULL
     ORDER BY msg.id
   `)
