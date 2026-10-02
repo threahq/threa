@@ -234,8 +234,10 @@ async function mintOrAttachSubtopicConversation(
   stream: Stream | null | undefined,
   initiatingUserId?: string
 ): Promise<string> {
-  await client.query(sql`SELECT id FROM streams WHERE id = ${message.streamId} FOR UPDATE`)
-  const active = (await ConversationRepository.findActiveByStream(client, message.streamId))[0]
+  await client.query(
+    sql`SELECT id FROM streams WHERE id = ${message.streamId} AND workspace_id = ${workspaceId} FOR UPDATE`
+  )
+  const active = (await ConversationRepository.findActiveByStream(client, workspaceId, message.streamId))[0]
   if (!active) {
     return mintConversationForMessage(client, workspaceId, message, stream, undefined, initiatingUserId)
   }

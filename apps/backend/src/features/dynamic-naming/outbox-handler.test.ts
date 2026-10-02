@@ -101,7 +101,7 @@ describe("dynamic naming outbox handler", () => {
       ...stream,
       type: StreamTypes.CHANNEL,
     })
-    spyOn(ConversationRepository, "findById").mockResolvedValue({
+    const findConversation = spyOn(ConversationRepository, "findById").mockResolvedValue({
       id: "conv_1",
       workspaceId: "ws_1",
       streamId: "stream_1",
@@ -132,6 +132,7 @@ describe("dynamic naming outbox handler", () => {
       },
       new Date(createdAt.getTime() + DYNAMIC_NAMING_QUIET_MS)
     )
+    expect(findConversation).toHaveBeenCalledWith(expect.anything(), "ws_1", "conv_1")
   })
 
   test("marks both ends of a reassignment structurally dirty", async () => {

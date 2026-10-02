@@ -656,8 +656,8 @@ export class LinkPreviewService {
     // Collapse "not found", "wrong workspace", and "no access to the anchor
     // stream" into the private tier so a conversation link never leaks whether
     // the conversation exists (matches the message/stream/memo resolvers).
-    const conversation = await ConversationRepository.findById(this.deps.pool, targetConversationId)
-    if (!conversation || conversation.workspaceId !== workspaceId) {
+    const conversation = await ConversationRepository.findById(this.deps.pool, workspaceId, targetConversationId)
+    if (!conversation) {
       return { kind: "conversation", accessTier: "private" }
     }
 
