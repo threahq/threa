@@ -16,14 +16,14 @@ export class AvatarProcessingService {
     this.avatarService = avatarService
   }
 
-  async processUpload(avatarUploadId: string): Promise<void> {
-    const upload = await AvatarUploadRepository.findById(this.pool, avatarUploadId)
+  async processUpload(workspaceId: string, avatarUploadId: string): Promise<void> {
+    const upload = await AvatarUploadRepository.findById(this.pool, workspaceId, avatarUploadId)
     if (!upload) {
       logger.info({ avatarUploadId }, "Upload row gone (removed or superseded), skipping")
       return
     }
 
-    const { workspaceId, userId, rawS3Key, replacesAvatarUrl } = upload
+    const { userId, rawS3Key, replacesAvatarUrl } = upload
 
     logger.info({ avatarUploadId, userId }, "Processing avatar")
 
@@ -58,7 +58,7 @@ export class AvatarProcessingService {
         logger.info({ avatarUploadId, userId }, "Upload gone or superseded, skipping user update")
       }
 
-      await AvatarUploadRepository.deleteById(client, avatarUploadId)
+      await AvatarUploadRepository.deleteById(client, workspaceId, avatarUploadId)
     })
 
     // Cleanup is fire-and-forget: raw file always; variants + old avatar only if we used them.

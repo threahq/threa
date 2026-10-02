@@ -31,6 +31,7 @@ export type ExtractionData = Omit<InsertAttachmentExtractionParams, "id" | "atta
  */
 export async function processAttachment(
   pool: Pool,
+  workspaceId: string,
   attachmentId: string,
   callback: (attachment: Attachment) => Promise<ExtractionData | null>
 ): Promise<void> {
@@ -38,7 +39,7 @@ export async function processAttachment(
 
   // Phase 1: Fetch attachment and claim it for processing
   const attachment = await withClient(pool, async (client) => {
-    const att = await AttachmentRepository.findById(client, attachmentId)
+    const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
     if (!att) {
       log.warn("Attachment not found, skipping")
       return null
@@ -46,6 +47,7 @@ export async function processAttachment(
 
     const claimed = await AttachmentRepository.updateProcessingStatus(
       client,
+      workspaceId,
       attachmentId,
       ProcessingStatuses.PROCESSING,
       { onlyIfStatusIn: [ProcessingStatuses.PENDING, ProcessingStatuses.PROCESSING, ProcessingStatuses.FAILED] }
@@ -68,7 +70,7 @@ export async function processAttachment(
 
   // Phase 3: Save extraction or mark skipped
   if (extractionData === null) {
-    await AttachmentRepository.updateProcessingStatus(pool, attachmentId, ProcessingStatuses.SKIPPED)
+    await AttachmentRepository.updateProcessingStatus(pool, workspaceId, attachmentId, ProcessingStatuses.SKIPPED)
     return
   }
 
@@ -76,17 +78,17 @@ export async function processAttachment(
     await AttachmentExtractionRepository.insert(client, {
       id: extractionId(),
       attachmentId,
-      workspaceId: attachment.workspaceId,
+      workspaceId,
       ...extractionData,
     })
 
-    await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+    await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
 
     // Outbox-driven follow-up: AttachmentEmbeddingHandler enqueues a summary
     // embedding job. Writing the event in the same transaction keeps the
     // extraction insert and the embedding trigger atomic (INV-7).
     await OutboxRepository.insert(client, "attachment:extraction_completed", {
-      workspaceId: attachment.workspaceId,
+      workspaceId,
       attachmentId,
       contentType: extractionData.contentType,
     })

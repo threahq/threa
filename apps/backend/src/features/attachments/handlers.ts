@@ -95,8 +95,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (upload.uploadedBy !== req.user!.id) {
         return res.status(403).json({ error: "Attachment upload reservation belongs to another user" })
       }
-      const attachment = await AttachmentRepository.findById(pool, attachmentId)
-      if (!attachment || attachment.workspaceId !== workspaceId) {
+      const attachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
+      if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
       }
       const marked = await AttachmentUploadRepository.markUploading(pool, workspaceId, attachmentId)
@@ -226,8 +226,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const { attachmentId } = req.params
       setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
 
-      const attachment = await attachmentService.getById(attachmentId)
-      if (!attachment || attachment.workspaceId !== workspaceId) {
+      const attachment = await attachmentService.getById(workspaceId, attachmentId)
+      if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
       }
 
@@ -263,7 +263,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
 
       // A generated variant resolved to its own object → presign it. Raw
       // requests and not-ready fall-throughs presign the original below.
-      const resolved = await resolveAttachmentVariant(pool, attachment, variant)
+      const resolved = await resolveAttachmentVariant(pool, workspaceId, attachment, variant)
       if (resolved.ready && resolved.storagePath !== attachment.storagePath) {
         const responseContentDisposition = download === "true" ? buildContentDisposition(resolved.filename) : undefined
         const url = await storage.getSignedDownloadUrl(resolved.storagePath, { responseContentDisposition })
@@ -296,8 +296,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const { attachmentId } = req.params
       setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
 
-      const attachment = await attachmentService.getById(attachmentId)
-      if (!attachment || attachment.workspaceId !== workspaceId) {
+      const attachment = await attachmentService.getById(workspaceId, attachmentId)
+      if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
       }
 
@@ -326,7 +326,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (!parsed.success) return res.status(400).json({ error: "Invalid query parameters" })
       const { variant } = parsed.data
 
-      const resolved = await resolveAttachmentVariant(pool, attachment, variant)
+      const resolved = await resolveAttachmentVariant(pool, workspaceId, attachment, variant)
 
       // The storage path uniquely identifies the served bytes (objects are
       // written once), so a path-derived ETag is a valid validator. The
@@ -380,8 +380,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const workspaceId = req.workspaceId!
       const { attachmentId } = req.params
 
-      const attachment = await attachmentService.getById(attachmentId)
-      if (!attachment || attachment.workspaceId !== workspaceId) {
+      const attachment = await attachmentService.getById(workspaceId, attachmentId)
+      if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
       }
 
@@ -393,7 +393,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         return res.status(403).json({ error: "Cannot delete files uploaded by other users" })
       }
 
-      await attachmentService.delete(attachmentId)
+      await attachmentService.delete(workspaceId, attachmentId)
       res.status(204).send()
     },
 
@@ -409,8 +409,8 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const { attachmentId } = req.params
       setAuditSubjects(res, [{ type: "attachment", id: attachmentId }])
 
-      const attachment = await attachmentService.getById(attachmentId)
-      if (!attachment || attachment.workspaceId !== workspaceId) {
+      const attachment = await attachmentService.getById(workspaceId, attachmentId)
+      if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
       }
 
@@ -426,7 +426,7 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         return res.status(403).json({ error: "Access denied" })
       }
 
-      const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachmentId)
+      const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, attachmentId)
       if (!extraction) {
         return res.status(404).json({ error: "Extraction not found" })
       }
@@ -527,6 +527,7 @@ interface ResolvedAttachmentVariant {
  */
 async function resolveAttachmentVariant(
   pool: Pool,
+  workspaceId: string,
   attachment: Attachment,
   variant: "raw" | "processed" | "thumbnail" | undefined
 ): Promise<ResolvedAttachmentVariant> {
@@ -540,7 +541,7 @@ async function resolveAttachmentVariant(
       }
     }
   } else if (variant === "processed" || variant === "thumbnail") {
-    const job = await VideoTranscodeJobRepository.findByAttachmentId(pool, attachment.id)
+    const job = await VideoTranscodeJobRepository.findByAttachmentId(pool, workspaceId, attachment.id)
     const path = variant === "processed" ? job?.processedStoragePath : job?.thumbnailStoragePath
     if (job?.status === "completed" && path) {
       return {

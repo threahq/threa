@@ -227,10 +227,15 @@ async function setupTestData(
   })
 
   // Attach to message
-  await AttachmentRepository.attachToMessage(pool, [testAttachmentId], triggerMessage.id, testStreamId)
+  await AttachmentRepository.attachToMessage(pool, ctx.workspaceId, [testAttachmentId], triggerMessage.id, testStreamId)
 
   // Mark as processed (so it's ready for agent)
-  await AttachmentRepository.updateProcessingStatus(pool, testAttachmentId, ProcessingStatuses.COMPLETED)
+  await AttachmentRepository.updateProcessingStatus(
+    pool,
+    ctx.workspaceId,
+    testAttachmentId,
+    ProcessingStatuses.COMPLETED
+  )
 
   // Create an extraction record with image caption (simulating what the image processing pipeline would create)
   await AttachmentExtractionRepository.insert(pool, {

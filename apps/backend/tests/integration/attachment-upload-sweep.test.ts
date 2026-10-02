@@ -142,11 +142,11 @@ describe("Attachment upload sweep", () => {
     // Bound: tombstone stays so the message renders "upload failed" forever.
     const bound = await AttachmentUploadRepository.findByAttachmentId(pool, testWorkspaceId, boundId)
     expect(bound?.status).toBe(AttachmentUploadStatuses.ABANDONED)
-    expect(await AttachmentRepository.findById(pool, boundId)).not.toBeNull()
+    expect(await AttachmentRepository.findById(pool, testWorkspaceId, boundId)).not.toBeNull()
 
     // Unbound: attachment row, tracking row, and S3 object are all gone.
     expect(await AttachmentUploadRepository.findByAttachmentId(pool, testWorkspaceId, unboundId)).toBeNull()
-    expect(await AttachmentRepository.findById(pool, unboundId)).toBeNull()
+    expect(await AttachmentRepository.findById(pool, testWorkspaceId, unboundId)).toBeNull()
     const deletedPaths = storageDelete.mock.calls.map((c: unknown[]) => c[0])
     expect(deletedPaths).toEqual([`${testWorkspaceId}/${unboundId}/stale.bin`])
   })
@@ -163,7 +163,7 @@ describe("Attachment upload sweep", () => {
     await service.sweepStaleUploads()
 
     expect(await AttachmentUploadRepository.findByAttachmentId(pool, testWorkspaceId, id)).toBeNull()
-    const attachment = await AttachmentRepository.findById(pool, id)
+    const attachment = await AttachmentRepository.findById(pool, testWorkspaceId, id)
     expect(attachment?.safetyStatus).toBe(AttachmentSafetyStatuses.QUARANTINED)
     const events = await pool.query(sql`
       SELECT payload FROM outbox
@@ -236,7 +236,7 @@ describe("Attachment upload sweep", () => {
 
     await service.recoverStalePendingScans()
 
-    const attachment = await AttachmentRepository.findById(pool, reservedId)
+    const attachment = await AttachmentRepository.findById(pool, testWorkspaceId, reservedId)
     expect(attachment?.safetyStatus).toBe(AttachmentSafetyStatuses.PENDING_SCAN)
   })
 })

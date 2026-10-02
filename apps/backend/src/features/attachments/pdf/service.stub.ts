@@ -28,14 +28,19 @@ export class StubPdfProcessingService implements PdfProcessingServiceLike {
     this.pool = deps.pool
   }
 
-  async prepare(attachmentId: string): Promise<void> {
+  async prepare(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId, phase: "prepare", stub: true })
 
     const attachment = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) return null
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.PROCESSING)
+      await AttachmentRepository.updateProcessingStatus(
+        client,
+        workspaceId,
+        attachmentId,
+        ProcessingStatuses.PROCESSING
+      )
       return att
     })
 
@@ -68,28 +73,33 @@ export class StubPdfProcessingService implements PdfProcessingServiceLike {
         })
       }
 
-      await PdfProcessingJobRepository.updateStatus(client, jobId, PdfJobStatuses.PROCESSING_PAGES)
+      await PdfProcessingJobRepository.updateStatus(client, workspaceId, jobId, PdfJobStatuses.PROCESSING_PAGES)
 
       for (let i = 0; i < totalPages; i++) {
-        await PdfProcessingJobRepository.incrementPagesCompleted(client, jobId)
+        await PdfProcessingJobRepository.incrementPagesCompleted(client, workspaceId, jobId)
       }
     })
 
     // Go straight to assemble
-    await this.assemble(attachmentId, jobId)
+    await this.assemble(workspaceId, attachmentId, jobId)
   }
 
-  async processPage(_attachmentId: string, _pageNumber: number, _pdfJobId: string): Promise<void> {
+  async processPage(
+    _workspaceId: string,
+    _attachmentId: string,
+    _pageNumber: number,
+    _pdfJobId: string
+  ): Promise<void> {
     // Stub: No-op since prepare() already marks pages as completed
   }
 
-  async assemble(attachmentId: string, pdfJobId: string): Promise<void> {
+  async assemble(workspaceId: string, attachmentId: string, pdfJobId: string): Promise<void> {
     const log = logger.child({ attachmentId, pdfJobId, phase: "assemble", stub: true })
 
     const { attachment, pages, job } = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
-      const pdfJob = await PdfProcessingJobRepository.findById(client, pdfJobId)
-      const pageExtractions = await PdfPageExtractionRepository.findByAttachmentId(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
+      const pdfJob = await PdfProcessingJobRepository.findById(client, workspaceId, pdfJobId)
+      const pageExtractions = await PdfPageExtractionRepository.findByAttachmentId(client, workspaceId, attachmentId)
       return { attachment: att, pages: pageExtractions, job: pdfJob }
     })
 
@@ -123,8 +133,8 @@ export class StubPdfProcessingService implements PdfProcessingServiceLike {
         },
       })
 
-      await PdfProcessingJobRepository.updateStatus(client, pdfJobId, PdfJobStatuses.COMPLETED)
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+      await PdfProcessingJobRepository.updateStatus(client, workspaceId, pdfJobId, PdfJobStatuses.COMPLETED)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
       await OutboxRepository.insert(client, "attachment:extraction_completed", {
         workspaceId: attachment.workspaceId,
         attachmentId,

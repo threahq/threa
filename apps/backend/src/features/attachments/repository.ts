@@ -133,32 +133,36 @@ const SELECT_FIELDS = `
 `
 
 export const AttachmentRepository = {
-  async findById(client: Querier, id: string): Promise<Attachment | null> {
+  async findById(client: Querier, workspaceId: string, id: string): Promise<Attachment | null> {
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE id = ${id}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND id = ${id}`
     )
     return result.rows[0] ? mapRowToAttachment(result.rows[0]) : null
   },
 
-  async findByIds(client: Querier, ids: string[]): Promise<Attachment[]> {
+  async findByIds(client: Querier, workspaceId: string, ids: string[]): Promise<Attachment[]> {
     if (ids.length === 0) return []
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE id = ANY(${ids})`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})`
     )
     return result.rows.map(mapRowToAttachment)
   },
 
-  async findByMessageId(client: Querier, messageId: string): Promise<Attachment[]> {
+  async findByMessageId(client: Querier, workspaceId: string, messageId: string): Promise<Attachment[]> {
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE message_id = ${messageId}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND message_id = ${messageId}`
     )
     return result.rows.map(mapRowToAttachment)
   },
 
-  async findByMessageIds(client: Querier, messageIds: string[]): Promise<Map<string, Attachment[]>> {
+  async findByMessageIds(
+    client: Querier,
+    workspaceId: string,
+    messageIds: string[]
+  ): Promise<Map<string, Attachment[]>> {
     if (messageIds.length === 0) return new Map()
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE message_id = ANY(${messageIds})`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})`
     )
 
     const byMessage = new Map<string, Attachment[]>()
@@ -171,15 +175,16 @@ export const AttachmentRepository = {
     return byMessage
   },
 
-  async findByIdForUpdate(client: Querier, id: string): Promise<Attachment | null> {
+  async findByIdForUpdate(client: Querier, workspaceId: string, id: string): Promise<Attachment | null> {
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE id = ${id} FOR UPDATE`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND id = ${id} FOR UPDATE`
     )
     return result.rows[0] ? mapRowToAttachment(result.rows[0]) : null
   },
 
   async findByMessageIdsWithExtractions(
     client: Querier,
+    workspaceId: string,
     messageIds: string[]
   ): Promise<Map<string, AttachmentWithExtraction[]>> {
     if (messageIds.length === 0) return new Map()
@@ -195,8 +200,8 @@ export const AttachmentRepository = {
         e.summary AS extraction_summary,
         e.full_text AS extraction_full_text
       FROM attachments a
-      LEFT JOIN attachment_extractions e ON e.attachment_id = a.id
-      WHERE a.message_id = ANY(${messageIds})
+      LEFT JOIN attachment_extractions e ON e.attachment_id = a.id AND e.workspace_id = ${workspaceId}
+      WHERE a.workspace_id = ${workspaceId} AND a.message_id = ANY(${messageIds})
     `)
 
     const byMessage = new Map<string, AttachmentWithExtraction[]>()
@@ -237,6 +242,7 @@ export const AttachmentRepository = {
 
   async attachToMessage(
     client: Querier,
+    workspaceId: string,
     attachmentIds: string[],
     messageId: string,
     streamId: string
@@ -250,15 +256,15 @@ export const AttachmentRepository = {
     const result = await client.query(sql`
       UPDATE attachments
       SET message_id = ${messageId}, stream_id = ${streamId}
-      WHERE id = ANY(${attachmentIds}) AND message_id IS NULL
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${attachmentIds}) AND message_id IS NULL
         AND safety_status = ANY(${[...BINDABLE_ATTACHMENT_SAFETY_STATUSES]})
     `)
     return result.rowCount ?? 0
   },
 
-  async delete(client: Querier, id: string): Promise<boolean> {
+  async delete(client: Querier, workspaceId: string, id: string): Promise<boolean> {
     const result = await client.query(sql`
-      DELETE FROM attachments WHERE id = ${id}
+      DELETE FROM attachments WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
   },
@@ -272,10 +278,10 @@ export const AttachmentRepository = {
    * means the file now has real message provenance and its bytes must be left
    * intact.
    */
-  async deleteIfUnbound(client: Querier, id: string): Promise<string | null> {
+  async deleteIfUnbound(client: Querier, workspaceId: string, id: string): Promise<string | null> {
     const result = await client.query<{ storage_path: string }>(sql`
       DELETE FROM attachments
-      WHERE id = ${id} AND message_id IS NULL AND stream_id IS NULL
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND message_id IS NULL AND stream_id IS NULL
       RETURNING storage_path
     `)
     return result.rows[0]?.storage_path ?? null
@@ -289,8 +295,10 @@ export const AttachmentRepository = {
    * cross-feature table name is deliberate — attachments must not import agents
    * code — and stays scoped to this single chokepoint.
    */
-  async deletePersonaBindings(client: Querier, id: string): Promise<void> {
-    await client.query(sql`DELETE FROM persona_attachments WHERE attachment_id = ${id}`)
+  async deletePersonaBindings(client: Querier, workspaceId: string, id: string): Promise<void> {
+    await client.query(
+      sql`DELETE FROM persona_attachments WHERE workspace_id = ${workspaceId} AND attachment_id = ${id}`
+    )
   },
 
   /**
@@ -298,10 +306,10 @@ export const AttachmentRepository = {
    * sweep). The `message_id IS NULL` guard makes a race with a concurrent
    * send lose cleanly: a just-bound row is skipped, not deleted.
    */
-  async deleteUnattachedByIds(client: Querier, ids: string[]): Promise<number> {
+  async deleteUnattachedByIds(client: Querier, workspaceId: string, ids: string[]): Promise<number> {
     if (ids.length === 0) return 0
     const result = await client.query(sql`
-      DELETE FROM attachments WHERE id = ANY(${ids}) AND message_id IS NULL
+      DELETE FROM attachments WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}) AND message_id IS NULL
     `)
     return result.rowCount ?? 0
   },
@@ -312,6 +320,7 @@ export const AttachmentRepository = {
    */
   async updateProcessingStatus(
     client: Querier,
+    workspaceId: string,
     id: string,
     status: ProcessingStatus,
     options?: { onlyIfStatus?: ProcessingStatus; onlyIfStatusIn?: ProcessingStatus[] }
@@ -320,7 +329,7 @@ export const AttachmentRepository = {
       const result = await client.query(sql`
         UPDATE attachments
         SET processing_status = ${status}
-        WHERE id = ${id} AND processing_status = ANY(${options.onlyIfStatusIn})
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND processing_status = ANY(${options.onlyIfStatusIn})
       `)
       return (result.rowCount ?? 0) > 0
     }
@@ -329,7 +338,7 @@ export const AttachmentRepository = {
       const result = await client.query(sql`
         UPDATE attachments
         SET processing_status = ${status}
-        WHERE id = ${id} AND processing_status = ${options.onlyIfStatus}
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND processing_status = ${options.onlyIfStatus}
       `)
       return (result.rowCount ?? 0) > 0
     }
@@ -337,7 +346,7 @@ export const AttachmentRepository = {
     const result = await client.query(sql`
       UPDATE attachments
       SET processing_status = ${status}
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
   },
@@ -349,6 +358,7 @@ export const AttachmentRepository = {
    */
   async updateImageVariant(
     client: Querier,
+    workspaceId: string,
     id: string,
     params: { thumbnailStoragePath: string; width: number; height: number }
   ): Promise<boolean> {
@@ -357,13 +367,14 @@ export const AttachmentRepository = {
       SET thumbnail_storage_path = ${params.thumbnailStoragePath},
           width = ${params.width},
           height = ${params.height}
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
   },
 
   async updateSafetyStatus(
     client: Querier,
+    workspaceId: string,
     id: string,
     status: AttachmentSafetyStatus,
     options?: { onlyIfStatus?: AttachmentSafetyStatus; onlyIfStatusIn?: AttachmentSafetyStatus[] }
@@ -372,7 +383,7 @@ export const AttachmentRepository = {
       const result = await client.query(sql`
         UPDATE attachments
         SET safety_status = ${status}
-        WHERE id = ${id} AND safety_status = ANY(${options.onlyIfStatusIn})
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND safety_status = ANY(${options.onlyIfStatusIn})
       `)
       return (result.rowCount ?? 0) > 0
     }
@@ -381,7 +392,7 @@ export const AttachmentRepository = {
       const result = await client.query(sql`
         UPDATE attachments
         SET safety_status = ${status}
-        WHERE id = ${id} AND safety_status = ${options.onlyIfStatus}
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND safety_status = ${options.onlyIfStatus}
       `)
       return (result.rowCount ?? 0) > 0
     }
@@ -389,25 +400,31 @@ export const AttachmentRepository = {
     const result = await client.query(sql`
       UPDATE attachments
       SET safety_status = ${status}
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
   },
 
   /**
    * Quarantine specific attachments still stuck in `pending_scan` (the
-   * upload sweep's scan-window cleanup). Returns the ids actually flipped.
+   * upload sweep's scan-window cleanup). Returns the refs actually flipped.
    */
-  async quarantineStuckPendingScans(client: Querier, ids: string[]): Promise<string[]> {
-    if (ids.length === 0) return []
-    const result = await client.query<{ id: string }>(sql`
-      UPDATE attachments
+  async quarantineStuckPendingScans(
+    client: Querier,
+    refs: { workspaceId: string; attachmentId: string }[]
+  ): Promise<{ workspaceId: string; attachmentId: string }[]> {
+    if (refs.length === 0) return []
+    const result = await client.query<{ workspace_id: string; id: string }>(sql`
+      UPDATE attachments a
       SET safety_status = ${AttachmentSafetyStatuses.QUARANTINED},
           processing_status = ${ProcessingStatuses.SKIPPED}
-      WHERE id = ANY(${ids}) AND safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN}
-      RETURNING id
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.attachmentId)}::text[])
+        AS ref(workspace_id, attachment_id)
+      WHERE a.workspace_id = ref.workspace_id AND a.id = ref.attachment_id
+        AND a.safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN}
+      RETURNING a.workspace_id, a.id
     `)
-    return result.rows.map((row) => row.id)
+    return result.rows.map((row) => ({ workspaceId: row.workspace_id, attachmentId: row.id }))
   },
 
   async quarantineStalePendingScans(client: Querier, options: { olderThan: Date; limit: number }): Promise<string[]> {
@@ -417,13 +434,17 @@ export const AttachmentRepository = {
     // `attachment_uploads` row exists, the upload staleness sweep owns the
     // row's lifecycle; its scan-window cleanup quarantines a genuinely stuck
     // pending_scan when it removes the orphaned tracking row.
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the stale-scan sweep covers every workspace
     const result = await client.query<{ id: string }>(sql`
       WITH stale AS (
-        SELECT id
+        SELECT id, workspace_id
         FROM attachments
         WHERE safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN}
           AND created_at < ${options.olderThan}
-          AND NOT EXISTS (SELECT 1 FROM attachment_uploads au WHERE au.attachment_id = attachments.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM attachment_uploads au
+            WHERE au.workspace_id = attachments.workspace_id AND au.attachment_id = attachments.id
+          )
         ORDER BY created_at ASC
         LIMIT ${options.limit}
         FOR UPDATE SKIP LOCKED
@@ -433,7 +454,7 @@ export const AttachmentRepository = {
         safety_status = ${AttachmentSafetyStatuses.QUARANTINED},
         processing_status = ${ProcessingStatuses.SKIPPED}
       FROM stale
-      WHERE a.id = stale.id
+      WHERE a.workspace_id = stale.workspace_id AND a.id = stale.id
         AND a.safety_status = ${AttachmentSafetyStatuses.PENDING_SCAN}
       RETURNING a.id
     `)
@@ -474,7 +495,7 @@ export const AttachmentRepository = {
           e.summary AS extraction_summary,
           e.full_text AS extraction_full_text
         FROM attachments a
-        LEFT JOIN attachment_extractions e ON e.attachment_id = a.id
+        LEFT JOIN attachment_extractions e ON e.attachment_id = a.id AND e.workspace_id = ${workspaceId}
         WHERE a.workspace_id = ${workspaceId}
           AND a.stream_id = ANY(${streamIds})
           AND (${!hasSafetyStatusFilter} OR a.safety_status = ANY(${safetyStatuses ?? []}))
@@ -502,7 +523,7 @@ export const AttachmentRepository = {
         e.summary AS extraction_summary,
         e.full_text AS extraction_full_text
       FROM attachments a
-      LEFT JOIN attachment_extractions e ON e.attachment_id = a.id
+      LEFT JOIN attachment_extractions e ON e.attachment_id = a.id AND e.workspace_id = ${workspaceId}
       WHERE a.workspace_id = ${workspaceId}
         AND a.stream_id = ANY(${streamIds})
         AND (${!hasSafetyStatusFilter} OR a.safety_status = ANY(${safetyStatuses ?? []}))
@@ -582,7 +603,7 @@ export const AttachmentRepository = {
       scoped_streams AS (
         SELECT acc.id
         FROM accessible_streams acc
-        LEFT JOIN streams s ON s.id = acc.id
+        LEFT JOIN streams s ON s.id = acc.id AND s.workspace_id = ${workspaceId}
         WHERE
           ${!hasStreamScope}
           OR acc.id = ANY(${scopedStreamIds})
@@ -604,9 +625,9 @@ export const AttachmentRepository = {
         COALESCE(ref_count.count, 0)::int AS reference_count
       FROM attachments a
       JOIN scoped_streams ss ON ss.id = a.stream_id
-      LEFT JOIN attachment_extractions e ON e.attachment_id = a.id
-      LEFT JOIN streams s ON s.id = a.stream_id
-      LEFT JOIN users u ON u.id = a.uploaded_by
+      LEFT JOIN attachment_extractions e ON e.attachment_id = a.id AND e.workspace_id = ${workspaceId}
+      LEFT JOIN streams s ON s.id = a.stream_id AND s.workspace_id = ${workspaceId}
+      LEFT JOIN users u ON u.id = a.uploaded_by AND u.workspace_id = ${workspaceId}
       LEFT JOIN (
         SELECT attachment_id, COUNT(*)::int AS count
         FROM attachment_references

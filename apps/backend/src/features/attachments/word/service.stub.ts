@@ -19,14 +19,19 @@ export class StubWordProcessingService implements WordProcessingServiceLike {
     this.pool = deps.pool
   }
 
-  async processWord(attachmentId: string): Promise<void> {
+  async processWord(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId, stub: true })
 
     const attachment = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) return null
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.PROCESSING)
+      await AttachmentRepository.updateProcessingStatus(
+        client,
+        workspaceId,
+        attachmentId,
+        ProcessingStatuses.PROCESSING
+      )
       return att
     })
 
@@ -80,7 +85,7 @@ export class StubWordProcessingService implements WordProcessingServiceLike {
         wordMetadata,
       })
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
     })
 
     log.info({ filename: attachment.filename }, "Stub word processing complete")

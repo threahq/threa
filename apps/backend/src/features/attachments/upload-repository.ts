@@ -45,6 +45,15 @@ export interface SweptAttachmentUpload {
   storagePath: string | null
 }
 
+interface SweptUploadRow {
+  attachment_id: string
+  workspace_id: string
+  status: string
+  message_id: string | null
+  stream_id: string | null
+  storage_path: string | null
+}
+
 function mapRow(row: AttachmentUploadRow): AttachmentUpload {
   return {
     id: row.id,
@@ -117,13 +126,17 @@ export const AttachmentUploadRepository = {
     return new Map(result.rows.map((row) => [row.attachment_id, mapRow(row)]))
   },
 
-  async deleteByAttachmentId(client: Querier, attachmentId: string): Promise<void> {
-    await client.query(sql`DELETE FROM attachment_uploads WHERE attachment_id = ${attachmentId}`)
+  async deleteByAttachmentId(client: Querier, workspaceId: string, attachmentId: string): Promise<void> {
+    await client.query(
+      sql`DELETE FROM attachment_uploads WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId}`
+    )
   },
 
-  async deleteByAttachmentIds(client: Querier, attachmentIds: string[]): Promise<void> {
+  async deleteByAttachmentIds(client: Querier, workspaceId: string, attachmentIds: string[]): Promise<void> {
     if (attachmentIds.length === 0) return
-    await client.query(sql`DELETE FROM attachment_uploads WHERE attachment_id = ANY(${attachmentIds})`)
+    await client.query(
+      sql`DELETE FROM attachment_uploads WHERE workspace_id = ${workspaceId} AND attachment_id = ANY(${attachmentIds})`
+    )
   },
 
   /**
@@ -200,16 +213,10 @@ export const AttachmentUploadRepository = {
    * rows only. FOR UPDATE SKIP LOCKED keeps concurrent sweeps from colliding.
    */
   async failStale(client: Querier, options: { olderThan: Date; limit: number }): Promise<SweptAttachmentUpload[]> {
-    const result = await client.query<{
-      attachment_id: string
-      workspace_id: string
-      status: string
-      message_id: string | null
-      stream_id: string | null
-      storage_path: string | null
-    }>(sql`
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the upload sweep covers every workspace
+    const result = await client.query<SweptUploadRow>(sql`
       WITH stale AS (
-        SELECT id, attachment_id
+        SELECT id, workspace_id, attachment_id
         FROM attachment_uploads
         WHERE status = ANY(${[AttachmentUploadStatuses.RESERVED, AttachmentUploadStatuses.UPLOADING]})
           AND updated_at < ${options.olderThan}
@@ -223,8 +230,8 @@ export const AttachmentUploadRepository = {
           error_message = 'Upload did not complete',
           updated_at = NOW()
       FROM stale
-      LEFT JOIN attachments a ON a.id = stale.attachment_id
-      WHERE au.id = stale.id
+      LEFT JOIN attachments a ON a.workspace_id = stale.workspace_id AND a.id = stale.attachment_id
+      WHERE au.workspace_id = stale.workspace_id AND au.id = stale.id
       RETURNING au.attachment_id, au.workspace_id, au.status, a.message_id, a.stream_id, a.storage_path
     `)
     return result.rows.map((row) => ({
@@ -246,16 +253,10 @@ export const AttachmentUploadRepository = {
     client: Querier,
     options: { olderThan: Date; limit: number }
   ): Promise<SweptAttachmentUpload[]> {
-    const result = await client.query<{
-      attachment_id: string
-      workspace_id: string
-      status: string
-      message_id: string | null
-      stream_id: string | null
-      storage_path: string | null
-    }>(sql`
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the upload sweep covers every workspace
+    const result = await client.query<SweptUploadRow>(sql`
       WITH stale AS (
-        SELECT id, attachment_id
+        SELECT id, workspace_id, attachment_id
         FROM attachment_uploads
         WHERE status = ${AttachmentUploadStatuses.FAILED}
           AND updated_at < ${options.olderThan}
@@ -267,8 +268,8 @@ export const AttachmentUploadRepository = {
       SET status = ${AttachmentUploadStatuses.ABANDONED},
           updated_at = NOW()
       FROM stale
-      LEFT JOIN attachments a ON a.id = stale.attachment_id
-      WHERE au.id = stale.id
+      LEFT JOIN attachments a ON a.workspace_id = stale.workspace_id AND a.id = stale.attachment_id
+      WHERE au.workspace_id = stale.workspace_id AND au.id = stale.id
       RETURNING au.attachment_id, au.workspace_id, au.status, a.message_id, a.stream_id, a.storage_path
     `)
     return result.rows.map((row) => ({
@@ -292,16 +293,10 @@ export const AttachmentUploadRepository = {
     client: Querier,
     options: { olderThan: Date; limit: number }
   ): Promise<SweptAttachmentUpload[]> {
-    const result = await client.query<{
-      attachment_id: string
-      workspace_id: string
-      status: string
-      message_id: string | null
-      stream_id: string | null
-      storage_path: string | null
-    }>(sql`
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the upload sweep covers every workspace
+    const result = await client.query<SweptUploadRow>(sql`
       WITH stale AS (
-        SELECT id, attachment_id
+        SELECT id, workspace_id, attachment_id
         FROM attachment_uploads
         WHERE status = ${AttachmentUploadStatuses.UPLOADED}
           AND updated_at < ${options.olderThan}
@@ -311,8 +306,8 @@ export const AttachmentUploadRepository = {
       )
       DELETE FROM attachment_uploads au
       USING stale
-      LEFT JOIN attachments a ON a.id = stale.attachment_id
-      WHERE au.id = stale.id
+      LEFT JOIN attachments a ON a.workspace_id = stale.workspace_id AND a.id = stale.attachment_id
+      WHERE au.workspace_id = stale.workspace_id AND au.id = stale.id
       RETURNING au.attachment_id, au.workspace_id, au.status, a.message_id, a.stream_id, a.storage_path
     `)
     return result.rows.map((row) => ({

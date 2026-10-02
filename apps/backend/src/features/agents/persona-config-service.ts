@@ -1244,11 +1244,11 @@ export class PersonaConfigService {
     const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
 
-    const attachment = await this.attachmentService.getById(attachmentId)
+    const attachment = await this.attachmentService.getById(workspaceId, attachmentId)
     // A missing row, a cross-workspace row, or one uploaded by someone else all
     // 404 — never leak (or bind) another user's private unbound upload, matching
     // `unboundAttachmentBlockedForCaller` on the generic serve path.
-    if (!attachment || attachment.workspaceId !== workspaceId || attachment.uploadedBy !== caller.userId) {
+    if (!attachment || attachment.uploadedBy !== caller.userId) {
       throw personaAttachmentNotFound()
     }
     // Only a free-floating workspace upload is bindable — never a file already
@@ -1300,7 +1300,7 @@ export class PersonaConfigService {
       // to avoid a permanent orphan. `deleteIfUnbound` so a message that claimed
       // the file between the cap check and now keeps its bytes (INV-20).
       await this.attachmentService
-        .deleteIfUnbound(attachmentId)
+        .deleteIfUnbound(workspaceId, attachmentId)
         .then((result) => {
           if (!result.deleted) {
             logger.info({ attachmentId }, "persona cap-race cleanup skipped — file was claimed by a message")
@@ -1390,8 +1390,8 @@ export class PersonaConfigService {
     const editable = await this.authorizeEditableOr404(workspaceId, personaId, caller)
     if (editable.kind !== "custom") throw customsOnly()
 
-    const source = await this.attachmentService.getById(sourceAttachmentId)
-    if (!source || source.workspaceId !== workspaceId) throw personaAttachmentSourceNotFound()
+    const source = await this.attachmentService.getById(workspaceId, sourceAttachmentId)
+    if (!source) throw personaAttachmentSourceNotFound()
 
     await this.assertCallerCanReadSource(source, workspaceId, caller.userId)
 
@@ -1427,7 +1427,7 @@ export class PersonaConfigService {
     } catch (error) {
       // The copy is a brand-new id, so a unique-PK collision cannot be a real
       // "already bound" case — clean up the just-created copy and rethrow.
-      await this.attachmentService.deleteIfUnbound(newId).catch((err) => {
+      await this.attachmentService.deleteIfUnbound(workspaceId, newId).catch((err) => {
         logger.error({ err, attachmentId: newId }, "failed to clean up persona copy after bind error")
       })
       throw error
@@ -1436,7 +1436,7 @@ export class PersonaConfigService {
       // Cap reached. The copy is unbound, so hard-delete it cleanly (its bytes +
       // extraction go with it) — race-safe so a message that somehow claimed it
       // keeps its bytes (INV-20; mirrors bind's cap-loss cleanup).
-      await this.attachmentService.deleteIfUnbound(newId).catch((err) => {
+      await this.attachmentService.deleteIfUnbound(workspaceId, newId).catch((err) => {
         logger.error({ err, attachmentId: newId }, "failed to clean up persona copy after cap race")
       })
       throw personaAttachmentLimitReached()
@@ -1486,7 +1486,7 @@ export class PersonaConfigService {
     // The binding is gone — the user-visible action succeeded. Hard-delete the
     // file only while it is still unbound: a message that claimed it between the
     // binding delete and now keeps its bytes (INV-20), we just log the skip.
-    const result = await this.attachmentService.deleteIfUnbound(attachmentId)
+    const result = await this.attachmentService.deleteIfUnbound(workspaceId, attachmentId)
     if (!result.deleted) {
       logger.info(
         { workspaceId, personaId, attachmentId },

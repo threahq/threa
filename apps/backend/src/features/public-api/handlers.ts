@@ -2997,7 +2997,7 @@ export function createPublicApiHandlers({
 
     async getAttachment(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
-      const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachment.id)
+      const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, req.workspaceId!, attachment.id)
 
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data: serializeAttachmentDetail(attachment, extraction) })
@@ -3243,7 +3243,7 @@ export function createPublicApiHandlers({
       const [authorNames, threadMap, attachmentsByMessage, slots] = await Promise.all([
         resolveAuthorDisplayNames(pool, req.workspaceId!, page),
         StreamRepository.findThreadsForMessageIds(pool, req.workspaceId!, streamId, pageMessageIds),
-        AttachmentRepository.findByMessageIds(pool, pageMessageIds),
+        AttachmentRepository.findByMessageIds(pool, req.workspaceId!, pageMessageIds),
         resolveSlots(
           req,
           page.map((m) => m.contentJson)
@@ -3367,7 +3367,7 @@ export function createPublicApiHandlers({
             StreamRepository.findThreadsForMessageIds(pool, workspaceId, sid, ids)
           )
         ),
-        AttachmentRepository.findByMessageIds(pool, pageMessageIds),
+        AttachmentRepository.findByMessageIds(pool, workspaceId, pageMessageIds),
         resolveSlots(
           req,
           page.map((m) => m.contentJson)

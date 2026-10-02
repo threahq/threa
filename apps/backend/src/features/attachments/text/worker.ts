@@ -16,11 +16,11 @@ export function createTextProcessingWorker(deps: TextProcessingWorkerDeps): JobH
   const { textProcessingService } = deps
 
   return async (job) => {
-    const { attachmentId, filename } = job.data
+    const { attachmentId, workspaceId, filename } = job.data
 
     logger.info({ jobId: job.id, attachmentId, filename }, "Processing text file job")
 
-    await textProcessingService.processText(attachmentId)
+    await textProcessingService.processText(workspaceId, attachmentId)
 
     logger.info({ jobId: job.id, attachmentId }, "Text processing job completed")
   }

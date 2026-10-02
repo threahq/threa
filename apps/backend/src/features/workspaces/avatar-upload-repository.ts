@@ -43,28 +43,19 @@ export const AvatarUploadRepository = {
     return mapRow(result.rows[0])
   },
 
-  async findById(db: Querier, id: string): Promise<AvatarUpload | null> {
+  async findById(db: Querier, workspaceId: string, id: string): Promise<AvatarUpload | null> {
     const result = await db.query<AvatarUploadRow>(sql`
       SELECT id, workspace_id, user_id, raw_s3_key, replaces_avatar_url, created_at
-      FROM avatar_uploads WHERE id = ${id}
+      FROM avatar_uploads WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  async findLatestForUser(db: Querier, userId: string): Promise<AvatarUpload | null> {
-    const result = await db.query<AvatarUploadRow>(sql`
-      SELECT id, workspace_id, user_id, raw_s3_key, replaces_avatar_url, created_at
-      FROM avatar_uploads WHERE user_id = ${userId}
-      ORDER BY created_at DESC, id DESC LIMIT 1
-    `)
-    return result.rows[0] ? mapRow(result.rows[0]) : null
+  async deleteById(db: Querier, workspaceId: string, id: string): Promise<void> {
+    await db.query(sql`DELETE FROM avatar_uploads WHERE workspace_id = ${workspaceId} AND id = ${id}`)
   },
 
-  async deleteById(db: Querier, id: string): Promise<void> {
-    await db.query(sql`DELETE FROM avatar_uploads WHERE id = ${id}`)
-  },
-
-  async deleteByUserId(db: Querier, userId: string): Promise<void> {
-    await db.query(sql`DELETE FROM avatar_uploads WHERE user_id = ${userId}`)
+  async deleteByUserId(db: Querier, workspaceId: string, userId: string): Promise<void> {
+    await db.query(sql`DELETE FROM avatar_uploads WHERE workspace_id = ${workspaceId} AND user_id = ${userId}`)
   },
 }

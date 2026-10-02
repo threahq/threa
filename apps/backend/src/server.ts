@@ -160,13 +160,7 @@ import { PlatformAdminService } from "./features/platform-admin"
 import { SidebarConfigService } from "./features/sidebar-config"
 import { UserE2eKeysService } from "./features/user-e2e-keys"
 import { createS3Storage } from "./lib/storage/s3-client"
-import {
-  OutboxDispatcher,
-  BroadcastHandler,
-  OutboxRetentionWorker,
-  OutboxRepository,
-  type OutboxHandler,
-} from "./lib/outbox"
+import { OutboxDispatcher, BroadcastHandler, OutboxRetentionWorker, type OutboxHandler } from "./lib/outbox"
 import {
   CompanionHandler,
   MentionInvokeHandler,
@@ -265,25 +259,12 @@ import {
   VideoTranscodingService,
   StubVideoTranscodingService,
   ThreaMediaConvertClient,
-  VideoTranscodeJobRepository,
+  createAttachmentFailedOnDLQ,
+  createVideoTranscodeOnDLQ,
   createMalwareScanner,
 } from "./features/attachments"
-import {
-  JobQueues,
-  type OnDLQHook,
-  type ImageCaptionJobData,
-  type PdfPrepareJobData,
-  type PdfProcessPageJobData,
-  type PdfAssembleJobData,
-  type TextProcessJobData,
-  type WordProcessJobData,
-  type ExcelProcessJobData,
-  type VideoTranscodeSubmitJobData,
-  type VideoTranscodeCheckJobData,
-  type AgentFollowUpFireJobData,
-} from "./lib/queue"
-import { AuthorTypes, ProcessingStatuses, resolveNotificationPause } from "@threahq/types"
-import { AttachmentRepository } from "./features/attachments"
+import { JobQueues, type OnDLQHook, type AgentFollowUpFireJobData } from "./lib/queue"
+import { AuthorTypes, resolveNotificationPause } from "@threahq/types"
 import { ulid } from "ulid"
 import { loadConfig } from "./lib/env"
 import { createCorsOriginChecker } from "./lib/cors"
@@ -1491,11 +1472,8 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubImageCaptionService(pool)
     : new ImageCaptionService({ pool, ai, storage, configResolver })
   const imageCaptionWorker = createImageCaptionWorker({ imageCaptionService })
-  const imageCaptionOnDLQ: OnDLQHook<ImageCaptionJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-  }
   jobQueue.registerHandler(JobQueues.IMAGE_CAPTION, imageCaptionWorker, {
-    hooks: { onDLQ: imageCaptionOnDLQ },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
@@ -1518,21 +1496,18 @@ export async function startServer(): Promise<ServerInstance> {
   const pdfPrepareWorker = createPdfPrepareWorker({ pdfProcessingService })
   const pdfPageWorker = createPdfPageWorker({ pdfProcessingService })
   const pdfAssembleWorker = createPdfAssembleWorker({ pdfProcessingService })
-  const pdfOnDLQ: OnDLQHook<PdfPrepareJobData | PdfProcessPageJobData | PdfAssembleJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-  }
   jobQueue.registerHandler(JobQueues.PDF_PREPARE, pdfPrepareWorker, {
-    hooks: { onDLQ: pdfOnDLQ as OnDLQHook<PdfPrepareJobData> },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
   jobQueue.registerHandler(JobQueues.PDF_PROCESS_PAGE, pdfPageWorker, {
-    hooks: { onDLQ: pdfOnDLQ as OnDLQHook<PdfProcessPageJobData> },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
   jobQueue.registerHandler(JobQueues.PDF_ASSEMBLE, pdfAssembleWorker, {
-    hooks: { onDLQ: pdfOnDLQ as OnDLQHook<PdfAssembleJobData> },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
@@ -1541,11 +1516,8 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubTextProcessingService({ pool })
     : new TextProcessingService({ pool, ai, storage })
   const textProcessingWorker = createTextProcessingWorker({ textProcessingService })
-  const textOnDLQ: OnDLQHook<TextProcessJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-  }
   jobQueue.registerHandler(JobQueues.TEXT_PROCESS, textProcessingWorker, {
-    hooks: { onDLQ: textOnDLQ },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
@@ -1554,11 +1526,8 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubWordProcessingService({ pool })
     : new WordProcessingService({ pool, ai, storage })
   const wordProcessingWorker = createWordProcessingWorker({ wordProcessingService })
-  const wordOnDLQ: OnDLQHook<WordProcessJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-  }
   jobQueue.registerHandler(JobQueues.WORD_PROCESS, wordProcessingWorker, {
-    hooks: { onDLQ: wordOnDLQ },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
@@ -1567,11 +1536,8 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubExcelProcessingService({ pool })
     : new ExcelProcessingService({ pool, ai, storage })
   const excelProcessingWorker = createExcelProcessingWorker({ excelProcessingService })
-  const excelOnDLQ: OnDLQHook<ExcelProcessJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-  }
   jobQueue.registerHandler(JobQueues.EXCEL_PROCESS, excelProcessingWorker, {
-    hooks: { onDLQ: excelOnDLQ },
+    hooks: { onDLQ: createAttachmentFailedOnDLQ() },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
@@ -1588,47 +1554,13 @@ export async function startServer(): Promise<ServerInstance> {
     : new StubVideoTranscodingService(pool)
   const videoSubmitWorker = createVideoTranscodeSubmitWorker({ videoTranscodingService, jobQueue })
   const videoCheckWorker = createVideoTranscodeCheckWorker({ videoTranscodingService, jobQueue })
-  const videoOnDLQ: OnDLQHook<VideoTranscodeSubmitJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-    const videoJob = await VideoTranscodeJobRepository.findByAttachmentId(querier, job.data.attachmentId)
-    if (videoJob) {
-      await VideoTranscodeJobRepository.updateFailed(querier, videoJob.id, "Moved to DLQ after exhausting retries")
-    }
-    const att = await AttachmentRepository.findById(querier, job.data.attachmentId)
-    await OutboxRepository.insert(querier, "attachment:transcoded", {
-      workspaceId: job.data.workspaceId,
-      ...(att?.streamId && { streamId: att.streamId }),
-      ...(att?.messageId && { messageId: att.messageId }),
-      attachmentId: job.data.attachmentId,
-      processingStatus: ProcessingStatuses.FAILED,
-    })
-  }
-  const videoCheckOnDLQ: OnDLQHook<VideoTranscodeCheckJobData> = async (querier, job) => {
-    await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
-    const videoJob = await VideoTranscodeJobRepository.findByAttachmentId(querier, job.data.attachmentId)
-    if (videoJob) {
-      await VideoTranscodeJobRepository.updateFailed(
-        querier,
-        videoJob.id,
-        "Check job moved to DLQ after exhausting retries"
-      )
-    }
-    const att = await AttachmentRepository.findById(querier, job.data.attachmentId)
-    await OutboxRepository.insert(querier, "attachment:transcoded", {
-      workspaceId: job.data.workspaceId,
-      ...(att?.streamId && { streamId: att.streamId }),
-      ...(att?.messageId && { messageId: att.messageId }),
-      attachmentId: job.data.attachmentId,
-      processingStatus: ProcessingStatuses.FAILED,
-    })
-  }
   jobQueue.registerHandler(JobQueues.VIDEO_TRANSCODE_SUBMIT, videoSubmitWorker, {
-    hooks: { onDLQ: videoOnDLQ },
+    hooks: { onDLQ: createVideoTranscodeOnDLQ("Moved to DLQ after exhausting retries") },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })
   jobQueue.registerHandler(JobQueues.VIDEO_TRANSCODE_CHECK, videoCheckWorker, {
-    hooks: { onDLQ: videoCheckOnDLQ },
+    hooks: { onDLQ: createVideoTranscodeOnDLQ("Check job moved to DLQ after exhausting retries") },
     tier: QueueTiers.HEAVY,
     fairness: QueueFairness.NONE,
   })

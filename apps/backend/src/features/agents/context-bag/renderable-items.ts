@@ -32,7 +32,7 @@ export async function hydrateRenderableItems(
     // only the text and the model has no idea anything was attached. The
     // renderer formats the metadata inline; full extraction content stays
     // behind the existing attachment tools.
-    AttachmentRepository.findByMessageIds(db, messageIds),
+    AttachmentRepository.findByMessageIds(db, workspaceId, messageIds),
     LinkPreviewRepository.findByMessageIds(db, workspaceId, messageIds),
   ])
 
