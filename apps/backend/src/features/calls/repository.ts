@@ -12,6 +12,16 @@ import {
   type PublishedTrack,
 } from "./config"
 
+export interface CallRef {
+  workspaceId: string
+  callId: string
+}
+
+export interface ParticipantRef {
+  workspaceId: string
+  participantId: string
+}
+
 // ── calls ────────────────────────────────────────────────────────────────────
 
 interface CallRow {
@@ -156,15 +166,20 @@ export const CallRepository = {
   /**
    * The `call_started` event id for a call — the anchor for its chat thread. Read
    * from the host stream's timeline (there is exactly one per call, appended in the
-   * start transaction). Scoped by `stream_id` (stream_events carries no
-   * workspace_id; the stream is the scoping key). Null when the row is missing
-   * (e.g. a pre-timeline legacy call). Kept in the calls feature so the chat-anchor
-   * association resolves without a streams→calls dependency.
+   * start transaction). Null when the row is missing (e.g. a pre-timeline legacy
+   * call). Kept in the calls feature so the chat-anchor association resolves
+   * without a streams→calls dependency.
    */
-  async findCallStartedEventId(db: Querier, streamId: string, callId: string): Promise<string | null> {
+  async findCallStartedEventId(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    callId: string
+  ): Promise<string | null> {
     const result = await db.query<{ id: string }>(sql`
       SELECT id FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'call_started'
         AND payload->>'callId' = ${callId}
       LIMIT 1
@@ -196,17 +211,20 @@ export const CallRepository = {
    * these BEFORE touching any endpoint or participant, matching the
    * call→endpoint→participant lock order every interactive path already uses via
    * {@link findByIdForUpdate}; without it the endpoint-first reap would AB-BA
-   * deadlock a concurrent leave/remove that locks call-first. `ORDER BY id` under
-   * a single `FOR UPDATE` fixes acquisition order so lockers never cross. Locked
-   * by global id (no workspace filter) as the sweeper runs workspace-agnostic.
+   * deadlock a concurrent leave/remove that locks call-first. `ORDER BY id,
+   * workspace_id` under a single `FOR UPDATE` fixes acquisition order so lockers
+   * never cross. The sweeper spans workspaces, so calls are named by
+   * `(workspace, id)` pair.
    */
-  async lockForUpdateInOrder(db: Querier, callIds: readonly string[]): Promise<void> {
-    if (callIds.length === 0) return
+  async lockForUpdateInOrder(db: Querier, refs: readonly CallRef[]): Promise<void> {
+    if (refs.length === 0) return
     await db.query(sql`
-      SELECT id FROM calls
-      WHERE id = ANY(${callIds as string[]})
-      ORDER BY id
-      FOR UPDATE
+      SELECT c.id FROM calls c
+      JOIN unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.callId)}::text[])
+        AS ref(ref_workspace_id, ref_call_id)
+        ON c.workspace_id = ref.ref_workspace_id AND c.id = ref.ref_call_id
+      ORDER BY c.id, c.workspace_id
+      FOR UPDATE OF c
     `)
   },
 
@@ -288,14 +306,16 @@ export const CallRepository = {
    */
   async enterGraceIfEmptyBatch(
     db: Querier,
-    params: { callIds: readonly string[]; graceDeadline: Date }
+    params: { refs: readonly CallRef[]; graceDeadline: Date }
   ): Promise<Call[]> {
-    if (params.callIds.length === 0) return []
+    if (params.refs.length === 0) return []
     const result = await db.query<CallRow>(sql`
       UPDATE calls c SET
         status = 'empty_grace', grace_deadline = ${params.graceDeadline},
         ended_reason = 'reaped', status_changed_at = NOW(), updated_at = NOW()
-      WHERE c.id = ANY(${params.callIds as string[]}) AND c.status = 'active'
+      FROM unnest(${params.refs.map((ref) => ref.workspaceId)}::text[], ${params.refs.map((ref) => ref.callId)}::text[])
+        AS ref(ref_workspace_id, ref_call_id)
+      WHERE c.workspace_id = ref.ref_workspace_id AND c.id = ref.ref_call_id AND c.status = 'active'
         AND NOT EXISTS (
           SELECT 1 FROM call_participants p
           WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined'
@@ -314,7 +334,9 @@ export const CallRepository = {
    * set on grace entry.
    */
   async endGraceExpired(db: Querier, now: Date): Promise<Call[]> {
-    const result = await db.query<CallRow>(sql`
+    const result = await db.query<CallRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- grace-expiry sweep covers every workspace
+      sql`
       UPDATE calls c SET
         status = 'ended', ended_at = ${now}, status_changed_at = NOW(), updated_at = NOW()
       WHERE c.status = 'empty_grace' AND c.grace_deadline <= ${now}
@@ -323,7 +345,8 @@ export const CallRepository = {
           WHERE p.workspace_id = c.workspace_id AND p.call_id = c.id AND p.status = 'joined'
         )
       RETURNING ${sql.raw(CALL_COLUMNS)}
-    `)
+    `
+    )
     return result.rows.map(mapCall)
   },
 
@@ -364,15 +387,17 @@ export const CallRepository = {
 
   /**
    * Batch roster-version bump for the reaper cascade (INV-56, INV-66): one atomic
-   * increment across every call whose membership the sweep just changed. Locked by
-   * global id (the sweeper already holds these call rows FOR UPDATE and runs
-   * workspace-agnostic), matching {@link lockForUpdateInOrder}.
+   * increment across every call whose membership the sweep just changed (the
+   * sweeper already holds these call rows FOR UPDATE), matching
+   * {@link lockForUpdateInOrder}.
    */
-  async bumpRosterVersionBatch(db: Querier, callIds: readonly string[]): Promise<void> {
-    if (callIds.length === 0) return
+  async bumpRosterVersionBatch(db: Querier, refs: readonly CallRef[]): Promise<void> {
+    if (refs.length === 0) return
     await db.query(sql`
-      UPDATE calls SET roster_version = roster_version + 1, updated_at = NOW()
-      WHERE id = ANY(${callIds as string[]})
+      UPDATE calls c SET roster_version = c.roster_version + 1, updated_at = NOW()
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.callId)}::text[])
+        AS ref(ref_workspace_id, ref_call_id)
+      WHERE c.workspace_id = ref.ref_workspace_id AND c.id = ref.ref_call_id
     `)
   },
 }
@@ -538,14 +563,15 @@ export const CallInvitationRepository = {
    * invitation across the given calls to `cancelled` in one statement, when those
    * calls just graced/ended with no live participant. Cancelling here (rather than
    * letting the ring lapse to `expired`) is what keeps an abandoned call from
-   * landing a spurious missed-call activity. Workspace-agnostic, matching the
-   * other sweeper batch methods (call ids are globally-unique ULIDs).
+   * landing a spurious missed-call activity.
    */
-  async cancelRingingForCalls(db: Querier, callIds: readonly string[]): Promise<CallInvitation[]> {
-    if (callIds.length === 0) return []
+  async cancelRingingForCalls(db: Querier, refs: readonly CallRef[]): Promise<CallInvitation[]> {
+    if (refs.length === 0) return []
     const result = await db.query<CallInvitationRow>(sql`
-      UPDATE call_invitations SET status = 'cancelled', status_changed_at = NOW()
-      WHERE call_id = ANY(${callIds as string[]}) AND status = 'ringing'
+      UPDATE call_invitations i SET status = 'cancelled', status_changed_at = NOW()
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.callId)}::text[])
+        AS ref(ref_workspace_id, ref_call_id)
+      WHERE i.workspace_id = ref.ref_workspace_id AND i.call_id = ref.ref_call_id AND i.status = 'ringing'
       RETURNING ${sql.raw(INVITATION_COLUMNS)}
     `)
     return result.rows.map(mapInvitation)
@@ -553,11 +579,14 @@ export const CallInvitationRepository = {
 
   /** Set-based ring expiry (INV-56): `ringing → expired` past `expires_at`. */
   async expireStaleRings(db: Querier, now: Date): Promise<CallInvitation[]> {
-    const result = await db.query<CallInvitationRow>(sql`
+    const result = await db.query<CallInvitationRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- ring-expiry sweep covers every workspace
+      sql`
       UPDATE call_invitations SET status = 'expired', status_changed_at = NOW()
       WHERE status = 'ringing' AND expires_at <= ${now}
       RETURNING ${sql.raw(INVITATION_COLUMNS)}
-    `)
+    `
+    )
     return result.rows.map(mapInvitation)
   },
 }
@@ -701,12 +730,14 @@ export const CallParticipantRepository = {
    * to `left` once none of their endpoints is live. Returns the affected rows so
    * the sweeper can decide which calls to grace.
    */
-  async markLeftWhereNoLiveEndpoint(db: Querier, participantIds: readonly string[]): Promise<CallParticipant[]> {
-    if (participantIds.length === 0) return []
+  async markLeftWhereNoLiveEndpoint(db: Querier, refs: readonly ParticipantRef[]): Promise<CallParticipant[]> {
+    if (refs.length === 0) return []
     const result = await db.query<CallParticipantRow>(sql`
       UPDATE call_participants p SET
         status = 'left', left_at = NOW(), status_changed_at = NOW(), updated_at = NOW()
-      WHERE p.id = ANY(${participantIds as string[]}) AND p.status = 'joined'
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.participantId)}::text[])
+        AS ref(ref_workspace_id, ref_participant_id)
+      WHERE p.workspace_id = ref.ref_workspace_id AND p.id = ref.ref_participant_id AND p.status = 'joined'
         AND NOT EXISTS (
           SELECT 1 FROM call_endpoints e
           WHERE e.workspace_id = p.workspace_id AND e.participant_id = p.id AND e.status IN ('connected', 'reconnecting')
@@ -1178,39 +1209,47 @@ export const CallEndpointRepository = {
   },
 
   /**
-   * First pass of the lease reaper: the distinct call ids that own a lapsed live
+   * First pass of the lease reaper: the distinct calls that own a lapsed live
    * endpoint, read WITHOUT locking so the reaper can lock those call rows first
    * (call→endpoint order) before closing the endpoints under the lock.
    */
-  async findLapsedCallIds(db: Querier, now: Date): Promise<string[]> {
-    const result = await db.query<{ call_id: string }>(sql`
-      SELECT DISTINCT call_id FROM call_endpoints
+  async findLapsedCallIds(db: Querier, now: Date): Promise<CallRef[]> {
+    const result = await db.query<{ workspace_id: string; call_id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- lease-reaper sweep covers every workspace
+      sql`
+      SELECT DISTINCT workspace_id, call_id FROM call_endpoints
       WHERE status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
-    `)
-    return result.rows.map((r) => r.call_id)
+    `
+    )
+    return result.rows.map((r) => ({ workspaceId: r.workspace_id, callId: r.call_id }))
   },
 
   async findLapsedWorkspaceIds(db: Querier, now: Date): Promise<string[]> {
-    const result = await db.query<{ workspace_id: string }>(sql`
+    const result = await db.query<{ workspace_id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- lease-reaper sweep covers every workspace
+      sql`
       SELECT DISTINCT workspace_id FROM call_endpoints
       WHERE status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
-    `)
+    `
+    )
     return result.rows.map((r) => r.workspace_id)
   },
 
   /**
    * Set-based lease reaping (INV-56): close every live endpoint past its lease on
-   * the given calls in one statement. Scoped to `callIds` — the rows the reaper
+   * the given calls in one statement. Scoped to `refs` — the rows the reaper
    * has already locked FOR UPDATE — so it only ever writes endpoints whose call
    * it holds (call→endpoint lock order). Returns the closed rows so the sweeper
    * can cascade participant/call state.
    */
-  async reapLapsed(db: Querier, now: Date, callIds: readonly string[]): Promise<CallEndpoint[]> {
-    if (callIds.length === 0) return []
+  async reapLapsed(db: Querier, now: Date, refs: readonly CallRef[]): Promise<CallEndpoint[]> {
+    if (refs.length === 0) return []
     const result = await db.query<CallEndpointRow>(sql`
-      UPDATE call_endpoints SET status = 'closed', status_changed_at = NOW()
-      WHERE call_id = ANY(${callIds as string[]})
-        AND status IN ('connected', 'reconnecting') AND lease_expires_at <= ${now}
+      UPDATE call_endpoints e SET status = 'closed', status_changed_at = NOW()
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.callId)}::text[])
+        AS ref(ref_workspace_id, ref_call_id)
+      WHERE e.workspace_id = ref.ref_workspace_id AND e.call_id = ref.ref_call_id
+        AND e.status IN ('connected', 'reconnecting') AND e.lease_expires_at <= ${now}
       RETURNING ${sql.raw(ENDPOINT_COLUMNS)}
     `)
     return result.rows.map(mapEndpoint)

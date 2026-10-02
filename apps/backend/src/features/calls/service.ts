@@ -1301,7 +1301,12 @@ export class CallService {
           startedBy: params.userId,
         })
       } else {
-        chatAnchorId = await CallRepository.findCallStartedEventId(client, params.streamId, targetCallId)
+        chatAnchorId = await CallRepository.findCallStartedEventId(
+          client,
+          params.workspaceId,
+          params.streamId,
+          targetCallId
+        )
       }
 
       if (created && stream.type === StreamTypes.DM) {
@@ -3065,8 +3070,8 @@ export class CallService {
       eligibilityByWorkspace.set(workspaceId, await this.resolveP2pEligibility(workspaceId))
     }
     const { closedSessionIds, result } = await withTransaction(this.pool, async (client) => {
-      const lapsedCallIds = await CallEndpointRepository.findLapsedCallIds(client, now)
-      if (lapsedCallIds.length === 0) {
+      const lapsedCalls = await CallEndpointRepository.findLapsedCallIds(client, now)
+      if (lapsedCalls.length === 0) {
         return { closedSessionIds: [] as string[], result: { endpoints: 0, participants: 0, calls: 0 } }
       }
 
@@ -3075,19 +3080,30 @@ export class CallService {
       // call→endpoint→participant order every interactive path uses. Reaping
       // endpoints first (as before) AB-BA deadlocked a concurrent leave/remove
       // that locks the call first.
-      await CallRepository.lockForUpdateInOrder(client, lapsedCallIds)
+      await CallRepository.lockForUpdateInOrder(client, lapsedCalls)
 
-      const closed = await CallEndpointRepository.reapLapsed(client, now, lapsedCallIds)
+      const closed = await CallEndpointRepository.reapLapsed(client, now, lapsedCalls)
       if (closed.length === 0) {
         return { closedSessionIds: [] as string[], result: { endpoints: 0, participants: 0, calls: 0 } }
       }
 
-      const participantIds = [...new Set(closed.map((e) => e.participantId))]
-      const left = await CallParticipantRepository.markLeftWhereNoLiveEndpoint(client, participantIds)
+      const participantRefs = [
+        ...new Map(
+          closed.map((e) => [
+            `${e.workspaceId}:${e.participantId}`,
+            { workspaceId: e.workspaceId, participantId: e.participantId },
+          ])
+        ).values(),
+      ]
+      const left = await CallParticipantRepository.markLeftWhereNoLiveEndpoint(client, participantRefs)
 
-      const callIds = [...new Set(closed.map((e) => e.callId))]
+      const callRefs = [
+        ...new Map(
+          closed.map((e) => [`${e.workspaceId}:${e.callId}`, { workspaceId: e.workspaceId, callId: e.callId }])
+        ).values(),
+      ]
       const graced = await CallRepository.enterGraceIfEmptyBatch(client, {
-        callIds,
+        refs: callRefs,
         graceDeadline: new Date(now.getTime() + EMPTY_GRACE_MS),
       })
 
@@ -3096,29 +3112,24 @@ export class CallService {
       // and the caller-gone ring never lands a missed-call activity.
       const cancelledRings = await CallInvitationRepository.cancelRingingForCalls(
         client,
-        graced.map((c) => c.id)
+        graced.map((c) => ({ workspaceId: c.workspaceId, callId: c.id }))
       )
       await this.settleCancelledRings(client, cancelledRings)
 
       // The reap changed membership on every call it touched: bump their roster
       // versions in the same tx (the call rows are already locked FOR UPDATE) so a
       // later roster fan-out is strictly newer than what peers hold (INV-66).
-      await CallRepository.bumpRosterVersionBatch(client, callIds)
+      await CallRepository.bumpRosterVersionBatch(client, callRefs)
 
       // Fan the refreshed roster to each touched call's card in the same tx
       // (INV-7). The call rows are locked; read each streamId to route the event.
-      // The sweep spans workspaces, so the workspace id comes from the closed
-      // endpoint that named each call.
-      const workspaceIdByCall = new Map(closed.map((e) => [e.callId, e.workspaceId]))
-      for (const cId of callIds) {
-        const wsId = workspaceIdByCall.get(cId)
-        if (!wsId) continue
-        const touched = await CallRepository.findById(client, wsId, cId)
+      for (const { workspaceId, callId } of callRefs) {
+        const touched = await CallRepository.findById(client, workspaceId, callId)
         if (touched) {
           await this.reconcileTransferMembership(client, touched, touched.rosterVersion)
-          const eligibility = eligibilityByWorkspace.get(wsId)
+          const eligibility = eligibilityByWorkspace.get(workspaceId)
           if (eligibility) await this.reconcileTransportPolicyLocked(client, touched, eligibility, now)
-          await this.emitParticipantsChanged(client, wsId, touched.streamId, cId)
+          await this.emitParticipantsChanged(client, workspaceId, touched.streamId, callId)
         }
       }
 
@@ -3148,7 +3159,7 @@ export class CallService {
       // same tx (INV-7) rather than leaving it to lapse into a missed call.
       const cancelledRings = await CallInvitationRepository.cancelRingingForCalls(
         client,
-        ended.map((c) => c.id)
+        ended.map((c) => ({ workspaceId: c.workspaceId, callId: c.id }))
       )
       await this.settleCancelledRings(client, cancelledRings)
 

@@ -117,19 +117,25 @@ export const UserSessionRepository = {
    */
   async getRecentDeviceKeys(db: Querier, deviceKeys: string[], windowMs: number): Promise<Set<string>> {
     if (deviceKeys.length === 0) return new Set()
-    const result = await db.query<{ device_key: string }>(sql`
+    const result = await db.query<{ device_key: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- the device key is a user-agent hash, so liveness counts the browser's activity in every workspace
+      sql`
       SELECT DISTINCT device_key FROM user_sessions
       WHERE device_key = ANY(${deviceKeys})
         AND last_active_at > now() - (${windowMs}::text || ' milliseconds')::interval
-    `)
+    `
+    )
     return new Set(result.rows.map((r) => r.device_key))
   },
 
   async cleanupStale(db: Querier, olderThanMs: number): Promise<number> {
-    const result = await db.query(sql`
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- retention sweep across every workspace
+      sql`
       DELETE FROM user_sessions
       WHERE last_active_at < now() - (${olderThanMs}::text || ' milliseconds')::interval
-    `)
+    `
+    )
     return result.rowCount ?? 0
   },
 }

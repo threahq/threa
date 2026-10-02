@@ -312,17 +312,20 @@ export const PushReceiptRepository = {
 
   /** Retention: delete rows past `retain_until`, oldest first, in one bounded batch. Returns rows deleted. */
   async deleteExpired(db: Querier, params: { limit: number }): Promise<number> {
-    const result = await db.query(sql`
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- retention sweep across every workspace
+      sql`
       DELETE FROM push_receipts r
       USING (
-        SELECT id FROM push_receipts
+        SELECT id, workspace_id FROM push_receipts
         WHERE retain_until < NOW()
         ORDER BY retain_until
         LIMIT ${params.limit}
         FOR UPDATE SKIP LOCKED
       ) doomed
-      WHERE r.id = doomed.id
-    `)
+      WHERE r.id = doomed.id AND r.workspace_id = doomed.workspace_id
+    `
+    )
     return result.rowCount ?? 0
   },
 }
