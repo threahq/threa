@@ -732,6 +732,7 @@ describe("Memo Repositories", () => {
         const localWorkspaceId = workspaceId()
         const localStreamId = streamId()
         const localUserId = userId()
+        const localConversationId = conversationId()
         let localMemberId = ""
 
         await withTransaction(pool, async (client) => {
@@ -750,12 +751,17 @@ describe("Memo Repositories", () => {
             companionMode: "off",
             createdBy: localMemberId,
           })
+          await ConversationRepository.insert(client, {
+            id: localConversationId,
+            streamId: localStreamId,
+            workspaceId: localWorkspaceId,
+          })
 
           await MemoRepository.insert(client, {
             id: memoId(),
             workspaceId: localWorkspaceId,
-            memoType: "message",
-            sourceMessageId: `msg_tags1_${Date.now()}`,
+            memoType: "conversation",
+            sourceConversationId: localConversationId,
             title: "Memo with tags 1",
             abstract: "Abstract",
             keyPoints: [],
@@ -769,8 +775,8 @@ describe("Memo Repositories", () => {
           await MemoRepository.insert(client, {
             id: memoId(),
             workspaceId: localWorkspaceId,
-            memoType: "message",
-            sourceMessageId: `msg_tags2_${Date.now()}`,
+            memoType: "conversation",
+            sourceConversationId: localConversationId,
             title: "Memo with tags 2",
             abstract: "Abstract",
             keyPoints: [],
@@ -783,7 +789,7 @@ describe("Memo Repositories", () => {
         })
 
         const tags = await withTransaction(pool, async (client) => {
-          return MemoRepository.getAllTags(client, localWorkspaceId, null)
+          return MemoRepository.getAllTags(client, localWorkspaceId, { scopeUserId: null, rootStreamId: localStreamId })
         })
 
         expect(tags).toContain("architecture")

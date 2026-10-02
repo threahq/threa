@@ -928,13 +928,29 @@ export const MemoRepository = {
     return mapRowToMemo(result.rows[0])
   },
 
-  /** Tags of active memos in `scopeUserId`'s tier, as `findByStream` scopes it. */
-  async getAllTags(db: Querier, workspaceId: string, scopeUserId: string | null): Promise<string[]> {
+  /**
+   * Tags a capture into `rootStreamId` may show its model: shared memos whose
+   * source root is that root or public (resolved through the root, as
+   * `findEmbedSummaries` does), plus `scopeUserId`'s own private memos.
+   */
+  async getAllTags(
+    db: Querier,
+    workspaceId: string,
+    scope: { scopeUserId: string | null; rootStreamId: string }
+  ): Promise<string[]> {
     const result = await db.query<{ tag: string }>(sql`
-      SELECT DISTINCT unnest(tags) as tag
-      FROM memos
-      WHERE workspace_id = ${workspaceId} AND status = 'active'
-        AND (scope <> 'user' OR scope_user_id = ${scopeUserId})
+      SELECT DISTINCT unnest(m.tags) as tag
+      FROM memos m
+      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
+      LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
+      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1]
+      LEFT JOIN streams s ON s.id = COALESCE(src_msg.stream_id, src_conv.stream_id, first_msg.stream_id)
+      LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+      WHERE m.workspace_id = ${workspaceId} AND m.status = 'active'
+        AND (
+          (m.scope = 'user' AND m.scope_user_id = ${scope.scopeUserId})
+          OR (m.scope <> 'user' AND (root.id = ${scope.rootStreamId} OR root.visibility = 'public'))
+        )
       ORDER BY tag
     `)
     return result.rows.map((r) => r.tag)

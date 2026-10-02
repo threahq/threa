@@ -334,7 +334,7 @@ export class MemoService implements MemoServiceLike {
         orderBy: "createdAt",
       })
 
-      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope.scopeUserId)
+      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope)
 
       const conversationItemIds = pending.filter((p) => p.itemType === "conversation").map((p) => p.itemId)
       const conversations = new Map<string, NonNullable<Awaited<ReturnType<typeof ConversationRepository.findById>>>>()
@@ -1222,7 +1222,7 @@ export class MemoService implements MemoServiceLike {
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
       })
-      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope.scopeUserId)
+      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope)
       // Only the explicit workspace setting is honored here (no participant-locale
       // fallback): a session's participants are usually just the invoking user, too
       // thin a sample to infer a canonical language from.

@@ -208,6 +208,20 @@ describe("memo capture: model context honors memo scope", () => {
     expect(memorizerContexts).toEqual([{ memoryContext: ["shared"], existingTags: ["shared-tag"] }])
   })
 
+  test("a public channel's capture sees tags from other public channels but not private ones", async () => {
+    const ws = await seedWorkspace()
+    const channel = await seedStream(ws, { type: "channel", visibility: "public", createdBy: ws.ownerId })
+    const otherPublic = await seedStream(ws, { type: "channel", visibility: "public", createdBy: ws.ownerId })
+    const privateChannel = await seedStream(ws, { type: "channel", visibility: "private", createdBy: ws.otherId })
+    await seedMemo(ws, otherPublic, { abstract: "public", tags: ["public-tag"] })
+    await seedMemo(ws, privateChannel, { abstract: "secret", tags: ["secret-tag"] })
+    await queueConversation(ws, channel)
+
+    await service().processBatch(ws.id, channel)
+
+    expect(memorizerContexts).toEqual([{ memoryContext: [], existingTags: ["public-tag"] }])
+  })
+
   test("a session in a shared channel's thread never shows the model a private memo saved there", async () => {
     const ws = await seedWorkspace()
     const channel = await seedStream(ws, { type: "channel", visibility: "public", createdBy: ws.ownerId })
