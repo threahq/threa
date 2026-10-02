@@ -140,7 +140,7 @@ export class ActivityService {
         )
         const validCandidateIds = candidateIds.filter((id) => workspaceUserIds.has(id))
         if (validCandidateIds.length > 0) {
-          const eligible = await this.filterByAccess(client, stream, rootStream, validCandidateIds)
+          const eligible = await this.filterByAccess(client, workspaceId, stream, rootStream, validCandidateIds)
           for (const id of validCandidateIds) {
             if (eligible.has(id)) userIds.add(id)
           }
@@ -150,6 +150,7 @@ export class ActivityService {
       if (broadcastIds.length > 0) {
         const broadcastUserIds = await this.resolveBroadcastTargets(
           client,
+          workspaceId,
           broadcastIds,
           stream,
           rootStream,
@@ -245,6 +246,7 @@ export class ActivityService {
    */
   private async resolveBroadcastTargets(
     client: PoolClient,
+    workspaceId: string,
     broadcastIds: string[],
     stream: Stream,
     rootStream: Stream | null,
@@ -255,7 +257,7 @@ export class ActivityService {
 
     const getMembers = async (streamId: string) => {
       if (!memberCache.has(streamId)) {
-        memberCache.set(streamId, await StreamMemberRepository.list(client, { streamId }))
+        memberCache.set(streamId, await StreamMemberRepository.list(client, workspaceId, { streamId }))
       }
       return memberCache.get(streamId)!
     }
@@ -294,12 +296,12 @@ export class ActivityService {
       const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) return []
 
-      const directMembers = await StreamMemberRepository.list(client, { streamId })
+      const directMembers = await StreamMemberRepository.list(client, workspaceId, { streamId })
       const rootStream = stream.rootStreamId
         ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
         : null
       const streamMembers = rootStream
-        ? await this.resolveInheritedNotificationCandidates(client, stream, rootStream.id, directMembers)
+        ? await this.resolveInheritedNotificationCandidates(client, workspaceId, stream, rootStream.id, directMembers)
         : directMembers
       if (streamMembers.length === 0) return []
 
@@ -357,11 +359,12 @@ export class ActivityService {
    */
   private async resolveInheritedNotificationCandidates(
     client: PoolClient,
+    workspaceId: string,
     stream: Stream,
     rootStreamId: string,
     directMembers: Awaited<ReturnType<typeof StreamMemberRepository.list>>
   ): Promise<Awaited<ReturnType<typeof StreamMemberRepository.list>>> {
-    const rootMembers = await StreamMemberRepository.list(client, { streamId: rootStreamId })
+    const rootMembers = await StreamMemberRepository.list(client, workspaceId, { streamId: rootStreamId })
     const directByMemberId = new Map(directMembers.map((member) => [member.memberId, member]))
 
     return rootMembers.map((rootMember) => {
@@ -451,11 +454,12 @@ export class ActivityService {
       if (message.authorType === AuthorTypes.USER && message.authorId && message.authorId !== actorId) {
         const directAuthorMember = await StreamMemberRepository.findByStreamAndMember(
           client,
+          workspaceId,
           streamId,
           message.authorId
         )
         const rootAuthorMember = rootStream
-          ? await StreamMemberRepository.findByStreamAndMember(client, rootStream.id, message.authorId)
+          ? await StreamMemberRepository.findByStreamAndMember(client, workspaceId, rootStream.id, message.authorId)
           : null
         let authorMember = directAuthorMember
         if (rootStream) {
@@ -585,6 +589,7 @@ export class ActivityService {
    */
   private async filterByAccess(
     client: PoolClient,
+    workspaceId: string,
     stream: Stream,
     rootStream: Stream | null,
     userIds: string[]
@@ -592,11 +597,11 @@ export class ActivityService {
     if (stream.rootStreamId) {
       if (!rootStream) return new Set()
       if (rootStream.visibility === Visibilities.PUBLIC) return new Set(userIds)
-      return StreamMemberRepository.filterMemberIds(client, rootStream.id, userIds)
+      return StreamMemberRepository.filterMemberIds(client, workspaceId, rootStream.id, userIds)
     }
 
     if (stream.visibility === Visibilities.PUBLIC) return new Set(userIds)
-    return StreamMemberRepository.filterMemberIds(client, stream.id, userIds)
+    return StreamMemberRepository.filterMemberIds(client, workspaceId, stream.id, userIds)
   }
 
   /**

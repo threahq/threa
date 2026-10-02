@@ -1305,7 +1305,7 @@ export class CallService {
       }
 
       if (created && stream.type === StreamTypes.DM) {
-        const peerId = await this.findDmPeer(client, params.streamId, params.userId)
+        const peerId = await this.findDmPeer(client, params.workspaceId, params.streamId, params.userId)
         if (peerId) {
           const invitation = await CallInvitationRepository.insertRinging(client, {
             id: callInvitationId(),
@@ -3178,10 +3178,10 @@ export class CallService {
 
   /**
    * Batch the reads the per-call `call_ended` appends share, once for the whole
-   * grace-end sweep (INV-56). The sweep spans workspaces, so the ever-participant
-   * and stream reads group by workspace (INV-8); the member read is id-keyed
-   * across the set. The event/outbox append stays a loop — neither has a
-   * batch insert — but every lookup it needs is already resolved.
+   * grace-end sweep (INV-56). The sweep spans workspaces, so the ever-participant,
+   * stream and member reads group by workspace (INV-8). The event/outbox append
+   * stays a loop — neither has a batch insert — but every lookup it needs is
+   * already resolved.
    */
   private async appendCallsEnded(client: PoolClient, calls: Call[]): Promise<void> {
     if (calls.length === 0) return
@@ -3194,6 +3194,7 @@ export class CallService {
     }
     const participantUserIdsByCall = new Map<string, string[]>()
     const streamByWorkspaceStream = new Map<string, Stream>()
+    const memberUserIdsByWorkspaceStream = new Map<string, string[]>()
     for (const [workspaceId, workspaceCalls] of callsByWorkspace) {
       const partial = await CallParticipantRepository.listUserIdsByCall(
         client,
@@ -3201,19 +3202,15 @@ export class CallService {
         workspaceCalls.map((c) => c.id)
       )
       for (const [callId, userIds] of partial) participantUserIdsByCall.set(callId, userIds)
-      const workspaceStreams = await StreamRepository.findByIds(client, workspaceId, [
-        ...new Set(workspaceCalls.map((c) => c.streamId)),
-      ])
+      const streamIds = [...new Set(workspaceCalls.map((c) => c.streamId))]
+      const workspaceStreams = await StreamRepository.findByIds(client, workspaceId, streamIds)
       for (const stream of workspaceStreams) streamByWorkspaceStream.set(`${workspaceId}:${stream.id}`, stream)
-    }
-
-    const streamIds = [...new Set(calls.map((c) => c.streamId))]
-
-    const memberUserIdsByStream = new Map<string, string[]>()
-    for (const member of await StreamMemberRepository.list(client, { streamIds })) {
-      const ids = memberUserIdsByStream.get(member.streamId)
-      if (ids) ids.push(member.memberId)
-      else memberUserIdsByStream.set(member.streamId, [member.memberId])
+      for (const member of await StreamMemberRepository.list(client, workspaceId, { streamIds })) {
+        const key = `${workspaceId}:${member.streamId}`
+        const ids = memberUserIdsByWorkspaceStream.get(key)
+        if (ids) ids.push(member.memberId)
+        else memberUserIdsByWorkspaceStream.set(key, [member.memberId])
+      }
     }
 
     for (const call of calls) {
@@ -3222,7 +3219,7 @@ export class CallService {
       await this.appendCallEnded(client, call, {
         streamVisibility: stream.visibility,
         participantUserIds: participantUserIdsByCall.get(call.id) ?? [],
-        memberUserIds: memberUserIdsByStream.get(call.streamId) ?? [],
+        memberUserIds: memberUserIdsByWorkspaceStream.get(`${call.workspaceId}:${call.streamId}`) ?? [],
       })
     }
   }
@@ -3252,7 +3249,7 @@ export class CallService {
       actorId: args.startedBy,
       actorType: AuthorTypes.USER,
     })
-    const memberUserIds = await this.listStreamMemberUserIds(client, args.streamId)
+    const memberUserIds = await this.listStreamMemberUserIds(client, args.call.workspaceId, args.streamId)
     await OutboxRepository.insert(client, "stream:call_started", {
       workspaceId: args.call.workspaceId,
       streamId: args.streamId,
@@ -3277,7 +3274,7 @@ export class CallService {
     const participantUserIdsByCall = await CallParticipantRepository.listUserIdsByCall(client, call.workspaceId, [
       call.id,
     ])
-    const memberUserIds = await this.listStreamMemberUserIds(client, call.streamId)
+    const memberUserIds = await this.listStreamMemberUserIds(client, call.workspaceId, call.streamId)
     await this.appendCallEnded(client, call, {
       streamVisibility: stream.visibility,
       participantUserIds: participantUserIdsByCall.get(call.id) ?? [],
@@ -3345,8 +3342,8 @@ export class CallService {
     })
   }
 
-  private async listStreamMemberUserIds(client: PoolClient, streamId: string): Promise<string[]> {
-    const members = await StreamMemberRepository.list(client, { streamId })
+  private async listStreamMemberUserIds(client: PoolClient, workspaceId: string, streamId: string): Promise<string[]> {
+    const members = await StreamMemberRepository.list(client, workspaceId, { streamId })
     return members.map((m) => m.memberId)
   }
 
@@ -3367,8 +3364,13 @@ export class CallService {
     return participant
   }
 
-  private async findDmPeer(client: PoolClient, streamId: string, userId: string): Promise<string | null> {
-    const members = await StreamMemberRepository.list(client, { streamId })
+  private async findDmPeer(
+    client: PoolClient,
+    workspaceId: string,
+    streamId: string,
+    userId: string
+  ): Promise<string | null> {
+    const members = await StreamMemberRepository.list(client, workspaceId, { streamId })
     const peer = members.find((m) => m.memberId !== userId)
     return peer?.memberId ?? null
   }

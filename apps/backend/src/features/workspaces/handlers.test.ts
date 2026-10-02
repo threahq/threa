@@ -17,8 +17,10 @@ function makeStreamService(archivedStreams: unknown[]) {
     listDmPeers: async () => [],
     // Mirrors the real resolver's contract: DM rows get a viewer-dependent
     // displayName baked on; everything else passes through.
-    resolveDmDisplayNames: async (streams: Array<{ type?: string; displayName?: string | null }>) =>
-      streams.map((s) => (s.type === "dm" ? { ...s, displayName: "Peer Name" } : s)),
+    resolveDmDisplayNames: async (
+      _workspaceId: string,
+      streams: Array<{ type?: string; displayName?: string | null }>
+    ) => streams.map((s) => (s.type === "dm" ? { ...s, displayName: "Peer Name" } : s)),
     getMembershipsBatch: async () => [],
     // Default: no read-state rows — every stream resolves as never-read.
     getEffectiveReadState: async (_userId: string, streamIds: string[]) =>

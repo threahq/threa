@@ -2095,7 +2095,7 @@ describe("durable push delivery", () => {
 
       await service.planActivityPush(event(), ctx.payload)
       await drainDuePushJobs(pool, service, ctx.ws)
-      await StreamMemberRepository.delete(pool, ctx.root.id, ctx.recipient.id)
+      await StreamMemberRepository.delete(pool, ctx.ws, ctx.root.id, ctx.recipient.id)
       await makeDeliveryDue(pool, (await deliveries(ctx.ws))[0]!.id)
       await drainDuePushJobs(pool, service, ctx.ws)
 

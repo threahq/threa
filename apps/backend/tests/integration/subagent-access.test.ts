@@ -43,7 +43,7 @@ describe("private channel", () => {
 
     // The delegating user created the thread and is a member of it; `member` is
     // only in the channel — access must come from the root, not the thread.
-    expect(await StreamMemberRepository.isMember(pool, threadStreamId, ctx.member)).toBe(false)
+    expect(await StreamMemberRepository.isMember(pool, ctx.workspaceId, threadStreamId, ctx.member)).toBe(false)
     expect(await checkStreamAccess(pool, threadStreamId, ctx.workspaceId, ctx.member)).toMatchObject({
       id: threadStreamId,
       rootStreamId: channel.id,
@@ -88,8 +88,8 @@ describe("public channel", () => {
     const channel = await ctx.createChannel({ slug: "public-inherit", memberIds: [ctx.owner] })
     const { threadStreamId } = await subagentService.create(createParams(ctx, channel.id))
 
-    expect(await StreamMemberRepository.isMember(pool, channel.id, ctx.outsider)).toBe(false)
-    expect(await StreamMemberRepository.isMember(pool, threadStreamId, ctx.outsider)).toBe(false)
+    expect(await StreamMemberRepository.isMember(pool, ctx.workspaceId, channel.id, ctx.outsider)).toBe(false)
+    expect(await StreamMemberRepository.isMember(pool, ctx.workspaceId, threadStreamId, ctx.outsider)).toBe(false)
     expect(await checkStreamAccess(pool, threadStreamId, ctx.workspaceId, ctx.outsider)).toMatchObject({
       id: threadStreamId,
       visibility: "public",

@@ -546,7 +546,12 @@ async function ensureStreamAccess(
 
   if (visibility === Visibilities.PUBLIC) return
 
-  const isMember = await StreamMemberRepository.isMember(client, params.accessStreamId, params.userId)
+  const isMember = await StreamMemberRepository.isMember(
+    client,
+    params.workspaceId,
+    params.accessStreamId,
+    params.userId
+  )
   if (!isMember) {
     throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
   }

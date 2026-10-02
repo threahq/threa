@@ -170,7 +170,7 @@ describe("read-as-owner access", () => {
 
   test("should lose access the moment the owner does — live delegation, not a snapshot", async () => {
     expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, revocableChannelId)).toBe(true)
-    await StreamMemberRepository.delete(pool, revocableChannelId, ownerId)
+    await StreamMemberRepository.delete(pool, testWorkspaceId, revocableChannelId, ownerId)
     expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, revocableChannelId)).toBe(false)
     expect(await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)).not.toContain(revocableChannelId)
   })
