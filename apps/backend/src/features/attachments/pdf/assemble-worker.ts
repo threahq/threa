@@ -11,11 +11,11 @@ export function createPdfAssembleWorker(deps: PdfAssembleWorkerDeps): JobHandler
   const { pdfProcessingService } = deps
 
   return async (job) => {
-    const { attachmentId, pdfJobId } = job.data
+    const { attachmentId, workspaceId, pdfJobId } = job.data
 
     logger.info({ jobId: job.id, attachmentId, pdfJobId }, "Starting PDF assemble job")
 
-    await pdfProcessingService.assemble(attachmentId, pdfJobId)
+    await pdfProcessingService.assemble(workspaceId, attachmentId, pdfJobId)
 
     logger.info({ jobId: job.id, attachmentId }, "PDF assemble job completed")
   }

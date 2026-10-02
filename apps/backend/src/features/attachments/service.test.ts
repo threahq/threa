@@ -109,7 +109,7 @@ describe("AttachmentService", () => {
       steps.push("storage:delete")
     })
 
-    const deleted = await service.delete("attach_1")
+    const deleted = await service.delete("ws_1", "attach_1")
 
     expect(deleted).toBe(true)
     expect(steps).toEqual([
@@ -130,16 +130,25 @@ describe("AttachmentService", () => {
     spyOn(AttachmentRepository, "findByIdForUpdate").mockResolvedValue(
       makeAttachment({ streamId: null, messageId: null })
     )
-    spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
-    spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockResolvedValue(undefined as never)
+    const extraction = spyOn(AttachmentExtractionRepository, "deleteByAttachmentId").mockResolvedValue(true)
+    const upload = spyOn(AttachmentUploadRepository, "deleteByAttachmentId").mockResolvedValue(undefined as never)
     const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
     spyOn(AttachmentRepository, "delete").mockResolvedValue(true)
 
     const { service } = createService()
-    const deleted = await service.delete("attach_1")
+    const deleted = await service.delete("ws_1", "attach_1")
 
-    expect(deleted).toBe(true)
-    expect(unbind).toHaveBeenCalledWith(expect.anything(), "attach_1")
+    expect({
+      deleted,
+      extractionDeletes: extraction.mock.calls.map((call) => call.slice(1)),
+      uploadDeletes: upload.mock.calls.map((call) => call.slice(1)),
+      personaUnbinds: unbind.mock.calls.map((call) => call.slice(1)),
+    }).toEqual({
+      deleted: true,
+      extractionDeletes: [["ws_1", "attach_1"]],
+      uploadDeletes: [["ws_1", "attach_1"]],
+      personaUnbinds: [["ws_1", "attach_1"]],
+    })
   })
 
   describe("deleteIfUnbound", () => {
@@ -152,14 +161,23 @@ describe("AttachmentService", () => {
       const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
 
       const { service, storage } = createService()
-      const result = await service.deleteIfUnbound("attach_1")
+      const result = await service.deleteIfUnbound("ws_1", "attach_1")
 
-      expect(result).toEqual({ deleted: true })
-      expect(conditionalDelete).toHaveBeenCalledWith(expect.anything(), "attach_1")
-      expect(extraction).toHaveBeenCalled()
-      expect(upload).toHaveBeenCalled()
-      expect(unbind).toHaveBeenCalled()
-      expect(storage.delete).toHaveBeenCalledWith("ws_1/attach_1/f")
+      expect({
+        result,
+        conditionalDeletes: conditionalDelete.mock.calls.map((call) => call.slice(1)),
+        extractionDeletes: extraction.mock.calls.map((call) => call.slice(1)),
+        uploadDeletes: upload.mock.calls.map((call) => call.slice(1)),
+        personaUnbinds: unbind.mock.calls.map((call) => call.slice(1)),
+        storageDeletes: storage.delete.mock.calls,
+      }).toEqual({
+        result: { deleted: true },
+        conditionalDeletes: [["ws_1", "attach_1"]],
+        extractionDeletes: [["ws_1", "attach_1"]],
+        uploadDeletes: [["ws_1", "attach_1"]],
+        personaUnbinds: [["ws_1", "attach_1"]],
+        storageDeletes: [["ws_1/attach_1/f"]],
+      })
     })
 
     it("leaves the bytes and rows intact when a message claimed the file (conditional delete no-ops)", async () => {
@@ -171,7 +189,7 @@ describe("AttachmentService", () => {
       const unbind = spyOn(AttachmentRepository, "deletePersonaBindings").mockResolvedValue(undefined as never)
 
       const { service, storage } = createService()
-      const result = await service.deleteIfUnbound("attach_1")
+      const result = await service.deleteIfUnbound("ws_1", "attach_1")
 
       expect(result).toEqual({ deleted: false })
       expect(extraction).not.toHaveBeenCalled()
@@ -188,7 +206,7 @@ describe("AttachmentService", () => {
     spyOn(AttachmentRepository, "delete").mockResolvedValue(true)
 
     const { service, storage } = createService()
-    const deleted = await service.delete("attach_missing")
+    const deleted = await service.delete("ws_1", "attach_missing")
 
     expect(deleted).toBe(false)
     expect(AttachmentExtractionRepository.deleteByAttachmentId).not.toHaveBeenCalled()
@@ -435,8 +453,8 @@ describe("AttachmentService", () => {
       expect(result).toBeNull()
     })
 
-    it("returns null when the attachment belongs to another workspace", async () => {
-      spyOn(AttachmentRepository, "findById").mockResolvedValue(makeAttachment({ workspaceId: "ws_other" }))
+    it("returns null when the attachment is not in the caller's workspace", async () => {
+      const findSpy = spyOn(AttachmentRepository, "findById").mockResolvedValue(null)
       const refSpy = spyOn(AttachmentReferenceRepository, "findReferencingStreamIds").mockResolvedValue([])
 
       const { service } = createService()
@@ -446,6 +464,7 @@ describe("AttachmentService", () => {
       })
 
       expect(result).toBeNull()
+      expect(findSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1")
       expect(refSpy).not.toHaveBeenCalled()
     })
 
@@ -659,7 +678,7 @@ describe("AttachmentService.copyForPersona", () => {
     await service.copyForPersona({ source: withThumb, newId: "attach_copy", uploadedBy: "usr_caller" })
 
     expect(storage.copyObject).toHaveBeenCalledWith("ws_1/attach_src/thumbnail.webp", "ws_1/attach_copy/thumbnail.webp")
-    expect(updateVariant.mock.calls[0]![2]).toMatchObject({
+    expect(updateVariant).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_copy", {
       thumbnailStoragePath: "ws_1/attach_copy/thumbnail.webp",
       width: 800,
       height: 600,

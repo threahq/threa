@@ -19,7 +19,6 @@ export type DroppedRefReason =
   | "stream-out-of-scope"
   | "attachment-not-found"
   | "attachment-out-of-scope"
-  | "attachment-cross-workspace"
   | "attachment-not-clean"
   | "memo-not-found"
   | "memo-not-active"
@@ -115,12 +114,14 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
       : new Map()
 
   const attachments =
-    attachmentIdsToCheck.size > 0 ? await AttachmentRepository.findByIds(pool, [...attachmentIdsToCheck]) : []
+    attachmentIdsToCheck.size > 0
+      ? await AttachmentRepository.findByIds(pool, workspaceId, [...attachmentIdsToCheck])
+      : []
   const attachmentMap = new Map(attachments.map((a) => [a.id, a]))
 
   // Per-attachment access decision, mirroring `AttachmentService.getAccessible`
   // plus event-service step 1's safety gate. The two checks compose to:
-  //   1. Workspace boundary
+  //   1. Workspace boundary (the lookup is workspace-scoped)
   //   2. Safety: malware-scan must be CLEAN (event-service rejects otherwise)
   //   3. Reachability: direct stream membership in scope, OR any referencing
   //      stream in scope (so attachments visible via inline references in
@@ -130,17 +131,13 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
   // multi-attachment messages don't pay sequential round-trip latency.
   const attachmentDecisions: Array<{
     attachId: string
-    decision: "ok" | "not-found" | "cross-workspace" | "not-clean" | "out-of-scope"
+    decision: "ok" | "not-found" | "not-clean" | "out-of-scope"
   }> = []
   await Promise.all(
     [...attachmentIdsToCheck].map(async (attachId) => {
       const a = attachmentMap.get(attachId)
       if (!a) {
         attachmentDecisions.push({ attachId, decision: "not-found" })
-        return
-      }
-      if (a.workspaceId !== workspaceId) {
-        attachmentDecisions.push({ attachId, decision: "cross-workspace" })
         return
       }
       if (a.safetyStatus !== AttachmentSafetyStatuses.CLEAN) {
@@ -223,9 +220,6 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
           return node
         case "not-found":
           dropped.push({ type: "attachmentReference", reason: "attachment-not-found", ids: { id } })
-          return null
-        case "cross-workspace":
-          dropped.push({ type: "attachmentReference", reason: "attachment-cross-workspace", ids: { id } })
           return null
         case "not-clean":
           // Mirrors event-service step 1's malware-scan gate. Refs surviving

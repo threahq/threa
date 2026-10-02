@@ -112,6 +112,7 @@ export const VoiceSessionRepository = {
    * double-transition (INV-20). Backed by idx_voice_sessions_expiry.
    */
   async expireStale(db: Querier, now: Date): Promise<number> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the expiry sweep covers every workspace
     const result = await db.query(sql`
       UPDATE voice_sessions
       SET status = 'expired', finished_at = NOW()

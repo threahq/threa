@@ -471,12 +471,17 @@ describe("QueueManager", () => {
           throw new Error("intentional failure")
         }
         // On success, mark completed (simulating what the real service does)
-        await AttachmentRepository.updateProcessingStatus(pool, attachmentId, ProcessingStatuses.COMPLETED)
+        await AttachmentRepository.updateProcessingStatus(pool, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
       }
 
       // onDLQ hook marks attachment as FAILED (mirrors server.ts)
       const onDLQHook: OnDLQHook<ImageCaptionJobData> = async (querier, job) => {
-        await AttachmentRepository.updateProcessingStatus(querier, job.data.attachmentId, ProcessingStatuses.FAILED)
+        await AttachmentRepository.updateProcessingStatus(
+          querier,
+          job.data.workspaceId,
+          job.data.attachmentId,
+          ProcessingStatuses.FAILED
+        )
       }
 
       const manager = new QueueManager({
@@ -515,7 +520,7 @@ describe("QueueManager", () => {
       try {
         await waitForCondition(
           async () => {
-            const attachment = await AttachmentRepository.findById(pool, attachmentId)
+            const attachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
             return attachment?.processingStatus === ProcessingStatuses.FAILED
           },
           5000,
@@ -532,7 +537,7 @@ describe("QueueManager", () => {
         )
 
         // Verify attachment is FAILED
-        const failedAttachment = await AttachmentRepository.findById(pool, attachmentId)
+        const failedAttachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
         expect(failedAttachment?.processingStatus).toBe(ProcessingStatuses.FAILED)
 
         // Verify message is in DLQ
@@ -545,7 +550,7 @@ describe("QueueManager", () => {
 
         await waitForCondition(
           async () => {
-            const attachment = await AttachmentRepository.findById(pool, attachmentId)
+            const attachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
             return attachment?.processingStatus === ProcessingStatuses.COMPLETED
           },
           5000,
@@ -553,7 +558,7 @@ describe("QueueManager", () => {
         )
 
         // Verify attachment is COMPLETED
-        const completedAttachment = await AttachmentRepository.findById(pool, attachmentId)
+        const completedAttachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
         expect(completedAttachment?.processingStatus).toBe(ProcessingStatuses.COMPLETED)
 
         // Handler was called: 2 times for DLQ + 1 time after un-DLQ

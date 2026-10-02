@@ -71,11 +71,10 @@ describe("validateDelegationContextRefs", () => {
   })
 
   it("gates attachments on workspace + malware-clean + stream reach (direct or via references)", async () => {
-    spyOn(AttachmentRepository, "findByIds").mockImplementation(
-      async (_db, ids) =>
+    const findAttachments = spyOn(AttachmentRepository, "findByIds").mockImplementation(
+      async (_db, _ws, ids) =>
         (ids as string[]).map((id) => ({
           id,
-          workspaceId: WS,
           safetyStatus: id === "att_dirty" ? "pending" : "clean",
           streamId: id === "att_ok" ? "stream_1" : "stream_secret",
         })) as never
@@ -91,11 +90,42 @@ describe("validateDelegationContextRefs", () => {
       "attachment:att_unreachable",
     ])
 
+    expect(findAttachments).toHaveBeenCalledWith(expect.anything(), WS, [
+      "att_ok",
+      "att_dirty",
+      "att_reachable_via_ref",
+      "att_unreachable",
+    ])
     expect(result.accepted).toEqual(["attachment:att_ok", "attachment:att_reachable_via_ref"])
     expect(result.dropped).toEqual([
       { ref: "attachment:att_dirty", reason: "attachment-not-clean" },
       { ref: "attachment:att_unreachable", reason: "attachment-out-of-scope" },
     ])
+  })
+
+  it("drops an attachment ref as not found when the workspace-scoped lookup omits the id", async () => {
+    const findAttachments = spyOn(AttachmentRepository, "findByIds").mockImplementation(
+      async (_db, _ws, ids) =>
+        (ids as string[])
+          .filter((id) => id !== "att_foreign")
+          .map((id) => ({ id, safetyStatus: "clean", streamId: "stream_1" })) as never
+    )
+    const referencing = spyOn(AttachmentReferenceRepository, "findReferencingStreamIds").mockResolvedValue([])
+
+    const result = await run(["attachment:att_ok", "attachment:att_foreign"])
+
+    expect({
+      result,
+      attachmentLookups: findAttachments.mock.calls.map((call) => call.slice(1)),
+      referenceLookups: referencing.mock.calls.length,
+    }).toEqual({
+      result: {
+        accepted: ["attachment:att_ok"],
+        dropped: [{ ref: "attachment:att_foreign", reason: "attachment-not-found" }],
+      },
+      attachmentLookups: [[WS, ["att_ok", "att_foreign"]]],
+      referenceLookups: 0,
+    })
   })
 
   it("drops unsupported schemes and malformed pointer URLs without touching the DB", async () => {

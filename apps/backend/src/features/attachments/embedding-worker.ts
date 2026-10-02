@@ -34,17 +34,9 @@ export function createAttachmentEmbeddingWorker(
     const { attachmentId, workspaceId } = job.data
     const log = logger.child({ jobId: job.id, attachmentId, workspaceId })
 
-    const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachmentId)
+    const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, attachmentId)
     if (!extraction) {
       log.warn("Extraction not found, skipping embedding")
-      return
-    }
-
-    if (extraction.workspaceId !== workspaceId) {
-      // Sanity check — workspace shard boundary (INV-8). A mismatched workspace
-      // means the job payload is stale or corrupt; refusing to embed is safer
-      // than indexing under the wrong tenant.
-      log.error({ extractionWorkspaceId: extraction.workspaceId }, "Workspace mismatch on embedding job")
       return
     }
 

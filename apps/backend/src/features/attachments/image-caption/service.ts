@@ -27,10 +27,10 @@ export class ImageCaptionService implements ImageCaptionServiceLike {
     this.configResolver = deps.configResolver
   }
 
-  async processImage(attachmentId: string): Promise<void> {
+  async processImage(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
-    await processAttachment(this.pool, attachmentId, async (attachment) => {
+    await processAttachment(this.pool, workspaceId, attachmentId, async (attachment) => {
       log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing image attachment")
 
       try {

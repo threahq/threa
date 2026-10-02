@@ -62,7 +62,7 @@ export class LabelMessageService {
 
     const ids = visible.map((m) => m.id)
     const [attachmentsByMessage, linkPreviewsByMessage] = await Promise.all([
-      AttachmentRepository.findByMessageIds(this.pool, ids),
+      AttachmentRepository.findByMessageIds(this.pool, workspaceId, ids),
       LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids),
     ])
 

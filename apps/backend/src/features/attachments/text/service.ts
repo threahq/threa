@@ -35,10 +35,10 @@ export class TextProcessingService implements TextProcessingServiceLike {
     this.storage = deps.storage
   }
 
-  async processText(attachmentId: string): Promise<void> {
+  async processText(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
-    await processAttachment(this.pool, attachmentId, async (attachment) => {
+    await processAttachment(this.pool, workspaceId, attachmentId, async (attachment) => {
       log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing text attachment")
 
       // Range-read the head only, to skip downloading full binaries.

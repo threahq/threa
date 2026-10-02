@@ -19,14 +19,19 @@ export class StubExcelProcessingService implements ExcelProcessingServiceLike {
     this.pool = deps.pool
   }
 
-  async processExcel(attachmentId: string): Promise<void> {
+  async processExcel(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId, stub: true })
 
     const attachment = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) return null
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.PROCESSING)
+      await AttachmentRepository.updateProcessingStatus(
+        client,
+        workspaceId,
+        attachmentId,
+        ProcessingStatuses.PROCESSING
+      )
       return att
     })
 
@@ -90,7 +95,7 @@ export class StubExcelProcessingService implements ExcelProcessingServiceLike {
         excelMetadata,
       })
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
     })
 
     log.info({ filename: attachment.filename }, "Stub excel processing complete")

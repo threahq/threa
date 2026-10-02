@@ -13,22 +13,23 @@ import type { VideoTranscodingServiceLike } from "./service"
 export class StubVideoTranscodingService implements VideoTranscodingServiceLike {
   constructor(private readonly pool: Pool) {}
 
-  async submit(attachmentId: string): Promise<void> {
+  async submit(workspaceId: string, attachmentId: string): Promise<void> {
     logger.info({ attachmentId }, "Stub video transcode: skipping (MediaConvert disabled)")
     await withTransaction(this.pool, async (client) => {
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.SKIPPED)
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.SKIPPED)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
+      if (!att) return
       await OutboxRepository.insert(client, "attachment:transcoded", {
-        workspaceId: att?.workspaceId ?? "",
-        ...(att?.streamId && { streamId: att.streamId }),
-        ...(att?.messageId && { messageId: att.messageId }),
+        workspaceId,
+        ...(att.streamId && { streamId: att.streamId }),
+        ...(att.messageId && { messageId: att.messageId }),
         attachmentId,
         processingStatus: ProcessingStatuses.SKIPPED,
       })
     })
   }
 
-  async checkStatus(_attachmentId: string): Promise<boolean> {
+  async checkStatus(_workspaceId: string, _attachmentId: string): Promise<boolean> {
     return true
   }
 }

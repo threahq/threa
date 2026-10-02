@@ -827,6 +827,7 @@ describe("attachment content handler", () => {
     return {
       handlers: createAttachmentHandlers({ attachmentService, streamService, storage, pool: {} as any }),
       storage,
+      attachmentService,
     }
   }
 
@@ -901,7 +902,7 @@ describe("attachment content handler", () => {
       filename: "clip.mov",
       storagePath: "ws_1/attach_1/clip.mov",
     }
-    spyOn(VideoTranscodeJobRepository, "findByAttachmentId").mockResolvedValue({
+    const jobSpy = spyOn(VideoTranscodeJobRepository, "findByAttachmentId").mockResolvedValue({
       status: "completed",
       processedStoragePath: "ws_1/attach_1/processed.mp4",
       thumbnailStoragePath: "ws_1/attach_1/thumbnail.0000000.jpg",
@@ -912,6 +913,7 @@ describe("attachment content handler", () => {
     await handlers.getContent(contentRequest({ query: { variant: "processed" } }), res)
     await once(res, "finish")
 
+    expect(jobSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1")
     expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/processed.mp4", { range: undefined })
     expect(res.headers).toMatchObject({
       "content-type": "video/mp4",
@@ -954,13 +956,13 @@ describe("attachment content handler", () => {
     expect(res.headers["content-range"]).toBe("bytes 0-10/11")
   })
 
-  it("returns 404 for an attachment in another workspace", async () => {
-    const attachment = { ...buildAttachment(AttachmentSafetyStatuses.CLEAN), workspaceId: "ws_other" }
-    const { handlers, storage } = makeHandlers({ attachment })
+  it("returns 404 for an attachment outside the request workspace", async () => {
+    const { handlers, storage, attachmentService } = makeHandlers({ attachment: null })
     const res = createStreamingResponse()
 
     await handlers.getContent(contentRequest(), res)
 
+    expect(attachmentService.getById).toHaveBeenCalledWith("ws_1", "attach_1")
     expect(res.statusCode).toBe(404)
     expect(storage.getObjectContent).not.toHaveBeenCalled()
   })

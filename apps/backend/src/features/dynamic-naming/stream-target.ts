@@ -88,6 +88,7 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
         stream.type === StreamTypes.ASIDE ? sameType.filter((s) => s.createdBy === stream.createdBy) : sameType
       const attachmentsByMessage = await AttachmentRepository.findByMessageIds(
         client,
+        target.workspaceId,
         messages.map((message) => message.id)
       )
       const attachmentIds = [...attachmentsByMessage.values()].flatMap((attachments) =>
@@ -99,7 +100,7 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
 
     const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
     if (fetched.attachmentIds.length > 0) {
-      const result = await awaitAttachmentProcessing(this.pool, fetched.attachmentIds)
+      const result = await awaitAttachmentProcessing(this.pool, target.workspaceId, fetched.attachmentIds)
       logger.debug(
         {
           targetId: target.targetId,
@@ -115,6 +116,7 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       fetched.attachmentIds.length > 0
         ? AttachmentRepository.findByMessageIdsWithExtractions(
             this.pool,
+            target.workspaceId,
             fetched.messages.map((message) => message.id)
           )
         : Promise.resolve(new Map<string, AttachmentWithExtraction[]>()),

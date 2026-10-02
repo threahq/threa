@@ -19,14 +19,19 @@ export class StubTextProcessingService implements TextProcessingServiceLike {
     this.pool = deps.pool
   }
 
-  async processText(attachmentId: string): Promise<void> {
+  async processText(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId, stub: true })
 
     const attachment = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) return null
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.PROCESSING)
+      await AttachmentRepository.updateProcessingStatus(
+        client,
+        workspaceId,
+        attachmentId,
+        ProcessingStatuses.PROCESSING
+      )
       return att
     })
 
@@ -59,7 +64,7 @@ export class StubTextProcessingService implements TextProcessingServiceLike {
         textMetadata,
       })
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
     })
 
     log.info({ filename: attachment.filename }, "Stub text processing complete")

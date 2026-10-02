@@ -22,7 +22,7 @@ export function createVideoTranscodeSubmitWorker(
 
     logger.info({ jobId: job.id, attachmentId, filename }, "Submitting video transcode job")
 
-    await videoTranscodingService.submit(attachmentId)
+    await videoTranscodingService.submit(workspaceId, attachmentId)
 
     await jobQueue.send(
       JobQueues.VIDEO_TRANSCODE_CHECK,
