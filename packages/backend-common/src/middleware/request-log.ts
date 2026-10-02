@@ -16,14 +16,15 @@ export function redactHookSecret(url: string): string {
   return url.replace(HOOK_SECRET_SEGMENT, "$1[redacted]")
 }
 
-/**
- * Invite-link lookups carry the invite's credential as `?token=`, and sign-in
- * carries the invite path through `redirect_to` and the WorkOS `state`.
- */
-const TOKEN_QUERY_PARAM = /([?&](?:token|state|redirect_to)=)[^&#]*/gi
+/** Invite-link lookups carry the invite's credential as `?token=`. */
+const TOKEN_QUERY_PARAM = /([?&]token=)[^&#]*/gi
+/** Sign-in carries the invite path through `redirect_to` and the WorkOS `state`; elsewhere `state` is a plain filter. */
+const SIGN_IN_PATH = /^\/api\/auth\//i
+const SIGN_IN_QUERY_PARAM = /([?&](?:state|redirect_to)=)[^&#]*/gi
 
 function redactRequestUrl(url: string): string {
-  return redactHookSecret(url).replace(TOKEN_QUERY_PARAM, "$1[redacted]")
+  const redacted = redactHookSecret(url).replace(TOKEN_QUERY_PARAM, "$1[redacted]")
+  return SIGN_IN_PATH.test(redacted) ? redacted.replace(SIGN_IN_QUERY_PARAM, "$1[redacted]") : redacted
 }
 
 /**

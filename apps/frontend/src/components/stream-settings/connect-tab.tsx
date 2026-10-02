@@ -25,12 +25,16 @@ function errorMessage(error: unknown, fallback: string): string {
   switch (error.code) {
     case StreamConnectionErrorCodes.NOT_SHAREABLE:
       return "Only active, unencrypted channels can be shared."
+    case StreamConnectionErrorCodes.ALREADY_SHARED:
+      return "This channel is already shared with another workspace."
+    case StreamConnectionErrorCodes.ALREADY_ACCEPTED:
+      return "Another workspace already accepted this invite."
     default:
       return fallback
   }
 }
 
-/** The list moved on under us (another admin shared, or the partner accepted): show the new state, not an error. */
+/** The partner accepted under us. The shared view replaces the message once this region's copy catches up. */
 function isStaleState(error: unknown): boolean {
   return (
     ApiError.isApiError(error) &&
@@ -85,8 +89,8 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       setCreated({ connectionId: connection.id, url: buildStreamConnectionInviteLink(token) })
     },
     onError: (error) => {
+      setActionError(errorMessage(error, "Couldn't create the link. Try again."))
       if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
-      else setActionError(errorMessage(error, "Couldn't create the link. Try again."))
     },
   })
 
@@ -98,8 +102,8 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
       setCreated(null)
     },
     onError: (error) => {
+      setActionError(errorMessage(error, "Couldn't revoke the link. Try again."))
       if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
-      else setActionError(errorMessage(error, "Couldn't revoke the link. Try again."))
     },
   })
 

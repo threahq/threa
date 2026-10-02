@@ -272,6 +272,19 @@ describe("ConnectTab", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 
+  it("should say the channel is already shared when the refresh hasn't caught up with the accept", async () => {
+    const list = vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])
+    vi.spyOn(streamConnectionsApi, "createInvite").mockRejectedValue(
+      new ApiError(409, StreamConnectionErrorCodes.ALREADY_SHARED, "already shared")
+    )
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This channel is already shared with another workspace.")
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+  })
+
   it("should show the partner once they accept while the pending invite is open", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.spyOn(streamConnectionsApi, "list")
@@ -305,6 +318,7 @@ describe("ConnectTab", () => {
     const queryClient = renderTab()
     expect(await screen.findByText("Waiting for another workspace to accept.")).toBeInTheDocument()
     await queryClient.refetchQueries()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(list).toHaveBeenCalledTimes(2)
     expect(screen.getByText("Waiting for another workspace to accept.")).toBeInTheDocument()

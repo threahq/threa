@@ -52,9 +52,10 @@ const LOOKUP_ERROR_COPY = {
 type LookupErrorCode = keyof typeof LOOKUP_ERROR_COPY
 
 function lookupErrorCode(error: unknown): LookupErrorCode | null {
-  if (ApiError.isApiError(error) && error.code && error.code in LOOKUP_ERROR_COPY) {
-    return error.code as LookupErrorCode
-  }
+  if (!ApiError.isApiError(error)) return null
+  // A token too mangled to validate is a dead link to the viewer.
+  if (error.status === 400) return StreamConnectionErrorCodes.NOT_FOUND
+  if (error.code && error.code in LOOKUP_ERROR_COPY) return error.code as LookupErrorCode
   return null
 }
 
@@ -67,8 +68,6 @@ function acceptErrorMessage(error: unknown): string {
       return "Shared channels aren't turned on for that workspace."
     case StreamConnectionErrorCodes.ALREADY_ACCEPTED:
       return "Another workspace already accepted this invite."
-    case StreamConnectionErrorCodes.SAME_WORKSPACE:
-      return "Pick a workspace other than the one sharing the channel."
     case StreamConnectionErrorCodes.EXPIRED:
       return LOOKUP_ERROR_COPY[StreamConnectionErrorCodes.EXPIRED].title
     case StreamConnectionErrorCodes.REVOKED:

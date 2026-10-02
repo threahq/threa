@@ -118,6 +118,11 @@ describe("requestLogSerializers.req token redaction", () => {
       "/api/auth/login?redirect_to=%2Fconnections%2Ftok_S3cr3t",
       "/api/auth/login?redirect_to=[redacted]",
     ],
+    [
+      "should leave state alone when given a url outside sign-in",
+      "/api/workspaces/ws_1/agent-outcomes?state=open",
+      "/api/workspaces/ws_1/agent-outcomes?state=open",
+    ],
   ]
 
   for (const [name, url, expected] of cases) {

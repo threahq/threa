@@ -140,10 +140,6 @@ describe("StreamConnectionAcceptPage", () => {
   it.each([
     { code: StreamConnectionErrorCodes.DISABLED, message: "Shared channels aren't turned on for that workspace." },
     { code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, message: "Another workspace already accepted this invite." },
-    {
-      code: StreamConnectionErrorCodes.SAME_WORKSPACE,
-      message: "Pick a workspace other than the one sharing the channel.",
-    },
     { code: StreamConnectionErrorCodes.EXPIRED, message: "Invite expired" },
     { code: StreamConnectionErrorCodes.REVOKED, message: "Invite revoked" },
   ])("should say why accepting failed ($code)", async ({ code, message }) => {
@@ -208,6 +204,7 @@ describe("StreamConnectionAcceptPage", () => {
     { status: 409, code: StreamConnectionErrorCodes.REVOKED, heading: "Invite revoked" },
     { status: 409, code: StreamConnectionErrorCodes.EXPIRED, heading: "Invite expired" },
     { status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, heading: "Invite already used" },
+    { status: 400, code: "VALIDATION_ERROR", heading: "Invite not found" },
   ])("should say why the link is dead and offer a way out ($code)", async ({ status, code, heading }) => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
     vi.spyOn(streamConnectionsApi, "lookup").mockRejectedValue(new ApiError(status, code, "dead link"))

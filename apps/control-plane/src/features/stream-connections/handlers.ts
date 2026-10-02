@@ -7,22 +7,18 @@ import type { StreamConnectionService } from "./service"
 
 const idSchema = z.string().min(1).max(64)
 
-const createInviteSchema = z
-  .object({
-    hostWorkspaceId: idSchema,
-    hostStreamId: idSchema,
-    hostStreamSlug: z.string().max(200).nullable(),
-    hostStreamDisplayName: z.string().max(200).nullable(),
-  })
-  .strict()
-const revokeSchema = z.object({ hostWorkspaceId: idSchema }).strict()
-const acceptSchema = z
-  .object({
-    token: streamConnectionTokenSchema,
-    partnerWorkspaceId: idSchema,
-    visibility: z.enum(VISIBILITY_OPTIONS),
-  })
-  .strict()
+const createInviteSchema = z.object({
+  hostWorkspaceId: idSchema,
+  hostStreamId: idSchema,
+  hostStreamSlug: z.string().max(200).nullable(),
+  hostStreamDisplayName: z.string().max(200).nullable(),
+})
+const revokeSchema = z.object({ hostWorkspaceId: idSchema })
+const acceptSchema = z.object({
+  token: streamConnectionTokenSchema,
+  partnerWorkspaceId: idSchema,
+  visibility: z.enum(VISIBILITY_OPTIONS),
+})
 const lookupSchema = z.object({ token: streamConnectionTokenSchema })
 
 interface Dependencies {
@@ -49,9 +45,9 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
     /** Session-authenticated: the invite page before the user picks a workspace. */
     async lookup(req: Request, res: Response) {
+      res.setHeader("Cache-Control", "no-store")
       if (!req.workosUserId) throw new HttpError("Not authenticated", { status: 401, code: "NOT_AUTHENTICATED" })
       const query = parseRequest(lookupSchema, req.query)
-      res.setHeader("Cache-Control", "no-store")
       res.json(await streamConnectionService.lookup(query.token, req.workosUserId))
     },
   }
