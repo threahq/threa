@@ -12,3 +12,10 @@ export declare const viMockRestrictedSyntax: { selector: string; message: string
 export declare const sqlTextAssertionAllowlist: Record<string, number>
 /** The allowlist's paths, rebased onto a package that lints from its own root. */
 export declare function sqlTextAssertionExemptions(packageDir: string): string[]
+
+/** Table name -> the reason it has no workspace_id column. */
+export declare const workspaceIdExemptTables: Record<string, string>
+/** Repo-relative source file -> count of SQL table references that predate `threa/workspace-scoped-sql`. */
+export declare const unscopedSqlAllowlist: Record<string, number>
+/** The allowlist's paths, rebased onto a package that lints from its own root. */
+export declare function unscopedSqlExemptions(packageDir: string): string[]

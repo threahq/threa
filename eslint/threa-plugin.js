@@ -474,6 +474,570 @@ const noSqlTextAssertionRule = {
   },
 }
 
+/** Tables with no workspace_id column, each with the reason it is workspace-agnostic. */
+export const workspaceIdExemptTables = {
+  workspaces: "the root: its id is the workspace id",
+  umzug_migrations: "migration runner metadata",
+  outbox: "global delivery log; the workspace rides in the event payload",
+  outbox_dead_letters: "outbox delivery failures, keyed by listener and outbox event id",
+  outbox_listeners: "per-listener outbox cursors, keyed by listener id",
+  backfill_chunks: "keyed by run_id; backfill_runs carries the workspace_id",
+  socket_io_attachments: "Socket.IO postgres adapter payload spill table",
+  sync_log_sweep_state: "singleton cursor of the outbox reconciliation sweep",
+  enclave_runtimes: "global infra: enclave instances serve every workspace (INV-8 auth/infra exception)",
+}
+
+const SQL_STATEMENT_VERB = /\b(?:SELECT|INSERT\s+INTO|DELETE\s+FROM|MERGE\s+INTO)\b|\bUPDATE\s[^;]*?\bSET\b/
+// A `${…}` the rule cannot see into. A table in its place is reported, never assumed scoped.
+const SQL_HIDDEN = "\u0000"
+// A `${…}` holding a whole statement from this file, which the rule checks where it is written.
+const SQL_CHECKED_ELSEWHERE = "\u0001"
+const SQL_MAX_CONST_HOPS = 3
+const SQL_TABLE_KEYWORDS = new Set(["FROM", "JOIN", "UPDATE", "INTO", "USING"])
+// Keywords that can directly follow a table reference, so a bare word there is its alias unless it is one of these.
+const SQL_KEYWORDS_AFTER_TABLE = new Set([
+  "WHERE",
+  "ON",
+  "USING",
+  "SET",
+  "JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "FULL",
+  "CROSS",
+  "NATURAL",
+  "ORDER",
+  "GROUP",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "UNION",
+  "INTERSECT",
+  "EXCEPT",
+  "FOR",
+  "FROM",
+  "RETURNING",
+  "WINDOW",
+  "FETCH",
+  "TABLESAMPLE",
+  "VALUES",
+  "SELECT",
+  "DEFAULT",
+  "OVERRIDING",
+  "WITH",
+])
+// A `(` before one of these opens a nested statement: a subquery, or a data-modifying CTE body.
+const SQL_SUBQUERY_STARTS = new Set(["SELECT", "WITH", "VALUES", "INSERT", "UPDATE", "DELETE"])
+const SQL_SCOPE_BREAKS = new Set(["UNION", "INTERSECT", "EXCEPT", ";"])
+// `EXTRACT(EPOCH FROM created_at)`: FROM introduces a column there, not a table.
+const SQL_FROM_TAKES_A_COLUMN_IN = new Set(["EXTRACT", "TRIM", "SUBSTRING", "OVERLAY"])
+const SQL_CONDITION_STARTS = new Set(["WHERE", "ON", "HAVING"])
+const SQL_CONDITION_ENDS = new Set([
+  ...SQL_SCOPE_BREAKS,
+  ...SQL_CONDITION_STARTS,
+  "GROUP",
+  "ORDER",
+  "LIMIT",
+  "OFFSET",
+  "FETCH",
+  "FOR",
+  "WINDOW",
+  "RETURNING",
+  "JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "FULL",
+  "CROSS",
+  "NATURAL",
+  "DO",
+  "SET",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  ",",
+])
+// Keywords after which a `,` no longer separates FROM-list items.
+const SQL_FROM_LIST_ENDS = new Set([
+  ...SQL_SCOPE_BREAKS,
+  "WHERE",
+  "GROUP",
+  "ORDER",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "WINDOW",
+  "FETCH",
+  "FOR",
+  "RETURNING",
+  "SET",
+  "WHEN",
+  "DO",
+  "SELECT",
+  "VALUES",
+])
+// The owner of a `workspace_id` this statement does not define; it is checked where it is defined.
+const SQL_OUTSIDE_OWNER = "outside"
+const SQL_CTE_DEFINITION =
+  /(?:\bWITH(?:\s+RECURSIVE)?|,)\s+(\w+)\s*(?:\([^)]*\))?\s+AS\s+(?:NOT\s+)?(?:MATERIALIZED\s+)?\(/gi
+
+function unwrapTsExpression(node) {
+  let current = node
+  while (["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression"].includes(current?.type)) {
+    current = current.expression
+  }
+  return current
+}
+
+function isSqlRawCall(node) {
+  return (
+    node.type === "CallExpression" &&
+    node.arguments.length === 1 &&
+    node.callee.type === "MemberExpression" &&
+    !node.callee.computed &&
+    node.callee.object.type === "Identifier" &&
+    node.callee.object.name === "sql" &&
+    node.callee.property.name === "raw"
+  )
+}
+
+function resolveConstInit(sourceCode, identifier) {
+  for (let scope = sourceCode.getScope(identifier); scope; scope = scope.upper) {
+    const variable = scope.set.get(identifier.name)
+    if (!variable) continue
+    const [definition] = variable.defs
+    const isConst = variable.defs.length === 1 && definition.type === "Variable" && definition.parent.kind === "const"
+    return isConst ? definition.node.init : null
+  }
+  return null
+}
+
+/** What `${expression}` contributes to the statement: a same-file constant's text, or a marker. */
+function fragmentText(sourceCode, expression, hops) {
+  const node = unwrapTsExpression(expression)
+  if (!node) return SQL_HIDDEN
+  if (isSqlRawCall(node)) return fragmentText(sourceCode, node.arguments[0], hops)
+  if (node.type === "Identifier") {
+    return hops < SQL_MAX_CONST_HOPS
+      ? fragmentText(sourceCode, resolveConstInit(sourceCode, node), hops + 1)
+      : SQL_HIDDEN
+  }
+  const isSqlTag = node.type === "TaggedTemplateExpression" && node.tag.type === "Identifier" && node.tag.name === "sql"
+  const template = isSqlTag ? node.quasi : node
+  if (template.type === "TemplateLiteral") {
+    const text = templateText(sourceCode, template, hops)
+    return SQL_STATEMENT_VERB.test(text) ? SQL_CHECKED_ELSEWHERE : text
+  }
+  if (node.type === "Literal" && typeof node.value === "string" && !SQL_STATEMENT_VERB.test(node.value))
+    return node.value
+  return SQL_HIDDEN
+}
+
+function templateText(sourceCode, template, hops) {
+  return template.quasis
+    .map((quasi, index) => {
+      const fragment = index === 0 ? "" : fragmentText(sourceCode, template.expressions[index - 1], hops)
+      return fragment + (quasi.value.cooked ?? quasi.value.raw)
+    })
+    .join("")
+}
+
+/** The statement's text with comments and string literals blanked and quoted identifiers unquoted. */
+function cleanSqlText(text) {
+  return text
+    .replace(/'(?:[^']|'')*'|--[^\n]*|\/\*[\s\S]*?\*\//g, (match) => (match.startsWith("'") ? "''" : " "))
+    .replace(/"/g, " ")
+}
+
+function tokenizeSql(text) {
+  return text.match(/[A-Za-z_][A-Za-z0-9_]*|\S/g) ?? []
+}
+
+function isFreeSqlWord(token) {
+  return token !== undefined && /^[A-Za-z_]/.test(token) && !SQL_KEYWORDS_AFTER_TABLE.has(token.toUpperCase())
+}
+
+function matchingParen(tokens, openIndex) {
+  let depth = 0
+  for (let index = openIndex; index < tokens.length; index++) {
+    if (tokens[index] === "(") depth++
+    else if (tokens[index] === ")" && --depth === 0) return index
+  }
+  return tokens.length - 1
+}
+
+/** Per token, the index where its subquery or set-operation branch starts (-1 for the top level), and each branch's enclosing branch. */
+function sqlScopes(tokens) {
+  // `opensScope` is false for a plain `(`, whose entry repeats the enclosing scope.
+  const stack = [{ scope: -1, opensScope: true }]
+  const parents = new Map()
+  const scopes = tokens.map((token, index) => {
+    if (token === ")" && stack.length > 1) stack.pop()
+    const top = stack.at(-1)
+    const { scope } = top
+    if (token === "(") {
+      const opensSubquery = SQL_SUBQUERY_STARTS.has(tokens[index + 1]?.toUpperCase())
+      if (opensSubquery) parents.set(index, scope)
+      stack.push({ scope: opensSubquery ? index : scope, opensScope: opensSubquery })
+    } else if (SQL_SCOPE_BREAKS.has(token.toUpperCase())) {
+      parents.set(index, top.opensScope ? parents.get(scope) : scope)
+      stack[stack.length - 1] = { scope: index, opensScope: true }
+    }
+    return scope
+  })
+  return { scopes, parents }
+}
+
+/** Matching `(`/`)`, `[`/`]` and `CASE`/`END` token indexes, mapped both ways. */
+function sqlPairs(tokens) {
+  const pairs = new Map()
+  const closers = { ")": "(", "]": "[", END: "CASE" }
+  const open = { "(": [], "[": [], CASE: [] }
+  tokens.forEach((token, index) => {
+    const word = token.toUpperCase()
+    if (word in open) open[word].push(index)
+    const opener = word in closers ? open[closers[word]].pop() : undefined
+    if (opener !== undefined) pairs.set(opener, index).set(index, opener)
+  })
+  return pairs
+}
+
+function readQualifiedName(tokens, start) {
+  let index = start
+  let name = tokens[index++]
+  let schema = null
+  while (tokens[index] === "." && isFreeSqlWord(tokens[index + 1])) {
+    schema ??= name
+    name = tokens[index + 1]
+    index += 2
+  }
+  return { name, schema, next: index }
+}
+
+function readAlias(tokens, start) {
+  let index = start
+  if (tokens[index]?.toUpperCase() === "AS") index++
+  const alias = isFreeSqlWord(tokens[index]) ? tokens[index++] : null
+  return { alias, next: index }
+}
+
+function skipColumnAliases(tokens, index) {
+  return tokens[index] === "(" ? matchingParen(tokens, index) + 1 : index
+}
+
+/** One FROM-list item: a table, a function call or a parenthesised subquery. `table` is null for the last two. */
+function readFromItem(tokens, start) {
+  let index = start
+  while (["LATERAL", "ONLY"].includes(tokens[index]?.toUpperCase())) index++
+
+  if (tokens[index] === "(") {
+    const { alias, next } = readAlias(tokens, matchingParen(tokens, index) + 1)
+    const afterParen = alias ? skipColumnAliases(tokens, next) : next
+    // `FROM (a JOIN b ON …)`: the first table sits behind the paren; the scan finds the joins on its own.
+    if (SQL_SUBQUERY_STARTS.has(tokens[index + 1]?.toUpperCase())) return { table: null, next: afterParen }
+    return { ...readFromItem(tokens, index + 1), next: afterParen }
+  }
+  if (tokens[index] === SQL_HIDDEN) {
+    return { hidden: true, next: skipColumnAliases(tokens, readAlias(tokens, index + 1).next) }
+  }
+  if (!isFreeSqlWord(tokens[index])) return { table: null, next: index + 1 }
+
+  const { name, schema, next } = readQualifiedName(tokens, index)
+  // `unnest($1) AS t(id)`: a function, with an optional column-alias list.
+  const isFunction = tokens[next] === "("
+  const { alias, next: afterAlias } = readAlias(tokens, isFunction ? matchingParen(tokens, next) + 1 : next)
+  return {
+    table: isFunction || /^(?:pg_|information_schema)/i.test(schema ?? name) ? null : name,
+    alias,
+    at: index,
+    next: skipColumnAliases(tokens, afterAlias),
+  }
+}
+
+/** `INSERT INTO t [AS a] (cols)`: the `(` after the table is a column list, not a function call. */
+function readInsertTarget(tokens, start) {
+  if (tokens[start] === SQL_HIDDEN) return { hidden: true }
+  if (!isFreeSqlWord(tokens[start])) return { table: null }
+  const { name, next } = readQualifiedName(tokens, start)
+  const { alias, next: afterAlias } = readAlias(tokens, next)
+  const namesWorkspaceId =
+    tokens[afterAlias] === "(" &&
+    tokens
+      .slice(afterAlias + 1, matchingParen(tokens, afterAlias))
+      .some((token) => token.toLowerCase() === "workspace_id")
+  return { table: name, alias, at: start, isInsert: true, namesWorkspaceId }
+}
+
+/** The index of the `workspace_id` token when tokens[start, end) is exactly `[q.]workspace_id`, else -1. */
+function workspaceIdRef(tokens, start, end) {
+  const index = end - 1
+  if (tokens[index]?.toLowerCase() !== "workspace_id") return -1
+  if (end - start === 1) return index
+  return end - start === 3 && tokens[start + 1] === "." ? index : -1
+}
+
+/** The sides of the comparison tokens[from, to) when it is `=`, `IS NOT DISTINCT FROM`, `IN` or `IS NULL`; `right` is null for the last two. */
+function sqlComparison(tokens, pairs, from, to) {
+  for (let index = from; index < to; index++) {
+    if (pairs.get(index) > index) {
+      index = pairs.get(index)
+      continue
+    }
+    const word = tokens[index].toUpperCase()
+    if (word === "=" && !["<", ">", "!"].includes(tokens[index - 1])) {
+      return { left: [from, index], right: [index + 1, to] }
+    }
+    if (word === "IN" && tokens[index - 1]?.toUpperCase() !== "NOT") return { left: [from, index], right: null }
+    if (word === "IS") {
+      const rest = tokens.slice(index + 1, to).map((token) => token.toUpperCase())
+      if (rest.join(" ") === "NULL") return { left: [from, index], right: null }
+      if (rest.slice(0, 3).join(" ") === "NOT DISTINCT FROM") return { left: [from, index], right: [index + 4, to] }
+      return null
+    }
+  }
+  return null
+}
+
+/** The ranges of tokens[from, to) between its top-level occurrences of `word`. */
+function splitSqlCondition(tokens, pairs, from, to, word) {
+  const parts = []
+  let start = from
+  for (let index = from; index < to; index++) {
+    if (pairs.get(index) > index) index = pairs.get(index)
+    else if (tokens[index].toUpperCase() === word) {
+      parts.push([start, index])
+      start = index + 1
+    }
+  }
+  parts.push([start, to])
+  return parts
+}
+
+/** Where the WHERE, ON or HAVING condition starting at `start` ends. */
+function sqlConditionEnd(tokens, pairs, start) {
+  for (let index = start; index < tokens.length; index++) {
+    const word = tokens[index].toUpperCase()
+    const isFunctionCall = (word === "LEFT" || word === "RIGHT") && tokens[index + 1] === "("
+    if (pairs.get(index) > index) index = pairs.get(index)
+    else if (word === ")" || (SQL_CONDITION_ENDS.has(word) && !isFunctionCall)) return index
+  }
+  return tokens.length
+}
+
+/**
+ * The tables a statement pins to one workspace. A
+ * WHERE, ON or HAVING condition pins a table when one of its top-level AND terms
+ * compares the table's workspace_id to a value (`= $1`, `= ANY(…)`, `IN (…)`, `IS NOT
+ * DISTINCT FROM`, `IS NULL`), or equates it to the workspace_id of a pinned table, and
+ * the condition filters that table's rows: a WHERE filters its own branch, a LEFT JOIN's
+ * ON only the joined side, a RIGHT or FULL JOIN's ON nothing. An OR pins only what each of
+ * its branches pins. A term under NOT or CASE, inside a function call, subquery or FILTER,
+ * or in a select list, RETURNING or SET pins nothing.
+ */
+function pinnedTables(tokens, tables) {
+  const { scopes, parents } = sqlScopes(tokens)
+  const pairs = sqlPairs(tokens)
+  const keyOf = ({ table, alias, at }) => `${scopes[at]}:${(alias ?? table).toLowerCase()}`
+  const keyed = tables
+    .filter((table) => !table.isInsert)
+    .map((table) => ({ ...table, scope: scopes[table.at], key: keyOf(table) }))
+  const keys = new Set(keyed.map((table) => table.key))
+
+  // A qualifier no table here owns is an outer query's row, a CTE, a subquery or function
+  // alias, or `excluded`; each is checked where it is defined, so its workspace_id is a value.
+  const ownerOf = (index) => {
+    if (tokens[index - 1] !== ".") {
+      const candidates = keyed.filter(
+        (table) =>
+          table.scope === scopes[index] &&
+          !table.alias &&
+          !Object.hasOwn(workspaceIdExemptTables, table.table.toLowerCase())
+      )
+      return candidates.length === 1 ? candidates[0].key : null
+    }
+    const qualifier = tokens[index - 2].toLowerCase()
+    for (let scope = scopes[index]; scope !== undefined; scope = parents.get(scope)) {
+      if (keys.has(`${scope}:${qualifier}`)) return `${scope}:${qualifier}`
+    }
+    return SQL_OUTSIDE_OWNER
+  }
+  // `w.id`, `w.id::text` and `COALESCE($1, workspace_id)` read this statement's rows, so they are not values.
+  const isValue = ([start, end]) => {
+    for (let index = start; index < end; index++) {
+      if (tokens[index] === "(" && SQL_SUBQUERY_STARTS.has(tokens[index + 1]?.toUpperCase())) index = pairs.get(index)
+      else if (tokens[index].toLowerCase() === "workspace_id") return false
+      else if (tokens[index - 1] === "." && ownerOf(index) !== SQL_OUTSIDE_OWNER) return false
+    }
+    return true
+  }
+
+  const termPins = (from, to) => {
+    const isGroup = tokens[from] === "(" && pairs.get(from) === to - 1
+    if (isGroup && !SQL_SUBQUERY_STARTS.has(tokens[from + 1]?.toUpperCase())) return conditionPins(from + 1, to - 1)
+    const comparison = sqlComparison(tokens, pairs, from, to)
+    if (!comparison) return { values: new Set(), edges: [] }
+    const { left, right } = comparison
+    const leftRef = workspaceIdRef(tokens, ...left)
+    const rightRef = right ? workspaceIdRef(tokens, ...right) : -1
+    if (leftRef !== -1 && rightRef !== -1) return { values: new Set(), edges: [[ownerOf(leftRef), ownerOf(rightRef)]] }
+    const ref = leftRef === -1 ? rightRef : leftRef
+    const other = leftRef === -1 ? left : right
+    if (ref === -1 || (other && !isValue(other))) return { values: new Set(), edges: [] }
+    return { values: new Set([ownerOf(ref)]), edges: [] }
+  }
+
+  const conditionPins = (from, to) => {
+    const branches = splitSqlCondition(tokens, pairs, from, to, "OR").map(([start, end]) => {
+      const terms = splitSqlCondition(tokens, pairs, start, end, "AND").map(([a, b]) => termPins(a, b))
+      return { values: new Set(terms.flatMap((term) => [...term.values])), edges: terms.flatMap((term) => term.edges) }
+    })
+    if (branches.length === 1) return branches[0]
+    const [first, ...rest] = branches
+    return {
+      values: new Set([...first.values].filter((owner) => rest.every((branch) => branch.values.has(owner)))),
+      edges: [],
+    }
+  }
+
+  const filteredBy = (clause) => {
+    const inScope = keyed.filter((table) => table.scope === scopes[clause])
+    if (tokens[clause].toUpperCase() !== "ON") return inScope
+    let join = clause - 1
+    while (join >= 0 && !["JOIN", "USING", "FROM", "(", ";"].includes(tokens[join].toUpperCase())) {
+      join = tokens[join] === ")" ? pairs.get(join) - 1 : join - 1
+    }
+    if (tokens[join]?.toUpperCase() !== "JOIN") return inScope
+    const side = tokens[tokens[join - 1]?.toUpperCase() === "OUTER" ? join - 2 : join - 1]?.toUpperCase()
+    if (side === "LEFT") return inScope.filter((table) => table.at > join && table.at < clause)
+    return side === "RIGHT" || side === "FULL" ? [] : inScope
+  }
+
+  const pinned = new Set([SQL_OUTSIDE_OWNER])
+  const flows = []
+  tokens.forEach((token, clause) => {
+    const word = token.toUpperCase()
+    if (!SQL_CONDITION_STARTS.has(word)) return
+    const previous = tokens[clause - 1]?.toUpperCase()
+    // `ON CONFLICT`, `DISTINCT ON (…)` and `FILTER (WHERE …)` filter no table's rows.
+    if (word === "ON" && (previous === "DISTINCT" || tokens[clause + 1]?.toUpperCase() === "CONFLICT")) return
+    if (word === "WHERE" && previous === "(" && tokens[clause - 2]?.toUpperCase() === "FILTER") return
+    const { values, edges } = conditionPins(clause + 1, sqlConditionEnd(tokens, pairs, clause + 1))
+    const filtered = new Set(filteredBy(clause).map((table) => table.key))
+    for (const owner of values) if (filtered.has(owner)) pinned.add(owner)
+    for (const [left, right] of edges) {
+      if (filtered.has(right)) flows.push([left, right])
+      if (filtered.has(left)) flows.push([right, left])
+    }
+  })
+
+  for (let grew = true; grew; ) {
+    grew = false
+    for (const [from, to] of flows) {
+      if (!pinned.has(from) || pinned.has(to)) continue
+      pinned.add(to)
+      grew = true
+    }
+  }
+  return new Set(tables.filter((table) => !table.isInsert && pinned.has(keyOf(table))))
+}
+
+/** Every FROM, JOIN, UPDATE, INTO and USING item in the statement, in order. */
+function sqlTableReferences(tokens) {
+  const references = []
+  const levels = [{ opener: undefined, inFromList: false }]
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]
+    const previous = tokens[index - 1]?.toUpperCase()
+    if (token === "(" || token === "[") {
+      levels.push({ opener: previous, inFromList: false })
+      continue
+    }
+    if (token === ")" || token === "]") {
+      if (levels.length > 1) levels.pop()
+      continue
+    }
+
+    const level = levels.at(-1)
+    const keyword = token.toUpperCase()
+    if (token === ",") {
+      if (level.inFromList) references.push(readFromItem(tokens, index + 1))
+      continue
+    }
+    if (SQL_FROM_LIST_ENDS.has(keyword)) level.inFromList = false
+    if (!SQL_TABLE_KEYWORDS.has(keyword)) continue
+    if (keyword === "FROM" && (previous === "DISTINCT" || SQL_FROM_TAKES_A_COLUMN_IN.has(level.opener))) continue
+    if (keyword === "UPDATE" && ["FOR", "KEY", "DO"].includes(previous)) continue
+    // `JOIN t USING (id)` names join columns; `MERGE … USING (SELECT …)` is a subquery.
+    if (keyword === "USING" && tokens[index + 1] === "(") continue
+
+    if (keyword === "INTO" && previous === "INSERT") {
+      references.push(readInsertTarget(tokens, index + 1))
+      continue
+    }
+    if (keyword === "FROM" || keyword === "USING") level.inFromList = true
+    references.push(readFromItem(tokens, index + 1))
+  }
+  return references
+}
+
+/** Table references in one SQL statement whose `workspace_id` the statement never pins. */
+function findUnscopedTableReferences(text) {
+  if (!SQL_STATEMENT_VERB.test(text)) return []
+
+  const tokens = tokenizeSql(text)
+  const cteNames = new Set([...text.matchAll(SQL_CTE_DEFINITION)].map((match) => match[1].toLowerCase()))
+  const references = sqlTableReferences(tokens)
+  const tables = references.filter((item) => item.table && !cteNames.has(item.table.toLowerCase()))
+  const pinned = pinnedTables(tokens, tables)
+
+  const isUnscoped = (item) => {
+    if (Object.hasOwn(workspaceIdExemptTables, item.table.toLowerCase())) return false
+    return item.isInsert ? !item.namesWorkspaceId : !pinned.has(item)
+  }
+  return references.filter((item) => item.hidden || (tables.includes(item) && isUnscoped(item)))
+}
+
+const CONNECT_COPY_RISK =
+  "A copy of the row can exist in another workspace under the same id (INV-8): Connect holds read-only copies of a shared stream's rows in a partner workspace."
+const CROSS_WORKSPACE_ESCAPE =
+  "if this statement is cross-workspace by design (queue claims, sweepers, lookups by a global secret such as a key hash), or the name is a CTE defined in another fragment, add `// eslint-disable-next-line threa/workspace-scoped-sql -- <reason>`."
+
+const workspaceScopedSqlRule = {
+  meta: {
+    type: "problem",
+    docs: {
+      description: "Require every workspace-scoped table in a SQL statement to be constrained by workspace_id (INV-8)",
+    },
+    schema: [],
+    messages: {
+      unscoped: `Table \`{{target}}\` is not pinned by \`{{column}}\` (compare it to a value, or to a pinned table's workspace_id). ${CONNECT_COPY_RISK} Constrain \`{{column}}\`, or, ${CROSS_WORKSPACE_ESCAPE}`,
+      unscopedInsert: `INSERT INTO \`{{target}}\` does not name workspace_id in its column list. ${CONNECT_COPY_RISK} Name workspace_id in the column list, or, ${CROSS_WORKSPACE_ESCAPE}`,
+      hiddenTable: `A table in this statement sits behind a \`\${…}\` that is not a constant in this file, so its workspace_id cannot be checked. ${CONNECT_COPY_RISK} Write the table name into the statement or a same-file \`const\`, or, ${CROSS_WORKSPACE_ESCAPE}`,
+    },
+  },
+  create(context) {
+    return {
+      TemplateLiteral(node) {
+        const text = cleanSqlText(templateText(context.sourceCode, node, 0))
+        for (const { table, alias, isInsert, hidden } of findUnscopedTableReferences(text)) {
+          if (hidden) {
+            context.report({ node, messageId: "hiddenTable" })
+            continue
+          }
+          const target = alias ? `${table} ${alias}` : table
+          context.report({
+            node,
+            messageId: isInsert ? "unscopedInsert" : "unscoped",
+            data: { target, column: `${alias ?? table}.workspace_id` },
+          })
+        }
+      },
+    }
+  },
+}
+
 export const dotenvRestrictedImportPattern = {
   group: ["dotenv", "dotenv/config"],
   message: "Bun auto-loads .env. Do not import dotenv in this repo.",
@@ -583,11 +1147,106 @@ export const sqlTextAssertionAllowlist = {
 }
 
 /** The allowlist's paths, rebased onto a package that lints from its own root. */
-export function sqlTextAssertionExemptions(packageDir) {
+function pathsUnderPackage(allowlist, packageDir) {
   const prefix = `${packageDir}/`
-  return Object.keys(sqlTextAssertionAllowlist)
+  return Object.keys(allowlist)
     .filter((path) => path.startsWith(prefix))
     .map((path) => path.slice(prefix.length))
+}
+
+export function sqlTextAssertionExemptions(packageDir) {
+  return pathsUnderPackage(sqlTextAssertionAllowlist, packageDir)
+}
+
+/**
+ * Per-file count of SQL table references that predate `threa/workspace-scoped-sql`
+ * (INV-8), the single source of truth for both consumers: `eslint.config.js`
+ * exempts these files so `lint` stays green, and the ratchet test compares live
+ * counts against them so the debt can only shrink. Fixing a statement and
+ * lowering its file's number is always welcome; raising one, or adding a file,
+ * is what the rule exists to stop.
+ */
+export const unscopedSqlAllowlist = {
+  "apps/backend/src/features/access-log/repository.ts": 5,
+  "apps/backend/src/features/activity/repository.ts": 1,
+  "apps/backend/src/features/agent-outcomes/read-repository.ts": 6,
+  "apps/backend/src/features/agents/conversation-summary-repository.ts": 1,
+  "apps/backend/src/features/agents/persona-attachment-repository.ts": 2,
+  "apps/backend/src/features/agents/persona-repository.ts": 2,
+  "apps/backend/src/features/agents/session-metrics.ts": 4,
+  "apps/backend/src/features/agents/session-repository.ts": 43,
+  "apps/backend/src/features/agents/stream-persona-participant-repository.ts": 4,
+  "apps/backend/src/features/ai-usage/usage-repository.ts": 2,
+  "apps/backend/src/features/api-keys/repository.ts": 3,
+  "apps/backend/src/features/attachments/extraction-repository.ts": 3,
+  "apps/backend/src/features/attachments/pdf/job-repository.ts": 9,
+  "apps/backend/src/features/attachments/pdf/page-extraction-repository.ts": 9,
+  "apps/backend/src/features/attachments/repository.ts": 29,
+  "apps/backend/src/features/attachments/upload-repository.ts": 11,
+  "apps/backend/src/features/attachments/video/job-repository.ts": 5,
+  "apps/backend/src/features/bot-runtimes/repository.ts": 19,
+  "apps/backend/src/features/calls/policy-repository.ts": 3,
+  "apps/backend/src/features/calls/repository.ts": 14,
+  "apps/backend/src/features/calls/transfer-repository.ts": 1,
+  "apps/backend/src/features/conversations/boundary-extraction-service.ts": 4,
+  "apps/backend/src/features/conversations/conversation-assigner.ts": 1,
+  "apps/backend/src/features/conversations/embedding-backfill.ts": 1,
+  "apps/backend/src/features/conversations/repository.ts": 13,
+  "apps/backend/src/features/conversations/settling-repository.ts": 5,
+  "apps/backend/src/features/decisions/repository.ts": 1,
+  "apps/backend/src/features/delegations/repository.ts": 4,
+  "apps/backend/src/features/dynamic-naming/state-repository.ts": 6,
+  "apps/backend/src/features/enclave-runtimes/invocations-repository.ts": 23,
+  "apps/backend/src/features/invitations/repository.ts": 7,
+  "apps/backend/src/features/link-previews/repository.ts": 2,
+  "apps/backend/src/features/memos/message-embedding-backfill.ts": 3,
+  "apps/backend/src/features/memos/pending-item-repository.ts": 2,
+  "apps/backend/src/features/memos/repository.ts": 56,
+  "apps/backend/src/features/mentions/mention-backfill.ts": 8,
+  "apps/backend/src/features/messaging/references/backfill.ts": 8,
+  "apps/backend/src/features/messaging/repository.ts": 49,
+  "apps/backend/src/features/messaging/search-config-backfill.ts": 2,
+  "apps/backend/src/features/messaging/version-repository.ts": 7,
+  "apps/backend/src/features/perf-diagnostics/repository.ts": 2,
+  "apps/backend/src/features/public-api/bot-api-key-repository.ts": 2,
+  "apps/backend/src/features/public-api/bot-repository.ts": 2,
+  "apps/backend/src/features/push/delivery-repository.ts": 2,
+  "apps/backend/src/features/push/receipt-repository.ts": 2,
+  "apps/backend/src/features/push/repository.ts": 4,
+  "apps/backend/src/features/push/session-repository.ts": 2,
+  "apps/backend/src/features/sandboxes/session-token-repository.ts": 2,
+  "apps/backend/src/features/saved-messages/repository.ts": 2,
+  "apps/backend/src/features/search/repository.ts": 22,
+  "apps/backend/src/features/stream-context/backfill.ts": 8,
+  "apps/backend/src/features/stream-context/read-repository.ts": 2,
+  "apps/backend/src/features/streams/access.ts": 3,
+  "apps/backend/src/features/streams/directory-stats-repository.ts": 2,
+  "apps/backend/src/features/streams/effective-read-state.ts": 1,
+  "apps/backend/src/features/streams/event-repository.ts": 27,
+  "apps/backend/src/features/streams/member-repository.ts": 22,
+  "apps/backend/src/features/streams/notification-resolver.ts": 3,
+  "apps/backend/src/features/streams/read-state-repository.ts": 28,
+  "apps/backend/src/features/streams/repository.ts": 43,
+  "apps/backend/src/features/streams/sparse-read-repository.ts": 17,
+  "apps/backend/src/features/streams/state-repository.ts": 2,
+  "apps/backend/src/features/subagents/repository.ts": 2,
+  "apps/backend/src/features/sync/repository.ts": 5,
+  "apps/backend/src/features/user-api-keys/repository.ts": 2,
+  "apps/backend/src/features/user-preferences/repository.ts": 7,
+  "apps/backend/src/features/voice-transcription/repository.ts": 1,
+  "apps/backend/src/features/workspace-integrations/repository.ts": 1,
+  "apps/backend/src/features/workspaces/avatar-upload-repository.ts": 4,
+  "apps/backend/src/features/workspaces/repository.ts": 1,
+  "apps/backend/src/features/workspaces/user-repository.ts": 2,
+  "apps/backend/src/lib/backfill/chunk-worker.ts": 1,
+  "apps/backend/src/lib/queue/cron-repository.ts": 15,
+  "apps/backend/src/lib/queue/repository.ts": 14,
+  "apps/backend/src/lib/queue/token-pool-repository.ts": 6,
+  "apps/backend/src/lib/sql-filters.ts": 2,
+}
+
+export function unscopedSqlExemptions(packageDir) {
+  return pathsUnderPackage(unscopedSqlAllowlist, packageDir)
 }
 
 const threaPlugin = {
@@ -596,6 +1255,7 @@ const threaPlugin = {
     "no-queryclient-getquerydata-in-render": noQueryClientGetQueryDataInRenderRule,
     "no-button-navigation": noButtonNavigationRule,
     "no-sql-text-assertion": noSqlTextAssertionRule,
+    "workspace-scoped-sql": workspaceScopedSqlRule,
   },
 }
 

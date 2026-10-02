@@ -5,6 +5,7 @@ import threaPlugin, {
   providerSdkRestrictedImportPattern,
   sqlTextAssertionExemptions,
   testRestrictedProperties,
+  unscopedSqlExemptions,
 } from "../../eslint/threa-plugin.js"
 
 /**
@@ -147,6 +148,16 @@ export default [
     ignores: sqlTextAssertionExemptions("apps/backend"),
     rules: {
       "threa/no-sql-text-assertion": "error",
+    },
+  },
+
+  // INV-8: every statement constrains workspace_id on the workspace-scoped tables it touches.
+  // Files in `unscopedSqlAllowlist` predate the rule; workspace-scoped-sql.test.ts holds each to its frozen count.
+  {
+    files: ["src/**/*.ts"],
+    ignores: ["src/**/*.test.ts", "src/db/migrations/**", ...unscopedSqlExemptions("apps/backend")],
+    rules: {
+      "threa/workspace-scoped-sql": "error",
     },
   },
 ]
