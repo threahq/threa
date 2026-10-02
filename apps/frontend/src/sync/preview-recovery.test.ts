@@ -11,7 +11,8 @@ import { SyncEngine, SyncEngineContext } from "./sync-engine"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { applyWorkspaceBootstrap } from "./workspace-sync"
 import { MockSocket, asSocket, makeDeps, makeStreamBootstrap } from "@/test/fixtures/sync-engine"
-import type { StreamPreviewHistoryBatchResponse } from "@threahq/types"
+import type { Draft, StreamPreviewHistoryBatchResponse } from "@threahq/types"
+import { enqueueOperation } from "./operation-queue"
 
 const engines: SyncEngine[] = []
 beforeEach(async () => {
@@ -85,6 +86,131 @@ function interceptPreviewWrite(onWrite: () => void) {
 }
 
 describe("preview history recovery", () => {
+  it.each(["resume", "pull"])(
+    "should finish preview, operation and draft setup when %s overlaps the cold snapshot",
+    async (trigger) => {
+      await Promise.all([db.pendingOperations.clear(), db.drafts.clear()])
+      const draft: Draft = {
+        id: "draft_setup",
+        workspaceId: "ws_1",
+        userId: "user_1",
+        scope: "stream:stream_a",
+        rootStreamId: null,
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "Recovered draft" }] }],
+        },
+        contentMarkdown: "Recovered draft",
+        attachmentIds: [],
+        command: null,
+        contextRefs: null,
+        ciphertext: null,
+        envelope: null,
+        e2eVersion: null,
+        version: 1,
+        clientUpdatedAt: new Date(1000).toISOString(),
+        stashedAt: null,
+        createdAt: new Date(1000).toISOString(),
+        updatedAt: new Date(1000).toISOString(),
+      }
+      const deps = {
+        ...makeDeps(),
+        syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
+        messageService: { update: vi.fn(), delete: vi.fn(async () => {}) },
+        draftsService: {
+          list: vi.fn(async () => ({ drafts: [draft] })),
+          upsert: vi.fn(),
+          resolve: vi.fn(),
+          delete: vi.fn(),
+        },
+      }
+      const workspace = await deps.workspaceService.bootstrap()
+      const snapshot = deferred<typeof workspace>()
+      deps.workspaceService.bootstrap.mockClear()
+      deps.workspaceService.bootstrap.mockImplementationOnce(() => snapshot.promise)
+      deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
+      await db.streams.put({ ...makeStreamBootstrap("stream_a").stream, _cachedAt: 1 })
+      await enqueueOperation("ws_1", "delete_message", { messageId: "msg_offline" })
+      const engine = new SyncEngine(deps)
+      engines.push(engine)
+      engine.warmStreams(["stream_a"])
+      const connecting = engine.onConnect(asSocket(new MockSocket()))
+      let recovery: Promise<void> | undefined
+      try {
+        await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
+        recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
+        snapshot.resolve({ ...workspace, syncHead: "10" })
+        await Promise.all([connecting, recovery])
+        await vi.waitFor(async () =>
+          expect({
+            preview: (await db.events.get("evt_stream_a_2"))?.streamId,
+            pending: await db.pendingOperations.toArray(),
+            draft: (await db.drafts.get(draft.id))?.contentJson,
+          }).toEqual({ preview: "stream_a", pending: [], draft: draft.contentJson })
+        )
+        expect(deps.messageService.delete).toHaveBeenCalledWith("ws_1", "msg_offline")
+        expect(deps.draftsService.list).toHaveBeenCalledExactlyOnceWith("ws_1")
+        expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1])).toEqual([["stream_a"]])
+      } finally {
+        snapshot.resolve({ ...workspace, syncHead: "10" })
+        await Promise.all([connecting, recovery])
+        engine.destroy()
+        await Promise.all([db.pendingOperations.clear(), db.drafts.clear()])
+      }
+    }
+  )
+
+  it.each(["resume", "pull"])(
+    "should keep the newer %s gate paused when same-connection setup finishes",
+    async (trigger) => {
+      const deps = { ...makeDeps(), syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) } }
+      const workspace = await deps.workspaceService.bootstrap()
+      const snapshot = deferred<typeof workspace>()
+      const required = deferred<void>()
+      deps.workspaceService.bootstrap.mockClear()
+      deps.workspaceService.bootstrap.mockImplementationOnce(() => snapshot.promise)
+      deps.workspaceService.bootstrap.mockResolvedValue({ ...workspace, syncHead: "10" })
+      const original = deps.streamService.bootstrap.getMockImplementation()!
+      deps.streamService.bootstrap.mockImplementation(async (...args) => {
+        await required.promise
+        return original(...args)
+      })
+      const engine = new SyncEngine(deps)
+      engines.push(engine)
+      const socket = new MockSocket()
+      const connecting = engine.onConnect(asSocket(socket))
+      let recovery: Promise<void> | undefined
+      try {
+        await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
+        engine.setCurrentStreamId("stream_required")
+        recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
+        snapshot.resolve({ ...workspace, syncHead: "10" })
+        await connecting
+        await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalled())
+        socket.trigger("workspace_user:added", {
+          workspaceId: "ws_1",
+          syncId: "11",
+          user: { id: "user_after_setup", workspaceId: "ws_1", name: "After setup" },
+        })
+        await pause()
+        expect({
+          catchUp: deps.syncService.catchUp.mock.calls,
+          user: await db.workspaceUsers.get("user_after_setup"),
+        }).toEqual({ catchUp: [], user: undefined })
+        required.resolve()
+        await recovery
+        await vi.waitFor(async () =>
+          expect(await db.workspaceUsers.get("user_after_setup")).toMatchObject({ name: "After setup" })
+        )
+      } finally {
+        snapshot.resolve({ ...workspace, syncHead: "10" })
+        required.resolve()
+        await Promise.all([connecting, recovery])
+        engine.destroy()
+      }
+    }
+  )
+
   it.each(["body", "terminal error"])(
     "should retire obsolete full-sweep roots before their %s settles without losing the cold snapshot",
     async (late) => {
@@ -602,7 +728,8 @@ describe("preview history recovery", () => {
       engine.setBoardStreamIds([])
       engine.setCurrentStreamId("stream_required")
       deps.syncService.catchUp.mockClear()
-      const newestSocket = new MockSocket()
+      const newestSocket = middleSocket
+      newestSocket.connected = true
       newer = engine.onConnect(asSocket(newestSocket))
       await vi.waitFor(() =>
         expect(deps.streamService.bootstrap.mock.calls.map((call) => call[1])).toContain("stream_required")

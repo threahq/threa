@@ -10,6 +10,7 @@ import { conversationKeys } from "@/hooks/use-conversations"
 import { db, getActiveDb, setActiveDb, ThreaDatabase } from "@/db/database"
 import { bumpAccountGeneration } from "@/db/event-writes"
 import { CatchUpBatch } from "./catch-up-batch"
+import { SyncLogCursor } from "./sync-log-cursor"
 import { ApiError } from "@/api/client"
 import {
   DEFAULT_SIDEBAR_CONFIG,
@@ -70,6 +71,138 @@ async function seedRevealableWorkspace(workspaceId: string): Promise<void> {
     db.sidebarConfigs.put({ id: workspaceId, workspaceId, config: DEFAULT_SIDEBAR_CONFIG, _cachedAt: cachedAt }),
   ])
 }
+
+describe("SyncEngine connection setup", () => {
+  it.each([
+    ["cursor", "disconnect"],
+    ["cursor", "same-socket reconnect"],
+    ["cursor", "destroy"],
+    ["cursor", "account change"],
+    ["snapshot", "disconnect"],
+    ["snapshot", "same-socket reconnect"],
+    ["snapshot", "destroy"],
+    ["snapshot", "account change"],
+  ])("should fence setup after %s waiting is retired by %s", async (boundary, change) => {
+    const deps = {
+      ...makeDeps(),
+      syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
+      draftsService: { list: vi.fn(async () => ({ drafts: [] })), upsert: vi.fn(), resolve: vi.fn(), delete: vi.fn() },
+    }
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const snapshot = { ...makeWorkspaceBootstrap(), syncHead: "10" }
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      if (boundary === "snapshot") await held
+      return snapshot
+    })
+    const load = SyncLogCursor.prototype.load
+    const spy = vi.spyOn(SyncLogCursor.prototype, "load").mockImplementationOnce(async function (this: SyncLogCursor) {
+      await load.call(this)
+      if (boundary === "cursor") await held
+    })
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    const older = engine.onConnect(asSocket(socket))
+    let newer: Promise<void> | undefined
+    try {
+      if (boundary === "snapshot")
+        await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
+      if (change === "destroy") engine.destroy()
+      else if (change === "account change") bumpAccountGeneration()
+      else {
+        socket.connected = false
+        engine.onDisconnect()
+        if (change === "same-socket reconnect") {
+          socket.connected = true
+          newer = engine.onConnect(asSocket(socket))
+        }
+      }
+      release()
+      await Promise.all([older, newer])
+      if (newer) {
+        await vi.waitFor(() => expect(deps.draftsService.list).toHaveBeenCalledExactlyOnceWith("ws_1"))
+        socket.trigger("workspace_user:added", {
+          workspaceId: "ws_1",
+          syncId: "11",
+          user: { id: "user_latest_connection", workspaceId: "ws_1", name: "Latest" },
+        })
+        await vi.waitFor(async () =>
+          expect(await db.workspaceUsers.get("user_latest_connection")).toMatchObject({ name: "Latest" })
+        )
+      } else {
+        expect(deps.draftsService.list).not.toHaveBeenCalled()
+      }
+    } finally {
+      release()
+      await Promise.all([older, newer])
+      spy.mockRestore()
+      engine.destroy()
+    }
+  })
+
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.syncCursors.clear(), db.workspaceUsers.clear(), db.streams.clear()])
+  })
+
+  it.each(["resume", "pull"])(
+    "should register live workspace handlers when %s overlaps cursor loading",
+    async (trigger) => {
+      const deps = {
+        ...makeDeps(),
+        syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
+      }
+      deps.workspaceService.bootstrap.mockResolvedValue({ ...makeWorkspaceBootstrap(), syncHead: "10" })
+      const engine = new SyncEngine(deps)
+      const socket = new MockSocket()
+      let release!: () => void
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const load = SyncLogCursor.prototype.load
+      const spy = vi.spyOn(SyncLogCursor.prototype, "load").mockImplementationOnce(async function (
+        this: SyncLogCursor
+      ) {
+        await load.call(this)
+        await held
+      })
+      const connecting = engine.onConnect(asSocket(socket))
+      let recovery: Promise<void> | undefined
+      try {
+        recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
+        await recovery
+        release()
+        await connecting
+        await db.streams.put({ ...makeStreamBootstrap("stream_setup").stream, _cachedAt: 1 })
+        socket.trigger("workspace_user:added", {
+          workspaceId: "ws_1",
+          syncId: "11",
+          user: { id: "user_setup", workspaceId: "ws_1", name: "Recovered" },
+        })
+        socket.trigger("stream:updated", {
+          workspaceId: "ws_1",
+          syncId: "12",
+          stream: { ...makeStreamBootstrap("stream_setup").stream, displayName: "Recovered stream" },
+        })
+        await vi.waitFor(async () =>
+          expect({
+            user: (await db.workspaceUsers.get("user_setup"))?.name,
+            stream: (await db.streams.get("stream_setup"))?.displayName,
+            query: deps.queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", "stream_setup"))
+              ?.displayName,
+          }).toEqual({ user: "Recovered", stream: "Recovered stream", query: "Recovered stream" })
+        )
+      } finally {
+        release()
+        await Promise.all([connecting, recovery])
+        spy.mockRestore()
+        engine.destroy()
+      }
+    }
+  )
+})
 
 describe("SyncEngine.handlePageResume", () => {
   beforeEach(async () => {

@@ -218,6 +218,7 @@ export class SyncEngine {
    *  drained into one follow-up backfill when the active one settles. */
   private queuedGapCursors = new Map<string, string>()
   private hasEverConnected = false
+  private connectionGeneration = 0
   /**
    * Per-stream bootstraps the first-connect sweep hands to the query layer
    * (`claimStreamBootstrap`). Created on demand by the claimant, resolved by the
@@ -580,6 +581,7 @@ export class SyncEngine {
     if (this.isDestroyed) return
     const isReconnect = this.hasEverConnected
     this.hasEverConnected = true
+    const connectionGeneration = ++this.connectionGeneration
     this.socket = socket
     // Synchronously, before any await: events arriving right after the
     // connect ack must already flow through the gate's forwarders — and be
@@ -615,7 +617,7 @@ export class SyncEngine {
         // with the snapshot it hands back — and this call leaves the position
         // unset until then (see `coldSnapshotSettled`).
         await this.initializeActiveCursor()
-        if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
+        if (!this.isAccountCurrent() || connectionGeneration !== this.connectionGeneration) return
       }
 
       // Resume persisted background uploads for this workspace (reload/PWA
@@ -639,7 +641,7 @@ export class SyncEngine {
       )
 
       await this.runBootstrap(isReconnect)
-      if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
+      if (!this.isAccountCurrent() || connectionGeneration !== this.connectionGeneration) return
 
       // A reconnect catches up the visible + board streams inside runBootstrap (via
       // getVisibleServerStreamIds); a first connect deliberately does not. But the
@@ -770,6 +772,7 @@ export class SyncEngine {
    * Called when the socket disconnects.
    */
   onDisconnect(): void {
+    this.connectionGeneration += 1
     this.replaceRecoveryGeneration()
     this.deps.syncStatus.setAllStale()
   }
@@ -995,6 +998,7 @@ export class SyncEngine {
    * Called when the workspace layout unmounts.
    */
   destroy(): void {
+    this.connectionGeneration += 1
     this.isDestroyed = true
     this.replaceRecoveryGeneration()
     this.settleColdSweep()
