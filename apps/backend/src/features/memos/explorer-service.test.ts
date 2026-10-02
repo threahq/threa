@@ -94,7 +94,7 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
   it("re-embeds when the abstract changes and persists both in one transaction", async () => {
     const { service, embed } = buildService()
     stubSourceStreamResolution()
-    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
+    const findById = spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
     const updated = fakeMemo({ abstract: "New abstract" })
     const updateSpy = spyOn(MemoRepository, "update").mockResolvedValue(updated)
     const embeddingSpy = spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined)
@@ -105,7 +105,8 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
 
     expect(result?.memo.abstract).toBe("New abstract")
     expect(embed).toHaveBeenCalledTimes(1)
-    expect(embeddingSpy).toHaveBeenCalledTimes(1)
+    expect(findById.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
+    expect(embeddingSpy.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID, [0.42]]])
     expect(updateSpy).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, MEMO_ID, {
       title: undefined,
       abstract: "New abstract",
@@ -164,13 +165,27 @@ describe("MemoExplorerService.archive / unarchive (roadmap 6.1)", () => {
   it("archives an accessible memo", async () => {
     const { service } = buildService()
     stubSourceStreamResolution()
-    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
+    const findById = spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
     const archiveSpy = spyOn(MemoRepository, "archive").mockResolvedValue(fakeMemo({ status: "archived" }))
 
     const result = await service.archive(WORKSPACE_ID, MEMO_ID, ACCESS)
 
     expect(result?.memo.status).toBe("archived")
-    expect(archiveSpy).toHaveBeenCalledWith(expect.anything(), MEMO_ID)
+    expect(findById.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
+    expect(archiveSpy.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
+  })
+
+  it("restores an archived memo", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    const findById = spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo({ status: "archived" }))
+    const unarchiveSpy = spyOn(MemoRepository, "unarchive").mockResolvedValue(fakeMemo())
+
+    const result = await service.unarchive(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result?.memo.status).toBe("active")
+    expect(findById.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
+    expect(unarchiveSpy.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
   })
 
   it("returns null when unarchive finds no archived row to restore", async () => {
@@ -198,6 +213,17 @@ describe("MemoExplorerService.archive / unarchive (roadmap 6.1)", () => {
 })
 
 describe("MemoExplorerService.getById (roadmap 6.1)", () => {
+  it("looks the memo up in the caller's workspace and returns null when that finds nothing", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    const findById = spyOn(MemoRepository, "findById").mockResolvedValue(null)
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result).toBeNull()
+    expect(findById.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
+  })
+
   it("returns archived memos (status is no longer gated) with a successor link when superseded", async () => {
     const { service } = buildService()
     stubSourceStreamResolution()

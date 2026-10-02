@@ -89,13 +89,13 @@ export const PendingItemRepository = {
     return result.rows.map(mapRowToPendingItem)
   },
 
-  async markProcessed(client: PoolClient, ids: string[]): Promise<void> {
+  async markProcessed(client: PoolClient, workspaceId: string, ids: string[]): Promise<void> {
     if (ids.length === 0) return
 
     await client.query(sql`
       UPDATE memo_pending_items
       SET processed_at = NOW()
-      WHERE id = ANY(${ids})
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
     `)
   },
 
@@ -107,6 +107,7 @@ export const PendingItemRepository = {
    */
   async recordClassifiedFingerprints(
     client: PoolClient,
+    workspaceId: string,
     entries: Array<{ id: string; fingerprint: string }>
   ): Promise<void> {
     if (entries.length === 0) return
@@ -118,7 +119,7 @@ export const PendingItemRepository = {
         ${entries.map((e) => e.id)}::text[],
         ${entries.map((e) => e.fingerprint)}::text[]
       ) AS v(id, fingerprint)
-      WHERE p.id = v.id
+      WHERE p.id = v.id AND p.workspace_id = ${workspaceId}
     `)
   },
 

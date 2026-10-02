@@ -287,7 +287,7 @@ export class MemoExplorerService {
         searchConfig: editedSearchConfig,
       })
       if (row && embedding) {
-        await MemoRepository.updateEmbedding(client, memoId, embedding)
+        await MemoRepository.updateEmbedding(client, workspaceId, memoId, embedding)
       }
       if (row) await this.publishCardUpdates(client, workspaceId, row)
       return row
@@ -338,7 +338,7 @@ export class MemoExplorerService {
     if (!resolved) {
       return null
     }
-    const archived = await MemoRepository.archive(this.pool, memoId)
+    const archived = await MemoRepository.archive(this.pool, workspaceId, memoId)
     if (!archived) {
       return null
     }
@@ -354,7 +354,7 @@ export class MemoExplorerService {
     if (!resolved) {
       return null
     }
-    const restored = await MemoRepository.unarchive(this.pool, memoId)
+    const restored = await MemoRepository.unarchive(this.pool, workspaceId, memoId)
     // null when the memo was not archived (e.g. superseded) — nothing to restore.
     if (!restored) {
       return null
@@ -398,8 +398,8 @@ export class MemoExplorerService {
     memoId: string,
     permissions: MemoExplorerPermissions
   ): Promise<{ memo: Memo; sourceContext: MemoSourceContext } | null> {
-    const memo = await MemoRepository.findById(this.pool, memoId)
-    if (!memo || memo.workspaceId !== workspaceId) {
+    const memo = await MemoRepository.findById(this.pool, workspaceId, memoId)
+    if (!memo) {
       return null
     }
 
