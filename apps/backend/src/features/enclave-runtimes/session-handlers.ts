@@ -236,7 +236,11 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
     const terminalError = `STREAM_READ_ONLY:${reason}`
     if (session?.status === SessionStatuses.RUNNING) {
       await failSessionWithLifecycle(pool, io, session, terminalError, async (tx) => {
-        await EnclaveInvocationsRepository.failBySession(tx, { sessionId: session.id, errorMessage: terminalError })
+        await EnclaveInvocationsRepository.failBySession(tx, {
+          workspaceId: session.workspaceId,
+          sessionId: session.id,
+          errorMessage: terminalError,
+        })
         await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, session.id)
       })
     }
@@ -276,6 +280,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertCallbackBound(session, req)
       await AgentSessionRepository.updateHeartbeat(pool, session.workspaceId, id)
       await EnclaveInvocationsRepository.renewBySession(pool, {
+        workspaceId: session.workspaceId,
         sessionId: id,
         claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
       })
@@ -891,7 +896,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         if (!completed) return false // raced to a terminal state under us
         // Flip the turn's claim with the session (same tx, INV-7) so the
         // claimable set and the session lifecycle can't diverge.
-        await EnclaveInvocationsRepository.completeBySession(tx, id)
+        await EnclaveInvocationsRepository.completeBySession(tx, session.workspaceId, id)
         // A new-protocol callback consumes this first; an old enclave never calls
         // it, so completion releases the otherwise-unused session-owned claim.
         await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, id)
@@ -1034,7 +1039,11 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       // own claim flip.
       const error = `Enclave session failed: ${parsed.data.errorName}`
       const won = await failSessionWithLifecycle(pool, io, session, error, async (tx) => {
-        await EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
+        await EnclaveInvocationsRepository.failBySession(tx, {
+          workspaceId: session.workspaceId,
+          sessionId: id,
+          errorMessage: error,
+        })
         await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, id)
       })
 

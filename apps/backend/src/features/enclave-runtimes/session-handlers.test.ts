@@ -22,7 +22,7 @@ import { MessageRepository, type EventService } from "../messaging"
 import { DynamicNamingStateRepository } from "../dynamic-naming"
 import type { AICostServiceLike } from "../ai-usage"
 import { createEnclaveSessionHandlers } from "./session-handlers"
-import { EnclaveInvocationsRepository } from "./invocations-repository"
+import { ENCLAVE_CLAIM_TTL_SECONDS, EnclaveInvocationsRepository } from "./invocations-repository"
 
 // A bare stand-in, but with a `query` so the catch-up's wake-up NOTIFY (fired by
 // enqueueEnclaveInvocation when a reopen produces work) has somewhere to land.
@@ -193,7 +193,9 @@ describe("createEnclaveSessionHandlers.message", () => {
 
     expect(createMessage).not.toHaveBeenCalled()
     expect(updateStatus).toHaveBeenCalledTimes(2)
-    expect(failClaim).toHaveBeenCalledTimes(1)
+    expect(failClaim.mock.calls.map((c) => c.slice(1))).toEqual([
+      [{ workspaceId: "ws_1", sessionId: "session_1", errorMessage: "STREAM_READ_ONLY:archived" }],
+    ])
     expect(releaseClaim.mock.calls.map((c) => c.slice(1))).toEqual([["ws_1", "session_1"]])
     expect(lifecycle).toHaveBeenCalledTimes(1)
   })
@@ -618,7 +620,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
     expect(createMessage).not.toHaveBeenCalled() // replies were already streamed via /messages
     expect(complete).toHaveBeenCalledTimes(1)
     // The turn's claim flips with the session, in the same transaction (INV-7).
-    expect(completeClaim).toHaveBeenCalledWith(tx, "session_1")
+    expect(completeClaim).toHaveBeenCalledWith(tx, "ws_1", "session_1")
     expect(releaseClaim).toHaveBeenCalledWith(tx, "ws_1", "session_1")
     // Completion + event are one atomic transaction (INV-7): completeSession runs
     // on the tx client, not the bare pool.
@@ -877,10 +879,9 @@ describe("createEnclaveSessionHandlers.fail", () => {
     // transaction as the RUNNING→FAILED flip (INV-7) — a loop error is not
     // retried (same semantics the push transport had).
     expect(failClaim.mock.calls[0]![0]).toBe(tx)
-    expect(failClaim.mock.calls[0]![1]).toMatchObject({
-      sessionId: "session_1",
-      errorMessage: "Enclave session failed: AbortError",
-    })
+    expect(failClaim.mock.calls.map((c) => c.slice(1))).toEqual([
+      [{ workspaceId: "ws_1", sessionId: "session_1", errorMessage: "Enclave session failed: AbortError" }],
+    ])
     expect(releaseClaim).toHaveBeenCalledWith(tx, "ws_1", "session_1")
     // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
     // classification — the error's class name, never plaintext content (INV-E7).
@@ -1157,7 +1158,11 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
       expect.objectContaining({ workspaceId: "ws_1", ownerId: "session_1" })
     )
     // A healthy long turn keeps its claim out of the claimable set.
-    expect(renewClaim).toHaveBeenCalledWith(pool, expect.objectContaining({ sessionId: "session_1" }))
+    expect(renewClaim).toHaveBeenCalledWith(pool, {
+      workspaceId: "ws_1",
+      sessionId: "session_1",
+      claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
+    })
     expect(res.statusCode).toBe(200)
     expect(res.jsonBody).toEqual({ abort: false })
   })
