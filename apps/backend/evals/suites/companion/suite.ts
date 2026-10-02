@@ -127,7 +127,7 @@ async function setupTestData(
   const modelConfig = getModelConfig(ctx)
 
   // Resolve Ariadne as production does: built-in defaults in code plus optional workspace overrides.
-  const templatePersona = await PersonaRepository.findById(pool, ARIADNE_AGENT_ID, ctx.workspaceId)
+  const templatePersona = await PersonaRepository.findById(pool, ctx.workspaceId, ARIADNE_AGENT_ID)
   if (!templatePersona) {
     throw new Error(`Could not resolve built-in companion persona ${ARIADNE_AGENT_ID} (see built-in-agents.ts)`)
   }
@@ -561,7 +561,9 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     // whether they completed — a provider that rejects a tool schema shows up
     // here as `tool_error`, and nowhere else.
     const steps =
-      runResult.sessionId == null ? [] : await AgentSessionRepository.findStepsBySession(ctx.pool, runResult.sessionId)
+      runResult.sessionId == null
+        ? []
+        : await AgentSessionRepository.findStepsBySession(ctx.pool, ctx.workspaceId, runResult.sessionId)
 
     const toolCalls = steps
       .filter((step) => step.stepType === "web_search" && step.completedAt !== null)

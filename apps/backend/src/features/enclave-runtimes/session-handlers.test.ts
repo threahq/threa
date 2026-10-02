@@ -81,7 +81,7 @@ const SESSION = {
   triggerMessageId: "msg_trigger",
   callbackTokenHash: hashCallbackToken(CB_TOKEN),
   createdAt: new Date("2026-05-30T00:00:00.000Z"),
-} as unknown as Awaited<ReturnType<typeof AgentSessionRepository.findById>>
+} as unknown as Awaited<ReturnType<typeof AgentSessionRepository.findByIdForCallback>>
 
 const MESSAGE_BODY = {
   messageId: "msg_a",
@@ -166,7 +166,7 @@ function makeHandlers(createMessage = mock(async (_input: Record<string, unknown
 
 describe("createEnclaveSessionHandlers.message", () => {
   it("terminalizes a generated-write denial once without writing output", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
@@ -197,19 +197,22 @@ describe("createEnclaveSessionHandlers.message", () => {
   })
 
   it("404s when the session is gone", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
     const { handlers } = makeHandlers()
     await expect(handlers.message(req("session_1", MESSAGE_BODY), fakeRes())).rejects.toMatchObject({ status: 404 })
   })
 
   it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.message(req("session_1", MESSAGE_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
   it("writes the streamed sealed reply and 204s", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const findStream = spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const { handlers, createMessage } = makeHandlers()
     const res = fakeRes()
@@ -243,19 +246,22 @@ describe("createEnclaveSessionHandlers.pollMessages (interjection pull)", () => 
   }
 
   it("404s when the session is gone", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
     const { handlers } = makeHandlers()
     await expect(handlers.pollMessages(getReq("session_1"), fakeRes())).rejects.toMatchObject({ status: 404 })
   })
 
   it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.pollMessages(getReq("session_1"), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
   it("returns no messages (never replays history) when the trigger sequence can't be resolved", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     // The trigger's message_created event isn't found — no safe floor to clamp to.
     spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(null)
@@ -272,7 +278,7 @@ describe("createEnclaveSessionHandlers.pollMessages (interjection pull)", () => 
   })
 
   it("returns sealed rows after the trigger-clamped boundary, excluding the persona's own replies", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     // Trigger at 5; the enclave asked for messages after 3, so the floor clamps up.
     spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
@@ -358,7 +364,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
   }
 
   it("atomically applies progress and a sealed generated rename", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
       id: "stream_1",
@@ -414,7 +420,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
   })
 
   it("does not advance keep for an unnamed encrypted stream", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
@@ -459,7 +465,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
   })
 
   it("rejects a replacement not sealed for the stream name slot", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const { handlers } = makeHandlers()
     await expect(
       handlers.namingDecision(
@@ -476,7 +482,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
   })
 
   it("lets a manual rename win without storing enclave output", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(db, "withTransaction").mockImplementation(((_pool: unknown, cb: (c: unknown) => unknown) => cb({})) as never)
     spyOn(StreamRepository, "findByIdForUpdateBlocking").mockResolvedValue({
@@ -503,7 +509,7 @@ describe("createEnclaveSessionHandlers.sealedSummary", () => {
   }
 
   it("upserts the sealed rolling summary keyed to the stream + Ariadne with the advanced cursor", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     const upsert = spyOn(ConversationSummaryRepository, "upsert").mockResolvedValue({} as never)
     const { handlers } = makeHandlers()
@@ -525,7 +531,7 @@ describe("createEnclaveSessionHandlers.sealedSummary", () => {
   })
 
   it("rejects a body whose cursor is not a base-10 integer", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const { handlers } = makeHandlers()
     await expect(
       handlers.sealedSummary(req("session_1", { ...SUMMARY_BODY, lastSummarizedSequence: "not-a-number" }), fakeRes())
@@ -533,7 +539,10 @@ describe("createEnclaveSessionHandlers.sealedSummary", () => {
   })
 
   it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.sealedSummary(req("session_1", SUMMARY_BODY), fakeRes())).rejects.toMatchObject({
       status: 409,
@@ -548,13 +557,16 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("404s when the session is gone", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
     const { handlers } = makeHandlers()
     await expect(handlers.complete(req("session_1", COMPLETE_BODY), fakeRes())).rejects.toMatchObject({ status: 404 })
   })
 
   it("no-ops (200) when the session is already completed", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.COMPLETED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.COMPLETED,
+    })
     const { handlers } = makeHandlers()
     const res = fakeRes()
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
@@ -562,13 +574,16 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.complete(req("session_1", COMPLETE_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
   it("records the sent ids, completes the session, and emits agent_session:completed", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const complete = spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
@@ -595,7 +610,9 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // Completion + event are one atomic transaction (INV-7): completeSession runs
     // on the tx client, not the bare pool.
     expect(complete.mock.calls[0]![0]).toBe(tx)
-    expect(complete.mock.calls[0]![2]).toMatchObject({
+    expect(complete.mock.calls[0]![1]).toBe("ws_1")
+    expect(complete.mock.calls[0]![2]).toBe("session_1")
+    expect(complete.mock.calls[0]![3]).toMatchObject({
       sentMessageIds: ["msg_a", "msg_b"],
       responseMessageId: "msg_a",
     })
@@ -613,7 +630,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("records the turn's token + cost usage against the workspace and invoking user", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
@@ -650,7 +667,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("does not record usage when the completion lost the RUNNING→COMPLETED race", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     // Lost the gated transition to a concurrent redelivery.
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
@@ -669,7 +686,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("dispatches a catch-up enclave turn for a user message that arrived mid-turn", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
@@ -705,7 +722,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("does not enqueue catch-up work when the unseen author lost write authority", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
@@ -740,7 +757,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("advances the catch-up boundary past a message the turn already incorporated (UX-12)", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
@@ -765,7 +782,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("does not emit the completed event when the session raced to a terminal state", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     // Won by another redelivery between assertRunning and the transaction.
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
@@ -784,7 +801,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 
   it("still completes the session durably when the stream is gone, skipping broadcast", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const complete = spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue(null) // stream deleted mid-turn
     const tx = {} as never
@@ -813,19 +830,22 @@ describe("createEnclaveSessionHandlers.fail", () => {
   })
 
   it("404s when the session is gone", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
     const { handlers } = makeHandlers()
     await expect(handlers.fail(req("session_1", FAIL_BODY), fakeRes())).rejects.toMatchObject({ status: 404 })
   })
 
   it("409s when the session already terminated", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.fail(req("session_1", FAIL_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
   it("marks the session FAILED with the scrubbed classification and emits the failed lifecycle", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
     const tx = {} as never
@@ -850,8 +870,10 @@ describe("createEnclaveSessionHandlers.fail", () => {
     })
     // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
     // classification — the error's class name, never plaintext content (INV-E7).
-    expect(updateStatus.mock.calls[0]![2]).toBe(SessionStatuses.FAILED)
-    expect(updateStatus.mock.calls[0]![3]).toMatchObject({
+    expect(updateStatus.mock.calls[0]![1]).toBe("ws_1")
+    expect(updateStatus.mock.calls[0]![2]).toBe("session_1")
+    expect(updateStatus.mock.calls[0]![3]).toBe(SessionStatuses.FAILED)
+    expect(updateStatus.mock.calls[0]![4]).toMatchObject({
       error: "Enclave session failed: AbortError",
       onlyIfStatus: SessionStatuses.RUNNING,
     })
@@ -868,7 +890,7 @@ describe("createEnclaveSessionHandlers.fail", () => {
   })
 
   it("204s without emitting when the session raced to a terminal state under us", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const tx = {} as never
     spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
@@ -897,7 +919,7 @@ describe("createEnclaveSessionHandlers.stepStarted", () => {
   })
 
   it("404s when the session is gone", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
     const { handlers } = makeHandlers()
     await expect(handlers.stepStarted(req("session_1", STEP_START_BODY), fakeRes())).rejects.toMatchObject({
       status: 404,
@@ -905,7 +927,10 @@ describe("createEnclaveSessionHandlers.stepStarted", () => {
   })
 
   it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.stepStarted(req("session_1", STEP_START_BODY), fakeRes())).rejects.toMatchObject({
       status: 409,
@@ -913,7 +938,7 @@ describe("createEnclaveSessionHandlers.stepStarted", () => {
   })
 
   it("opens an in-flight row (no completedAt) + current_step_type in one tx, broadcasts step:started + progress", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const tx = {} as never
     spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
@@ -937,9 +962,10 @@ describe("createEnclaveSessionHandlers.stepStarted", () => {
     expect(res.statusCode).toBe(204)
     // The row is opened in-progress — no completedAt — so the dialog renders it live.
     expect(append.mock.calls[0]![0]).toBe(tx)
-    expect(append.mock.calls[0]![1]).toMatchObject({ id: "step_b", stepType: "web_search" })
-    expect((append.mock.calls[0]![1] as { completedAt?: Date }).completedAt).toBeUndefined()
-    expect(stepType).toHaveBeenCalledWith(tx, "session_1", "web_search")
+    expect(append.mock.calls[0]![1]).toBe("ws_1")
+    expect(append.mock.calls[0]![2]).toMatchObject({ id: "step_b", stepType: "web_search" })
+    expect((append.mock.calls[0]![2] as { completedAt?: Date }).completedAt).toBeUndefined()
+    expect(stepType).toHaveBeenCalledWith(tx, "ws_1", "session_1", "web_search")
 
     expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:step:started")).toBe(true)
@@ -957,19 +983,22 @@ describe("createEnclaveSessionHandlers.steps", () => {
   })
 
   it("404s when the session is gone", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
     const { handlers } = makeHandlers()
     await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 404 })
   })
 
   it("409s when the session is no longer running", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
+      ...SESSION!,
+      status: SessionStatuses.FAILED,
+    })
     const { handlers } = makeHandlers()
     await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
   it("finalizes the in-flight step in place (sealed content + completedAt), broadcasts step:completed, and 204s", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const update = spyOn(AgentSessionRepository, "updateStep").mockResolvedValue({
       id: "step_a",
@@ -991,12 +1020,13 @@ describe("createEnclaveSessionHandlers.steps", () => {
     // Updates the existing row in place — no insert on the happy path.
     expect(append).not.toHaveBeenCalled()
     expect(update.mock.calls[0]![0]).toBeDefined()
-    expect(update.mock.calls[0]![1]).toBe("step_a")
-    expect(update.mock.calls[0]![2]).toMatchObject({
+    expect(update.mock.calls[0]![1]).toBe("ws_1")
+    expect(update.mock.calls[0]![2]).toBe("step_a")
+    expect(update.mock.calls[0]![3]).toMatchObject({
       contentCiphertext: "Y3Q=", // sealed content — the server never holds plaintext (INV-E7)
       contentEnvelope: STEP_BODY.envelope,
     })
-    expect((update.mock.calls[0]![2] as { completedAt?: Date }).completedAt).toBeInstanceOf(Date)
+    expect((update.mock.calls[0]![3] as { completedAt?: Date }).completedAt).toBeInstanceOf(Date)
 
     expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
     expect(emit.mock.calls[0]![0]).toBe("agent_session:step:completed")
@@ -1007,7 +1037,7 @@ describe("createEnclaveSessionHandlers.steps", () => {
   })
 
   it("falls back to a completed insert + progress when the start POST was dropped", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     // No in-flight row to finalize.
     spyOn(AgentSessionRepository, "updateStep").mockResolvedValue(null)
@@ -1033,8 +1063,9 @@ describe("createEnclaveSessionHandlers.steps", () => {
     expect(res.statusCode).toBe(204)
     // Inserts a completed row + advances current_step_type so the trace still lands.
     expect(append.mock.calls[0]![0]).toBe(tx)
-    expect(append.mock.calls[0]![1]).toMatchObject({ id: "step_a", contentCiphertext: "Y3Q=" })
-    expect(stepType).toHaveBeenCalledWith(tx, "session_1", "thinking")
+    expect(append.mock.calls[0]![1]).toBe("ws_1")
+    expect(append.mock.calls[0]![2]).toMatchObject({ id: "step_a", contentCiphertext: "Y3Q=" })
+    expect(stepType).toHaveBeenCalledWith(tx, "ws_1", "session_1", "thinking")
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:step:completed")).toBe(true)
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:progress")).toBe(true)
   })
@@ -1054,7 +1085,7 @@ describe("createEnclaveSessionHandlers.substep", () => {
   }
 
   it("broadcasts the sealed phase to the stream + session rooms without persisting (no snapshot)", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const update = spyOn(AgentSessionRepository, "updateStep")
     const { handlers, io, emit } = makeHandlers()
@@ -1071,7 +1102,7 @@ describe("createEnclaveSessionHandlers.substep", () => {
   })
 
   it("persists the running snapshot onto the in-flight step (sealed, no completion) when one travels", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const update = spyOn(AgentSessionRepository, "updateStep").mockResolvedValue(null)
     const { handlers, emit } = makeHandlers()
@@ -1080,13 +1111,14 @@ describe("createEnclaveSessionHandlers.substep", () => {
     await handlers.substep(req("session_1", SUBSTEP_WITH_SNAPSHOT), res)
 
     expect(res.statusCode).toBe(204)
-    expect(update.mock.calls[0]![1]).toBe("step_a")
-    expect(update.mock.calls[0]![2]).toMatchObject({
+    expect(update.mock.calls[0]![1]).toBe("ws_1")
+    expect(update.mock.calls[0]![2]).toBe("step_a")
+    expect(update.mock.calls[0]![3]).toMatchObject({
       contentCiphertext: "c25hcA==",
       contentEnvelope: SUBSTEP_WITH_SNAPSHOT.snapshotEnvelope,
     })
     // No completedAt — the step stays in-flight; the snapshot only seeds refresh recovery.
-    expect((update.mock.calls[0]![2] as { completedAt?: Date }).completedAt).toBeUndefined()
+    expect((update.mock.calls[0]![3] as { completedAt?: Date }).completedAt).toBeUndefined()
     // Still broadcasts the live phase.
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:substep")).toBe(true)
   })
@@ -1099,20 +1131,32 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
   })
 
   it("refreshes the heartbeat, renews the claim, and answers abort: false", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
     const { handlers, renewClaim } = makeHandlers()
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)
-    expect(beat).toHaveBeenCalledWith(pool, "session_1")
+    expect(beat).toHaveBeenCalledWith(pool, "ws_1", "session_1")
     // A healthy long turn keeps its claim out of the claimable set.
     expect(renewClaim).toHaveBeenCalledWith(pool, expect.objectContaining({ sessionId: "session_1" }))
     expect(res.statusCode).toBe(200)
     expect(res.jsonBody).toEqual({ abort: false })
   })
 
+  it("answers abort: false without renewing anything when the session row is gone", async () => {
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(null)
+    const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
+    const { handlers, renewClaim } = makeHandlers()
+    const res = fakeRes()
+    await handlers.heartbeat(req("session_1", {}), res)
+    expect(beat).not.toHaveBeenCalled()
+    expect(renewClaim).not.toHaveBeenCalled()
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({ abort: false })
+  })
+
   it("carries a requested abort back on the heartbeat (§2.7: cancel rides the pull channel)", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
       ...SESSION!,
       abortRequestedAt: new Date(),
     } as typeof SESSION)
@@ -1138,7 +1182,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   const tokenHeader = (token: string) => ({ [ENCLAVE_CALLBACK_TOKEN_HEADER]: token })
 
   it("403s a mismatched token without writing anything", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(BOUND_SESSION)
     const { handlers, createMessage } = makeHandlers()
     await expect(
       handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_evil")), fakeRes())
@@ -1147,7 +1191,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("403s a presented token when the session row carries none", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
       ...SESSION!,
       callbackTokenHash: null,
     } as typeof SESSION)
@@ -1158,7 +1202,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("accepts the matching token and writes the reply", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(BOUND_SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const { handlers, createMessage } = makeHandlers()
     const res = fakeRes()
@@ -1168,7 +1212,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("403s an absent token without writing anything — rollout tolerance is over", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(BOUND_SESSION)
     const { handlers, createMessage } = makeHandlers()
     await expect(handlers.message(req("session_1", MESSAGE_BODY, {}), fakeRes())).rejects.toMatchObject({
       status: 403,
@@ -1178,7 +1222,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("rejects a wrong-generation seal loudly instead of persisting an undecryptable reply", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
       ...BOUND_SESSION!,
       replyKeyGeneration: 2,
     } as typeof SESSION)
@@ -1191,7 +1235,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("403s pre-2.4b sessions (NULL hash) called without a token — no caller can satisfy them", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
       ...SESSION!,
       callbackTokenHash: null,
       replyKeyGeneration: null,
@@ -1204,7 +1248,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("binds the heartbeat too — wrong token never refreshes", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(BOUND_SESSION)
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
     const { handlers } = makeHandlers()
     await expect(handlers.heartbeat(req("session_1", {}, tokenHeader("cbtok_evil")), fakeRes())).rejects.toMatchObject({
@@ -1214,7 +1258,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("rejects a wrong-generation sealed step", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+    spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue({
       ...BOUND_SESSION!,
       replyKeyGeneration: 1,
     } as typeof SESSION)
@@ -1236,7 +1280,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   ]
   for (const [handlerName, body] of mismatchCases) {
     it(`binds ${String(handlerName)} — a wrong token is 403 with nothing written or broadcast`, async () => {
-      spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+      spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(BOUND_SESSION)
       const tx = spyOn(db, "withTransaction")
       const { handlers, emit, createMessage } = makeHandlers()
       await expect(

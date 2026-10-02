@@ -366,7 +366,7 @@ export class EnclaveClaimService {
     // Idempotency: the turn already has a session in flight or done for this
     // trigger. A FAILED session is allowed to re-assign — a fresh session id
     // is minted below, so the retry is clean.
-    const existing = await AgentSessionRepository.findByTriggerMessage(pool, triggerId)
+    const existing = await AgentSessionRepository.findByTriggerMessage(pool, workspaceId, triggerId)
     if (existing?.status === SessionStatuses.COMPLETED) {
       return completeAsNoOp("session already completed")
     }
@@ -460,7 +460,7 @@ export class EnclaveClaimService {
         })
         await failSessionWithLifecycleInTransaction(
           tx,
-          { id: deniedSessionId, streamId, personaId: ARIADNE_AGENT_ID },
+          { id: deniedSessionId, workspaceId, streamId, personaId: ARIADNE_AGENT_ID },
           triggerStream,
           denial.message,
           (failTx) =>
@@ -553,12 +553,12 @@ export class EnclaveClaimService {
     // the recent turn_digest step ciphertext from this stream's completed
     // sessions. Summary: the single (stream, persona) row the enclave extends.
     const [digestRows, summaryRow] = await Promise.all([
-      AgentSessionRepository.findRecentDigestStepsByStream(pool, {
+      AgentSessionRepository.findRecentDigestStepsByStream(pool, workspaceId, {
         streamId,
         personaId: ARIADNE_AGENT_ID,
         limit: TURN_DIGEST_INJECT_COUNT,
       }),
-      ConversationSummaryRepository.findByStreamAndPersona(pool, streamId, ARIADNE_AGENT_ID),
+      ConversationSummaryRepository.findByStreamAndPersona(pool, workspaceId, streamId, ARIADNE_AGENT_ID),
     ])
     const recentDigests = digestRows
       .filter((row) => row.step.contentCiphertext && row.step.contentEnvelope)

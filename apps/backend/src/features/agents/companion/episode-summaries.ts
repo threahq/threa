@@ -26,9 +26,9 @@ export function buildEpisodeSummaryPromptBlock(rows: RecentEpisodeSummary[]): st
 /** Fetch + format in one call — the context build's single entry point. */
 export async function loadEpisodeSummaryPromptBlock(
   db: Querier,
-  params: { streamId: string; personaId: string }
+  params: { workspaceId: string; streamId: string; personaId: string }
 ): Promise<string | null> {
-  const rows = await AgentSessionRepository.findRecentEpisodeSummariesByStream(db, {
+  const rows = await AgentSessionRepository.findRecentEpisodeSummariesByStream(db, params.workspaceId, {
     streamId: params.streamId,
     personaId: params.personaId,
     limit: EPISODE_SUMMARY_INJECT_COUNT,

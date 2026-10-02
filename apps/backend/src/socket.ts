@@ -464,7 +464,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       const sessionMatch = room.match(/^ws:([^:]+):agent_session:(.+)$/)
       if (sessionMatch) {
         const [, wsId, agentSessionId] = sessionMatch
-        const session = await AgentSessionRepository.findById(pool, agentSessionId)
+        const session = await AgentSessionRepository.findById(pool, wsId, agentSessionId)
         if (!session) {
           recordSubscribe({
             workspaceId: wsId,
@@ -479,9 +479,9 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         }
         const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, wsId, workosUserId)
         if (!workspaceUser) {
-          // The session was fetched globally by id and its workspace is
-          // unproven here — recording its streamId would leak a foreign
-          // workspace's identifier into the probed workspace's audit rows.
+          // The session was fetched before the caller's membership in wsId was
+          // proven — recording its streamId would leak the workspace's
+          // identifier into a non-member's probe audit rows.
           // Denied rows carry only the session id the prober supplied.
           recordSubscribe({
             workspaceId: wsId,
@@ -608,7 +608,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           return
         }
         try {
-          const session = await AgentSessionRepository.findById(pool, sessionId)
+          const session = await AgentSessionRepository.findById(pool, workspaceIdFromPayload, sessionId)
           if (!session) {
             callback?.({ ok: false, error: "Session not found" })
             return
@@ -643,7 +643,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
           // lives in this server's abort registry. Both are graceful — the turn
           // wraps up with whatever it has rather than failing.
           const aborted = session.callbackTokenHash
-            ? await AgentSessionRepository.requestAbort(pool, sessionId)
+            ? await AgentSessionRepository.requestAbort(pool, workspaceIdFromPayload, sessionId)
             : sessionAbortRegistry.abort(sessionId, "user_abort")
           wsMessagesTotal.inc({
             workspace_id: workspaceIdFromPayload,
@@ -790,7 +790,7 @@ async function emitRunningSessionBootstraps(
 ): Promise<void> {
   const { pool, wsId, streamIds } = params
   // Null before the first step fires; the next live progress event populates the entry.
-  const sessions = (await AgentSessionRepository.findRunningByStreams(pool, streamIds)).filter(
+  const sessions = (await AgentSessionRepository.findRunningByStreams(pool, wsId, streamIds)).filter(
     (session) => session.currentStepType
   )
   if (sessions.length === 0) return
@@ -798,12 +798,13 @@ async function emitRunningSessionBootstraps(
   const [counts, personas] = await Promise.all([
     AgentSessionRepository.countStepsBySessions(
       pool,
+      wsId,
       sessions.map((session) => session.id)
     ),
     PersonaRepository.findByIds(
       pool,
-      sessions.map((session) => session.personaId),
-      wsId
+      wsId,
+      sessions.map((session) => session.personaId)
     ),
   ])
   const personaNames = new Map(personas.map((persona) => [persona.id, persona.name]))

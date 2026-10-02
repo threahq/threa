@@ -343,6 +343,58 @@ describe("access-log socket capture", () => {
     socket.disconnect()
   })
 
+  test("should resolve an agent-session room only inside the room's workspace", async () => {
+    const client = new TestClient()
+    await loginAs(client, email("agsess-room"), "Session Watcher")
+    const wsA = await createWorkspace(client, "Session Home WS")
+    const wsB = await createWorkspace(client, "Session Other WS")
+    const scratchpad = await createScratchpad(client, wsA.id)
+    const sessionId = `agsess_room_${testRunId}`
+    await pool.query(
+      `INSERT INTO agent_sessions (id, workspace_id, stream_id, persona_id, trigger_message_id, status)
+       VALUES ($1, $2, $3, 'persona_room', 'msg_room', 'running')`,
+      [sessionId, wsA.id, scratchpad.id]
+    )
+
+    const socket = createSocket(client)
+    await connectSocket(socket)
+    await joinRoom(socket, `ws:${wsA.id}:agent_session:${sessionId}`)
+    // The caller is a member of wsB too, so only the workspace pin on the lookup refuses this.
+    await expect(joinRoom(socket, `ws:${wsB.id}:agent_session:${sessionId}`)).rejects.toThrow("Session not found")
+
+    socket.disconnect()
+  })
+
+  test("should abort an agent session only inside the payload's workspace", async () => {
+    const client = new TestClient()
+    await loginAs(client, email("agsess-abort"), "Session Stopper")
+    const wsA = await createWorkspace(client, "Abort Home WS")
+    const wsB = await createWorkspace(client, "Abort Other WS")
+    const scratchpad = await createScratchpad(client, wsA.id)
+    const sessionId = `agsess_abort_${testRunId}`
+    // A callback token hash routes the abort to the session row instead of this server's in-process registry.
+    await pool.query(
+      `INSERT INTO agent_sessions (id, workspace_id, stream_id, persona_id, trigger_message_id, status, callback_token_hash)
+       VALUES ($1, $2, $3, 'persona_abort', 'msg_abort', 'running', 'hash_abort')`,
+      [sessionId, wsA.id, scratchpad.id]
+    )
+    const socket = createSocket(client)
+    await connectSocket(socket)
+    const abort = (workspaceId: string) =>
+      socket.timeout(5000).emitWithAck("agent_session:research:abort", { sessionId, workspaceId })
+
+    const foreign = await abort(wsB.id)
+    const own = await abort(wsA.id)
+    const row = await pool.query(`SELECT abort_requested_at FROM agent_sessions WHERE id = $1`, [sessionId])
+    socket.disconnect()
+
+    expect({ foreign, own, abortRequested: row.rows[0].abort_requested_at !== null }).toEqual({
+      foreign: { ok: false, error: "Session not found" },
+      own: { ok: true },
+      abortRequested: true,
+    })
+  })
+
   test("reconstructDeliveredEvents returns exactly the in-interval events for the subscriber", async () => {
     const client = new TestClient()
     const user = await loginAs(client, email("recon"), "Reconstructor")

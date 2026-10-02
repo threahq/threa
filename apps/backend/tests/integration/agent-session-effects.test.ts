@@ -20,6 +20,7 @@ const SETTINGS_EFFECT: AgentToolEffect = {
 }
 
 describe("session lifecycle payloads carry the turn's effects", () => {
+  const testWorkspaceId = workspaceId()
   let pool: Pool
 
   beforeAll(async () => {
@@ -40,14 +41,14 @@ describe("session lifecycle payloads carry the turn's effects", () => {
 
   async function writeStep(sessionId: string, stepNumber: number, effects?: AgentToolEffect[]): Promise<string> {
     const id = stepId()
-    await AgentSessionRepository.upsertStep(pool, {
+    await AgentSessionRepository.upsertStep(pool, testWorkspaceId, {
       id,
       sessionId,
       stepNumber,
       stepType: effects ? AgentStepTypes.TOOL_CALL : AgentStepTypes.WEB_SEARCH,
       startedAt: new Date(),
     })
-    if (effects) await AgentSessionRepository.updateStep(pool, id, { effects })
+    if (effects) await AgentSessionRepository.updateStep(pool, testWorkspaceId, id, { effects })
     return id
   }
 
@@ -67,7 +68,7 @@ describe("session lifecycle payloads carry the turn's effects", () => {
         streamId: streamId(),
         personaId: personaId(),
         personaName: "Ariadne",
-        workspaceId: workspaceId(),
+        workspaceId: testWorkspaceId,
         serverId: "test-server",
         initialSequence: 1n,
         ...params,
@@ -138,7 +139,7 @@ describe("session lifecycle payloads carry the turn's effects", () => {
     // The retry reuses step_number 1; upsertStep's ON CONFLICT resets effects to
     // NULL, so attempt 1's write is gone from the step rows from here on.
     await writeStep(attemptOneSessionId, 1)
-    const steps = await AgentSessionRepository.findStepsBySession(pool, attemptOneSessionId)
+    const steps = await AgentSessionRepository.findStepsBySession(pool, testWorkspaceId, attemptOneSessionId)
     expect(steps.map((s) => s.effects)).toEqual([undefined])
 
     // The durable interrupted event is now the only record of it.
@@ -174,8 +175,8 @@ describe("an orphaned session's terminal event carries its effects", () => {
   })
 
   test("surfaces a write made before the process died", async () => {
-    const testStreamId = streamId()
     const testWorkspaceId = workspaceId()
+    const testStreamId = streamId()
     const testSessionId = sessionId()
     const testPersonaId = personaId()
 
@@ -194,14 +195,14 @@ describe("an orphaned session's terminal event carries its effects", () => {
     })
 
     const writtenStepId = stepId()
-    await AgentSessionRepository.upsertStep(pool, {
+    await AgentSessionRepository.upsertStep(pool, testWorkspaceId, {
       id: writtenStepId,
       sessionId: testSessionId,
       stepNumber: 1,
       stepType: AgentStepTypes.TOOL_CALL,
       startedAt: new Date(),
     })
-    await AgentSessionRepository.updateStep(pool, writtenStepId, {
+    await AgentSessionRepository.updateStep(pool, testWorkspaceId, writtenStepId, {
       effects: [{ kind: "settings", target: "theme", before: "light", after: "dark" }],
     })
 

@@ -68,7 +68,7 @@ describe("ConversationSummaryRepository sealed rolling summary", () => {
       lastSummarizedSequence: 5n,
     })
 
-    const read = await ConversationSummaryRepository.findByStreamAndPersona(pool, sId, PERSONA_ID)
+    const read = await ConversationSummaryRepository.findByStreamAndPersona(pool, wsId, sId, PERSONA_ID)
     expect(read?.summary).toBeNull()
     expect(read?.sealed).toEqual({ ciphertext, envelope: ENVELOPE, keyGeneration: 3 })
     expect(read?.lastSummarizedSequence).toBe(5n)
@@ -99,7 +99,7 @@ describe("ConversationSummaryRepository sealed rolling summary", () => {
       lastSummarizedSequence: 4n,
     })
 
-    const afterStale = await ConversationSummaryRepository.findByStreamAndPersona(pool, sId, PERSONA_ID)
+    const afterStale = await ConversationSummaryRepository.findByStreamAndPersona(pool, wsId, sId, PERSONA_ID)
     expect(afterStale?.sealed?.ciphertext).toBe(firstCiphertext)
     expect(afterStale?.lastSummarizedSequence).toBe(5n)
 
@@ -114,7 +114,7 @@ describe("ConversationSummaryRepository sealed rolling summary", () => {
       lastSummarizedSequence: 9n,
     })
 
-    const afterAdvance = await ConversationSummaryRepository.findByStreamAndPersona(pool, sId, PERSONA_ID)
+    const afterAdvance = await ConversationSummaryRepository.findByStreamAndPersona(pool, wsId, sId, PERSONA_ID)
     expect(afterAdvance?.summary).toBe("Newer plaintext summary")
     expect(afterAdvance?.sealed).toBeNull()
     expect(afterAdvance?.lastSummarizedSequence).toBe(9n)

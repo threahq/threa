@@ -9,7 +9,7 @@ import { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
 import { insertEvalPersona } from "../../evals/framework/eval-persona"
 import { PersonaRepository } from "../../src/features/agents"
-import { personaId } from "../../src/lib/id"
+import { personaId, workspaceId } from "../../src/lib/id"
 
 const template = {
   description: "Eval template",
@@ -97,7 +97,7 @@ describe("eval persona insert", () => {
       name: "Ariadne (Eval)",
     })
 
-    const persona = await PersonaRepository.findById(pool, id, null)
+    const persona = await PersonaRepository.findById(pool, workspaceId(), id)
     expect(persona?.model).toBe("openrouter:openai/gpt-5.6-luna")
   })
 })

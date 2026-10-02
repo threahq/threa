@@ -158,6 +158,7 @@ describe("ConversationSummaryService", () => {
       keptMessages,
     })
 
+    expect(findSummarySpy).toHaveBeenCalledWith({}, "ws_1", "stream_1", "persona_1")
     expect(listByRangeSpy).toHaveBeenCalledWith({}, "ws_1", "stream_1", 51n, 79n, { limit: 40 })
     // The fold carries the cost-attribution context and telemetry through to the
     // shared `generateTextWithTools` call, and folds the prior summary in (so the

@@ -229,7 +229,7 @@ describe("recordSteps plaintext tool step lifecycle", () => {
     const holder = await pool.connect()
     try {
       await holder.query("BEGIN")
-      const open = await AgentSessionRepository.appendStep(holder, {
+      const open = await AgentSessionRepository.appendStep(holder, ws, {
         id: `step_racing_${ws.slice(-8)}`,
         sessionId: invocationId,
         stepType: "tool_call",
@@ -262,7 +262,7 @@ describe("recordSteps plaintext tool step lifecycle", () => {
   test("should reject an append whose caller-supplied step id already exists instead of retrying forever", async () => {
     const existing = await send({ stepType: "tool_call", content: "dup", clientStepId: "call-dup" })
     await expect(
-      AgentSessionRepository.appendStep(pool, {
+      AgentSessionRepository.appendStep(pool, ws, {
         id: existing.stepId,
         sessionId: invocationId,
         stepType: "tool_call",
@@ -290,7 +290,7 @@ describe("recordSteps plaintext tool step lifecycle", () => {
       clientStepId: "call-hang-1",
       phase: "started",
     })
-    const completed = await AgentSessionRepository.completeSession(pool, invocationId, { lastSeenSequence: 0n })
+    const completed = await AgentSessionRepository.completeSession(pool, ws, invocationId, { lastSeenSequence: 0n })
     const afterComplete = await closedWithSession(beforeComplete.stepId)
 
     await pool.query("UPDATE agent_sessions SET status = 'running', completed_at = NULL WHERE id = $1", [invocationId])
@@ -300,7 +300,9 @@ describe("recordSteps plaintext tool step lifecycle", () => {
       clientStepId: "call-hang-2",
       phase: "started",
     })
-    const failed = await AgentSessionRepository.updateStatus(pool, invocationId, "failed", { error: "runtime died" })
+    const failed = await AgentSessionRepository.updateStatus(pool, ws, invocationId, "failed", {
+      error: "runtime died",
+    })
 
     expect({
       completed: completed?.status,

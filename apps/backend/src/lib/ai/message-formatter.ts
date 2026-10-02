@@ -120,7 +120,7 @@ export class MessageFormatter {
 
     const [users, personas] = await Promise.all([
       UserRepository.findByIds(client, workspaceId, [...userIds]),
-      PersonaRepository.findByIds(client, [...personaIds], workspaceId),
+      PersonaRepository.findByIds(client, workspaceId, [...personaIds]),
     ])
 
     const nameById = new Map<string, string>()
@@ -129,7 +129,6 @@ export class MessageFormatter {
 
     return nameById
   }
-
 
   /**
    * Format messages in a simple inline format for prompts.

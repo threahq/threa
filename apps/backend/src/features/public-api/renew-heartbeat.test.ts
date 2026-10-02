@@ -63,7 +63,7 @@ describe("renewBotInvocationClaim", () => {
     await handlers.renewBotInvocationClaim(req, createResponse())
 
     expect(updateHeartbeat).toHaveBeenCalledTimes(1)
-    expect(updateHeartbeat.mock.calls[0]).toEqual([pool, "binv_1"])
+    expect(updateHeartbeat.mock.calls[0]).toEqual([pool, "ws_1", "binv_1"])
   })
 
   it("does not bump the heartbeat when the claim is gone (404)", async () => {

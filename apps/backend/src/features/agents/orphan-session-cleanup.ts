@@ -32,21 +32,21 @@ const ORPHAN_ERROR = "Session orphaned (stale heartbeat)"
  */
 export async function failSessionWithLifecycleInTransaction(
   tx: Querier,
-  session: { id: string; streamId: string; personaId: string },
+  session: { id: string; workspaceId: string; streamId: string; personaId: string },
   stream: Awaited<ReturnType<typeof StreamRepository.findById>>,
   error: string,
   onFailed?: (tx: Querier) => Promise<void>,
   options: { spendDenial?: AISpendDenialReason } = {}
 ): Promise<boolean> {
-  const { id: sessionId, streamId, personaId } = session
-  const failed = await AgentSessionRepository.updateStatus(tx, sessionId, SessionStatuses.FAILED, {
+  const { id: sessionId, workspaceId, streamId, personaId } = session
+  const failed = await AgentSessionRepository.updateStatus(tx, workspaceId, sessionId, SessionStatuses.FAILED, {
     error,
     onlyIfStatus: SessionStatuses.RUNNING,
   })
   if (!failed) return false
   if (onFailed) await onFailed(tx)
   if (stream) {
-    const steps = await AgentSessionRepository.findStepsBySession(tx, sessionId)
+    const steps = await AgentSessionRepository.findStepsBySession(tx, workspaceId, sessionId)
     const streamEvent = await StreamEventRepository.insert(tx, {
       id: eventId(),
       workspaceId: stream.workspaceId,

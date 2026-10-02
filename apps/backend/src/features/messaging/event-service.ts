@@ -555,7 +555,7 @@ export class EventService {
 
     const [isMember, isPersona] = await Promise.all([
       StreamMemberRepository.isMember(client, workspaceId, streamId, actorId),
-      StreamPersonaParticipantRepository.hasParticipated(client, streamId, actorId),
+      StreamPersonaParticipantRepository.hasParticipated(client, workspaceId, streamId, actorId),
     ])
 
     if (isMember && isPersona) {
@@ -2810,7 +2810,7 @@ export class EventService {
       .filter((id): id is string => typeof id === "string")
     const runningSessionProgress =
       startedSessionIds.length > 0
-        ? await AgentSessionRepository.findProgressSnapshotsByIds(this.pool, startedSessionIds)
+        ? await AgentSessionRepository.findProgressSnapshotsByIds(this.pool, scope.workspaceId, startedSessionIds)
         : new Map()
 
     // Stored payloads snapshot a PAST access decision and a past memo state:

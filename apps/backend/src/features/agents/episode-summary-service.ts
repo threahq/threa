@@ -40,7 +40,7 @@ export class EpisodeSummaryService {
     const { workspaceId, sessionId } = params
     const { pool } = this.deps
 
-    const session = await AgentSessionRepository.findById(pool, sessionId)
+    const session = await AgentSessionRepository.findById(pool, workspaceId, sessionId)
     if (!session) {
       logger.debug({ sessionId }, "episode summary skipped — session not found")
       return { written: false }
@@ -85,7 +85,7 @@ export class EpisodeSummaryService {
       return { written: false }
     }
 
-    const written = await AgentSessionRepository.setEpisodeSummary(pool, sessionId, summary)
+    const written = await AgentSessionRepository.setEpisodeSummary(pool, workspaceId, sessionId, summary)
     logger.info({ sessionId, workspaceId, written }, "episode summary processed")
     return { written }
   }

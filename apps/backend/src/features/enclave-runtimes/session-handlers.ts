@@ -230,7 +230,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
     const denial = error as { code?: string; details?: { reason?: string } }
     if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
     const sessionId = req.params.id
-    const session = sessionId ? await AgentSessionRepository.findById(pool, sessionId) : null
+    const session = sessionId ? await AgentSessionRepository.findByIdForCallback(pool, sessionId) : null
     const reason =
       denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "missing_initiating_user")
     const terminalError = `STREAM_READ_ONLY:${reason}`
@@ -267,9 +267,14 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
       // No assertRunning here on purpose — a late heartbeat against a finished
       // session has always been a harmless no-op, only the binding is enforced.
-      const session = await AgentSessionRepository.findById(pool, id)
-      if (session) assertCallbackBound(session, req)
-      await AgentSessionRepository.updateHeartbeat(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
+      if (!session) {
+        const response: EnclaveSessionHeartbeatResponse = { abort: false }
+        res.status(200).json(response)
+        return
+      }
+      assertCallbackBound(session, req)
+      await AgentSessionRepository.updateHeartbeat(pool, session.workspaceId, id)
       await EnclaveInvocationsRepository.renewBySession(pool, {
         sessionId: id,
         claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
@@ -278,7 +283,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         ownerId: id,
         leaseSeconds: DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
       })
-      const response: EnclaveSessionHeartbeatResponse = { abort: session?.abortRequestedAt != null }
+      const response: EnclaveSessionHeartbeatResponse = { abort: session.abortRequestedAt != null }
       res.status(200).json(response)
     },
 
@@ -295,7 +300,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = messageSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
@@ -356,7 +361,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = pollAfterSchema.safeParse(req.query)
       if (!parsed.success) throw new HttpError("Invalid query", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
@@ -412,7 +417,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       ]
       const [members, personas] = await Promise.all([
         userIds.length > 0 ? UserRepository.findByIds(pool, stream.workspaceId, userIds) : Promise.resolve([]),
-        personaIds.length > 0 ? PersonaRepository.findByIds(pool, personaIds, stream.workspaceId) : Promise.resolve([]),
+        personaIds.length > 0 ? PersonaRepository.findByIds(pool, stream.workspaceId, personaIds) : Promise.resolve([]),
       ])
       const names = new Map<string, string>()
       for (const m of members) names.set(m.id, m.name)
@@ -459,7 +464,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = EnclaveNamingDecisionSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       if (parsed.data.action === "rename") {
@@ -596,7 +601,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = sealedSummarySchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
@@ -645,7 +650,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = sealedStepStartSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
@@ -665,7 +670,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           streamId: session.streamId,
           principal: { kind: "user", userId: initiatingUserId },
         })
-        const created = await AgentSessionRepository.appendStep(tx, {
+        const created = await AgentSessionRepository.appendStep(tx, session.workspaceId, {
           id: step.stepId,
           sessionId: id,
           stepType: step.stepType,
@@ -674,7 +679,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           contentEnvelope: step.envelope,
           startedAt: new Date(),
         })
-        await AgentSessionRepository.updateCurrentStepType(tx, id, step.stepType)
+        await AgentSessionRepository.updateCurrentStepType(tx, session.workspaceId, id, step.stepType)
         return created
       })
 
@@ -709,7 +714,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = sealedStepSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
@@ -728,7 +733,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           streamId: session.streamId,
           principal: { kind: "user", userId: initiatingUserId },
         })
-        return AgentSessionRepository.updateStep(tx, step.stepId, {
+        return AgentSessionRepository.updateStep(tx, session.workspaceId, step.stepId, {
           contentCiphertext: step.ciphertext,
           contentEnvelope: step.envelope,
           messageId: step.messageId,
@@ -748,7 +753,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
             streamId: session.streamId,
             principal: { kind: "user", userId: initiatingUserId },
           })
-          const created = await AgentSessionRepository.appendStep(tx, {
+          const created = await AgentSessionRepository.appendStep(tx, session.workspaceId, {
             id: step.stepId,
             sessionId: id,
             stepType: step.stepType,
@@ -758,7 +763,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
             startedAt,
             completedAt,
           })
-          await AgentSessionRepository.updateCurrentStepType(tx, id, step.stepType)
+          await AgentSessionRepository.updateCurrentStepType(tx, session.workspaceId, id, step.stepType)
           return created
         })
         emitInlineProgress(io, session, stream.workspaceId, persisted.stepNumber, persisted.stepType)
@@ -794,7 +799,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = sealedSubstepSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
@@ -819,7 +824,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           // `requireRunning` guards the finalize race: a snapshot that lands after
           // the step's `/steps` finalize (reordering / retry) must not overwrite the
           // final content with a mid-run partial. Once finalized this no-ops.
-          await AgentSessionRepository.updateStep(tx, sub.stepId, {
+          await AgentSessionRepository.updateStep(tx, session.workspaceId, sub.stepId, {
             contentCiphertext: sub.snapshotCiphertext,
             contentEnvelope: sub.snapshotEnvelope,
             requireRunning: true,
@@ -856,7 +861,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = completeSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       if (session?.status === SessionStatuses.COMPLETED) {
         res.status(200).json({ status: "already_completed" }) // idempotent redelivery
         return
@@ -876,7 +881,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       // forever. Gated on winning the RUNNING→COMPLETED transition so a redelivery
       // that raced doesn't double-emit. Plaintext-free: counts + timing only.
       const committed = await withTransaction(pool, async (tx) => {
-        const completed = await AgentSessionRepository.completeSession(tx, id, {
+        const completed = await AgentSessionRepository.completeSession(tx, session.workspaceId, id, {
           lastSeenSequence: session.lastSeenSequence ?? 0n,
           responseMessageId: messageIds[0] ?? null,
           sentMessageIds: messageIds,
@@ -894,7 +899,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         // cleanup makes for a streamless reclaim. An open dialog on a now-deleted
         // stream then reconciles on its next bootstrap rather than live.
         if (stream) {
-          const steps = await AgentSessionRepository.findStepsBySession(tx, id)
+          const steps = await AgentSessionRepository.findStepsBySession(tx, session.workspaceId, id)
           const completedEvent = await StreamEventRepository.insert(tx, {
             id: eventId(),
             workspaceId: stream.workspaceId,
@@ -1016,7 +1021,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const parsed = failSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await AgentSessionRepository.findById(pool, id)
+      const session = await AgentSessionRepository.findByIdForCallback(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
 

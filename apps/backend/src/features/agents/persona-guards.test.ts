@@ -43,8 +43,9 @@ describe("assertAssignablePersona", () => {
   })
 
   it("accepts an active workspace/built-in persona with no caller context", async () => {
-    spyOn(PersonaRepository, "findById").mockResolvedValue(persona({ managedBy: "workspace" }))
+    const find = spyOn(PersonaRepository, "findById").mockResolvedValue(persona({ managedBy: "workspace" }))
     await expect(assertAssignablePersona(db, "persona_x", "workspace_1")).resolves.toBeUndefined()
+    expect(find).toHaveBeenCalledWith(db, "workspace_1", "persona_x")
   })
 
   it("rejects an archived persona (400, does not degrade to Ariadne)", async () => {

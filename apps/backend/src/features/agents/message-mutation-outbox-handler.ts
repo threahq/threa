@@ -154,7 +154,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     }
 
     const latestSession = await this.findLatestPersonaSession(payload.workspaceId, (cursor) =>
-      AgentSessionRepository.findByTriggerMessage(this.db, payload.messageId, cursor)
+      AgentSessionRepository.findByTriggerMessage(this.db, payload.workspaceId, payload.messageId, cursor)
     )
     if (latestSession) {
       await this.handleTriggerMessageEdit(payload, occurredAt, latestSession)
@@ -226,7 +226,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     occurredAt: Date
   ): Promise<void> {
     const latestSession = await this.findLatestPersonaSession(payload.workspaceId, (cursor) =>
-      AgentSessionRepository.findLatestByStream(this.db, payload.streamId, cursor)
+      AgentSessionRepository.findLatestByStream(this.db, payload.workspaceId, payload.streamId, cursor)
     )
     if (!latestSession) return
     if (latestSession.triggerMessageId === payload.messageId) return
@@ -335,7 +335,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     const superseded =
       session.status === SessionStatuses.SUPERSEDED
         ? session
-        : await AgentSessionRepository.updateStatus(this.db, session.id, SessionStatuses.SUPERSEDED, {
+        : await AgentSessionRepository.updateStatus(this.db, workspaceId, session.id, SessionStatuses.SUPERSEDED, {
             error: supersedeReason,
             onlyIfStatusIn: [SessionStatuses.COMPLETED, SessionStatuses.FAILED],
           })
@@ -361,7 +361,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
   }
 
   private async handleInvokingMessageDeleted(payload: NormalizedMessageDeletedPayload): Promise<void> {
-    const sessions = await AgentSessionRepository.listByTriggerMessage(this.db, payload.messageId)
+    const sessions = await AgentSessionRepository.listByTriggerMessage(this.db, payload.workspaceId, payload.messageId)
     if (sessions.length === 0) return
 
     for (const session of sessions) {
@@ -389,7 +389,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
     }
 
     return withTransaction(this.db, async (db) => {
-      const updated = await AgentSessionRepository.updateStatus(db, session.id, SessionStatuses.DELETED, {
+      const updated = await AgentSessionRepository.updateStatus(db, workspaceId, session.id, SessionStatuses.DELETED, {
         error: "Invoking message deleted",
       })
       if (!updated) return null

@@ -72,6 +72,7 @@ function arrangeSink() {
   // id to the id it generated to tell a fresh insert from an idempotent dedup.
   const appendStep = spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (
     _db: unknown,
+    _workspaceId: string,
     params: { id: string }
   ) => ({ ...persisted, id: params.id })) as never)
   const updateCurrentStepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(
@@ -103,7 +104,8 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     }
 
     expect(appendStep).toHaveBeenCalledTimes(1)
-    const params = appendStep.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    expect(appendStep.mock.calls[0]?.[1]).toBe("ws_1")
+    const params = appendStep.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(params).toMatchObject({
       sessionId: "binv_1",
       stepType: AgentStepTypes.TOOL_CALL,
@@ -111,7 +113,7 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     })
     // Post-hoc frame: the row lands already completed.
     expect(params.completedAt).toEqual(params.startedAt)
-    expect(updateCurrentStepType).toHaveBeenCalledWith(expect.anything(), "binv_1", AgentStepTypes.TOOL_CALL)
+    expect(updateCurrentStepType).toHaveBeenCalledWith(expect.anything(), "ws_1", "binv_1", AgentStepTypes.TOOL_CALL)
     expect(sink.lastStep?.stepNumber).toBe(3)
   })
 
@@ -151,7 +153,11 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     const io = { to: (room: string) => target([room]) } as unknown as Server
     spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
       fn({} as never)) as never)
-    spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (_db: unknown, params: { id: string }) => ({
+    spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (
+      _db: unknown,
+      _workspaceId: string,
+      params: { id: string }
+    ) => ({
       id: params.id,
       sessionId: "binv_1",
       stepNumber: 1,
@@ -242,7 +248,7 @@ describe("BotInvocationTraceSink via the shared projector", () => {
     }
 
     expect(appendStep).toHaveBeenCalledTimes(1)
-    expect(appendStep.mock.calls[0]?.[1]).toMatchObject({
+    expect(appendStep.mock.calls[0]?.[2]).toMatchObject({
       stepType: AgentStepTypes.THINKING,
       content: "Pondering…",
     })
@@ -253,6 +259,7 @@ describe("synthesizeReplyOnlyBotTrace", () => {
   it("reconstructs a context_received + message_sent trace through the projector, marked synthesized", async () => {
     const appendStep = spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (
       _db: unknown,
+      _workspaceId: string,
       params: { id: string; stepType: string; content: string }
     ) => ({ id: params.id, stepType: params.stepType, content: params.content })) as never)
     const updateCurrentStepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(
@@ -260,6 +267,7 @@ describe("synthesizeReplyOnlyBotTrace", () => {
     )
 
     const steps = await synthesizeReplyOnlyBotTrace({} as never, {
+      workspaceId: "ws_1",
       sessionId: "binv_1",
       trigger: {
         messageId: "msg_trigger",
@@ -272,7 +280,8 @@ describe("synthesizeReplyOnlyBotTrace", () => {
     })
 
     expect(appendStep).toHaveBeenCalledTimes(2)
-    const contextParams = appendStep.mock.calls[0]?.[1] as unknown as { stepType: string; content: string }
+    expect(appendStep.mock.calls.map((c) => c[1])).toEqual(["ws_1", "ws_1"])
+    const contextParams = appendStep.mock.calls[0]?.[2] as unknown as { stepType: string; content: string }
     expect(contextParams.stepType).toBe(AgentStepTypes.CONTEXT_RECEIVED)
     expect(JSON.parse(contextParams.content)).toEqual({
       messages: [
@@ -287,7 +296,7 @@ describe("synthesizeReplyOnlyBotTrace", () => {
       ],
       synthesized: true,
     })
-    expect(appendStep.mock.calls[1]?.[1]).toMatchObject({
+    expect(appendStep.mock.calls[1]?.[2]).toMatchObject({
       sessionId: "binv_1",
       stepType: AgentStepTypes.MESSAGE_SENT,
       content: "High tide is at 14:32.",
