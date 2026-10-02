@@ -43,6 +43,33 @@ import {
   type StreamPreviewHistoryBatchResponse,
 } from "@threahq/types"
 
+interface StreamRefresh {
+  promise: Promise<boolean>
+  controller: AbortController
+  generation?: number
+}
+
+function awaitRecovery<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort)
+      reject(signal.reason)
+    }
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort)
+        reject(error)
+      }
+    )
+  })
+}
+
 type BootstrapOutcome = { status: "success" } | { status: "cancelled" } | { status: "error"; error: unknown }
 
 interface SyncEngineDeps {
@@ -64,7 +91,7 @@ interface SyncEngineDeps {
     bootstrap: (
       workspaceId: string,
       streamId: string,
-      params?: { after?: string }
+      params?: { after?: string; signal?: AbortSignal }
     ) => Promise<import("@threahq/types").StreamBootstrap>
   }
   messageService?: {
@@ -174,7 +201,7 @@ export class SyncEngine {
    *  below-floor `forceFull` request arriving while a slim reconnect is already
    *  queued upgrades the queued run rather than being collapsed away. */
   private queuedReconnectForceFull = false
-  private activeStreamRefreshes = new Map<string, Promise<boolean>>()
+  private activeStreamRefreshes = new Map<string, StreamRefresh>()
   /** Single-flighted display-only HTTP warm fetches (see warmStreamOverHttp).
    *  Kept separate from activeStreamRefreshes: a warm fetch performs no room
    *  join, so it must never satisfy a reconnect-path refresh that needs one. */
@@ -280,6 +307,7 @@ export class SyncEngine {
   private recoveryGeneration = 0
   private previewDrain: Promise<void> | null = null
   private boardDrain: Promise<unknown> = Promise.resolve()
+  private boardAbort = new AbortController()
   private previewScheduled = false
   private previewAbort: AbortController | null = null
   /** Refreshed (or in flight) since the last connect; a refresh that doesn't land
@@ -494,6 +522,20 @@ export class SyncEngine {
   private replaceRecoveryGeneration(): void {
     this.recoveryGeneration += 1
     this.previewAbort?.abort()
+    this.boardAbort.abort()
+    this.boardAbort = new AbortController()
+    // Retained timeline requests are foreground demand, not cold queue permits.
+    // Exclusive cold transports are aborted before another generation can launch.
+    this.boardDrain = Promise.resolve()
+    for (const [streamId, refresh] of this.activeStreamRefreshes) {
+      if (refresh.generation === undefined) continue
+      if (this.isAccountCurrent() && this.isForegroundStream(streamId)) {
+        refresh.generation = this.recoveryGeneration
+      } else {
+        refresh.controller.abort()
+        this.activeStreamRefreshes.delete(streamId)
+      }
+    }
     this.refreshedWarmStreamIds.clear()
   }
 
@@ -520,6 +562,7 @@ export class SyncEngine {
     // This cycle's catch-up run reopens live flow when it completes.
     this.eventGate?.attach(socket)
     this.replaceRecoveryGeneration()
+    const generation = this.recoveryGeneration
     this.beginCatchUpCycle()
 
     try {
@@ -544,7 +587,7 @@ export class SyncEngine {
         // with the snapshot it hands back — and this call leaves the position
         // unset until then (see `coldSnapshotSettled`).
         await this.initializeActiveCursor()
-        if (this.isDestroyed) return
+        if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
       }
 
       // Resume persisted background uploads for this workspace (reload/PWA
@@ -568,6 +611,7 @@ export class SyncEngine {
       )
 
       await this.runBootstrap(isReconnect)
+      if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
 
       // A reconnect catches up the visible + board streams inside runBootstrap (via
       // getVisibleServerStreamIds); a first connect deliberately does not. But the
@@ -594,13 +638,9 @@ export class SyncEngine {
       // never blocks the connect path — drafts are local-first.
       void this.syncDrafts()
     } finally {
-      // Runs after bootstrap so it never competes for the connection setup
-      // window, and runs however the connect path above ended: it is the only
-      // path that resumes the gate paused at the top, so a throw or a destroy
-      // return above would otherwise strand every buffered live event until the
-      // next reconnect. Applies entries through the gate (no-op without a sync
-      // service; runCatchUp itself returns at once on a destroyed engine).
-      void this.runCatchUp(isReconnect ? "reconnect" : "connect")
+      // Only this generation can end its bootstrap window. A retired connect
+      // must not start catch-up while a newer connect's required streams are pending.
+      if (generation === this.recoveryGeneration) void this.runCatchUp(isReconnect ? "reconnect" : "connect")
     }
   }
 
@@ -623,7 +663,9 @@ export class SyncEngine {
     // the full snapshot inside runBootstrap; the below-floor catch-up fallback
     // re-forces full when the cursor has dropped beneath the retained
     // sync-log floor.
+    const generation = this.recoveryGeneration
     await this.runBootstrap(true)
+    if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
     this.schedulePreviewDrain()
     void this.runCatchUp("resume")
   }
@@ -641,7 +683,9 @@ export class SyncEngine {
     if (this.isDestroyed) return
     this.replaceRecoveryGeneration()
     this.beginCatchUpCycle()
+    const generation = this.recoveryGeneration
     await this.runBootstrap(true, { forceFull: true })
+    if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
     await this.runCatchUp("pull")
   }
 
@@ -1290,6 +1334,8 @@ export class SyncEngine {
    * buffered live events splice in on top — newest state wins, no regression.
    */
   private async slimReconnectBootstrap(): Promise<BootstrapOutcome> {
+    const generation = this.recoveryGeneration
+    const current = () => this.isAccountCurrent() && generation === this.recoveryGeneration
     const { workspaceId, syncStatus } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
 
@@ -1304,7 +1350,7 @@ export class SyncEngine {
       if (this.socket?.connected) {
         await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
       }
-      if (!this.isAccountCurrent()) return { status: "cancelled" }
+      if (!current()) return { status: "cancelled" }
 
       if (this.socket?.connected) {
         await this.syncBoardStreams(this.getVisibleServerStreamIds(), { refreshPersisted: true })
@@ -1323,16 +1369,16 @@ export class SyncEngine {
         }
         await Promise.all(Array.from({ length: Math.min(BOARD_SYNC_CONCURRENCY, activeIds.length) }, worker))
       }
-      if (!this.isAccountCurrent()) return { status: "cancelled" }
+      if (!current()) return { status: "cancelled" }
 
       if (this.socket?.connected) await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
-      if (!this.isAccountCurrent()) return { status: "cancelled" }
+      if (!current()) return { status: "cancelled" }
 
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")
       return { status: "success" }
     } catch (error) {
-      if (!this.isAccountCurrent()) return { status: "cancelled" }
+      if (!current()) return { status: "cancelled" }
       this.lastWorkspaceError = error
       syncStatus.set(`workspace:${workspaceId}`, "stale")
       return { status: "error", error }
@@ -1390,6 +1436,10 @@ export class SyncEngine {
     return bootstrapPromise
   }
 
+  private isForegroundStream(streamId: string): boolean {
+    return this.currentStreamId === streamId || this.visibleStreamIds.includes(streamId)
+  }
+
   private getVisibleServerStreamIds(): string[] {
     const streamIds = [
       ...(this.currentStreamId ? [this.currentStreamId] : []),
@@ -1429,7 +1479,15 @@ export class SyncEngine {
    */
   private syncBoardStreams(streamIds: string[], options?: { refreshPersisted?: boolean }): Promise<string[]> {
     const generation = this.recoveryGeneration
-    const drain = this.boardDrain.then(() => this.performBoardSync(streamIds, generation, options))
+    const signal = this.boardAbort.signal
+    const drain = this.boardDrain.then(async () => {
+      try {
+        return await awaitRecovery(this.performBoardSync(streamIds, generation, options), signal)
+      } catch (error) {
+        if (signal.aborted && error === signal.reason) return []
+        throw error
+      }
+    })
     this.boardDrain = drain.catch(() => undefined)
     return drain
   }
@@ -1550,18 +1608,27 @@ export class SyncEngine {
     }
 
     const existing = this.activeStreamRefreshes.get(streamId)
-    if (existing) return existing
+    if (existing) {
+      return recoveryGeneration === undefined
+        ? existing.promise
+        : this.joinStreamForCatchUp(streamId).then(() => existing.promise)
+    }
 
-    const refresh = this.performStreamRefresh(streamId, recoveryGeneration).finally(() => {
+    const refresh: StreamRefresh = {
+      promise: Promise.resolve(false),
+      controller: new AbortController(),
+      generation: this.isForegroundStream(streamId) ? undefined : recoveryGeneration,
+    }
+    refresh.promise = this.performStreamRefresh(streamId, refresh).finally(() => {
       if (this.activeStreamRefreshes.get(streamId) === refresh) {
         this.activeStreamRefreshes.delete(streamId)
       }
     })
     this.activeStreamRefreshes.set(streamId, refresh)
-    return refresh
+    return refresh.promise
   }
 
-  private async performStreamRefresh(streamId: string, recoveryGeneration?: number): Promise<boolean> {
+  private async performStreamRefresh(streamId: string, refresh: StreamRefresh): Promise<boolean> {
     const { workspaceId, syncStatus, streamService, queryClient } = this.deps
     const key = `stream:${streamId}`
 
@@ -1571,11 +1638,11 @@ export class SyncEngine {
     try {
       const queryKey = streamKeys.bootstrap(workspaceId, streamId)
       const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
-      const cursor = await this.joinStreamForCatchUp(streamId)
-      if (this.isDestroyed) return false
+      const cursor = await awaitRecovery(this.joinStreamForCatchUp(streamId), refresh.controller.signal)
+      if (!this.isAccountCurrent() || refresh.controller.signal.aborted) return false
       if (
-        recoveryGeneration !== undefined &&
-        (recoveryGeneration !== this.recoveryGeneration ||
+        refresh.generation !== undefined &&
+        (refresh.generation !== this.recoveryGeneration ||
           !this.socket?.connected ||
           !this.getVisibleServerStreamIds().includes(streamId))
       )
@@ -1585,8 +1652,16 @@ export class SyncEngine {
       const after = previousBootstrap ? cursor : null
 
       const fetchStartedAt = Date.now()
-      const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
+      const cursorParams = after ? { after } : undefined
+      const params =
+        refresh.generation === undefined ? cursorParams : { ...cursorParams, signal: refresh.controller.signal }
+      const bootstrap = await awaitRecovery(
+        streamService.bootstrap(workspaceId, streamId, params),
+        refresh.controller.signal
+      )
+      if (!this.isAccountCurrent() || refresh.controller.signal.aborted) return false
       await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
+      if (!this.isAccountCurrent() || refresh.controller.signal.aborted) return false
 
       queryClient.setQueryData<CachedStreamBootstrap>(queryKey, (currentBootstrap) =>
         toCachedStreamBootstrap(bootstrap, currentBootstrap ?? previousBootstrap, {
@@ -1596,6 +1671,7 @@ export class SyncEngine {
       syncStatus.set(key, "synced")
       return true
     } catch (error) {
+      if (!this.isAccountCurrent() || refresh.controller.signal.aborted) return false
       this.applyReconnectStreamError(streamId, error)
       syncStatus.set(key, syncStatus.getError(key) ? "error" : "stale")
       return false

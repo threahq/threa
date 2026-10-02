@@ -53,12 +53,17 @@ export const streamsApi = {
     return res.stream
   },
 
-  async bootstrap(workspaceId: string, streamId: string, params?: { after?: string }): Promise<StreamBootstrap> {
+  async bootstrap(
+    workspaceId: string,
+    streamId: string,
+    params?: { after?: string; signal?: AbortSignal }
+  ): Promise<StreamBootstrap> {
     const searchParams = new URLSearchParams()
     if (params?.after) searchParams.set("after", params.after)
     const query = searchParams.toString()
     const res = await api.get<{ data: StreamBootstrap }>(
-      `/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap${query ? `?${query}` : ""}`
+      `/api/workspaces/${workspaceId}/streams/${streamId}/bootstrap${query ? `?${query}` : ""}`,
+      { signal: params?.signal }
     )
     // Raw carrier fields (`slots` / temporary legacy `sharedMessages`) pass
     // through to the write owner; the slot store normalizes them (Amendment A2).

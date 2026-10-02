@@ -211,7 +211,10 @@ export function makeStreamBootstrap(streamId = "stream_1", sequence = "2"): Stre
 
 export function makeDeps() {
   const workspaceBootstrap = vi.fn(async () => makeWorkspaceBootstrap())
-  const streamBootstrap = vi.fn(async (_workspaceId: string, streamId: string) => makeStreamBootstrap(streamId))
+  const streamBootstrap = vi.fn(
+    async (_workspaceId: string, streamId: string, _params?: { after?: string; signal?: AbortSignal }) =>
+      makeStreamBootstrap(streamId)
+  )
   return {
     workspaceId: "ws_1",
     syncStatus: new SyncStatusStore(),

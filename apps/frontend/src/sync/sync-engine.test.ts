@@ -795,7 +795,7 @@ describe("SyncEngine.setBoardStreamIds", () => {
     engine.setBoardStreamIds(["thread_1"])
 
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", { signal: expect.any(AbortSignal) })
     })
   })
 
@@ -843,7 +843,9 @@ describe("SyncEngine.setBoardStreamIds", () => {
     engine.setBoardStreamIds(["stream_member"])
 
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", {
+        signal: expect.any(AbortSignal),
+      })
     })
   })
 
@@ -897,13 +899,13 @@ describe("SyncEngine.setBoardStreamIds", () => {
 
     engine.setBoardStreamIds(["thread_a"])
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_a", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_a", { signal: expect.any(AbortSignal) })
     })
     deps.streamService.bootstrap.mockClear()
 
     engine.setBoardStreamIds(["thread_a", "thread_b"])
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_b", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_b", { signal: expect.any(AbortSignal) })
     })
     expect(deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "thread_a")).toHaveLength(0)
   })
@@ -933,7 +935,9 @@ describe("SyncEngine.setBoardStreamIds", () => {
 
     engine.setBoardStreamIds(["thread_live"])
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_live", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_live", {
+        signal: expect.any(AbortSignal),
+      })
     })
     deps.streamService.bootstrap.mockClear()
 

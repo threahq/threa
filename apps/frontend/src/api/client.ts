@@ -202,9 +202,10 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
     else callerSignal.addEventListener("abort", onCallerAbort, { once: true })
   }
 
-  let response: Response
+  let responseFields: { status: number; correlationId?: string } | null = null
+  let responseOk = false
   try {
-    response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(`${API_BASE}${path}`, {
       ...init,
       credentials: "include",
       signal: controller.signal,
@@ -214,18 +215,47 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
         ...init.headers,
       },
     })
+    const correlationId = response.headers.get("x-railway-request-id") ?? undefined
+    responseFields = { status: response.status, correlationId }
+    responseOk = response.ok
+    if (isSlow()) observation.record("http_headers", responseFields)
+    if (response.status === 204) {
+      if (isSlow()) observation.record("http_body_complete", responseFields)
+      return undefined as T
+    }
+
+    if (!response.ok) {
+      const error = await parseApiError(response)
+      controller.signal.throwIfAborted()
+      if (isSlow()) observation.record("http_body_complete", responseFields)
+      throw error
+    }
+
+    let body: T
+    try {
+      body = (await response.json()) as T
+    } catch (error) {
+      if (controller.signal.aborted) throw error
+      throw new ApiError(response.status, "PARSE_ERROR", "Failed to parse server response")
+    }
+    controller.signal.throwIfAborted()
+    if (isSlow()) observation.record("http_body_complete", responseFields)
+    return body
   } catch (err) {
-    stopStallTimer()
     let diagnosticEvent: "http_timeout" | "http_abort" | "http_failure" = "http_failure"
-    let diagnosticReason: "timeout" | "abort" | "network" = "network"
+    let diagnosticReason: "timeout" | "abort" | "network" | "unknown" | "server" = responseFields
+      ? "unknown"
+      : "network"
     if (timedOut) {
       diagnosticEvent = "http_timeout"
       diagnosticReason = "timeout"
     } else if (controller.signal.aborted) {
       diagnosticEvent = "http_abort"
       diagnosticReason = "abort"
+    } else if (ApiError.isApiError(err) && !responseOk) {
+      diagnosticReason = "server"
     }
-    observation.record(diagnosticEvent, { reason: diagnosticReason })
+    observation.record(diagnosticEvent, { ...responseFields, reason: diagnosticReason })
     void flushConnectivityDiagnostics()
     // A timeout is a network-like failure, not an auth signal. Throw a plain
     // Error (NOT an ApiError) so `handleGlobalError` can't mistake it for a
@@ -238,38 +268,6 @@ async function apiFetch<T>(path: string, options: ApiRequestInit = {}): Promise<
   } finally {
     clearTimeout(timeout)
     if (callerSignal) callerSignal.removeEventListener("abort", onCallerAbort)
-  }
-
-  const correlationId = response.headers.get("x-railway-request-id") ?? undefined
-  const responseFields = { status: response.status, correlationId }
-  if (isSlow()) observation.record("http_headers", responseFields)
-  if (response.status === 204) {
-    stopStallTimer()
-    if (isSlow()) observation.record("http_body_complete", responseFields)
-    return undefined as T
-  }
-
-  if (!response.ok) {
-    try {
-      const error = await parseApiError(response)
-      if (isSlow()) observation.record("http_body_complete", responseFields)
-      observation.record("http_failure", { ...responseFields, reason: "server" })
-      void flushConnectivityDiagnostics()
-      throw error
-    } finally {
-      stopStallTimer()
-    }
-  }
-
-  try {
-    const body = (await response.json()) as T
-    if (isSlow()) observation.record("http_body_complete", responseFields)
-    return body
-  } catch {
-    observation.record("http_failure", { ...responseFields, reason: "unknown" })
-    void flushConnectivityDiagnostics()
-    throw new ApiError(response.status, "PARSE_ERROR", "Failed to parse server response")
-  } finally {
     stopStallTimer()
   }
 }
