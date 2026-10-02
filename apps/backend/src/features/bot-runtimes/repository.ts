@@ -335,8 +335,7 @@ async function findInvocationActorSource(
  */
 function canonicalSourceGateSql(alias: string, revisionSql: QueryConfig): QueryConfig {
   const invocation: QueryConfig = { text: alias, values: [] }
-  return composeSql`s.workspace_id = ${invocation}.workspace_id
-              AND m.stream_id = ${invocation}.active_stream_id
+  return composeSql`m.stream_id = ${invocation}.active_stream_id
               AND m.deleted_at IS NULL
               AND m.revision = ${revisionSql}`
 }
@@ -348,8 +347,8 @@ async function lockCanonicalInvocationSource(
   const result = await db.query<{ id: string }>(composeSql`
     SELECT m.id
     FROM bot_invocations i
-    JOIN messages m ON m.id = i.source_message_id
-    JOIN streams s ON s.id = m.stream_id
+    JOIN messages m ON m.id = i.source_message_id AND m.workspace_id = i.workspace_id
+    JOIN streams s ON s.id = m.stream_id AND s.workspace_id = i.workspace_id
     WHERE i.id = ${params.invocationId}
       AND i.workspace_id = ${params.workspaceId}
       AND i.actor_type = 'bot'
@@ -764,7 +763,7 @@ export const BotRuntimeSessionLinkRepository = {
       UPDATE bot_runtime_session_links l
       SET status = 'active', last_seen_at = NOW(), updated_at = NOW()
       FROM candidate
-      WHERE l.id = candidate.id
+      WHERE l.id = candidate.id AND l.workspace_id = ${params.workspaceId}
       RETURNING l.*`)
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
@@ -811,7 +810,7 @@ export const BotRuntimeSessionLinkRepository = {
       UPDATE bot_runtime_session_links l
       SET status = 'ended', runtime_session_id = l.runtime_session_id || ':retired:' || l.id, updated_at = NOW()
       FROM candidate
-      WHERE l.id = candidate.id
+      WHERE l.id = candidate.id AND l.workspace_id = ${params.workspaceId}
       RETURNING l.*`)
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
@@ -1078,10 +1077,7 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
           i.trigger = 'session-control'
           OR EXISTS (
             SELECT 1 FROM stream_e2e_key_wraps w
-            -- messages has no workspace_id column (it is scoped by stream_id); the
-            -- join on the globally-unique source message id is the invocation's own
-            -- trigger, so it stays tenant-safe without one (as enclave claimNext does).
-            JOIN messages m ON m.id = i.source_message_id
+            JOIN messages m ON m.id = i.source_message_id AND m.workspace_id = i.workspace_id
             WHERE w.workspace_id = i.workspace_id
               AND w.stream_id = i.root_stream_id
               AND w.recipient_kind = 'bot'
@@ -1091,29 +1087,6 @@ function sealedStreamClaimGateSql(instanceId: string): QueryConfig {
         )
     )
   )`
-}
-
-/** `ORDER BY` is stable so the repair loop makes progress across batches. */
-async function queryDeletedSourcesWithRunningSessions(
-  db: Querier,
-  options: { workspaceId?: string; sessionId?: string; limit?: number }
-): Promise<Array<{ workspaceId: string; sourceMessageId: string }>> {
-  const result = await db.query<{ workspace_id: string; source_message_id: string }>(sql`
-    SELECT DISTINCT i.workspace_id, i.source_message_id
-    FROM bot_invocations i
-    JOIN agent_sessions s ON s.id = i.id
-    WHERE i.status = 'cancelled'
-      AND i.cancellation_reason = 'source_deleted'
-      AND s.status = 'running'
-      AND (${options.sessionId ?? null}::text IS NULL OR i.id = ${options.sessionId ?? null})
-      AND (${options.workspaceId ?? null}::text IS NULL OR i.workspace_id = ${options.workspaceId ?? null})
-    ORDER BY i.workspace_id, i.source_message_id
-    LIMIT ${options.limit ?? null}
-  `)
-  return result.rows.map((row) => ({
-    workspaceId: row.workspace_id,
-    sourceMessageId: row.source_message_id,
-  }))
 }
 
 export const BotInvocationRepository = {
@@ -1128,15 +1101,37 @@ export const BotInvocationRepository = {
     db: Querier,
     params: { workspaceId: string; sessionId: string }
   ): Promise<{ workspaceId: string; sourceMessageId: string } | null> {
-    const rows = await queryDeletedSourcesWithRunningSessions(db, params)
-    return rows[0] ?? null
+    const result = await db.query<{ workspace_id: string; source_message_id: string }>(sql`
+      SELECT i.workspace_id, i.source_message_id
+      FROM bot_invocations i
+      JOIN agent_sessions s ON s.id = i.id AND s.workspace_id = i.workspace_id
+      WHERE i.status = 'cancelled'
+        AND i.cancellation_reason = 'source_deleted'
+        AND s.status = 'running'
+        AND i.workspace_id = ${params.workspaceId}
+        AND i.id = ${params.sessionId}
+    `)
+    const row = result.rows[0]
+    return row ? { workspaceId: row.workspace_id, sourceMessageId: row.source_message_id } : null
   },
 
+  /** `ORDER BY` is stable so the repair loop makes progress across batches. */
   async findDeletedSourcesWithRunningSessions(
     db: Querier,
     limit: number
   ): Promise<Array<{ workspaceId: string; sourceMessageId: string }>> {
-    return queryDeletedSourcesWithRunningSessions(db, { limit })
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the startup repair sweep covers every workspace
+    const result = await db.query<{ workspace_id: string; source_message_id: string }>(sql`
+      SELECT DISTINCT i.workspace_id, i.source_message_id
+      FROM bot_invocations i
+      JOIN agent_sessions s ON s.id = i.id AND s.workspace_id = i.workspace_id
+      WHERE i.status = 'cancelled'
+        AND i.cancellation_reason = 'source_deleted'
+        AND s.status = 'running'
+      ORDER BY i.workspace_id, i.source_message_id
+      LIMIT ${limit}
+    `)
+    return result.rows.map((row) => ({ workspaceId: row.workspace_id, sourceMessageId: row.source_message_id }))
   },
 
   /** Source lock first, actor locks second: the order every route insert and terminal transition takes. */
@@ -1294,7 +1289,8 @@ export const BotInvocationRepository = {
         SET status = 'cancelled', cancellation_reason = ${params.reason},
             source_message_revision = GREATEST(source_message_revision, COALESCE((
               SELECT m.revision FROM messages m JOIN streams s ON s.id = m.stream_id
-              WHERE m.id = bot_invocations.source_message_id AND s.workspace_id = bot_invocations.workspace_id
+              WHERE m.id = bot_invocations.source_message_id AND m.workspace_id = bot_invocations.workspace_id
+                AND s.workspace_id = bot_invocations.workspace_id
             ), source_message_revision)), updated_at = NOW()
         WHERE workspace_id = ${params.workspaceId} AND source_message_id = ${params.sourceMessageId}
           AND status IN ('pending', 'claimed')
@@ -1302,7 +1298,7 @@ export const BotInvocationRepository = {
       `)
       const repairResult = await lockedDb.query<BotInvocationRow>(sql`
         SELECT i.* FROM bot_invocations i
-        JOIN agent_sessions session ON session.id = i.id AND session.status IN ('running', 'completed')
+        JOIN agent_sessions session ON session.id = i.id AND session.workspace_id = i.workspace_id AND session.status IN ('running', 'completed')
         WHERE i.workspace_id = ${params.workspaceId} AND i.source_message_id = ${params.sourceMessageId}
           AND (
             (i.status = 'cancelled' AND i.cancellation_reason = ${params.reason})
@@ -1572,7 +1568,7 @@ export const BotInvocationRepository = {
               AND r.instance_id = ${params.instanceId} AND r.runtime_kind = ${params.runtimeKind}
           )
       FROM candidate
-      WHERE i.id = candidate.id
+      WHERE i.id = candidate.id AND i.workspace_id = ${params.workspaceId}
       RETURNING i.*`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
@@ -1751,6 +1747,8 @@ export const BotInvocationRepository = {
           AND (i.trigger = 'session-control' OR EXISTS (
             SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
             WHERE m.id = i.source_message_id
+              AND m.workspace_id = i.workspace_id
+              AND s.workspace_id = i.workspace_id
               AND ${canonicalSourceGateSql("i", sql`${params.sourceRevision}`)}
               AND (
                 i.claimed_source_message_revision = ${params.sourceRevision}
@@ -1788,6 +1786,8 @@ export const BotInvocationRepository = {
           AND (i.trigger = 'session-control' OR EXISTS (
             SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
             WHERE m.id = i.source_message_id
+              AND m.workspace_id = i.workspace_id
+              AND s.workspace_id = i.workspace_id
               AND ${canonicalSourceGateSql("i", sql`i.claimed_source_message_revision`)}
           ))
         RETURNING i.*`)
@@ -1835,8 +1835,8 @@ export const BotInvocationRepository = {
               await lockedDb.query<{ id: string }>(composeSql`
                 SELECT i.id
                 FROM bot_invocations i
-                JOIN messages m ON m.id = i.source_message_id
-                JOIN streams s ON s.id = m.stream_id
+                JOIN messages m ON m.id = i.source_message_id AND m.workspace_id = i.workspace_id
+                JOIN streams s ON s.id = m.stream_id AND s.workspace_id = i.workspace_id
                 WHERE i.id = ANY(${messageCandidateIds})
                   AND i.workspace_id = ${params.workspaceId}
                   AND i.actor_type = 'bot'
@@ -1862,6 +1862,8 @@ export const BotInvocationRepository = {
             OR EXISTS (
               SELECT 1 FROM messages m JOIN streams s ON s.id = m.stream_id
               WHERE m.id = bot_invocations.source_message_id
+                AND m.workspace_id = bot_invocations.workspace_id
+                AND s.workspace_id = bot_invocations.workspace_id
                 AND ${canonicalSourceGateSql("bot_invocations", sql`bot_invocations.claimed_source_message_revision`)}
             )
           )

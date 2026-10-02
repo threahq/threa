@@ -85,6 +85,7 @@ export const UserApiKeyRepository = {
   },
 
   async findActiveByPrefix(db: Querier, prefix: string): Promise<UserApiKeyRow[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the API key prefix discovers the workspace; key rows are never copied
     const result = await db.query<Record<string, unknown>>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)}
       FROM user_api_keys
@@ -158,9 +159,9 @@ export const UserApiKeyRepository = {
     return result.rowCount ?? 0
   },
 
-  async touchLastUsed(db: Querier, id: string): Promise<void> {
+  async touchLastUsed(db: Querier, workspaceId: string, id: string): Promise<void> {
     await db.query(sql`
-      UPDATE user_api_keys SET last_used_at = NOW() WHERE id = ${id}
+      UPDATE user_api_keys SET last_used_at = NOW() WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
   },
 }

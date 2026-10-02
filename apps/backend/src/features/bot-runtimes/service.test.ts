@@ -1103,3 +1103,43 @@ describe("BotRuntimeService outbox emission", () => {
     })
   })
 })
+
+describe("BotRuntimeService.repairDeletedSourceSession", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("looks the session up in the caller's workspace and repairs nothing when it is not found there", async () => {
+    const find = spyOn(BotInvocationRepository, "findDeletedSourceForRunningSession").mockResolvedValue(null)
+    const cancel = spyOn(BotRuntimeService.prototype, "cancelInvocationsForDeletedSource").mockResolvedValue(0)
+
+    const repaired = await new BotRuntimeService({ pool: fakePool }).repairDeletedSourceSession({
+      workspaceId: "ws_1",
+      sessionId: "binv_late",
+    })
+
+    expect({ repaired, find: find.mock.calls, cancel: cancel.mock.calls }).toEqual({
+      repaired: false,
+      find: [[fakePool, { workspaceId: "ws_1", sessionId: "binv_late" }]],
+      cancel: [],
+    })
+  })
+
+  it("cancels the deleted source the lookup returned", async () => {
+    spyOn(BotInvocationRepository, "findDeletedSourceForRunningSession").mockResolvedValue({
+      workspaceId: "ws_1",
+      sourceMessageId: "msg_deleted",
+    })
+    const cancel = spyOn(BotRuntimeService.prototype, "cancelInvocationsForDeletedSource").mockResolvedValue(1)
+
+    const repaired = await new BotRuntimeService({ pool: fakePool }).repairDeletedSourceSession({
+      workspaceId: "ws_1",
+      sessionId: "binv_late",
+    })
+
+    expect({ repaired, cancel: cancel.mock.calls }).toEqual({
+      repaired: true,
+      cancel: [[{ workspaceId: "ws_1", sourceMessageId: "msg_deleted" }]],
+    })
+  })
+})
