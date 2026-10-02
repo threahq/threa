@@ -88,7 +88,7 @@ export class DynamicNamingService {
     const adapter = this.adapters.get(ref.targetKind)
     if (!adapter) return { status: "protected" }
     if (!ref.initiatingUserId) {
-      await DynamicNamingStateRepository.releaseOwnedClaim(this.pool, ownerId)
+      await DynamicNamingStateRepository.releaseOwnedClaim(this.pool, ref.workspaceId, ownerId)
       return { status: "protected" }
     }
 

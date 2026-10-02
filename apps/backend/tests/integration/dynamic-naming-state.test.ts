@@ -104,12 +104,15 @@ describe("dynamic naming state repository", () => {
       expectedVersion: state.version,
       leaseSeconds: 1,
     })
-    expect(await repo.renewOwnedClaimLease(pool, { ownerId: "session_1", leaseSeconds: 60 })).toBe(1)
+    expect(
+      await repo.renewOwnedClaimLease(pool, { workspaceId: workspace, ownerId: "session_1", leaseSeconds: 60 })
+    ).toBe(1)
     expect(await repo.find(pool, workspace, "stream", state.targetId)).toMatchObject({
       version: claim!.version,
       claimOwnerId: "session_1",
     })
     const observed = await repo.advanceOwnedClaimObservation(pool, {
+      workspaceId: workspace,
       ownerId: "session_1",
       token: claim!.claimToken!,
       expectedVersion: claim!.version,
@@ -117,7 +120,7 @@ describe("dynamic naming state repository", () => {
       messageCount: 3,
     })
     expect(observed).toMatchObject({ version: claim!.version + 1, claimCheckpoint: 3, claimMessageCount: 3 })
-    expect(await repo.releaseOwnedClaim(pool, "session_1")).toBe(1)
+    expect(await repo.releaseOwnedClaim(pool, workspace, "session_1")).toBe(1)
     expect(await repo.find(pool, workspace, "stream", state.targetId)).toMatchObject({
       version: claim!.version + 2,
       claimOwnerId: null,
@@ -162,7 +165,6 @@ describe("dynamic naming state repository", () => {
       leaseSeconds: 60,
     })
     expect(renewed).toMatchObject({ claimToken: claim!.claimToken, version: claim!.version + 1 })
-    expect(await repo.recoverExpiredClaims(pool, workspace, 1)).toBe(0)
     expect(
       await repo.renewClaim(pool, {
         workspaceId: workspace,
@@ -175,7 +177,7 @@ describe("dynamic naming state repository", () => {
     ).toBeNull()
   })
 
-  test("expired claims recover and stale token/version cannot apply", async () => {
+  test("expired claims are reclaimable and stale token/version cannot apply", async () => {
     const state = await repo.ensure(pool, {
       workspaceId: workspace,
       targetKind: "stream",
@@ -193,8 +195,6 @@ describe("dynamic naming state repository", () => {
       expectedVersion: state.version,
       leaseSeconds: -1,
     })
-    expect(await repo.recoverExpiredClaims(pool, workspace, 1)).toBe(1)
-    const recovered = await repo.find(pool, workspace, "stream", "stream_dn_expiry")
     const claim = await repo.claim(pool, {
       workspaceId: workspace,
       targetKind: "stream",
@@ -204,7 +204,7 @@ describe("dynamic naming state repository", () => {
       messageCount: 1,
       structureVersion: 0,
       titleRevision: 1,
-      expectedVersion: recovered!.version,
+      expectedVersion: expired!.version,
       leaseSeconds: 60,
     })
     expect(
@@ -374,7 +374,6 @@ describe("dynamic naming state repository", () => {
         expectedVersion: claim!.version,
       })
     ).toBeNull()
-    expect(await repo.recoverExpiredClaims(pool, otherWorkspace, 10)).toBe(0)
   })
 
   test("apply enforces pinned revision and forced checkpoint policy", async () => {
@@ -448,36 +447,5 @@ describe("dynamic naming state repository", () => {
       state: { lastEvaluatedMessageCount: 12, regenerationPending: false, completedAt: expect.any(Date) },
       consumedClaim: { checkpoint: 10, messageCount: 12, reason: "regenerate" },
     })
-  })
-
-  test("orphan cleanup preserves live targets", async () => {
-    const targetId = "stream_dn_live"
-    await pool.query(
-      "INSERT INTO streams (id, workspace_id, slug, display_name, type, created_by) VALUES ($1, $2, $3, $4, 'channel', $5)",
-      [targetId, workspace, "dn-live", "Live", "usr_dn_live"]
-    )
-    await repo.ensure(pool, { workspaceId: workspace, targetKind: "stream", targetId })
-    await repo.cleanupOrphans(pool, workspace, 10)
-    expect(await repo.find(pool, workspace, "stream", targetId)).not.toBeNull()
-    await pool.query("DELETE FROM streams WHERE id = $1", [targetId])
-  })
-
-  test("orphan cleanup cannot cross workspace boundaries", async () => {
-    const state = await repo.ensure(pool, {
-      workspaceId: workspace,
-      targetKind: "stream",
-      targetId: "stream_dn_wrong_workspace_orphan",
-    })
-    expect(await repo.cleanupOrphans(pool, otherWorkspace, 10)).toBe(0)
-    expect(await repo.find(pool, workspace, "stream", state.targetId)).not.toBeNull()
-  })
-
-  test("orphan cleanup is bounded and set based", async () => {
-    for (const targetId of ["stream_dn_orphan_a", "stream_dn_orphan_b", "stream_dn_orphan_c"]) {
-      await repo.ensure(pool, { workspaceId: workspace, targetKind: "stream", targetId })
-    }
-    expect(await repo.cleanupOrphans(pool, workspace, 2)).toBe(2)
-    const remaining = await pool.query("SELECT id FROM dynamic_naming_state WHERE workspace_id = $1", [workspace])
-    expect(remaining.rows).toHaveLength(1)
   })
 })
