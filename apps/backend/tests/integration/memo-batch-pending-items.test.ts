@@ -299,6 +299,29 @@ describe("memo batch: pending items", () => {
     expect(await pendingState(seeded.conversationId)).toMatchObject({ processed: true })
   })
 
+  test("switching memory off while a reflective capture's model calls run saves no memos", async () => {
+    const seeded = await seedQueuedConversation()
+    const anchorMessageId = await withTransaction(pool, (client) => addMessage(client, seeded, 3n))
+    const sessionId = `session_${messageId()}`
+
+    const result = await serviceWith({
+      classify: async () => {
+        await switchMemoryOff(seeded)
+        return worthy
+      },
+    }).captureSessionReflection({
+      workspaceId: testWorkspaceId,
+      streamId: seeded.streamId,
+      sessionId,
+      digest: "Trigger: where do we start? Replied: with the auth service.",
+      anchorMessageId,
+      participantIds: [testUserId],
+    })
+
+    const { rows } = await pool.query(`SELECT id FROM memos WHERE source_session_id = $1`, [sessionId])
+    expect({ captured: result.captured, memos: rows.length }).toEqual({ captured: 0, memos: 0 })
+  })
+
   test("switching memory off cannot commit while a save that passed the memory gate is writing", async () => {
     const seeded = await seedQueuedConversation()
     const findNearDuplicate = MemoRepository.findNearDuplicate

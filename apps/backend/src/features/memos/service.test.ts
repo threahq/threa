@@ -925,6 +925,7 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
   }
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+  spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockResolvedValue(fakeStream())
   spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
     new Map([
       [
