@@ -363,7 +363,12 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const triggerSeq = session.triggerMessageId
-        ? await StreamEventRepository.getMessageSequence(pool, session.streamId, session.triggerMessageId)
+        ? await StreamEventRepository.getMessageSequence(
+            pool,
+            session.workspaceId,
+            session.streamId,
+            session.triggerMessageId
+          )
         : null
       // No resolvable trigger sequence → no safe floor. Returning rows from 0
       // would replay the enclave's entire pre-trigger history, so degrade to
@@ -384,7 +389,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
 
       // Same seam the in-process companion's `check` walks (persona-agent.ts):
       // list message_created events after the boundary, then hydrate the rows.
-      const events = await StreamEventRepository.list(pool, session.streamId, {
+      const events = await StreamEventRepository.list(pool, session.workspaceId, session.streamId, {
         types: ["message_created"],
         afterSequence: effectiveAfter,
         limit: 50,
@@ -945,6 +950,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         try {
           const triggerSeq = await StreamEventRepository.getMessageSequence(
             pool,
+            session.workspaceId,
             session.streamId,
             session.triggerMessageId
           )
@@ -956,7 +962,12 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
             // trigger boundary when the turn saw nothing past its trigger.
             const reported = parsed.data.lastProcessedSequence ? BigInt(parsed.data.lastProcessedSequence) : 0n
             const seenBoundary = reported > triggerSeq ? reported : triggerSeq
-            const unseen = await StreamEventRepository.getLatestUnseenUserMessage(pool, session.streamId, seenBoundary)
+            const unseen = await StreamEventRepository.getLatestUnseenUserMessage(
+              pool,
+              session.workspaceId,
+              session.streamId,
+              seenBoundary
+            )
             if (unseen) {
               await withTransaction(pool, async (tx) => {
                 await assertStreamWritable(tx, {

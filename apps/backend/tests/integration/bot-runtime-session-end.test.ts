@@ -170,7 +170,7 @@ describe("ending a bot runtime session", () => {
 
     // `/done` archived the bot's thread; the fresh attach reopens it as the bot.
     expect(second.stream.archivedAt).toBeNull()
-    const lifecycle = await StreamEventRepository.list(pool, first.stream.id, {
+    const lifecycle = await StreamEventRepository.list(pool, workspace, first.stream.id, {
       types: ["stream_archived", "stream_unarchived"],
     })
     expect(
@@ -261,7 +261,7 @@ describe("ending a bot runtime session", () => {
       userThread: await archive(userThreadId),
     }).toEqual({ ownThread: thread.id, ownThreadAgain: null, scratchpad: null, userThread: null })
 
-    const lifecycle = await StreamEventRepository.list(pool, thread.id, { types: ["stream_archived"] })
+    const lifecycle = await StreamEventRepository.list(pool, workspace, thread.id, { types: ["stream_archived"] })
     expect(lifecycle).toMatchObject([{ eventType: "stream_archived", actorId: bot, actorType: "bot" }])
     const untouched = await pool.query<{ archived_at: Date | null }>(
       "SELECT archived_at FROM streams WHERE id = ANY($1) ORDER BY id",

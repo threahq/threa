@@ -38,7 +38,7 @@ export async function findThreadAnchorContext(db: Querier, stream: Stream): Prom
   if (!anchorId) return null
   if (anchorId.startsWith("msg_")) return MessageRepository.findThreadRoot(db, { parentAnchorId: anchorId })
 
-  const event = await StreamEventRepository.findById(db, anchorId)
+  const event = await StreamEventRepository.findById(db, stream.workspaceId, anchorId)
   if (!event) return null
   const text = serializeThreadAnchorCard(event.eventType, event.payload)
   if (!text) return null

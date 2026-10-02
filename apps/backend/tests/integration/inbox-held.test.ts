@@ -98,7 +98,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
 
       const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
         holdInInbox: true,
@@ -114,7 +114,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, reader)
       await sendMessages(wid, sid, reader, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
 
       const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
         holdInInbox: true,
@@ -131,7 +131,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
 
       const { held, state } = await ReadStateRepository.advance(pool, sid, reader, evt.id, {
         holdInInbox: false,
@@ -151,7 +151,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 2)
-      const [evt1, evt2] = await StreamEventRepository.list(pool, sid)
+      const [evt1, evt2] = await StreamEventRepository.list(pool, wid, sid)
 
       const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
       expect(first.held).toBe(true)
@@ -171,7 +171,7 @@ describe("inbox hold", () => {
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
       await StreamMemberRepository.insert(pool, wid, sid, reader)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
       const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
       expect(first.held).toBe(true)
 
@@ -207,14 +207,14 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 2)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
 
       // Reader's frontier before the hold begins.
       await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
       expect((await ReadStateRepository.get(pool, sid, reader))?.inboxFloorEventId).toBeNull()
 
       await sendMessages(wid, sid, author, 1)
-      const [, , evt3] = await StreamEventRepository.list(pool, sid)
+      const [, , evt3] = await StreamEventRepository.list(pool, wid, sid)
       const { state } = await ReadStateRepository.advance(pool, sid, reader, evt3.id, { holdInInbox: true })
 
       expect(state?.inboxHeld).toBe(true)
@@ -228,7 +228,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const [, evt2, evt3] = await StreamEventRepository.list(pool, sid)
+      const [, evt2, evt3] = await StreamEventRepository.list(pool, wid, sid)
 
       const first = await ReadStateRepository.advance(pool, sid, reader, evt2.id, { holdInInbox: true })
       expect(first.state?.inboxFloorEventId).toBeNull() // never read before -> floor null (held from the start)
@@ -247,7 +247,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
 
       const { state } = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
 
@@ -264,11 +264,11 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 2)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
 
       await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
       await sendMessages(wid, sid, author, 1)
-      const [, , evt3] = await StreamEventRepository.list(pool, sid)
+      const [, , evt3] = await StreamEventRepository.list(pool, wid, sid)
       const held = await ReadStateRepository.advance(pool, sid, reader, evt3.id, { holdInInbox: true })
       expect(held.state?.inboxFloorEventId).toBe(evt1.id)
 
@@ -291,8 +291,8 @@ describe("inbox hold", () => {
       await seedChannel(wid, unheldStream, author)
       await sendMessages(wid, heldStream, author, 1)
       await sendMessages(wid, unheldStream, author, 2)
-      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
-      const unheldEvents = await StreamEventRepository.list(pool, unheldStream)
+      const [evtHeld] = await StreamEventRepository.list(pool, wid, heldStream)
+      const unheldEvents = await StreamEventRepository.list(pool, wid, unheldStream)
 
       await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, unheldStream, reader, unheldEvents[0].id, { holdInInbox: false })
@@ -315,7 +315,7 @@ describe("inbox hold", () => {
       const sid = streamId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
 
       const { states } = await ReadStateRepository.batchAdvance(pool, reader, new Map([[sid, evt.id]]))
 
@@ -370,7 +370,7 @@ describe("inbox hold", () => {
         const author = userId()
         await seedChannel(wid, sid, other, "public")
         await sendMessages(wid, sid, other, 1)
-        const [evtFirst] = await StreamEventRepository.list(pool, sid)
+        const [evtFirst] = await StreamEventRepository.list(pool, wid, sid)
         // Simulate a prior read that held the stream (e.g. from before the
         // author last sent), independent of the send path under test.
         await ReadStateRepository.advance(pool, sid, author, evtFirst.id, { holdInInbox: true })
@@ -458,7 +458,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
       await UserPreferencesRepository.setOverride(pool, wid, reader, "inboxClearMode", "read")
 
       await streamService.markAsRead(wid, sid, reader, evt.id)
@@ -474,7 +474,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
       await UserPreferencesRepository.setOverride(pool, wid, reader, "inboxClearMode", "manual")
 
       await streamService.markAsRead(wid, sid, reader, evt.id)
@@ -489,7 +489,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
 
       await streamService.markAsRead(wid, sid, reader, evt.id)
 
@@ -552,7 +552,7 @@ describe("inbox hold", () => {
       const reactor = userId()
       await seedChannel(wid, sid, author, "public")
       const [msg1] = await sendMessages(wid, sid, author, 2)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reactor, evt1.id, { holdInInbox: true })
       expect((await ReadStateRepository.get(pool, sid, reactor))?.inboxHeld).toBe(true)
 
@@ -574,7 +574,7 @@ describe("inbox hold", () => {
       const reactor = userId()
       await seedChannel(wid, sid, author, "public")
       const [msg1] = await sendMessages(wid, sid, author, 1)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reactor, evt1.id, { holdInInbox: true })
       await UserPreferencesRepository.setOverride(pool, wid, reactor, "inboxClearMode", "manual")
 
@@ -610,16 +610,16 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
       // Frontier before the hold begins.
       await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
 
       await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reader, events[2].id, { holdInInbox: true })
       // A further read-without-clearing must not move the floor or the arrival.
       await sendMessages(wid, sid, author, 1)
-      const eventsAfter = await StreamEventRepository.list(pool, sid)
+      const eventsAfter = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reader, eventsAfter[3].id, { holdInInbox: true })
 
       const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
@@ -634,11 +634,11 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
 
       await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
 
@@ -652,7 +652,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: false })
 
       const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
@@ -667,7 +667,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       const arrivals = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
 
@@ -689,7 +689,7 @@ describe("inbox hold", () => {
 
       // A later, undeleted message still counts.
       const [msg2] = await sendMessages(wid, sid, author, 1)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
       const evt2 = events.find((e) => e.payload?.messageId === msg2)!
 
       const arrivalsAfter = await ReadStateRepository.listInboxArrivals(pool, wid, reader, [sid])
@@ -708,8 +708,8 @@ describe("inbox hold", () => {
       await seedChannel(wid, unheldStream, reader)
       await sendMessages(wid, heldStream, author, 1)
       await sendMessages(wid, unheldStream, reader, 1)
-      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
-      const [evtUnheld] = await StreamEventRepository.list(pool, unheldStream)
+      const [evtHeld] = await StreamEventRepository.list(pool, wid, heldStream)
+      const [evtUnheld] = await StreamEventRepository.list(pool, wid, unheldStream)
 
       await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, unheldStream, reader, evtUnheld.id, { holdInInbox: true })
@@ -732,8 +732,8 @@ describe("inbox hold", () => {
       await seedChannel(otherWid, otherWorkspaceStream, author)
       await sendMessages(wid, sid, author, 1)
       await sendMessages(otherWid, otherWorkspaceStream, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
-      const [evtOtherWs] = await StreamEventRepository.list(pool, otherWorkspaceStream)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
+      const [evtOtherWs] = await StreamEventRepository.list(pool, otherWid, otherWorkspaceStream)
 
       await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, otherWorkspaceStream, reader, evtOtherWs.id, { holdInInbox: true })
@@ -763,9 +763,9 @@ describe("inbox hold", () => {
       await sendMessages(wid, held, author, 1)
       await sendMessages(wid, notHeld, author, 1)
       await sendMessages(otherWid, otherWorkspaceStream, author, 1)
-      const [evtHeld] = await StreamEventRepository.list(pool, held)
-      const [evtNotHeld] = await StreamEventRepository.list(pool, notHeld)
-      const [evtOtherWs] = await StreamEventRepository.list(pool, otherWorkspaceStream)
+      const [evtHeld] = await StreamEventRepository.list(pool, wid, held)
+      const [evtNotHeld] = await StreamEventRepository.list(pool, wid, notHeld)
+      const [evtOtherWs] = await StreamEventRepository.list(pool, otherWid, otherWorkspaceStream)
 
       await ReadStateRepository.advance(pool, held, reader, evtHeld.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, notHeld, reader, evtNotHeld.id, { holdInInbox: false })
@@ -791,8 +791,8 @@ describe("inbox hold", () => {
       await seedChannel(wid, lostAccess, author, "private")
       await sendMessages(wid, readable, author, 1)
       await sendMessages(wid, lostAccess, author, 1)
-      const [evtReadable] = await StreamEventRepository.list(pool, readable)
-      const [evtLost] = await StreamEventRepository.list(pool, lostAccess)
+      const [evtReadable] = await StreamEventRepository.list(pool, wid, readable)
+      const [evtLost] = await StreamEventRepository.list(pool, wid, lostAccess)
       await ReadStateRepository.advance(pool, readable, reader, evtReadable.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, lostAccess, reader, evtLost.id, { holdInInbox: true })
 
@@ -808,7 +808,7 @@ describe("inbox hold", () => {
       const held = streamId()
       await seedChannel(wid, held, author)
       await sendMessages(wid, held, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, held)
+      const [evt] = await StreamEventRepository.list(pool, wid, held)
       await ReadStateRepository.advance(pool, held, reader, evt.id, { holdInInbox: true })
 
       await new UserPreferencesService(pool).updatePreferences(wid, reader, { inboxClearMode: "read" })
@@ -826,7 +826,7 @@ describe("inbox hold", () => {
       const held = streamId()
       await seedChannel(wid, held, author)
       await sendMessages(wid, held, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, held)
+      const [evt] = await StreamEventRepository.list(pool, wid, held)
       await ReadStateRepository.advance(pool, held, reader, evt.id, { holdInInbox: true })
 
       await new UserPreferencesService(pool).updatePreferences(wid, reader, { inboxClearMode: "manual" })
@@ -846,8 +846,8 @@ describe("inbox hold", () => {
       await seedChannel(wid, privateStream, author, "private")
       await sendMessages(wid, readableStream, author, 1)
       await sendMessages(wid, privateStream, author, 1)
-      const [evtReadable] = await StreamEventRepository.list(pool, readableStream)
-      const [evtPrivate] = await StreamEventRepository.list(pool, privateStream)
+      const [evtReadable] = await StreamEventRepository.list(pool, wid, readableStream)
+      const [evtPrivate] = await StreamEventRepository.list(pool, wid, privateStream)
 
       await ReadStateRepository.advance(pool, readableStream, reader, evtReadable.id, { holdInInbox: true })
       await ReadStateRepository.advance(pool, privateStream, reader, evtPrivate.id, { holdInInbox: true })
@@ -877,7 +877,7 @@ describe("inbox hold", () => {
         [thread, wid, author, root, rootMsg]
       )
       await sendMessages(wid, thread, author, 1)
-      const [evtThread] = await StreamEventRepository.list(pool, thread)
+      const [evtThread] = await StreamEventRepository.list(pool, wid, thread)
 
       await ReadStateRepository.advance(pool, thread, reader, evtThread.id, { holdInInbox: true })
       expect((await ReadStateRepository.get(pool, thread, reader))?.inboxHeld).toBe(true)
@@ -898,7 +898,7 @@ describe("inbox hold", () => {
       // without pinning a new hold, even though the latest events are all
       // authored by someone else.
       await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       const result = await streamReadService.clearInbox(wid, reader, [sid])
 
@@ -920,8 +920,8 @@ describe("inbox hold", () => {
       await seedChannel(wid, alreadyCaughtUpStream, author, "public")
       await sendMessages(wid, heldStream, author, 1)
       await sendMessages(wid, alreadyCaughtUpStream, author, 1)
-      const [evtHeld] = await StreamEventRepository.list(pool, heldStream)
-      const [evtAlreadyCaughtUp] = await StreamEventRepository.list(pool, alreadyCaughtUpStream)
+      const [evtHeld] = await StreamEventRepository.list(pool, wid, heldStream)
+      const [evtAlreadyCaughtUp] = await StreamEventRepository.list(pool, wid, alreadyCaughtUpStream)
 
       await ReadStateRepository.advance(pool, heldStream, reader, evtHeld.id, { holdInInbox: true })
       // Already at the latest event and never held — clearInbox should be a
@@ -990,7 +990,7 @@ describe("inbox hold", () => {
       await seedChannel(wid, sid, author, "public")
       await StreamMemberRepository.insert(pool, wid, sid, reader)
       await sendMessages(wid, sid, author, 1)
-      const [evt1] = await StreamEventRepository.list(pool, sid)
+      const [evt1] = await StreamEventRepository.list(pool, wid, sid)
 
       // Hold, then clear — the row starts this call unheld with a real
       // history of having been held once.
@@ -1052,7 +1052,7 @@ describe("inbox hold", () => {
       const sid = streamId()
       await seedChannel(wid, sid, author, "public")
       const [msgId] = await sendMessages(wid, sid, author, 1)
-      const [evt] = await StreamEventRepository.list(pool, sid)
+      const [evt] = await StreamEventRepository.list(pool, wid, sid)
       await ReadStateRepository.advance(pool, sid, reader, evt.id, { holdInInbox: true })
       const activity = await insertMention(wid, reader, author, sid, msgId)
 

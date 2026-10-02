@@ -396,7 +396,7 @@ export class ActivityService {
     userIds: string[]
   ): Promise<Set<string>> {
     if (userIds.length === 0) return new Set()
-    const messageEvent = await StreamEventRepository.findByMessageId(client, streamId, messageId)
+    const messageEvent = await StreamEventRepository.findByMessageId(client, workspaceId, streamId, messageId)
     if (!messageEvent) return new Set()
     return usersReadThroughEffective(client, workspaceId, streamId, userIds, messageEvent.sequence)
   }
@@ -729,7 +729,7 @@ export class ActivityService {
         if (message.streamId !== stream.id) return invalid("moved")
 
         if (WATERMARK_READ_ACTIVITY_TYPES.has(activity.activityType)) {
-          const event = await StreamEventRepository.findByMessageId(client, stream.id, message.id)
+          const event = await StreamEventRepository.findByMessageId(client, workspaceId, stream.id, message.id)
           if (event) {
             const readers = await usersReadThroughEffective(client, workspaceId, stream.id, [userId], event.sequence)
             if (readers.has(userId)) return invalid("read")

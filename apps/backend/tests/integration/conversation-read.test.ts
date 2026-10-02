@@ -73,8 +73,8 @@ describe("ConversationService read/unread", () => {
     return id
   }
 
-  async function eventByMessage(sid: string): Promise<Map<string, { id: string; sequence: bigint }>> {
-    const events = await StreamEventRepository.list(pool, sid)
+  async function eventByMessage(wid: string, sid: string): Promise<Map<string, { id: string; sequence: bigint }>> {
+    const events = await StreamEventRepository.list(pool, wid, sid)
     return new Map(
       events.map((e) => [(e.payload as { messageId: string }).messageId, { id: e.id, sequence: e.sequence }])
     )
@@ -120,7 +120,7 @@ describe("ConversationService read/unread", () => {
       userId: reader,
     })
 
-    const rootEvents = await eventByMessage(root)
+    const rootEvents = await eventByMessage(wid, root)
     const byStream = new Map(streams.map((s) => [s.streamId, s]))
 
     // Two streams touched (tmsg2 is past the cutoff, excluded).
@@ -138,7 +138,7 @@ describe("ConversationService read/unread", () => {
 
     // Thread: non-member leg → compacted into its OWN standalone frontier
     // (only tmsg1; tmsg2 excluded by cutoff), membership never upserted.
-    const threadEvents = await eventByMessage(thread)
+    const threadEvents = await eventByMessage(wid, thread)
     const threadSnap = byStream.get(thread)!
     expect(threadSnap.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
     expect(threadSnap.lastReadSequence).toBe(threadEvents.get(tmsg1)!.sequence.toString())
@@ -226,7 +226,7 @@ describe("ConversationService read/unread", () => {
     await setCreatedAt(msg2, 3000)
 
     const convId = await insertConversation(wid, root, [msg1, tmsg1, msg2])
-    const rootEvents = await eventByMessage(root)
+    const rootEvents = await eventByMessage(wid, root)
 
     // Read the whole conversation first. The thread leg (non-member) compacts
     // into its standalone read-state row — no overlay left on the leg.
@@ -237,7 +237,7 @@ describe("ConversationService read/unread", () => {
       userId: reader,
     })
     expect(await SparseReadRepository.countOverlay(pool, thread, reader)).toBe(0)
-    const threadEvents = await eventByMessage(thread)
+    const threadEvents = await eventByMessage(wid, thread)
     expect((await ReadStateRepository.get(pool, thread, reader))?.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
 
     // Now mark unread from tmsg1 (cutoff 2000): tmsg1 + msg2 affected.
@@ -260,7 +260,7 @@ describe("ConversationService read/unread", () => {
 
     // Effective root unread: msg2 is unread again (msg1 read).
     const readState = await ReadStateRepository.get(pool, root, reader)
-    const counts = await streamService.getUnreadCounts([
+    const counts = await streamService.getUnreadCounts(wid, [
       { streamId: root, memberId: reader, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
     expect(counts.get(root)?.unreadCount).toBe(1)
@@ -295,7 +295,7 @@ describe("ConversationService read/unread", () => {
     })
     expect(streams).toHaveLength(1)
     const readState = await ReadStateRepository.get(pool, root, reader)
-    const counts = await streamService.getUnreadCounts([
+    const counts = await streamService.getUnreadCounts(wid, [
       { streamId: root, memberId: reader, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
     expect(counts.get(root)?.unreadCount).toBe(1)

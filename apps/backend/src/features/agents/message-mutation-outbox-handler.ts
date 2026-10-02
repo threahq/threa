@@ -419,7 +419,12 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
   private async deleteSessionMessages(session: AgentSession, workspaceId: string): Promise<void> {
     let messageIds = [...session.sentMessageIds]
     try {
-      const eventMessageIds = await StreamEventRepository.listMessageIdsBySession(this.db, session.streamId, session.id)
+      const eventMessageIds = await StreamEventRepository.listMessageIdsBySession(
+        this.db,
+        workspaceId,
+        session.streamId,
+        session.id
+      )
       messageIds = [...new Set([...messageIds, ...eventMessageIds])]
     } catch (err) {
       logger.error({ err, sessionId: session.id }, "Failed loading session messages from stream events")

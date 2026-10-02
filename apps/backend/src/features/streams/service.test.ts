@@ -870,6 +870,7 @@ describe("StreamService.createThreadOn anchor routing", () => {
     })
 
     expect(mockMessageFindByIdForUpdate).not.toHaveBeenCalled()
+    expect(mockEventFindById).toHaveBeenCalledWith(expect.anything(), "ws_1", "event_1")
     expect(mockInsertThreadOrFind).toHaveBeenCalledWith({}, expect.objectContaining({ parentAnchorId: "event_1" }))
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
@@ -1822,7 +1823,7 @@ describe("StreamService.markAsRead", () => {
 
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
-    expect(mockGetMessageOrdinalForEvent).toHaveBeenCalledWith({}, "stream_1", "evt_9")
+    expect(mockGetMessageOrdinalForEvent).toHaveBeenCalledWith({}, "ws_1", "stream_1", "evt_9")
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
       workspaceId: "ws_1",
       authorId: "usr_1",
@@ -1844,7 +1845,7 @@ describe("StreamService.markAsRead", () => {
     // post-write frontier, and the overlay prune must absorb at it — not at the
     // stale event.
     mockFindByStreamAndMember.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
-    mockGetMessageOrdinalForEvent.mockImplementation(async (_db, _streamId, eventId) => {
+    mockGetMessageOrdinalForEvent.mockImplementation(async (_db, _workspaceId, _streamId, eventId) => {
       if (eventId === "evt_9") return { sequence: 42n, messageOrdinal: 7 } as never
       if (eventId === "evt_higher") return { sequence: 90n, messageOrdinal: 12 } as never
       return null as never
@@ -1993,7 +1994,7 @@ describe("StreamService.markUnread", () => {
 
     await service.markUnread("ws_1", "stream_1", "usr_1", "msg_5")
 
-    expect(mockCountMessagesThrough).toHaveBeenCalledWith({}, "stream_1", 40n)
+    expect(mockCountMessagesThrough).toHaveBeenCalledWith({}, "ws_1", "stream_1", 40n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {
       workspaceId: "ws_1",
       authorId: "usr_1",
@@ -2151,11 +2152,13 @@ describe("StreamService.markAllAsRead", () => {
     expect(mockDeleteAllForStreams).toHaveBeenCalledWith({}, "usr_1", ["stream_1", "stream_2"])
     expect(mockCountMessages).toHaveBeenCalledWith(
       {},
+      "ws_1",
       new Map([
         ["stream_1", "100"],
         ["stream_2", "50"],
       ])
     )
+    expect([mockLatestEventIds, mockGetSequences].map((spy) => spy.mock.calls[0]![1])).toEqual(["ws_1", "ws_1"])
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_all", {
       workspaceId: "ws_1",
       authorId: "usr_1",

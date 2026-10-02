@@ -118,7 +118,9 @@ describe("governed model set", () => {
 
     expect(parse(result.output)).toMatchObject({ ok: false, allowedModels: DEFAULT_SUBAGENT_MODELS })
     expect(await activeRunCount(channel.id)).toBe(0)
-    expect(await StreamEventRepository.list(pool, channel.id, { types: ["subagent:created"] })).toHaveLength(0)
+    expect(
+      await StreamEventRepository.list(pool, ctx.workspaceId, channel.id, { types: ["subagent:created"] })
+    ).toHaveLength(0)
   })
 
   test("a model the registry has never heard of is refused the same way", async () => {

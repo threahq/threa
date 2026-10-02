@@ -57,6 +57,7 @@ describe("findThreadAnchorContext", () => {
 
     const result = await findThreadAnchorContext(querier, makeStream({ parentAnchorId: "event_dlg" }))
 
+    expect(eventFindById).toHaveBeenCalledWith(querier, "ws_1", "event_dlg")
     expect(result).not.toBeNull()
     expect(result!.id).toBe("event_dlg")
     expect(result!.authorId).toBe("usr_author")

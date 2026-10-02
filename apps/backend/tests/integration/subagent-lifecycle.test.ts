@@ -42,11 +42,11 @@ afterAll(async () => {
 })
 
 async function cardEvents(streamId: string) {
-  return StreamEventRepository.list(pool, streamId, { types: ["subagent:created"] })
+  return StreamEventRepository.list(pool, ctx.workspaceId, streamId, { types: ["subagent:created"] })
 }
 
 async function statusEvents(streamId: string) {
-  return StreamEventRepository.list(pool, streamId, { types: ["subagent:status_changed"] })
+  return StreamEventRepository.list(pool, ctx.workspaceId, streamId, { types: ["subagent:status_changed"] })
 }
 
 /** Claim from the queue the way the persona-agent worker does. */

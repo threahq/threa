@@ -1258,10 +1258,12 @@ describe("AgentMessageMutationHandler", () => {
       completedAt: new Date("2026-02-19T12:00:00.000Z"),
     }))
 
-    spyOn(StreamEventRepository, "listMessageIdsBySession").mockImplementation(async (_db, _streamId, sessionId) => {
-      if (sessionId === "session_1") return ["msg_agent_live_1"]
-      return []
-    })
+    const listMessageIdsBySession = spyOn(StreamEventRepository, "listMessageIdsBySession").mockImplementation(
+      async (_db, _workspaceId, _streamId, sessionId) => {
+        if (sessionId === "session_1") return ["msg_agent_live_1"]
+        return []
+      }
+    )
 
     spyOn(StreamEventRepository, "insert").mockResolvedValue({
       id: "evt_1",
@@ -1309,6 +1311,7 @@ describe("AgentMessageMutationHandler", () => {
         rootStreamId: "stream_root_1",
       })
     )
+    expect(listMessageIdsBySession).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_thread_1", "session_1")
     expect(eventService.deleteMessageInternal).toHaveBeenCalledTimes(2)
     expect(eventService.deleteMessageInternal).toHaveBeenCalledWith(
       expect.objectContaining({
