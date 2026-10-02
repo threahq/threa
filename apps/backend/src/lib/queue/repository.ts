@@ -96,11 +96,6 @@ export interface FailDlqParams {
   dlqAt: Date
 }
 
-export interface UnDlqParams {
-  messageId: string
-  processAfter: Date
-}
-
 export interface QueueDepthRow {
   queueName: string
   pending: number
@@ -239,6 +234,7 @@ export const QueueRepository = {
           claimed_count = claimed_count + 1
         FROM selected
         WHERE queue_messages.id = selected.id
+          AND queue_messages.workspace_id = ${params.workspaceId}
         RETURNING
           queue_messages.id,
           queue_messages.queue_name,
@@ -276,6 +272,7 @@ export const QueueRepository = {
    */
   async batchRenewClaims(db: Querier, params: BatchRenewClaimsParams): Promise<number> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         UPDATE queue_messages
         SET claimed_until = GREATEST(claimed_until, ${params.claimedUntil})
@@ -293,6 +290,7 @@ export const QueueRepository = {
   /** Verifies claimedBy so only the claiming worker completes the message. */
   async complete(db: Querier, params: CompleteParams): Promise<void> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         UPDATE queue_messages
         SET
@@ -318,6 +316,7 @@ export const QueueRepository = {
    */
   async lockClaim(db: Querier, claim: QueueClaim): Promise<{ claimedUntil: Date } | null> {
     const result = await db.query<{ claimed_until: Date }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         SELECT claimed_until FROM queue_messages
         WHERE id = ${claim.messageId}
@@ -349,6 +348,7 @@ export const QueueRepository = {
    */
   async cancelById(db: Querier, messageId: string): Promise<boolean> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         UPDATE queue_messages
         SET
@@ -369,6 +369,7 @@ export const QueueRepository = {
    */
   async fail(db: Querier, params: FailParams): Promise<void> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         UPDATE queue_messages
         SET
@@ -395,6 +396,7 @@ export const QueueRepository = {
    */
   async defer(db: Querier, params: DeferParams): Promise<void> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         UPDATE queue_messages
         SET
@@ -417,6 +419,7 @@ export const QueueRepository = {
   /** Verifies claimedBy so only the claiming worker moves the message to DLQ. */
   async failDlq(db: Querier, params: FailDlqParams): Promise<void> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         UPDATE queue_messages
         SET
@@ -437,25 +440,6 @@ export const QueueRepository = {
     }
   },
 
-  async unDlq(db: Querier, params: UnDlqParams): Promise<void> {
-    const result = await db.query(
-      sql`
-        UPDATE queue_messages
-        SET
-          dlq_at = NULL,
-          failed_count = 0,
-          last_error = NULL,
-          process_after = ${params.processAfter}
-        WHERE id = ${params.messageId}
-          AND dlq_at IS NOT NULL
-      `
-    )
-
-    if ((result.rowCount ?? 0) === 0) {
-      throw new Error(`Failed to un-DLQ message ${params.messageId}: not found or not in DLQ`)
-    }
-  },
-
   /**
    * Delete one batch (up to `limit`) of terminal messages in `category` whose
    * retention timestamp is older than `cutoff`. Returns rows deleted; callers
@@ -473,6 +457,7 @@ export const QueueRepository = {
 
     const column = sql.raw(RETENTION_COLUMN[params.category])
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- retention sweep across every workspace
       sql`
         WITH candidates AS (
           SELECT id
@@ -486,9 +471,7 @@ export const QueueRepository = {
         USING candidates
         WHERE queue_messages.id = candidates.id
           -- Re-assert the terminal predicate: the CTE's filter is evaluated at
-          -- statement snapshot, so a concurrent reactivation (unDlq) committing
-          -- mid-statement would otherwise pass the id-only re-check and delete
-          -- a now-live row.
+          -- statement snapshot, not under the row lock.
           AND queue_messages.${column} IS NOT NULL
           AND queue_messages.${column} < ${params.cutoff}
       `
@@ -514,6 +497,7 @@ export const QueueRepository = {
       pending: string
       oldest_pending_at: Date | null
     }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue depth metrics across every workspace
       sql`
         SELECT
           queue_name,
@@ -528,6 +512,7 @@ export const QueueRepository = {
     )
 
     const dlq = await db.query<{ queue_name: string; dlq: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue depth metrics across every workspace
       sql`
         SELECT queue_name, COUNT(*) AS dlq
         FROM queue_messages
@@ -565,6 +550,7 @@ export const QueueRepository = {
   /** For testing/debugging. */
   async getById(db: Querier, id: string): Promise<QueueMessage | null> {
     const result = await db.query<QueueMessageRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- queue_messages.id is the global primary key and queue rows are never copied across workspaces
       sql`
         SELECT ${SELECT_FIELDS}
         FROM queue_messages
