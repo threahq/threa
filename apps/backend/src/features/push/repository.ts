@@ -142,7 +142,9 @@ export const PushSubscriptionRepository = {
     db: Querier,
     params: { workspaceId: string; id: string; generation: number; staleForMs: number }
   ): Promise<boolean> {
-    const result = await db.query(sql`
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- only the user_sessions probe is cross-workspace (the device key is a user-agent hash, shared by every workspace the browser is active in); s stays pinned to params.workspaceId
+      sql`
       DELETE FROM push_subscriptions s
       WHERE s.workspace_id = ${params.workspaceId}
         AND s.id = ${params.id}
@@ -153,7 +155,8 @@ export const PushSubscriptionRepository = {
           WHERE us.device_key = s.device_key
             AND us.last_active_at > NOW() - (${params.staleForMs}::text || ' milliseconds')::interval
         )
-    `)
+    `
+    )
     return (result.rowCount ?? 0) > 0
   },
 
@@ -185,7 +188,7 @@ export const PushSubscriptionRepository = {
   async deleteOldestByUser(db: Querier, workspaceId: string, userId: string): Promise<void> {
     await db.query(sql`
       DELETE FROM push_subscriptions
-      WHERE id = (
+      WHERE workspace_id = ${workspaceId} AND id = (
         SELECT id FROM push_subscriptions
         WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
         ORDER BY updated_at ASC
@@ -201,11 +204,17 @@ export const PushSubscriptionRepository = {
    * (INV-8 infra exception: same pattern as cross-workspace session cleanup).
    */
   async deleteByEndpointForUser(db: Querier, endpoint: string, workosUserId: string): Promise<number> {
-    const result = await db.query(sql`
-      DELETE FROM push_subscriptions
-      WHERE endpoint = ${endpoint}
-        AND user_id IN (SELECT id FROM users WHERE workos_user_id = ${workosUserId})
-    `)
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- logout cleans up the browser's subscription in every workspace the WorkOS identity belongs to
+      sql`
+      DELETE FROM push_subscriptions ps
+      USING users u
+      WHERE u.workspace_id = ps.workspace_id
+        AND u.id = ps.user_id
+        AND u.workos_user_id = ${workosUserId}
+        AND ps.endpoint = ${endpoint}
+    `
+    )
     return result.rowCount ?? 0
   },
 
