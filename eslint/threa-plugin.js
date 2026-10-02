@@ -983,8 +983,8 @@ function sqlTableReferences(tokens) {
 }
 
 /** Table references in one SQL statement whose `workspace_id` the statement never pins. */
-function findUnscopedTableReferences(text) {
-  if (!SQL_STATEMENT_VERB.test(text)) return []
+function findUnscopedTableReferences(text, extendsStatement) {
+  if (!SQL_STATEMENT_VERB.test(text) && !extendsStatement) return []
 
   const tokens = tokenizeSql(text)
   const cteNames = new Set([...text.matchAll(SQL_CTE_DEFINITION)].map((match) => match[1].toLowerCase()))
@@ -1021,7 +1021,15 @@ const workspaceScopedSqlRule = {
     return {
       TemplateLiteral(node) {
         const text = cleanSqlText(templateText(context.sourceCode, node, 0))
-        for (const { table, alias, isInsert, hidden } of findUnscopedTableReferences(text)) {
+        // A template opening with a statement fragment extends that statement, so the joins it appends are checked
+        // here. An unresolved fragment only counts inside a SQL tag; a plain template opening with one is usually prose.
+        const opening = text.trimStart()[0]
+        const isSqlTagged =
+          node.parent.type === "TaggedTemplateExpression" &&
+          node.parent.tag.type === "Identifier" &&
+          (node.parent.tag.name === "sql" || node.parent.tag.name === "composeSql")
+        const extendsStatement = opening === SQL_CHECKED_ELSEWHERE || (opening === SQL_HIDDEN && isSqlTagged)
+        for (const { table, alias, isInsert, hidden } of findUnscopedTableReferences(text, extendsStatement)) {
           if (hidden) {
             context.report({ node, messageId: "hiddenTable" })
             continue
