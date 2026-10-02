@@ -204,7 +204,7 @@ export async function resolveMessageReferences(
     if (version !== source.revision) versionKeys.push({ messageId: ref.messageId, versionNumber: version })
   }
 
-  const versionRows = await MessageVersionRepository.findByMessageVersions(db, versionKeys)
+  const versionRows = await MessageVersionRepository.findByMessageVersions(db, params.workspaceId, versionKeys)
 
   const quoteAuthorIds = new Set<string>()
   for (const ref of references) {

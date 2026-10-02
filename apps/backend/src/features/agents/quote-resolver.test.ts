@@ -495,7 +495,7 @@ describe("pinned quote precursors", () => {
     expect(findVersions).toHaveBeenCalledTimes(1)
     // msg_C is pinned at its current revision and msg_D is unpinned — neither
     // needs a snapshot row.
-    expect(findVersions.mock.calls[0][1]).toEqual([{ messageId: "msg_B", versionNumber: 1 }])
+    expect(findVersions).toHaveBeenCalledWith(mockClient, "ws_test", [{ messageId: "msg_B", versionNumber: 1 }])
   })
 })
 

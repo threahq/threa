@@ -194,7 +194,7 @@ export async function resolveQuoteReplies(
       versionKeys.push({ messageId: quote.messageId, versionNumber: quote.version })
     }
   }
-  const pinnedVersions = await MessageVersionRepository.findByMessageVersions(db, versionKeys)
+  const pinnedVersions = await MessageVersionRepository.findByMessageVersions(db, workspaceId, versionKeys)
 
   return { resolved, authorNames, pinnedVersions }
 }

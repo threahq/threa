@@ -199,7 +199,7 @@ async function runSupersedeRerun(params: {
     id === PARENT_STREAM_ID ? { ...stream, id: PARENT_STREAM_ID } : { ...stream, ...params.streamOverride }
   )
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
-  spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(1)
+  const getCurrentRevision = spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(1)
   spyOn(StreamEventRepository, "insert").mockImplementation(
     async (_db, input: any) =>
       ({ ...input, sequence: 1n, createdAt: new Date(), actorId: input.actorId ?? null }) as any
@@ -364,6 +364,7 @@ async function runSupersedeRerun(params: {
     createThread,
     updateStatus,
     assertInitiatorWritable,
+    getCurrentRevision,
   }
 }
 
@@ -577,11 +578,13 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
   })
 
   it("runs the escalation model when the superseded attempt failed response validation", async () => {
-    const { result, capturedModelStrings, escalationSteps, markResponseValidationFailed } = await runSupersedeRerun({
-      supersededFailedValidation: true,
-    })
+    const { result, capturedModelStrings, escalationSteps, markResponseValidationFailed, getCurrentRevision } =
+      await runSupersedeRerun({
+        supersededFailedValidation: true,
+      })
 
     expect(result.status).toBe("completed")
+    expect(getCurrentRevision).toHaveBeenCalledWith(emptyDb, WORKSPACE_ID, TRIGGER_MESSAGE_ID)
     expect(result.messagesSent).toBe(1)
     expect(capturedModelStrings).toEqual([OPUS])
     // The escalation is visible in the trace with its provenance.

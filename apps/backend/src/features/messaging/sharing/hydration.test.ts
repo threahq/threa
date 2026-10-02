@@ -161,16 +161,18 @@ describe("pinned hydration", () => {
     spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a", revision: 2, contentJson: currentDoc })]])
     )
-    spyOn(MessageVersionRepository, "findByMessageVersions").mockResolvedValue(
+    const findVersions = spyOn(MessageVersionRepository, "findByMessageVersions").mockResolvedValue(
       new Map([["msg_a@1", { messageId: "msg_a", versionNumber: 1, contentJson: v1Doc } as any]])
     )
     stubAuthorLookups()
     stubFullAccess()
+    return { findVersions }
   }
 
   it("serves the pinned version's body and reports the source's current revision", async () => {
-    stubSource()
+    const { findVersions } = stubSource()
     const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a", 1)])
+    expect(findVersions).toHaveBeenCalledWith({}, "ws_1", [{ messageId: "msg_a", versionNumber: 1 }])
     expect(result[key("msg_a", 1)]).toMatchObject({
       state: "ok",
       contentJson: v1Doc,
