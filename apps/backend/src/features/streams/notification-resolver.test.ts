@@ -107,6 +107,14 @@ describe("resolveNotificationLevelsForStream", () => {
 
     const results = await resolveNotificationLevelsForStream(db, threadStream, members)
 
+    const bound = (db.query as ReturnType<typeof mock>).mock.calls.map(
+      (call) => (call[0] as unknown as { values: unknown[] }).values
+    )
+    expect(bound).toEqual([
+      ["ws_1", "stream_channel", "ws_1", 2],
+      ["ws_1", ["stream_channel"], ["member_1", "member_3"]],
+    ])
+
     const byMember = new Map(results.map((r) => [r.memberId, r]))
 
     // member_2: explicit muted (never hits DB)

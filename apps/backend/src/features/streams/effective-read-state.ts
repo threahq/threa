@@ -16,10 +16,11 @@ export interface EffectiveReadState {
  */
 export async function getEffectiveReadState(
   db: Querier,
+  workspaceId: string,
   userId: string,
   streamIds: string[]
 ): Promise<Map<string, EffectiveReadState>> {
-  const rows = await ReadStateRepository.getBatch(db, userId, streamIds)
+  const rows = await ReadStateRepository.getBatch(db, workspaceId, userId, streamIds)
   const readStateByStream = new Map(rows.map((r) => [r.streamId, r]))
 
   const effective = new Map<string, EffectiveReadState>()
@@ -55,7 +56,8 @@ export async function usersReadThroughEffective(
   const result = await db.query<{ user_id: string }>(sql`
     SELECT rs.user_id
     FROM stream_read_state rs
-    JOIN stream_events se ON se.id = rs.last_read_event_id AND se.stream_id = rs.stream_id
+    JOIN stream_events se
+      ON se.id = rs.last_read_event_id AND se.stream_id = rs.stream_id AND se.workspace_id = rs.workspace_id
     WHERE rs.workspace_id = ${workspaceId}
       AND rs.stream_id = ${streamId}
       AND rs.user_id = ANY(${userIds})
