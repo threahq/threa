@@ -186,6 +186,10 @@ describe("Conversation, settling and embedding backfill workspace scope (INV-8)"
 
   const ids = (conversations: Array<{ id: string }>) => conversations.map((conversation) => conversation.id).sort()
 
+  // NOW() reaches JS as a millisecond Date, so a row created earlier in the same
+  // millisecond would compare as not before it; one more millisecond keeps it in.
+  const passStart = async () => new Date((await MessageConversationStateRepository.now(pool)).getTime() + 1)
+
   /**
    * A stream holding A's settling row for one message plus B's settling row for a
    * message of B's that points at A's conversation and stream.
@@ -373,7 +377,7 @@ describe("Conversation, settling and embedding backfill workspace scope (INV-8)"
       stream,
       [keep, foreignFloor],
       "llm-window",
-      await MessageConversationStateRepository.now(pool)
+      await passStart()
     )
 
     expect({
@@ -407,7 +411,7 @@ describe("Conversation, settling and embedding backfill workspace scope (INV-8)"
       stream,
       [keep],
       "llm-window",
-      await MessageConversationStateRepository.now(pool)
+      await passStart()
     )
 
     expect({
