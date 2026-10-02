@@ -54,7 +54,9 @@ describe("MemoAccumulatorHandler memory gate", () => {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as typeof dbModule.withClient)
-    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(async (_db: any, id: string) => findById(id))
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) =>
+      findById(id)
+    )
     const queue = spyOn(PendingItemRepository, "queue").mockResolvedValue([])
     const activity = spyOn(StreamStateRepository, "upsertActivity").mockResolvedValue(undefined as never)
     const handler = new TestableMemoAccumulatorHandler({} as any)

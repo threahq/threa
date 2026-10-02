@@ -95,7 +95,7 @@ export class StreamBriefService {
         })
         const effectiveRootId = authority.target.rootStreamId ?? authority.target.id
         if (effectiveRootId !== streamId) throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
-        const freshTarget = await StreamRepository.findById(client, request.requestedStreamId)
+        const freshTarget = await StreamRepository.findById(client, request.workspaceId, request.requestedStreamId)
         if (freshTarget?.e2eEnabled) {
           throw new HttpError("Briefs are not supported on encrypted streams", {
             status: 400,

@@ -201,7 +201,7 @@ describe("search_streams DM matching", () => {
       })
       await StreamMemberRepository.insert(client, testWorkspaceId, otherPrivateScratchpadId, outsider.id)
 
-      const scratchpad = await StreamRepository.findById(client, scratchpadId)
+      const scratchpad = await StreamRepository.findById(client, testWorkspaceId, scratchpadId)
       expect(scratchpad).not.toBeNull()
 
       const accessSpec = await computeAgentAccessSpec(client, {

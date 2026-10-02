@@ -61,7 +61,7 @@ describe("E2eStreamActorsRepository.listSealedRootsForBot", () => {
           createdBy,
         })
       }
-      await StreamRepository.update(client, archivedId, { archivedAt: new Date() })
+      await StreamRepository.update(client, wsId, archivedId, { archivedAt: new Date() })
       await StreamRepository.insert(client, {
         id: sealedThreadId,
         workspaceId: wsId,

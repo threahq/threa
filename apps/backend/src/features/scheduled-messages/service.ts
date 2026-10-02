@@ -143,13 +143,10 @@ export class ScheduledMessagesService {
               code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
             })
           }
-          // Workspace-scope check (INV-8): MessageRepository.findById is keyed
-          // by the message PK alone, so we must verify the parent belongs to
-          // the caller's workspace via its stream. Without this, a caller could
-          // attach a foreign workspace's message id and the row would be
-          // accepted (and silently leak workspace boundaries at fire time).
-          const parentStream = await StreamRepository.findById(client, parent.streamId)
-          if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
+          // MessageRepository.findById is keyed by message id alone; the
+          // workspace-scoped stream lookup is what rejects a foreign message.
+          const parentStream = await StreamRepository.findById(client, params.workspaceId, parent.streamId)
+          if (!parentStream) {
             throw new HttpError("Parent message not found", {
               status: 404,
               code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
@@ -689,8 +686,11 @@ export class ScheduledMessagesService {
     return queueId
   }
 
-  private async assertSchedulingTransportSupported(client: PoolClient, stream: { id: string }): Promise<void> {
-    const fresh = await StreamRepository.findById(client, stream.id)
+  private async assertSchedulingTransportSupported(
+    client: PoolClient,
+    stream: { id: string; workspaceId: string }
+  ): Promise<void> {
+    const fresh = await StreamRepository.findById(client, stream.workspaceId, stream.id)
     if (fresh?.e2eEnabled) {
       throw new HttpError("Cannot schedule messages to an end-to-end-encrypted stream", {
         status: 400,

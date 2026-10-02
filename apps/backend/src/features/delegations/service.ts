@@ -125,7 +125,7 @@ export class DelegationService {
       })
 
       // "In this stream" landmark. Sealed streams are never indexed.
-      const stream = await StreamRepository.findById(client, params.streamId)
+      const stream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
       if (!stream) {
         logger.warn(
           { workspaceId: params.workspaceId, streamId: params.streamId, delegationId: inserted.id },

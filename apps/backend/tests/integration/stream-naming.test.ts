@@ -260,7 +260,7 @@ describe("Stream Naming", () => {
           })
         ).toBeNull()
       }
-      expect(await StreamRepository.findById(pool, scratchpad.id)).toMatchObject({
+      expect(await StreamRepository.findById(pool, wsId, scratchpad.id)).toMatchObject({
         displayName: "Current title",
         displayNameSource: "generated",
         displayNameRevision: first!.displayNameRevision,
@@ -344,7 +344,7 @@ describe("Dynamic plaintext stream naming", () => {
       action: "rename",
       revision: 1,
     })
-    expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
+    expect(await StreamRepository.findById(pool, wsId, stream.id)).toMatchObject({
       displayName: "Lunar gardening",
       displayNameSource: "generated",
       displayNameRevision: 1,
@@ -370,7 +370,7 @@ describe("Dynamic plaintext stream naming", () => {
         "job_manual"
       )
     ).toEqual({ status: "stale" })
-    expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
+    expect(await StreamRepository.findById(pool, wsId, stream.id)).toMatchObject({
       displayName: "My garden notes",
       displayNameSource: "explicit",
       displayNameRevision: 1,
@@ -510,7 +510,7 @@ describe("Dynamic plaintext stream naming", () => {
     releaseProvider()
 
     expect(await evaluation).toEqual({ status: "stale" })
-    expect(await StreamRepository.findById(pool, stream.id)).toMatchObject({
+    expect(await StreamRepository.findById(pool, wsId, stream.id)).toMatchObject({
       displayName: null,
       displayNameRevision: 0,
     })

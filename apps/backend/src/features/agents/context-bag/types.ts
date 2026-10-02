@@ -72,9 +72,7 @@ export interface ResolvedRef {
    * authoritative choice, never the client-supplied `ref.streamId`. For a
    * thread ref it's the (access-checked) source stream; for a conversation ref
    * it's the conversation's own root. Callers MUST use this, not `ref.streamId`,
-   * for `StreamRepository.findByIds` — that lookup is not workspace-scoped, so
-   * feeding it an unvalidated client id leaks another workspace's stream
-   * metadata (INV-8).
+   * for stream lookups — a conversation ref's `ref.streamId` is never access-checked.
    */
   sourceStreamId: string
   items: RenderableMessage[]
@@ -113,7 +111,7 @@ export interface Resolver<TRef extends ContextRef = ContextRef> {
   readonly kind: TRef["kind"]
   canonicalKey(ref: TRef): string
   assertAccess(db: Querier, ref: TRef, userId: string, workspaceId: string): Promise<void>
-  fetch(db: Querier, ref: TRef, options?: ResolverFetchOptions): Promise<Omit<ResolvedRef, "ref">>
+  fetch(db: Querier, workspaceId: string, ref: TRef, options?: ResolverFetchOptions): Promise<Omit<ResolvedRef, "ref">>
 }
 
 /**

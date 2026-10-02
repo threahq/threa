@@ -112,10 +112,11 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
  */
 export async function resolveMemoScopeForStreamId(
   db: Querier,
+  workspaceId: string,
   streamId: string
 ): Promise<{ scope: MemoScope; scopeUserId: string | null; rootStreamId: string }> {
-  const stream = await StreamRepository.findById(db, streamId)
-  const root = stream?.rootStreamId ? await StreamRepository.findById(db, stream.rootStreamId) : stream
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
+  const root = stream?.rootStreamId ? await StreamRepository.findById(db, workspaceId, stream.rootStreamId) : stream
   return { ...resolveExtractedMemoScope(root), rootStreamId: root?.id ?? streamId }
 }
 
@@ -318,7 +319,7 @@ export class MemoService implements MemoServiceLike {
       // The visibility tier for everything extracted this batch depends only on
       // the (top-level) stream — memos from a private scratchpad are the owner's
       // private tier (roadmap 6.4).
-      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
+      const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
 
       const existingTags = await MemoRepository.getAllTags(client, workspaceId)
 
@@ -873,7 +874,7 @@ export class MemoService implements MemoServiceLike {
     memos: Array<Pick<MemoToCreate, "id" | "title" | "knowledgeType" | "sourceMessageIds">>
   ): Promise<void> {
     if (memos.length === 0) return
-    const stream = await StreamRepository.findById(client, streamId)
+    const stream = await StreamRepository.findById(client, workspaceId, streamId)
     if (!stream) {
       logger.warn({ workspaceId, streamId }, "Memo capture: stream row missing, skipping context landmarks")
       return
@@ -1017,14 +1018,14 @@ export class MemoService implements MemoServiceLike {
       // override needs an invoking human to own it — with none, fall back to the
       // natural tier rather than mint an ownerless (CHECK-violating) user memo.
       // Resolves the root so a thread-backed save inherits the scratchpad tier.
-      const natural = await resolveMemoScopeForStreamId(client, streamId)
+      const natural = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
       let resolvedScope = natural.scope
       let resolvedScopeUserId = natural.scopeUserId
       if (scopeOverride === MemoScopes.WORKSPACE) {
         // Aside content never lands workspace-scoped: the tool's LLM-supplied
         // override downgrades to the aside's natural user tier, and the result
         // reports the scope it actually landed in.
-        const root = await StreamRepository.findById(client, natural.rootStreamId)
+        const root = await StreamRepository.findById(client, workspaceId, natural.rootStreamId)
         if (root?.type !== StreamTypes.ASIDE) {
           resolvedScope = MemoScopes.WORKSPACE
           resolvedScopeUserId = null
@@ -1167,7 +1168,7 @@ export class MemoService implements MemoServiceLike {
       // residue in a private scratchpad is the owner's private tier (roadmap 6.4),
       // consistent with the passive extractor. Resolves the root first so a
       // thread-backed session still inherits the scratchpad tier.
-      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
+      const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
       return { existingMemos, existingTags, memoLanguage, memoScope }
     })
 

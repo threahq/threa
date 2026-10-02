@@ -897,8 +897,8 @@ export function createStreamHandlers({
 
       const candidateAnchorIds = collectThreadAnchorIds(result.events)
       const [threadDataMap, threadSummaryMap] = await Promise.all([
-        streamService.getThreadsWithReplyCounts(streamId, candidateAnchorIds),
-        streamService.getThreadSummaries(streamId, candidateAnchorIds),
+        streamService.getThreadsWithReplyCounts(workspaceId, streamId, candidateAnchorIds),
+        streamService.getThreadSummaries(workspaceId, streamId, candidateAnchorIds),
       ])
       const enrichedEvents = await eventService.enrichBootstrapEvents(result.events, threadDataMap, threadSummaryMap, {
         workspaceId,
@@ -1158,8 +1158,8 @@ export function createStreamHandlers({
       const candidateAnchorIds = collectThreadAnchorIds(events)
       const threadScope = syncMode === "append" ? undefined : candidateAnchorIds
       const [threadDataMap, threadSummaryMap] = await Promise.all([
-        streamService.getThreadsWithReplyCounts(streamId, threadScope),
-        streamService.getThreadSummaries(streamId, threadScope),
+        streamService.getThreadsWithReplyCounts(workspaceId, streamId, threadScope),
+        streamService.getThreadSummaries(workspaceId, streamId, threadScope),
       ])
       const threadStates =
         syncMode === "append"

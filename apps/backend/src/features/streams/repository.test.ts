@@ -61,19 +61,19 @@ describe("StreamRepository.insertThreadOrFind", () => {
 describe("StreamRepository.isAncestor", () => {
   test("short-circuits without a query when the IDs are equal", async () => {
     const db = makeDb([])
-    expect(await StreamRepository.isAncestor(db, "stream_a", "stream_a")).toBe(true)
+    expect(await StreamRepository.isAncestor(db, "ws_1", "stream_a", "stream_a")).toBe(true)
     expect(db._query).not.toHaveBeenCalled()
   })
 
   test("returns true when the recursive CTE finds any matching row", async () => {
     const db = makeDb([{ matched: true }])
-    expect(await StreamRepository.isAncestor(db, "stream_parent", "stream_thread")).toBe(true)
+    expect(await StreamRepository.isAncestor(db, "ws_1", "stream_parent", "stream_thread")).toBe(true)
     expect(db._query).toHaveBeenCalledTimes(1)
   })
 
   test("returns false when the CTE returns no rows", async () => {
     const db = makeDb([])
-    expect(await StreamRepository.isAncestor(db, "stream_other", "stream_thread")).toBe(false)
+    expect(await StreamRepository.isAncestor(db, "ws_1", "stream_other", "stream_thread")).toBe(false)
     expect(db._query).toHaveBeenCalledTimes(1)
   })
 })
@@ -179,7 +179,7 @@ describe("StreamRepository purpose exclusion (cont.)", () => {
 
   test("findById surfaces the purpose so a directly-mounted stream stays functional", async () => {
     const db = makeDb([streamRow({ purpose: StreamPurposes.PERSONA_TEST })])
-    const stream = await StreamRepository.findById(db, "stream_x")
+    const stream = await StreamRepository.findById(db, "ws_1", "stream_x")
     // Direct fetch is unfiltered — the exclusion is a list-only concern.
     expect(queryText(db)).not.toContain("s.purpose IS NULL")
     expect(stream?.purpose).toBe(StreamPurposes.PERSONA_TEST)

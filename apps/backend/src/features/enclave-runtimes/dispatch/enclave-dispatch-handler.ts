@@ -109,14 +109,14 @@ export class EnclaveDispatchHandler implements OutboxHandler {
           // works instantly) but no turn is dispatched. Threads inherit the
           // root scratchpad's mode live, mirroring CompanionHandler, so a root
           // toggled after the thread was created is still respected.
-          const stream = await StreamRepository.findById(this.db, streamId)
+          const stream = await StreamRepository.findById(this.db, workspaceId, streamId)
           if (!stream) {
             seen.push(event.id)
             continue
           }
           let companionSource = stream
           if (stream.companionMode !== CompanionModes.ON && stream.rootStreamId) {
-            const rootStream = await StreamRepository.findById(this.db, stream.rootStreamId)
+            const rootStream = await StreamRepository.findById(this.db, workspaceId, stream.rootStreamId)
             if (
               rootStream &&
               rootStream.type === StreamTypes.SCRATCHPAD &&

@@ -185,7 +185,7 @@ describe("Aside foundations", () => {
       createdBy: creator,
     })
 
-    const scope = await resolveMemoScopeForStreamId(pool, aside.id)
+    const scope = await resolveMemoScopeForStreamId(pool, wsId, aside.id)
     expect(scope).toEqual({ scope: MemoScopes.USER, scopeUserId: creator, rootStreamId: aside.id })
   })
 

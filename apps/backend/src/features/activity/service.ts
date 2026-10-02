@@ -118,10 +118,12 @@ export class ActivityService {
     if (mentionedUserIds.length === 0 && broadcastIds.length === 0) return []
 
     return withClient(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream || stream.workspaceId !== workspaceId) return []
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
+      if (!stream) return []
 
-      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      const rootStream = stream.rootStreamId
+        ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
+        : null
 
       // Threads inherit their root stream's type for @channel/@here eligibility.
       const effectiveType = rootStream?.type ?? stream.type
@@ -207,10 +209,12 @@ export class ActivityService {
     if (actorType !== AuthorTypes.USER) return null
 
     return withClient(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream || stream.workspaceId !== workspaceId) return null
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
+      if (!stream) return null
 
-      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      const rootStream = stream.rootStreamId
+        ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
+        : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = contentMarkdown.slice(0, 200)
       const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
@@ -287,11 +291,13 @@ export class ActivityService {
     const { workspaceId, streamId, messageId, actorId, actorType, contentMarkdown, excludeUserIds } = params
 
     return withClient(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream || stream.workspaceId !== workspaceId) return []
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
+      if (!stream) return []
 
       const directMembers = await StreamMemberRepository.list(client, { streamId })
-      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      const rootStream = stream.rootStreamId
+        ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
+        : null
       const streamMembers = rootStream
         ? await this.resolveInheritedNotificationCandidates(client, stream, rootStream.id, directMembers)
         : directMembers
@@ -420,10 +426,12 @@ export class ActivityService {
       const message = await MessageRepository.findById(client, messageId)
       if (!message) return []
 
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream || stream.workspaceId !== workspaceId) return []
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
+      if (!stream) return []
 
-      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      const rootStream = stream.rootStreamId
+        ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
+        : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = (message.contentMarkdown ?? "").slice(0, 200)
       const actor = await this.resolveAuthor(client, workspaceId, actorId, actorType)
@@ -655,10 +663,12 @@ export class ActivityService {
     const addedByType = payload.addedByType === AuthorTypes.BOT ? AuthorTypes.BOT : AuthorTypes.USER
 
     return withClient(this.pool, async (client) => {
-      const stream = await StreamRepository.findById(client, streamId)
-      if (!stream || stream.workspaceId !== workspaceId) return []
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
+      if (!stream) return []
 
-      const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
+      const rootStream = stream.rootStreamId
+        ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
+        : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const actor = await this.resolveAuthor(client, workspaceId, addedBy, addedByType)
 

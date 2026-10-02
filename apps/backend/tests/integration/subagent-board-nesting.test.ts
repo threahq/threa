@@ -186,6 +186,6 @@ describe("conversations minted inside a subagent thread", () => {
 
     expect(minted?.parentConversationId).toBeNull()
     // Guard against the thread silently not being a thread.
-    expect((await StreamRepository.findById(pool, thread.id))?.parentAnchorId).toBe(anchorMessageId)
+    expect((await StreamRepository.findById(pool, ctx.workspaceId, thread.id))?.parentAnchorId).toBe(anchorMessageId)
   })
 })

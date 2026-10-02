@@ -7,14 +7,10 @@ import { StreamRepository, type Stream } from "./repository"
  * thread follows its root (INV-62), every other type governs itself. `null`
  * when that stream is gone, which {@link isMemoryAutomationOn} reads as off.
  */
-export async function findMemoryModeStream(
-  db: Querier,
-  workspaceId: string,
-  streamId: string
-): Promise<Stream | null> {
-  const stream = await StreamRepository.findByIdForWorkspace(db, streamId, workspaceId)
+export async function findMemoryModeStream(db: Querier, workspaceId: string, streamId: string): Promise<Stream | null> {
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
   if (!stream?.rootStreamId) return stream
-  return StreamRepository.findByIdForWorkspace(db, stream.rootStreamId, workspaceId)
+  return StreamRepository.findById(db, workspaceId, stream.rootStreamId)
 }
 
 /**

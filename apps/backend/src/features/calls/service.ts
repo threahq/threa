@@ -45,6 +45,7 @@ import {
   StreamRepository,
   StreamEventRepository,
 } from "../streams"
+import type { Stream } from "../streams"
 import { UserRepository } from "../workspaces"
 import type { FeatureFlagService } from "../feature-flags"
 import { ActivityRepository } from "../activity"
@@ -3004,7 +3005,7 @@ export class CallService {
     const call = await CallRepository.findById(client, invitation.workspaceId, invitation.callId)
     if (!call) return
     const inviter = await UserRepository.findById(client, invitation.workspaceId, invitation.inviterUserId)
-    const stream = await StreamRepository.findById(client, call.streamId)
+    const stream = await StreamRepository.findById(client, call.workspaceId, call.streamId)
     const context = {
       authorName: inviter?.name ?? null,
       streamName: stream?.displayName ?? stream?.slug ?? null,
@@ -3178,27 +3179,35 @@ export class CallService {
   /**
    * Batch the reads the per-call `call_ended` appends share, once for the whole
    * grace-end sweep (INV-56). The sweep spans workspaces, so the ever-participant
-   * read groups by workspace (INV-8); the stream row and member reads are
-   * id-keyed across the set. The event/outbox append stays a loop — neither has a
+   * and stream reads group by workspace (INV-8); the member read is id-keyed
+   * across the set. The event/outbox append stays a loop — neither has a
    * batch insert — but every lookup it needs is already resolved.
    */
   private async appendCallsEnded(client: PoolClient, calls: Call[]): Promise<void> {
     if (calls.length === 0) return
 
-    const callIdsByWorkspace = new Map<string, string[]>()
+    const callsByWorkspace = new Map<string, Call[]>()
     for (const call of calls) {
-      const ids = callIdsByWorkspace.get(call.workspaceId)
-      if (ids) ids.push(call.id)
-      else callIdsByWorkspace.set(call.workspaceId, [call.id])
+      const group = callsByWorkspace.get(call.workspaceId)
+      if (group) group.push(call)
+      else callsByWorkspace.set(call.workspaceId, [call])
     }
     const participantUserIdsByCall = new Map<string, string[]>()
-    for (const [workspaceId, callIds] of callIdsByWorkspace) {
-      const partial = await CallParticipantRepository.listUserIdsByCall(client, workspaceId, callIds)
+    const streamByWorkspaceStream = new Map<string, Stream>()
+    for (const [workspaceId, workspaceCalls] of callsByWorkspace) {
+      const partial = await CallParticipantRepository.listUserIdsByCall(
+        client,
+        workspaceId,
+        workspaceCalls.map((c) => c.id)
+      )
       for (const [callId, userIds] of partial) participantUserIdsByCall.set(callId, userIds)
+      const workspaceStreams = await StreamRepository.findByIds(client, workspaceId, [
+        ...new Set(workspaceCalls.map((c) => c.streamId)),
+      ])
+      for (const stream of workspaceStreams) streamByWorkspaceStream.set(`${workspaceId}:${stream.id}`, stream)
     }
 
     const streamIds = [...new Set(calls.map((c) => c.streamId))]
-    const streamById = new Map((await StreamRepository.findByIds(client, streamIds)).map((s) => [s.id, s]))
 
     const memberUserIdsByStream = new Map<string, string[]>()
     for (const member of await StreamMemberRepository.list(client, { streamIds })) {
@@ -3208,7 +3217,7 @@ export class CallService {
     }
 
     for (const call of calls) {
-      const stream = streamById.get(call.streamId)
+      const stream = streamByWorkspaceStream.get(`${call.workspaceId}:${call.streamId}`)
       if (!stream) continue
       await this.appendCallEnded(client, call, {
         streamVisibility: stream.visibility,
@@ -3263,7 +3272,7 @@ export class CallService {
    * skips the append: there is nowhere to land the card.
    */
   private async appendCallEndedForLeave(client: PoolClient, call: Call): Promise<void> {
-    const stream = await StreamRepository.findById(client, call.streamId)
+    const stream = await StreamRepository.findById(client, call.workspaceId, call.streamId)
     if (!stream) return
     const participantUserIdsByCall = await CallParticipantRepository.listUserIdsByCall(client, call.workspaceId, [
       call.id,

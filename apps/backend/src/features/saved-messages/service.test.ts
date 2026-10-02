@@ -105,24 +105,25 @@ function setupService() {
   // these fixtures, so the engagement hook short-circuits.
   spyOn(MessageConversationStateRepository, "settle").mockResolvedValue([])
   // resolveSavedView is covered by its own tests; stub out here
-  spyOn(viewModule, "resolveSavedView").mockImplementation(async (_db: any, _userId: string, rows: SavedMessage[]) =>
-    rows.map((r) => ({
-      id: r.id,
-      workspaceId: r.workspaceId,
-      userId: r.userId,
-      messageId: r.messageId,
-      streamId: r.streamId,
-      conversationId: r.conversationId,
-      status: r.status,
-      title: r.title,
-      note: r.note,
-      remindAt: r.remindAt?.toISOString() ?? null,
-      reminderSentAt: r.reminderSentAt?.toISOString() ?? null,
-      savedAt: r.savedAt.toISOString(),
-      statusChangedAt: r.statusChangedAt.toISOString(),
-      message: null,
-      unavailableReason: null,
-    }))
+  spyOn(viewModule, "resolveSavedView").mockImplementation(
+    async (_db: any, _workspaceId: string, _userId: string, rows: SavedMessage[]) =>
+      rows.map((r) => ({
+        id: r.id,
+        workspaceId: r.workspaceId,
+        userId: r.userId,
+        messageId: r.messageId,
+        streamId: r.streamId,
+        conversationId: r.conversationId,
+        status: r.status,
+        title: r.title,
+        note: r.note,
+        remindAt: r.remindAt?.toISOString() ?? null,
+        reminderSentAt: r.reminderSentAt?.toISOString() ?? null,
+        savedAt: r.savedAt.toISOString(),
+        statusChangedAt: r.statusChangedAt.toISOString(),
+        message: null,
+        unavailableReason: null,
+      }))
   )
   return new SavedMessagesService({ pool: {} as any })
 }
@@ -142,11 +143,12 @@ describe("SavedMessagesService.save", () => {
   it("throws 404 when the message's stream is not in the caller's workspace", async () => {
     const service = setupService()
     spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage())
-    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ workspaceId: "ws_other" }))
+    const findStream = spyOn(StreamRepository, "findById").mockResolvedValue(null)
 
     await expect(
       service.save({ workspaceId: WORKSPACE_ID, userId: USER_ID, messageId: MESSAGE_ID, remindAt: null })
     ).rejects.toMatchObject({ status: 404 })
+    expect(findStream).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, STREAM_ID)
   })
 
   it("throws 403 on private streams when the user is not a member", async () => {
@@ -241,7 +243,9 @@ describe("SavedMessagesService.save", () => {
       thread_1: fakeStream({ id: "thread_1", rootStreamId: "root_1", parentStreamId: "root_1" }),
       root_1: fakeStream({ id: "root_1" }),
     }
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => streamsById[id] ?? null)
+    spyOn(StreamRepository, "findById").mockImplementation(
+      async (_db: any, _workspaceId: string, id: string) => streamsById[id] ?? null
+    )
     // The conversation was minted inside the thread, so its streamId is the
     // thread id — a raw-id compare would wrongly drop it; effective roots match.
     spyOn(ConversationRepository, "findByIds").mockResolvedValue([{ id: "conv_1", streamId: "thread_1" } as any])

@@ -309,15 +309,15 @@ describe("cross-bot linked scratchpad routing", () => {
       instanceId: scenario.childInstance,
       runtimeSessionId: scenario.childSession,
     })
-    const originalRead = StreamRepository.findByIdForWorkspaceForShare
+    const originalRead = StreamRepository.findByIdForShare
     let reads = 0
     let releaseReads!: () => void
     const bothRead = new Promise<void>((resolve) => {
       releaseReads = resolve
     })
-    const readSpy = spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockImplementation(async (...args) => {
+    const readSpy = spyOn(StreamRepository, "findByIdForShare").mockImplementation(async (...args) => {
       const result = await originalRead(...args)
-      if (args[1] === scenario.root) {
+      if (args[2] === scenario.root) {
         reads += 1
         if (reads === 2) releaseReads()
         await bothRead

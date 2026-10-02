@@ -66,8 +66,8 @@ async function resolveMemoSearchScope(
     return userAccessibleStreamIds
   }
 
-  const anchorStream = await StreamRepository.findById(pool, anchorStreamId)
-  if (!anchorStream || anchorStream.workspaceId !== workspaceId) {
+  const anchorStream = await StreamRepository.findById(pool, workspaceId, anchorStreamId)
+  if (!anchorStream) {
     throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
   }
 

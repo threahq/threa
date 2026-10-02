@@ -40,7 +40,7 @@ export class RepliesCommand implements Command {
     const requested = args ? (args as RuntimeReplyMode) : null
 
     return withTransaction(this.deps.pool, async (db) => {
-      const stream = await StreamRepository.findByIdForWorkspace(db, ctx.streamId, ctx.workspaceId)
+      const stream = await StreamRepository.findById(db, ctx.workspaceId, ctx.streamId)
       const link = stream && isRepliesStream(stream) ? await findRootLink(db, stream) : null
       if (!link) {
         return { success: false, error: "/replies needs a scratchpad with a linked session" }

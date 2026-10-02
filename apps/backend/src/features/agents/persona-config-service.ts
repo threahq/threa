@@ -489,9 +489,9 @@ export class PersonaConfigService {
   }
 
   /** The bound test stream id when it still exists and is unarchived, else null. */
-  private async resolveActiveTestStreamId(testStreamId: string | null): Promise<string | null> {
+  private async resolveActiveTestStreamId(workspaceId: string, testStreamId: string | null): Promise<string | null> {
     if (!testStreamId) return null
-    const stream = await this.streamService.getStreamById(testStreamId)
+    const stream = await this.streamService.getStreamById(workspaceId, testStreamId)
     return stream && !stream.archivedAt ? stream.id : null
   }
 
@@ -672,7 +672,7 @@ export class PersonaConfigService {
     // scratchpad as an active-looking test chat with no way back to the empty
     // state. `ensureTestStream` mints a fresh stream on the next Start and
     // overwrites the stale pointer then.
-    const testStreamId = await this.resolveActiveTestStreamId(draftDetail.testStreamId)
+    const testStreamId = await this.resolveActiveTestStreamId(workspaceId, draftDetail.testStreamId)
     return { patch: parsed, testStreamId, updatedAt: draftDetail.updatedAt }
   }
 
@@ -933,7 +933,7 @@ export class PersonaConfigService {
     const personaName = editable.kind === "custom" ? editable.row.name : editable.base.name
 
     const draft = await PersonaConfigDraftRepository.findByOwner(this.pool, workspaceId, agentId, callerId)
-    const activeStreamId = await this.resolveActiveTestStreamId(draft?.testStreamId ?? null)
+    const activeStreamId = await this.resolveActiveTestStreamId(workspaceId, draft?.testStreamId ?? null)
     if (activeStreamId) return { streamId: activeStreamId }
 
     const stream = await this.streamService.createScratchpad({

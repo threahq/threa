@@ -287,16 +287,15 @@ describe("claimBotInvocation context handle", () => {
     expect(findSurrounding).not.toHaveBeenCalled()
   })
 
-  it("withholds context when the stream row is gone or belongs to another workspace (INV-8)", async () => {
-    const { handlers, req, findSurrounding } = arrangeClaim({
-      stream: { ...threadStream, workspaceId: "ws_other" } as unknown as Stream,
-    })
+  it("should withhold context when the stream is not found in the invocation's workspace (INV-8)", async () => {
+    const { handlers, req, findStream, findSurrounding } = arrangeClaim({ stream: null })
     const { res, payloads } = createResponse()
 
     await handlers.claimBotInvocation(req, res)
 
     const data = (payloads[0] as { data: Record<string, unknown> }).data
     expect("context" in data).toBe(false)
+    expect(findStream).toHaveBeenCalledWith(expect.anything(), "ws_1", threadStream.id)
     expect(findSurrounding).not.toHaveBeenCalled()
   })
 })

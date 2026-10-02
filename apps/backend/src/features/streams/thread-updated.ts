@@ -33,6 +33,7 @@ export async function publishThreadUpdated(
   const includeReplyCount = options.includeReplyCount ?? true
   const threadSummary = await StreamRepository.findThreadSummaryByParentMessage(
     client,
+    thread.workspaceId,
     thread.parentStreamId,
     thread.parentAnchorId
   )

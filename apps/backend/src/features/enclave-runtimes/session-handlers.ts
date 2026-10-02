@@ -299,7 +299,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const reply = parsed.data
@@ -359,7 +359,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
       assertCallbackBound(session, req)
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const triggerSeq = session.triggerMessageId
@@ -468,7 +468,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         }
       }
 
-      const streamSnapshot = await StreamRepository.findById(pool, session.streamId)
+      const streamSnapshot = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!streamSnapshot) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       await withTransaction(pool, async (tx) => {
@@ -481,7 +481,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         // Authority locked the target/root in canonical order. Re-reading the
         // already-held target lock gives the title revision used by the CAS
         // without introducing a target-before-root lock inversion.
-        const stream = await StreamRepository.findByIdForUpdateBlocking(tx, session.streamId)
+        const stream = await StreamRepository.findByIdForUpdateBlocking(tx, session.workspaceId, session.streamId)
         if (!stream) return
         const decision = parsed.data
         const source = stream.displayNameSource ?? (stream.displayName ? TitleSources.LEGACY : null)
@@ -561,7 +561,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         if (!stored) throw new Error("E2E naming decision target disappeared")
         // updateDisplayName returns a streams-only row; refetch the E2E join so
         // the live event carries the replacement ciphertext with its revision.
-        const projected = await StreamRepository.findById(tx, updated.id)
+        const projected = await StreamRepository.findById(tx, session.workspaceId, stream.id)
         if (!projected) throw new Error("E2E naming stream disappeared after title update")
         await OutboxRepository.insert(tx, "stream:updated", {
           workspaceId: projected.workspaceId,
@@ -595,7 +595,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       await withTransaction(pool, async (tx) => {
@@ -644,9 +644,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
-      // The session room is workspace-scoped; the enclave's internal-auth context
-      // carries no workspace, so resolve it from the session's stream (as /messages does).
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const step = parsed.data
@@ -710,7 +708,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertRunning(session)
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const step = parsed.data
@@ -796,7 +794,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertCallbackBound(session, req)
       assertReplyGeneration(session, parsed.data.envelope)
       assertReplyGeneration(session, parsed.data.snapshotEnvelope)
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const sub = parsed.data
@@ -862,9 +860,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertCallbackBound(session, req)
 
       const messageIds = parsed.data.messageIds
-      // Resolve the workspace from the stream (the internal-auth context carries
-      // none) so we can address the workspace-scoped rooms, as the other callbacks do.
-      const stream = await StreamRepository.findById(pool, session.streamId)
+      const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
       const completedAt = new Date()
 
       // Complete the session AND emit the `agent_session:completed` lifecycle event
@@ -1026,7 +1022,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
 
       const { model, usage } = parsed.data
       if (won && model && usage) {
-        const stream = await StreamRepository.findById(pool, session.streamId)
+        const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
         if (stream)
           await recordEnclaveUsage(pool, costService, { session, workspaceId: stream.workspaceId, model, usage })
       }

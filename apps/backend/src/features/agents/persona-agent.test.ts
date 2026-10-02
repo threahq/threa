@@ -90,6 +90,7 @@ function makeDraft(overrides?: Partial<Draft>): Draft {
 function makeSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
     id: RUNNING_SESSION_ID,
+    workspaceId: WORKSPACE_ID,
     streamId: STREAM_ID,
     personaId: PERSONA_ID,
     triggerMessageId: TRIGGER_MESSAGE_ID,
@@ -188,7 +189,7 @@ async function runSupersedeRerun(params: {
   }
   // A thread's context walks parent ids up to its root (context-builder); the
   // parent must resolve to a different, rootless stream or that walk never ends.
-  spyOn(StreamRepository, "findById").mockImplementation(async (_db, id: string) =>
+  spyOn(StreamRepository, "findById").mockImplementation(async (_db, _workspaceId: string, id: string) =>
     id === PARENT_STREAM_ID ? { ...stream, id: PARENT_STREAM_ID } : { ...stream, ...params.streamOverride }
   )
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)

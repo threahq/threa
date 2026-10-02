@@ -36,8 +36,8 @@ describe("resolveEffectiveAccessStreams", () => {
     const dangling = stream("thread_missing", "ws_1", "stream_missing")
     const crossWorkspace = stream("stream_other", "ws_2")
     const findByIds = mock(async () => [rootA, rootB, crossWorkspace])
-    const original = StreamRepository.findByIdsInWorkspace
-    StreamRepository.findByIdsInWorkspace = findByIds
+    const original = StreamRepository.findByIds
+    StreamRepository.findByIds = findByIds
 
     try {
       const facts = await resolveEffectiveAccessStreams({} as any, "ws_1", [threadB, dangling, rootA, crossWorkspace])
@@ -47,19 +47,19 @@ describe("resolveEffectiveAccessStreams", () => {
       ])
       expect(findByIds).toHaveBeenCalledWith({}, "ws_1", [rootB.id, "stream_missing", rootA.id, crossWorkspace.id])
     } finally {
-      StreamRepository.findByIdsInWorkspace = original
+      StreamRepository.findByIds = original
     }
   })
 
   it("does not query for empty input", async () => {
-    const original = StreamRepository.findByIdsInWorkspace
+    const original = StreamRepository.findByIds
     const findByIds = mock(async () => [])
-    StreamRepository.findByIdsInWorkspace = findByIds
+    StreamRepository.findByIds = findByIds
     try {
       expect(await resolveEffectiveAccessStreams({} as any, "ws_1", [])).toEqual([])
       expect(findByIds).not.toHaveBeenCalled()
     } finally {
-      StreamRepository.findByIdsInWorkspace = original
+      StreamRepository.findByIds = original
     }
   })
 })

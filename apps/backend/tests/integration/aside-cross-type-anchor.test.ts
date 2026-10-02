@@ -99,7 +99,7 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
     })
     expect(sameThread.id).toBe(thread.id)
 
-    const threadsByAnchor = await StreamRepository.findThreadsForMessages(pool, channel.id)
+    const threadsByAnchor = await StreamRepository.findThreadsForMessageIds(pool, wsId, channel.id, [anchorId])
     expect(threadsByAnchor.get(anchorId)).toBe(thread.id)
   })
 
@@ -168,7 +168,7 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
       })
     )
 
-    expect((await StreamRepository.findById(pool, thread.id))?.parentStreamId).toBe(destination.id)
-    expect((await StreamRepository.findById(pool, aside.id))?.parentStreamId).toBe(channel.id)
+    expect((await StreamRepository.findById(pool, wsId, thread.id))?.parentStreamId).toBe(destination.id)
+    expect((await StreamRepository.findById(pool, wsId, aside.id))?.parentStreamId).toBe(channel.id)
   })
 })

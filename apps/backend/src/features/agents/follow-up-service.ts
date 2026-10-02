@@ -160,7 +160,7 @@ export class AgentFollowUpService {
       // "In this stream" landmark. Sealed streams are never indexed. Status and
       // `scheduledFor` are mutable, so they stay out of `detail` and are joined
       // live on read — a stored copy would show a cancelled follow-up as pending.
-      const stream = await StreamRepository.findById(client, params.streamId)
+      const stream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
       if (!stream) {
         logger.warn(
           { workspaceId: params.workspaceId, streamId: params.streamId, followUpId: inserted.id },

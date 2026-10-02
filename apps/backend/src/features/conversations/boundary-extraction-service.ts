@@ -70,7 +70,7 @@ export class BoundaryExtractionService {
       if (!conversation || conversation.workspaceId !== workspaceId) {
         return { conversation: null, stream: null, messages: [] as Message[] }
       }
-      const stream = await StreamRepository.findById(client, conversation.streamId)
+      const stream = await StreamRepository.findById(client, workspaceId, conversation.streamId)
       const messagesMap = await MessageRepository.findByIds(client, conversation.messageIds)
       // Preserve the conversation's stored (chronological) order.
       const messages = conversation.messageIds
@@ -126,7 +126,7 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContextBase: null }
       }
 
-      const stream = await StreamRepository.findById(client, streamId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) {
         return { message: null, stream: null, extractionContextBase: null }
       }
@@ -202,7 +202,12 @@ export class BoundaryExtractionService {
       // from the thread stream rows (streams.reply_count, the maintained source of
       // truth), not the message's own shadow count (plan §Projections).
       const candidateAnchorIds = [...surroundingMessages.map((m) => m.id), ...surroundingCardEventIds]
-      const anchorsWithReplies = await StreamRepository.findAnchorsWithReplies(client, stream.id, candidateAnchorIds)
+      const anchorsWithReplies = await StreamRepository.findAnchorsWithReplies(
+        client,
+        stream.workspaceId,
+        stream.id,
+        candidateAnchorIds
+      )
       const threadRootIds = candidateAnchorIds.filter((id) => anchorsWithReplies.has(id))
       const threadMessagesByParent = await MessageRepository.findThreadMessages(client, threadRootIds)
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
@@ -748,7 +753,9 @@ export class BoundaryExtractionService {
         const cached = deliveryByStreamId.get(conversationStreamId)
         if (cached) return cached
         const conversationStream =
-          conversationStreamId === stream.id ? stream : await StreamRepository.findById(client, conversationStreamId)
+          conversationStreamId === stream.id
+            ? stream
+            : await StreamRepository.findById(client, workspaceId, conversationStreamId)
         const resolved = await resolveConversationDelivery(client, conversationStream)
         deliveryByStreamId.set(conversationStreamId, resolved)
         return resolved

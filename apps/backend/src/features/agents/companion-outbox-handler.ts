@@ -83,7 +83,7 @@ export class CompanionHandler extends DebouncedOutboxHandler {
 
     const triggeredBy = messageEvent.actorId
 
-    const stream = await StreamRepository.findById(this.db, streamId)
+    const stream = await StreamRepository.findById(this.db, workspaceId, streamId)
     if (!stream) {
       logger.warn({ streamId }, "CompanionHandler: stream not found")
       return
@@ -118,7 +118,7 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       // Ariadna responds in nested threads the same way she responds
       // in the scratchpad itself.
       if (stream.companionMode !== CompanionModes.ON && stream.rootStreamId) {
-        const rootStream = await StreamRepository.findById(this.db, stream.rootStreamId)
+        const rootStream = await StreamRepository.findById(this.db, stream.workspaceId, stream.rootStreamId)
         if (
           rootStream &&
           (rootStream.type === StreamTypes.SCRATCHPAD || rootStream.type === StreamTypes.ASIDE) &&

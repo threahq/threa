@@ -350,7 +350,7 @@ describe("ConversationService.reassignMessagesToConversation archived streams", 
     const convA = makeConversation({ id: "conv_a" })
     const spies = setup({ conversations: { conv_a: convA }, primaries: { m1: "conv_a", m2: "conv_a" } })
     spyOn(StreamRepository, "findById").mockImplementation(
-      async (_c: unknown, id: string) =>
+      async (_c: unknown, _workspaceId: string, id: string) =>
         (id === "chan_1"
           ? { id: "chan_1", type: "thread", rootStreamId: "chan_root" }
           : { id: "chan_root", type: "channel", rootStreamId: null, archivedAt: new Date() }) as never

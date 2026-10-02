@@ -71,7 +71,7 @@ export async function loadMessageEmbeddingText(
   workspaceId: string,
   message: Message
 ): Promise<string | null> {
-  const stream = await StreamRepository.findById(pool, message.streamId)
+  const stream = await StreamRepository.findById(pool, workspaceId, message.streamId)
   if (!stream) {
     return null
   }

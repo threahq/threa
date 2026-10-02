@@ -55,7 +55,7 @@ export async function emitSettledConversationUpdates(
     if (!delivery) {
       delivery = await resolveConversationDelivery(
         client,
-        await StreamRepository.findById(client, conversation.streamId)
+        await StreamRepository.findById(client, workspaceId, conversation.streamId)
       )
       deliveryByStreamId.set(conversation.streamId, delivery)
     }

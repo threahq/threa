@@ -42,7 +42,9 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
   const { stream, invokingUserId } = params
 
   // For threads, compute based on root stream
-  const effectiveStream = stream.rootStreamId ? await StreamRepository.findById(db, stream.rootStreamId) : stream
+  const effectiveStream = stream.rootStreamId
+    ? await StreamRepository.findById(db, stream.workspaceId, stream.rootStreamId)
+    : stream
 
   if (!effectiveStream) {
     // Orphaned thread - fall back to public only
