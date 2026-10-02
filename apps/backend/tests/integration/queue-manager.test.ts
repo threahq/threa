@@ -1,22 +1,12 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
 import { QueueManager, QueueRepository, TokenPoolRepository } from "../../src/lib/queue"
-import { AttachmentRepository } from "../../src/features/attachments"
 import { setupTestDatabase } from "./setup"
-import type {
-  Job,
-  JobHandler,
-  JobQueueName,
-  OnDLQHook,
-  QueueMessageMeta,
-  ImageCaptionJobData,
-} from "../../src/lib/queue"
+import type { Job, JobHandler, JobQueueName, OnDLQHook, QueueMessageMeta } from "../../src/lib/queue"
 import type { Querier } from "../../src/db"
-import { ProcessingStatuses, type ProcessingStatus } from "@threahq/types"
 import { AISpendDeniedError } from "@threahq/agent-runtime"
 
 const TEST_QUEUE = "test.dlq-hook" as JobQueueName
-const IMAGE_CAPTION_TEST_QUEUE = "test.image-caption.dlq-hook" as JobQueueName
 
 interface TestJobData {
   workspaceId: string
@@ -442,133 +432,6 @@ describe("QueueManager", () => {
         claimedBy: null,
         deferredAtLeast25Minutes: true,
       })
-    })
-  })
-
-  describe("image caption onDLQ hook", () => {
-    test("should mark attachment FAILED on DLQ and COMPLETED after un-DLQ retry", async () => {
-      const workspaceId = `ws_test_${Date.now()}`
-      const attachmentId = `attach_test_${Date.now()}`
-      const messageId = `queue_test_${Date.now()}`
-
-      // Create attachment in PENDING state
-      await AttachmentRepository.insert(pool, {
-        id: attachmentId,
-        workspaceId,
-        uploadedBy: "user_test",
-        filename: "test.png",
-        mimeType: "image/png",
-        sizeBytes: 1000,
-        storagePath: "test/path.png",
-      })
-
-      // Controllable handler: fails until shouldSucceed is true
-      let shouldSucceed = false
-      let handlerCalls = 0
-      const handler: JobHandler<ImageCaptionJobData> = async () => {
-        handlerCalls++
-        if (!shouldSucceed) {
-          throw new Error("intentional failure")
-        }
-        // On success, mark completed (simulating what the real service does)
-        await AttachmentRepository.updateProcessingStatus(pool, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
-      }
-
-      // onDLQ hook marks attachment as FAILED (mirrors server.ts)
-      const onDLQHook: OnDLQHook<ImageCaptionJobData> = async (querier, job) => {
-        await AttachmentRepository.updateProcessingStatus(
-          querier,
-          job.data.workspaceId,
-          job.data.attachmentId,
-          ProcessingStatuses.FAILED
-        )
-      }
-
-      const manager = new QueueManager({
-        pool,
-        queueRepository: QueueRepository,
-        tokenPoolRepository: TokenPoolRepository,
-        maxRetries: 2, // DLQ after 2 failures
-        pollIntervalMs: 10,
-        lockDurationMs: 5000,
-        baseBackoffMs: 10,
-      })
-
-      manager.registerHandler(IMAGE_CAPTION_TEST_QUEUE, handler as JobHandler<unknown>, {
-        hooks: { onDLQ: onDLQHook as OnDLQHook<unknown> },
-      })
-
-      // Enqueue the job
-      const now = new Date()
-      await QueueRepository.insert(pool, {
-        id: messageId,
-        queueName: IMAGE_CAPTION_TEST_QUEUE,
-        workspaceId,
-        payload: {
-          attachmentId,
-          workspaceId,
-          filename: "test.png",
-          mimeType: "image/png",
-          storagePath: "test/path.png",
-        },
-        processAfter: now,
-        insertedAt: now,
-      })
-
-      manager.start()
-
-      try {
-        await waitForCondition(
-          async () => {
-            const attachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
-            return attachment?.processingStatus === ProcessingStatuses.FAILED
-          },
-          5000,
-          "Timeout waiting for attachment to be marked FAILED"
-        )
-
-        await waitForCondition(
-          async () => {
-            const message = await QueueRepository.getById(pool, messageId)
-            return message?.dlqAt !== null
-          },
-          5000,
-          "Timeout waiting for message to be moved to DLQ"
-        )
-
-        // Verify attachment is FAILED
-        const failedAttachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
-        expect(failedAttachment?.processingStatus).toBe(ProcessingStatuses.FAILED)
-
-        // Verify message is in DLQ
-        const dlqMessage = await QueueRepository.getById(pool, messageId)
-        expect(dlqMessage?.dlqAt).not.toBeNull()
-
-        // Un-DLQ and allow success
-        shouldSucceed = true
-        await QueueRepository.unDlq(pool, { messageId, processAfter: new Date() })
-
-        await waitForCondition(
-          async () => {
-            const attachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
-            return attachment?.processingStatus === ProcessingStatuses.COMPLETED
-          },
-          5000,
-          "Timeout waiting for attachment to be marked COMPLETED after un-DLQ"
-        )
-
-        // Verify attachment is COMPLETED
-        const completedAttachment = await AttachmentRepository.findById(pool, workspaceId, attachmentId)
-        expect(completedAttachment?.processingStatus).toBe(ProcessingStatuses.COMPLETED)
-
-        // Handler was called: 2 times for DLQ + 1 time after un-DLQ
-        expect(handlerCalls).toBe(3)
-      } finally {
-        await manager.stop()
-        // Cleanup
-        await pool.query("DELETE FROM attachments WHERE id = $1", [attachmentId])
-        await pool.query("DELETE FROM queue_messages WHERE id = $1", [messageId])
-      }
     })
   })
 

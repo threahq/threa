@@ -1195,10 +1195,6 @@ export const unscopedSqlAllowlist = {
   "apps/backend/src/features/workspace-integrations/repository.ts": 1,
   "apps/backend/src/features/workspaces/repository.ts": 1,
   "apps/backend/src/features/workspaces/user-repository.ts": 2,
-  "apps/backend/src/lib/backfill/chunk-worker.ts": 1,
-  "apps/backend/src/lib/queue/cron-repository.ts": 15,
-  "apps/backend/src/lib/queue/repository.ts": 14,
-  "apps/backend/src/lib/queue/token-pool-repository.ts": 6,
   "apps/backend/src/lib/sql-filters.ts": 2,
 }
 

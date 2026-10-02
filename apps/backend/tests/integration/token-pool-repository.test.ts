@@ -1,7 +1,12 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
-import { Pool } from "pg"
+import { Pool, type PoolClient } from "pg"
 import { QueueRepository, TokenPoolRepository } from "../../src/lib/queue"
 import { setupTestDatabase, withTestTransaction } from "./setup"
+
+async function findToken(client: PoolClient, id: string) {
+  const result = await client.query<{ leased_until: Date }>("SELECT leased_until FROM queue_tokens WHERE id = $1", [id])
+  return result.rows[0] ?? null
+}
 
 describe("TokenPoolRepository", () => {
   let pool: Pool
@@ -615,8 +620,8 @@ describe("TokenPoolRepository", () => {
         expect(renewed).toBe(true)
 
         // Verify lease extended
-        const token = await TokenPoolRepository.getById(client, tokens[0].id)
-        expect(token!.leasedUntil).toEqual(new Date(now.getTime() + 20000))
+        const token = await findToken(client, tokens[0].id)
+        expect(token!.leased_until).toEqual(new Date(now.getTime() + 20000))
       })
     })
 
@@ -686,7 +691,7 @@ describe("TokenPoolRepository", () => {
         })
 
         // Verify deleted
-        const token = await TokenPoolRepository.getById(client, tokens[0].id)
+        const token = await findToken(client, tokens[0].id)
         expect(token).toBeNull()
       })
     })
@@ -772,8 +777,8 @@ describe("TokenPoolRepository", () => {
         expect(deleted).toBe(2)
 
         // Verify all tokens deleted
-        const token1 = await TokenPoolRepository.getById(client, allTokens[0].id)
-        const token2 = await TokenPoolRepository.getById(client, allTokens[1].id)
+        const token1 = await findToken(client, allTokens[0].id)
+        const token2 = await findToken(client, allTokens[1].id)
 
         expect(token1).toBeNull()
         expect(token2).toBeNull()
@@ -814,7 +819,7 @@ describe("TokenPoolRepository", () => {
         expect(deleted).toBe(0)
 
         // Verify token still exists
-        const token = await TokenPoolRepository.getById(client, tokens[0].id)
+        const token = await findToken(client, tokens[0].id)
         expect(token).not.toBeNull()
       })
     })
