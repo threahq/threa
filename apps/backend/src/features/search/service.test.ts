@@ -70,7 +70,7 @@ describe("SearchService exact phrase search", () => {
 
     expect(exactSearch).toHaveBeenCalledWith(
       pool,
-      expect.objectContaining({ query: "created pr", phrases: ["1429", "urgent"] })
+      expect.objectContaining({ workspaceId: "ws_1", query: "created pr", phrases: ["1429", "urgent"] })
     )
   })
 
@@ -87,7 +87,10 @@ describe("SearchService exact phrase search", () => {
       exact: true,
     })
 
-    expect(exactSearch).toHaveBeenCalledWith(pool, expect.objectContaining({ query: "", phrases: ["1429"] }))
+    expect(exactSearch).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({ workspaceId: "ws_1", query: "", phrases: ["1429"] })
+    )
   })
 })
 
@@ -161,6 +164,7 @@ describe("SearchService deep mode", () => {
     expect(hybridSearch).toHaveBeenCalledTimes(3)
     for (const [, params] of hybridSearch.mock.calls) {
       expect((params as { limit: number }).limit).toBe(SEARCH_DEEP_CANDIDATE_POOL)
+      expect((params as { workspaceId: string }).workspaceId).toBe("ws_1")
     }
     expect(hybridSearch.mock.calls.map(([, params]) => (params as { query: string }).query)).toEqual([
       "original query",
@@ -395,7 +399,7 @@ describe("SearchService with the search flag off", () => {
     expect(hybridSearch).toHaveBeenCalledTimes(1)
     expect(hybridSearch).toHaveBeenCalledWith(
       pool,
-      expect.objectContaining({ query: "original query", ranking: "legacy", limit: 20 })
+      expect.objectContaining({ workspaceId: "ws_1", query: "original query", ranking: "legacy", limit: 20 })
     )
     expect(expand).not.toHaveBeenCalled()
     expect(score).not.toHaveBeenCalled()
@@ -417,7 +421,7 @@ describe("SearchService with the search flag off", () => {
 
     expect(fullTextSearch).toHaveBeenCalledWith(
       pool,
-      expect.objectContaining({ query: "railway deploy", ranking: "legacy" })
+      expect.objectContaining({ workspaceId: "ws_1", query: "railway deploy", ranking: "legacy" })
     )
   })
 
@@ -435,8 +439,12 @@ describe("SearchService with the search flag off", () => {
       query: "original query",
     })
 
-    expect(hybridSearch).toHaveBeenCalledWith(pool, expect.objectContaining({ ranking: "improved" }))
+    expect(hybridSearch).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({ workspaceId: "ws_1", ranking: "improved" })
+    )
     expect(conversationSearch).toHaveBeenCalledTimes(1)
+    expect(conversationSearch).toHaveBeenCalledWith(pool, expect.objectContaining({ workspaceId: "ws_1" }))
   })
 })
 
@@ -451,7 +459,7 @@ describe("SearchService memo leg", () => {
   test("should search memos with the query, phrases, stream scope and date filters, and fold the hit into a row", async () => {
     spyOn(SearchRepository, "hybridSearch").mockResolvedValue([fakeResult("msg_1")])
     spyOn(SearchRepository, "conversationSearch").mockResolvedValue([])
-    spyOn(SearchRepository, "conversationsForMessages").mockResolvedValue(new Map())
+    const conversationsForMessages = spyOn(SearchRepository, "conversationsForMessages").mockResolvedValue(new Map())
     const messagesByIds = spyOn(SearchRepository, "messagesByIds").mockResolvedValue([fakeResult("msg_2")])
     const memo = {
       memo: { id: "memo_1", sourceMessageIds: ["msg_1", "msg_2"] },
@@ -480,7 +488,11 @@ describe("SearchService memo leg", () => {
       limit: 3,
       mode: "fast",
     })
-    expect(messagesByIds).toHaveBeenCalledWith(pool, { ids: ["msg_2"], streamIds: ["stream_1"] })
+    expect(messagesByIds).toHaveBeenCalledWith(pool, { workspaceId: "ws_1", ids: ["msg_2"], streamIds: ["stream_1"] })
+    expect(conversationsForMessages).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({ workspaceId: "ws_1", streamIds: ["stream_1"] })
+    )
     expect(memos).toEqual([memo])
     expect(clusters).toEqual([
       expect.objectContaining({ hits: [fakeResult("msg_1")], memoIds: ["memo_1"], matchedVia: ["message", "memory"] }),

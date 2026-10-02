@@ -361,22 +361,26 @@ export class SavedMessagesService {
    * Emits `saved_reminder:fired` in the same tx as the update so the outbox
    * payload reflects committed state.
    */
-  async markReminderFired(params: { savedId: string }): Promise<{ fired: boolean }> {
+  async markReminderFired(params: {
+    workspaceId: string
+    userId: string
+    savedId: string
+  }): Promise<{ fired: boolean }> {
     return withTransaction(this.pool, async (client) => {
-      const row = await SavedMessagesRepository.findByIdUnscoped(client, params.savedId)
+      const row = await SavedMessagesRepository.findById(client, params.workspaceId, params.userId, params.savedId)
       if (!row || row.status !== SavedStatuses.SAVED || row.reminderSentAt !== null) {
         return { fired: false }
       }
 
       const now = new Date()
-      const updated = await SavedMessagesRepository.markReminderSent(client, params.savedId, now)
+      const updated = await SavedMessagesRepository.markReminderSent(client, params.workspaceId, params.savedId, now)
       if (!updated) return { fired: false }
 
-      const [view] = await resolveSavedView(client, row.workspaceId, row.userId, [updated])
+      const [view] = await resolveSavedView(client, params.workspaceId, params.userId, [updated])
 
       await OutboxRepository.insert(client, "saved_reminder:fired", {
-        workspaceId: row.workspaceId,
-        targetUserId: row.userId,
+        workspaceId: params.workspaceId,
+        targetUserId: params.userId,
         savedId: row.id,
         messageId: row.messageId,
         streamId: row.streamId,

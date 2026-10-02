@@ -39,13 +39,13 @@ export const MAX_STREAM_CHAIN_DEPTH = 32
 export function effectivelyArchivedSql(alias: string): string {
   return `EXISTS (
     WITH RECURSIVE archival_chain AS (
-      SELECT c0.parent_stream_id, c0.archived_at, 0 AS depth
+      SELECT c0.workspace_id, c0.parent_stream_id, c0.archived_at, 0 AS depth
       FROM streams c0
-      WHERE c0.id = ${alias}.id
+      WHERE c0.id = ${alias}.id AND c0.workspace_id = ${alias}.workspace_id
       UNION ALL
-      SELECT p.parent_stream_id, p.archived_at, c.depth + 1
+      SELECT p.workspace_id, p.parent_stream_id, p.archived_at, c.depth + 1
       FROM archival_chain c
-      JOIN streams p ON p.id = c.parent_stream_id
+      JOIN streams p ON p.id = c.parent_stream_id AND p.workspace_id = c.workspace_id
       WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
     )
     SELECT 1 FROM archival_chain WHERE archival_chain.archived_at IS NOT NULL

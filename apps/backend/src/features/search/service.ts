@@ -286,6 +286,7 @@ export class SearchService {
     // For exact matching, skip embedding generation - use ILIKE directly (INV-30: single query, pass pool)
     if (exact) {
       const results = await SearchRepository.exactSearch(this.pool, {
+        workspaceId,
         query,
         phrases,
         streamIds,
@@ -390,6 +391,7 @@ export class SearchService {
         streamIds,
       }),
       SearchRepository.messagesByIds(this.pool, {
+        workspaceId,
         ids: [...sourceIds].filter((id) => !resultIds.has(id)),
         streamIds,
       }),
@@ -423,6 +425,7 @@ export class SearchService {
 
     if (!hasQuery || !hasEmbedding) {
       return SearchRepository.fullTextSearch(this.pool, {
+        workspaceId,
         query: normalizedQuery,
         phrases,
         streamIds,
@@ -435,6 +438,7 @@ export class SearchService {
     // Improved ranking scores a pool and cuts to the limit; legacy fetches exactly what it returns.
     const scored = ranking === "improved"
     const candidates = await SearchRepository.hybridSearch(this.pool, {
+      workspaceId,
       query: normalizedQuery,
       phrases,
       embedding,
@@ -518,6 +522,7 @@ export class SearchService {
     const lists = await Promise.all(
       queries.map((q, i) =>
         SearchRepository.hybridSearch(this.pool, {
+          workspaceId,
           query: q,
           phrases,
           embedding: embeddings[i],

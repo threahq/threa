@@ -1056,6 +1056,7 @@ Each query must have:
         const primaryResults =
           !hasQuery || !hasEmbedding
             ? await SearchRepository.fullTextSearch(client, {
+                workspaceId,
                 query: normalizedQuery,
                 streamIds: accessibleStreamIds,
                 filters,
@@ -1063,6 +1064,7 @@ Each query must have:
                 ranking,
               })
             : await SearchRepository.hybridSearch(client, {
+                workspaceId,
                 query: normalizedQuery,
                 embedding,
                 streamIds: accessibleStreamIds,
@@ -1074,6 +1076,7 @@ Each query must have:
         const searchResults =
           hasQuery && hasEmbedding && primaryResults.length === 0
             ? await SearchRepository.fullTextSearch(client, {
+                workspaceId,
                 query: normalizedQuery,
                 streamIds: accessibleStreamIds,
                 filters,

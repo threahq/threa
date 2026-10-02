@@ -29,7 +29,7 @@ describe("SyncService.catchUp retention floor", () => {
     expect(result.requiresBootstrap).toBeUndefined()
     expect(result.head).toBe(9n)
     expect(result.entries).toHaveLength(1)
-    expect(listEntries).toHaveBeenCalledTimes(1)
+    expect(listEntries.mock.calls.map((call) => call[1])).toEqual([{ ...baseParams, after: 5n }])
   })
 
   it("signals requiresBootstrap and discards the page when the cursor is below the floor", async () => {
