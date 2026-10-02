@@ -79,7 +79,7 @@ describe("Sparse read overlay", () => {
   }
 
   async function effectiveUnread(wid: string, sid: string, memberId: string): Promise<number> {
-    const readState = await ReadStateRepository.get(pool, sid, memberId)
+    const readState = await ReadStateRepository.get(pool, wid, sid, memberId)
     const counts = await streamService.getUnreadCounts(wid, [
       { streamId: sid, memberId, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
@@ -147,7 +147,7 @@ describe("Sparse read overlay", () => {
       lastReadOrdinal: 3,
       markedMessageIds: [msg1, msg2],
     })
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(0)
     expect(await effectiveUnread(wid, sid, reader)).toBe(0)
   })
 
@@ -177,11 +177,11 @@ describe("Sparse read overlay", () => {
     expect(snapshot.lastReadEventId).toBe(lastEvent.id)
     expect(snapshot.lastReadSequence).toBe(lastEvent.sequence.toString())
     expect(snapshot.readMessageIds).toEqual([])
-    expect(await SparseReadRepository.countOverlay(pool, threadId, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, threadId, reader)).toBe(0)
     // The frontier landed in stream_read_state — and NO membership row was
     // upserted (membership ≠ access ≠ read state, INV-62).
     expect(await StreamMemberRepository.findByStreamAndMember(pool, wid, threadId, reader)).toBeNull()
-    const readState = await ReadStateRepository.get(pool, threadId, reader)
+    const readState = await ReadStateRepository.get(pool, wid, threadId, reader)
     expect(readState?.lastReadEventId).toBe(lastEvent.id)
     expect(readState?.workspaceId).toBe(wid)
   })
@@ -199,7 +199,7 @@ describe("Sparse read overlay", () => {
     )
 
     expect(second).toEqual(first)
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(1)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(1)
   })
 
   test("overlay rows are workspace-tagged and member-scoped (INV-8)", async () => {
@@ -235,7 +235,7 @@ describe("Sparse read overlay", () => {
     // Timeline mark-as-read up to the latest event absorbs the hole.
     await streamService.markAsRead(wid, sid, reader, eventByMsg.get(msg3)!.id)
 
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(0)
     const readPayloads = await outboxFor("stream:read", sid)
     expect(readPayloads.at(-1)?.readMessageIds).toEqual([])
     expect(await effectiveUnread(wid, sid, reader)).toBe(0)
@@ -256,9 +256,9 @@ describe("Sparse read overlay", () => {
     )
     await streamService.markUnread(wid, sid, reader, msg2)
 
-    const readState = await ReadStateRepository.get(pool, sid, reader)
+    const readState = await ReadStateRepository.get(pool, wid, sid, reader)
     expect(readState?.lastReadEventId).toBe(eventByMsg.get(msg1)!.id)
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(0)
     // msg2, msg3 unread again.
     expect(await effectiveUnread(wid, sid, reader)).toBe(2)
   })
@@ -301,7 +301,7 @@ describe("Sparse read overlay", () => {
 
     expect(snapshot.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
     expect(snapshot.readMessageIds).toEqual([])
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(0)
     expect(await effectiveUnread(wid, sid, reader)).toBe(0)
   })
 
@@ -350,9 +350,9 @@ describe("Sparse read overlay", () => {
     )
     await streamService.markUnread(wid, sid, reader, msg4)
 
-    const readState = await ReadStateRepository.get(pool, sid, reader)
+    const readState = await ReadStateRepository.get(pool, wid, sid, reader)
     expect(readState?.lastReadEventId).toBe(eventByMsg.get(msg3)!.id)
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(0)
     expect(await effectiveUnread(wid, sid, reader)).toBe(1)
   })
 
@@ -368,11 +368,11 @@ describe("Sparse read overlay", () => {
     await withTransaction(pool, (client) =>
       applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg3] })
     )
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(1)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(1)
 
     await streamService.removeMember(sid, reader, wid, other)
 
-    expect(await SparseReadRepository.countOverlay(pool, sid, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, sid, reader)).toBe(0)
     // The other member's overlay state is untouched by reader's removal.
     expect(await effectiveUnread(wid, sid, other)).toBe(3)
   })

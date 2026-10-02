@@ -23,7 +23,7 @@ function makeStreamService(archivedStreams: unknown[]) {
     ) => streams.map((s) => (s.type === "dm" ? { ...s, displayName: "Peer Name" } : s)),
     getMembershipsBatch: async () => [],
     // Default: no read-state rows — every stream resolves as never-read.
-    getEffectiveReadState: async (_userId: string, streamIds: string[]) =>
+    getEffectiveReadState: async (_workspaceId: string, _userId: string, streamIds: string[]) =>
       new Map(streamIds.map((streamId) => [streamId, { streamId, lastReadEventId: null, lastReadAt: null }])),
     getUnreadCounts: async () => new Map(),
     getReadOverlayForMember: async () => new Map(),

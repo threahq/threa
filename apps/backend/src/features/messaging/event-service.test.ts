@@ -1132,7 +1132,7 @@ describe("EventService.createMessage author born-read", () => {
     // same (stream, author, event) — the author's own message isn't counted
     // unread. Default (interaction) mode: a send never creates a new hold.
     const createdEventId = (StreamEventRepository.insert as any).mock.calls[0][1].id
-    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId, {
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", createdEventId, {
       holdInInbox: false,
     })
   })
@@ -1144,7 +1144,7 @@ describe("EventService.createMessage author born-read", () => {
     await service.createMessage(baseParams)
 
     const createdEventId = (StreamEventRepository.insert as any).mock.calls[0][1].id
-    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "stream_1", "usr_1", createdEventId, {
+    expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", createdEventId, {
       holdInInbox: false,
     })
   })
@@ -1890,7 +1890,11 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
 
     // A3: the moved events' source read frontiers are repointed on the same tx
     // client (same source stream, event+source-sequence pairs).
-    expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith({}, "stream_src", expect.any(Array))
+    expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith({}, "ws_1", "stream_src", expect.any(Array))
+    expect(SparseReadRepository.rehomeReads).toHaveBeenCalledWith(
+      {},
+      { workspaceId: "ws_1", sourceStreamId: "stream_src", destinationStreamId: "stream_thread", messageIds: ["msg_a"] }
+    )
 
     expect(
       [

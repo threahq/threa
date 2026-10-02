@@ -49,7 +49,7 @@ describe("getEffectiveReadState", () => {
       },
     ])
 
-    const effective = await getEffectiveReadState({} as never, "usr_1", STREAM_IDS)
+    const effective = await getEffectiveReadState({} as never, "ws_1", "usr_1", STREAM_IDS)
 
     expect(effective.get("stream_present_null")?.lastReadEventId).toBeNull()
     expect(effective.get("stream_present")?.lastReadEventId).toBe("evt_read_state")
@@ -63,8 +63,8 @@ describe("getEffectiveReadState", () => {
 
   test("queries the standalone store for exactly the requested stream ids", async () => {
     const getBatch = spyOn(ReadStateRepository, "getBatch").mockResolvedValue([])
-    await getEffectiveReadState({} as never, "usr_1", STREAM_IDS)
-    expect(getBatch).toHaveBeenCalledWith({}, "usr_1", STREAM_IDS)
+    await getEffectiveReadState({} as never, "ws_1", "usr_1", STREAM_IDS)
+    expect(getBatch).toHaveBeenCalledWith({}, "ws_1", "usr_1", STREAM_IDS)
   })
 })
 
@@ -85,7 +85,7 @@ describe("usersReadThroughEffective", () => {
     // qualify. No stream_members anywhere — a non-member viewer's own row
     // qualifies (INV-62 access without membership), closing the late-insert race.
     expect(text).toContain(
-      "FROM stream_read_state rs JOIN stream_events se ON se.id = rs.last_read_event_id AND se.stream_id = rs.stream_id"
+      "FROM stream_read_state rs JOIN stream_events se ON se.id = rs.last_read_event_id AND se.stream_id = rs.stream_id AND se.workspace_id = rs.workspace_id"
     )
     expect(text).toContain("rs.workspace_id = $1")
     expect(text).not.toContain("stream_members")

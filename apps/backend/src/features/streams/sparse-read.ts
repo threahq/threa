@@ -51,8 +51,13 @@ async function resolveWatermarkSequence(
  * a present NULL is an explicit unread-to-zero. Read state is not a membership
  * surface — this never creates a membership row (INV-62).
  */
-async function watermarkSeed(db: Querier, streamId: string, userId: string): Promise<string | null> {
-  const readState = await ReadStateRepository.ensureForUpdate(db, streamId, userId)
+async function watermarkSeed(
+  db: Querier,
+  workspaceId: string,
+  streamId: string,
+  userId: string
+): Promise<string | null> {
+  const readState = await ReadStateRepository.ensureForUpdate(db, workspaceId, streamId, userId)
   return readState ? readState.lastReadEventId : null
 }
 
@@ -80,7 +85,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     messageIds: params.messageIds,
   })
 
-  let watermarkEventId = await watermarkSeed(db, streamId, memberId)
+  let watermarkEventId = await watermarkSeed(db, workspaceId, streamId, memberId)
   let watermarkSeq = await resolveWatermarkSequence(db, workspaceId, streamId, watermarkEventId)
 
   // The conversation cutoff filters by createdAt only, so member ids at/below
@@ -88,11 +93,11 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
   // compaction branch) or they double-subtract in the effective unread count —
   // the overlay invariant is "every row strictly above the watermark".
   if (watermarkSeq > 0n) {
-    await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
+    await SparseReadRepository.pruneAtOrBelow(db, workspaceId, streamId, memberId, watermarkSeq)
   }
 
   const seedEventId = watermarkEventId
-  const target = await SparseReadRepository.findCompactionTarget(db, streamId, memberId, watermarkSeq)
+  const target = await SparseReadRepository.findCompactionTarget(db, workspaceId, streamId, memberId, watermarkSeq)
   if (target) {
     watermarkEventId = target.eventId
     watermarkSeq = target.sequence
@@ -101,7 +106,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
   // just above the (possibly compacted) watermark can never be read by anyone,
   // so absorb it too — otherwise agent-deleted transients above the watermark
   // stall it forever and the stream can never fully read from the board.
-  const deletedRun = await SparseReadRepository.findTrailingDeletedRunEnd(db, streamId, watermarkSeq)
+  const deletedRun = await SparseReadRepository.findTrailingDeletedRunEnd(db, workspaceId, streamId, watermarkSeq)
   if (deletedRun) {
     watermarkEventId = deletedRun.eventId
     watermarkSeq = deletedRun.sequence
@@ -112,7 +117,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     // event, so the watermark is non-null here.
     if (watermarkEventId) {
       const inboxClearMode = await resolveInboxClearMode(db, memberId)
-      const { held } = await ReadStateRepository.advance(db, streamId, memberId, watermarkEventId, {
+      const { held } = await ReadStateRepository.advance(db, workspaceId, streamId, memberId, watermarkEventId, {
         holdInInbox: inboxClearMode !== "read",
       })
       if (held) {
@@ -124,11 +129,11 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
         })
       }
     }
-    await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
+    await SparseReadRepository.pruneAtOrBelow(db, workspaceId, streamId, memberId, watermarkSeq)
   }
 
   const lastReadOrdinal = await ordinalFor(db, workspaceId, streamId, watermarkSeq)
-  const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
+  const overlay = await SparseReadRepository.listOverlayIds(db, workspaceId, streamId, memberId)
 
   const snapshot: ReadStateSnapshot = {
     streamId,
@@ -167,10 +172,10 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
 export async function applySparseUnread(db: Querier, params: ApplySparseReadParams): Promise<ReadStateSnapshot> {
   const { workspaceId, streamId, memberId, messageIds } = params
 
-  await SparseReadRepository.deleteReads(db, streamId, memberId, messageIds)
+  await SparseReadRepository.deleteReads(db, workspaceId, streamId, memberId, messageIds)
 
   const earliest = await StreamEventRepository.findEarliestMessageEvent(db, workspaceId, streamId, messageIds)
-  const watermarkEventId = await watermarkSeed(db, streamId, memberId)
+  const watermarkEventId = await watermarkSeed(db, workspaceId, streamId, memberId)
   const watermarkSeq = await resolveWatermarkSequence(db, workspaceId, streamId, watermarkEventId)
 
   if (earliest && watermarkSeq >= earliest.sequence) {
@@ -178,10 +183,10 @@ export async function applySparseUnread(db: Querier, params: ApplySparseReadPara
     const newWatermarkEventId = previous?.id ?? null
     const newWatermarkSeq = previous?.sequence ?? 0n
     // The regress lands in stream_read_state unconditionally (may be null — same tx).
-    await ReadStateRepository.set(db, streamId, memberId, newWatermarkEventId)
+    await ReadStateRepository.set(db, workspaceId, streamId, memberId, newWatermarkEventId)
 
     const lastReadOrdinal = await ordinalFor(db, workspaceId, streamId, newWatermarkSeq)
-    const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
+    const overlay = await SparseReadRepository.listOverlayIds(db, workspaceId, streamId, memberId)
 
     const snapshot: ReadStateSnapshot = {
       streamId,
@@ -205,7 +210,7 @@ export async function applySparseUnread(db: Querier, params: ApplySparseReadPara
   }
 
   const lastReadOrdinal = await ordinalFor(db, workspaceId, streamId, watermarkSeq)
-  const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
+  const overlay = await SparseReadRepository.listOverlayIds(db, workspaceId, streamId, memberId)
 
   const snapshot: ReadStateSnapshot = {
     streamId,

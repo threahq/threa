@@ -252,7 +252,7 @@ export function createWorkspaceHandlers({
       // (NULL watermark). Unread counts, watermark sequences, and the overlay
       // derivation below all source from this.
       const membershipStreamIds = streamMemberships.map((m) => m.streamId)
-      const effectiveReadState = await streamService.getEffectiveReadState(userId, membershipStreamIds)
+      const effectiveReadState = await streamService.getEffectiveReadState(workspaceId, userId, membershipStreamIds)
 
       // Inbox arrival order: candidates are held streams plus every member
       // stream (the arrival lookup itself drops streams with nothing unread).
@@ -291,7 +291,7 @@ export function createWorkspaceHandlers({
         if (effective.lastReadEventId) watermarkEventIds.add(effective.lastReadEventId)
       }
       const [readOverlayMap, watermarkSequences] = await Promise.all([
-        streamService.getReadOverlayForMember(userId, membershipStreamIds),
+        streamService.getReadOverlayForMember(workspaceId, userId, membershipStreamIds),
         streamService.getSequencesByEventIds(workspaceId, [...watermarkEventIds]),
       ])
       const readMessageIds: Record<string, string[]> = {}

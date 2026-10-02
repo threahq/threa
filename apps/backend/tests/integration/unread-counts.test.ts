@@ -187,7 +187,7 @@ describe("Unread Counts", () => {
       })
 
       // The author's read frontier should have advanced to include their own message
-      const authorReadState = await ReadStateRepository.get(pool, testStreamId, authorId)
+      const authorReadState = await ReadStateRepository.get(pool, testWorkspaceId, testStreamId, authorId)
       expect(authorReadState?.lastReadEventId).not.toBeNull()
 
       // Author should have 0 unread
@@ -197,7 +197,7 @@ describe("Unread Counts", () => {
       expect(authorCounts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
 
       // Other user should have 1 unread (no read-state row yet = never read)
-      const otherReadState = await ReadStateRepository.get(pool, testStreamId, otherUserId)
+      const otherReadState = await ReadStateRepository.get(pool, testWorkspaceId, testStreamId, otherUserId)
       expect(otherReadState).toBeNull()
 
       const otherCounts = await streamService.getUnreadCounts(testWorkspaceId, [
@@ -313,8 +313,8 @@ describe("Unread Counts", () => {
       expect(updatedStreamIds).toContain(stream2)
 
       // Verify read frontiers advanced
-      const readState1 = await ReadStateRepository.get(pool, stream1, testUserId)
-      const readState2 = await ReadStateRepository.get(pool, stream2, testUserId)
+      const readState1 = await ReadStateRepository.get(pool, testWorkspaceId, stream1, testUserId)
+      const readState2 = await ReadStateRepository.get(pool, testWorkspaceId, stream2, testUserId)
 
       expect(readState1?.lastReadEventId).not.toBeNull()
       expect(readState2?.lastReadEventId).not.toBeNull()
@@ -414,7 +414,7 @@ describe("Unread Counts", () => {
       expect(updatedStreamIds).not.toContain(stream2)
 
       // Stream2 should still have unread (otherUserId sent a message that testUserId hasn't read)
-      const readState2 = await ReadStateRepository.get(pool, stream2, testUserId)
+      const readState2 = await ReadStateRepository.get(pool, workspace2, stream2, testUserId)
       expect(readState2).toBeNull()
     })
   })
@@ -459,13 +459,13 @@ describe("Unread Counts", () => {
       ])
 
       await withTransaction(pool, async (client) => {
-        await ReadStateRepository.batchAdvance(client, testUserId, updates, { holdInInbox: false })
+        await ReadStateRepository.batchAdvance(client, testWorkspaceId, testUserId, updates)
       })
 
       // Verify all frontiers advanced
-      const r1 = await ReadStateRepository.get(pool, stream1, testUserId)
-      const r2 = await ReadStateRepository.get(pool, stream2, testUserId)
-      const r3 = await ReadStateRepository.get(pool, stream3, testUserId)
+      const r1 = await ReadStateRepository.get(pool, testWorkspaceId, stream1, testUserId)
+      const r2 = await ReadStateRepository.get(pool, testWorkspaceId, stream2, testUserId)
+      const r3 = await ReadStateRepository.get(pool, testWorkspaceId, stream3, testUserId)
 
       expect(r1?.lastReadEventId).toBe(eventIds[0])
       expect(r2?.lastReadEventId).toBe(eventIds[1])
@@ -580,7 +580,7 @@ describe("Unread Counts", () => {
       })
 
       await streamService.markAllAsRead(testWorkspaceId, readerId)
-      const readState = await ReadStateRepository.get(pool, testStreamId, readerId)
+      const readState = await ReadStateRepository.get(pool, testWorkspaceId, testStreamId, readerId)
       expect(readState?.lastReadEventId).not.toBeNull()
 
       const result = await pool.query(
@@ -671,10 +671,10 @@ describe("Unread Counts", () => {
       const [firstEvent, targetEvent, thirdEvent] = events
 
       await withTransaction(pool, async (client) => {
-        await ReadStateRepository.set(client, testStreamId, atTarget, targetEvent.id)
-        await ReadStateRepository.set(client, testStreamId, past, thirdEvent.id)
-        await ReadStateRepository.set(client, testStreamId, behind, firstEvent.id)
-        await ReadStateRepository.set(client, testStreamId, dangling, "evt_does_not_exist")
+        await ReadStateRepository.set(client, testWorkspaceId, testStreamId, atTarget, targetEvent.id)
+        await ReadStateRepository.set(client, testWorkspaceId, testStreamId, past, thirdEvent.id)
+        await ReadStateRepository.set(client, testWorkspaceId, testStreamId, behind, firstEvent.id)
+        await ReadStateRepository.set(client, testWorkspaceId, testStreamId, dangling, "evt_does_not_exist")
         // `unread` keeps no row (never read).
       })
 

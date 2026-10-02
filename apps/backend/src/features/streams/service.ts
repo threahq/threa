@@ -980,7 +980,7 @@ export class StreamService {
 
           // Born-read the creation events so initial members don't see them as unread.
           const lastEvent = events[events.length - 1]
-          await ReadStateRepository.setForUsers(client, stream.id, validMemberIds, lastEvent.id)
+          await ReadStateRepository.setForUsers(client, params.workspaceId, stream.id, validMemberIds, lastEvent.id)
         }
       }
 
@@ -2257,7 +2257,7 @@ export class StreamService {
     // Born-read the member_added event (after inserting it) so it's not shown as
     // unread. Monotonic advance: a re-added user keeps any surviving higher
     // position — read state survives leave/rejoin (user-private truth).
-    await ReadStateRepository.advance(client, stream.id, memberId, evtId, { holdInInbox: false })
+    await ReadStateRepository.advance(client, stream.workspaceId, stream.id, memberId, evtId, { holdInInbox: false })
 
     await OutboxRepository.insert(client, "stream:member_added", {
       workspaceId: stream.workspaceId,
@@ -2402,7 +2402,7 @@ export class StreamService {
     // The overlay leaves with the membership: a rejoin born-reads the watermark
     // at latest, and any surviving row would sit below it — violating the
     // strictly-above invariant and double-subtracting in the unread count.
-    await SparseReadRepository.deleteAllForStreams(client, memberId, [stream.id])
+    await SparseReadRepository.deleteAllForStreams(client, stream.workspaceId, memberId, [stream.id])
 
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
@@ -2453,7 +2453,7 @@ export class StreamService {
           memberId,
           streamId
         )
-        await SparseReadRepository.deleteAllForStreams(client, memberId, removedStreamIds)
+        await SparseReadRepository.deleteAllForStreams(client, workspaceId, memberId, removedStreamIds)
         for (const removedStreamId of removedStreamIds) {
           const threadEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
@@ -2639,7 +2639,7 @@ export class StreamService {
     // stale-device advance is rejected and the post-write frontier — not the raw
     // event — is the read position this user's other sessions adopt.
     const inboxClearMode = await resolveInboxClearMode(client, memberId)
-    const { state: postWrite } = await ReadStateRepository.advance(client, streamId, memberId, eventId, {
+    const { state: postWrite } = await ReadStateRepository.advance(client, workspaceId, streamId, memberId, eventId, {
       holdInInbox: inboxClearMode !== "read",
     })
     let readEventId = eventId
@@ -2660,8 +2660,8 @@ export class StreamService {
     // Advancing the watermark absorbs the run at/below it, so prune those rows
     // in the same transaction at the effective (post-write) frontier; the
     // remaining overlay is the absolute set the client keeps.
-    await SparseReadRepository.pruneAtOrBelow(client, streamId, memberId, readPosition.sequence)
-    const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
+    await SparseReadRepository.pruneAtOrBelow(client, workspaceId, streamId, memberId, readPosition.sequence)
+    const readMessageIds = await SparseReadRepository.listOverlayIds(client, workspaceId, streamId, memberId)
     // Absolute read position (sync phase 2c): clients derive unread as
     // latestOrdinal - lastReadOrdinal, so the event carries where this read
     // lands in message-ordinal space. `inboxHeld` is the post-write value —
@@ -2726,7 +2726,7 @@ export class StreamService {
       // read-only for participation, never written — membership ≠ read state).
       // Explicit unread is one of the sanctioned downward moves.
       const membership = await StreamMemberRepository.findByStreamAndMember(client, workspaceId, streamId, memberId)
-      const postWrite = await ReadStateRepository.set(client, streamId, memberId, lastReadEventId)
+      const postWrite = await ReadStateRepository.set(client, workspaceId, streamId, memberId, lastReadEventId)
       // Mark-unread means "this message and everything after it is unread", so
       // overlay rows at/above the target contradict the intent — drop them. The
       // pointer lands just before the target, which can also ADVANCE it (target
@@ -2734,11 +2734,11 @@ export class StreamService {
       // rows now at/below the new watermark must go too, or they double-subtract
       // in the effective unread count. `previous` is the message immediately
       // before the target, so together the two deletes clear the whole overlay.
-      await SparseReadRepository.deleteAtOrAbove(client, streamId, memberId, messageEvent.sequence)
+      await SparseReadRepository.deleteAtOrAbove(client, workspaceId, streamId, memberId, messageEvent.sequence)
       if (previous) {
-        await SparseReadRepository.pruneAtOrBelow(client, streamId, memberId, previous.sequence)
+        await SparseReadRepository.pruneAtOrBelow(client, workspaceId, streamId, memberId, previous.sequence)
       }
-      const readMessageIds = await SparseReadRepository.listOverlayIds(client, streamId, memberId)
+      const readMessageIds = await SparseReadRepository.listOverlayIds(client, workspaceId, streamId, memberId)
       await OutboxRepository.insert(client, "stream:read_set", {
         workspaceId,
         authorId: memberId,
@@ -2781,7 +2781,7 @@ export class StreamService {
     // Advance only streams whose read frontier sits below the latest event —
     // read state is the sole source, so a stream already at its latest event
     // (or with no new messages) is skipped and emits nothing.
-    const readStates = await ReadStateRepository.getBatch(client, memberId, streamIds)
+    const readStates = await ReadStateRepository.getBatch(client, workspaceId, memberId, streamIds)
     const frontierByStream = new Map(readStates.map((readState) => [readState.streamId, readState.lastReadEventId]))
     const updatesToApply = new Map<string, string>()
     for (const [streamId, latestEventId] of latestEventIds.entries()) {
@@ -2798,7 +2798,12 @@ export class StreamService {
     // (monotonic store; membership is never consulted). updatedStreamIds, the
     // per-stream reads, and the frontier snapshot all derive from that
     // complete set: one frontier per attempted valid stream, no gaps.
-    const { states: advancedStates } = await ReadStateRepository.batchAdvance(client, memberId, updatesToApply)
+    const { states: advancedStates } = await ReadStateRepository.batchAdvance(
+      client,
+      workspaceId,
+      memberId,
+      updatesToApply
+    )
 
     const updatedStreamIds = advancedStates.map((state) => state.streamId)
 
@@ -2807,7 +2812,7 @@ export class StreamService {
     // Read-all pins each frontier to its stream's latest event, so nothing
     // can remain above the watermark — wipe every absorbed overlay row (the
     // client clears each read stream's set on `stream:read_all`).
-    await SparseReadRepository.deleteAllForStreams(client, memberId, updatedStreamIds)
+    await SparseReadRepository.deleteAllForStreams(client, workspaceId, memberId, updatedStreamIds)
     // Canonical post-write frontier per updated stream: the standalone
     // watermark + its resolved per-stream sequence + the absolute ordinal.
     // Carried additively (one bounded event, not N) so clients advance the
@@ -2890,7 +2895,7 @@ export class StreamService {
     const accessibleStreamIds = [...(await listAccessibleStreamIds(client, workspaceId, userId, streamIds))]
     if (accessibleStreamIds.length === 0) return { accessibleStreamIds, clearedStreamIds: [], frontiers: [] }
 
-    await ReadStateRepository.ensureBatchForUpdate(client, userId, accessibleStreamIds)
+    await ReadStateRepository.ensureBatchForUpdate(client, workspaceId, userId, accessibleStreamIds)
     const { frontiers } = await this.advanceStreamsToLatest(client, workspaceId, userId, accessibleStreamIds)
 
     const clearedStreamIds = await releaseInboxHold(client, workspaceId, userId, accessibleStreamIds)
@@ -2927,8 +2932,12 @@ export class StreamService {
    * source: every requested stream resolves, and a stream with no row is
    * never-read (NULL watermark).
    */
-  async getEffectiveReadState(userId: string, streamIds: string[]): Promise<Map<string, EffectiveReadState>> {
-    return getEffectiveReadState(this.pool, userId, streamIds)
+  async getEffectiveReadState(
+    workspaceId: string,
+    userId: string,
+    streamIds: string[]
+  ): Promise<Map<string, EffectiveReadState>> {
+    return getEffectiveReadState(this.pool, workspaceId, userId, streamIds)
   }
 
   /**
@@ -2942,7 +2951,7 @@ export class StreamService {
     streamId: string,
     userId: string
   ): Promise<{ unreadCount: number; totalCount: number }> {
-    const effective = await getEffectiveReadState(this.pool, userId, [streamId])
+    const effective = await getEffectiveReadState(this.pool, workspaceId, userId, [streamId])
     const counts = await this.getUnreadCounts(workspaceId, [
       { streamId, memberId: userId, lastReadEventId: effective.get(streamId)?.lastReadEventId ?? null },
     ])
@@ -2950,13 +2959,17 @@ export class StreamService {
   }
 
   /** The viewer's standalone read-state row on one stream (per-stream bootstrap frontier). */
-  async getViewerReadState(streamId: string, userId: string): Promise<StreamReadState | null> {
-    return ReadStateRepository.get(this.pool, streamId, userId)
+  async getViewerReadState(workspaceId: string, streamId: string, userId: string): Promise<StreamReadState | null> {
+    return ReadStateRepository.get(this.pool, workspaceId, streamId, userId)
   }
 
   /** The member's sparse read overlay across `streamIds`, keyed by stream id (bootstrap). */
-  async getReadOverlayForMember(memberId: string, streamIds: string[]): Promise<Map<string, string[]>> {
-    return SparseReadRepository.listOverlayIdsForMember(this.pool, memberId, streamIds)
+  async getReadOverlayForMember(
+    workspaceId: string,
+    memberId: string,
+    streamIds: string[]
+  ): Promise<Map<string, string[]>> {
+    return SparseReadRepository.listOverlayIdsForMember(this.pool, workspaceId, memberId, streamIds)
   }
 
   /** Resolve watermark event ids to per-stream sequences (bootstrap `streamReadState.lastReadSequence`). */

@@ -969,7 +969,7 @@ export function createStreamHandlers({
           streamService.getMembers(workspaceId, streamId),
           streamService.getBotMemberIds(workspaceId, streamId),
           streamService.getMembership(workspaceId, streamId, userId),
-          streamService.getViewerReadState(streamId, userId),
+          streamService.getViewerReadState(workspaceId, streamId, userId),
           eventService.getLatestSequence(workspaceId, streamId),
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
           // Archiving writes only the target row, so a stream's own
