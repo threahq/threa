@@ -23,10 +23,11 @@ export function createVideoTranscodeOnDLQ<T extends { workspaceId: string; attac
       await VideoTranscodeJobRepository.updateFailed(querier, job.data.workspaceId, videoJob.id, failureMessage)
     }
     const att = await AttachmentRepository.findById(querier, job.data.workspaceId, job.data.attachmentId)
+    if (!att) return
     await OutboxRepository.insert(querier, "attachment:transcoded", {
       workspaceId: job.data.workspaceId,
-      ...(att?.streamId && { streamId: att.streamId }),
-      ...(att?.messageId && { messageId: att.messageId }),
+      ...(att.streamId && { streamId: att.streamId }),
+      ...(att.messageId && { messageId: att.messageId }),
       attachmentId: job.data.attachmentId,
       processingStatus: ProcessingStatuses.FAILED,
     })
