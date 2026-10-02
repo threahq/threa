@@ -59,9 +59,9 @@ export const MEMO_ACTIVE_CONVERSATION_QUIET_MS = 30 * 60 * 1000
 export const MEMO_MAX_FAILED_ATTEMPTS = 3
 
 /**
- * How long a batch holds its stream. Well past a 50-item batch's model calls;
- * a batch that outlives it saves nothing, so the bound only delays a stream
- * whose batch crashed.
+ * How long a batch holds its stream without renewing. A batch renews before
+ * each conversation, so this bounds one conversation's model calls and how
+ * long a crashed batch delays its stream.
  */
 export const MEMO_BATCH_CLAIM_SECONDS = 15 * 60
 

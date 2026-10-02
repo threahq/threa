@@ -319,6 +319,50 @@ describe("memo batch: pending items", () => {
     })
   })
 
+  test("a batch renews its claim between conversations, so a lapsed lease is not taken over", async () => {
+    const first = await seedQueuedConversation()
+    const second = { streamId: first.streamId, conversationId: conversationId() }
+    await withTransaction(pool, async (client) => {
+      await ConversationRepository.insert(client, {
+        id: second.conversationId,
+        streamId: second.streamId,
+        workspaceId: testWorkspaceId,
+        status: ConversationStatuses.RESOLVED,
+      })
+      for (const sequence of [3n, 4n]) {
+        await addMessage(client, second, sequence)
+      }
+      await requeue(client, second)
+    })
+    let classifyCalls = 0
+    let takeover: unknown
+    const slow = serviceWith({
+      classify: async () => {
+        classifyCalls++
+        if (classifyCalls === 1) {
+          await pool.query(`UPDATE memo_stream_state SET batch_claim_expires_at = NOW() WHERE stream_id = $1`, [
+            first.streamId,
+          ])
+        } else {
+          takeover = await serviceWith({}).processBatch(testWorkspaceId, first.streamId)
+        }
+        return worthy
+      },
+    })
+
+    const result = await slow.processBatch(testWorkspaceId, first.streamId)
+
+    expect({
+      result,
+      takeover,
+      memos: [await memoCount(first.conversationId), await memoCount(second.conversationId)],
+    }).toEqual({
+      result: { processed: 2, memosCreated: 2 },
+      takeover: { processed: 0, memosCreated: 0 },
+      memos: [1, 1],
+    })
+  })
+
   test("a stream switched off after its conversations were queued drops them without a model call", async () => {
     const seeded = await seedQueuedConversation()
     await switchMemoryOff(seeded)

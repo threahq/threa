@@ -68,6 +68,23 @@ export const StreamStateRepository = {
     return result.rows.length > 0
   },
 
+  /** False once another batch has taken the stream over. */
+  async renewBatchClaim(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    token: string,
+    leaseSeconds: number
+  ): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE memo_stream_state
+      SET batch_claim_expires_at = NOW() + INTERVAL '1 second' * ${leaseSeconds}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND batch_claim_token = ${token}
+      RETURNING stream_id
+    `)
+    return result.rows.length > 0
+  },
+
   /** Row-locked, so a takeover can't commit while the holder is saving. */
   async holdsBatchClaim(db: Querier, workspaceId: string, streamId: string, token: string): Promise<boolean> {
     const result = await db.query(sql`

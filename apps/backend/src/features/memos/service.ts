@@ -453,6 +453,18 @@ export class MemoService implements MemoServiceLike {
 
     const convItems = fetchedData.pending.filter((p) => p.itemType === "conversation")
     for (const item of convItems) {
+      if (
+        !(await StreamStateRepository.renewBatchClaim(
+          this.pool,
+          workspaceId,
+          streamId,
+          claimToken,
+          MEMO_BATCH_CLAIM_SECONDS
+        ))
+      ) {
+        logger.info({ streamId }, "Memo batch lost its stream claim — another batch took over")
+        return { processed: 0, memosCreated: 0 }
+      }
       try {
         const conversation = fetchedData.conversations.get(item.itemId)
         if (!conversation) {

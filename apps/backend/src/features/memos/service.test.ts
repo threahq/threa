@@ -147,6 +147,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   spyOn(StreamStateRepository, "markProcessed").mockResolvedValue(undefined as never)
   spyOn(StreamStateRepository, "claimBatch").mockResolvedValue(true)
   spyOn(StreamStateRepository, "holdsBatchClaim").mockResolvedValue(true)
+  spyOn(StreamStateRepository, "renewBatchClaim").mockResolvedValue(true)
   spyOn(StreamStateRepository, "releaseBatchClaim").mockResolvedValue(undefined)
   const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
   const outboxInsertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
