@@ -327,7 +327,7 @@ describe("SavedMessagesRepository.markReminderSent", () => {
     const sentRow = { ...SAVED_ROW, reminder_sent_at: NOW }
     const db = createQuerier(captured, [sentRow], 1)
 
-    const result = await SavedMessagesRepository.markReminderSent(db, "saved_01", NOW)
+    const result = await SavedMessagesRepository.markReminderSent(db, "ws_1", "saved_01", NOW)
 
     expect(result).not.toBeNull()
     expect(result?.reminderSentAt).toEqual(NOW)
@@ -340,7 +340,7 @@ describe("SavedMessagesRepository.markReminderSent", () => {
 
   it("returns null when the row was already sent or not in saved status", async () => {
     const db = createQuerier({ text: null, values: null }, [], 0)
-    const result = await SavedMessagesRepository.markReminderSent(db, "saved_01", NOW)
+    const result = await SavedMessagesRepository.markReminderSent(db, "ws_1", "saved_01", NOW)
     expect(result).toBeNull()
   })
 })
@@ -364,21 +364,6 @@ describe("SavedMessagesRepository.findById", () => {
     const db = createQuerier({ text: null, values: null }, [], 0)
     const result = await SavedMessagesRepository.findById(db, "ws_1", "usr_1", "saved_missing")
     expect(result).toBeNull()
-  })
-})
-
-describe("SavedMessagesRepository.findByIdUnscoped", () => {
-  afterEach(() => mock.restore())
-
-  it("looks up by id only (worker path) without workspace/user filter", async () => {
-    const captured: Captured = { text: null, values: null }
-    const db = createQuerier(captured, [SAVED_ROW])
-
-    await SavedMessagesRepository.findByIdUnscoped(db, "saved_01")
-
-    expect(captured.text).toContain("WHERE id = $")
-    expect(captured.text).not.toContain("workspace_id = $")
-    expect(captured.text).not.toContain("user_id = $")
   })
 })
 

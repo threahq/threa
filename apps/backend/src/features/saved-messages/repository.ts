@@ -246,16 +246,6 @@ export const SavedMessagesRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  /** Worker-scoped lookup — no user_id filter; used by the reminder worker. */
-  async findByIdUnscoped(db: Querier, savedId: string): Promise<SavedMessage | null> {
-    const result = await db.query<SavedMessageRow>(sql`
-      SELECT ${sql.raw(SAVED_MESSAGE_COLUMNS)}
-      FROM saved_messages
-      WHERE id = ${savedId}
-    `)
-    return result.rows[0] ? mapRow(result.rows[0]) : null
-  },
-
   async findByMessageId(
     db: Querier,
     workspaceId: string,
@@ -393,12 +383,18 @@ export const SavedMessagesRepository = {
    * can build outbox payloads without a second SELECT; null when the update
    * was a no-op (already sent, not in saved status, or missing).
    */
-  async markReminderSent(db: Querier, savedId: string, sentAt: Date): Promise<SavedMessage | null> {
+  async markReminderSent(
+    db: Querier,
+    workspaceId: string,
+    savedId: string,
+    sentAt: Date
+  ): Promise<SavedMessage | null> {
     const result = await db.query<SavedMessageRow>(sql`
       UPDATE saved_messages SET
         reminder_sent_at = ${sentAt},
         updated_at = NOW()
       WHERE id = ${savedId}
+        AND workspace_id = ${workspaceId}
         AND reminder_sent_at IS NULL
         AND status = ${SavedStatuses.SAVED}
       RETURNING ${sql.raw(SAVED_MESSAGE_COLUMNS)}

@@ -2168,7 +2168,9 @@ describe("durable push delivery", () => {
           messageId: message.id,
           remindAt: new Date(Date.now() + HOUR_MS),
         })
-        expect(await savedService.markReminderFired({ savedId: saved.id })).toEqual({ fired: true })
+        expect(
+          await savedService.markReminderFired({ workspaceId: users.ws, userId: users.recipient.id, savedId: saved.id })
+        ).toEqual({ fired: true })
         const outbox = await pool.query(
           `SELECT id, payload, created_at FROM outbox
            WHERE event_type = 'saved_reminder:fired' AND payload->>'savedId' = $1 ORDER BY id DESC LIMIT 1`,

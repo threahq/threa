@@ -1,6 +1,7 @@
-import { describe, expect, test, mock } from "bun:test"
+import { afterEach, describe, expect, test, mock, spyOn } from "bun:test"
 import { WorkspaceAgent, type WorkspaceAgentDeps, type WorkspaceAgentInput } from "./researcher"
 import type { Pool } from "pg"
+import { SearchRepository } from "../../search"
 import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import type { EmbeddingServiceLike } from "../../memos"
@@ -368,5 +369,48 @@ describe("WorkspaceAgent abort/deadline checkpoints (continued)", () => {
     }
 
     expect((caught as Error)?.message).toContain("REACHED_POOL")
+  })
+})
+
+describe("WorkspaceAgent searchMessages workspace scope", () => {
+  afterEach(() => mock.restore())
+
+  const emptyClient = { query: mock(async () => ({ rows: [], rowCount: 0 })), release: mock(() => {}) }
+  const pool = { connect: mock(async () => emptyClient) } as unknown as Pool
+
+  function searchMessages(embedding: number[]) {
+    const agent = new WorkspaceAgent({
+      pool,
+      ai: {} as AI,
+      configResolver: {} as ConfigResolver,
+      embeddingService: { embed: mock(async () => embedding) } as unknown as EmbeddingServiceLike,
+    })
+    return (agent as unknown as { searchMessages: (...args: unknown[]) => Promise<unknown> }).searchMessages(
+      pool,
+      { target: "messages", type: "semantic", query: "launch date" },
+      "ws_1",
+      ["stream_1"],
+      false,
+      new Set(),
+      "improved"
+    )
+  }
+
+  test("passes the invocation's workspace to the keyword-only search when there is no embedding", async () => {
+    const fullTextSearch = spyOn(SearchRepository, "fullTextSearch").mockResolvedValue([])
+
+    await searchMessages([])
+
+    expect(fullTextSearch.mock.calls.map(([, params]) => params.workspaceId)).toEqual(["ws_1"])
+  })
+
+  test("passes the invocation's workspace to the hybrid search and to its keyword fallback", async () => {
+    const hybridSearch = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
+    const fullTextSearch = spyOn(SearchRepository, "fullTextSearch").mockResolvedValue([])
+
+    await searchMessages([0.1])
+
+    expect(hybridSearch.mock.calls.map(([, params]) => params.workspaceId)).toEqual(["ws_1"])
+    expect(fullTextSearch.mock.calls.map(([, params]) => params.workspaceId)).toEqual(["ws_1"])
   })
 })

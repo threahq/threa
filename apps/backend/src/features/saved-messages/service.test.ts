@@ -575,23 +575,26 @@ describe("SavedMessagesService reminder queue integration", () => {
 describe("SavedMessagesService.markReminderFired", () => {
   afterEach(() => mock.restore())
 
-  it("no-ops when the row is missing", async () => {
+  const params = { workspaceId: WORKSPACE_ID, userId: USER_ID, savedId: SAVED_ID }
+
+  it("no-ops when the row is missing, looking it up in the job's workspace for the job's user", async () => {
     const service = setupService()
-    spyOn(SavedMessagesRepository, "findByIdUnscoped").mockResolvedValue(null)
+    const findSpy = spyOn(SavedMessagesRepository, "findById").mockResolvedValue(null)
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await service.markReminderFired({ savedId: SAVED_ID })
+    const result = await service.markReminderFired(params)
 
     expect(result.fired).toBe(false)
+    expect(findSpy.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, USER_ID, SAVED_ID]])
     expect(outboxSpy).not.toHaveBeenCalled()
   })
 
   it("no-ops when status is no longer 'saved'", async () => {
     const service = setupService()
-    spyOn(SavedMessagesRepository, "findByIdUnscoped").mockResolvedValue(fakeSaved({ status: SavedStatuses.DONE }))
+    spyOn(SavedMessagesRepository, "findById").mockResolvedValue(fakeSaved({ status: SavedStatuses.DONE }))
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await service.markReminderFired({ savedId: SAVED_ID })
+    const result = await service.markReminderFired(params)
 
     expect(result.fired).toBe(false)
     expect(outboxSpy).not.toHaveBeenCalled()
@@ -599,10 +602,10 @@ describe("SavedMessagesService.markReminderFired", () => {
 
   it("no-ops when reminder already sent", async () => {
     const service = setupService()
-    spyOn(SavedMessagesRepository, "findByIdUnscoped").mockResolvedValue(fakeSaved({ reminderSentAt: NOW }))
+    spyOn(SavedMessagesRepository, "findById").mockResolvedValue(fakeSaved({ reminderSentAt: NOW }))
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await service.markReminderFired({ savedId: SAVED_ID })
+    const result = await service.markReminderFired(params)
 
     expect(result.fired).toBe(false)
     expect(outboxSpy).not.toHaveBeenCalled()
@@ -610,17 +613,28 @@ describe("SavedMessagesService.markReminderFired", () => {
 
   it("emits saved_reminder:fired when the row is still pending", async () => {
     const service = setupService()
-    spyOn(SavedMessagesRepository, "findByIdUnscoped").mockResolvedValue(fakeSaved())
-    spyOn(SavedMessagesRepository, "markReminderSent").mockResolvedValue(fakeSaved({ reminderSentAt: NOW }))
+    spyOn(SavedMessagesRepository, "findById").mockResolvedValue(fakeSaved())
+    const markSpy = spyOn(SavedMessagesRepository, "markReminderSent").mockResolvedValue(
+      fakeSaved({ reminderSentAt: NOW })
+    )
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await service.markReminderFired({ savedId: SAVED_ID })
+    const result = await service.markReminderFired(params)
 
     expect(result.fired).toBe(true)
+    expect(markSpy.mock.calls.map((c) => c.slice(1, 3))).toEqual([[WORKSPACE_ID, SAVED_ID]])
+    expect(viewModule.resolveSavedView).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      USER_ID,
+      expect.anything()
+    )
     expect(outboxSpy).toHaveBeenCalledWith(
       expect.anything(),
       "saved_reminder:fired",
       expect.objectContaining({
+        workspaceId: WORKSPACE_ID,
+        targetUserId: USER_ID,
         savedId: SAVED_ID,
         messageId: MESSAGE_ID,
         streamId: STREAM_ID,
@@ -630,11 +644,11 @@ describe("SavedMessagesService.markReminderFired", () => {
 
   it("no-ops when markReminderSent returns null (race with another worker)", async () => {
     const service = setupService()
-    spyOn(SavedMessagesRepository, "findByIdUnscoped").mockResolvedValue(fakeSaved())
+    spyOn(SavedMessagesRepository, "findById").mockResolvedValue(fakeSaved())
     spyOn(SavedMessagesRepository, "markReminderSent").mockResolvedValue(null)
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const result = await service.markReminderFired({ savedId: SAVED_ID })
+    const result = await service.markReminderFired(params)
 
     expect(result.fired).toBe(false)
     expect(outboxSpy).not.toHaveBeenCalled()

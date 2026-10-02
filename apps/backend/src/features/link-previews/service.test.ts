@@ -602,6 +602,24 @@ describe("LinkPreviewService.getPreviewsForMessages", () => {
   })
 })
 
+describe("LinkPreviewService message preview lookups workspace scope", () => {
+  test("should look a message's previews up in the caller's workspace", async () => {
+    const find = spyOn(LinkPreviewRepository, "findByMessageId").mockResolvedValue([])
+
+    await makeService({}, {}).getPreviewsForMessage(WORKSPACE_ID, "msg_1")
+
+    expect(find.mock.calls.map((call) => call.slice(1))).toEqual([[WORKSPACE_ID, "msg_1"]])
+  })
+
+  test("should look a batch of messages' previews up in the caller's workspace", async () => {
+    const find = spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
+
+    await makeService({}, {}).getPreviewsForMessages(WORKSPACE_ID, VIEWER_ID, ["msg_1", "msg_2"])
+
+    expect(find.mock.calls.map((call) => call.slice(1))).toEqual([[WORKSPACE_ID, ["msg_1", "msg_2"]]])
+  })
+})
+
 describe("LinkPreviewService.resolveInAppLinkByUrl", () => {
   const previousOrigins = process.env.CORS_ALLOWED_ORIGINS
   beforeAll(() => {
