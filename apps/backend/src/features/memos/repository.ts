@@ -218,14 +218,6 @@ function scopeConditions(filters: MemoSearchFilters | undefined) {
 
 const DEFAULT_SEARCH_STATUSES: MemoStatus[] = ["active"]
 
-export interface SemanticSearchParams {
-  workspaceId: string
-  embedding: number[]
-  filters?: MemoSearchFilters
-  limit?: number
-  semanticDistanceThreshold?: number
-}
-
 export interface FullTextSearchParams {
   workspaceId: string
   query: string
@@ -324,8 +316,10 @@ function mapMemoSearchResult(row: MemoSearchRow, distance: number): MemoSearchRe
 }
 
 export const MemoRepository = {
-  async findById(db: Querier, id: string): Promise<Memo | null> {
-    const result = await db.query<MemoRow>(sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM memos WHERE id = ${id}`)
+  async findById(db: Querier, workspaceId: string, id: string): Promise<Memo | null> {
+    const result = await db.query<MemoRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos WHERE id = ${id} AND workspace_id = ${workspaceId}
+    `)
     if (!result.rows[0]) return null
     return mapRowToMemo(result.rows[0])
   },
@@ -420,9 +414,10 @@ export const MemoRepository = {
         ${pairs.map((pair) => pair.citingRootStreamId)}::text[]
       ) AS requested(memo_id, citing_root_stream_id)
       JOIN memos m ON m.id = requested.memo_id
-      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
+      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id AND src_msg.workspace_id = m.workspace_id
       LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
-      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1]
+        AND src_conv.workspace_id = m.workspace_id
+      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1] AND first_msg.workspace_id = m.workspace_id
       LEFT JOIN streams s ON s.id = COALESCE(src_msg.stream_id, src_conv.stream_id, first_msg.stream_id)
         AND s.workspace_id = ${workspaceId}
       LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
@@ -457,52 +452,16 @@ export const MemoRepository = {
    * serializes to — the picker's node, a pasted link, an API-written body. The
    * id is a prefixed ULID, so the pattern cannot collide with a longer id, and
    * it is passed as a parameter rather than interpolated.
-   *
-   * Workspace scoping goes through `streams`: `messages` carries no
-   * `workspace_id` (INV-8's exemption is the join, not the column).
    */
   async findCitingStreamIds(db: Querier, workspaceId: string, memoId: string): Promise<string[]> {
     const result = await db.query<{ stream_id: string }>(sql`
       SELECT DISTINCT m.stream_id
       FROM messages m
-      JOIN streams s ON s.id = m.stream_id
-      WHERE s.workspace_id = ${workspaceId}
+      WHERE m.workspace_id = ${workspaceId}
         AND m.deleted_at IS NULL
         AND m.content_markdown LIKE ${"%(memo:" + memoId + ")%"}
     `)
     return result.rows.map((row) => row.stream_id)
-  },
-
-  async findByWorkspace(
-    db: Querier,
-    workspaceId: string,
-    options?: { status?: MemoStatus; type?: MemoType; limit?: number }
-  ): Promise<Memo[]> {
-    const limit = options?.limit ?? 50
-    const conditions: string[] = [`workspace_id = $1`]
-    const values: unknown[] = [workspaceId]
-    let paramIndex = 2
-
-    if (options?.status) {
-      conditions.push(`status = $${paramIndex++}`)
-      values.push(options.status)
-    }
-    if (options?.type) {
-      conditions.push(`memo_type = $${paramIndex++}`)
-      values.push(options.type)
-    }
-
-    values.push(limit)
-
-    const query = `
-      SELECT ${SELECT_FIELDS} FROM memos
-      WHERE ${conditions.join(" AND ")}
-      ORDER BY created_at DESC
-      LIMIT $${paramIndex}
-    `
-
-    const result = await db.query<MemoRow>(query, values)
-    return result.rows.map(mapRowToMemo)
   },
 
   /**
@@ -511,6 +470,7 @@ export const MemoRepository = {
    */
   async findByStream(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     options: { scopeUserId: string | null; status?: MemoStatus; limit?: number; orderBy?: "createdAt" | "updatedAt" }
   ): Promise<Memo[]> {
@@ -519,8 +479,8 @@ export const MemoRepository = {
 
     // UNION over the two source paths: conversation memos (via source_conversation_id)
     // and message memos (via source_message_id), each resolving to a stream_id.
-    const values: unknown[] = [streamId, options.scopeUserId]
-    let paramIndex = 3
+    const values: unknown[] = [workspaceId, streamId, options.scopeUserId]
+    let paramIndex = 4
     let statusClause = ""
 
     if (options.status) {
@@ -531,38 +491,20 @@ export const MemoRepository = {
 
     values.push(limit)
 
-    const scopeClause = `AND (m.scope <> 'user' OR m.scope_user_id = $2)`
+    const scopeClause = `AND (m.scope <> 'user' OR m.scope_user_id = $3)`
     const query = `
       SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
-      JOIN conversations c ON m.source_conversation_id = c.id
-      WHERE c.stream_id = $1 ${scopeClause} ${statusClause}
+      JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
+      WHERE m.workspace_id = $1 AND c.stream_id = $2 ${scopeClause} ${statusClause}
       UNION
       SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
-      JOIN messages msg ON m.source_message_id = msg.id
-      WHERE msg.stream_id = $1 ${scopeClause} ${statusClause}
+      JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
+      WHERE m.workspace_id = $1 AND msg.stream_id = $2 ${scopeClause} ${statusClause}
       ORDER BY ${orderBy} DESC
       LIMIT $${paramIndex}
     `
 
     const result = await db.query<MemoRow>(query, values)
-    return result.rows.map(mapRowToMemo)
-  },
-
-  async findBySourceMessage(db: Querier, messageId: string): Promise<Memo | null> {
-    const result = await db.query<MemoRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
-      WHERE source_message_id = ${messageId}
-    `)
-    if (!result.rows[0]) return null
-    return mapRowToMemo(result.rows[0])
-  },
-
-  async findBySourceConversation(db: Querier, conversationId: string): Promise<Memo[]> {
-    const result = await db.query<MemoRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
-      WHERE source_conversation_id = ${conversationId}
-      ORDER BY version DESC
-    `)
     return result.rows.map(mapRowToMemo)
   },
 
@@ -590,10 +532,10 @@ export const MemoRepository = {
     return new Set(result.rows.map((row) => row.source_conversation_id))
   },
 
-  async findActiveBySourceConversation(db: Querier, conversationId: string): Promise<Memo[]> {
+  async findActiveBySourceConversation(db: Querier, workspaceId: string, conversationId: string): Promise<Memo[]> {
     const result = await db.query<MemoRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
-      WHERE source_conversation_id = ${conversationId} AND status = 'active'
+      WHERE workspace_id = ${workspaceId} AND source_conversation_id = ${conversationId} AND status = 'active'
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToMemo)
@@ -652,7 +594,9 @@ export const MemoRepository = {
         EXISTS (
           SELECT 1 FROM messages
           JOIN streams ON streams.id = messages.stream_id AND streams.workspace_id = memos.workspace_id
-          WHERE messages.id = ANY(memos.source_message_ids) AND messages.deleted_at IS NULL
+          WHERE messages.id = ANY(memos.source_message_ids)
+            AND messages.workspace_id = memos.workspace_id
+            AND messages.deleted_at IS NULL
         ) AS has_live_source
       FROM memos
       WHERE workspace_id = ${workspaceId}
@@ -696,7 +640,7 @@ export const MemoRepository = {
         SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
-        JOIN conversations c ON m.source_conversation_id = c.id
+        JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
         WHERE c.stream_id = ${streamId}
           AND m.workspace_id = ${workspaceId}
           AND m.status = 'active'
@@ -708,7 +652,7 @@ export const MemoRepository = {
         SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
-        JOIN messages msg ON m.source_message_id = msg.id
+        JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
         WHERE msg.stream_id = ${streamId}
           AND m.workspace_id = ${workspaceId}
           AND m.status = 'active'
@@ -966,12 +910,12 @@ export const MemoRepository = {
     return result.rowCount ?? 0
   },
 
-  async updateEmbedding(db: Querier, id: string, embedding: number[]): Promise<void> {
+  async updateEmbedding(db: Querier, workspaceId: string, id: string, embedding: number[]): Promise<void> {
     await db.query(sql`
       UPDATE memos
       SET embedding = ${JSON.stringify(embedding)}::vector,
           updated_at = NOW()
-      WHERE id = ${id}
+      WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
   },
 
@@ -982,13 +926,13 @@ export const MemoRepository = {
    * retired-by-supersession content into retrieval. Returns null when the row
    * is missing or not active.
    */
-  async archive(db: Querier, id: string): Promise<Memo | null> {
+  async archive(db: Querier, workspaceId: string, id: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
       UPDATE memos
       SET status = 'archived',
           archived_at = NOW(),
           updated_at = NOW()
-      WHERE id = ${id} AND status = 'active'
+      WHERE id = ${id} AND workspace_id = ${workspaceId} AND status = 'active'
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null
@@ -1001,13 +945,13 @@ export const MemoRepository = {
    * be resurrected into retrieval — only user-archived memos come back.
    * Returns null when the row is missing or not archived.
    */
-  async unarchive(db: Querier, id: string): Promise<Memo | null> {
+  async unarchive(db: Querier, workspaceId: string, id: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
       UPDATE memos
       SET status = 'active',
           archived_at = NULL,
           updated_at = NOW()
-      WHERE id = ${id} AND status = 'archived'
+      WHERE id = ${id} AND workspace_id = ${workspaceId} AND status = 'archived'
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     if (!result.rows[0]) return null
@@ -1054,11 +998,13 @@ export const MemoRepository = {
     const result = await db.query<{ tag: string }>(sql`
       SELECT DISTINCT unnest(m.tags) as tag
       FROM memos m
-      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
+      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id AND src_msg.workspace_id = m.workspace_id
       LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
-      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1]
+        AND src_conv.workspace_id = m.workspace_id
+      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1] AND first_msg.workspace_id = m.workspace_id
       LEFT JOIN streams s ON s.id = COALESCE(src_msg.stream_id, src_conv.stream_id, first_msg.stream_id)
-      LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+        AND s.workspace_id = m.workspace_id
+      LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE m.workspace_id = ${workspaceId} AND m.status = 'active'
         AND (
           (m.scope = 'user' AND m.scope_user_id = ${scope.scopeUserId})
@@ -1067,56 +1013,6 @@ export const MemoRepository = {
       ORDER BY tag
     `)
     return result.rows.map((r) => r.tag)
-  },
-
-  /** Semantic search over memo abstract embeddings by vector similarity. */
-  async semanticSearch(db: Querier, params: SemanticSearchParams): Promise<MemoSearchResult[]> {
-    const { workspaceId, embedding, filters, limit = 10, semanticDistanceThreshold = 0.8 } = params
-    const streamIds = filters?.streamIds
-    const hasStreamFilter = streamIds && streamIds.length > 0
-    const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
-    const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
-    const hasTagFilter = Boolean(filters?.tags?.length)
-    const scopeCond = scopeConditions(filters)
-
-    const embeddingLiteral = `[${embedding.join(",")}]`
-
-    const result = await db.query<MemoSearchRow & { distance: number }>(sql`
-      WITH memo_with_stream AS (
-        SELECT
-          ${sql.raw(SELECT_FIELDS_PREFIXED)},
-          m.embedding <=> ${embeddingLiteral}::vector as distance,
-          COALESCE(msg_stream.id, conv_stream.id) as stream_id,
-          COALESCE(msg_stream.type, conv_stream.type) as stream_type,
-          COALESCE(msg_stream.display_name, msg_stream.slug, conv_stream.display_name, conv_stream.slug) as stream_name,
-          root_stream.id as root_stream_id,
-          root_stream.type as root_stream_type,
-          COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
-        FROM memos m
-        LEFT JOIN messages msg ON m.source_message_id = msg.id
-        LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
-        LEFT JOIN conversations conv ON m.source_conversation_id = conv.id
-        LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
-        LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
-        WHERE m.workspace_id = ${workspaceId}
-          AND m.status = 'active'
-          AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold}
-          AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
-          AND (${!hasKnowledgeTypeFilter} OR m.knowledge_type = ANY(${filters?.knowledgeTypes ?? []}))
-          AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
-          AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
-          AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
-      )
-      SELECT * FROM memo_with_stream
-      WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
-      ORDER BY distance ASC
-      LIMIT ${limit}
-    `)
-
-    return result.rows.map((row) => mapMemoSearchResult(row, row.distance))
   },
 
   /** Full-text search over memo title, abstract, and key points. */
@@ -1142,11 +1038,12 @@ export const MemoRepository = {
             root_stream.type as root_stream_type,
             COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
           FROM memos m
-          LEFT JOIN messages msg ON m.source_message_id = msg.id
-          LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
-          LEFT JOIN conversations conv ON m.source_conversation_id = conv.id
-          LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
+          LEFT JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
+          LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id AND msg_stream.workspace_id = m.workspace_id
+          LEFT JOIN conversations conv ON m.source_conversation_id = conv.id AND conv.workspace_id = m.workspace_id
+          LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id AND conv_stream.workspace_id = m.workspace_id
           LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
+            AND root_stream.workspace_id = m.workspace_id
           WHERE m.workspace_id = ${workspaceId}
             AND m.status = ANY(${statuses})
             AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
@@ -1179,11 +1076,12 @@ export const MemoRepository = {
           root_stream.type as root_stream_type,
           COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
         FROM memos m
-        LEFT JOIN messages msg ON m.source_message_id = msg.id
-        LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
-        LEFT JOIN conversations conv ON m.source_conversation_id = conv.id
-        LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
+        LEFT JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
+        LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id AND msg_stream.workspace_id = m.workspace_id
+        LEFT JOIN conversations conv ON m.source_conversation_id = conv.id AND conv.workspace_id = m.workspace_id
+        LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id AND conv_stream.workspace_id = m.workspace_id
         LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
+          AND root_stream.workspace_id = m.workspace_id
         WHERE m.workspace_id = ${workspaceId}
           AND m.status = ANY(${statuses})
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))
@@ -1245,11 +1143,12 @@ export const MemoRepository = {
 
     const embeddingLiteral = `[${embedding.join(",")}]`
     const streamJoins = sql.raw(`
-      LEFT JOIN messages msg ON m.source_message_id = msg.id
-      LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
-      LEFT JOIN conversations conv ON m.source_conversation_id = conv.id
-      LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
+      LEFT JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
+      LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id AND msg_stream.workspace_id = m.workspace_id
+      LEFT JOIN conversations conv ON m.source_conversation_id = conv.id AND conv.workspace_id = m.workspace_id
+      LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id AND conv_stream.workspace_id = m.workspace_id
       LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
+        AND root_stream.workspace_id = m.workspace_id
     `)
 
     // Per-list candidate cap before fusion. The 50 floor matches the
@@ -1328,7 +1227,7 @@ export const MemoRepository = {
         root_stream.type as root_stream_type,
         COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
       FROM fused f
-      JOIN memos m ON m.id = f.id
+      JOIN memos m ON m.id = f.id AND m.workspace_id = ${workspaceId}
       ${streamJoins}
       ORDER BY (f.score * ${boost}) DESC
       LIMIT ${limit}
@@ -1364,11 +1263,12 @@ export const MemoRepository = {
           root_stream.type as root_stream_type,
           COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
         FROM memos m
-        LEFT JOIN messages msg ON m.source_message_id = msg.id
-        LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id
-        LEFT JOIN conversations conv ON m.source_conversation_id = conv.id
-        LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id
+        LEFT JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
+        LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id AND msg_stream.workspace_id = m.workspace_id
+        LEFT JOIN conversations conv ON m.source_conversation_id = conv.id AND conv.workspace_id = m.workspace_id
+        LEFT JOIN streams conv_stream ON conv.stream_id = conv_stream.id AND conv_stream.workspace_id = m.workspace_id
         LEFT JOIN streams root_stream ON root_stream.id = COALESCE(msg_stream.root_stream_id, conv_stream.root_stream_id)
+          AND root_stream.workspace_id = m.workspace_id
         WHERE m.workspace_id = ${workspaceId}
           AND m.status = ANY(${statuses})
           AND (${!hasMemoTypeFilter} OR m.memo_type = ANY(${filters?.memoTypes ?? []}))

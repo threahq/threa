@@ -97,14 +97,14 @@ export const PendingItemRepository = {
   },
 
   /** Items requeued since they were read keep their newer version and stay pending. */
-  async markProcessed(client: PoolClient, items: PendingItemVersion[]): Promise<void> {
+  async markProcessed(client: PoolClient, workspaceId: string, items: PendingItemVersion[]): Promise<void> {
     if (items.length === 0) return
 
     await client.query(sql`
       UPDATE memo_pending_items AS p
       SET processed_at = NOW()
       FROM UNNEST(${items.map((i) => i.id)}::text[], ${items.map((i) => i.version)}::int[]) AS v(id, version)
-      WHERE p.id = v.id AND p.version = v.version
+      WHERE p.workspace_id = ${workspaceId} AND p.id = v.id AND p.version = v.version
     `)
   },
 
@@ -140,6 +140,7 @@ export const PendingItemRepository = {
    */
   async recordClassifiedFingerprints(
     client: PoolClient,
+    workspaceId: string,
     entries: Array<{ id: string; fingerprint: string }>
   ): Promise<void> {
     if (entries.length === 0) return
@@ -151,7 +152,7 @@ export const PendingItemRepository = {
         ${entries.map((e) => e.id)}::text[],
         ${entries.map((e) => e.fingerprint)}::text[]
       ) AS v(id, fingerprint)
-      WHERE p.id = v.id
+      WHERE p.id = v.id AND p.workspace_id = ${workspaceId}
     `)
   },
 
