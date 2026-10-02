@@ -310,7 +310,7 @@ export class MemoService implements MemoServiceLike {
         return null
       }
 
-      const existingMemos = await MemoRepository.findByStream(client, streamId, {
+      const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
@@ -334,7 +334,7 @@ export class MemoService implements MemoServiceLike {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)
           conversationMessages.set(convId, msgs)
-          const existingMemos = await MemoRepository.findActiveBySourceConversation(client, convId)
+          const existingMemos = await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId)
           existingConversationMemos.set(convId, existingMemos)
         }
       }
@@ -766,7 +766,7 @@ export class MemoService implements MemoServiceLike {
 
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
-        await MemoRepository.updateEmbedding(client, memoData.id, embedding)
+        await MemoRepository.updateEmbedding(client, workspaceId, memoData.id, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,
           streamId: fetchedData.memoScope.rootStreamId,
@@ -839,12 +839,13 @@ export class MemoService implements MemoServiceLike {
       // already older than the quiet threshold.
       // Written before markProcessed so a conversation that reached the model
       // this pass can be recognised as unchanged on the next one.
-      await PendingItemRepository.recordClassifiedFingerprints(client, classifiedFingerprints)
+      await PendingItemRepository.recordClassifiedFingerprints(client, workspaceId, classifiedFingerprints)
 
       const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id))
       if (itemsToMark.length > 0) {
         await PendingItemRepository.markProcessed(
           client,
+          workspaceId,
           itemsToMark.map((p) => p.id)
         )
       }
@@ -1083,7 +1084,7 @@ export class MemoService implements MemoServiceLike {
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
       })
-      await MemoRepository.updateEmbedding(client, newMemoId, embedding)
+      await MemoRepository.updateEmbedding(client, workspaceId, newMemoId, embedding)
       await OutboxRepository.insert(client, "memo:created", {
         workspaceId,
         streamId: natural.rootStreamId,
@@ -1151,7 +1152,7 @@ export class MemoService implements MemoServiceLike {
 
     // Phase 1: read the stream's memo context (single connection, no AI held).
     const context = await withClient(this.pool, async (client) => {
-      const existingMemos = await MemoRepository.findByStream(client, streamId, {
+      const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
@@ -1281,7 +1282,7 @@ export class MemoService implements MemoServiceLike {
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
         })
-        await MemoRepository.updateEmbedding(client, newMemoId, embedding)
+        await MemoRepository.updateEmbedding(client, workspaceId, newMemoId, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,
           streamId: context.memoScope.rootStreamId,
