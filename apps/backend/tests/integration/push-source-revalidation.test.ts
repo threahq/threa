@@ -172,7 +172,7 @@ describe("push source revalidation", () => {
         messageId: message.id,
         actorId: author.id,
       })
-      await StreamMemberRepository.delete(pool, root.id, recipient.id)
+      await StreamMemberRepository.delete(pool, ws, root.id, recipient.id)
 
       expect(await resolve(ws, recipient.id, row.id)).toEqual({ valid: false, reason: "access_lost" })
     })
@@ -384,7 +384,7 @@ describe("push source revalidation", () => {
       })
 
       const before = await resolve(ws, recipient.id, row.id)
-      await StreamMemberRepository.delete(pool, dm.id, recipient.id)
+      await StreamMemberRepository.delete(pool, ws, dm.id, recipient.id)
       const after = await resolve(ws, recipient.id, row.id)
 
       expect({ before, after }).toEqual({
@@ -623,7 +623,11 @@ describe("push source revalidation", () => {
         remindAt: IN_AN_HOUR(),
       })
       const lostGen = await fire(saved.id)
-      await StreamMemberRepository.delete(pool, priv.id, recipient.id)
+      expect(await resolveReminder(ws, recipient.id, saved.id, lostGen)).toMatchObject({
+        contentMarkdown: "private note",
+        unavailableReason: null,
+      })
+      await StreamMemberRepository.delete(pool, ws, priv.id, recipient.id)
 
       const results = [
         await resolveReminder(deleted.ws, deleted.recipient.id, deleted.saved.id, deletedGen),

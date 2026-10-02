@@ -541,6 +541,7 @@ export class EventService {
 
   private async resolveActorType(
     client: PoolClient,
+    workspaceId: string,
     streamId: string,
     actorId: string,
     actorType?: AuthorType,
@@ -553,7 +554,7 @@ export class EventService {
     }
 
     const [isMember, isPersona] = await Promise.all([
-      StreamMemberRepository.isMember(client, streamId, actorId),
+      StreamMemberRepository.isMember(client, workspaceId, streamId, actorId),
       StreamPersonaParticipantRepository.hasParticipated(client, streamId, actorId),
     ])
 
@@ -1071,7 +1072,7 @@ export class EventService {
       isAncestor: (db, ancestorId, streamId) =>
         StreamRepository.isAncestor(db, params.workspaceId, ancestorId, streamId),
       countExposedMembers: (db, targetStreamId, sourceStreamId) =>
-        StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
+        StreamMemberRepository.countMembersNotIn(db, params.workspaceId, targetStreamId, sourceStreamId),
       canReadStream: async (db, workspaceId, streamId, userId) =>
         (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
       confirmedPrivacyWarning: params.confirmedPrivacyWarning,
@@ -1312,6 +1313,7 @@ export class EventService {
 
         const actorType = await this.resolveActorType(
           client,
+          params.workspaceId,
           params.streamId,
           params.actorId,
           params.actorType,
@@ -1415,7 +1417,7 @@ export class EventService {
             isAncestor: (db, ancestorId, streamId) =>
               StreamRepository.isAncestor(db, params.workspaceId, ancestorId, streamId),
             countExposedMembers: (db, targetStreamId, sourceStreamId) =>
-              StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
+              StreamMemberRepository.countMembersNotIn(db, params.workspaceId, targetStreamId, sourceStreamId),
             canReadStream: async (db, workspaceId, streamId, userId) =>
               (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
             confirmedPrivacyWarning: params.confirmedPrivacyWarning,
@@ -1659,6 +1661,7 @@ export class EventService {
 
         const actorType = await this.resolveActorType(
           client,
+          params.workspaceId,
           params.streamId,
           params.actorId,
           params.actorType,
@@ -1788,6 +1791,7 @@ export class EventService {
 
       const isMember = await StreamMemberRepository.isMember(
         client,
+        params.workspaceId,
         sourceStream.rootStreamId ?? sourceStream.id,
         params.actorId
       )
@@ -2291,6 +2295,7 @@ export class EventService {
 
       const isMember = await StreamMemberRepository.isMember(
         client,
+        params.workspaceId,
         sourceStream.rootStreamId ?? sourceStream.id,
         params.actorId
       )

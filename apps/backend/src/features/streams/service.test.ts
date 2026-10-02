@@ -45,10 +45,10 @@ const mockFindByIdsForUpdateBlocking = spyOn(StreamRepository, "findByIdsForUpda
   }
 )
 const mockLockMemberships = spyOn(StreamMemberRepository, "lockMemberships").mockImplementation(
-  async (_client, streamIds) => new Set(streamIds)
+  async (_client, _workspaceId, streamIds) => new Set(streamIds)
 )
 spyOn(StreamMemberRepository, "lockMemberPairs").mockImplementation(
-  async (_client, pairs) => new Set(pairs.map(({ streamId, memberId }) => `${streamId}:${memberId}`))
+  async (_client, _workspaceId, pairs) => new Set(pairs.map(({ streamId, memberId }) => `${streamId}:${memberId}`))
 )
 const mockLockGrants = spyOn(BotChannelAccessRepository, "lockGrants").mockResolvedValue(new Set())
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
@@ -1952,7 +1952,7 @@ describe("StreamService.markAsRead", () => {
       readMessageIds: [],
       inboxHeld: true,
     })
-    expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
+    expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1")
     expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
     expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
@@ -2051,7 +2051,7 @@ describe("StreamService.markUnread", () => {
       membership: null,
       readState: { lastReadEventId: "evt_4", lastReadSequence: "40", lastReadAt: null },
     })
-    expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "stream_1", "usr_1")
+    expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1")
     expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
     expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {

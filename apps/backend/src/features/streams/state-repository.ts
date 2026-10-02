@@ -76,6 +76,7 @@ export const StreamStateRepository = {
     const capInterval = options?.capIntervalSeconds ?? 300
     const quietInterval = options?.quietIntervalSeconds ?? 30
 
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the memo worker drains every workspace
     const result = await db.query<{ workspace_id: string; stream_id: string }>(sql`
       SELECT DISTINCT p.workspace_id, p.stream_id
       FROM memo_pending_items p
