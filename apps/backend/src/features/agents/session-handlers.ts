@@ -63,6 +63,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         const sessionIds = [...new Set([session.id, ...relatedSessions.map((relatedSession) => relatedSession.id)])]
         const rerunContextBySessionId = await StreamEventRepository.listRerunContextBySessionIds(
           pool,
+          workspaceId,
           session.streamId,
           sessionIds
         )

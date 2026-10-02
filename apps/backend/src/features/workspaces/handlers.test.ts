@@ -173,12 +173,16 @@ describe("workspace bootstrap handler", () => {
           { streamId: "stream_c", lastReadEventId: "evt_m_c", lastReadAt: new Date("2026-01-03T00:00:00.000Z") },
         ],
       ])
-    const unreadArgs: unknown[] = []
-    streamService.getUnreadCounts = async (arg: unknown) => {
-      unreadArgs.push(arg)
+    const unreadArgs: unknown[][] = []
+    streamService.getUnreadCounts = async (...args: unknown[]) => {
+      unreadArgs.push(args)
       return new Map()
     }
-    streamService.getSequencesByEventIds = async (ids: string[]) => new Map(ids.map((id) => [id, `seq_of_${id}`]))
+    const sequenceWorkspaceIds: string[] = []
+    streamService.getSequencesByEventIds = async (workspaceId: string, ids: string[]) => {
+      sequenceWorkspaceIds.push(workspaceId)
+      return new Map(ids.map((id) => [id, `seq_of_${id}`]))
+    }
 
     const handlers = createWorkspaceHandlers(deps)
     const { req, res, getJson } = makeReqRes()
@@ -186,10 +190,14 @@ describe("workspace bootstrap handler", () => {
 
     // Unread counts source from the effective frontier, not raw membership.
     expect(unreadArgs[0]).toEqual([
-      { streamId: "stream_a", memberId: "usr_1", lastReadEventId: null },
-      { streamId: "stream_b", memberId: "usr_1", lastReadEventId: "evt_rs_b" },
-      { streamId: "stream_c", memberId: "usr_1", lastReadEventId: "evt_m_c" },
+      "ws_1",
+      [
+        { streamId: "stream_a", memberId: "usr_1", lastReadEventId: null },
+        { streamId: "stream_b", memberId: "usr_1", lastReadEventId: "evt_rs_b" },
+        { streamId: "stream_c", memberId: "usr_1", lastReadEventId: "evt_m_c" },
+      ],
     ])
+    expect(sequenceWorkspaceIds).toEqual(["ws_1"])
 
     // Every member stream gets an entry; a present NULL is an authoritative
     // explicit frontier (not "no data").

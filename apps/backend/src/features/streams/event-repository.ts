@@ -298,6 +298,7 @@ export const StreamEventRepository = {
 
   async list(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     filters?: {
       types?: EventType[]
@@ -316,9 +317,9 @@ export const StreamEventRepository = {
     // Author-scoped events (command lifecycle, aside anchors) are actor-only:
     // when viewerId is set, hide other actors' rows. Without viewerId, all
     // events return (internal callers).
-    const conditions: string[] = ["stream_id = $1"]
-    const params: unknown[] = [streamId]
-    let paramIndex = 2
+    const conditions: string[] = []
+    const params: unknown[] = [workspaceId, streamId]
+    let paramIndex = 3
 
     if (afterSequence !== undefined) {
       conditions.push(`sequence > $${paramIndex}`)
@@ -353,7 +354,9 @@ export const StreamEventRepository = {
     const query = `
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE ${conditions.join(" AND ")}
+      WHERE workspace_id = $1
+        AND stream_id = $2
+        ${conditions.map((condition) => `AND ${condition}`).join("\n        ")}
       ORDER BY sequence ${orderDirection}
       LIMIT $${paramIndex}
     `
@@ -372,6 +375,7 @@ export const StreamEventRepository = {
    */
   async listAround(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     targetSequence: bigint,
     options?: { limit?: number; viewerId?: string }
@@ -382,12 +386,12 @@ export const StreamEventRepository = {
 
     // Fetch older (including target) and newer sequentially on the provided connection.
     // Using the explicit name avoids a broken `this` binding if the method is destructured.
-    const olderEvents = await StreamEventRepository.list(db, streamId, {
+    const olderEvents = await StreamEventRepository.list(db, workspaceId, streamId, {
       beforeSequence: targetSequence + 1n,
       limit: half + 1,
       viewerId: options?.viewerId,
     })
-    const newerEvents = await StreamEventRepository.list(db, streamId, {
+    const newerEvents = await StreamEventRepository.list(db, workspaceId, streamId, {
       afterSequence: targetSequence,
       limit: half + 1,
       viewerId: options?.viewerId,
@@ -415,20 +419,27 @@ export const StreamEventRepository = {
     return { events, hasOlder, hasNewer }
   },
 
-  async findById(db: Querier, id: string): Promise<StreamEvent | null> {
+  async findById(db: Querier, workspaceId: string, id: string): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId}
+        AND id = ${id}
     `)
     return result.rows[0] ? mapRowToEvent(result.rows[0]) : null
   },
 
-  async findCommandTerminal(db: Querier, streamId: string, commandId: string): Promise<StreamEvent | null> {
+  async findCommandTerminal(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    commandId: string
+  ): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type IN ('command_completed', 'command_failed')
         AND payload->>'commandId' = ${commandId}
       LIMIT 1
@@ -444,11 +455,17 @@ export const StreamEventRepository = {
    * timestamp tie resolves deterministically; backed by the
    * `(stream_id, created_at)` index.
    */
-  async findFirstMessageOnOrAfter(db: Querier, streamId: string, date: Date): Promise<StreamEvent | null> {
+  async findFirstMessageOnOrAfter(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    date: Date
+  ): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type IN ('message_created', 'companion_response')
         AND created_at >= ${date}
       ORDER BY created_at ASC, sequence ASC
@@ -458,11 +475,17 @@ export const StreamEventRepository = {
   },
 
   /** Find the message_created event for a given message ID within a stream. */
-  async findByMessageId(db: Querier, streamId: string, messageId: string): Promise<StreamEvent | null> {
+  async findByMessageId(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    messageId: string
+  ): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND payload->>'messageId' = ${messageId}
       LIMIT 1
@@ -475,12 +498,18 @@ export const StreamEventRepository = {
    * the earliest affected message for a conversation mark-unread regress. Null
    * when none of the ids resolve to a message event in the stream.
    */
-  async findEarliestMessageEvent(db: Querier, streamId: string, messageIds: string[]): Promise<StreamEvent | null> {
+  async findEarliestMessageEvent(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    messageIds: string[]
+  ): Promise<StreamEvent | null> {
     if (messageIds.length === 0) return null
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND payload->>'messageId' = ANY(${messageIds}::text[])
       ORDER BY sequence ASC
@@ -496,11 +525,17 @@ export const StreamEventRepository = {
    * when `sequence` is the stream's first message (nothing precedes it, so the
    * pointer becomes "nothing read").
    */
-  async findPreviousMessageEvent(db: Querier, streamId: string, sequence: bigint): Promise<StreamEvent | null> {
+  async findPreviousMessageEvent(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    sequence: bigint
+  ): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND sequence < ${sequence.toString()}
       ORDER BY sequence DESC
@@ -511,6 +546,7 @@ export const StreamEventRepository = {
 
   async findMessageCreatedByMessageIdsForUpdate(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     messageIds: string[]
   ): Promise<StreamEvent[]> {
@@ -519,7 +555,8 @@ export const StreamEventRepository = {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND payload->>'messageId' = ANY(${messageIds})
       ORDER BY sequence ASC
@@ -530,6 +567,7 @@ export const StreamEventRepository = {
 
   async moveMessageCreatedEvents(
     db: Querier,
+    workspaceId: string,
     params: {
       sourceStreamId: string
       destinationStreamId: string
@@ -583,7 +621,8 @@ export const StreamEventRepository = {
        FROM (
          SELECT * FROM unnest($2::text[], $3::bigint[], $4::bigint[]) AS u(message_id, new_sequence, new_broadcast_sequence)
        ) updates
-       WHERE e.stream_id = $5
+       WHERE e.workspace_id = $12
+         AND e.stream_id = $5
          AND e.event_type = 'message_created'
          AND e.payload->>'messageId' = updates.message_id
        RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at`,
@@ -599,6 +638,7 @@ export const StreamEventRepository = {
         params.movedFrom.movedBy,
         params.movedFrom.movedByType,
         params.movedFrom.moveTombstoneId,
+        workspaceId,
       ]
     )
     return result.rows.map(mapRowToEvent)
@@ -606,6 +646,7 @@ export const StreamEventRepository = {
 
   async findAgentSessionEventsBySessionIdsForUpdate(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     sessionIds: string[]
   ): Promise<StreamEvent[]> {
@@ -614,7 +655,8 @@ export const StreamEventRepository = {
     const result = await db.query<StreamEventRow>(sql`
       SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = ANY(${[...AGENT_SESSION_EVENT_TYPES]})
         AND payload->>'sessionId' = ANY(${sessionIds})
       ORDER BY sequence ASC
@@ -625,6 +667,7 @@ export const StreamEventRepository = {
 
   async moveEventsById(
     db: Querier,
+    workspaceId: string,
     params: { sourceStreamId: string; destinationStreamId: string; updates: MoveEventIdSequenceUpdate[] }
   ): Promise<StreamEvent[]> {
     if (params.updates.length === 0) return []
@@ -639,34 +682,20 @@ export const StreamEventRepository = {
        FROM (
          SELECT * FROM unnest($2::text[], $3::bigint[], $4::bigint[]) AS u(event_id, new_sequence, new_broadcast_sequence)
        ) updates
-       WHERE e.stream_id = $5
+       WHERE e.workspace_id = $6
+         AND e.stream_id = $5
          AND e.id = updates.event_id
        RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at`,
-      [params.destinationStreamId, eventIds, sequences, broadcastSequences, params.sourceStreamId]
+      [params.destinationStreamId, eventIds, sequences, broadcastSequences, params.sourceStreamId, workspaceId]
     )
     return result.rows.map(mapRowToEvent)
   },
 
-  async getLatestSequence(db: Querier, streamId: string): Promise<bigint | null> {
+  async getLatestSequence(db: Querier, workspaceId: string, streamId: string): Promise<bigint | null> {
     const result = await db.query<{ sequence: string }>(sql`
       SELECT sequence FROM stream_events
-      WHERE stream_id = ${streamId}
-      ORDER BY sequence DESC
-      LIMIT 1
-    `)
-    return result.rows[0] ? BigInt(result.rows[0].sequence) : null
-  },
-
-  /**
-   * Get the latest sequence number for user messages only.
-   * Used to check if new user messages arrived while excluding persona responses.
-   */
-  async getLatestUserMessageSequence(db: Querier, streamId: string): Promise<bigint | null> {
-    const result = await db.query<{ sequence: string }>(sql`
-      SELECT sequence FROM stream_events
-      WHERE stream_id = ${streamId}
-        AND event_type = 'message_created'
-        AND actor_type = 'user'
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
       ORDER BY sequence DESC
       LIMIT 1
     `)
@@ -682,13 +711,15 @@ export const StreamEventRepository = {
    */
   async getLatestUnseenUserMessage(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     afterSequence: bigint
   ): Promise<{ messageId: string; authorId: string; sequence: bigint } | null> {
     const result = await db.query<{ message_id: string; actor_id: string; sequence: string }>(sql`
       SELECT payload->>'messageId' AS message_id, actor_id, sequence
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND actor_type = 'user'
         AND sequence > ${afterSequence.toString()}
@@ -707,10 +738,16 @@ export const StreamEventRepository = {
    * as the "seen up to here" boundary on completion — the enclave was given
    * history up to its trigger and nothing after it.
    */
-  async getMessageSequence(db: Querier, streamId: string, messageId: string): Promise<bigint | null> {
+  async getMessageSequence(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    messageId: string
+  ): Promise<bigint | null> {
     const result = await db.query<{ sequence: string }>(sql`
       SELECT sequence FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND payload->>'messageId' = ${messageId}
       LIMIT 1
@@ -723,11 +760,17 @@ export const StreamEventRepository = {
    * Uses message_created event payload.sessionId to include messages sent before
    * session completion (when agent_sessions.sent_message_ids may still be empty).
    */
-  async listMessageIdsBySession(db: Querier, streamId: string, sessionId: string): Promise<string[]> {
+  async listMessageIdsBySession(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    sessionId: string
+  ): Promise<string[]> {
     const result = await db.query<{ message_id: string }>(sql`
       SELECT payload->>'messageId' AS message_id
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND payload->>'sessionId' = ${sessionId}
         AND payload->>'messageId' IS NOT NULL
@@ -738,6 +781,7 @@ export const StreamEventRepository = {
 
   async listRerunContextBySessionIds(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     sessionIds: string[]
   ): Promise<Map<string, AgentSessionRerunContext>> {
@@ -748,7 +792,8 @@ export const StreamEventRepository = {
         payload->>'sessionId' AS session_id,
         payload->'rerunContext' AS rerun_context
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'agent_session:started'
         AND payload->>'sessionId' = ANY(${sessionIds}::text[])
     `)
@@ -766,13 +811,18 @@ export const StreamEventRepository = {
    * Count message_created events for multiple streams.
    * Returns a map of streamId -> message count
    */
-  async countMessagesByStreamBatch(db: Querier, streamIds: string[]): Promise<Map<string, number>> {
+  async countMessagesByStreamBatch(
+    db: Querier,
+    workspaceId: string,
+    streamIds: string[]
+  ): Promise<Map<string, number>> {
     if (streamIds.length === 0) return new Map()
 
     const result = await db.query<{ stream_id: string; count: string }>(sql`
       SELECT stream_id, COUNT(*)::text AS count
       FROM stream_events
-      WHERE stream_id = ANY(${streamIds})
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
         AND event_type = 'message_created'
       GROUP BY stream_id
     `)
@@ -794,6 +844,7 @@ export const StreamEventRepository = {
    */
   async countUnreadByStreamBatch(
     db: Querier,
+    workspaceId: string,
     memberships: Array<{ streamId: string; memberId: string; lastReadEventId: string | null }>
   ): Promise<Map<string, { unreadCount: number; totalCount: number }>> {
     if (memberships.length === 0) return new Map()
@@ -816,7 +867,7 @@ export const StreamEventRepository = {
         FROM (
           SELECT unnest($1::text[]) as stream_id, unnest($2::text[]) as member_id, unnest($3::text[]) as last_read_event_id
         ) m
-        LEFT JOIN stream_events se ON se.id = m.last_read_event_id
+        LEFT JOIN stream_events se ON se.id = m.last_read_event_id AND se.workspace_id = $4
       )
       SELECT
         m.stream_id,
@@ -824,16 +875,16 @@ export const StreamEventRepository = {
           COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq)
           - COALESCE((
               SELECT COUNT(*) FROM stream_member_message_reads r
-              WHERE r.stream_id = m.stream_id AND r.member_id = m.member_id
+              WHERE r.workspace_id = $4 AND r.stream_id = m.stream_id AND r.member_id = m.member_id
             ), 0),
           0
         )::text as unread_count,
         COUNT(e.id)::text as total_count
       FROM memberships m
-      LEFT JOIN stream_events e ON e.stream_id = m.stream_id AND e.event_type = 'message_created'
+      LEFT JOIN stream_events e ON e.stream_id = m.stream_id AND e.event_type = 'message_created' AND e.workspace_id = $4
       GROUP BY m.stream_id, m.member_id
     `,
-      [streamIds, memberIds, lastReadEventIds]
+      [streamIds, memberIds, lastReadEventIds, workspaceId]
     )
 
     const map = new Map<string, { unreadCount: number; totalCount: number }>()
@@ -850,7 +901,11 @@ export const StreamEventRepository = {
    * Batch {@link countMessagesThrough}: each stream's message ordinal at its
    * given sequence. Streams absent from the result have no messages at or below it.
    */
-  async countMessagesThroughBatch(db: Querier, sequences: Map<string, string>): Promise<Map<string, number>> {
+  async countMessagesThroughBatch(
+    db: Querier,
+    workspaceId: string,
+    sequences: Map<string, string>
+  ): Promise<Map<string, number>> {
     if (sequences.size === 0) return new Map()
     const result = await db.query<{ stream_id: string; count: string }>(sql`
       WITH input AS (
@@ -860,7 +915,8 @@ export const StreamEventRepository = {
       SELECT i.stream_id, COUNT(*)::text AS count
       FROM input i
       JOIN stream_events e ON e.stream_id = i.stream_id
-      WHERE e.event_type = 'message_created'
+      WHERE e.workspace_id = ${workspaceId}
+        AND e.event_type = 'message_created'
         AND e.sequence <= i.sequence
       GROUP BY i.stream_id
     `)
@@ -873,11 +929,12 @@ export const StreamEventRepository = {
    * sequence allocator row lock serializes message inserts per stream until
    * commit, so every lower-sequence message is committed and visible.
    */
-  async countMessagesThrough(db: Querier, streamId: string, sequence: bigint): Promise<number> {
+  async countMessagesThrough(db: Querier, workspaceId: string, streamId: string, sequence: bigint): Promise<number> {
     const result = await db.query<{ count: string }>(sql`
       SELECT COUNT(*)::text AS count
       FROM stream_events
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ${streamId}
         AND event_type = 'message_created'
         AND sequence <= ${sequence.toString()}
     `)
@@ -892,6 +949,7 @@ export const StreamEventRepository = {
    */
   async getMessageOrdinalForEvent(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     eventId: string
   ): Promise<{ sequence: bigint; messageOrdinal: number } | null> {
@@ -901,12 +959,14 @@ export const StreamEventRepository = {
         (
           SELECT COUNT(*)
           FROM stream_events e
-          WHERE e.stream_id = se.stream_id
+          WHERE e.workspace_id = se.workspace_id
+            AND e.stream_id = se.stream_id
             AND e.event_type = 'message_created'
             AND e.sequence <= se.sequence
         )::text AS message_ordinal
       FROM stream_events se
-      WHERE se.id = ${eventId}
+      WHERE se.workspace_id = ${workspaceId}
+        AND se.id = ${eventId}
         AND se.stream_id = ${streamId}
     `)
     const row = result.rows[0]
@@ -920,11 +980,12 @@ export const StreamEventRepository = {
    * `lastReadSequence` — the client needs the watermark's sequence to place its
    * read frontier against the sparse overlay.
    */
-  async getSequencesByEventIds(db: Querier, eventIds: string[]): Promise<Map<string, string>> {
+  async getSequencesByEventIds(db: Querier, workspaceId: string, eventIds: string[]): Promise<Map<string, string>> {
     if (eventIds.length === 0) return new Map()
     const result = await db.query<{ id: string; sequence: string }>(sql`
       SELECT id, sequence FROM stream_events
-      WHERE id = ANY(${eventIds}::text[])
+      WHERE workspace_id = ${workspaceId}
+        AND id = ANY(${eventIds}::text[])
     `)
     const map = new Map<string, string>()
     for (const row of result.rows) map.set(row.id, row.sequence)
@@ -935,13 +996,18 @@ export const StreamEventRepository = {
    * Get the latest event ID for multiple streams.
    * Returns a map of streamId -> latestEventId
    */
-  async getLatestEventIdByStreamBatch(db: Querier, streamIds: string[]): Promise<Map<string, string>> {
+  async getLatestEventIdByStreamBatch(
+    db: Querier,
+    workspaceId: string,
+    streamIds: string[]
+  ): Promise<Map<string, string>> {
     if (streamIds.length === 0) return new Map()
 
     const result = await db.query<{ stream_id: string; latest_event_id: string }>(sql`
       SELECT DISTINCT ON (stream_id) stream_id, id as latest_event_id
       FROM stream_events
-      WHERE stream_id = ANY(${streamIds})
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
       ORDER BY stream_id, sequence DESC
     `)
 

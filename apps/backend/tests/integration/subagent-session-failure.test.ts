@@ -44,7 +44,7 @@ afterAll(async () => {
 })
 
 async function statusEvents(streamId: string) {
-  return StreamEventRepository.list(pool, streamId, { types: ["subagent:status_changed"] })
+  return StreamEventRepository.list(pool, ctx.workspaceId, streamId, { types: ["subagent:status_changed"] })
 }
 
 describe("terminal turn failure", () => {
@@ -93,7 +93,9 @@ describe("terminal turn failure", () => {
     })
     // The session's own terminal event landed in the thread, in that same
     // transaction — the card and the trace tell one story.
-    expect(await StreamEventRepository.list(pool, threadStreamId, { types: ["agent_session:failed"] })).toHaveLength(1)
+    expect(
+      await StreamEventRepository.list(pool, ctx.workspaceId, threadStreamId, { types: ["agent_session:failed"] })
+    ).toHaveLength(1)
   })
 
   test("a retryable attempt is not terminal and leaves the run alive", async () => {

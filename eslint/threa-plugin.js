@@ -1231,7 +1231,6 @@ export const unscopedSqlAllowlist = {
   "apps/backend/src/features/streams/access.ts": 3,
   "apps/backend/src/features/streams/directory-stats-repository.ts": 2,
   "apps/backend/src/features/streams/effective-read-state.ts": 1,
-  "apps/backend/src/features/streams/event-repository.ts": 27,
   "apps/backend/src/features/streams/member-repository.ts": 21,
   "apps/backend/src/features/streams/notification-resolver.ts": 3,
   "apps/backend/src/features/streams/read-state-repository.ts": 28,

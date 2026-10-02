@@ -32,9 +32,14 @@ export interface ApplySparseReadParams {
   messageIds: string[]
 }
 
-async function resolveWatermarkSequence(db: Querier, streamId: string, eventId: string | null): Promise<bigint> {
+async function resolveWatermarkSequence(
+  db: Querier,
+  workspaceId: string,
+  streamId: string,
+  eventId: string | null
+): Promise<bigint> {
   if (!eventId) return 0n
-  const pos = await StreamEventRepository.getMessageOrdinalForEvent(db, streamId, eventId)
+  const pos = await StreamEventRepository.getMessageOrdinalForEvent(db, workspaceId, streamId, eventId)
   return pos ? pos.sequence : 0n
 }
 
@@ -51,8 +56,8 @@ async function watermarkSeed(db: Querier, streamId: string, userId: string): Pro
   return readState ? readState.lastReadEventId : null
 }
 
-async function ordinalFor(db: Querier, streamId: string, sequence: bigint): Promise<number> {
-  return sequence > 0n ? StreamEventRepository.countMessagesThrough(db, streamId, sequence) : 0
+async function ordinalFor(db: Querier, workspaceId: string, streamId: string, sequence: bigint): Promise<number> {
+  return sequence > 0n ? StreamEventRepository.countMessagesThrough(db, workspaceId, streamId, sequence) : 0
 }
 
 /**
@@ -76,7 +81,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
   })
 
   let watermarkEventId = await watermarkSeed(db, streamId, memberId)
-  let watermarkSeq = await resolveWatermarkSequence(db, streamId, watermarkEventId)
+  let watermarkSeq = await resolveWatermarkSequence(db, workspaceId, streamId, watermarkEventId)
 
   // The conversation cutoff filters by createdAt only, so member ids at/below
   // the watermark reach the insert; drop them unconditionally (not just in the
@@ -122,7 +127,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     await SparseReadRepository.pruneAtOrBelow(db, streamId, memberId, watermarkSeq)
   }
 
-  const lastReadOrdinal = await ordinalFor(db, streamId, watermarkSeq)
+  const lastReadOrdinal = await ordinalFor(db, workspaceId, streamId, watermarkSeq)
   const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
 
   const snapshot: ReadStateSnapshot = {
@@ -164,18 +169,18 @@ export async function applySparseUnread(db: Querier, params: ApplySparseReadPara
 
   await SparseReadRepository.deleteReads(db, streamId, memberId, messageIds)
 
-  const earliest = await StreamEventRepository.findEarliestMessageEvent(db, streamId, messageIds)
+  const earliest = await StreamEventRepository.findEarliestMessageEvent(db, workspaceId, streamId, messageIds)
   const watermarkEventId = await watermarkSeed(db, streamId, memberId)
-  const watermarkSeq = await resolveWatermarkSequence(db, streamId, watermarkEventId)
+  const watermarkSeq = await resolveWatermarkSequence(db, workspaceId, streamId, watermarkEventId)
 
   if (earliest && watermarkSeq >= earliest.sequence) {
-    const previous = await StreamEventRepository.findPreviousMessageEvent(db, streamId, earliest.sequence)
+    const previous = await StreamEventRepository.findPreviousMessageEvent(db, workspaceId, streamId, earliest.sequence)
     const newWatermarkEventId = previous?.id ?? null
     const newWatermarkSeq = previous?.sequence ?? 0n
     // The regress lands in stream_read_state unconditionally (may be null — same tx).
     await ReadStateRepository.set(db, streamId, memberId, newWatermarkEventId)
 
-    const lastReadOrdinal = await ordinalFor(db, streamId, newWatermarkSeq)
+    const lastReadOrdinal = await ordinalFor(db, workspaceId, streamId, newWatermarkSeq)
     const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
 
     const snapshot: ReadStateSnapshot = {
@@ -199,7 +204,7 @@ export async function applySparseUnread(db: Querier, params: ApplySparseReadPara
     return snapshot
   }
 
-  const lastReadOrdinal = await ordinalFor(db, streamId, watermarkSeq)
+  const lastReadOrdinal = await ordinalFor(db, workspaceId, streamId, watermarkSeq)
   const overlay = await SparseReadRepository.listOverlayIds(db, streamId, memberId)
 
   const snapshot: ReadStateSnapshot = {

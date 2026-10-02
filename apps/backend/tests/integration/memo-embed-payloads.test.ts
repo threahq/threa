@@ -85,7 +85,7 @@ describe("memo embed summaries on message payloads", () => {
   }
 
   async function payloadOf(messageIdToFind: string, eventType: string): Promise<Record<string, unknown>> {
-    const events = await eventService.listEvents(channel, { limit: 200 })
+    const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
     const match = events.find(
       (e) => e.eventType === eventType && (e.payload as { messageId?: string }).messageId === messageIdToFind
     )
@@ -338,7 +338,7 @@ describe("memo embed summaries on message payloads", () => {
         ...bodyCiting("swapped", [secondMemo]),
       })
 
-      const events = await eventService.listEvents(channel, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
         workspaceId: testWorkspaceId,
         streamId: channel,
@@ -366,7 +366,7 @@ describe("memo embed summaries on message payloads", () => {
         ...testMessageContent("dropped"),
       })
 
-      const events = await eventService.listEvents(channel, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
         workspaceId: testWorkspaceId,
         streamId: channel,
@@ -393,7 +393,7 @@ describe("memo embed summaries on message payloads", () => {
         message.id,
       ])
 
-      const events = await eventService.listEvents(channel, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
         workspaceId: testWorkspaceId,
         streamId: channel,
@@ -414,7 +414,7 @@ describe("memo embed summaries on message payloads", () => {
         ...bodyCiting("cites what this room can't read", [unreachableMemo]),
       })
 
-      const events = await eventService.listEvents(channel, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
         workspaceId: testWorkspaceId,
         streamId: channel,
@@ -440,7 +440,7 @@ describe("memo embed summaries on message payloads", () => {
       })
       await pool.query(`UPDATE memos SET title = 'After the retitle' WHERE id = $1`, [retitled])
 
-      const events = await eventService.listEvents(channel, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
         workspaceId: testWorkspaceId,
         streamId: channel,
@@ -480,7 +480,7 @@ describe("memo embed summaries on message payloads", () => {
 
       await pool.query(`UPDATE streams SET visibility = 'private' WHERE id = $1`, [publicElsewhere])
 
-      const events = await eventService.listEvents(channel, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
       const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
         workspaceId: testWorkspaceId,
         streamId: channel,

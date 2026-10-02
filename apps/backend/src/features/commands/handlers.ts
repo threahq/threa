@@ -93,7 +93,7 @@ async function findCommandDispatchReplay(
 ): Promise<ClaimedCommandDispatch | null> {
   const existing = await CommandDispatchRepository.findByClientId(db, params)
   if (!existing) return null
-  const event = await StreamEventRepository.findById(db, existing.eventId)
+  const event = await StreamEventRepository.findById(db, params.workspaceId, existing.eventId)
   if (!event) throw new Error("Command dispatch event missing after idempotency lookup")
   const payload = event.payload as CommandDispatchedPayload
   return { commandId: existing.commandId, command: payload.name, args: payload.args, event }

@@ -1364,6 +1364,33 @@ describe("EventService INV-E1 sink guard", () => {
   })
 })
 
+describe("EventService.listEventsAround", () => {
+  beforeEach(() => {
+    spyOn(db, "withClient").mockImplementation(((_pool: unknown, cb: (client: any) => Promise<unknown>) =>
+      cb({})) as any)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("should resolve a message id target in the caller's workspace when no event has that id", async () => {
+    const target = { id: "evt_target", streamId: "stream_1", sequence: 42n } as StreamEvent
+    const findById = spyOn(StreamEventRepository, "findById").mockResolvedValue(null)
+    const findByMessageId = spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue(target)
+    const around = { events: [target], hasOlder: false, hasNewer: false }
+    const listAround = spyOn(StreamEventRepository, "listAround").mockResolvedValue(around)
+
+    const service = new EventService({} as any)
+    const result = await service.listEventsAround("ws_1", "stream_1", "msg_target", { limit: 20 })
+
+    expect(result).toEqual(around)
+    expect(findById).toHaveBeenCalledWith(expect.anything(), "ws_1", "msg_target")
+    expect(findByMessageId).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", "msg_target")
+    expect(listAround).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", 42n, { limit: 20 })
+  })
+})
+
 describe("EventService.listEventsAroundDate", () => {
   beforeEach(() => {
     spyOn(db, "withClient").mockImplementation(((_pool: unknown, cb: (client: any) => Promise<unknown>) =>
@@ -1379,7 +1406,7 @@ describe("EventService.listEventsAroundDate", () => {
     const listAround = spyOn(StreamEventRepository, "listAround")
 
     const service = new EventService({} as any)
-    const result = await service.listEventsAroundDate("stream_1", new Date("2026-06-16T00:00:00.000Z"))
+    const result = await service.listEventsAroundDate("ws_1", "stream_1", new Date("2026-06-16T00:00:00.000Z"))
 
     expect(result).toEqual({ events: [], hasOlder: false, hasNewer: false, anchorMessageId: null })
     expect(listAround).not.toHaveBeenCalled()
@@ -1397,17 +1424,22 @@ describe("EventService.listEventsAroundDate", () => {
       actorType: "user",
       createdAt: new Date("2026-06-16T09:00:00.000Z"),
     }
-    spyOn(StreamEventRepository, "findFirstMessageOnOrAfter").mockResolvedValue(anchor)
+    const findFirst = spyOn(StreamEventRepository, "findFirstMessageOnOrAfter").mockResolvedValue(anchor)
     const around = { events: [anchor], hasOlder: true, hasNewer: true }
     const listAround = spyOn(StreamEventRepository, "listAround").mockResolvedValue(around)
 
     const service = new EventService({} as any)
-    const result = await service.listEventsAroundDate("stream_1", new Date("2026-06-16T00:00:00.000Z"), {
+    const date = new Date("2026-06-16T00:00:00.000Z")
+    const result = await service.listEventsAroundDate("ws_1", "stream_1", date, {
       limit: 20,
       viewerId: "usr_1",
     })
 
-    expect(listAround).toHaveBeenCalledWith(expect.anything(), "stream_1", 42n, { limit: 20, viewerId: "usr_1" })
+    expect(findFirst).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", date)
+    expect(listAround).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", 42n, {
+      limit: 20,
+      viewerId: "usr_1",
+    })
     expect(result).toEqual({ ...around, anchorMessageId: "msg_anchor" })
   })
 })
@@ -1859,6 +1891,16 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     // A3: the moved events' source read frontiers are repointed on the same tx
     // client (same source stream, event+source-sequence pairs).
     expect(ReadStateRepository.repointForMovedEvents).toHaveBeenCalledWith({}, "stream_src", expect.any(Array))
+
+    expect(
+      [
+        StreamEventRepository.findMessageCreatedByMessageIdsForUpdate,
+        StreamEventRepository.findAgentSessionEventsBySessionIdsForUpdate,
+        StreamEventRepository.moveMessageCreatedEvents,
+        StreamEventRepository.moveEventsById,
+        StreamEventRepository.countMessagesByStreamBatch,
+      ].map((spy) => (spy as any).mock.calls[0][1])
+    ).toEqual(["ws_1", "ws_1", "ws_1", "ws_1", "ws_1"])
   })
 
   it("re-homes the moved messages' context rows onto the destination thread", async () => {
@@ -2240,6 +2282,7 @@ describe("EventService.createMessage outbox pairing (the sidebar's single previe
       },
       activityFollowsCreated: true,
     })
+    expect(StreamEventRepository.countMessagesThrough).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", 42n)
   })
 })
 

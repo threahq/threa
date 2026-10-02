@@ -1026,11 +1026,23 @@ export function createPublicApiHandlers({
   /** Bind idempotent replay to the bot, create-event actor, and session that made the request. */
   async function findOwnTurnMessageByClientId(
     tx: PoolClient,
-    params: { streamId: string; clientMessageId: string; botId: string; sessionId: string; expectedId?: string }
+    params: {
+      workspaceId: string
+      streamId: string
+      clientMessageId: string
+      botId: string
+      sessionId: string
+      expectedId?: string
+    }
   ): Promise<Message | null> {
     const existing = await MessageRepository.findByClientMessageId(tx, params.streamId, params.clientMessageId)
     if (!existing) return null
-    const createdEvent = await StreamEventRepository.findByMessageId(tx, params.streamId, existing.id)
+    const createdEvent = await StreamEventRepository.findByMessageId(
+      tx,
+      params.workspaceId,
+      params.streamId,
+      existing.id
+    )
     if (
       (params.expectedId !== undefined && existing.id !== params.expectedId) ||
       existing.authorId !== params.botId ||
@@ -1755,7 +1767,10 @@ export function createPublicApiHandlers({
             claimValidForSession = false
             return
           }
-          const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
+          const latestSequence = await eventService.getLatestSequence(
+            invocation.workspaceId,
+            invocation.responseStreamId
+          )
           const session = await AgentSessionRepository.insertRunningOrSkip(client, {
             id: invocation.id,
             workspaceId: invocation.workspaceId,
@@ -1953,6 +1968,7 @@ export function createPublicApiHandlers({
         // A committed idempotent retry performs no new authorized write.
         if (data.clientMessageId) {
           const existing = await findOwnTurnMessageByClientId(tx, {
+            workspaceId,
             streamId: snapshot.responseStreamId,
             clientMessageId: data.clientMessageId,
             botId,
@@ -2145,6 +2161,7 @@ export function createPublicApiHandlers({
             principal: { kind: "bot", botId: bot.id },
           })
           const existing = await findOwnTurnMessageByClientId(tx, {
+            workspaceId: stream.workspaceId,
             streamId: snapshot.responseStreamId,
             clientMessageId: data.messageId,
             botId: bot.id,
@@ -2372,7 +2389,7 @@ export function createPublicApiHandlers({
           // Finalize the session lifecycle in the same transaction (INV-7), gated on
           // winning the RUNNING→COMPLETED transition so a raced redelivery can't
           // double-emit. Plaintext-free: counts + timing only.
-          const latestSequence = await eventService.getLatestSequence(session.streamId)
+          const latestSequence = await eventService.getLatestSequence(stream.workspaceId, session.streamId)
           const finalized = await AgentSessionRepository.completeSession(client, session.id, {
             lastSeenSequence: latestSequence ?? 0n,
             responseMessageId: message?.id ?? null,
@@ -2643,7 +2660,7 @@ export function createPublicApiHandlers({
           // did finish and send its reply, so finalize it COMPLETED rather than
           // leaving the trace stuck red.
           if (session?.status === AgentSessionStatuses.RUNNING || session?.status === AgentSessionStatuses.FAILED) {
-            const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
+            const latestSequence = await eventService.getLatestSequence(req.workspaceId!, completed.responseStreamId)
             const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
               lastSeenSequence: latestSequence ?? 0n,
               responseMessageId: message?.id ?? null,

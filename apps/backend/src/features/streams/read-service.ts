@@ -41,7 +41,8 @@ export class StreamReadService {
       const eventId =
         "eventId" in target
           ? target.eventId
-          : ((await StreamEventRepository.findByMessageId(client, streamId, target.messageId))?.id ?? target.messageId)
+          : ((await StreamEventRepository.findByMessageId(client, workspaceId, streamId, target.messageId))?.id ??
+            target.messageId)
       const result = await this.deps.streamService.markAsReadInTransaction(
         client,
         workspaceId,

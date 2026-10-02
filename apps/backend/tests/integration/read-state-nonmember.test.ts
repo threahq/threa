@@ -93,7 +93,7 @@ describe("read state — non-member unlock", () => {
       const viewer = userId() // access-without-membership (INV-62 thread viewer)
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       // The viewer has NO stream_members row — only their own read-state row,
       // advanced through the second event (sequence-resolved in SQL).
@@ -116,7 +116,7 @@ describe("read state — non-member unlock", () => {
       const member = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       // An explicit unread-to-zero: the row exists with a NULL watermark, which
       // reads as "before the first message" and never qualifies.
@@ -134,7 +134,7 @@ describe("read state — non-member unlock", () => {
       const member = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       // Membership alone carries no read truth: with no read-state row the member
       // is never-read and does not qualify.
@@ -151,7 +151,7 @@ describe("read state — non-member unlock", () => {
       const member = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       // A foreign stream whose second event sits at/above the target sequence —
       // the shape a corrupt frontier takes when it points outside the user's own
@@ -160,7 +160,7 @@ describe("read state — non-member unlock", () => {
       const foreignSid = streamId()
       await seedChannel(foreignWid, foreignSid, author)
       await sendMessages(foreignWid, foreignSid, author, 2)
-      const foreignEvents = await StreamEventRepository.list(pool, foreignSid)
+      const foreignEvents = await StreamEventRepository.list(pool, foreignWid, foreignSid)
 
       await StreamMemberRepository.insert(pool, wid, sid, member)
       // Corrupt the frontier directly (bypassing validation) to reference the
@@ -187,7 +187,7 @@ describe("read state — non-member unlock", () => {
       const viewer = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       const { membership } = await streamService.markAsRead(wid, sid, viewer, events[1].id)
 
@@ -220,7 +220,7 @@ describe("read state — non-member unlock", () => {
       const viewer = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       await streamService.markAsRead(wid, sid, viewer, events[2].id)
       await streamService.markAsRead(wid, sid, viewer, events[0].id)
@@ -240,7 +240,7 @@ describe("read state — non-member unlock", () => {
       const viewer = userId()
       await seedChannel(wid, sid, author)
       const [, msg2] = await sendMessages(wid, sid, author, 2)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       await streamService.markAsRead(wid, sid, viewer, events[1].id)
       const result = await streamService.markUnread(wid, sid, viewer, msg2)
@@ -275,7 +275,7 @@ describe("read state — non-member unlock", () => {
       const viewer = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
 
       const result = await streamService.markAsRead(wid, sid, viewer, events[1].id)
 
@@ -314,8 +314,8 @@ describe("read state — non-member unlock", () => {
       await seedChannel(wid, otherSid, author)
       await sendMessages(wid, sid, author, 2)
       await sendMessages(wid, otherSid, author, 1)
-      const events = await StreamEventRepository.list(pool, sid)
-      const foreign = await StreamEventRepository.list(pool, otherSid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
+      const foreign = await StreamEventRepository.list(pool, wid, otherSid)
 
       // Seed a real frontier first: the no-op must leave it exactly where it was.
       await streamService.markAsRead(wid, sid, viewer, events[0].id)
@@ -350,7 +350,7 @@ describe("read state — non-member unlock", () => {
       const viewer = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 3)
-      const events = await StreamEventRepository.list(pool, sid)
+      const events = await StreamEventRepository.list(pool, wid, sid)
       const target = events[1]
       const readService = new StreamReadService({
         pool,

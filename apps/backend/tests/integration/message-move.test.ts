@@ -157,11 +157,15 @@ describe("message move integration", () => {
     const destThreadRow = await StreamRepository.findById(pool, testWorkspaceId, result.thread.id)
     expect(destThreadRow?.replyCount).toBe(2)
 
-    const sourceEvents = await StreamEventRepository.list(pool, sourceStreamId, { types: ["message_created"] })
+    const sourceEvents = await StreamEventRepository.list(pool, testWorkspaceId, sourceStreamId, {
+      types: ["message_created"],
+    })
     const sourceMessageIds = sourceEvents.map((event) => (event.payload as { messageId: string }).messageId)
     expect(sourceMessageIds).toEqual([target.id, keep.id])
 
-    const threadEvents = await StreamEventRepository.list(pool, result.thread.id, { types: ["message_created"] })
+    const threadEvents = await StreamEventRepository.list(pool, testWorkspaceId, result.thread.id, {
+      types: ["message_created"],
+    })
     const threadMessageIds = threadEvents.map((event) => (event.payload as { messageId: string }).messageId)
     expect(threadMessageIds).toEqual([movedA.id, movedB.id])
 
@@ -169,7 +173,7 @@ describe("message move integration", () => {
     expect(movedTraceSession?.streamId).toBe(result.thread.id)
     expect(result.removedEventIds).toEqual(expect.arrayContaining([traceStartedEventId, traceCompletedEventId]))
 
-    const sourceTraceEvents = await StreamEventRepository.list(pool, sourceStreamId, {
+    const sourceTraceEvents = await StreamEventRepository.list(pool, testWorkspaceId, sourceStreamId, {
       types: ["agent_session:started", "agent_session:completed"],
     })
     const sourceTraceEventIds = sourceTraceEvents.map((event) => event.id)
@@ -179,7 +183,7 @@ describe("message move integration", () => {
     expect(sourceTraceEventIds).not.toContain(traceStartedEventId)
     expect(sourceTraceEventIds).not.toContain(traceCompletedEventId)
 
-    const threadTraceEvents = await StreamEventRepository.list(pool, result.thread.id, {
+    const threadTraceEvents = await StreamEventRepository.list(pool, testWorkspaceId, result.thread.id, {
       types: ["agent_session:started", "agent_session:completed"],
     })
     expect(threadTraceEvents.map((event) => event.eventType)).toEqual([
@@ -193,7 +197,7 @@ describe("message move integration", () => {
     // (per-message previews + stream metadata) the drawer depends on.
     // Find by id rather than asserting count (INV-23) — future test setup
     // could add a second move call without breaking these assertions.
-    const sourceTombstoneRows = await StreamEventRepository.list(pool, sourceStreamId, {
+    const sourceTombstoneRows = await StreamEventRepository.list(pool, testWorkspaceId, sourceStreamId, {
       types: ["messages:moved"],
     })
     const sourceTombstone = sourceTombstoneRows.find((event) => event.id === result.sourceTombstoneEvent.id)
@@ -223,7 +227,7 @@ describe("message move integration", () => {
     // declares — any window that can see the hole also sees the declaration.
     expect(sourceTombstone.broadcastSequence).toBe(7n)
 
-    const destinationTombstoneRows = await StreamEventRepository.list(pool, result.thread.id, {
+    const destinationTombstoneRows = await StreamEventRepository.list(pool, testWorkspaceId, result.thread.id, {
       types: ["messages:moved"],
     })
     const destinationTombstone = destinationTombstoneRows.find(
@@ -237,7 +241,7 @@ describe("message move integration", () => {
 
     // The destination's broadcast chain is dense over the relocated events
     // (in source chronological order) plus the destination tombstone (INV-61).
-    const destinationEvents = await StreamEventRepository.list(pool, result.thread.id)
+    const destinationEvents = await StreamEventRepository.list(pool, testWorkspaceId, result.thread.id)
     expect(destinationEvents.map((event) => [event.eventType, event.broadcastSequence])).toEqual([
       ["message_created", 1n],
       ["message_created", 2n],
@@ -265,7 +269,7 @@ describe("message move integration", () => {
     // joining a separate provenance table. Locks in the full provenance
     // shape — including the snapshotted source slug/displayName the
     // tooltip depends on, and the explicit movedByType.
-    const relocatedMessageCreated = await StreamEventRepository.list(pool, result.thread.id, {
+    const relocatedMessageCreated = await StreamEventRepository.list(pool, testWorkspaceId, result.thread.id, {
       types: ["message_created"],
     })
     for (const event of relocatedMessageCreated) {
