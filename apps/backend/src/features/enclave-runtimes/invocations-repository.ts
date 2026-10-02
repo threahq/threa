@@ -208,6 +208,7 @@ export const EnclaveInvocationsRepository = {
     db: Querier,
     params: { keyId: string; maxAttempts: number }
   ): Promise<EnclaveInvocation | null> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- global claim poll across workspaces; every join matches on workspace_id
     const result = await db.query<EnclaveInvocationRow>(sql`
       SELECT i.* FROM enclave_invocations i
       WHERE (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
@@ -226,7 +227,7 @@ export const EnclaveInvocationsRepository = {
         AND EXISTS (
           SELECT 1
           FROM stream_e2e_key_wraps w
-          JOIN messages m ON m.id = i.message_id
+          JOIN messages m ON m.id = i.message_id AND m.workspace_id = i.workspace_id
           WHERE w.workspace_id = i.workspace_id
             AND w.stream_id = i.root_stream_id
             AND w.recipient_kind = 'enclave'
@@ -241,13 +242,15 @@ export const EnclaveInvocationsRepository = {
 
   async claimNext(
     db: Querier,
-    params: { keyId: string; claimToken: string; claimTtlSeconds: number; maxAttempts: number; invocationId?: string }
+    workspaceId: string,
+    params: { invocationId: string; keyId: string; claimToken: string; claimTtlSeconds: number; maxAttempts: number }
   ): Promise<EnclaveInvocation | null> {
     const result = await db.query<EnclaveInvocationRow>(sql`
       WITH candidate AS (
         SELECT i.id FROM enclave_invocations i
-        WHERE (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
-          AND (${params.invocationId ?? null}::text IS NULL OR i.id = ${params.invocationId ?? null})
+        WHERE i.workspace_id = ${workspaceId}
+          AND (i.status = 'pending' OR (i.status = 'claimed' AND i.claim_expires_at < NOW()))
+          AND i.id = ${params.invocationId}
           AND i.attempts < ${params.maxAttempts}
           AND EXISTS (
             SELECT 1
@@ -263,16 +266,14 @@ export const EnclaveInvocationsRepository = {
           AND EXISTS (
             SELECT 1
             FROM stream_e2e_key_wraps w
-            JOIN messages m ON m.id = i.message_id
+            JOIN messages m ON m.id = i.message_id AND m.workspace_id = i.workspace_id
             WHERE w.workspace_id = i.workspace_id
               AND w.stream_id = i.root_stream_id
               AND w.recipient_kind = 'enclave'
               AND w.recipient_key_id = ${params.keyId}
               AND w.key_generation = (m.envelope ->> 'keyGeneration')::int
           )
-        ORDER BY i.created_at ASC, i.id ASC
         FOR UPDATE OF i SKIP LOCKED
-        LIMIT 1
       )
       UPDATE enclave_invocations i
       SET status = 'claimed',
@@ -282,7 +283,7 @@ export const EnclaveInvocationsRepository = {
           attempts = attempts + 1,
           updated_at = NOW()
       FROM candidate
-      WHERE i.id = candidate.id
+      WHERE i.id = candidate.id AND i.workspace_id = ${workspaceId}
       RETURNING i.*
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
@@ -293,11 +294,11 @@ export const EnclaveInvocationsRepository = {
    * address the claim by session id (the enclave never sees invocation ids).
    * Written in the same transaction as the session row (INV-7).
    */
-  async attachSession(db: Querier, params: { id: string; sessionId: string }): Promise<void> {
+  async attachSession(db: Querier, params: { workspaceId: string; id: string; sessionId: string }): Promise<void> {
     await db.query(sql`
       UPDATE enclave_invocations
       SET session_id = ${params.sessionId}, updated_at = NOW()
-      WHERE id = ${params.id} AND status = 'claimed'
+      WHERE workspace_id = ${params.workspaceId} AND id = ${params.id} AND status = 'claimed'
     `)
   },
 
@@ -307,22 +308,23 @@ export const EnclaveInvocationsRepository = {
    * trigger, …) — the claim-time equivalent of the push worker's silent
    * early returns. Guarded on `claimed` so a raced terminal flip no-ops.
    */
-  async completeClaimed(db: Querier, id: string): Promise<void> {
+  async completeClaimed(db: Querier, workspaceId: string, id: string): Promise<void> {
     await db.query(sql`
       UPDATE enclave_invocations
       SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-      WHERE id = ${id} AND status = 'claimed'
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND status = 'claimed'
     `)
   },
 
   async failClaimed(
     db: Querier,
-    params: { id: string; keyId: string; claimToken: string; errorMessage: string }
+    params: { workspaceId: string; id: string; keyId: string; claimToken: string; errorMessage: string }
   ): Promise<void> {
     await db.query(sql`
       UPDATE enclave_invocations
       SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
-      WHERE id = ${params.id}
+      WHERE workspace_id = ${params.workspaceId}
+        AND id = ${params.id}
         AND status = 'claimed'
         AND claimed_by_key_id = ${params.keyId}
         AND claim_token = ${params.claimToken}
@@ -331,11 +333,11 @@ export const EnclaveInvocationsRepository = {
   },
 
   /** Flip the claim with the session when its turn completes. */
-  async completeBySession(db: Querier, sessionId: string): Promise<void> {
+  async completeBySession(db: Querier, workspaceId: string, sessionId: string): Promise<void> {
     await db.query(sql`
       UPDATE enclave_invocations
       SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-      WHERE session_id = ${sessionId} AND status = 'claimed'
+      WHERE workspace_id = ${workspaceId} AND session_id = ${sessionId} AND status = 'claimed'
     `)
   },
 
@@ -346,11 +348,14 @@ export const EnclaveInvocationsRepository = {
    * contrast, never calls this: its claim lapses by TTL and the attempt
    * budget gives the turn another shot.)
    */
-  async failBySession(db: Querier, params: { sessionId: string; errorMessage: string }): Promise<void> {
+  async failBySession(
+    db: Querier,
+    params: { workspaceId: string; sessionId: string; errorMessage: string }
+  ): Promise<void> {
     await db.query(sql`
       UPDATE enclave_invocations
       SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
-      WHERE session_id = ${params.sessionId} AND status = 'claimed'
+      WHERE workspace_id = ${params.workspaceId} AND session_id = ${params.sessionId} AND status = 'claimed'
     `)
   },
 
@@ -360,11 +365,17 @@ export const EnclaveInvocationsRepository = {
    * claimable set. Only a live claim renews (an expired one may already be
    * re-claimed elsewhere).
    */
-  async renewBySession(db: Querier, params: { sessionId: string; claimTtlSeconds: number }): Promise<void> {
+  async renewBySession(
+    db: Querier,
+    params: { workspaceId: string; sessionId: string; claimTtlSeconds: number }
+  ): Promise<void> {
     await db.query(sql`
       UPDATE enclave_invocations
       SET claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, updated_at = NOW()
-      WHERE session_id = ${params.sessionId} AND status = 'claimed' AND claim_expires_at > NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND session_id = ${params.sessionId}
+        AND status = 'claimed'
+        AND claim_expires_at > NOW()
     `)
   },
 
@@ -383,6 +394,7 @@ export const EnclaveInvocationsRepository = {
     db: Querier,
     params: { maxAttempts: number; pendingMaxAgeMs: number }
   ): Promise<EnclaveInvocation[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- poll-cadence sweep across workspaces
     const result = await db.query<EnclaveInvocationRow>(sql`
       UPDATE enclave_invocations
       SET status = 'parked',
@@ -417,6 +429,7 @@ export const EnclaveInvocationsRepository = {
     params: { stalenessMs: number; scope?: { workspaceId: string; rootStreamId: string; ownerUserId: string } }
   ): Promise<UnservablePendingInvocation[]> {
     const scope = params.scope
+    // eslint-disable-next-line threa/workspace-scoped-sql -- sweep across workspaces when scope is omitted; every join matches on workspace_id
     const result = await db.query<UnservablePendingRow>(sql`
       SELECT i.id, i.workspace_id, i.root_stream_id, e.owner_user_id, i.created_at
       FROM enclave_invocations i
@@ -450,7 +463,7 @@ export const EnclaveInvocationsRepository = {
             )
             AND EXISTS (
               SELECT 1 FROM stream_e2e_key_wraps w
-              JOIN messages m ON m.id = i.message_id
+              JOIN messages m ON m.id = i.message_id AND m.workspace_id = i.workspace_id
               WHERE w.workspace_id = i.workspace_id
                 AND w.stream_id = i.root_stream_id
                 AND w.recipient_kind = 'enclave'

@@ -192,15 +192,16 @@ export class EnclaveClaimService {
 
         const trigger = await MessageRepository.findById(tx, candidate.workspaceId, candidate.messageId)
         if (!trigger || trigger.authorType !== AuthorTypes.USER) {
-          const claimed = await EnclaveInvocationsRepository.claimNext(tx, {
+          const claimed = await EnclaveInvocationsRepository.claimNext(tx, candidate.workspaceId, {
+            invocationId: candidate.id,
             keyId,
             claimToken,
             claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
             maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
-            invocationId: candidate.id,
           })
           if (claimed) {
             await EnclaveInvocationsRepository.failClaimed(tx, {
+              workspaceId: candidate.workspaceId,
               id: claimed.id,
               keyId,
               claimToken,
@@ -224,16 +225,17 @@ export class EnclaveClaimService {
             denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")
         }
 
-        const invocation = await EnclaveInvocationsRepository.claimNext(tx, {
+        const invocation = await EnclaveInvocationsRepository.claimNext(tx, candidate.workspaceId, {
+          invocationId: candidate.id,
           keyId,
           claimToken,
           claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
           maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
-          invocationId: candidate.id,
         })
         if (!invocation) return { kind: "none" as const }
         if (denialReason) {
           await EnclaveInvocationsRepository.failClaimed(tx, {
+            workspaceId: candidate.workspaceId,
             id: invocation.id,
             keyId,
             claimToken,
@@ -341,7 +343,7 @@ export class EnclaveClaimService {
     const { workspaceId, streamId, messageId: triggerId, rootStreamId: e2eStreamId } = invocation
     const completeAsNoOp = async (reason: string): Promise<BuildOutcome> => {
       logger.info({ invocationId: invocation.id, workspaceId, streamId, reason }, "Enclave claim completed as no-op")
-      await EnclaveInvocationsRepository.completeClaimed(pool, invocation.id)
+      await EnclaveInvocationsRepository.completeClaimed(pool, workspaceId, invocation.id)
       return { kind: "no_op" }
     }
 
@@ -401,6 +403,7 @@ export class EnclaveClaimService {
       const currentTrigger = await MessageRepository.findById(tx, workspaceId, triggerId)
       if (!currentTrigger || currentTrigger.authorType !== "user") {
         await EnclaveInvocationsRepository.failClaimed(tx, {
+          workspaceId,
           id: invocation.id,
           keyId,
           claimToken,
@@ -418,6 +421,7 @@ export class EnclaveClaimService {
         const denial = error as { code?: string; details?: { reason?: string } }
         if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
         await EnclaveInvocationsRepository.failClaimed(tx, {
+          workspaceId,
           id: invocation.id,
           keyId,
           claimToken,
@@ -449,7 +453,11 @@ export class EnclaveClaimService {
           initialSequence: 0n,
         })
         if (!created) return "busy" as const
-        await EnclaveInvocationsRepository.attachSession(tx, { id: invocation.id, sessionId: deniedSessionId })
+        await EnclaveInvocationsRepository.attachSession(tx, {
+          workspaceId,
+          id: invocation.id,
+          sessionId: deniedSessionId,
+        })
         await this.insertStartedEvent(tx, {
           workspaceId,
           stream: triggerStream,
@@ -465,6 +473,7 @@ export class EnclaveClaimService {
           denial.message,
           (failTx) =>
             EnclaveInvocationsRepository.failClaimed(failTx, {
+              workspaceId,
               id: invocation.id,
               keyId,
               claimToken,
@@ -716,7 +725,7 @@ export class EnclaveClaimService {
         }
       }
 
-      await EnclaveInvocationsRepository.attachSession(tx, { id: invocation.id, sessionId: sid })
+      await EnclaveInvocationsRepository.attachSession(tx, { workspaceId, id: invocation.id, sessionId: sid })
       await this.insertStartedEvent(tx, {
         workspaceId,
         stream: triggerStream,
