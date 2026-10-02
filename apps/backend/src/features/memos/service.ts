@@ -329,7 +329,7 @@ export class MemoService implements MemoServiceLike {
       const existingConversationMemos = new Map<string, Memo[]>()
 
       for (const convId of conversationItemIds) {
-        const conv = await ConversationRepository.findById(client, convId)
+        const conv = await ConversationRepository.findById(client, workspaceId, convId)
         if (conv) {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)

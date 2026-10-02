@@ -129,7 +129,8 @@ describe("conversationAssigner — threadFromMessage", () => {
 describe("conversationAssigner — newSubtopic (declared branch, stream-locked mint)", () => {
   // The assigner locks the thread stream row before find-or-mint, so the client
   // needs a `query` that resolves (the real path runs `SELECT … FOR UPDATE`).
-  const LOCK_CLIENT = { query: mock(async () => ({ rows: [] })) } as never
+  const lockQuery = mock(async (_statement: { values: unknown[] }) => ({ rows: [] }))
+  const LOCK_CLIENT = { query: lockQuery } as never
   let insert: ReturnType<typeof spyOn>
   let addPrimaryMessage: ReturnType<typeof spyOn>
   let bumpActivityForIds: ReturnType<typeof spyOn>
@@ -137,6 +138,7 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
   let findActiveByStream: ReturnType<typeof spyOn>
 
   beforeEach(() => {
+    lockQuery.mockClear()
     insert = spyOn(ConversationRepository, "insert").mockResolvedValue({ id: "conv_new" } as never)
     addPrimaryMessage = spyOn(ConversationRepository, "addPrimaryMessage").mockResolvedValue(undefined as never)
     bumpActivityForIds = spyOn(ConversationRepository, "bumpActivityForIds").mockResolvedValue(undefined as never)
@@ -164,7 +166,8 @@ describe("conversationAssigner — newSubtopic (declared branch, stream-locked m
     // Locks the thread stream row before deciding (INV-20), then mints anchored to
     // the thread — the branch relationship (thr_1.parentMessageId ∈ the parent
     // conversation) is derivable from the graph, so no parent id is written.
-    expect((LOCK_CLIENT as { query: ReturnType<typeof mock> }).query).toHaveBeenCalled()
+    expect(lockQuery.mock.calls.map(([statement]) => statement.values)).toContainEqual(["thr_1", WORKSPACE_ID])
+    expect(findActiveByStream).toHaveBeenCalledWith(LOCK_CLIENT, WORKSPACE_ID, "thr_1")
     expect(insert).toHaveBeenCalledTimes(1)
     expect(insert.mock.calls[0][1]).toMatchObject({ streamId: "thr_1", workspaceId: WORKSPACE_ID })
     // The mint generates its own id; the reply joins that same conversation.

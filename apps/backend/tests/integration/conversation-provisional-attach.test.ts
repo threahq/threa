@@ -54,7 +54,7 @@ describe("provisional conversation attach", () => {
       streamId?: string
       authorId?: string
       authorType?: "user" | "persona"
-      conversation?: { intent: "existing"; conversationId: string }
+      conversation?: { intent: "existing"; conversationId: string } | { intent: "newSubtopic" }
     } = {}
   ) => {
     return eventService.createMessageReturningConversationInternal({
@@ -185,18 +185,17 @@ describe("provisional conversation attach", () => {
 
     const sent = await send("Undeclared follow-up")
 
-    const conversation = await ConversationRepository.findById(pool, convId)
+    const conversation = await ConversationRepository.findById(pool, testWorkspaceId, convId)
     const row = await settlingRow(sent.message.id)
+    const intentRow = await pool.query<{ conversation_intent: string | null }>(
+      sql`SELECT conversation_intent FROM messages WHERE id = ${sent.message.id}`
+    )
     expect({
       returnedConversationId: sent.conversationId,
       memberIds: conversation!.messageIds,
       state: row?.state,
       rowConversationId: row?.conversation_id,
-      intent: (
-        await pool.query<{ conversation_intent: string | null }>(
-          sql`SELECT conversation_intent FROM messages WHERE id = ${sent.message.id}`
-        )
-      ).rows[0]!.conversation_intent,
+      intent: intentRow.rows[0]!.conversation_intent,
     }).toEqual({
       returnedConversationId: convId,
       memberIds: [opener.message.id, sent.message.id],
@@ -221,7 +220,7 @@ describe("provisional conversation attach", () => {
 
     const sent = await send("Much later message")
 
-    const conversation = await ConversationRepository.findById(pool, convId)
+    const conversation = await ConversationRepository.findById(pool, testWorkspaceId, convId)
     expect({
       returnedConversationId: sent.conversationId,
       memberIds: conversation!.messageIds,
@@ -236,7 +235,7 @@ describe("provisional conversation attach", () => {
   test("a stream with no conversation mints nothing", async () => {
     const sent = await send("First ever message")
 
-    const conversations = await ConversationRepository.findByStream(pool, testStreamId)
+    const conversations = await ConversationRepository.findByStream(pool, testWorkspaceId, testStreamId)
     expect({
       returnedConversationId: sent.conversationId,
       conversationCount: conversations.length,
@@ -268,7 +267,7 @@ describe("provisional conversation attach", () => {
 
     const sent = await send("Scratch follow-up", { streamId: scratchpadId })
 
-    const conversation = await ConversationRepository.findById(pool, convId)
+    const conversation = await ConversationRepository.findById(pool, testWorkspaceId, convId)
     expect({
       returnedConversationId: sent.conversationId,
       memberIds: conversation!.messageIds,
@@ -313,7 +312,7 @@ describe("provisional conversation attach", () => {
 
     const reply = await send("Thread reply", { streamId: threadId })
 
-    const conversation = await ConversationRepository.findById(pool, convId)
+    const conversation = await ConversationRepository.findById(pool, testWorkspaceId, convId)
     const row = await settlingRow(reply.message.id)
     expect({
       returnedConversationId: reply.conversationId,
@@ -323,6 +322,38 @@ describe("provisional conversation attach", () => {
       returnedConversationId: convId,
       memberIds: [anchor.message.id, reply.message.id],
       state: "settling",
+    })
+  })
+
+  test("should mint one thread-anchored conversation when two newSubtopic replies land in the same thread", async () => {
+    const anchor = await send("Anchor message")
+    const threadId = streamId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: threadId,
+        workspaceId: testWorkspaceId,
+        type: "thread",
+        visibility: "private",
+        companionMode: "off",
+        createdBy: testUserId,
+        parentStreamId: testStreamId,
+        parentAnchorId: anchor.message.id,
+        rootStreamId: testStreamId,
+      })
+    })
+
+    const first = await send("First branch reply", { streamId: threadId, conversation: { intent: "newSubtopic" } })
+    const second = await send("Second branch reply", { streamId: threadId, conversation: { intent: "newSubtopic" } })
+
+    const conversation = await ConversationRepository.findById(pool, testWorkspaceId, first.conversationId!)
+    expect({
+      secondConversationId: second.conversationId,
+      streamId: conversation!.streamId,
+      memberIds: conversation!.messageIds,
+    }).toEqual({
+      secondConversationId: first.conversationId,
+      streamId: threadId,
+      memberIds: [first.message.id, second.message.id],
     })
   })
 
@@ -341,8 +372,8 @@ describe("provisional conversation attach", () => {
     }
     const decided = await extraction.processMessage(sent.message.id, testStreamId, testWorkspaceId)
 
-    const guessed = await ConversationRepository.findById(pool, guessedConvId)
-    const other = await ConversationRepository.findById(pool, otherConvId)
+    const guessed = await ConversationRepository.findById(pool, testWorkspaceId, guessedConvId)
+    const other = await ConversationRepository.findById(pool, testWorkspaceId, otherConvId)
     const row = await settlingRow(sent.message.id)
     expect({
       decidedConversationId: decided?.id,
@@ -395,8 +426,8 @@ describe("provisional conversation attach", () => {
     await MessageConversationStateRepository.settle(pool, testWorkspaceId, [machineSettled.message.id], "llm-window")
     const machineDecision = await extraction.processMessage(machineSettled.message.id, testStreamId, testWorkspaceId)
 
-    const guessed = await ConversationRepository.findById(pool, guessedConvId)
-    const other = await ConversationRepository.findById(pool, otherConvId)
+    const guessed = await ConversationRepository.findById(pool, testWorkspaceId, guessedConvId)
+    const other = await ConversationRepository.findById(pool, testWorkspaceId, otherConvId)
     expect({
       engagedDecision: engagedDecision?.id,
       machineDecision: machineDecision?.id,
@@ -425,8 +456,8 @@ describe("provisional conversation attach", () => {
     }
     const decided = await extraction.processMessage(engaged.message.id, testStreamId, testWorkspaceId)
 
-    const guessed = await ConversationRepository.findById(pool, guessedConvId)
-    const other = await ConversationRepository.findById(pool, otherConvId)
+    const guessed = await ConversationRepository.findById(pool, testWorkspaceId, guessedConvId)
+    const other = await ConversationRepository.findById(pool, testWorkspaceId, otherConvId)
     expect({
       decided: decided?.id,
       guessedMembers: guessed!.messageIds,
@@ -457,8 +488,8 @@ describe("provisional conversation attach", () => {
     }
     const decided = await extraction.processMessage(declared.message.id, testStreamId, testWorkspaceId)
 
-    const declaredConv = await ConversationRepository.findById(pool, declaredConvId)
-    const other = await ConversationRepository.findById(pool, otherConvId)
+    const declaredConv = await ConversationRepository.findById(pool, testWorkspaceId, declaredConvId)
+    const other = await ConversationRepository.findById(pool, testWorkspaceId, otherConvId)
     expect({
       decided: decided?.id,
       declaredMembers: declaredConv!.messageIds,
@@ -495,7 +526,7 @@ describe("provisional conversation attach", () => {
     extractor.next = { assignments: [{ conversationId: otherConvId, isPrimary: true }], confidence: 0.9 }
     await extraction.processMessage(sent.message.id, testStreamId, testWorkspaceId)
 
-    const guessed = await ConversationRepository.findById(pool, guessedConvId)
+    const guessed = await ConversationRepository.findById(pool, testWorkspaceId, guessedConvId)
     expect({ members: guessed!.messageIds, participants: guessed!.participantIds.sort() }).toEqual({
       members: [opener.message.id, concurrent.message.id],
       participants: [testUserId, otherUserId].sort(),
@@ -567,7 +598,7 @@ describe("provisional conversation attach", () => {
       spy.mockRestore()
     }
 
-    const conversation = await ConversationRepository.findById(pool, convId)
+    const conversation = await ConversationRepository.findById(pool, testWorkspaceId, convId)
     const persisted = await pool.query(sql`SELECT id FROM messages WHERE id = ${sent!.message.id}`)
     expect({
       messagePersisted: persisted.rows.length,
@@ -598,8 +629,8 @@ describe("provisional conversation attach", () => {
     }
     await extraction.processMessage(sent.message.id, testStreamId, testWorkspaceId)
 
-    const declared = await ConversationRepository.findById(pool, declaredConvId)
-    const other = await ConversationRepository.findById(pool, otherConvId)
+    const declared = await ConversationRepository.findById(pool, testWorkspaceId, declaredConvId)
+    const other = await ConversationRepository.findById(pool, testWorkspaceId, otherConvId)
     expect({ declaredMembers: declared!.messageIds, otherMembers: other!.messageIds }).toEqual({
       declaredMembers: [opener.message.id, sent.message.id],
       otherMembers: [],
@@ -626,8 +657,8 @@ describe("provisional conversation attach", () => {
     }
     const decided = await extraction.processMessage(sent.message.id, testStreamId, testWorkspaceId)
 
-    const userChoice = await ConversationRepository.findById(pool, userChoiceId)
-    const other = await ConversationRepository.findById(pool, otherConvId)
+    const userChoice = await ConversationRepository.findById(pool, testWorkspaceId, userChoiceId)
+    const other = await ConversationRepository.findById(pool, testWorkspaceId, otherConvId)
     expect({
       decidedConversationId: decided?.id,
       userChoiceMembers: userChoice!.messageIds,

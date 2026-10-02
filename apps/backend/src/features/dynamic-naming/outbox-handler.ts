@@ -238,8 +238,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
   }
 
   private async isEligibleConversation(workspaceId: string, conversationId: string): Promise<boolean> {
-    const conversation = await ConversationRepository.findById(this.db, conversationId)
-    if (!conversation || conversation.workspaceId !== workspaceId) return false
+    const conversation = await ConversationRepository.findById(this.db, workspaceId, conversationId)
+    if (!conversation) return false
     const stream = await StreamRepository.findById(this.db, workspaceId, conversation.streamId)
     if (!stream) return false
     if (stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return false

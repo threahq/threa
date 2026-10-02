@@ -25,13 +25,9 @@ export function createConversationEmbeddingWorker(
     const { conversationId, workspaceId } = job.data
     const log = logger.child({ jobId: job.id, conversationId, workspaceId })
 
-    const conversation = await ConversationRepository.findById(pool, conversationId)
+    const conversation = await ConversationRepository.findById(pool, workspaceId, conversationId)
     if (!conversation) {
       log.warn("Conversation not found, skipping embedding")
-      return
-    }
-    if (conversation.workspaceId !== workspaceId) {
-      log.error({ conversationWorkspaceId: conversation.workspaceId }, "Workspace mismatch on embedding job")
       return
     }
     if (!isConversationEmbeddable(conversation)) {
@@ -47,7 +43,7 @@ export function createConversationEmbeddingWorker(
       // Re-read rather than reuse the row above: the guard calls this again
       // after losing the write race, and the winner is exactly what changed.
       loadText: async () => {
-        const current = await ConversationRepository.findById(pool, conversationId)
+        const current = await ConversationRepository.findById(pool, workspaceId, conversationId)
         if (!current || !isConversationEmbeddable(current)) return null
         return (await loadConversationEmbeddingTexts(pool, workspaceId, [current])).get(conversationId) ?? null
       },

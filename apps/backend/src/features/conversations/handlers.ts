@@ -239,8 +239,8 @@ export function createConversationHandlers({
       const workspaceId = req.workspaceId!
       const { conversationId } = req.params
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -259,8 +259,8 @@ export function createConversationHandlers({
       const workspaceId = req.workspaceId!
       const { conversationId } = req.params
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -285,8 +285,8 @@ export function createConversationHandlers({
       const workspaceId = req.workspaceId!
       const { conversationId } = req.params
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -313,8 +313,8 @@ export function createConversationHandlers({
       const workspaceId = req.workspaceId!
       const { conversationId } = req.params
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -343,8 +343,8 @@ export function createConversationHandlers({
 
       const { conversationId, messageId } = validateRequest(reassignMessageParamsSchema, req.params)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -367,8 +367,8 @@ export function createConversationHandlers({
 
       const { conversationId, messageId } = validateRequest(settleMessageParamsSchema, req.params)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -421,8 +421,8 @@ export function createConversationHandlers({
 
       const { conversationId } = validateRequest(proposeSplitParamsSchema, req.params)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -453,8 +453,8 @@ export function createConversationHandlers({
       const { conversationId } = validateRequest(applySplitParamsSchema, req.params)
       const { groups } = validateRequest(applySplitSchema, req.body)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -484,8 +484,8 @@ export function createConversationHandlers({
       const { conversationId } = validateRequest(updateConversationParamsSchema, req.params)
       const { topicSummary, status } = validateRequest(updateConversationBodySchema, req.body)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -507,8 +507,8 @@ export function createConversationHandlers({
       const workspaceId = req.workspaceId!
       const { conversationId } = validateRequest(regenerateConversationParamsSchema, req.params)
       validateRequest(regenerateConversationBodySchema, req.body ?? {})
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
@@ -529,8 +529,8 @@ export function createConversationHandlers({
 
       const { threadStreamId } = validateRequest(splitThreadSchema, req.body)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
 
@@ -555,8 +555,8 @@ export function createConversationHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { conversationId } = validateRequest(hideConversationParamsSchema, req.params)
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
@@ -568,8 +568,8 @@ export function createConversationHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { conversationId } = validateRequest(hideConversationParamsSchema, req.params)
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
@@ -614,8 +614,8 @@ export function createConversationHandlers({
 
       const { throughMessageId } = validateRequest(markReadSchema, req.body)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
@@ -632,8 +632,8 @@ export function createConversationHandlers({
 
       const { fromMessageId } = validateRequest(markUnreadSchema, req.body)
 
-      const conversation = await conversationService.getById(conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await conversationService.getById(workspaceId, conversationId)
+      if (!conversation) {
         return res.status(404).json({ error: "Conversation not found" })
       }
       await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)

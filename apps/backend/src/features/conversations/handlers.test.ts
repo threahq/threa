@@ -35,7 +35,9 @@ describe("Conversation Handlers", () => {
   const mockListByWorkspace = mock(() =>
     Promise.resolve({ posts: [] as Record<string, unknown>[], nextCursor: null as string | null })
   )
-  const mockGetById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
+  const mockGetById = mock((_workspaceId: string, _conversationId: string) =>
+    Promise.resolve(null as Record<string, unknown> | null)
+  )
   const mockGetMessages = mock(() => Promise.resolve([] as Record<string, unknown>[]))
   const mockGetBoardPostById = mock(() => Promise.resolve(null as Record<string, unknown> | null))
   const mockUpdateConversation = mock(() => Promise.resolve({ conversation: {} as Record<string, unknown> }))
@@ -298,6 +300,7 @@ describe("Conversation Handlers", () => {
       const res = mockRes()
       await handlers.getById(mockReq({ params: { conversationId: "conv_1" } }), res)
 
+      expect(mockGetById).toHaveBeenCalledWith("ws_1", "conv_1")
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
     })
 
@@ -308,6 +311,45 @@ describe("Conversation Handlers", () => {
         "Stream not found"
       )
     })
+  })
+
+  describe("conversation lookup", () => {
+    const lookups = [
+      ["getMessages", {}],
+      ["getBoardMessages", {}],
+      ["reassignMessage", { params: { conversationId: "conv_1", messageId: "msg_1" } }],
+      ["proposeSplit", {}],
+      [
+        "applySplit",
+        {
+          body: {
+            groups: [
+              { title: "First", messageIds: ["msg_1"] },
+              { title: "Second", messageIds: ["msg_2"] },
+            ],
+          },
+        },
+      ],
+      ["regenerateTitle", { params: { workspaceId: "ws_1", conversationId: "conv_1" }, body: {} }],
+      ["hideConversation", {}],
+      ["unhideConversation", {}],
+      ["markRead", { body: { throughMessageId: "msg_1" } }],
+      ["markUnread", { body: { fromMessageId: "msg_1" } }],
+    ] as const
+
+    for (const [handler, overrides] of lookups) {
+      test(`should 404 from ${handler} when the conversation is not in the request workspace`, async () => {
+        mockGetById.mockResolvedValue(null)
+        const res = mockRes()
+        await handlers[handler](mockReq({ params: { conversationId: "conv_1" }, ...overrides }), res)
+        const { statusCode, body } = res as unknown as { statusCode: number; body: unknown }
+        expect({ statusCode, body, lookups: mockGetById.mock.calls }).toEqual({
+          statusCode: 404,
+          body: { error: "Conversation not found" },
+          lookups: [["ws_1", "conv_1"]],
+        })
+      })
+    }
   })
 
   describe("getMessages", () => {
@@ -340,10 +382,11 @@ describe("Conversation Handlers", () => {
       expect(mockSplitThread).not.toHaveBeenCalled()
     })
 
-    test("404s when the conversation is in another workspace", async () => {
-      mockGetById.mockResolvedValue({ id: "conv_1", streamId: "stream_1", workspaceId: "ws_other" })
+    test("404s when the conversation is not found in the request workspace", async () => {
+      mockGetById.mockResolvedValue(null)
       const res = mockRes()
       await handlers.splitThread(req(), res)
+      expect(mockGetById).toHaveBeenCalledWith("ws_1", "conv_1")
       expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
       expect(mockValidateStreamAccess).not.toHaveBeenCalled()
       expect(mockSplitThread).not.toHaveBeenCalled()
@@ -379,10 +422,11 @@ describe("Conversation Handlers", () => {
       expect(mockGetBoardPostById).not.toHaveBeenCalled()
     })
 
-    test("404s when the conversation is in another workspace", async () => {
-      mockGetById.mockResolvedValue({ id: "conv_1", streamId: "stream_1", workspaceId: "ws_other" })
+    test("404s when the conversation is not found in the request workspace", async () => {
+      mockGetById.mockResolvedValue(null)
       const res = mockRes()
       await handlers.getBoardPost(mockReq({ params: { conversationId: "conv_1" } }), res)
+      expect(mockGetById).toHaveBeenCalledWith("ws_1", "conv_1")
       expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
       expect(mockValidateStreamAccess).not.toHaveBeenCalled()
     })
@@ -442,10 +486,11 @@ describe("Conversation Handlers", () => {
       expect(mockUpdateConversation).not.toHaveBeenCalled()
     })
 
-    test("404s a conversation in another workspace before writing", async () => {
-      mockGetById.mockResolvedValue({ id: "conv_1", streamId: "stream_1", workspaceId: "other_ws" })
+    test("404s a conversation not found in the request workspace before writing", async () => {
+      mockGetById.mockResolvedValue(null)
       const res = mockRes()
       await handlers.updateConversation(req({ topicSummary: "x" }), res)
+      expect(mockGetById).toHaveBeenCalledWith("ws_1", "conv_1")
       expect((res as unknown as { statusCode: number }).statusCode).toBe(404)
       expect(mockUpdateConversation).not.toHaveBeenCalled()
     })

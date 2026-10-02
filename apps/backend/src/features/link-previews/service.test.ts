@@ -228,13 +228,14 @@ describe("LinkPreviewService.resolveInAppLink", () => {
     spyOn(LinkPreviewRepository, "findById").mockResolvedValue(
       makePreview({ contentType: "conversation_link", targetStreamId: null, targetConversationId: "conv_1" })
     )
-    spyOn(ConversationRepository, "findById").mockResolvedValue(null)
+    const findById = spyOn(ConversationRepository, "findById").mockResolvedValue(null)
     const service = makeService({ tryAccess: async () => makeStream() }, {})
 
     expect(await service.resolveInAppLink(WORKSPACE_ID, VIEWER_ID, "lp_1")).toEqual({
       kind: "conversation",
       accessTier: "private",
     })
+    expect(findById).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_1")
   })
 
   test("returns private when the viewer cannot access the conversation's anchor stream", async () => {

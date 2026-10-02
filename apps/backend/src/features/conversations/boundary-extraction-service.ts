@@ -66,8 +66,8 @@ export class BoundaryExtractionService {
    */
   async proposeSplit(conversationId: string, workspaceId: string): Promise<SplitProposal & { conversationId: string }> {
     const { conversation, stream, messages } = await withClient(this.pool, async (client) => {
-      const conversation = await ConversationRepository.findById(client, conversationId)
-      if (!conversation || conversation.workspaceId !== workspaceId) {
+      const conversation = await ConversationRepository.findById(client, workspaceId, conversationId)
+      if (!conversation) {
         return { conversation: null, stream: null, messages: [] as Message[] }
       }
       const stream = await StreamRepository.findById(client, workspaceId, conversation.streamId)
@@ -162,7 +162,7 @@ export class BoundaryExtractionService {
       }
 
       if (!isClusteredStreamType(stream.type)) {
-        const existingConversations = await ConversationRepository.findByStream(client, stream.id)
+        const existingConversations = await ConversationRepository.findByStream(client, workspaceId, stream.id)
         return {
           message,
           stream,
@@ -416,9 +416,11 @@ export class BoundaryExtractionService {
         decision.assignments.length === 1 &&
         decision.assignments[0].conversationId === null
       ) {
-        await client.query(sql`SELECT id FROM streams WHERE id = ${stream.id} FOR UPDATE`)
+        await client.query(
+          sql`SELECT id FROM streams WHERE id = ${stream.id} AND workspace_id = ${workspaceId} FOR UPDATE`
+        )
 
-        const existingConversations = await ConversationRepository.findByStream(client, stream.id)
+        const existingConversations = await ConversationRepository.findByStream(client, workspaceId, stream.id)
         const activeConversation = existingConversations.find((c) => c.status === ConversationStatuses.ACTIVE)
 
         if (activeConversation) {
@@ -481,15 +483,11 @@ export class BoundaryExtractionService {
 
       // INV-20 race safety: lock the message rows we're about to (re)assign so
       // two concurrent boundary extractions can't both write the same message
-      // into two different conversations. Scoping is intentionally on id only
-      // — `messages.id` is the PK, and the id set comes from
-      // validReassignmentMessageIds (already filtered against the messages we
-      // just queried in this stream and its threads), so there's no
-      // cross-tenant exposure to guard against here.
+      // into two different conversations.
       const lockMessageIds = [messageId, ...candidateReassignments.map((r) => r.messageId)]
       await client.query(sql`
         SELECT id FROM messages
-        WHERE id = ANY(${lockMessageIds}::text[])
+        WHERE workspace_id = ${workspaceId} AND id = ANY(${lockMessageIds}::text[])
         FOR UPDATE
       `)
 
@@ -845,7 +843,9 @@ export class BoundaryExtractionService {
   private async assignAgentReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
     return withTransaction(this.pool, async (client) => {
       // Lock the message row so a concurrent re-delivery can't double-assign.
-      await client.query(sql`SELECT id FROM messages WHERE id = ${message.id} FOR UPDATE`)
+      await client.query(
+        sql`SELECT id FROM messages WHERE id = ${message.id} AND workspace_id = ${workspaceId} FOR UPDATE`
+      )
 
       // Idempotent on re-delivery: if already a primary somewhere, leave it.
       const existingPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
@@ -853,16 +853,18 @@ export class BoundaryExtractionService {
 
       // Lock the stream so two replies racing in a fresh thread don't both mint a
       // conversation (mirrors the scratchpad create path's stream lock, INV-20).
-      await client.query(sql`SELECT id FROM streams WHERE id = ${stream.id} FOR UPDATE`)
+      await client.query(
+        sql`SELECT id FROM streams WHERE id = ${stream.id} AND workspace_id = ${workspaceId} FOR UPDATE`
+      )
 
       // Scratchpads keep one conversation for the stream's lifetime, so a
       // sweep-faded conversation is reused (and reactivated below) rather than
       // shadowed by a fresh mint; elsewhere a fully-faded stream means a new
       // session and a new conversation is correct.
       const existing =
-        (await ConversationRepository.findActiveByStream(client, stream.id))[0] ??
+        (await ConversationRepository.findActiveByStream(client, workspaceId, stream.id))[0] ??
         (!isClusteredStreamType(stream.type)
-          ? (await ConversationRepository.findByStream(client, stream.id, { limit: 1 }))[0]
+          ? (await ConversationRepository.findByStream(client, workspaceId, stream.id, { limit: 1 }))[0]
           : undefined)
       const isNew = !existing
       const conversation =
