@@ -260,7 +260,7 @@ export class BoundaryExtractionService {
       // Await only new-message attachments: they're the payload most likely to
       // change classification. Context attachments were processed by their own
       // earlier boundary-extract runs.
-      const newMessageAttachments = await AttachmentRepository.findByMessageId(client, message.id)
+      const newMessageAttachments = await AttachmentRepository.findByMessageId(client, workspaceId, message.id)
       const newMessageAttachmentIds = newMessageAttachments.map((a) => a.id)
 
       const extractionContextBase: Omit<ExtractionContext, "attachmentsByMessageId"> = {
@@ -324,7 +324,7 @@ export class BoundaryExtractionService {
           { messageId, attachmentCount: newMessageAttachmentIds.length },
           "Boundary extraction awaiting attachment processing for new message"
         )
-        const awaitResult = await awaitAttachmentProcessing(this.pool, newMessageAttachmentIds)
+        const awaitResult = await awaitAttachmentProcessing(this.pool, workspaceId, newMessageAttachmentIds)
         if (!awaitResult.allCompleted) {
           // Classify with whatever extractions exist; don't block forever.
           logger.warn(
@@ -341,7 +341,7 @@ export class BoundaryExtractionService {
       await linkPreviewProcessing
 
       const [attachmentsByMessage, previewRowsByMessage] = await Promise.all([
-        AttachmentRepository.findByMessageIdsWithExtractions(this.pool, attachmentTargetIds),
+        AttachmentRepository.findByMessageIdsWithExtractions(this.pool, workspaceId, attachmentTargetIds),
         LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
       ])
       const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)

@@ -17,8 +17,8 @@ export interface VideoTranscodingServiceDeps {
 }
 
 export interface VideoTranscodingServiceLike {
-  submit(attachmentId: string): Promise<void>
-  checkStatus(attachmentId: string): Promise<boolean>
+  submit(workspaceId: string, attachmentId: string): Promise<void>
+  checkStatus(workspaceId: string, attachmentId: string): Promise<boolean>
 }
 
 /**
@@ -40,18 +40,18 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     this.s3Config = deps.s3Config
   }
 
-  async submit(attachmentId: string): Promise<void> {
+  async submit(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
     // Phase 1: Claim attachment and create tracking job
     const { attachment, job } = await withTransaction(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) {
         log.warn("Attachment not found, skipping video transcode")
         return { attachment: null, job: null }
       }
 
-      const existingJob = await VideoTranscodeJobRepository.findByAttachmentId(client, attachmentId)
+      const existingJob = await VideoTranscodeJobRepository.findByAttachmentId(client, workspaceId, attachmentId)
       if (att.processingStatus === ProcessingStatuses.PROCESSING && existingJob?.mediaconvertJobId) {
         log.info(
           { existingJobId: existingJob.id, mediaconvertJobId: existingJob.mediaconvertJobId },
@@ -62,6 +62,7 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
 
       const claimed = await AttachmentRepository.updateProcessingStatus(
         client,
+        workspaceId,
         attachmentId,
         ProcessingStatuses.PROCESSING,
         // PROCESSING included for crash recovery: if the worker crashed after claiming
@@ -79,7 +80,7 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
       const trackingJob = await VideoTranscodeJobRepository.upsert(client, {
         id: videoTranscodeJobId(),
         attachmentId,
-        workspaceId: att.workspaceId,
+        workspaceId,
       })
 
       return { attachment: att, job: trackingJob }
@@ -88,7 +89,7 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     if (!attachment || !job) return
 
     // Phase 2: Submit to MediaConvert (no DB connection held — INV-41)
-    const s3OutputPrefix = `${attachment.workspaceId}/${attachmentId}/`
+    const s3OutputPrefix = `${workspaceId}/${attachmentId}/`
     let mediaconvertJobId: string
     try {
       mediaconvertJobId = await this.mediaConvertClient.submitTranscodeJob({
@@ -98,23 +99,23 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
       })
     } catch (error) {
       log.error({ error }, "Failed to submit MediaConvert job")
-      await this.markFailed(job.id, attachmentId, `MediaConvert submission failed: ${error}`, attachment.workspaceId)
+      await this.markFailed(workspaceId, job.id, attachmentId, `MediaConvert submission failed: ${error}`)
       return
     }
 
     // Phase 3: Update tracking job with MediaConvert job ID
-    await VideoTranscodeJobRepository.updateSubmitted(this.pool, job.id, mediaconvertJobId)
+    await VideoTranscodeJobRepository.updateSubmitted(this.pool, workspaceId, job.id, mediaconvertJobId)
     log.info({ mediaconvertJobId, jobId: job.id }, "Video transcode job submitted")
   }
 
   /**
    * Returns true when the job is terminal (completed or failed), false if still in progress.
    */
-  async checkStatus(attachmentId: string): Promise<boolean> {
+  async checkStatus(workspaceId: string, attachmentId: string): Promise<boolean> {
     const log = logger.child({ attachmentId })
 
     // Phase 1: Fetch tracking job (single query — pass pool directly per INV-30)
-    const job = await VideoTranscodeJobRepository.findByAttachmentId(this.pool, attachmentId)
+    const job = await VideoTranscodeJobRepository.findByAttachmentId(this.pool, workspaceId, attachmentId)
 
     if (!job) {
       log.warn("Video transcode job not found, treating as done")
@@ -127,7 +128,7 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
 
     if (!job.mediaconvertJobId) {
       log.warn("Transcode job has no MediaConvert job ID, marking as failed")
-      await this.markFailed(job.id, attachmentId, "No MediaConvert job ID", job.workspaceId)
+      await this.markFailed(workspaceId, job.id, attachmentId, "No MediaConvert job ID")
       return true
     }
 
@@ -135,7 +136,7 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     const ageMs = Date.now() - job.createdAt.getTime()
     if (ageMs > VIDEO_TRANSCODE_MAX_AGE_MS) {
       log.warn({ ageMs }, "Transcode job exceeded max age, marking as failed")
-      await this.markFailed(job.id, attachmentId, "Transcoding timed out", job.workspaceId)
+      await this.markFailed(workspaceId, job.id, attachmentId, "Transcoding timed out")
       return true
     }
 
@@ -143,17 +144,22 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     const status = await this.mediaConvertClient.getJobStatus(job.mediaconvertJobId)
 
     if (status.status === "COMPLETE") {
-      const processedPath = `${job.workspaceId}/${attachmentId}/processed.mp4`
-      const thumbnailPath = `${job.workspaceId}/${attachmentId}/thumbnail.0000000.jpg`
+      const processedPath = `${workspaceId}/${attachmentId}/processed.mp4`
+      const thumbnailPath = `${workspaceId}/${attachmentId}/thumbnail.0000000.jpg`
 
       await withTransaction(this.pool, async (client) => {
-        await VideoTranscodeJobRepository.updateCompleted(client, job.id, processedPath, thumbnailPath)
-        await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+        await VideoTranscodeJobRepository.updateCompleted(client, workspaceId, job.id, processedPath, thumbnailPath)
+        await AttachmentRepository.updateProcessingStatus(
+          client,
+          workspaceId,
+          attachmentId,
+          ProcessingStatuses.COMPLETED
+        )
 
         // Fetch attachment to get streamId/messageId for scoping the outbox event
-        const att = await AttachmentRepository.findById(client, attachmentId)
+        const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
         await OutboxRepository.insert(client, "attachment:transcoded", {
-          workspaceId: job.workspaceId,
+          workspaceId,
           ...(att?.streamId && { streamId: att.streamId }),
           ...(att?.messageId && { messageId: att.messageId }),
           attachmentId,
@@ -166,7 +172,7 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
     }
 
     if (status.status === "ERROR" || status.status === "CANCELED") {
-      await this.markFailed(job.id, attachmentId, status.errorMessage ?? "Unknown error", job.workspaceId)
+      await this.markFailed(workspaceId, job.id, attachmentId, status.errorMessage ?? "Unknown error")
       return true
     }
 
@@ -175,19 +181,18 @@ export class VideoTranscodingService implements VideoTranscodingServiceLike {
   }
 
   private async markFailed(
+    workspaceId: string,
     jobId: string,
     attachmentId: string,
-    errorMessage: string,
-    workspaceId?: string
+    errorMessage: string
   ): Promise<void> {
     await withTransaction(this.pool, async (client) => {
-      await VideoTranscodeJobRepository.updateFailed(client, jobId, errorMessage)
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.FAILED)
+      await VideoTranscodeJobRepository.updateFailed(client, workspaceId, jobId, errorMessage)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.FAILED)
 
-      const att = await AttachmentRepository.findById(client, attachmentId)
-      const resolvedWorkspaceId = workspaceId ?? att?.workspaceId ?? ""
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       await OutboxRepository.insert(client, "attachment:transcoded", {
-        workspaceId: resolvedWorkspaceId,
+        workspaceId,
         ...(att?.streamId && { streamId: att.streamId }),
         ...(att?.messageId && { messageId: att.messageId }),
         attachmentId,

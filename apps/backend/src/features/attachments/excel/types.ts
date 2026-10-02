@@ -3,5 +3,5 @@
  * Implemented by both the real service and stub service.
  */
 export interface ExcelProcessingServiceLike {
-  processExcel(attachmentId: string): Promise<void>
+  processExcel(workspaceId: string, attachmentId: string): Promise<void>
 }

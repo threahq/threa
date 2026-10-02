@@ -90,36 +90,30 @@ export const VideoTranscodeJobRepository = {
     return mapRowToJob(result.rows[0])
   },
 
-  async findByAttachmentId(client: Querier, attachmentId: string): Promise<VideoTranscodeJob | null> {
-    const result = await client.query<VideoTranscodeJobRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM video_transcode_jobs WHERE attachment_id = ${attachmentId}`
-    )
+  async findByAttachmentId(
+    client: Querier,
+    workspaceId: string,
+    attachmentId: string
+  ): Promise<VideoTranscodeJob | null> {
+    const result = await client.query<VideoTranscodeJobRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM video_transcode_jobs
+      WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId}
+    `)
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
-  async findByAttachmentIds(client: Querier, attachmentIds: string[]): Promise<Map<string, VideoTranscodeJob>> {
-    if (attachmentIds.length === 0) return new Map()
-    const result = await client.query<VideoTranscodeJobRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM video_transcode_jobs WHERE attachment_id = ANY(${attachmentIds})`
-    )
-    const map = new Map<string, VideoTranscodeJob>()
-    for (const row of result.rows) {
-      map.set(row.attachment_id, mapRowToJob(row))
-    }
-    return map
-  },
-
-  async updateSubmitted(client: Querier, id: string, mediaconvertJobId: string): Promise<boolean> {
+  async updateSubmitted(client: Querier, workspaceId: string, id: string, mediaconvertJobId: string): Promise<boolean> {
     const result = await client.query(sql`
       UPDATE video_transcode_jobs
       SET status = 'submitted', mediaconvert_job_id = ${mediaconvertJobId}, submitted_at = NOW()
-      WHERE id = ${id} AND status = 'pending'
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND status = 'pending'
     `)
     return (result.rowCount ?? 0) > 0
   },
 
   async updateCompleted(
     client: Querier,
+    workspaceId: string,
     id: string,
     processedStoragePath: string,
     thumbnailStoragePath: string
@@ -130,16 +124,16 @@ export const VideoTranscodeJobRepository = {
           processed_storage_path = ${processedStoragePath},
           thumbnail_storage_path = ${thumbnailStoragePath},
           completed_at = NOW()
-      WHERE id = ${id} AND status IN ('pending', 'submitted')
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND status IN ('pending', 'submitted')
     `)
     return (result.rowCount ?? 0) > 0
   },
 
-  async updateFailed(client: Querier, id: string, errorMessage: string): Promise<boolean> {
+  async updateFailed(client: Querier, workspaceId: string, id: string, errorMessage: string): Promise<boolean> {
     const result = await client.query(sql`
       UPDATE video_transcode_jobs
       SET status = 'failed', error_message = ${errorMessage}, completed_at = NOW()
-      WHERE id = ${id} AND status IN ('pending', 'submitted')
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND status IN ('pending', 'submitted')
     `)
     return (result.rowCount ?? 0) > 0
   },

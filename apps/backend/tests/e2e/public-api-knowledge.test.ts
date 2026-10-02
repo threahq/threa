@@ -132,7 +132,13 @@ describe("Public API v1 — Knowledge Retrieval", () => {
       storagePath: `tests/public-attachment-${testRunId}.bin`,
       safetyStatus: AttachmentSafetyStatuses.CLEAN,
     })
-    await AttachmentRepository.attachToMessage(pool, [publicAttachmentId], publicAttachmentMessage.id, publicChannel.id)
+    await AttachmentRepository.attachToMessage(
+      pool,
+      workspace.id,
+      [publicAttachmentId],
+      publicAttachmentMessage.id,
+      publicChannel.id
+    )
     await AttachmentExtractionRepository.insert(pool, {
       id: extractionId(),
       attachmentId: publicAttachmentId,
@@ -161,6 +167,7 @@ describe("Public API v1 — Knowledge Retrieval", () => {
     })
     await AttachmentRepository.attachToMessage(
       pool,
+      workspace.id,
       [privateAttachmentId],
       privateAttachmentMessage.id,
       privateChannel.id

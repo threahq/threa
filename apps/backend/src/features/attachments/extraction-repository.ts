@@ -199,19 +199,29 @@ export const AttachmentExtractionRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  async findByAttachmentId(client: Querier, attachmentId: string): Promise<AttachmentExtraction | null> {
-    const result = await client.query<AttachmentExtractionRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachment_extractions WHERE attachment_id = ${attachmentId}`
-    )
+  async findByAttachmentId(
+    client: Querier,
+    workspaceId: string,
+    attachmentId: string
+  ): Promise<AttachmentExtraction | null> {
+    const result = await client.query<AttachmentExtractionRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM attachment_extractions
+      WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId}
+    `)
     return result.rows[0] ? mapRowToExtraction(result.rows[0]) : null
   },
 
-  async findByAttachmentIds(client: Querier, attachmentIds: string[]): Promise<Map<string, AttachmentExtraction>> {
+  async findByAttachmentIds(
+    client: Querier,
+    workspaceId: string,
+    attachmentIds: string[]
+  ): Promise<Map<string, AttachmentExtraction>> {
     if (attachmentIds.length === 0) return new Map()
 
-    const result = await client.query<AttachmentExtractionRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachment_extractions WHERE attachment_id = ANY(${attachmentIds})`
-    )
+    const result = await client.query<AttachmentExtractionRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM attachment_extractions
+      WHERE workspace_id = ${workspaceId} AND attachment_id = ANY(${attachmentIds})
+    `)
 
     const byAttachment = new Map<string, AttachmentExtraction>()
     for (const row of result.rows) {
@@ -251,9 +261,9 @@ export const AttachmentExtractionRepository = {
     return result.rows.map(mapRowToExtraction)
   },
 
-  async deleteByAttachmentId(client: Querier, attachmentId: string): Promise<boolean> {
+  async deleteByAttachmentId(client: Querier, workspaceId: string, attachmentId: string): Promise<boolean> {
     const result = await client.query(sql`
-      DELETE FROM attachment_extractions WHERE attachment_id = ${attachmentId}
+      DELETE FROM attachment_extractions WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId}
     `)
     return (result.rowCount ?? 0) > 0
   },
@@ -282,8 +292,7 @@ export const AttachmentExtractionRepository = {
    * filtered it out).
    *
    * The `workspace_id` predicate enforces the workspace shard boundary
-   * (INV-8) at the data layer so a future caller can't accidentally embed
-   * across workspaces even if it skips the worker's pre-check.
+   * (INV-8): a job payload carrying another workspace's id matches nothing.
    */
   async updateSummaryEmbedding(
     client: Querier,

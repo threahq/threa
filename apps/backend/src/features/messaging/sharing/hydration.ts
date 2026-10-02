@@ -364,7 +364,7 @@ async function hydrateSharedMessageRefsWithResolvers(
     // emitted on the source stream.
     const [authorNames, attachmentsByMessageId] = await Promise.all([
       resolveActorNames(db, workspaceId, actorIds),
-      AttachmentRepository.findByMessageIds(db, [...attachmentMessageIds]),
+      AttachmentRepository.findByMessageIds(db, workspaceId, [...attachmentMessageIds]),
     ])
     const uploadStatuses = await fetchUploadStatuses(db, workspaceId, [...attachmentsByMessageId.values()].flat())
     for (const [key, entry] of okRefs) {

@@ -50,12 +50,12 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
     this.jobQueue = deps.jobQueue
   }
 
-  async prepare(attachmentId: string): Promise<void> {
+  async prepare(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId, phase: "prepare" })
 
     // Claim the attachment for processing.
     const attachment = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) {
         log.warn("Attachment not found, skipping")
         return null
@@ -63,6 +63,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
 
       const claimed = await AttachmentRepository.updateProcessingStatus(
         client,
+        workspaceId,
         attachmentId,
         ProcessingStatuses.PROCESSING,
         { onlyIfStatusIn: [ProcessingStatuses.PENDING, ProcessingStatuses.PROCESSING, ProcessingStatuses.FAILED] }
@@ -179,7 +180,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
         await PdfPageExtractionRepository.insert(client, record)
       }
 
-      await PdfProcessingJobRepository.updateStatus(client, jobId, PdfJobStatuses.PROCESSING_PAGES)
+      await PdfProcessingJobRepository.updateStatus(client, workspaceId, jobId, PdfJobStatuses.PROCESSING_PAGES)
     })
 
     const pagesNeedingProcessing = pageInfos.filter(
@@ -193,7 +194,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
     if (pagesAlreadyComplete > 0) {
       await withTransaction(this.pool, async (client) => {
         for (let i = 0; i < pagesAlreadyComplete; i++) {
-          await PdfProcessingJobRepository.incrementPagesCompleted(client, jobId)
+          await PdfProcessingJobRepository.incrementPagesCompleted(client, workspaceId, jobId)
         }
       })
     }
@@ -227,17 +228,22 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
    * are already done in prepare(); scanned runs Tesseract OCR; complex_layout
    * and mixed run vision-model extraction.
    */
-  async processPage(attachmentId: string, pageNumber: number, pdfJobId: string): Promise<void> {
+  async processPage(workspaceId: string, attachmentId: string, pageNumber: number, pdfJobId: string): Promise<void> {
     const log = logger.child({ attachmentId, pageNumber, pdfJobId, phase: "processPage" })
 
     const { page, attachment } = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       if (!att) {
         log.warn("Attachment not found")
         return { page: null, attachment: null }
       }
 
-      const pageRecord = await PdfPageExtractionRepository.findByAttachmentAndPage(client, attachmentId, pageNumber)
+      const pageRecord = await PdfPageExtractionRepository.findByAttachmentAndPage(
+        client,
+        workspaceId,
+        attachmentId,
+        pageNumber
+      )
       if (!pageRecord) {
         log.warn("Page record not found")
         return { page: null, attachment: null }
@@ -245,6 +251,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
 
       const claimed = await PdfPageExtractionRepository.updateProcessingStatus(
         client,
+        workspaceId,
         pageRecord.id,
         ProcessingStatuses.PROCESSING,
         { onlyIfStatusIn: [ProcessingStatuses.PENDING, ProcessingStatuses.PROCESSING, ProcessingStatuses.FAILED] }
@@ -260,7 +267,7 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
 
     if (!page || !attachment) {
       // An already-claimed/missing page still counts toward the fan-in check.
-      await this.checkAndTriggerAssemble(pdfJobId, attachmentId, attachment?.workspaceId ?? "")
+      await this.checkAndTriggerAssemble(workspaceId, attachmentId, pdfJobId)
       return
     }
 
@@ -297,42 +304,48 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
       log.error({ error }, "Page processing failed")
 
       await withTransaction(this.pool, async (client) => {
-        await PdfPageExtractionRepository.updateProcessingStatus(client, page.id, ProcessingStatuses.FAILED, {
-          errorMessage: error instanceof Error ? error.message : String(error),
-        })
-        await PdfProcessingJobRepository.incrementPagesFailed(client, pdfJobId)
+        await PdfPageExtractionRepository.updateProcessingStatus(
+          client,
+          workspaceId,
+          page.id,
+          ProcessingStatuses.FAILED,
+          {
+            errorMessage: error instanceof Error ? error.message : String(error),
+          }
+        )
+        await PdfProcessingJobRepository.incrementPagesFailed(client, workspaceId, pdfJobId)
       })
 
-      await this.checkAndTriggerAssemble(pdfJobId, attachmentId, attachment.workspaceId)
+      await this.checkAndTriggerAssemble(workspaceId, attachmentId, pdfJobId)
       return
     }
 
     await withTransaction(this.pool, async (client) => {
-      await PdfPageExtractionRepository.update(client, page.id, {
+      await PdfPageExtractionRepository.update(client, workspaceId, page.id, {
         ocrText: processedContent.ocrText,
         markdownContent: processedContent.markdownContent,
         processingStatus: ProcessingStatuses.COMPLETED,
       })
 
-      await PdfProcessingJobRepository.incrementPagesCompleted(client, pdfJobId)
+      await PdfProcessingJobRepository.incrementPagesCompleted(client, workspaceId, pdfJobId)
     })
 
     log.info("Page processing complete")
 
-    await this.checkAndTriggerAssemble(pdfJobId, attachmentId, attachment.workspaceId)
+    await this.checkAndTriggerAssemble(workspaceId, attachmentId, pdfJobId)
   }
 
-  async assemble(attachmentId: string, pdfJobId: string): Promise<void> {
+  async assemble(workspaceId: string, attachmentId: string, pdfJobId: string): Promise<void> {
     const log = logger.child({ attachmentId, pdfJobId, phase: "assemble" })
 
     const { attachment, pages, job } = await withClient(this.pool, async (client) => {
-      const att = await AttachmentRepository.findById(client, attachmentId)
-      const pdfJob = await PdfProcessingJobRepository.findById(client, pdfJobId)
-      const pageExtractions = await PdfPageExtractionRepository.findByAttachmentId(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
+      const pdfJob = await PdfProcessingJobRepository.findById(client, workspaceId, pdfJobId)
+      const pageExtractions = await PdfPageExtractionRepository.findByAttachmentId(client, workspaceId, attachmentId)
 
       // Claim the assembling status to fence out a concurrent assemble.
       if (pdfJob) {
-        await PdfProcessingJobRepository.updateStatus(client, pdfJobId, PdfJobStatuses.ASSEMBLING, {
+        await PdfProcessingJobRepository.updateStatus(client, workspaceId, pdfJobId, PdfJobStatuses.ASSEMBLING, {
           onlyIfStatus: PdfJobStatuses.PROCESSING_PAGES,
         })
       }
@@ -430,9 +443,9 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
         },
       })
 
-      await PdfProcessingJobRepository.updateStatus(client, pdfJobId, PdfJobStatuses.COMPLETED)
+      await PdfProcessingJobRepository.updateStatus(client, workspaceId, pdfJobId, PdfJobStatuses.COMPLETED)
 
-      await AttachmentRepository.updateProcessingStatus(client, attachmentId, ProcessingStatuses.COMPLETED)
+      await AttachmentRepository.updateProcessingStatus(client, workspaceId, attachmentId, ProcessingStatuses.COMPLETED)
 
       // Emit the same extraction-completed event the shared `processAttachment`
       // path emits, so PDFs flow through `AttachmentEmbeddingHandler` for the
@@ -552,8 +565,8 @@ export class PdfProcessingService implements PdfProcessingServiceLike {
     return this.processComplexPage(attachment, pageNumber)
   }
 
-  private async checkAndTriggerAssemble(pdfJobId: string, attachmentId: string, workspaceId: string): Promise<void> {
-    const allDone = await PdfProcessingJobRepository.isAllPagesProcessed(this.pool, pdfJobId)
+  private async checkAndTriggerAssemble(workspaceId: string, attachmentId: string, pdfJobId: string): Promise<void> {
+    const allDone = await PdfProcessingJobRepository.isAllPagesProcessed(this.pool, workspaceId, pdfJobId)
 
     if (allDone) {
       await this.jobQueue.send(JobQueues.PDF_ASSEMBLE, {

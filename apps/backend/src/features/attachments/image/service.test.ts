@@ -53,7 +53,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
       .toBuffer()
 
     const attachment = buildAttachment()
-    spyOn(AttachmentRepository, "findById").mockResolvedValue(attachment)
+    const findSpy = spyOn(AttachmentRepository, "findById").mockResolvedValue(attachment)
     const updateSpy = spyOn(AttachmentRepository, "updateImageVariant").mockResolvedValue(true)
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
     spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, cb: (c: any) => Promise<any>) =>
@@ -61,8 +61,12 @@ describe("ImageThumbnailService.generateThumbnail", () => {
 
     const { service, storage } = createService(png)
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
+    expect(findSpy.mock.calls.map((call) => call.slice(1))).toEqual([
+      ["ws_1", "attach_1"],
+      ["ws_1", "attach_1"],
+    ])
     expect(storage.putObject).toHaveBeenCalledTimes(1)
     const [key, body, contentType] = storage.putObject.mock.calls[0]
     expect(key).toBe("ws_1/attach_1/thumbnail.webp")
@@ -73,7 +77,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(640)
     expect(body.length).toBeLessThan(png.length)
 
-    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "attach_1", {
+    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1", {
       thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
       width: 1600,
       height: 800,
@@ -117,7 +121,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
 
     const { service, storage } = createService(gif)
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     const [key, body, contentType] = storage.putObject.mock.calls[0]
     expect(key).toBe("ws_1/attach_1/thumbnail.webp")
@@ -128,7 +132,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     // Source loops forever (loop: 0); the thumbnail must too.
     expect(meta.loop).toBe(0)
     expect(Math.max(meta.width ?? 0, meta.pageHeight ?? 0)).toBeLessThanOrEqual(640)
-    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "attach_1", {
+    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1", {
       thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
       width: 1600,
       height: 800,
@@ -151,7 +155,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
 
     const { service, storage } = createService(gif)
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     const body = storage.putObject.mock.calls[0][1] as Buffer
     const meta = await sharp(body, { animated: true }).metadata()
@@ -177,9 +181,9 @@ describe("ImageThumbnailService.generateThumbnail", () => {
 
     const { service } = createService(rotated)
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
-    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "attach_1", {
+    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1", {
       thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
       width: 600,
       height: 1200,
@@ -192,7 +196,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     )
     const { service, storage } = createService()
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     expect(storage.getObject).not.toHaveBeenCalled()
     expect(storage.putObject).not.toHaveBeenCalled()
@@ -204,7 +208,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     )
     const { service, storage } = createService()
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     expect(storage.getObject).not.toHaveBeenCalled()
     expect(storage.putObject).not.toHaveBeenCalled()
@@ -215,7 +219,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     const updateSpy = spyOn(AttachmentRepository, "updateImageVariant").mockResolvedValue(true)
     const { service, storage } = createService(Buffer.from("this is not an image"))
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     expect(storage.putObject).not.toHaveBeenCalled()
     expect(updateSpy).not.toHaveBeenCalled()
@@ -225,7 +229,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     spyOn(AttachmentRepository, "findById").mockResolvedValue(null)
     const { service, storage } = createService()
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     expect(storage.getObject).not.toHaveBeenCalled()
   })
@@ -245,7 +249,7 @@ describe("ImageThumbnailService.generateThumbnail", () => {
 
     const { service } = createService(png)
 
-    await service.generateThumbnail("attach_1")
+    await service.generateThumbnail("ws_1", "attach_1")
 
     expect(outboxSpy).not.toHaveBeenCalled()
   })

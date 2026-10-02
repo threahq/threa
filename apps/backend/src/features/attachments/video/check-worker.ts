@@ -23,7 +23,7 @@ export function createVideoTranscodeCheckWorker(
 
     logger.debug({ jobId: job.id, attachmentId }, "Checking video transcode status")
 
-    const done = await videoTranscodingService.checkStatus(attachmentId)
+    const done = await videoTranscodingService.checkStatus(workspaceId, attachmentId)
 
     if (!done) {
       await jobQueue.send(

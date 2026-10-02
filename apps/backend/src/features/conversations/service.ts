@@ -485,7 +485,7 @@ export class ConversationService {
       for (const message of messages) byId.set(message.id, toBoardPostMessage(message, [], []))
       return byId
     }
-    const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, ids)
+    const attachmentsByMessage = await AttachmentRepository.findByMessageIds(this.pool, workspaceId, ids)
     const linkPreviewsByMessage = await LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, ids)
     const summariesByMessage = await hydrateAttachmentSummaries(this.pool, workspaceId, attachmentsByMessage)
     // Same card content the timeline gets from the event payload, so a message

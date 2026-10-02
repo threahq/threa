@@ -13,13 +13,13 @@ export interface PdfProcessingServiceDeps {
 
 export interface PdfProcessingServiceLike {
   /** Phase 1: Extract text/images, classify pages, create page records, fan out jobs */
-  prepare(attachmentId: string): Promise<void>
+  prepare(workspaceId: string, attachmentId: string): Promise<void>
 
   /** Phase 2: Process single page based on classification */
-  processPage(attachmentId: string, pageNumber: number, pdfJobId: string): Promise<void>
+  processPage(workspaceId: string, attachmentId: string, pageNumber: number, pdfJobId: string): Promise<void>
 
   /** Phase 3: Combine page results, generate summary, create document extraction */
-  assemble(attachmentId: string, pdfJobId: string): Promise<void>
+  assemble(workspaceId: string, attachmentId: string, pdfJobId: string): Promise<void>
 }
 
 export interface PageInfo {

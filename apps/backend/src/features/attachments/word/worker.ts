@@ -10,11 +10,11 @@ export function createWordProcessingWorker(deps: WordProcessingWorkerDeps): JobH
   const { wordProcessingService } = deps
 
   return async (job) => {
-    const { attachmentId, filename } = job.data
+    const { attachmentId, workspaceId, filename } = job.data
 
     logger.info({ jobId: job.id, attachmentId, filename }, "Processing Word document job")
 
-    await wordProcessingService.processWord(attachmentId)
+    await wordProcessingService.processWord(workspaceId, attachmentId)
 
     logger.info({ jobId: job.id, attachmentId }, "Word processing job completed")
   }

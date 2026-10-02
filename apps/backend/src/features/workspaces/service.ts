@@ -604,7 +604,7 @@ export class WorkspaceService {
       oldAvatarUrl = currentUser?.avatarUrl ?? null
 
       // Delete any in-flight upload rows — racing workers will see their row gone and skip
-      await AvatarUploadRepository.deleteByUserId(client, userId)
+      await AvatarUploadRepository.deleteByUserId(client, workspaceId, userId)
 
       const result = await UserRepository.update(client, workspaceId, userId, {
         avatarUrl: null,

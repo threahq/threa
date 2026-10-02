@@ -40,10 +40,10 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
     this.storage = deps.storage
   }
 
-  async generateThumbnail(attachmentId: string): Promise<void> {
+  async generateThumbnail(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
-    const attachment = await AttachmentRepository.findById(this.pool, attachmentId)
+    const attachment = await AttachmentRepository.findById(this.pool, workspaceId, attachmentId)
     if (!attachment) {
       log.warn("Attachment not found, skipping thumbnail generation")
       return
@@ -92,7 +92,7 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
 
     let committed = false
     await withTransaction(this.pool, async (client) => {
-      committed = await AttachmentRepository.updateImageVariant(client, attachmentId, {
+      committed = await AttachmentRepository.updateImageVariant(client, workspaceId, attachmentId, {
         thumbnailStoragePath: thumbnailPath,
         width,
         height,
@@ -106,7 +106,7 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
 
       // Re-read for stream/message scoping — the attachment may have been
       // attached to a message between the initial read and now.
-      const att = await AttachmentRepository.findById(client, attachmentId)
+      const att = await AttachmentRepository.findById(client, workspaceId, attachmentId)
       await OutboxRepository.insert(client, "attachment:thumbnailed", {
         workspaceId: attachment.workspaceId,
         ...(att?.streamId && { streamId: att.streamId }),

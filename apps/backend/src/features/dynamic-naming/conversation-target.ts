@@ -99,6 +99,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       )
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
+        target.workspaceId,
         messages.map((message) => message.id)
       )
       return {
@@ -111,12 +112,14 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
     if (!fetched || fetched.messages.length === 0) return null
 
     const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
-    if (fetched.attachmentIds.length > 0) await awaitAttachmentProcessing(this.pool, fetched.attachmentIds)
+    if (fetched.attachmentIds.length > 0)
+      await awaitAttachmentProcessing(this.pool, target.workspaceId, fetched.attachmentIds)
     const [linkPreviews, attachments] = await Promise.all([
       linkPreviewProcessing,
       fetched.attachmentIds.length
         ? AttachmentRepository.findByMessageIdsWithExtractions(
             this.pool,
+            target.workspaceId,
             fetched.messages.map((message) => message.id)
           )
         : Promise.resolve(new Map<string, AttachmentWithExtraction[]>()),

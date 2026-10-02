@@ -93,7 +93,7 @@ export async function validateDelegationContextRefs(
     memoIds.size > 0
       ? MemoRepository.findByIdsInWorkspace(pool, workspaceId, [...memoIds])
       : new Map<string, { status: string }>(),
-    attachmentIds.size > 0 ? AttachmentRepository.findByIds(pool, [...attachmentIds]) : [],
+    attachmentIds.size > 0 ? AttachmentRepository.findByIds(pool, workspaceId, [...attachmentIds]) : [],
   ])
   const attachmentMap = new Map(attachments.map((a) => [a.id, a]))
 
@@ -104,7 +104,7 @@ export async function validateDelegationContextRefs(
   await Promise.all(
     [...attachmentIds].map(async (id) => {
       const attachment = attachmentMap.get(id)
-      if (!attachment || attachment.workspaceId !== workspaceId) return
+      if (!attachment) return
       if (attachment.safetyStatus !== AttachmentSafetyStatuses.CLEAN) return
       if (attachment.streamId && accessibleSet.has(attachment.streamId)) {
         attachmentReachable.set(id, true)
@@ -123,7 +123,6 @@ export async function validateDelegationContextRefs(
   const dropped: DroppedContextRef[] = []
   for (const { ref, parsed: p } of parsed) {
     const reason = classifyParsedRef(p, {
-      workspaceId,
       accessibleSet,
       messageMap,
       memoMap,
@@ -143,11 +142,10 @@ export async function validateDelegationContextRefs(
 function classifyParsedRef(
   parsed: ParsedRef | null,
   lookups: {
-    workspaceId: string
     accessibleSet: Set<string>
     messageMap: Map<string, { streamId: string }>
     memoMap: Map<string, { status: string }>
-    attachmentMap: Map<string, { workspaceId: string; safetyStatus: string; streamId: string | null }>
+    attachmentMap: Map<string, { safetyStatus: string; streamId: string | null }>
     attachmentReachable: Map<string, boolean>
   }
 ): DroppedContextRefReason | null {
@@ -170,7 +168,7 @@ function classifyParsedRef(
   }
 
   const attachment = lookups.attachmentMap.get(parsed.attachmentId)
-  if (!attachment || attachment.workspaceId !== lookups.workspaceId) return "attachment-not-found"
+  if (!attachment) return "attachment-not-found"
   if (attachment.safetyStatus !== AttachmentSafetyStatuses.CLEAN) return "attachment-not-clean"
   return lookups.attachmentReachable.get(parsed.attachmentId) ? null : "attachment-out-of-scope"
 }

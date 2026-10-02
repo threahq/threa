@@ -78,22 +78,16 @@ export const PdfProcessingJobRepository = {
     return mapRowToJob(result.rows[0])
   },
 
-  async findById(client: Querier, id: string): Promise<PdfProcessingJob | null> {
+  async findById(client: Querier, workspaceId: string, id: string): Promise<PdfProcessingJob | null> {
     const result = await client.query<PdfProcessingJobRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_processing_jobs WHERE id = ${id}`
-    )
-    return result.rows[0] ? mapRowToJob(result.rows[0]) : null
-  },
-
-  async findByAttachmentId(client: Querier, attachmentId: string): Promise<PdfProcessingJob | null> {
-    const result = await client.query<PdfProcessingJobRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_processing_jobs WHERE attachment_id = ${attachmentId}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_processing_jobs WHERE workspace_id = ${workspaceId} AND id = ${id}`
     )
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
   async updateStatus(
     client: Querier,
+    workspaceId: string,
     id: string,
     status: PdfJobStatus,
     options?: { errorMessage?: string; onlyIfStatus?: PdfJobStatus }
@@ -106,7 +100,7 @@ export const PdfProcessingJobRepository = {
         SET status = ${status},
             error_message = ${options.errorMessage ?? null},
             completed_at = ${sql.raw(completedAt)}
-        WHERE id = ${id} AND status = ${options.onlyIfStatus}
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND status = ${options.onlyIfStatus}
       `)
       return (result.rowCount ?? 0) > 0
     }
@@ -116,7 +110,7 @@ export const PdfProcessingJobRepository = {
       SET status = ${status},
           error_message = ${options?.errorMessage ?? null},
           completed_at = ${sql.raw(completedAt)}
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
   },
@@ -125,47 +119,33 @@ export const PdfProcessingJobRepository = {
    * Atomically increment pages_completed and return the updated job for
    * fan-in coordination after each page completes.
    */
-  async incrementPagesCompleted(client: Querier, id: string): Promise<PdfProcessingJob | null> {
+  async incrementPagesCompleted(client: Querier, workspaceId: string, id: string): Promise<PdfProcessingJob | null> {
     const result = await client.query<PdfProcessingJobRow>(sql`
       UPDATE pdf_processing_jobs
       SET pages_completed = pages_completed + 1
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
   /** Atomically increment pages_failed and return the updated job. */
-  async incrementPagesFailed(client: Querier, id: string): Promise<PdfProcessingJob | null> {
+  async incrementPagesFailed(client: Querier, workspaceId: string, id: string): Promise<PdfProcessingJob | null> {
     const result = await client.query<PdfProcessingJobRow>(sql`
       UPDATE pdf_processing_jobs
       SET pages_failed = pages_failed + 1
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRowToJob(result.rows[0]) : null
   },
 
-  async isAllPagesProcessed(client: Querier, id: string): Promise<boolean> {
+  async isAllPagesProcessed(client: Querier, workspaceId: string, id: string): Promise<boolean> {
     const result = await client.query<{ all_done: boolean }>(sql`
       SELECT (pages_completed + pages_failed >= total_pages) as all_done
       FROM pdf_processing_jobs
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return result.rows[0]?.all_done ?? false
-  },
-
-  async delete(client: Querier, id: string): Promise<boolean> {
-    const result = await client.query(sql`
-      DELETE FROM pdf_processing_jobs WHERE id = ${id}
-    `)
-    return (result.rowCount ?? 0) > 0
-  },
-
-  async deleteByAttachmentId(client: Querier, attachmentId: string): Promise<boolean> {
-    const result = await client.query(sql`
-      DELETE FROM pdf_processing_jobs WHERE attachment_id = ${attachmentId}
-    `)
-    return (result.rowCount ?? 0) > 0
   },
 }

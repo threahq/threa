@@ -35,122 +35,127 @@ export class ExcelProcessingService implements ExcelProcessingServiceLike {
     this.storage = deps.storage
   }
 
-  async processExcel(attachmentId: string): Promise<void> {
+  async processExcel(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
-    await processAttachment(this.pool, attachmentId, async (attachment): Promise<ExtractionData | null> => {
-      log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing Excel workbook")
+    await processAttachment(
+      this.pool,
+      workspaceId,
+      attachmentId,
+      async (attachment): Promise<ExtractionData | null> => {
+        log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing Excel workbook")
 
-      try {
-        const fileBuffer = await this.storage.getObject(attachment.storagePath)
+        try {
+          const fileBuffer = await this.storage.getObject(attachment.storagePath)
 
-        const format = validateExcelFormat(fileBuffer)
-        log.info({ format }, "Excel format detected")
+          const format = validateExcelFormat(fileBuffer)
+          log.info({ format }, "Excel format detected")
 
-        const extracted = extractExcel(fileBuffer, format)
+          const extracted = extractExcel(fileBuffer, format)
 
-        const totalRows = extracted.sheets.reduce((sum, s) => sum + s.rows, 0)
-        const totalCells = extracted.sheets.reduce((sum, s) => sum + s.rows * s.columns, 0)
+          const totalRows = extracted.sheets.reduce((sum, s) => sum + s.rows, 0)
+          const totalCells = extracted.sheets.reduce((sum, s) => sum + s.rows * s.columns, 0)
 
-        const sizeTier = determineSizeTier(totalCells)
-        const injectionStrategy = determineInjectionStrategy(sizeTier)
+          const sizeTier = determineSizeTier(totalCells)
+          const injectionStrategy = determineInjectionStrategy(sizeTier)
 
-        const sheetInfos: ExcelSheetInfo[] = extracted.sheets.map((s) => ({
-          name: s.name,
-          rows: s.rows,
-          columns: s.columns,
-          headers: s.headers,
-          columnTypes: s.columnTypes,
-          sampleRows: s.sampleRows,
-        }))
+          const sheetInfos: ExcelSheetInfo[] = extracted.sheets.map((s) => ({
+            name: s.name,
+            rows: s.rows,
+            columns: s.columns,
+            headers: s.headers,
+            columnTypes: s.columnTypes,
+            sampleRows: s.sampleRows,
+          }))
 
-        const chartInfos: ExcelChartInfo[] = extracted.charts.map((c) => ({
-          sheetName: c.sheetName,
-          type: c.type,
-          title: c.title,
-          description: c.description,
-        }))
+          const chartInfos: ExcelChartInfo[] = extracted.charts.map((c) => ({
+            sheetName: c.sheetName,
+            type: c.type,
+            title: c.title,
+            description: c.description,
+          }))
 
-        const excelMetadata: ExcelMetadata = {
-          format,
-          sizeTier,
-          injectionStrategy,
-          totalSheets: extracted.sheets.length,
-          totalRows,
-          totalCells,
-          author: extracted.metadata.author,
-          createdAt: extracted.metadata.createdAt?.toISOString() ?? null,
-          modifiedAt: extracted.metadata.modifiedAt?.toISOString() ?? null,
-          sheets: sheetInfos,
-          charts: chartInfos,
-        }
+          const excelMetadata: ExcelMetadata = {
+            format,
+            sizeTier,
+            injectionStrategy,
+            totalSheets: extracted.sheets.length,
+            totalRows,
+            totalCells,
+            author: extracted.metadata.author,
+            createdAt: extracted.metadata.createdAt?.toISOString() ?? null,
+            modifiedAt: extracted.metadata.modifiedAt?.toISOString() ?? null,
+            sheets: sheetInfos,
+            charts: chartInfos,
+          }
 
-        let summary: string
-        let fullTextToStore: string | null
+          let summary: string
+          let fullTextToStore: string | null
 
-        if (sizeTier === TextSizeTiers.LARGE) {
-          fullTextToStore = null
+          if (sizeTier === TextSizeTiers.LARGE) {
+            fullTextToStore = null
 
-          const sheetOverview = buildSheetOverview(extracted.sheets)
-          const sampleData = buildSampleDataPreview(extracted.sheets)
+            const sheetOverview = buildSheetOverview(extracted.sheets)
+            const sampleData = buildSampleDataPreview(extracted.sheets)
 
-          const summaryResult = await this.ai.generateObject({
-            model: EXCEL_SUMMARY_MODEL_ID,
-            schema: excelSummarySchema,
-            temperature: EXCEL_SUMMARY_TEMPERATURE,
-            messages: [
-              { role: "system", content: EXCEL_SUMMARY_SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: EXCEL_SUMMARY_USER_PROMPT.replace("{filename}", attachment.filename)
-                  .replace("{sheetCount}", String(extracted.sheets.length))
-                  .replace("{totalRows}", String(totalRows))
-                  .replace("{totalCells}", String(totalCells))
-                  .replace("{sheetOverview}", sheetOverview)
-                  .replace("{sampleData}", sampleData),
+            const summaryResult = await this.ai.generateObject({
+              model: EXCEL_SUMMARY_MODEL_ID,
+              schema: excelSummarySchema,
+              temperature: EXCEL_SUMMARY_TEMPERATURE,
+              messages: [
+                { role: "system", content: EXCEL_SUMMARY_SYSTEM_PROMPT },
+                {
+                  role: "user",
+                  content: EXCEL_SUMMARY_USER_PROMPT.replace("{filename}", attachment.filename)
+                    .replace("{sheetCount}", String(extracted.sheets.length))
+                    .replace("{totalRows}", String(totalRows))
+                    .replace("{totalCells}", String(totalCells))
+                    .replace("{sheetOverview}", sheetOverview)
+                    .replace("{sampleData}", sampleData),
+                },
+              ],
+              telemetry: {
+                functionId: "excel-summary",
+                metadata: {
+                  attachment_id: attachmentId,
+                  workspace_id: attachment.workspaceId,
+                  filename: attachment.filename,
+                  format,
+                  size_tier: sizeTier,
+                },
               },
-            ],
-            telemetry: {
-              functionId: "excel-summary",
-              metadata: {
-                attachment_id: attachmentId,
-                workspace_id: attachment.workspaceId,
-                filename: attachment.filename,
-                format,
-                size_tier: sizeTier,
+              context: {
+                workspaceId: attachment.workspaceId,
               },
-            },
-            context: {
-              workspaceId: attachment.workspaceId,
-            },
-          })
+            })
 
-          summary = summaryResult.value.summary
-          log.info({ format, sizeTier, summaryLength: summary.length }, "Excel summary generated")
-        } else {
-          fullTextToStore = buildFullMarkdown(extracted.sheets, sizeTier)
-          summary = generateSimpleSummary(attachment.filename, format, extracted.sheets.length, totalRows, totalCells)
-        }
+            summary = summaryResult.value.summary
+            log.info({ format, sizeTier, summaryLength: summary.length }, "Excel summary generated")
+          } else {
+            fullTextToStore = buildFullMarkdown(extracted.sheets, sizeTier)
+            summary = generateSimpleSummary(attachment.filename, format, extracted.sheets.length, totalRows, totalCells)
+          }
 
-        return {
-          contentType: "document" as const,
-          summary,
-          fullText: fullTextToStore,
-          structuredData: null,
-          sourceType: "excel" as const,
-          excelMetadata,
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        if (errorMessage.includes("password") || errorMessage.includes("encrypted")) {
-          log.info({ filename: attachment.filename }, "Password-protected workbook, marking as skipped")
-          return null
-        }
+          return {
+            contentType: "document" as const,
+            summary,
+            fullText: fullTextToStore,
+            structuredData: null,
+            sourceType: "excel" as const,
+            excelMetadata,
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          if (errorMessage.includes("password") || errorMessage.includes("encrypted")) {
+            log.info({ filename: attachment.filename }, "Password-protected workbook, marking as skipped")
+            return null
+          }
 
-        log.error({ error }, "Excel processing failed")
-        throw error
+          log.error({ error }, "Excel processing failed")
+          throw error
+        }
       }
-    })
+    )
   }
 }
 

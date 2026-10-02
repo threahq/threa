@@ -2031,16 +2031,10 @@ describe("PersonaConfigService.bindAttachment — attachment state gates", () =>
     await expect(
       makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_NOT_FOUND" })
-    expect(insert).not.toHaveBeenCalled()
-  })
-
-  it("404s a cross-workspace attachment (never bind another workspace's upload)", async () => {
-    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
-    const deps = makeBindDeps({ getById: mock(async () => settledAttachment({ workspaceId: "workspace_other" })) })
-
-    await expect(
-      makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
-    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_NOT_FOUND" })
+    expect({ lookups: deps.attachmentService.getById.mock.calls, bound: insert.mock.calls }).toEqual({
+      lookups: [[WORKSPACE_ID, ATTACHMENT_ID]],
+      bound: [],
+    })
   })
 
   it("404s an attachment uploaded by another user (does not leak an unbound upload)", async () => {
@@ -2128,7 +2122,7 @@ describe("PersonaConfigService.bindAttachment — cap and conflicts", () => {
     // The sweep never reaps a settled-but-unbound attachment (its tracking row is
     // gone), so bind must delete it to avoid a permanent orphan — race-safely, so
     // a file a message claimed in the meantime keeps its bytes (INV-20).
-    expect(del).toHaveBeenCalledWith(ATTACHMENT_ID)
+    expect(del).toHaveBeenCalledWith(WORKSPACE_ID, ATTACHMENT_ID)
   })
 
   it("lost cap race where a message claimed the file: cleanup no-ops but still 400s", async () => {
@@ -2141,7 +2135,7 @@ describe("PersonaConfigService.bindAttachment — cap and conflicts", () => {
     await expect(
       makeService(undefined, deps).bindAttachment(WORKSPACE_ID, "persona_custom_1", ADMIN, ATTACHMENT_ID)
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
-    expect(del).toHaveBeenCalledWith(ATTACHMENT_ID)
+    expect(del).toHaveBeenCalledWith(WORKSPACE_ID, ATTACHMENT_ID)
   })
 })
 
@@ -2331,23 +2325,10 @@ describe("PersonaConfigService.attachFromExisting — source gates", () => {
         "attach_source_1"
       )
     ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND" })
-    expect(attachmentService.copyForPersona).not.toHaveBeenCalled()
-  })
-
-  it("404s a cross-workspace source", async () => {
-    spyOn(PersonaRepository, "resolveEditable").mockResolvedValue({ kind: "custom", row: customPersona() })
-    const { attachmentService } = makeAttachDeps({
-      getById: mock(async () => sourceAttachment({ workspaceId: "workspace_other" })),
-    })
-
-    await expect(
-      makeService(grantingStreamService(), { attachmentService }).attachFromExisting(
-        WORKSPACE_ID,
-        "persona_custom_1",
-        ADMIN,
-        "attach_source_1"
-      )
-    ).rejects.toMatchObject({ status: 404, code: "PERSONA_ATTACHMENT_SOURCE_NOT_FOUND" })
+    expect({
+      lookups: attachmentService.getById.mock.calls,
+      copies: attachmentService.copyForPersona.mock.calls,
+    }).toEqual({ lookups: [[WORKSPACE_ID, "attach_source_1"]], copies: [] })
   })
 
   it("404s when the caller cannot read the source stream and performs NO copy", async () => {
@@ -2491,7 +2472,7 @@ describe("PersonaConfigService.attachFromExisting — copy, cap, and cleanup", (
       )
     ).rejects.toMatchObject({ status: 400, code: "PERSONA_ATTACHMENT_LIMIT" })
     // The copy is the freshly-generated id, not the source — cleanup targets it.
-    expect(del).toHaveBeenCalledWith(capturedNewId())
+    expect(del).toHaveBeenCalledWith(WORKSPACE_ID, capturedNewId())
     expect(capturedNewId()).not.toBe("attach_source_1")
   })
 
@@ -2528,7 +2509,7 @@ describe("PersonaConfigService.removeAttachment", () => {
 
     await makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "att_1", ADMIN)
 
-    expect(del).toHaveBeenCalledWith("att_1")
+    expect(del).toHaveBeenCalledWith(WORKSPACE_ID, "att_1")
   })
 
   it("still succeeds when a message claimed the file first (binding gone, bytes left intact)", async () => {
@@ -2542,7 +2523,7 @@ describe("PersonaConfigService.removeAttachment", () => {
     await makeService(undefined, deps).removeAttachment(WORKSPACE_ID, "persona_custom_1", "att_1", ADMIN)
 
     expect(unbind).toHaveBeenCalled()
-    expect(del).toHaveBeenCalledWith("att_1")
+    expect(del).toHaveBeenCalledWith(WORKSPACE_ID, "att_1")
   })
 
   it("404s when the binding does not exist (and never touches the attachment)", async () => {

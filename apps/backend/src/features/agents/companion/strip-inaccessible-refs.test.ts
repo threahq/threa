@@ -177,11 +177,9 @@ describe("stripInaccessibleAgentRefs", () => {
     expect(JSON.stringify(result.contentJson)).toContain("local snippet")
   })
 
-  it("drops attachmentReference when the attachment id is unknown or in another workspace", async () => {
+  it("drops attachmentReference when the workspace-scoped lookup does not find the attachment", async () => {
     spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
-    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
-      { id: "att_other_ws", workspaceId: "ws_other", streamId: "stream_x" } as any,
-    ])
+    const findSpy = spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
 
     const result = await stripInaccessibleAgentRefs({
       pool,
@@ -191,8 +189,8 @@ describe("stripInaccessibleAgentRefs", () => {
       contentJson: doc(paragraph(attachmentRefNode("att_phantom"), attachmentRefNode("att_other_ws"))),
     })
 
-    expect(result.dropped).toHaveLength(2)
-    expect(result.dropped.map((d) => d.reason).sort()).toEqual(["attachment-cross-workspace", "attachment-not-found"])
+    expect(findSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", ["att_phantom", "att_other_ws"])
+    expect(result.dropped.map((d) => d.reason)).toEqual(["attachment-not-found", "attachment-not-found"])
   })
 
   it("falls back to reference-projection scope when the attachment's own stream is out of scope", async () => {

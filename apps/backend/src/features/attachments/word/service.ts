@@ -39,123 +39,128 @@ export class WordProcessingService implements WordProcessingServiceLike {
     this.storage = deps.storage
   }
 
-  async processWord(attachmentId: string): Promise<void> {
+  async processWord(workspaceId: string, attachmentId: string): Promise<void> {
     const log = logger.child({ attachmentId })
 
-    await processAttachment(this.pool, attachmentId, async (attachment): Promise<ExtractionData | null> => {
-      log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing Word document")
+    await processAttachment(
+      this.pool,
+      workspaceId,
+      attachmentId,
+      async (attachment): Promise<ExtractionData | null> => {
+        log.info({ filename: attachment.filename, mimeType: attachment.mimeType }, "Processing Word document")
 
-      try {
-        const fileBuffer = await this.storage.getObject(attachment.storagePath)
+        try {
+          const fileBuffer = await this.storage.getObject(attachment.storagePath)
 
-        const format = validateWordFormat(fileBuffer)
-        log.info({ format }, "Word format detected")
+          const format = validateWordFormat(fileBuffer)
+          log.info({ format }, "Word format detected")
 
-        const extracted = await extractWord(fileBuffer, format)
-        const textContent = extracted.text
+          const extracted = await extractWord(fileBuffer, format)
+          const textContent = extracted.text
 
-        let processedImageCaptions: string[] = []
-        if (extracted.images.length > 0) {
-          log.info({ imageCount: extracted.images.length }, "Processing embedded images")
-          processedImageCaptions = await this.captionEmbeddedImages(
-            extracted.images,
-            attachment.workspaceId,
-            attachmentId
-          )
-        }
+          let processedImageCaptions: string[] = []
+          if (extracted.images.length > 0) {
+            log.info({ imageCount: extracted.images.length }, "Processing embedded images")
+            processedImageCaptions = await this.captionEmbeddedImages(
+              extracted.images,
+              attachment.workspaceId,
+              attachmentId
+            )
+          }
 
-        const contentWithImages = this.integrateImageCaptions(textContent, processedImageCaptions)
+          const contentWithImages = this.integrateImageCaptions(textContent, processedImageCaptions)
 
-        const wordCount = countWords(textContent)
-        const characterCount = textContent.length
-        const contentBytes = Buffer.byteLength(contentWithImages, "utf-8")
+          const wordCount = countWords(textContent)
+          const characterCount = textContent.length
+          const contentBytes = Buffer.byteLength(contentWithImages, "utf-8")
 
-        const sizeTier = determineSizeTier(contentBytes)
-        const injectionStrategy = determineInjectionStrategy(sizeTier)
+          const sizeTier = determineSizeTier(contentBytes)
+          const injectionStrategy = determineInjectionStrategy(sizeTier)
 
-        const sections = buildSections(textContent)
+          const sections = buildSections(textContent)
 
-        const wordMetadata: WordMetadata = {
-          format,
-          sizeTier,
-          injectionStrategy,
-          pageCount: extracted.properties.pageCount,
-          wordCount,
-          characterCount,
-          author: extracted.properties.author,
-          createdAt: extracted.properties.createdAt?.toISOString() ?? null,
-          modifiedAt: extracted.properties.modifiedAt?.toISOString() ?? null,
-          embeddedImageCount: extracted.images.length,
-          sections,
-        }
-
-        let summary: string
-        let fullTextToStore: string | null
-
-        if (sizeTier === TextSizeTiers.LARGE) {
-          fullTextToStore = null
-
-          const contentPreview = textContent.slice(0, 4000)
-          const summaryResult = await this.ai.generateObject({
-            model: WORD_SUMMARY_MODEL_ID,
-            schema: wordSummarySchema,
-            temperature: WORD_SUMMARY_TEMPERATURE,
-            messages: [
-              { role: "system", content: WORD_SUMMARY_SYSTEM_PROMPT },
-              {
-                role: "user",
-                content: WORD_SUMMARY_USER_PROMPT.replace("{filename}", attachment.filename)
-                  .replace("{wordCount}", String(wordCount))
-                  .replace("{contentPreview}", contentPreview),
-              },
-            ],
-            telemetry: {
-              functionId: "word-summary",
-              metadata: {
-                attachment_id: attachmentId,
-                workspace_id: attachment.workspaceId,
-                filename: attachment.filename,
-                format,
-                size_tier: sizeTier,
-              },
-            },
-            context: {
-              workspaceId: attachment.workspaceId,
-            },
-          })
-
-          summary = summaryResult.value.summary
-          log.info({ format, sizeTier, summaryLength: summary.length }, "Word summary generated")
-        } else {
-          fullTextToStore = contentWithImages
-          summary = generateSimpleSummary(
-            attachment.filename,
+          const wordMetadata: WordMetadata = {
             format,
+            sizeTier,
+            injectionStrategy,
+            pageCount: extracted.properties.pageCount,
             wordCount,
             characterCount,
-            extracted.images.length
-          )
-        }
+            author: extracted.properties.author,
+            createdAt: extracted.properties.createdAt?.toISOString() ?? null,
+            modifiedAt: extracted.properties.modifiedAt?.toISOString() ?? null,
+            embeddedImageCount: extracted.images.length,
+            sections,
+          }
 
-        return {
-          contentType: "document" as const,
-          summary,
-          fullText: fullTextToStore,
-          structuredData: null,
-          sourceType: "word" as const,
-          wordMetadata,
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error)
-        if (errorMessage.includes("password") || errorMessage.includes("encrypted")) {
-          log.info({ filename: attachment.filename }, "Password-protected document, marking as skipped")
-          return null
-        }
+          let summary: string
+          let fullTextToStore: string | null
 
-        log.error({ error }, "Word processing failed")
-        throw error
+          if (sizeTier === TextSizeTiers.LARGE) {
+            fullTextToStore = null
+
+            const contentPreview = textContent.slice(0, 4000)
+            const summaryResult = await this.ai.generateObject({
+              model: WORD_SUMMARY_MODEL_ID,
+              schema: wordSummarySchema,
+              temperature: WORD_SUMMARY_TEMPERATURE,
+              messages: [
+                { role: "system", content: WORD_SUMMARY_SYSTEM_PROMPT },
+                {
+                  role: "user",
+                  content: WORD_SUMMARY_USER_PROMPT.replace("{filename}", attachment.filename)
+                    .replace("{wordCount}", String(wordCount))
+                    .replace("{contentPreview}", contentPreview),
+                },
+              ],
+              telemetry: {
+                functionId: "word-summary",
+                metadata: {
+                  attachment_id: attachmentId,
+                  workspace_id: attachment.workspaceId,
+                  filename: attachment.filename,
+                  format,
+                  size_tier: sizeTier,
+                },
+              },
+              context: {
+                workspaceId: attachment.workspaceId,
+              },
+            })
+
+            summary = summaryResult.value.summary
+            log.info({ format, sizeTier, summaryLength: summary.length }, "Word summary generated")
+          } else {
+            fullTextToStore = contentWithImages
+            summary = generateSimpleSummary(
+              attachment.filename,
+              format,
+              wordCount,
+              characterCount,
+              extracted.images.length
+            )
+          }
+
+          return {
+            contentType: "document" as const,
+            summary,
+            fullText: fullTextToStore,
+            structuredData: null,
+            sourceType: "word" as const,
+            wordMetadata,
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          if (errorMessage.includes("password") || errorMessage.includes("encrypted")) {
+            log.info({ filename: attachment.filename }, "Password-protected document, marking as skipped")
+            return null
+          }
+
+          log.error({ error }, "Word processing failed")
+          throw error
+        }
       }
-    })
+    )
   }
 
   private async captionEmbeddedImages(
