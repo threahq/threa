@@ -10,6 +10,7 @@
     "dev": "bun scripts/dev.ts",
     "dev:mobile": "LAN_MODE=true bun scripts/dev.ts",
     "dev:remote": "TAILSCALE_MODE=true bun scripts/dev.ts",
+    "dev:regions": "SECOND_REGION=true bun scripts/dev.ts",
     "dev:test": "bun scripts/dev-test.ts",
     "dev:backend": "bun --hot apps/backend/src/index.ts",
     "dev:frontend": "bun run --cwd apps/frontend dev",
