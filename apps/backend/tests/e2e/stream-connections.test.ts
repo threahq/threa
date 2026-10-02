@@ -28,9 +28,29 @@ describe("Stream connections E2E", () => {
       member.post(`${base}/streams/${channelId}/connection-invites`, {}),
       member.post(`${base}/stream-connections/${streamConnectionId()}/revoke`, {}),
       member.post(`${base}/stream-connections/accept`, { token: "tok", visibility: "private" }),
+      member.get(`${base}/stream-connections/can-accept`),
     ])
 
-    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403])
+    expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403])
+  })
+
+  test("should tell an admin they can't accept while the workspace flag is off", async () => {
+    const response = await owner.get(`/api/workspaces/${workspaceId}/stream-connections/can-accept`)
+
+    expect({ status: response.status, body: response.data }).toEqual({
+      status: 404,
+      body: expect.objectContaining({ code: "STREAM_CONNECTIONS_DISABLED" }),
+    })
+  })
+
+  test("should report a channel as not shareable while the workspace flag is off", async () => {
+    const query = new URLSearchParams({ workspaceId, streamId: channelId })
+    const response = await owner.internalRequest("GET", `/internal/stream-connections/shareable?${query}`)
+
+    expect({ status: response.status, body: response.data }).toEqual({
+      status: 200,
+      body: { shareable: false },
+    })
   })
 
   test("should accept a valid snapshot, ignore unknown keys, and reject a malformed one on the internal sync endpoint", async () => {

@@ -408,16 +408,39 @@ export class ControlPlaneClient {
     return snapshotResponseSchema.parse(body).snapshot
   }
 
+  async getStreamConnection(params: { connectionId: string; workspaceId: string }): Promise<StreamConnectionSnapshot> {
+    const query = new URLSearchParams({ workspaceId: params.workspaceId })
+    const body = await this.requestStreamConnection(
+      `/internal/stream-connections/${encodeURIComponent(params.connectionId)}?${query}`,
+      { method: "GET" },
+      "read shared channel"
+    )
+    return snapshotResponseSchema.parse(body).snapshot
+  }
+
   private async postStreamConnection(path: string, payload: unknown, action: string): Promise<unknown> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
+    return this.requestStreamConnection(path, { method: "POST", body: JSON.stringify(payload) }, action)
+  }
+
+  private async requestStreamConnection(
+    path: string,
+    init: { method: "GET" | "POST"; body?: string },
+    action: string
+  ): Promise<unknown> {
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch (err) {
+      logger.error({ err, path }, `Failed to ${action}`)
+      throw new HttpError(`Failed to ${action}`, { status: 502, code: "CONTROL_PLANE_UNAVAILABLE" })
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => "")
       const error = toControlPlaneHttpError(res.status, body, `Failed to ${action}`)

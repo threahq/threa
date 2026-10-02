@@ -450,6 +450,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
     app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
     app.post("/internal/stream-connections", internalAuth, streamConnections.sync)
+    app.get("/internal/stream-connections/shareable", internalAuth, streamConnections.shareable)
   }
 
   // Enclave runtime registry — gated by the dedicated enclave credential
@@ -821,6 +822,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("stream_connections.create_invite", "write"),
     requireWorkspaceAdmin,
     streamConnections.createInvite
+  )
+  app.get(
+    "/api/workspaces/:workspaceId/stream-connections/can-accept",
+    ...authed,
+    audit("stream_connections.can_accept", "read"),
+    requireWorkspaceAdmin,
+    streamConnections.canAccept
   )
   app.post(
     "/api/workspaces/:workspaceId/stream-connections/accept",

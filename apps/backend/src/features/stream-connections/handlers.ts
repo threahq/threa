@@ -6,6 +6,7 @@ import type { StreamConnectionService } from "./service"
 
 const streamParamsSchema = z.object({ streamId: z.string().min(1) })
 const connectionParamsSchema = z.object({ connectionId: z.string().min(1) })
+const shareableQuerySchema = z.object({ workspaceId: z.string().min(1), streamId: z.string().min(1) })
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -40,10 +41,21 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
       res.json({ connection })
     },
 
+    /** The invite page's workspace picker: answers with the same refusals accept would. */
+    async canAccept(req: Request, res: Response) {
+      await streamConnectionService.assertCanAccept(req.workspaceId!)
+      res.status(204).send()
+    },
+
     async accept(req: Request, res: Response) {
       const body = validateRequest(acceptStreamConnectionSchema, req.body)
       const connection = await streamConnectionService.accept({ workspaceId: req.workspaceId!, ...body })
       res.json({ connection })
+    },
+
+    async shareable(req: Request, res: Response) {
+      const query = validateRequest(shareableQuerySchema, req.query)
+      res.json({ shareable: await streamConnectionService.isStreamShareable(query) })
     },
 
     /** Control-plane fan-out: the full current state, so replays are idempotent. */

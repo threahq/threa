@@ -20,6 +20,7 @@ const acceptSchema = z.object({
   visibility: z.enum(VISIBILITY_OPTIONS),
 })
 const lookupSchema = z.object({ token: streamConnectionTokenSchema })
+const getSchema = z.object({ workspaceId: idSchema })
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -41,6 +42,12 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
     async accept(req: Request, res: Response) {
       const body = parseRequest(acceptSchema, req.body)
       res.json({ snapshot: await streamConnectionService.accept(body) })
+    },
+
+    async get(req: Request, res: Response) {
+      const connectionId = parseRequest(idSchema, req.params.id)
+      const { workspaceId } = parseRequest(getSchema, req.query)
+      res.json({ snapshot: await streamConnectionService.getForWorkspace({ connectionId, workspaceId }) })
     },
 
     /** Session-authenticated: the invite page before the user picks a workspace. */

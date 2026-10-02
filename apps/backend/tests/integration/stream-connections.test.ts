@@ -24,7 +24,8 @@ function startStubControlPlane() {
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      requests.push({ path: new URL(req.url).pathname, body: await req.json() })
+      const url = new URL(req.url)
+      requests.push({ path: url.pathname + url.search, body: req.method === "GET" ? null : await req.json() })
       const next = responses.shift()
       if (!next) return Response.json({ error: "No stub response queued" }, { status: 500 })
       return Response.json(next.body, { status: next.status })
@@ -128,8 +129,11 @@ describe("StreamConnectionService", () => {
     const stream = await seedStream(host.id, host.adminId)
     const invited = snapshot(host, stream.id)
     cp.respond(201, { snapshot: invited, token: "tok_secret", superseded: null })
+    cp.respond(200, { snapshot: invited })
 
     const result = await service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+    const minted = [...cp.requests]
+    const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
 
     const connection = {
       id: invited.id,
@@ -143,13 +147,10 @@ describe("StreamConnectionService", () => {
       partnerVisibility: null,
       expiresAt: invited.expiresAt,
     }
-    expect({
-      result,
-      sent: cp.requests,
-      listed: await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId }),
-    }).toEqual({
+    // A pending link is re-read from the control plane on every list, in case an accept never arrived.
+    expect({ result, minted, listed, repaired: cp.requests.slice(minted.length) }).toEqual({
       result: { connection, token: "tok_secret" },
-      sent: [
+      minted: [
         {
           path: "/internal/stream-connections",
           body: {
@@ -161,6 +162,7 @@ describe("StreamConnectionService", () => {
         },
       ],
       listed: [connection],
+      repaired: [{ path: `/internal/stream-connections/${invited.id}?workspaceId=${host.id}`, body: null }],
     })
   })
 
@@ -171,11 +173,41 @@ describe("StreamConnectionService", () => {
     await service.applySnapshot(first)
     const second = snapshot(host, stream.id)
     cp.respond(201, { snapshot: second, token: "tok_2", superseded: { ...first, state: "revoked", revision: 2 } })
+    cp.respond(200, { snapshot: second })
 
     await service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
 
     const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
     expect(listed.map((c) => c.id)).toEqual([second.id])
+  })
+
+  test("should heal an accept the control plane never delivered when the host lists a pending link", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const invited = snapshot(host, stream.id)
+    await service.applySnapshot(invited)
+    const remotePartner = { id: workspaceId(), name: "Globex" }
+    cp.respond(200, { snapshot: { ...activated(invited, remotePartner), partnerRegion: "us" } })
+
+    const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+
+    expect({ listed, sent: cp.requests }).toEqual({
+      listed: [
+        {
+          id: invited.id,
+          role: "host",
+          state: "active",
+          streamId: stream.id,
+          streamSlug: "launch",
+          streamDisplayName: "Launch",
+          remoteWorkspaceId: remotePartner.id,
+          remoteWorkspaceName: "Globex",
+          partnerVisibility: "private",
+          expiresAt: invited.expiresAt,
+        },
+      ],
+      sent: [{ path: `/internal/stream-connections/${invited.id}?workspaceId=${host.id}`, body: null }],
+    })
   })
 
   test("should project both sides when host and partner live in this region", async () => {
@@ -392,6 +424,41 @@ describe("StreamConnectionService", () => {
     }).toEqual({ codes: Array(4).fill(StreamConnectionErrorCodes.NOT_SHAREABLE), sent: [] })
   })
 
+  test("should report only an active, unencrypted channel with sharing on as still shareable", async () => {
+    const host = await seedWorkspace("Acme")
+    const switchedOff = await seedWorkspace("Initech", "off")
+    const channel = await seedStream(host.id, host.adminId)
+    const dm = await seedStream(host.id, host.adminId, StreamTypes.DM)
+    const archived = await seedStream(host.id, host.adminId)
+    await pool.query("UPDATE streams SET archived_at = NOW() WHERE id = $1", [archived.id])
+    const sealed = await seedStream(host.id, host.adminId)
+    await E2eStreamsRepository.markStreamE2e(pool, {
+      streamId: sealed.id,
+      workspaceId: host.id,
+      ownerUserId: host.adminId,
+      ownerUserKeyId: "e2ek_owner",
+    })
+    const offChannel = await seedStream(switchedOff.id, switchedOff.adminId)
+
+    const answers = await Promise.all([
+      service.isStreamShareable({ workspaceId: host.id, streamId: channel.id }),
+      service.isStreamShareable({ workspaceId: host.id, streamId: dm.id }),
+      service.isStreamShareable({ workspaceId: host.id, streamId: archived.id }),
+      service.isStreamShareable({ workspaceId: host.id, streamId: sealed.id }),
+      service.isStreamShareable({ workspaceId: host.id, streamId: streamId() }),
+      service.isStreamShareable({ workspaceId: host.id, streamId: offChannel.id }),
+      service.isStreamShareable({ workspaceId: switchedOff.id, streamId: offChannel.id }),
+    ])
+
+    expect(answers).toEqual([true, false, false, false, false, false, false])
+  })
+
+  test("should refuse to answer for a workspace this region doesn't hold", async () => {
+    await expect(service.isStreamShareable({ workspaceId: workspaceId(), streamId: streamId() })).rejects.toMatchObject(
+      { status: 404, code: "WORKSPACE_NOT_FOUND" }
+    )
+  })
+
   test("should hide every action while the workspace flag is off", async () => {
     const host = await seedWorkspace("Acme", "off")
     const stream = await seedStream(host.id, host.adminId)
@@ -402,10 +469,11 @@ describe("StreamConnectionService", () => {
       service.listForStream(ids),
       service.revokeInvite({ workspaceId: host.id, connectionId: streamConnectionId() }),
       service.accept({ workspaceId: host.id, token: "tok", visibility: "public" }),
+      service.assertCanAccept(host.id),
     ])
 
     expect(outcomes.map((o) => (o.status === "rejected" ? (o.reason as { status: number; code: string }) : o))).toEqual(
-      Array(4).fill(expect.objectContaining({ status: 404, code: StreamConnectionErrorCodes.DISABLED }))
+      Array(5).fill(expect.objectContaining({ status: 404, code: StreamConnectionErrorCodes.DISABLED }))
     )
     expect(cp.requests).toEqual([])
   })
@@ -418,5 +486,35 @@ describe("StreamConnectionService", () => {
     await expect(
       service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
     ).rejects.toMatchObject({ status: 409, code: StreamConnectionErrorCodes.ALREADY_SHARED })
+  })
+
+  test("should fail the list rather than show a link the control plane couldn't confirm", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const ids = { workspaceId: host.id, streamId: stream.id, userId: host.adminId }
+    cp.respond(201, { snapshot: snapshot(host, stream.id), token: "tok_secret", superseded: null })
+    await service.createInvite(ids)
+    cp.respond(503, { error: "Unavailable" })
+
+    await expect(service.listForStream(ids)).rejects.toMatchObject({
+      status: 502,
+      code: "CONTROL_PLANE_UNAVAILABLE",
+    })
+  })
+
+  test("should answer 502 when the control plane can't be reached", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const unreachable = startStubControlPlane()
+    unreachable.stop()
+    const isolated = new StreamConnectionService({
+      pool,
+      controlPlaneClient: new ControlPlaneClient(unreachable.url, "test-key"),
+      featureFlagService: new FeatureFlagService(pool),
+    })
+
+    await expect(
+      isolated.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+    ).rejects.toMatchObject({ status: 502, code: "CONTROL_PLANE_UNAVAILABLE" })
   })
 })

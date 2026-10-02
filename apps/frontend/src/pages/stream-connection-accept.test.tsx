@@ -8,7 +8,7 @@ import {
   type Workspace,
 } from "@threahq/types"
 import { render, screen, userEvent, waitFor, within } from "@/test"
-import { ApiError } from "@/api/client"
+import { ApiError, api } from "@/api/client"
 import { streamConnectionsApi } from "@/api/stream-connections"
 import * as authModule from "@/auth"
 import * as hooksModule from "@/hooks"
@@ -78,6 +78,7 @@ describe("StreamConnectionAcceptPage", () => {
     vi.restoreAllMocks()
     login.mockReset()
     refetchWorkspaces.mockReset()
+    vi.spyOn(api, "get").mockResolvedValue(undefined)
   })
 
   it.each(["/connections/tok_1", "/connections/a%7Cb%2Fc"])(
@@ -142,6 +143,10 @@ describe("StreamConnectionAcceptPage", () => {
     { code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, message: "Another workspace already accepted this invite." },
     { code: StreamConnectionErrorCodes.EXPIRED, message: "Invite expired" },
     { code: StreamConnectionErrorCodes.REVOKED, message: "Invite revoked" },
+    {
+      code: StreamConnectionErrorCodes.NOT_SHAREABLE,
+      message: "The host stopped sharing this channel. Ask the channel's admin about it.",
+    },
   ])("should say why accepting failed ($code)", async ({ code, message }) => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
     vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
@@ -186,6 +191,58 @@ describe("StreamConnectionAcceptPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Invite expired" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Open Threa" })).toHaveAttribute("href", "/")
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument()
+  })
+
+  it("should offer only the workspaces the viewer can accept into", async () => {
+    mockSession({ id: "user_1" }, [
+      makeWorkspace("ws_acme", "Acme"),
+      makeWorkspace("ws_beta", "Beta"),
+      makeWorkspace("ws_gamma", "Gamma"),
+      makeWorkspace("ws_delta", "Delta"),
+      makeWorkspace("ws_epsilon", "Epsilon"),
+    ])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
+    const refusals: Record<string, ApiError> = {
+      ws_beta: new ApiError(403, "FORBIDDEN", "not an admin"),
+      ws_gamma: new ApiError(404, StreamConnectionErrorCodes.DISABLED, "sharing off"),
+      ws_epsilon: new ApiError(500, "INTERNAL", "boom"),
+    }
+    let answerProbes = () => {}
+    const probesAnswered = new Promise<void>((resolve) => (answerProbes = resolve))
+    const get = vi.spyOn(api, "get").mockImplementation(async (path) => {
+      await probesAnswered
+      const refusal = refusals[path.split("/")[3]]
+      if (refusal) throw refusal
+      return undefined as never
+    })
+
+    renderPage()
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(4))
+    const comboboxWhilePending = screen.queryByRole("combobox")
+    answerProbes()
+    await userEvent.click(await screen.findByRole("combobox"))
+
+    const options = await screen.findAllByRole("option")
+    expect({
+      comboboxWhilePending,
+      offered: options.map((option) => option.textContent),
+      probed: get.mock.calls.map(([path]) => path.split("/")[3]),
+    }).toEqual({
+      comboboxWhilePending: null,
+      offered: ["Delta", "Epsilon"],
+      probed: ["ws_beta", "ws_gamma", "ws_delta", "ws_epsilon"],
+    })
+  })
+
+  it("should point the viewer elsewhere when no other workspace can accept", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_acme", "Acme"), makeWorkspace("ws_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
+    vi.spyOn(api, "get").mockRejectedValue(new ApiError(403, "FORBIDDEN", "not an admin"))
+
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "No other workspace to connect" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument()
   })
 

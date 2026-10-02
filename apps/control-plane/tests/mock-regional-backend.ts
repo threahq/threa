@@ -13,6 +13,8 @@ export interface MockRegionalBackend {
   requests: Array<{ method: string; url: string; body: unknown }>
   /** Status the stream-connection sync endpoint answers a valid snapshot with; 204 by default. */
   setStreamConnectionStatus: (status: number) => void
+  /** What the shareable check answers, or "error" for a 503; true by default. */
+  setStreamShareable: (answer: boolean | "error") => void
   /** Reset recorded requests and configured statuses */
   reset: () => void
   stop: () => Promise<void>
@@ -36,6 +38,7 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
 export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
   const requests: MockRegionalBackend["requests"] = []
   let streamConnectionStatus = 204
+  let streamShareable: boolean | "error" = true
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const body = await parseBody(req)
@@ -76,6 +79,18 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
+    // GET /internal/stream-connections/shareable — the host check before an accept
+    if (req.method === "GET" && url.startsWith("/internal/stream-connections/shareable?")) {
+      if (streamShareable === "error") {
+        res.writeHead(503)
+        res.end()
+        return
+      }
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ shareable: streamShareable }))
+      return
+    }
+
     // Fallback 404
     res.writeHead(404, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "Not found" }))
@@ -100,9 +115,13 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
     setStreamConnectionStatus: (status) => {
       streamConnectionStatus = status
     },
+    setStreamShareable: (answer) => {
+      streamShareable = answer
+    },
     reset: () => {
       requests.length = 0
       streamConnectionStatus = 204
+      streamShareable = true
     },
     stop: () =>
       new Promise<void>((resolve) => {

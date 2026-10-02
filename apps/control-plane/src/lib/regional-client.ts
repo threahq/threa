@@ -1,8 +1,13 @@
 import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threahq/backend-common"
 import type { FeatureFlagScope, StreamConnectionSnapshot } from "@threahq/types"
+import { z } from "zod/v4"
 import type { RegionConfig } from "../config"
 
 const REGIONAL_REQUEST_TIMEOUT_MS = 15_000
+// Below the backend's 10s budget for the accept call that waits on this check.
+const SHAREABLE_CHECK_TIMEOUT_MS = 5_000
+
+const shareableResponseSchema = z.object({ shareable: z.boolean() })
 
 export class RegionalClient {
   constructor(
@@ -141,8 +146,7 @@ export class RegionalClient {
 
   /**
    * Shared transport for fire-and-forget internal POSTs (no response body
-   * needed). Headers, timeout, error normalization, and HTTP plumbing live
-   * here once; callers differ only in path, body, and the log label.
+   * needed). Callers differ only in path, body, and the log label.
    */
   private async postInternal(
     region: string,
@@ -150,17 +154,27 @@ export class RegionalClient {
     body: Record<string, unknown>,
     logContext: string
   ): Promise<void> {
+    await this.requestInternal(region, path, { method: "POST", body: JSON.stringify(body) }, logContext)
+  }
+
+  /** Headers, timeout, error normalization, and HTTP plumbing live here once. */
+  private async requestInternal(
+    region: string,
+    path: string,
+    init: { method: "GET" | "POST"; body?: string },
+    logContext: string,
+    timeoutMs = REGIONAL_REQUEST_TIMEOUT_MS
+  ): Promise<Response> {
     const url = `${this.getRegionUrl(region)}${path}`
     let res: Response
     try {
       res = await fetch(url, {
-        method: "POST",
+        ...init,
         headers: {
           "Content-Type": "application/json",
           [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
         },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       })
     } catch (err) {
       logger.error({ err, region, url }, `${logContext} request failed`)
@@ -172,6 +186,7 @@ export class RegionalClient {
       logger.error({ region, status: res.status, body: responseBody }, `${logContext} failed`)
       throw new Error(`Regional backend returned ${res.status}: ${responseBody}`)
     }
+    return res
   }
 
   /**
@@ -198,6 +213,19 @@ export class RegionalClient {
   /** Push a stream connection's current state. The region projects whichever sides it holds. */
   async syncStreamConnection(region: string, snapshot: StreamConnectionSnapshot): Promise<void> {
     await this.postInternal(region, "/internal/stream-connections", snapshot, "Regional stream connection sync")
+  }
+
+  /** Whether the host channel still exists as an active, unencrypted channel with sharing switched on. */
+  async isStreamShareable(region: string, params: { workspaceId: string; streamId: string }): Promise<boolean> {
+    const query = new URLSearchParams(params)
+    const res = await this.requestInternal(
+      region,
+      `/internal/stream-connections/shareable?${query}`,
+      { method: "GET" },
+      "Regional stream shareable check",
+      SHAREABLE_CHECK_TIMEOUT_MS
+    )
+    return shareableResponseSchema.parse(await res.json()).shareable
   }
 
   /**

@@ -1,11 +1,12 @@
-import { api } from "./client"
-import type {
-  AcceptStreamConnectionInput,
-  CreateStreamConnectionInviteResponse,
-  ListStreamConnectionsResponse,
-  StreamConnection,
-  StreamConnectionLookupResponse,
-  StreamConnectionResponse,
+import { ApiError, api } from "./client"
+import {
+  StreamConnectionErrorCodes,
+  type AcceptStreamConnectionInput,
+  type CreateStreamConnectionInviteResponse,
+  type ListStreamConnectionsResponse,
+  type StreamConnection,
+  type StreamConnectionLookupResponse,
+  type StreamConnectionResponse,
 } from "@threahq/types"
 
 export const streamConnectionsApi = {
@@ -27,6 +28,20 @@ export const streamConnectionsApi = {
       `/api/workspaces/${workspaceId}/stream-connections/${connectionId}/revoke`
     )
     return res.connection
+  },
+
+  /** False when the viewer isn't an admin there or the workspace has sharing switched off. */
+  async canAccept(workspaceId: string): Promise<boolean> {
+    try {
+      // The picker waits on every probe, so a slow region can't hold it for the default 20s.
+      await api.get<void>(`/api/workspaces/${workspaceId}/stream-connections/can-accept`, { timeoutMs: 5_000 })
+      return true
+    } catch (error) {
+      if (ApiError.isApiError(error) && (error.status === 403 || error.code === StreamConnectionErrorCodes.DISABLED)) {
+        return false
+      }
+      throw error
+    }
   },
 
   async accept(workspaceId: string, input: AcceptStreamConnectionInput): Promise<StreamConnection> {

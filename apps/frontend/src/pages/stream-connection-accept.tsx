@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Ban, Check, Hourglass, Link2, Link2Off, SearchX, type LucideIcon } from "lucide-react"
 import {
   StreamConnectionErrorCodes,
@@ -68,6 +68,8 @@ function acceptErrorMessage(error: unknown): string {
       return "Shared channels aren't turned on for that workspace."
     case StreamConnectionErrorCodes.ALREADY_ACCEPTED:
       return "Another workspace already accepted this invite."
+    case StreamConnectionErrorCodes.NOT_SHAREABLE:
+      return "The host stopped sharing this channel. Ask the channel's admin about it."
     case StreamConnectionErrorCodes.EXPIRED:
       return LOOKUP_ERROR_COPY[StreamConnectionErrorCodes.EXPIRED].title
     case StreamConnectionErrorCodes.REVOKED:
@@ -115,14 +117,17 @@ function SignedInAccept({ token }: { token: string }) {
     queryFn: () => streamConnectionsApi.lookup(token),
     retry: false,
   })
+  const invite = lookup.data?.state === StreamConnectionStates.INVITED ? lookup.data : null
+  const candidates = invite && workspaces ? workspaces.filter((w) => w.id !== invite.hostWorkspaceId) : []
+  const canAccept = useQueries({
+    queries: candidates.map((w) => ({
+      queryKey: ["stream-connection-can-accept", w.id],
+      queryFn: () => streamConnectionsApi.canAccept(w.id),
+      retry: false,
+    })),
+  })
 
-  if (lookup.isPending || workspacesLoading) {
-    return (
-      <StandalonePage>
-        <p className="text-sm text-muted-foreground">Loading invite…</p>
-      </StandalonePage>
-    )
-  }
+  if (lookup.isPending || workspacesLoading) return <LoadingInvite />
 
   // A link that died since it loaded wins over the invite still in the cache.
   const deadCode = lookupErrorCode(lookup.error)
@@ -168,19 +173,22 @@ function SignedInAccept({ token }: { token: string }) {
     )
   }
 
-  const candidates = workspaces.filter((w) => w.id !== data.hostWorkspaceId)
-  if (candidates.length === 0) {
+  if (canAccept.some((q) => q.isPending)) return <LoadingInvite />
+  // A failed check keeps its workspace on offer: the accept itself says what went wrong.
+  const acceptable = candidates.filter((_, i) => canAccept[i]?.data !== false)
+  if (acceptable.length === 0) {
     return (
       <StatusScreen icon={SearchX} title="No other workspace to connect">
         <p className="text-sm text-muted-foreground">
-          Accept from a workspace you administer, other than {data.hostWorkspaceName}.
+          Accept from a workspace other than {data.hostWorkspaceName} where you're an admin and shared channels are
+          turned on.
         </p>
         <OpenThreaLink />
       </StatusScreen>
     )
   }
 
-  return <AcceptForm token={token} lookup={data} workspaces={candidates} />
+  return <AcceptForm token={token} lookup={data} workspaces={acceptable} />
 }
 
 function AcceptForm({
@@ -195,7 +203,8 @@ function AcceptForm({
   const queryClient = useQueryClient()
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
   const [visibility, setVisibility] = useState<Visibility>("private")
-  const workspace = workspaces.find((w) => w.id === workspaceId)
+  // A rechecked workspace can drop out of the list under the selection.
+  const workspace = workspaces.find((w) => w.id === workspaceId) ?? workspaces[0]
   const accept = useMutation({
     mutationFn: (target: Workspace) => streamConnectionsApi.accept(target.id, { token, visibility }),
     onSuccess: async (_, target) => {
@@ -238,7 +247,7 @@ function AcceptForm({
               Workspace
             </Label>
             <Select
-              value={workspaceId}
+              value={workspace?.id ?? ""}
               onValueChange={(id) => {
                 accept.reset()
                 setWorkspaceId(id)
@@ -335,6 +344,14 @@ function Connected({
         Open {workspaceName}
       </Link>
     </StatusScreen>
+  )
+}
+
+function LoadingInvite() {
+  return (
+    <StandalonePage>
+      <p className="text-sm text-muted-foreground">Loading invite…</p>
+    </StandalonePage>
   )
 }
 

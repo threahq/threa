@@ -93,6 +93,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "streams.put_brief",
   "stream_connections.list",
   "stream_connections.create_invite",
+  "stream_connections.can_accept",
   "stream_connections.accept",
   "stream_connections.revoke",
   "streams.update_companion",

@@ -61,7 +61,11 @@ describe("StreamConnectionService", () => {
   }
 
   function received(region: MockRegionalBackend) {
-    return region.requests.map((r) => ({ url: r.url, body: r.body }))
+    return region.requests.filter((r) => r.method === "POST").map((r) => ({ url: r.url, body: r.body }))
+  }
+
+  function shareableChecks(region: MockRegionalBackend) {
+    return region.requests.filter((r) => r.method === "GET").map((r) => r.url)
   }
 
   beforeAll(async () => {
@@ -252,7 +256,7 @@ describe("StreamConnectionService", () => {
     expect(first.superseded).toBeNull()
   })
 
-  test("should refuse to replace or revoke an accepted share and re-send its snapshot to the regions", async () => {
+  test("should refuse to replace or revoke an accepted share without touching it", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot, token } = await invite(host, "stream_shared")
@@ -266,13 +270,13 @@ describe("StreamConnectionService", () => {
       status: 409,
       code: StreamConnectionErrorCodes.ALREADY_ACCEPTED,
     })
-    // Invite, accept, then one re-sync per refusal: a host that missed the accept heals by retrying.
-    expect(await syncEvents(snapshot.id)).toEqual([
-      { connectionId: snapshot.id },
-      { connectionId: snapshot.id },
-      { connectionId: snapshot.id },
-      { connectionId: snapshot.id },
-    ])
+    expect({
+      live: await liveConnections(host),
+      events: await syncEvents(snapshot.id),
+    }).toEqual({
+      live: [{ id: snapshot.id, state: "active" }],
+      events: [{ connectionId: snapshot.id }, { connectionId: snapshot.id }],
+    })
   })
 
   test("should either share the channel or revoke the invite when a new link races the accept", async () => {
@@ -352,6 +356,67 @@ describe("StreamConnectionService", () => {
     })
   })
 
+  test("should ask the host region before accepting and refuse when the channel is no longer shareable", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partner = await seedWorkspace("us", "Globex")
+    const { snapshot, token } = await invite(host)
+    eu.setStreamShareable(false)
+
+    await expect(service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })).rejects.toMatchObject({
+      status: 409,
+      code: StreamConnectionErrorCodes.NOT_SHAREABLE,
+    })
+
+    const query = new URLSearchParams({ workspaceId: host, streamId: snapshot.hostStreamId })
+    expect({
+      eu: shareableChecks(eu),
+      us: shareableChecks(us),
+      live: await liveConnections(host),
+      events: await syncEvents(snapshot.id),
+    }).toEqual({
+      eu: [`/internal/stream-connections/shareable?${query}`],
+      us: [],
+      live: [{ id: snapshot.id, state: "invited" }],
+      events: [{ connectionId: snapshot.id }],
+    })
+  })
+
+  test("should leave the invite pending when the host region can't answer the shareable check", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partner = await seedWorkspace("us", "Globex")
+    const { snapshot, token } = await invite(host)
+    eu.setStreamShareable("error")
+
+    await expect(service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })).rejects.toThrow(
+      "Regional backend returned 503"
+    )
+
+    expect({
+      live: await liveConnections(host),
+      events: await syncEvents(snapshot.id),
+    }).toEqual({
+      live: [{ id: snapshot.id, state: "invited" }],
+      events: [{ connectionId: snapshot.id }],
+    })
+  })
+
+  test("should not ask the host region again when the partner retries an accepted invite", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partner = await seedWorkspace("us", "Globex")
+    const { snapshot, token } = await invite(host)
+    await service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })
+    eu.reset()
+    eu.setStreamShareable("error")
+
+    const retried = await service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })
+
+    expect({ state: retried.state, checks: shareableChecks(eu), events: await syncEvents(snapshot.id) }).toEqual({
+      state: "active",
+      checks: [],
+      events: [{ connectionId: snapshot.id }, { connectionId: snapshot.id }],
+    })
+  })
+
   test("should refuse to accept an unknown, revoked, expired, or own-workspace invite", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
@@ -365,6 +430,8 @@ describe("StreamConnectionService", () => {
       expiredInvite.snapshot.id,
     ])
     const ownInvite = await invite(host)
+    // Each refusal is about the invite itself, so it wins over the channel no longer being shareable.
+    eu.setStreamShareable(false)
 
     const outcomes = await Promise.allSettled([
       accept("not-a-token"),
@@ -373,15 +440,34 @@ describe("StreamConnectionService", () => {
       accept(ownInvite.token, host),
     ])
 
-    expect(outcomes.map((o) => (o.status === "rejected" ? (o.reason as { code: string }).code : "accepted"))).toEqual([
-      StreamConnectionErrorCodes.NOT_FOUND,
-      StreamConnectionErrorCodes.REVOKED,
-      StreamConnectionErrorCodes.EXPIRED,
-      StreamConnectionErrorCodes.SAME_WORKSPACE,
-    ])
+    expect({
+      outcomes: outcomes.map((o) => (o.status === "rejected" ? (o.reason as { code: string }).code : "accepted")),
+      checks: shareableChecks(eu),
+    }).toEqual({
+      outcomes: [
+        StreamConnectionErrorCodes.NOT_FOUND,
+        StreamConnectionErrorCodes.REVOKED,
+        StreamConnectionErrorCodes.EXPIRED,
+        StreamConnectionErrorCodes.SAME_WORKSPACE,
+      ],
+      checks: [],
+    })
     await expect(service.lookup(expiredInvite.token, "workos_viewer")).rejects.toMatchObject({
       code: StreamConnectionErrorCodes.EXPIRED,
     })
+  })
+
+  test("should return a connection's current state only to its host or partner", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partner = await seedWorkspace("us", "Globex")
+    const stranger = await seedWorkspace("us", "Initech")
+    const { token } = await invite(host)
+    const accepted = await service.accept({ token, partnerWorkspaceId: partner, visibility: "private" })
+
+    const read = (workspaceId: string) => service.getForWorkspace({ connectionId: accepted.id, workspaceId })
+
+    expect({ host: await read(host), partner: await read(partner) }).toEqual({ host: accepted, partner: accepted })
+    await expect(read(stranger)).rejects.toMatchObject({ status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
   })
 
   test("should revoke a pending invite once, and refuse another workspace", async () => {
