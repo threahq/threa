@@ -2665,8 +2665,8 @@ export class EventService {
     })
   }
 
-  async getMessageVersions(messageId: string): Promise<MessageVersion[]> {
-    return MessageVersionRepository.listByMessageId(this.pool, messageId)
+  async getMessageVersions(workspaceId: string, messageId: string): Promise<MessageVersion[]> {
+    return MessageVersionRepository.listByMessageId(this.pool, workspaceId, messageId)
   }
 
   async getMessagesByIds(workspaceId: string, messageIds: string[]): Promise<Map<string, Message>> {

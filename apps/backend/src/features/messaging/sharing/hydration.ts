@@ -259,7 +259,7 @@ async function hydrateSharedMessageRefsWithResolvers(
       if (version !== source.revision) versionKeys.push({ messageId: ref.messageId, versionNumber: version })
     }
 
-    const versionRows = await MessageVersionRepository.findByMessageVersions(db, versionKeys)
+    const versionRows = await MessageVersionRepository.findByMessageVersions(db, workspaceId, versionKeys)
 
     const nextFrontier = new Map<string, SharedMessageRef>()
     for (const { key, ref, source, version } of live) {

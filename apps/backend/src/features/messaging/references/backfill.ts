@@ -14,10 +14,9 @@ export const MESSAGE_REFERENCE_PINS_BACKFILL_NAME = "message-reference-pins"
 /**
  * Tables holding ProseMirror `contentJson` that may carry quote/share nodes
  * written before the server pinned references to a revision and range. Same
- * set and same scoping as the mention backfill: `message_versions` scopes (and
- * skips E2E) through its parent `messages` row, the others carry their own
- * `workspace_id` and exclude E2E by `e2e_version IS NULL` (messages) or by
- * `content_json IS NULL` (drafts null it when sealed).
+ * set as the mention backfill: `message_versions` skips E2E through its parent
+ * `messages` row, the others exclude E2E by `e2e_version IS NULL` (messages) or
+ * by `content_json IS NULL` (drafts null it when sealed).
  */
 type BackfillTable = "messages" | "message_versions" | "scheduled_messages" | "drafts"
 
@@ -37,16 +36,14 @@ function listIdsQuery(table: BackfillTable, workspaceId: string) {
     case "messages":
       return sql`
         SELECT id FROM messages
-        WHERE stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
-          AND content_json IS NOT NULL AND e2e_version IS NULL
+        WHERE workspace_id = ${workspaceId} AND content_json IS NOT NULL AND e2e_version IS NULL
         ORDER BY id
       `
     case "message_versions":
       return sql`
         SELECT v.id FROM message_versions v
-        JOIN messages m ON m.id = v.message_id
-        JOIN streams s ON s.id = m.stream_id
-        WHERE s.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
+        JOIN messages m ON m.id = v.message_id AND m.workspace_id = ${workspaceId}
+        WHERE v.workspace_id = ${workspaceId} AND m.e2e_version IS NULL AND v.content_json IS NOT NULL
         ORDER BY v.id
       `
     case "scheduled_messages":
@@ -68,19 +65,17 @@ function selectRowsQuery(table: BackfillTable, workspaceId: string, ids: string[
   if (table === "message_versions") {
     return sql`
       SELECT v.id, v.content_json, v.created_at FROM message_versions v
-      JOIN messages m ON m.id = v.message_id
-      JOIN streams s ON s.id = m.stream_id
-      WHERE s.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
+      JOIN messages m ON m.id = v.message_id AND m.workspace_id = ${workspaceId}
+      WHERE v.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
     `
   }
   if (table === "messages") {
     return sql`
       SELECT id, content_json, created_at FROM messages
-      WHERE id = ANY(${ids})
-        AND content_json IS NOT NULL
-        AND stream_id IN (SELECT id FROM streams WHERE workspace_id = ${workspaceId})
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}) AND content_json IS NOT NULL
     `
   }
+  // eslint-disable-next-line threa/workspace-scoped-sql -- table is a BackfillTable; pinned by workspace_id below
   return sql`
     SELECT id, content_json, created_at FROM ${sql.raw(table)}
     WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}) AND content_json IS NOT NULL
@@ -232,13 +227,9 @@ async function processChunk(
   if (sourceIds.size === 0) return { processed: 0 }
 
   const sourcesById = await MessageRepository.findByIds(ctx.pool, workspaceId, [...sourceIds])
-  // Ids come out of stored content, so they are whatever an author once wrote.
-  // `sourcesById` is already workspace-resolved; anything it does not name is
-  // not this workspace's to read (INV-8).
-  const versionsByMessageId = await MessageVersionRepository.findByMessageIds(
-    ctx.pool,
-    [...quotedSourceIds].filter((id) => sourcesById.has(id))
-  )
+  const versionsByMessageId = await MessageVersionRepository.findByMessageIds(ctx.pool, workspaceId, [
+    ...quotedSourceIds,
+  ])
 
   const observedById = new Map(rows.map((row) => [row.id, JSON.stringify(row.content_json)]))
   const updates = pinReferenceRows(rows, sourcesById, versionsByMessageId)
@@ -252,12 +243,13 @@ async function processChunk(
   // replacing what it read (INV-20) — an author editing in between would
   // otherwise have their new text overwritten with the old. A row that moved
   // stays unpinned and the next run pins it, since pinning is idempotent.
+  // eslint-disable-next-line threa/workspace-scoped-sql -- table is a BackfillTable; pinned by workspace_id below
   const written = await ctx.pool.query(sql`
     UPDATE ${sql.raw(table)} AS t
     SET content_json = data.content_json::jsonb, content_markdown = data.content_markdown
     FROM unnest(${updateIds}::text[], ${updateJson}::text[], ${updateMarkdown}::text[], ${observedJson}::text[])
       AS data(id, content_json, content_markdown, observed_content_json)
-    WHERE t.id = data.id AND t.content_json = data.observed_content_json::jsonb
+    WHERE t.workspace_id = ${workspaceId} AND t.id = data.id AND t.content_json = data.observed_content_json::jsonb
   `)
 
   return { processed: written.rowCount ?? 0 }

@@ -60,7 +60,7 @@ function createHandler(botInvocationOwned: boolean | ((sessionId: string) => boo
   spyOn(BotInvocationRepository, "isBotInvocationSession").mockImplementation(async (_db, _workspaceId, sessionId) =>
     typeof botInvocationOwned === "function" ? botInvocationOwned(sessionId) : botInvocationOwned
   )
-  spyOn(MessageVersionRepository, "findLatestByMessageId").mockResolvedValue(null)
+  const findLatestVersion = spyOn(MessageVersionRepository, "findLatestByMessageId").mockResolvedValue(null)
 
   const eventService = {
     deleteMessageInternal: mock(async () => null),
@@ -72,7 +72,7 @@ function createHandler(botInvocationOwned: boolean | ((sessionId: string) => boo
 
   const handler = new AgentMessageMutationHandler({} as any, jobQueue, eventService)
 
-  return { handler, eventService, jobQueue }
+  return { handler, eventService, jobQueue, findLatestVersion }
 }
 
 async function waitForDebounce(): Promise<void> {
@@ -109,7 +109,7 @@ describe("AgentMessageMutationHandler", () => {
       } as any,
     ])
 
-    spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(3)
+    const getRevisionSpy = spyOn(MessageVersionRepository, "getCurrentRevision").mockResolvedValue(3)
     spyOn(StreamEventRepository, "listMessageIdsBySession").mockResolvedValue([])
 
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
@@ -167,11 +167,13 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:30:00.000Z"),
       completedAt: new Date("2026-02-19T12:01:00.000Z"),
     })
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, eventService, jobQueue, findLatestVersion } = createHandler()
     handler.handle()
 
     await waitForDebounce()
 
+    expect(getRevisionSpy).toHaveBeenCalledWith({}, "ws_1", "msg_invoke_1")
+    expect(findLatestVersion).toHaveBeenCalledWith({}, "ws_1", "msg_invoke_1")
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
       "session_old",
@@ -730,12 +732,13 @@ describe("AgentMessageMutationHandler", () => {
       createdAt: new Date("2026-02-19T11:00:00.000Z"),
       completedAt: new Date("2026-02-19T12:11:00.000Z"),
     })
-    const { handler, eventService, jobQueue } = createHandler()
+    const { handler, eventService, jobQueue, findLatestVersion } = createHandler()
     handler.handle()
 
     await waitForDebounce()
 
     expect(getRevisionSpy).not.toHaveBeenCalled()
+    expect(findLatestVersion).toHaveBeenCalledWith({}, "ws_1", "msg_referenced_1")
     expect(AgentSessionRepository.updateStatus).toHaveBeenCalledWith(
       {},
       "session_latest",
