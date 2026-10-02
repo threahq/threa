@@ -18,6 +18,7 @@ describe("describe_memo viewer", () => {
   let ownerId: string
   let publicChannelId: string
   let ownerScratchpadId: string
+  let sharedScratchpadId: string
   let privateMemoId: string
   let sharedMemoId: string
   let supersededMemoId: string
@@ -49,6 +50,7 @@ describe("describe_memo viewer", () => {
     testWorkspaceId = workspaceId()
     publicChannelId = streamId()
     ownerScratchpadId = streamId()
+    sharedScratchpadId = streamId()
     privateMemoId = memoId()
     sharedMemoId = memoId()
     supersededMemoId = memoId()
@@ -82,6 +84,18 @@ describe("describe_memo viewer", () => {
         createdBy: ownerId,
       })
       await StreamMemberRepository.insert(client, ownerScratchpadId, ownerId)
+
+      // Joined through one of the scratchpad's threads.
+      const guestId = (await addTestMember(client, testWorkspaceId, userId())).id
+      await StreamRepository.insert(client, {
+        id: sharedScratchpadId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.SCRATCHPAD,
+        visibility: Visibilities.PRIVATE,
+        createdBy: ownerId,
+      })
+      await StreamMemberRepository.insert(client, sharedScratchpadId, ownerId)
+      await StreamMemberRepository.insert(client, sharedScratchpadId, guestId)
 
       // Both memos cite a message in the public channel, so the source-stream
       // gate passes in every turn and only the memo's scope separates them.
@@ -134,6 +148,13 @@ describe("describe_memo viewer", () => {
     expect(await describeFrom(ownerScratchpadId, privateMemoId)).toMatchObject({
       id: privateMemoId,
       title: "Private to the owner",
+    })
+  })
+
+  test("a turn in a private scratchpad another member can read cannot describe the private memo", async () => {
+    expect(await describeFrom(sharedScratchpadId, privateMemoId)).toEqual({
+      error: "Memo not found, archived, or you don't have access to its source stream",
+      memoId: privateMemoId,
     })
   })
 
