@@ -84,40 +84,44 @@ export const ReadStateRepository = {
    */
   async advance(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     userId: string,
     eventId: string,
     opts: { holdInInbox: boolean }
   ): Promise<{ state: StreamReadState | null; held: boolean }> {
-    if (opts.holdInInbox) await ReadStateRepository.ensureForUpdate(db, streamId, userId)
+    if (opts.holdInInbox) await ReadStateRepository.ensureForUpdate(db, workspaceId, streamId, userId)
     const result = await db.query<StreamReadStateRow & { hold: boolean }>(
       `
       WITH prior AS (
         SELECT last_read_event_id
         FROM stream_read_state
-        WHERE stream_id = $1 AND user_id = $2
+        WHERE workspace_id = $1 AND stream_id = $2 AND user_id = $3
       ),
       should_hold AS (
-        SELECT $4::boolean AND EXISTS (
+        SELECT $5::boolean AND EXISTS (
           SELECT 1 FROM stream_events e
-          LEFT JOIN messages m ON m.id = e.payload->>'messageId'
-          WHERE e.stream_id = $1
+          LEFT JOIN messages m ON m.id = e.payload->>'messageId' AND m.workspace_id = $1
+          WHERE e.workspace_id = $1
+            AND e.stream_id = $2
             AND e.event_type = 'message_created'
-            AND e.actor_id IS DISTINCT FROM $2
+            AND e.actor_id IS DISTINCT FROM $3
             AND m.deleted_at IS NULL
             AND e.sequence > COALESCE(
               (SELECT cur_ev.sequence FROM stream_events cur_ev
-                 WHERE cur_ev.id = (SELECT last_read_event_id FROM prior)),
+                 WHERE cur_ev.workspace_id = $1 AND cur_ev.id = (SELECT last_read_event_id FROM prior)),
               0
             )
-            AND e.sequence <= (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = $3)
+            AND e.sequence <= (
+              SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.workspace_id = $1 AND new_ev.id = $4
+            )
         ) AS hold
       ),
       upserted AS (
         INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at, inbox_held)
-        SELECT s.workspace_id, $1, $2, $3, NOW(), NOW(), COALESCE((SELECT hold FROM should_hold), false)
+        SELECT s.workspace_id, $2, $3, $4, NOW(), NOW(), COALESCE((SELECT hold FROM should_hold), false)
         FROM streams s
-        WHERE s.id = $1
+        WHERE s.workspace_id = $1 AND s.id = $2
         ON CONFLICT (stream_id, user_id) DO UPDATE
         SET last_read_event_id = EXCLUDED.last_read_event_id,
             last_read_at = EXCLUDED.last_read_at,
@@ -129,10 +133,16 @@ export const ReadStateRepository = {
               ELSE NULL
             END
         WHERE COALESCE(
-            (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = EXCLUDED.last_read_event_id),
+            (
+              SELECT new_ev.sequence FROM stream_events new_ev
+              WHERE new_ev.workspace_id = $1 AND new_ev.id = EXCLUDED.last_read_event_id
+            ),
             0
           ) > COALESCE(
-            (SELECT cur_ev.sequence FROM stream_events cur_ev WHERE cur_ev.id = stream_read_state.last_read_event_id),
+            (
+              SELECT cur_ev.sequence FROM stream_events cur_ev
+              WHERE cur_ev.workspace_id = $1 AND cur_ev.id = stream_read_state.last_read_event_id
+            ),
             0
           )
         RETURNING ${SELECT_FIELDS}
@@ -140,13 +150,13 @@ export const ReadStateRepository = {
       SELECT upserted.*, COALESCE((SELECT hold FROM should_hold), false) AS hold
       FROM upserted
       `,
-      [streamId, userId, eventId, opts.holdInInbox]
+      [workspaceId, streamId, userId, eventId, opts.holdInInbox]
     )
     // The monotonic guard rejected a stale advance — RETURNING is empty, so
     // read back the row as it stands (same tx). This call didn't write, so it
     // can't have held anything.
     if (!result.rows[0]) {
-      return { state: await ReadStateRepository.get(db, streamId, userId), held: false }
+      return { state: await ReadStateRepository.get(db, workspaceId, streamId, userId), held: false }
     }
     const row = result.rows[0]
     return { state: mapRowToReadState(row), held: row.hold }
@@ -157,20 +167,26 @@ export const ReadStateRepository = {
    * park the watermark before the first message. No sequence comparison: this
    * deliberately moves the pointer backward.
    */
-  async set(db: Querier, streamId: string, userId: string, eventId: string | null): Promise<StreamReadState | null> {
+  async set(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    userId: string,
+    eventId: string | null
+  ): Promise<StreamReadState | null> {
     const result = await db.query<StreamReadStateRow>(
       `
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
-      SELECT s.workspace_id, $1, $2, $3, NOW(), NOW()
+      SELECT s.workspace_id, $2, $3, $4, NOW(), NOW()
       FROM streams s
-      WHERE s.id = $1
+      WHERE s.workspace_id = $1 AND s.id = $2
       ON CONFLICT (stream_id, user_id) DO UPDATE
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
       RETURNING ${SELECT_FIELDS}
       `,
-      [streamId, userId, eventId]
+      [workspaceId, streamId, userId, eventId]
     )
     return result.rows[0] ? mapRowToReadState(result.rows[0]) : null
   },
@@ -193,6 +209,7 @@ export const ReadStateRepository = {
    */
   async batchAdvance(
     db: Querier,
+    workspaceId: string,
     userId: string,
     updates: Map<string, string>
   ): Promise<{ states: StreamReadState[] }> {
@@ -204,31 +221,37 @@ export const ReadStateRepository = {
     await db.query(
       `
       WITH input AS (
-        SELECT unnest($1::text[]) AS stream_id, unnest($2::text[]) AS event_id
+        SELECT unnest($2::text[]) AS stream_id, unnest($3::text[]) AS event_id
       )
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
-      SELECT s.workspace_id, i.stream_id, $3, i.event_id, NOW(), NOW()
+      SELECT s.workspace_id, i.stream_id, $4, i.event_id, NOW(), NOW()
       FROM input i
-      JOIN streams s ON s.id = i.stream_id
+      JOIN streams s ON s.id = i.stream_id AND s.workspace_id = $1
       ON CONFLICT (stream_id, user_id) DO UPDATE
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
       WHERE COALESCE(
-          (SELECT new_ev.sequence FROM stream_events new_ev WHERE new_ev.id = EXCLUDED.last_read_event_id),
+          (
+            SELECT new_ev.sequence FROM stream_events new_ev
+            WHERE new_ev.workspace_id = $1 AND new_ev.id = EXCLUDED.last_read_event_id
+          ),
           0
         ) > COALESCE(
-          (SELECT cur_ev.sequence FROM stream_events cur_ev WHERE cur_ev.id = stream_read_state.last_read_event_id),
+          (
+            SELECT cur_ev.sequence FROM stream_events cur_ev
+            WHERE cur_ev.workspace_id = $1 AND cur_ev.id = stream_read_state.last_read_event_id
+          ),
           0
         )
       `,
-      [streamIds, eventIds, userId]
+      [workspaceId, streamIds, eventIds, userId]
     )
     // Authoritative same-tx re-read of every attempted (stream, user) row: the
     // upsert has no RETURNING (rejected rows never appear in one), so this is
     // the only source for the full attempted set — one frontier per stream,
     // no gaps.
-    const states = await ReadStateRepository.getBatch(db, userId, streamIds)
+    const states = await ReadStateRepository.getBatch(db, workspaceId, userId, streamIds)
     return { states }
   },
 
@@ -238,20 +261,20 @@ export const ReadStateRepository = {
    * lockers can't deadlock each other and a concurrent hold-enabled
    * {@link advance} waits until the caller commits.
    */
-  async ensureBatchForUpdate(db: Querier, userId: string, streamIds: string[]): Promise<void> {
+  async ensureBatchForUpdate(db: Querier, workspaceId: string, userId: string, streamIds: string[]): Promise<void> {
     if (streamIds.length === 0) return
     await db.query(sql`
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
       SELECT s.workspace_id, s.id, ${userId}, NULL, NULL, NOW()
       FROM streams s
-      WHERE s.id = ANY(${streamIds})
+      WHERE s.workspace_id = ${workspaceId} AND s.id = ANY(${streamIds})
       ORDER BY s.id
       ON CONFLICT (stream_id, user_id) DO NOTHING
     `)
     await db.query(sql`
       SELECT stream_id
       FROM stream_read_state
-      WHERE user_id = ${userId} AND stream_id = ANY(${streamIds})
+      WHERE workspace_id = ${workspaceId} AND user_id = ${userId} AND stream_id = ANY(${streamIds})
       ORDER BY stream_id
       FOR UPDATE
     `)
@@ -311,7 +334,8 @@ export const ReadStateRepository = {
         SELECT s.stream_id,
           COALESCE(
             (SELECT e.sequence FROM stream_events e
-               WHERE e.id = CASE WHEN s.inbox_held THEN s.inbox_floor_event_id ELSE s.last_read_event_id END
+               WHERE e.workspace_id = ${workspaceId}
+                 AND e.id = CASE WHEN s.inbox_held THEN s.inbox_floor_event_id ELSE s.last_read_event_id END
                  AND e.stream_id = s.stream_id),
             0
           ) AS floor_sequence
@@ -322,8 +346,9 @@ export const ReadStateRepository = {
       JOIN LATERAL (
         SELECT e.created_at
         FROM stream_events e
-        LEFT JOIN messages m ON m.id = e.payload->>'messageId'
-        WHERE e.stream_id = fs.stream_id
+        LEFT JOIN messages m ON m.id = e.payload->>'messageId' AND m.workspace_id = ${workspaceId}
+        WHERE e.workspace_id = ${workspaceId}
+          AND e.stream_id = fs.stream_id
           AND e.event_type = 'message_created'
           AND e.actor_id IS DISTINCT FROM ${userId}
           AND e.sequence > fs.floor_sequence
@@ -338,21 +363,27 @@ export const ReadStateRepository = {
   },
 
   /** Batch unconditional set for many users on one stream (channel-creation born-read). */
-  async setForUsers(db: Querier, streamId: string, userIds: string[], eventId: string): Promise<void> {
+  async setForUsers(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    userIds: string[],
+    eventId: string
+  ): Promise<void> {
     if (userIds.length === 0) return
 
     await db.query(
       `
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
-      SELECT s.workspace_id, $1, u.user_id, $2, NOW(), NOW()
-      FROM streams s, unnest($3::text[]) AS u(user_id)
-      WHERE s.id = $1
+      SELECT s.workspace_id, $2, u.user_id, $3, NOW(), NOW()
+      FROM streams s, unnest($4::text[]) AS u(user_id)
+      WHERE s.workspace_id = $1 AND s.id = $2
       ON CONFLICT (stream_id, user_id) DO UPDATE
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
       `,
-      [streamId, eventId, userIds]
+      [workspaceId, streamId, eventId, userIds]
     )
   },
 
@@ -372,6 +403,7 @@ export const ReadStateRepository = {
    */
   async repointForMovedEvents(
     db: Querier,
+    workspaceId: string,
     sourceStreamId: string,
     movedEvents: Array<{ eventId: string; sequence: bigint }>
   ): Promise<void> {
@@ -381,44 +413,44 @@ export const ReadStateRepository = {
     await db.query(
       `
       WITH moved AS (
-        SELECT unnest($2::text[]) AS event_id, unnest($3::bigint[]) AS src_seq
+        SELECT unnest($3::text[]) AS event_id, unnest($4::bigint[]) AS src_seq
       ),
       repoint AS (
         SELECT rs.user_id,
           (SELECT e.id FROM stream_events e
-             WHERE e.stream_id = $1 AND e.sequence < moved.src_seq
+             WHERE e.workspace_id = $1 AND e.stream_id = $2 AND e.sequence < moved.src_seq
              ORDER BY e.sequence DESC LIMIT 1) AS new_event_id
         FROM stream_read_state rs
         JOIN moved ON moved.event_id = rs.last_read_event_id
-        WHERE rs.stream_id = $1
+        WHERE rs.workspace_id = $1 AND rs.stream_id = $2
       )
       UPDATE stream_read_state rs
       SET last_read_event_id = repoint.new_event_id, updated_at = NOW()
       FROM repoint
-      WHERE rs.stream_id = $1 AND rs.user_id = repoint.user_id
+      WHERE rs.workspace_id = $1 AND rs.stream_id = $2 AND rs.user_id = repoint.user_id
       `,
-      [sourceStreamId, eventIds, sequences]
+      [workspaceId, sourceStreamId, eventIds, sequences]
     )
     await db.query(
       `
       WITH moved AS (
-        SELECT unnest($2::text[]) AS event_id, unnest($3::bigint[]) AS src_seq
+        SELECT unnest($3::text[]) AS event_id, unnest($4::bigint[]) AS src_seq
       ),
       repoint AS (
         SELECT rs.user_id,
           (SELECT e.id FROM stream_events e
-             WHERE e.stream_id = $1 AND e.sequence < moved.src_seq
+             WHERE e.workspace_id = $1 AND e.stream_id = $2 AND e.sequence < moved.src_seq
              ORDER BY e.sequence DESC LIMIT 1) AS new_event_id
         FROM stream_read_state rs
         JOIN moved ON moved.event_id = rs.inbox_floor_event_id
-        WHERE rs.stream_id = $1
+        WHERE rs.workspace_id = $1 AND rs.stream_id = $2
       )
       UPDATE stream_read_state rs
       SET inbox_floor_event_id = repoint.new_event_id, updated_at = NOW()
       FROM repoint
-      WHERE rs.stream_id = $1 AND rs.user_id = repoint.user_id
+      WHERE rs.workspace_id = $1 AND rs.stream_id = $2 AND rs.user_id = repoint.user_id
       `,
-      [sourceStreamId, eventIds, sequences]
+      [workspaceId, sourceStreamId, eventIds, sequences]
     )
   },
 
@@ -430,46 +462,51 @@ export const ReadStateRepository = {
    * lock-order hazard. A seeded row carries a NULL watermark (never read =
    * position before the first message). Two statements: ON CONFLICT DO NOTHING
    * returns nothing for an existing row, and FOR UPDATE can't ride the insert.
-   * Returns null only for a dangling stream id.
+   * Returns null when the stream does not exist in `workspaceId`.
    */
-  async ensureForUpdate(db: Querier, streamId: string, userId: string): Promise<StreamReadState | null> {
+  async ensureForUpdate(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    userId: string
+  ): Promise<StreamReadState | null> {
     await db.query(
       `
       INSERT INTO stream_read_state (workspace_id, stream_id, user_id, last_read_event_id, last_read_at, updated_at)
-      SELECT s.workspace_id, $1, $2, NULL, NULL, NOW()
+      SELECT s.workspace_id, $2, $3, NULL, NULL, NOW()
       FROM streams s
-      WHERE s.id = $1
+      WHERE s.workspace_id = $1 AND s.id = $2
       ON CONFLICT (stream_id, user_id) DO NOTHING
       `,
-      [streamId, userId]
+      [workspaceId, streamId, userId]
     )
     const result = await db.query<StreamReadStateRow>(
       `
       SELECT ${SELECT_FIELDS}
       FROM stream_read_state
-      WHERE stream_id = $1 AND user_id = $2
+      WHERE workspace_id = $1 AND stream_id = $2 AND user_id = $3
       FOR UPDATE
       `,
-      [streamId, userId]
+      [workspaceId, streamId, userId]
     )
     return result.rows[0] ? mapRowToReadState(result.rows[0]) : null
   },
 
-  async get(db: Querier, streamId: string, userId: string): Promise<StreamReadState | null> {
+  async get(db: Querier, workspaceId: string, streamId: string, userId: string): Promise<StreamReadState | null> {
     const result = await db.query<StreamReadStateRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)}
       FROM stream_read_state
-      WHERE stream_id = ${streamId} AND user_id = ${userId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND user_id = ${userId}
     `)
     return result.rows[0] ? mapRowToReadState(result.rows[0]) : null
   },
 
-  async getBatch(db: Querier, userId: string, streamIds: string[]): Promise<StreamReadState[]> {
+  async getBatch(db: Querier, workspaceId: string, userId: string, streamIds: string[]): Promise<StreamReadState[]> {
     if (streamIds.length === 0) return []
     const result = await db.query<StreamReadStateRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)}
       FROM stream_read_state
-      WHERE user_id = ${userId} AND stream_id = ANY(${streamIds})
+      WHERE workspace_id = ${workspaceId} AND user_id = ${userId} AND stream_id = ANY(${streamIds})
     `)
     return result.rows.map(mapRowToReadState)
   },

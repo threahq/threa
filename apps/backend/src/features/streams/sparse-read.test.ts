@@ -30,20 +30,33 @@ describe("applySparseRead", () => {
     const ordinalForEvent = spyOn(StreamEventRepository, "getMessageOrdinalForEvent").mockResolvedValue({
       sequence: 10n,
     } as never)
-    spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue({
+    const findCompactionTarget = spyOn(SparseReadRepository, "findCompactionTarget").mockResolvedValue({
       eventId: "evt_new",
       sequence: 20n,
     } as never)
-    spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
+    const findTrailingDeletedRunEnd = spyOn(SparseReadRepository, "findTrailingDeletedRunEnd").mockResolvedValue(null)
     const countThrough = spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(2)
     const readStateAdvance = spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false })
 
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
-    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new", { holdInInbox: true })
+    expect(readStateAdvance).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", "evt_new", { holdInInbox: true })
     expect({ ordinal: ordinalForEvent.mock.calls[0], count: countThrough.mock.calls[0] }).toEqual({
       ordinal: [db, "ws_1", "stream_1", "evt_old"],
       count: [db, "ws_1", "stream_1", 20n],
+    })
+    expect(SparseReadRepository.insertReads).toHaveBeenCalledWith(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      memberId: "usr_1",
+      messageIds: ["msg_1"],
+    })
+    expect({
+      compaction: findCompactionTarget.mock.calls[0],
+      trailingRun: findTrailingDeletedRunEnd.mock.calls[0],
+    }).toEqual({
+      compaction: [db, "ws_1", "stream_1", "usr_1", 10n],
+      trailingRun: [db, "ws_1", "stream_1", 20n],
     })
   })
 
@@ -83,7 +96,7 @@ describe("applySparseRead", () => {
       messageIds: ["msg_1"],
     })
 
-    expect(ensureForUpdate).toHaveBeenCalledWith(db, "stream_1", "usr_1")
+    expect(ensureForUpdate).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1")
     // NULL seed: no watermark sequence to resolve from the event table.
     expect(ordinalForEvent).not.toHaveBeenCalled()
     // A null frontier can't advance the monotonic store.
@@ -117,8 +130,8 @@ describe("applySparseRead", () => {
       messageIds: ["msg_1"],
     })
 
-    expect(readStateAdvance).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_new", { holdInInbox: true })
-    expect(pruneAtOrBelow).toHaveBeenCalledWith(db, "stream_1", "usr_1", 20n)
+    expect(readStateAdvance).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", "evt_new", { holdInInbox: true })
+    expect(pruneAtOrBelow).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", 20n)
     expect(snapshot.lastReadEventId).toBe("evt_new")
     expect(snapshot.lastReadSequence).toBe("20")
   })
@@ -186,7 +199,9 @@ describe("applySparseUnread", () => {
       messageIds: ["msg_5"],
     })
 
-    expect(readStateSet).toHaveBeenCalledWith(db, "stream_1", "usr_1", "evt_4")
+    expect(readStateSet).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", "evt_4")
+    expect(SparseReadRepository.deleteReads).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", ["msg_5"])
+    expect(SparseReadRepository.listOverlayIds).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1")
     expect(snapshot.lastReadEventId).toBe("evt_4")
     expect(snapshot.lastReadSequence).toBe("25")
     expect(outboxInsert).toHaveBeenCalledWith(
@@ -210,7 +225,7 @@ describe("applySparseUnread", () => {
 
     await applySparseUnread(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
-    expect(readStateSet).toHaveBeenCalledWith(db, "stream_1", "usr_1", null)
+    expect(readStateSet).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", null)
   })
 
   it("leaves the frontier untouched when it already sits behind the affected run", async () => {

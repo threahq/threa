@@ -1835,7 +1835,9 @@ describe("StreamService.markAsRead", () => {
       inboxHeld: false,
     })
     // The advance is the sole watermark write — monotonic (reads never regress it).
-    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
+    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", "evt_9", {
+      holdInInbox: true,
+    })
   })
 
   test("sources the stream:read payload from the post-write frontier when it sits above the sent event", async () => {
@@ -1871,7 +1873,7 @@ describe("StreamService.markAsRead", () => {
       readMessageIds: [],
       inboxHeld: false,
     })
-    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 90n)
+    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", 90n)
   })
 
   test("keeps the sent event as the payload when the advance lands there", async () => {
@@ -1900,7 +1902,7 @@ describe("StreamService.markAsRead", () => {
       readMessageIds: [],
       inboxHeld: false,
     })
-    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
+    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", 42n)
   })
 
   test("ignores a read pointer that doesn't resolve to a real event — no watermark write, no stream:read", async () => {
@@ -1953,8 +1955,10 @@ describe("StreamService.markAsRead", () => {
       inboxHeld: true,
     })
     expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1")
-    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
-    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "stream_1", "usr_1", 42n)
+    expect(mockReadStateAdvance).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", "evt_9", {
+      holdInInbox: true,
+    })
+    expect(mockPruneAtOrBelow).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", 42n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
       workspaceId: "ws_1",
       authorId: "usr_1",
@@ -2004,9 +2008,9 @@ describe("StreamService.markUnread", () => {
       lastReadOrdinal: 4,
       readMessageIds: [],
     })
-    expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
+    expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", 50n)
     // The regress is the sole watermark write.
-    expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
+    expect(mockReadStateSet).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", "evt_4")
   })
 
   test("clears the read pointer when the target is the first message", async () => {
@@ -2023,7 +2027,7 @@ describe("StreamService.markUnread", () => {
       expect.objectContaining({ lastReadEventId: null, lastReadSequence: "0", lastReadOrdinal: 0 })
     )
     // Regress to null parks the frontier before the first message.
-    expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", null)
+    expect(mockReadStateSet).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", null)
   })
 
   test("throws MESSAGE_NOT_FOUND when the message is not in the stream", async () => {
@@ -2052,8 +2056,8 @@ describe("StreamService.markUnread", () => {
       readState: { lastReadEventId: "evt_4", lastReadSequence: "40", lastReadAt: null },
     })
     expect(mockFindByStreamAndMember).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1")
-    expect(mockReadStateSet).toHaveBeenCalledWith({}, "stream_1", "usr_1", "evt_4")
-    expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "stream_1", "usr_1", 50n)
+    expect(mockReadStateSet).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", "evt_4")
+    expect(mockDeleteAtOrAbove).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", 50n)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_set", {
       workspaceId: "ws_1",
       authorId: "usr_1",
@@ -2149,7 +2153,8 @@ describe("StreamService.markAllAsRead", () => {
         lastReadAt: READ_ALL_AT.toISOString(),
       },
     ])
-    expect(mockDeleteAllForStreams).toHaveBeenCalledWith({}, "usr_1", ["stream_1", "stream_2"])
+    expect(mockReadStateGetBatch).toHaveBeenCalledWith({}, "ws_1", "usr_1", ["stream_1", "stream_2"])
+    expect(mockDeleteAllForStreams).toHaveBeenCalledWith({}, "ws_1", "usr_1", ["stream_1", "stream_2"])
     expect(mockCountMessages).toHaveBeenCalledWith(
       {},
       "ws_1",
@@ -2171,6 +2176,7 @@ describe("StreamService.markAllAsRead", () => {
     })
     expect(mockReadStateBatchAdvance).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "usr_1",
       new Map([
         ["stream_1", "evt_a"],
@@ -2214,7 +2220,7 @@ describe("StreamService.markAllAsRead", () => {
         lastReadAt: READ_ALL_AT.toISOString(),
       },
     ])
-    expect(mockReadStateBatchAdvance).toHaveBeenCalledWith({}, "usr_1", new Map([["stream_2", "evt_b"]]))
+    expect(mockReadStateBatchAdvance).toHaveBeenCalledWith({}, "ws_1", "usr_1", new Map([["stream_2", "evt_b"]]))
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
       "stream:read_all",
@@ -2731,7 +2737,7 @@ describe("StreamService.createChannel read-state shadow", () => {
 
     // The creator is filtered out of the additional-member batch; the frontier
     // lands on the last creation event.
-    expect(mockReadStateSetForUsers).toHaveBeenCalledWith({}, "stream_new", ["usr_a", "usr_b"], "evt_b")
+    expect(mockReadStateSetForUsers).toHaveBeenCalledWith({}, "ws_1", "stream_new", ["usr_a", "usr_b"], "evt_b")
   })
 })
 
@@ -2772,10 +2778,11 @@ describe("StreamService.addMember read-state shadow", () => {
     const bornReadEventId = (eventCall![1] as { id: string }).id
     expect(bornReadEventId).toBeTruthy()
 
-    const advanceCall = mockReadStateAdvance.mock.calls.find((call) => call[1] === "stream_1" && call[2] === "usr_new")
+    const advanceCall = mockReadStateAdvance.mock.calls.find((call) => call[2] === "stream_1" && call[3] === "usr_new")
     expect(advanceCall).toBeDefined()
     expect(advanceCall![0]).toBe(eventCall![0])
-    expect(advanceCall![3]).toBe(bornReadEventId)
+    expect(advanceCall![1]).toBe("ws_1")
+    expect(advanceCall![4]).toBe(bornReadEventId)
     expect(mockUpdateMember).not.toHaveBeenCalled()
   })
 })

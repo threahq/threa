@@ -144,7 +144,9 @@ describe("ConversationService read/unread", () => {
     expect(threadSnap.lastReadSequence).toBe(threadEvents.get(tmsg1)!.sequence.toString())
     expect(threadSnap.readMessageIds).toEqual([])
     expect(await StreamMemberRepository.findByStreamAndMember(pool, wid, thread, reader)).toBeNull()
-    expect((await ReadStateRepository.get(pool, thread, reader))?.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
+    expect((await ReadStateRepository.get(pool, wid, thread, reader))?.lastReadEventId).toBe(
+      threadEvents.get(tmsg1)!.id
+    )
   })
 
   test("markRead clears activity for exactly the marked messages, never the stream's other topics", async () => {
@@ -236,9 +238,11 @@ describe("ConversationService read/unread", () => {
       throughMessageId: msg2,
       userId: reader,
     })
-    expect(await SparseReadRepository.countOverlay(pool, thread, reader)).toBe(0)
+    expect(await SparseReadRepository.countOverlay(pool, wid, thread, reader)).toBe(0)
     const threadEvents = await eventByMessage(wid, thread)
-    expect((await ReadStateRepository.get(pool, thread, reader))?.lastReadEventId).toBe(threadEvents.get(tmsg1)!.id)
+    expect((await ReadStateRepository.get(pool, wid, thread, reader))?.lastReadEventId).toBe(
+      threadEvents.get(tmsg1)!.id
+    )
 
     // Now mark unread from tmsg1 (cutoff 2000): tmsg1 + msg2 affected.
     const { streams } = await conversationService.markUnread({
@@ -255,11 +259,11 @@ describe("ConversationService read/unread", () => {
     // standalone frontier before it (null watermark) — membership untouched.
     expect(byStream.get(thread)!.lastReadEventId).toBeNull()
     expect(byStream.get(thread)!.readMessageIds).toEqual([])
-    expect(await ReadStateRepository.get(pool, thread, reader)).toMatchObject({ lastReadEventId: null })
+    expect(await ReadStateRepository.get(pool, wid, thread, reader)).toMatchObject({ lastReadEventId: null })
     expect(await StreamMemberRepository.findByStreamAndMember(pool, wid, thread, reader)).toBeNull()
 
     // Effective root unread: msg2 is unread again (msg1 read).
-    const readState = await ReadStateRepository.get(pool, root, reader)
+    const readState = await ReadStateRepository.get(pool, wid, root, reader)
     const counts = await streamService.getUnreadCounts(wid, [
       { streamId: root, memberId: reader, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
@@ -294,7 +298,7 @@ describe("ConversationService read/unread", () => {
       userId: reader,
     })
     expect(streams).toHaveLength(1)
-    const readState = await ReadStateRepository.get(pool, root, reader)
+    const readState = await ReadStateRepository.get(pool, wid, root, reader)
     const counts = await streamService.getUnreadCounts(wid, [
       { streamId: root, memberId: reader, lastReadEventId: readState?.lastReadEventId ?? null },
     ])
