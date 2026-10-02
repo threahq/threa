@@ -94,23 +94,27 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
   it("enterGraceIfEmptyBatch cascades reaped emptiness with a workspace-correlated anti-join", async () => {
     const captured: Captured = { text: "" }
     await CallRepository.enterGraceIfEmptyBatch(createQuerier(captured), {
-      callIds: ["call_1", "call_2"],
+      refs: [
+        { workspaceId: "ws_1", callId: "call_1" },
+        { workspaceId: "ws_1", callId: "call_2" },
+      ],
       graceDeadline: NOW,
     })
     const sql = normalize(captured.text)
     expect(sql).toContain("ended_reason = 'reaped'")
-    expect(sql).toContain("c.id = ANY")
     expect(sql).toMatch(/NOT EXISTS \([^)]*call_participants p[\s\S]*status = 'joined'/)
     expect(sql).toContain("p.workspace_id = c.workspace_id")
   })
 
   it("lockForUpdateInOrder locks the calls FOR UPDATE in id order (call→endpoint reap order)", async () => {
     const captured: Captured = { text: "" }
-    await CallRepository.lockForUpdateInOrder(createQuerier(captured), ["call_2", "call_1"])
+    await CallRepository.lockForUpdateInOrder(createQuerier(captured), [
+      { workspaceId: "ws_1", callId: "call_2" },
+      { workspaceId: "ws_1", callId: "call_1" },
+    ])
     const sql = normalize(captured.text)
     expect(sql).toContain("FROM calls")
-    expect(sql).toContain("id = ANY")
-    expect(sql).toContain("ORDER BY id")
+    expect(sql).toContain("ORDER BY c.id")
     expect(sql).toContain("FOR UPDATE")
   })
 
@@ -118,6 +122,7 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
     const captured: Captured = { text: "" }
     const id = await CallRepository.findCallStartedEventId(
       createQuerier(captured, [{ id: "event_chat_1" }]),
+      "ws_1",
       "stream_1",
       "call_1"
     )
@@ -131,7 +136,7 @@ describe("CallRepository — active-call glare + grace re-verification", () => {
 
   it("findCallStartedEventId returns null when no matching card exists", async () => {
     const captured: Captured = { text: "" }
-    const id = await CallRepository.findCallStartedEventId(createQuerier(captured, []), "stream_1", "call_1")
+    const id = await CallRepository.findCallStartedEventId(createQuerier(captured, []), "ws_1", "stream_1", "call_1")
     expect(id).toBeNull()
   })
 })
@@ -218,17 +223,19 @@ describe("CallEndpointRepository — lease fencing + lapse-only reap", () => {
     const captured: Captured = { text: "" }
     await CallEndpointRepository.findLapsedCallIds(createQuerier(captured), NOW)
     const sql = normalize(captured.text)
-    expect(sql).toContain("SELECT DISTINCT call_id")
+    expect(sql).toContain("SELECT DISTINCT workspace_id, call_id")
     expect(sql).toContain("status IN ('connected', 'reconnecting')")
     expect(sql).toContain("lease_expires_at <=")
     expect(sql).not.toContain("FOR UPDATE")
   })
 
-  it("reapLapsed closes only live lapsed endpoints scoped to the locked calls", async () => {
+  it("reapLapsed closes only live lapsed endpoints", async () => {
     const captured: Captured = { text: "" }
-    await CallEndpointRepository.reapLapsed(createQuerier(captured), NOW, ["call_1", "call_2"])
+    await CallEndpointRepository.reapLapsed(createQuerier(captured), NOW, [
+      { workspaceId: "ws_1", callId: "call_1" },
+      { workspaceId: "ws_1", callId: "call_2" },
+    ])
     const sql = normalize(captured.text)
-    expect(sql).toContain("call_id = ANY")
     expect(sql).toContain("status IN ('connected', 'reconnecting')")
     expect(sql).toContain("lease_expires_at <=")
     expect(sql).toContain("SET status = 'closed'")
@@ -287,7 +294,9 @@ describe("CallEndpointRepository — live-endpoint pull-authorization set (S1)",
 describe("CallParticipantRepository — endpoint liveness anti-join", () => {
   it("markLeftWhereNoLiveEndpoint workspace-correlates the endpoint anti-join", async () => {
     const captured: Captured = { text: "" }
-    await CallParticipantRepository.markLeftWhereNoLiveEndpoint(createQuerier(captured), ["callp_1"])
+    await CallParticipantRepository.markLeftWhereNoLiveEndpoint(createQuerier(captured), [
+      { workspaceId: "ws_1", participantId: "callp_1" },
+    ])
     const sql = normalize(captured.text)
     expect(sql).toContain("SET status = 'left'")
     expect(sql).toMatch(/NOT EXISTS \([^)]*call_endpoints e[\s\S]*status IN \('connected', 'reconnecting'\)/)
