@@ -149,6 +149,9 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       return
     }
 
+    // Stream state before pending rows, the order a batch save locks them in.
+    await StreamStateRepository.upsertActivity(client, workspaceId, topLevelStream.id)
+
     await PendingItemRepository.queue(
       client,
       conversationIds.map((itemId) => ({
@@ -159,8 +162,6 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
         itemId,
       }))
     )
-
-    await StreamStateRepository.upsertActivity(client, workspaceId, topLevelStream.id)
 
     logger.debug(
       { workspaceId, streamId: topLevelStream.id, conversationIds },
