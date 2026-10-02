@@ -15,7 +15,6 @@ const RULE = "threa/workspace-scoped-sql"
 
 RuleTester.describe = describe as unknown as typeof RuleTester.describe
 RuleTester.it = test as unknown as typeof RuleTester.it
-RuleTester.itOnly = test.only as unknown as typeof RuleTester.itOnly
 
 const ruleTester = new RuleTester({
   languageOptions: { parser: tsParser as Linter.Parser, ecmaVersion: "latest", sourceType: "module" },
