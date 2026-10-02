@@ -563,7 +563,10 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
 
     await engine.onConnect(asSocket(socket)) // second connect → reconnect
 
-    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", {
+      after: "1",
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it("reads the navigation refresh cursor before the room join can deliver live events", async () => {
@@ -3007,7 +3010,10 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     // worker copy bypassed) plus the open stream's delta, then the log replay,
     // all before the pull resolves; the window is closed by then.
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledWith("ws_1", { fresh: true })
-    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: expect.any(String) })
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", {
+      after: expect.any(String),
+      signal: expect.any(AbortSignal),
+    })
     expect(deps.syncService.catchUp).toHaveBeenCalled()
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
@@ -3213,7 +3219,7 @@ describe("SyncEngine first-connect sweep", () => {
     await engine.onConnect(asSocket(new MockSocket()))
     stop()
 
-    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", undefined]])
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", { signal: expect.any(AbortSignal) }]])
     expect(seen).toEqual([
       { open: true, workspace: false, stream: false },
       { open: false, workspace: true, stream: true },
@@ -3230,7 +3236,7 @@ describe("SyncEngine first-connect sweep", () => {
     await connecting
 
     await expect(claim).resolves.toMatchObject({ stream: { id: "stream_2" }, windowVersion: expect.any(Number) })
-    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_2", undefined]])
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_2", { signal: expect.any(AbortSignal) }]])
     engine.destroy()
   })
 
@@ -3355,7 +3361,9 @@ describe("SyncEngine first-connect sweep", () => {
     const engine = new SyncEngine(deps)
     engine.setCurrentStreamId("stream_1")
     const connecting = engine.onConnect(asSocket(new MockSocket()))
-    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", undefined))
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { signal: expect.any(AbortSignal) })
+    )
     // Navigated to again mid-sweep (a panel reopening it): deferred to the sweep.
     engine.setVisibleStreamIds(["stream_1"])
 

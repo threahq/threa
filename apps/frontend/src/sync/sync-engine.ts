@@ -43,6 +43,12 @@ import {
   type StreamPreviewHistoryBatchResponse,
 } from "@threahq/types"
 
+interface FullSweepRoot {
+  readonly taskId: symbol
+  readonly generation: number
+  readonly controller: AbortController
+}
+
 interface StreamRefresh {
   promise: Promise<boolean>
   controller: AbortController
@@ -202,6 +208,7 @@ export class SyncEngine {
    *  queued upgrades the queued run rather than being collapsed away. */
   private queuedReconnectForceFull = false
   private activeStreamRefreshes = new Map<string, StreamRefresh>()
+  private fullSweepRoots = new Map<string, FullSweepRoot>()
   /** Single-flighted display-only HTTP warm fetches (see warmStreamOverHttp).
    *  Kept separate from activeStreamRefreshes: a warm fetch performs no room
    *  join, so it must never satisfy a reconnect-path refresh that needs one. */
@@ -349,6 +356,7 @@ export class SyncEngine {
   setCurrentStreamId(id: string | undefined): void {
     if (this.currentStreamId === id) return
     this.currentStreamId = id
+    this.retireFullSweepRoots()
     if (id) {
       void this.refreshStreamAfterNavigation(id)
     }
@@ -362,6 +370,7 @@ export class SyncEngine {
   setVisibleStreamIds(ids: string[]): void {
     const previous = new Set(this.visibleStreamIds)
     this.visibleStreamIds = ids
+    this.retireFullSweepRoots()
 
     for (const streamId of ids) {
       if (previous.has(streamId) || !isServerStreamId(streamId)) continue
@@ -400,6 +409,7 @@ export class SyncEngine {
       toSync.push(streamId)
     }
     this.boardStreamIds = next
+    this.retireFullSweepRoots()
     // Newly-declared streams INCLUDING already-subscribed ones: a bootstrap room
     // join is not history, so `syncBoardStreams` decides per stream whether a
     // fetch is actually needed (see its persisted-window skip).
@@ -421,6 +431,7 @@ export class SyncEngine {
       toSync.push(streamId)
     }
     this.panelStreamIds = next
+    this.retireFullSweepRoots()
     if (toSync.length > 0) void this.syncBoardStreams(toSync)
   }
 
@@ -519,8 +530,25 @@ export class SyncEngine {
     }
   }
 
+  private fullSweepRootNeeded(streamId: string, root: FullSweepRoot): boolean {
+    return (
+      this.isAccountCurrent() &&
+      !root.controller.signal.aborted &&
+      (root.generation === this.recoveryGeneration ||
+        this.coldSweepClaims.has(streamId) ||
+        this.getVisibleServerStreamIds().includes(streamId))
+    )
+  }
+
+  private retireFullSweepRoots(): void {
+    for (const [streamId, root] of this.fullSweepRoots) {
+      if (!this.fullSweepRootNeeded(streamId, root)) root.controller.abort()
+    }
+  }
+
   private replaceRecoveryGeneration(): void {
     this.recoveryGeneration += 1
+    this.retireFullSweepRoots()
     this.previewAbort?.abort()
     this.boardAbort.abort()
     this.boardAbort = new AbortController()
@@ -1021,6 +1049,18 @@ export class SyncEngine {
       new Set([...this.getVisibleServerStreamIds(), ...(_isReconnect ? [] : this.coldSweepClaims.keys())])
     )
     if (!_isReconnect) this.coldSweepStreamIds = new Set(visibleStreamIds)
+    const taskId = Symbol("full-sweep")
+    const roots = new Map(
+      visibleStreamIds.map((streamId) => {
+        const root: FullSweepRoot = {
+          taskId,
+          generation: this.recoveryGeneration,
+          controller: new AbortController(),
+        }
+        this.fullSweepRoots.set(streamId, root)
+        return [streamId, root] as const
+      })
+    )
     // Only the streams whose window actually landed count as swept; a stream
     // whose fetch failed keeps its deferred refresh so settle retries it.
     let sweptStreamIds: ReadonlySet<string> = new Set()
@@ -1059,7 +1099,16 @@ export class SyncEngine {
         const catchupCursors = new Map<string, string | null>()
         await Promise.all(
           visibleStreamIds.map(async (streamId) => {
-            catchupCursors.set(streamId, await this.joinStreamForCatchUp(streamId))
+            const root = roots.get(streamId)!
+            try {
+              if (!this.fullSweepRootNeeded(streamId, root)) return
+              catchupCursors.set(
+                streamId,
+                await awaitRecovery(this.joinStreamForCatchUp(streamId), root.controller.signal)
+              )
+            } catch (error) {
+              if (!root.controller.signal.aborted) throw error
+            }
           })
         )
 
@@ -1067,6 +1116,8 @@ export class SyncEngine {
         const [workspaceBootstrap, streamResults] = await Promise.all([
           workspaceService.bootstrap(workspaceId, { fresh }),
           mapBounded(visibleStreamIds, async (streamId) => {
+            const root = roots.get(streamId)!
+            if (!this.fullSweepRootNeeded(streamId, root)) return { streamId, cancelled: true }
             try {
               // A reconnect appends from the cursor. A first connect without a
               // cached bootstrap is a fresh open, not a catch-up: fetch the
@@ -1074,9 +1125,14 @@ export class SyncEngine {
               const cursor = catchupCursors.get(streamId) ?? null
               const after =
                 _isReconnect || queryClient.getQueryData(streamKeys.bootstrap(workspaceId, streamId)) ? cursor : null
-              const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
+              const params = { ...(after ? { after } : {}), signal: root.controller.signal }
+              const bootstrap = await awaitRecovery(
+                streamService.bootstrap(workspaceId, streamId, params),
+                root.controller.signal
+              )
               return { streamId, bootstrap }
             } catch (error) {
+              if (root.controller.signal.aborted) return { streamId, cancelled: true }
               return { streamId, error }
             }
           }),
@@ -1084,12 +1140,18 @@ export class SyncEngine {
         stopFetch()
         if (!this.isAccountCurrent()) return { status: "cancelled" }
         this.assertSnapshotHeadAboveCursor(_isReconnect, localCursor, workspaceBootstrap)
+        if (!_isReconnect) await this.holdWriteForCachedReveal(cachedWorkspace)
+        if (!this.isAccountCurrent()) return { status: "cancelled" }
 
         const successfulStreamBootstraps = new Map<string, import("@threahq/types").StreamBootstrap>()
         const staleStreamIds = new Set<string>()
         const terminalStreamIds = new Set<string>()
+        const cancelledStreamIds = new Set<string>()
         for (const result of streamResults) {
-          if ("bootstrap" in result && result.bootstrap) {
+          if ("cancelled" in result || roots.get(result.streamId)!.controller.signal.aborted) {
+            cancelledStreamIds.add(result.streamId)
+            staleStreamIds.add(result.streamId)
+          } else if ("bootstrap" in result && result.bootstrap) {
             successfulStreamBootstraps.set(result.streamId, result.bootstrap)
           } else {
             if (ApiError.isApiError(result.error) && (result.error.status === 403 || result.error.status === 404)) {
@@ -1120,9 +1182,6 @@ export class SyncEngine {
             })
           }
         }
-
-        if (!_isReconnect) await this.holdWriteForCachedReveal(cachedWorkspace)
-        if (!this.isAccountCurrent()) return { status: "cancelled" }
 
         // One apply window around the IDB commit and both cache publications,
         // held until the timeline's re-reads of the written windows have
@@ -1161,9 +1220,11 @@ export class SyncEngine {
             syncStatus.set(`stream:${streamId}`, "synced")
           }
           for (const result of streamResults) {
-            if ("error" in result) this.coldSweepClaims.get(result.streamId)?.reject(result.error)
+            if ("error" in result && !cancelledStreamIds.has(result.streamId))
+              this.coldSweepClaims.get(result.streamId)?.reject(result.error)
           }
           for (const streamId of [...staleStreamIds, ...terminalStreamIds]) {
+            if (cancelledStreamIds.has(streamId) && syncStatus.get(`stream:${streamId}`) !== "syncing") continue
             const status = syncStatus.getError(`stream:${streamId}`) ? "error" : "stale"
             syncStatus.set(`stream:${streamId}`, status)
           }
@@ -1268,6 +1329,9 @@ export class SyncEngine {
       }
       return !this.isAccountCurrent() ? { status: "cancelled" } : { status: "error", error }
     } finally {
+      for (const [streamId, root] of this.fullSweepRoots) {
+        if (root.taskId === taskId) this.fullSweepRoots.delete(streamId)
+      }
       // Whatever the sweep did not hand over, the query layer now fetches itself.
       if (!_isReconnect) this.settleColdSweep(sweptStreamIds, landedBootstrap)
     }
