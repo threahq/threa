@@ -89,12 +89,28 @@ test("should keep every unopened preview available offline and batch recovery wi
       individualPreviewFetches.push(pathname)
     }
   })
+  const initialPreviews = page.waitForResponse((response) => {
+    const request = response.request()
+    return (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname.endsWith("/streams/preview-history") &&
+      streams.every((id) => request.postDataJSON().streamIds.includes(id))
+    )
+  })
   await page.goto(`/w/${workspaceId}/s/${current}`)
+  const initialPreviewResponse = await initialPreviews
+  await expectApiOk(initialPreviewResponse, "Warm initial preview histories")
+  await initialPreviewResponse.finished()
   await expect(page.getByRole("main").locator("[contenteditable='true']").first()).toBeVisible()
   await expect
     .poll(async () => (await localState(page, accountId, workspaceId)).messages.map((message) => message.content))
-    .toEqual(expect.arrayContaining(streams.map((_, index) => `Cached preview ${index}`)))
-
+    .toEqual(
+      expect.arrayContaining([
+        ...streams.map((_, index) => `Cached preview ${index}`),
+        "Before offline edit",
+        "Before offline deletion",
+      ])
+    )
   await context.setOffline(true)
   const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
   for (const [index, streamId] of streams.entries()) {
