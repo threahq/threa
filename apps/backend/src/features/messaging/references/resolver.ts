@@ -165,7 +165,7 @@ export async function resolveMessageReferences(
   const references = collectReferenceNodes(contentJson)
   const legacyKeys = collectLegacyQuoteKeys(params.previousContentJson)
 
-  const sourcesById = await MessageRepository.findByIdsInWorkspace(db, params.workspaceId, [
+  const sourcesById = await MessageRepository.findByIds(db, params.workspaceId, [
     ...new Set(references.map((ref) => ref.messageId)),
   ])
 

@@ -162,7 +162,7 @@ export async function resolveBagForStream(
     const [sourceStreams, itemCounts] = refStreamIds.length
       ? await Promise.all([
           StreamRepository.findByIds(db, bag.workspaceId, refStreamIds),
-          MessageRepository.countByStreams(db, refStreamIds),
+          MessageRepository.countByStreams(db, bag.workspaceId, refStreamIds),
         ])
       : [[], new Map<string, number>()]
     const streamById = new Map(sourceStreams.map((s) => [s.id, s]))

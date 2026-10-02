@@ -82,7 +82,7 @@ describe("Agent block metadata", () => {
       ...contentWithAgentBlock("Two options."),
     })
 
-    const stored = await MessageRepository.findById(pool, created.id)
+    const stored = await MessageRepository.findById(pool, wsId, created.id)
     expect(stored?.metadata).toEqual({
       source: "composer",
       [MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY]: AGENT_ID,
@@ -99,6 +99,7 @@ describe("Agent block metadata", () => {
     })
 
     const found = await MessageRepository.findByMetadata(pool, {
+      workspaceId: wsId,
       streamIds: [streamId],
       filter: { [MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY]: AGENT_ID },
       limit: 10,
@@ -117,7 +118,7 @@ describe("Agent block metadata", () => {
       contentMarkdown: "just me",
     })
 
-    const stored = await MessageRepository.findById(pool, created.id)
+    const stored = await MessageRepository.findById(pool, wsId, created.id)
     expect(stored?.metadata).toEqual({})
     expect(messageMetadataSchema.safeParse({ [MESSAGE_METADATA_AGENT_BLOCK_AUTHORS_KEY]: AGENT_ID }).success).toBe(
       false

@@ -176,7 +176,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     subagentModel,
   } = params
 
-  const triggerMessage = await MessageRepository.findById(db, messageId)
+  const triggerMessage = await MessageRepository.findById(db, workspaceId, messageId)
   const invokingUserId =
     triggerMessage?.authorType === AuthorTypes.USER ? triggerMessage.authorId : invokingUserOverride
 
@@ -451,7 +451,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   if (sharedRefIds.size > 0) {
     const refIdArray = [...sharedRefIds]
     const [sourceCandidates, grants] = await Promise.all([
-      MessageRepository.findByIdsInWorkspace(db, workspaceId, refIdArray),
+      MessageRepository.findByIds(db, workspaceId, refIdArray),
       SharedMessageRepository.listBySourceMessageIds(db, workspaceId, refIdArray),
     ])
 

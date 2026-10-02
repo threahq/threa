@@ -49,7 +49,7 @@ export function createConversationEmbeddingWorker(
       loadText: async () => {
         const current = await ConversationRepository.findById(pool, conversationId)
         if (!current || !isConversationEmbeddable(current)) return null
-        return (await loadConversationEmbeddingTexts(pool, [current])).get(conversationId) ?? null
+        return (await loadConversationEmbeddingTexts(pool, workspaceId, [current])).get(conversationId) ?? null
       },
       readExpectedHash: async () =>
         (await ConversationRepository.findEmbeddingSourceHashes(pool, workspaceId, [conversationId])).get(

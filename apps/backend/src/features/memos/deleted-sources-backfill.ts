@@ -31,7 +31,7 @@ export async function processChunk(
   workspaceId: string,
   chunk: MemoDeletedSourcesChunk
 ): Promise<{ processed: number }> {
-  const messages = await MessageRepository.findByIds(ctx.pool, chunk.ids)
+  const messages = await MessageRepository.findByIds(ctx.pool, workspaceId, chunk.ids)
   let processed = 0
   for (const message of messages.values()) {
     await withTransaction(ctx.pool, async (client) => {

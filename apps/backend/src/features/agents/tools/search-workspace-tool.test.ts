@@ -179,6 +179,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
         id: "msg_1",
         url: "/w/ws_1/s/stream_1?m=msg_1",
       })
+      expect(list).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", { limit: 10 })
     } finally {
       ;[list, streams, users, personas].forEach((spy) => spy.mockRestore())
     }

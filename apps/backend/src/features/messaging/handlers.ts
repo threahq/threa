@@ -436,7 +436,7 @@ export function createMessageHandlers({
 
       const data = validateRequest(updateMessageSchema, req.body)
 
-      const existing = await eventService.getMessageById(messageId)
+      const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing) {
         throw new MessageNotFoundError()
       }
@@ -547,7 +547,7 @@ export function createMessageHandlers({
       const workspaceId = req.workspaceId!
       const { messageId } = req.params
 
-      const existing = await eventService.getMessageById(messageId)
+      const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing) {
         throw new MessageNotFoundError()
       }
@@ -588,7 +588,7 @@ export function createMessageHandlers({
         throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
       }
 
-      const existing = await eventService.getMessageById(messageId)
+      const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing) {
         throw new MessageNotFoundError()
       }
@@ -630,7 +630,7 @@ export function createMessageHandlers({
         throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
       }
 
-      const existing = await eventService.getMessageById(messageId)
+      const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing) {
         throw new MessageNotFoundError()
       }
@@ -666,7 +666,7 @@ export function createMessageHandlers({
       const workspaceId = req.workspaceId!
       const { messageId } = req.params
 
-      const existing = await eventService.getMessageById(messageId)
+      const existing = await eventService.getMessageById(workspaceId, messageId)
       if (!existing || existing.deletedAt) {
         throw new MessageNotFoundError()
       }

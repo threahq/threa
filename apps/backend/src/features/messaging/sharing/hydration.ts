@@ -191,7 +191,7 @@ interface ResolvedOkRef {
  * that source exists in a target stream the viewer can read).
  *
  * Each level performs a fixed handful of batched queries (no per-ref DB
- * loops, INV-56): one `findByIdsInWorkspace`, one accessible-streams
+ * loops, INV-56): one `findByIds`, one accessible-streams
  * lookup, one share-grant lookup, and one `findByMessageVersions` for the
  * pins that name an older revision. Author names and the private-placeholder
  * source-stream lookup are batched once at the end.
@@ -230,7 +230,7 @@ async function hydrateSharedMessageRefsWithResolvers(
     for (const [key] of level) visited.add(key)
 
     const ids = [...new Set(level.map(([, ref]) => ref.messageId))]
-    const byId = await MessageRepository.findByIdsInWorkspace(db, workspaceId, ids)
+    const byId = await MessageRepository.findByIds(db, workspaceId, ids)
     const fetchedStreamIds = [...byId.values()].map((m) => m.streamId)
     const [accessibleStreams, grantedSources] = await Promise.all([
       resolvers.accessibleStreams(db, workspaceId, fetchedStreamIds),
@@ -291,7 +291,7 @@ async function hydrateSharedMessageRefsWithResolvers(
   const truncated = [...frontier].filter(([key]) => !visited.has(key) && !result[key])
   if (truncated.length > 0) {
     const truncatedIds = [...new Set(truncated.map(([, ref]) => ref.messageId))]
-    const truncatedMessages = await MessageRepository.findByIdsInWorkspace(db, workspaceId, truncatedIds)
+    const truncatedMessages = await MessageRepository.findByIds(db, workspaceId, truncatedIds)
     const fetchedStreamIds = [...truncatedMessages.values()].map((m) => m.streamId)
     const [accessibleStreams, grantedSources] = await Promise.all([
       resolvers.accessibleStreams(db, workspaceId, fetchedStreamIds),

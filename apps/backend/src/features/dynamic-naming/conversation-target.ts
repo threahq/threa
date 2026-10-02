@@ -68,7 +68,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
     const titleRevision = conversation.topicSummaryRevision ?? 0
     if (params.expectedTitleRevision !== undefined && params.expectedTitleRevision !== titleRevision) return null
 
-    const messages = await MessageRepository.findByIdsInWorkspace(client, params.workspaceId, conversation.messageIds)
+    const messages = await MessageRepository.findByIds(client, params.workspaceId, conversation.messageIds)
     const primary = orderedPrimaryMessages(conversation, messages)
     return {
       workspaceId: params.workspaceId,
@@ -90,7 +90,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       const stream = await StreamRepository.findById(client, target.workspaceId, conversation.streamId)
       if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
-      const byId = await MessageRepository.findByIdsInWorkspace(client, target.workspaceId, conversation.messageIds)
+      const byId = await MessageRepository.findByIds(client, target.workspaceId, conversation.messageIds)
       const messages = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
       const siblings = await ConversationRepository.findByStreamIncludingThreads(
         client,

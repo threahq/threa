@@ -33,6 +33,7 @@ export async function processChunk(
   `)
   const processed = await MessageRepository.fillMissingSearchConfigs(
     ctx.pool,
+    workspaceId,
     result.rows.map((row) => ({ id: row.id, searchConfig: detectSearchConfig(row.content_markdown) }))
   )
   return { processed }

@@ -136,17 +136,8 @@ export class ScheduledMessagesService {
         await this.assertSchedulingTransportSupported(client, authority.target)
 
         if (params.parentMessageId) {
-          const parent = await MessageRepository.findById(client, params.parentMessageId)
+          const parent = await MessageRepository.findById(client, params.workspaceId, params.parentMessageId)
           if (!parent || parent.deletedAt !== null) {
-            throw new HttpError("Parent message not found", {
-              status: 404,
-              code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",
-            })
-          }
-          // MessageRepository.findById is keyed by message id alone; the
-          // workspace-scoped stream lookup is what rejects a foreign message.
-          const parentStream = await StreamRepository.findById(client, params.workspaceId, parent.streamId)
-          if (!parentStream) {
             throw new HttpError("Parent message not found", {
               status: 404,
               code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE",

@@ -251,7 +251,7 @@ export class LabelAssignmentService {
     workspaceId: string,
     messageId: string
   ): Promise<boolean> {
-    const streamId = (await MessageRepository.findStreamIdsByIds(client, [messageId])).get(messageId)
+    const streamId = (await MessageRepository.findStreamIdsByIds(client, workspaceId, [messageId])).get(messageId)
     if (!streamId) return false
     return this.canReachStream(client, actor, workspaceId, streamId)
   }

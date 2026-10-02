@@ -126,14 +126,14 @@ function setup(options: {
     return created
   })
 
-  spyOn(MessageRepository, "findByIdsForUpdate").mockImplementation(async (_c, ids: string[]) =>
+  spyOn(MessageRepository, "findByIdsForUpdate").mockImplementation(async (_c, workspaceId, ids: string[]) =>
     ids
-      .filter((id) => MESSAGES[id])
+      .filter((id) => workspaceId === WORKSPACE_ID && MESSAGES[id])
       .map(message)
       .sort((a, b) => (a as unknown as { sequence: number }).sequence - (b as unknown as { sequence: number }).sequence)
   )
-  spyOn(MessageRepository, "findByIds").mockImplementation(async (_c, ids: string[]) =>
-    messageMap(ids.filter((id) => MESSAGES[id]))
+  spyOn(MessageRepository, "findByIds").mockImplementation(async (_c, workspaceId, ids: string[]) =>
+    messageMap(ids.filter((id) => workspaceId === WORKSPACE_ID && MESSAGES[id]))
   )
 
   spyOn(delivery, "resolveConversationDelivery").mockResolvedValue({

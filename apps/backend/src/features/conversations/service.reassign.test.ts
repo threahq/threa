@@ -77,8 +77,8 @@ function setup(options: {
     if (denied) throw Object.assign(new Error("read only"), { status: 403, code: "STREAM_READ_ONLY" })
     return []
   })
-  const findMessage = async (_c: unknown, id: string) => {
-    const base = MESSAGES[id]
+  const findMessage = async (_c: unknown, workspaceId: string, id: string) => {
+    const base = workspaceId === WORKSPACE_ID ? MESSAGES[id] : undefined
     return base ? ({ id, streamId: base.streamId, authorId: base.authorId } as unknown as Message) : null
   }
   spyOn(MessageRepository, "findById").mockImplementation(findMessage)

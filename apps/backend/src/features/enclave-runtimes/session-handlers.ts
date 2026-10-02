@@ -52,7 +52,7 @@ async function resolveInitiatingUserId(db: Pool | PoolClient, session: AgentSess
   if (!session.triggerMessageId) {
     throw new HttpError("Enclave session has no initiating user", { status: 403, code: "STREAM_READ_ONLY" })
   }
-  const trigger = await MessageRepository.findById(db, session.triggerMessageId)
+  const trigger = await MessageRepository.findById(db, session.workspaceId, session.triggerMessageId)
   if (!trigger || trigger.authorType !== AuthorTypes.USER) {
     throw new HttpError("Enclave session has no initiating user", { status: 403, code: "STREAM_READ_ONLY" })
   }
@@ -401,7 +401,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const messageIds = incoming
         .map((event) => (event.payload as { messageId?: string }).messageId)
         .filter((messageId): messageId is string => typeof messageId === "string")
-      const messagesById = await MessageRepository.findByIds(pool, messageIds)
+      const messagesById = await MessageRepository.findByIds(pool, session.workspaceId, messageIds)
 
       // Resolve author display names (non-secret) so the enclave can render the
       // same "new context arrived" trace the companion does — mirrors the
@@ -503,7 +503,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           (stream.displayNameRevision ?? 0) !== decision.observedTitleRevision
         )
           return
-        const stats = await MessageRepository.getNamingStats(tx, stream.id)
+        const stats = await MessageRepository.getNamingStats(tx, session.workspaceId, stream.id)
         // Growth after the enclave's final snapshot does not invalidate a sound
         // decision by itself; catch-up handles those rows. Deletion does make the
         // observed context impossible and therefore stale.
@@ -1066,7 +1066,7 @@ async function recordEnclaveUsage(
     // The invoking user is the trigger message's author (the session row
     // stores only the trigger message id). Origin is always "user": the
     // enclave runs solely for user-sent E2E scratchpad messages.
-    const triggerMessage = await MessageRepository.findById(pool, session.triggerMessageId)
+    const triggerMessage = await MessageRepository.findById(pool, params.workspaceId, session.triggerMessageId)
     // The enclave routes exclusively through OpenRouter and reports the bare
     // model id (the `openrouter:` prefix is stripped at dispatch), so re-derive
     // the provider with the same parser the companion records through.

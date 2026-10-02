@@ -52,7 +52,7 @@ export async function processChunk(
     workspaceId,
     eligible.rows.map((row) => row.id)
   )
-  const texts = await loadConversationEmbeddingTexts(ctx.pool, conversations)
+  const texts = await loadConversationEmbeddingTexts(ctx.pool, workspaceId, conversations)
   const storedHashes = await ConversationRepository.findEmbeddingSourceHashes(
     ctx.pool,
     workspaceId,
