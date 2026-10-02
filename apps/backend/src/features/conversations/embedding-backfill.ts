@@ -13,7 +13,7 @@ export type ConversationEmbeddingChunk = { ids: string[] }
  * outbox handler applies. Shared between `plan` and the process-time recheck.
  */
 const ELIGIBLE_PREDICATE = sql`
-  NOT EXISTS (SELECT 1 FROM e2e_streams e WHERE e.stream_id = c.stream_id)
+  NOT EXISTS (SELECT 1 FROM e2e_streams e WHERE e.stream_id = c.stream_id AND e.workspace_id = c.workspace_id)
   AND cardinality(c.message_ids) > 0
   AND (length(btrim(coalesce(c.topic_summary, ''))) > 0 OR length(btrim(coalesce(c.summary, ''))) > 0)
 `

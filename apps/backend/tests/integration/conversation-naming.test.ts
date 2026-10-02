@@ -115,11 +115,37 @@ describe("dynamic conversation naming", () => {
       )
     ).toMatchObject({ status: "evaluated", action: "rename" })
     expect(checkpoint).toBe(3)
-    expect(await ConversationRepository.findById(pool, item.conversationId)).toMatchObject({
+    expect(await ConversationRepository.findById(pool, item.workspaceId, item.conversationId)).toMatchObject({
       topicSummary: "Deployment rollback",
       topicSummarySource: "generated",
       topicSummaryRevision: 2,
     })
+  })
+
+  test("should pass sibling conversation titles from the same stream to the decider", async () => {
+    const item = await fixture({ count: 3, title: "Deployment issue" })
+    await ConversationRepository.insert(pool, {
+      id: conversationId(),
+      streamId: item.streamId,
+      workspaceId: item.workspaceId,
+      topicSummary: "Database migration plan",
+      topicSummarySource: "generated",
+    })
+    let existingTitles: string[] | null = null
+    const naming = service(async (input) => {
+      existingTitles = input.existingTitles
+      return { action: "keep" }
+    })
+    await naming.evaluate(
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
+      "job_siblings"
+    )
+    expect(existingTitles).toEqual(["Database migration plan"])
   })
 
   test("an untitled deterministic conversation evaluates checkpoint 1", async () => {
@@ -244,7 +270,7 @@ describe("dynamic conversation naming", () => {
     })
     expect(await naming.evaluate(ref, "job_before_move")).toEqual({ status: "stale" })
     expect(await naming.evaluate(ref, "job_after_move")).toMatchObject({ status: "evaluated", action: "rename" })
-    expect(await ConversationRepository.findById(pool, item.conversationId)).toMatchObject({
+    expect(await ConversationRepository.findById(pool, item.workspaceId, item.conversationId)).toMatchObject({
       topicSummary: "Current membership title",
     })
   })
@@ -272,7 +298,7 @@ describe("dynamic conversation naming", () => {
         "job_manual"
       )
     ).toEqual({ status: "stale" })
-    expect(await ConversationRepository.findById(pool, item.conversationId)).toMatchObject({
+    expect(await ConversationRepository.findById(pool, item.workspaceId, item.conversationId)).toMatchObject({
       topicSummary: "My rollback plan",
       topicSummarySource: "explicit",
     })

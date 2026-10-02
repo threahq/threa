@@ -35,11 +35,12 @@ function fakeConversation(over: Partial<Conversation> = {}): Conversation {
 describe("ConversationService.updateConversation — user status lock", () => {
   let updateSpy: ReturnType<typeof spyOn>
   let updateTopicSpy: ReturnType<typeof spyOn>
+  let findByIdSpy: ReturnType<typeof spyOn>
 
   beforeEach(() => {
     spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, cb: (client: unknown) => unknown) =>
       cb({})) as never)
-    spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
+    findByIdSpy = spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
     spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     updateSpy = spyOn(ConversationRepository, "update").mockResolvedValue(fakeConversation())
     updateTopicSpy = spyOn(ConversationRepository, "updateTopicSummary").mockResolvedValue(
@@ -65,6 +66,7 @@ describe("ConversationService.updateConversation — user status lock", () => {
       actorUserId: "usr_1",
     })
 
+    expect(findByIdSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "conv_1")
     expect(updateSpy).toHaveBeenCalledWith(
       expect.anything(),
       "ws_1",
@@ -206,5 +208,36 @@ describe("ConversationService.markRead/markUnread — conversation boundary", ()
     ).rejects.toMatchObject({ status: 404, code: "MESSAGE_NOT_FOUND" })
 
     expect(applyRead).not.toHaveBeenCalled()
+  })
+})
+
+describe("ConversationService reads — workspace-scoped lookups", () => {
+  afterEach(() => mock.restore())
+
+  test("should look a conversation up by workspace id then conversation id when getting it by id", async () => {
+    const findById = spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
+
+    await new ConversationService(POOL).getById("ws_1", "conv_1")
+
+    expect(findById.mock.calls.map((call) => call.slice(1))).toEqual([["ws_1", "conv_1"]])
+  })
+
+  test("should list a stream by workspace id then stream id when listing its conversations", async () => {
+    const findByStream = spyOn(ConversationRepository, "findByStreamIncludingThreads").mockResolvedValue([
+      fakeConversation(),
+    ])
+    const listSettling = spyOn(MessageConversationStateRepository, "listSettlingByConversationIds").mockResolvedValue(
+      new Map()
+    )
+
+    await new ConversationService(POOL).listByStream("ws_1", "stream_1", { status: "active" })
+
+    expect({
+      findByStream: findByStream.mock.calls.map((call) => call.slice(1)),
+      listSettling: listSettling.mock.calls.map((call) => call.slice(1)),
+    }).toEqual({
+      findByStream: [["ws_1", "stream_1", { status: "active" }]],
+      listSettling: [["ws_1", ["conv_1"]]],
+    })
   })
 })

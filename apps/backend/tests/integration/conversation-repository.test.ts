@@ -110,7 +110,7 @@ describe("ConversationRepository", () => {
 
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
 
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(conversation?.id).toBe(convId)
@@ -138,7 +138,7 @@ describe("ConversationRepository", () => {
       })
 
       const found = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(found).not.toBeNull()
@@ -148,7 +148,7 @@ describe("ConversationRepository", () => {
 
     test("returns null when not exists", async () => {
       const found = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, "conv_nonexistent")
+        return ConversationRepository.findById(client, testWorkspaceId, "conv_nonexistent")
       })
 
       expect(found).toBeNull()
@@ -198,7 +198,7 @@ describe("ConversationRepository", () => {
       })
 
       const conversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findByStream(client, localStreamId)
+        return ConversationRepository.findByStream(client, testWorkspaceId, localStreamId)
       })
 
       expect(conversations.length).toBeGreaterThanOrEqual(2)
@@ -239,7 +239,7 @@ describe("ConversationRepository", () => {
       })
 
       const activeConversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findByStream(client, localStreamId, {
+        return ConversationRepository.findByStream(client, testWorkspaceId, localStreamId, {
           status: ConversationStatuses.ACTIVE,
         })
       })
@@ -282,7 +282,7 @@ describe("ConversationRepository", () => {
       })
 
       const conversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findActiveByStream(client, localStreamId)
+        return ConversationRepository.findActiveByStream(client, testWorkspaceId, localStreamId)
       })
 
       expect(conversations.every((c) => c.status === ConversationStatuses.ACTIVE)).toBe(true)
@@ -718,7 +718,7 @@ describe("ConversationRepository", () => {
           topicSummary: "Current topic",
           topicSummarySource: "generated",
         })
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       for (const guard of [
@@ -735,7 +735,7 @@ describe("ConversationRepository", () => {
           })
         ).toBeNull()
       }
-      expect(await ConversationRepository.findById(pool, convId)).toMatchObject({
+      expect(await ConversationRepository.findById(pool, testWorkspaceId, convId)).toMatchObject({
         topicSummary: "Current topic",
         topicSummarySource: "generated",
         topicSummaryRevision: first!.topicSummaryRevision,
@@ -776,7 +776,7 @@ describe("ConversationRepository", () => {
       })
 
       const afterExtraction = await withTransaction(pool, async (client) =>
-        ConversationRepository.findById(client, convId)
+        ConversationRepository.findById(client, testWorkspaceId, convId)
       )
       expect(afterExtraction).toMatchObject({
         completenessScore: 5,
@@ -799,7 +799,7 @@ describe("ConversationRepository", () => {
       })
 
       const afterLockedPass = await withTransaction(pool, async (client) =>
-        ConversationRepository.findById(client, convId)
+        ConversationRepository.findById(client, testWorkspaceId, convId)
       )
       expect(afterLockedPass).toMatchObject({
         completenessScore: 7,
@@ -846,7 +846,7 @@ describe("ConversationRepository", () => {
       })
 
       const originalConv = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       // Small delay to ensure different timestamps
@@ -855,7 +855,7 @@ describe("ConversationRepository", () => {
       const updated = await withTransaction(pool, async (client) => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msg2Id, testUserId)
         await ConversationRepository.bumpActivityForIds(client, testWorkspaceId, [convId])
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(updated?.messageIds).toEqual([msg1Id, msg2Id])
@@ -889,7 +889,7 @@ describe("ConversationRepository", () => {
 
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, user2UserId)
 
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(conversation?.participantIds).toEqual([user2UserId])
@@ -986,7 +986,7 @@ describe("ConversationRepository", () => {
 
       // And the foreign conversation row is untouched.
       const foreignConv = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, foreignConvId)
+        return ConversationRepository.findById(client, otherWorkspaceId, foreignConvId)
       })
       expect(foreignConv?.topicSummary).toBe("Foreign topic")
     })
@@ -1017,7 +1017,7 @@ describe("ConversationRepository", () => {
         await ConversationRepository.addSecondaryMessage(client, testWorkspaceId, convId, msgId)
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
 
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(conversation?.messageIds).toEqual([msgId])
@@ -1048,7 +1048,7 @@ describe("ConversationRepository", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
         await ConversationRepository.addSecondaryMessage(client, testWorkspaceId, convId, msgId)
 
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(conversation?.messageIds).toEqual([msgId])
@@ -1079,45 +1079,11 @@ describe("ConversationRepository", () => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
         await ConversationRepository.removePrimaryMessage(client, testWorkspaceId, convId, msgId)
 
-        return ConversationRepository.findById(client, convId)
+        return ConversationRepository.findById(client, testWorkspaceId, convId)
       })
 
       expect(conversation?.messageIds).toEqual([])
       expect(conversation?.participantIds).toEqual([testUserId])
-    })
-  })
-
-  describe("delete", () => {
-    test("removes conversation and returns true", async () => {
-      const convId = conversationId()
-
-      await withTransaction(pool, async (client) => {
-        await ConversationRepository.insert(client, {
-          id: convId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-        })
-      })
-
-      const deleted = await withTransaction(pool, async (client) => {
-        return ConversationRepository.delete(client, convId)
-      })
-
-      expect(deleted).toBe(true)
-
-      const found = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, convId)
-      })
-
-      expect(found).toBeNull()
-    })
-
-    test("returns false for non-existent conversation", async () => {
-      const deleted = await withTransaction(pool, async (client) => {
-        return ConversationRepository.delete(client, "conv_nonexistent")
-      })
-
-      expect(deleted).toBe(false)
     })
   })
 
@@ -1171,7 +1137,7 @@ describe("ConversationRepository", () => {
       expect(byId.has(recentStalled)).toBe(false)
 
       const untouched = await withTransaction(pool, async (client) =>
-        ConversationRepository.findById(client, liveActive)
+        ConversationRepository.findById(client, testWorkspaceId, liveActive)
       )
       expect(untouched?.status).toBe(ConversationStatuses.ACTIVE)
     })

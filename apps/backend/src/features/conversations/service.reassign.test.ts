@@ -84,8 +84,8 @@ function setup(options: {
   spyOn(MessageRepository, "findById").mockImplementation(findMessage)
   spyOn(MessageRepository, "findByIdForUpdate").mockImplementation(findMessage)
 
-  spyOn(ConversationRepository, "findById").mockImplementation(
-    async (_c: unknown, id: string) => options.conversations[id] ?? null
+  spyOn(ConversationRepository, "findById").mockImplementation(async (_c: unknown, workspaceId: string, id: string) =>
+    workspaceId === WORKSPACE_ID ? (options.conversations[id] ?? null) : null
   )
   spyOn(ConversationRepository, "findPrimaryByMessageId").mockImplementation(async (_c, _ws, messageId: string) => {
     const convId = options.primaries[messageId]

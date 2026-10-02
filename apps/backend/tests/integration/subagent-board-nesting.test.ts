@@ -101,7 +101,7 @@ describe("conversations minted inside a subagent thread", () => {
     })
 
     const mintedId = await mintConversationFor(run.threadStreamId, ctx.owner)
-    const minted = await ConversationRepository.findById(pool, mintedId)
+    const minted = await ConversationRepository.findById(pool, ctx.workspaceId, mintedId)
 
     expect(minted?.parentConversationId).toBe(sourceConversationId)
   })
@@ -111,7 +111,7 @@ describe("conversations minted inside a subagent thread", () => {
     const run = await subagentService.create({ ...createParams(ctx, channel.id), sourceConversationId: null })
 
     const mintedId = await mintConversationFor(run.threadStreamId, ctx.owner)
-    const minted = await ConversationRepository.findById(pool, mintedId)
+    const minted = await ConversationRepository.findById(pool, ctx.workspaceId, mintedId)
 
     expect(minted?.parentConversationId).toBeNull()
   })
@@ -182,7 +182,7 @@ describe("conversations minted inside a subagent thread", () => {
     })
 
     const mintedId = await mintConversationFor(thread.id, ctx.owner)
-    const minted = await ConversationRepository.findById(pool, mintedId)
+    const minted = await ConversationRepository.findById(pool, ctx.workspaceId, mintedId)
 
     expect(minted?.parentConversationId).toBeNull()
     // Guard against the thread silently not being a thread.

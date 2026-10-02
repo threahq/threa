@@ -48,8 +48,8 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
 
   async resolveAuthorityStreamId(client: PoolClient, params: DynamicNamingTargetLockParams): Promise<string | null> {
     if (params.targetKind !== "conversation") return null
-    const conversation = await ConversationRepository.findById(client, params.targetId)
-    return conversation?.workspaceId === params.workspaceId ? conversation.streamId : null
+    const conversation = await ConversationRepository.findById(client, params.workspaceId, params.targetId)
+    return conversation?.streamId ?? null
   }
 
   async lockAndValidate(
@@ -85,8 +85,8 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
 
   async loadContext(target: DynamicNamingTargetSnapshot): Promise<DynamicNamingTargetContext | null> {
     const fetched = await withClient(this.pool, async (client) => {
-      const conversation = await ConversationRepository.findById(client, target.targetId)
-      if (!conversation || conversation.workspaceId !== target.workspaceId) return null
+      const conversation = await ConversationRepository.findById(client, target.workspaceId, target.targetId)
+      if (!conversation) return null
       const stream = await StreamRepository.findById(client, target.workspaceId, conversation.streamId)
       if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
@@ -94,6 +94,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       const messages = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
       const siblings = await ConversationRepository.findByStreamIncludingThreads(
         client,
+        target.workspaceId,
         stream.rootStreamId ?? stream.id,
         { limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1 }
       )
