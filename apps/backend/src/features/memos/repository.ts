@@ -575,15 +575,16 @@ export const MemoRepository = {
   },
 
   /**
-   * Active saved and reflective memos in the given visibility tier that cite one
-   * of `messageIds` edited after the memo was made. A conversation memo is
-   * reconsidered through its own conversation, so it is not returned here.
+   * Active saved and reflective memos the batch's audience may see that cite one
+   * of `messageIds` edited after the memo was made: everything but private memos,
+   * plus `scopeUserId`'s own when the batch is that owner's. A conversation
+   * memo is reconsidered through its own conversation, so it is not returned here.
    */
   async findActiveMessageMemosCitingEdited(
     db: Querier,
     workspaceId: string,
     messageIds: string[],
-    tier: { scope: MemoScope; scopeUserId: string | null }
+    scopeUserId: string | null
   ): Promise<Memo[]> {
     if (messageIds.length === 0) return []
     const result = await db.query<MemoRow>(sql`
@@ -591,8 +592,7 @@ export const MemoRepository = {
       WHERE workspace_id = ${workspaceId}
         AND status = 'active'
         AND memo_type = 'message'
-        AND scope = ${tier.scope}
-        AND scope_user_id IS NOT DISTINCT FROM ${tier.scopeUserId}
+        AND (scope <> 'user' OR scope_user_id = ${scopeUserId})
         AND source_message_ids && ${messageIds}::text[]
         AND EXISTS (
           SELECT 1 FROM messages

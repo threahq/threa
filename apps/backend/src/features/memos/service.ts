@@ -405,7 +405,7 @@ export class MemoService implements MemoServiceLike {
               client,
               workspaceId,
               conv.messageIds,
-              memoScope
+              memoScope.scopeUserId
             )),
           ]
           existingConversationMemos.set(convId, existingMemos)

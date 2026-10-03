@@ -8,6 +8,8 @@ import {
   StreamTypes,
   Visibilities,
   type MemoryMode,
+  type StreamType,
+  type Visibility,
 } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import {
@@ -55,14 +57,19 @@ describe("memo sources: deleted and edited messages", () => {
   }
 
   /** A resolved two-message conversation in its own public channel, with nothing queued. */
-  async function seedConversation(memoryMode: MemoryMode = MemoryModes.AUTO): Promise<Seeded> {
+  async function seedConversation(
+    memoryMode: MemoryMode = MemoryModes.AUTO,
+    stream: { type: StreamType; visibility: Visibility } = {
+      type: StreamTypes.CHANNEL,
+      visibility: Visibilities.PUBLIC,
+    }
+  ): Promise<Seeded> {
     const seeded: Seeded = { streamId: streamId(), conversationId: conversationId(), messageIds: [] }
     await withTransaction(pool, async (client) => {
       await StreamRepository.insert(client, {
         id: seeded.streamId,
         workspaceId: testWorkspaceId,
-        type: StreamTypes.CHANNEL,
-        visibility: Visibilities.PUBLIC,
+        ...stream,
         slug: `c-${seeded.streamId.slice(-8)}`,
         createdBy: testUserId,
         memoryMode,
@@ -602,6 +609,20 @@ describe("memo sources: deleted and edited messages", () => {
         privateMemo: await memoStatus(privateMemo),
         afterEdit: await memoStatus(afterEdit),
       }).toEqual({ shown: [], privateMemo: MemoStatuses.ACTIVE, afterEdit: MemoStatuses.ACTIVE })
+    })
+
+    test("in a private scratchpad, its owner's memos are shown whatever their tier", async () => {
+      const seeded = await seedConversation(MemoryModes.AUTO, {
+        type: StreamTypes.SCRATCHPAD,
+        visibility: Visibilities.PRIVATE,
+      })
+      const workspaceMemo = await seedSavedMemo(seeded)
+      const ownerMemo = await seedSavedMemo(seeded, { scope: "user", scopeUserId: testUserId })
+
+      await edit(seeded, "the rollout starts on Tuesday")
+      const shown = await reconsider(seeded, false)
+
+      expect(shown.sort()).toEqual([workspaceMemo, ownerMemo].sort())
     })
   })
 
