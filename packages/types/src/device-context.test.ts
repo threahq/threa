@@ -1,13 +1,10 @@
 import { describe, it, expect } from "bun:test"
-import { DEVICE_LAYOUTS, DEVICE_OSES, parseDeviceContext } from "./device-context"
+import { parseDeviceContext, type DeviceContext } from "./device-context"
 
 describe("parseDeviceContext", () => {
-  it("accepts every layout and OS combination", () => {
-    for (const layout of DEVICE_LAYOUTS) {
-      for (const os of DEVICE_OSES) {
-        expect(parseDeviceContext({ layout, os, installed: false })).toEqual({ layout, os, installed: false })
-      }
-    }
+  it("should return the device when it is well-formed", () => {
+    const device: DeviceContext = { layout: "mobile", os: "android", installed: true }
+    expect(parseDeviceContext(device)).toEqual(device)
   })
 
   it.each([
@@ -19,7 +16,7 @@ describe("parseDeviceContext", () => {
     ["a non-boolean installed", { layout: "mobile", os: "ios", installed: "yes" }],
     ["a missing field", { layout: "mobile", os: "ios" }],
     ["an extra field", { layout: "mobile", os: "ios", installed: true, userAgent: "x" }],
-  ])("rejects %s", (_name, value) => {
+  ])("should reject %s", (_name, value) => {
     expect(parseDeviceContext(value)).toBeNull()
   })
 })

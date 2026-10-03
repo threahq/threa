@@ -8,6 +8,5 @@ CREATE TABLE IF NOT EXISTS user_device_contexts (
   layout TEXT NOT NULL,
   os TEXT NOT NULL,
   installed BOOLEAN NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (workspace_id, user_id)
 );

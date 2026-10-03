@@ -4,8 +4,6 @@ import { isMobileViewport } from "@/hooks/use-mobile"
 export interface DeviceSignals {
   mobileLayout: boolean
   installed: boolean
-  /** `navigator.userAgentData.platform`, present on Chromium only. */
-  clientHintPlatform: string | undefined
   platform: string
   userAgent: string
   maxTouchPoints: number
@@ -20,32 +18,16 @@ export function isStandaloneApp(): boolean {
 }
 
 export function readDeviceSignals(): DeviceSignals {
-  const { userAgentData } = navigator as Navigator & { userAgentData?: { platform?: string } }
   return {
     mobileLayout: isMobileViewport(),
     installed: isStandaloneApp(),
-    clientHintPlatform: userAgentData?.platform,
     platform: navigator.platform ?? "",
     userAgent: navigator.userAgent ?? "",
     maxTouchPoints: navigator.maxTouchPoints ?? 0,
   }
 }
 
-const CLIENT_HINT_OSES: Array<[RegExp, DeviceOs]> = [
-  [/android/i, "android"],
-  [/chrom(e|ium) os/i, "chromeos"],
-  [/ios/i, "ios"],
-  [/mac/i, "macos"],
-  [/windows/i, "windows"],
-  [/linux/i, "linux"],
-]
-
-function osFromClientHint(platform: string | undefined): DeviceOs | null {
-  if (!platform) return null
-  return CLIENT_HINT_OSES.find(([pattern]) => pattern.test(platform))?.[1] ?? null
-}
-
-function osFromUserAgent({ platform, userAgent, maxTouchPoints }: DeviceSignals): DeviceOs {
+function osFromSignals({ platform, userAgent, maxTouchPoints }: DeviceSignals): DeviceOs {
   // Android's UA also says Linux, and iPadOS 13+ says Macintosh; both are told apart first.
   if (/Android/.test(userAgent)) return "android"
   if (/iPhone|iPod|iPad/.test(platform) || /iPhone|iPod|iPad/.test(userAgent)) return "ios"
@@ -61,7 +43,7 @@ function osFromUserAgent({ platform, userAgent, maxTouchPoints }: DeviceSignals)
 export function describeDevice(signals: DeviceSignals): DeviceContext {
   return {
     layout: signals.mobileLayout ? "mobile" : "desktop",
-    os: osFromClientHint(signals.clientHintPlatform) ?? osFromUserAgent(signals),
+    os: osFromSignals(signals),
     installed: signals.installed,
   }
 }

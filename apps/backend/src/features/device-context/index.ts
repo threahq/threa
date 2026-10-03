@@ -1,2 +1,2 @@
 export { UserDeviceContextRepository } from "./repository"
-export { DeviceHeartbeatSync } from "./heartbeat-sync"
+export { storeHeartbeatDevice } from "./heartbeat"

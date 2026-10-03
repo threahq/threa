@@ -3,7 +3,13 @@ import { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
 import { sql } from "../../src/db"
 import { UserDeviceContextRepository } from "../../src/features/device-context"
+import { UserPreferencesService } from "../../src/features/user-preferences"
+import { UserRepository } from "../../src/features/workspaces"
 import { userId, workspaceId } from "../../src/lib/id"
+import type { DeviceContext } from "@threahq/types"
+
+const laptop: DeviceContext = { layout: "desktop", os: "linux", installed: false }
+const phone: DeviceContext = { layout: "mobile", os: "android", installed: true }
 
 describe("UserDeviceContextRepository", () => {
   let pool: Pool
@@ -16,80 +22,72 @@ describe("UserDeviceContextRepository", () => {
     await pool.end()
   })
 
-  async function readUpdatedAt(wsId: string, usrId: string): Promise<string> {
-    const result = await pool.query<{ updated_at: string }>(sql`
-      SELECT updated_at::text FROM user_device_contexts WHERE workspace_id = ${wsId} AND user_id = ${usrId}
+  async function seedUser(wsId = workspaceId()): Promise<{ wsId: string; usrId: string }> {
+    const usrId = userId()
+    await pool.query(sql`
+      INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name)
+      VALUES (${usrId}, ${wsId}, ${`wos_${usrId}`}, ${`${usrId}@test.local`}, 'member', ${usrId}, 'Device User')
     `)
-    return result.rows[0].updated_at
+    return { wsId, usrId }
   }
 
-  test("insert, update, unchanged report and delete", async () => {
-    const wsId = workspaceId()
-    const usrId = userId()
+  test("should keep only the latest device and delete it on request", async () => {
+    const { wsId, usrId } = await seedUser()
 
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
 
-    expect(
-      await UserDeviceContextRepository.upsert(pool, wsId, usrId, { layout: "desktop", os: "linux", installed: false })
-    ).toBe(true)
-    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual({
-      layout: "desktop",
-      os: "linux",
-      installed: false,
-    })
-    const insertedAt = await readUpdatedAt(wsId, usrId)
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, laptop)
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual(laptop)
 
-    expect(
-      await UserDeviceContextRepository.upsert(pool, wsId, usrId, { layout: "desktop", os: "linux", installed: false })
-    ).toBe(false)
-    expect(await readUpdatedAt(wsId, usrId)).toBe(insertedAt)
-
-    expect(
-      await UserDeviceContextRepository.upsert(pool, wsId, usrId, { layout: "mobile", os: "android", installed: true })
-    ).toBe(true)
-    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual({
-      layout: "mobile",
-      os: "android",
-      installed: true,
-    })
-    expect(await readUpdatedAt(wsId, usrId)).not.toBe(insertedAt)
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, phone)
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, phone)
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual(phone)
 
     await UserDeviceContextRepository.delete(pool, wsId, usrId)
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
   })
 
-  test("keeps one row per user per workspace, isolated from other workspaces and users", async () => {
-    const wsA = workspaceId()
-    const wsB = workspaceId()
-    const usrId = userId()
-    const otherUsrId = userId()
+  test("should leave other users' devices when one user's device is deleted", async () => {
+    const { wsId, usrId } = await seedUser()
+    const other = await seedUser(wsId)
 
-    await UserDeviceContextRepository.upsert(pool, wsA, usrId, { layout: "mobile", os: "ios", installed: true })
-    await UserDeviceContextRepository.upsert(pool, wsB, usrId, { layout: "desktop", os: "macos", installed: false })
-    await UserDeviceContextRepository.upsert(pool, wsA, otherUsrId, {
-      layout: "desktop",
-      os: "windows",
-      installed: false,
-    })
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, phone)
+    await UserDeviceContextRepository.upsert(pool, wsId, other.usrId, laptop)
+    await UserDeviceContextRepository.delete(pool, wsId, usrId)
 
-    await UserDeviceContextRepository.delete(pool, wsA, usrId)
-
-    expect(await UserDeviceContextRepository.find(pool, wsA, usrId)).toBeNull()
-    expect(await UserDeviceContextRepository.find(pool, wsB, usrId)).toEqual({
-      layout: "desktop",
-      os: "macos",
-      installed: false,
-    })
-    expect(await UserDeviceContextRepository.find(pool, wsA, otherUsrId)).toEqual({
-      layout: "desktop",
-      os: "windows",
-      installed: false,
-    })
+    expect({
+      deleted: await UserDeviceContextRepository.find(pool, wsId, usrId),
+      other: await UserDeviceContextRepository.find(pool, wsId, other.usrId),
+    }).toEqual({ deleted: null, other: laptop })
   })
 
-  test("reads a stored value this build does not know as absent", async () => {
-    const wsId = workspaceId()
-    const usrId = userId()
+  test("should delete the device and refuse later reports when the user turns sharing off", async () => {
+    const { wsId, usrId } = await seedUser()
+    const preferences = new UserPreferencesService(pool)
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, laptop)
+
+    await preferences.updatePreferences(wsId, usrId, { shareDeviceWithAgents: false })
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
+
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, phone)
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
+
+    await preferences.updatePreferences(wsId, usrId, { shareDeviceWithAgents: true })
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, phone)
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual(phone)
+  })
+
+  test("should refuse a report when the user is no longer a member", async () => {
+    const { wsId, usrId } = await seedUser()
+    await UserRepository.remove(pool, wsId, usrId)
+
+    await UserDeviceContextRepository.upsert(pool, wsId, usrId, phone)
+
+    expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
+  })
+
+  test("should read a stored value this build does not know as absent", async () => {
+    const { wsId, usrId } = await seedUser()
     await pool.query(sql`
       INSERT INTO user_device_contexts (workspace_id, user_id, layout, os, installed)
       VALUES (${wsId}, ${usrId}, 'tablet', 'ios', TRUE)

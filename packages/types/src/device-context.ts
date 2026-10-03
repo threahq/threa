@@ -1,13 +1,12 @@
 import { z } from "zod"
 
-export const DEVICE_LAYOUTS = ["mobile", "desktop"] as const
-export type DeviceLayout = (typeof DEVICE_LAYOUTS)[number]
+const DEVICE_LAYOUTS = ["mobile", "desktop"] as const
 
-export const DEVICE_OSES = ["ios", "android", "macos", "windows", "linux", "chromeos", "other"] as const
+const DEVICE_OSES = ["ios", "android", "macos", "windows", "linux", "chromeos", "other"] as const
 export type DeviceOs = (typeof DEVICE_OSES)[number]
 
 /** What the client reports about the device in use on a socket heartbeat. */
-export const deviceContextSchema = z.strictObject({
+const deviceContextSchema = z.strictObject({
   layout: z.enum(DEVICE_LAYOUTS),
   os: z.enum(DEVICE_OSES),
   installed: z.boolean(),

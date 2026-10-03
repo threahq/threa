@@ -8,20 +8,27 @@ interface UserDeviceContextRow {
 }
 
 export const UserDeviceContextRepository = {
-  /** Stores the user's latest device. Returns whether anything changed; an identical report leaves the row untouched. */
-  async upsert(db: Querier, workspaceId: string, userId: string, device: DeviceContext): Promise<boolean> {
-    const result = await db.query(sql`
+  /**
+   * Stores the user's latest device, unless they turned sharing off or are no
+   * longer a member: a stale client can still report after either, and the
+   * delete that went with it must stay deleted.
+   */
+  async upsert(db: Querier, workspaceId: string, userId: string, device: DeviceContext): Promise<void> {
+    await db.query(sql`
       INSERT INTO user_device_contexts (workspace_id, user_id, layout, os, installed)
-      VALUES (${workspaceId}, ${userId}, ${device.layout}, ${device.os}, ${device.installed})
+      SELECT ${workspaceId}, ${userId}, ${device.layout}, ${device.os}, ${device.installed}
+      WHERE EXISTS (SELECT 1 FROM users WHERE workspace_id = ${workspaceId} AND id = ${userId})
+        AND NOT EXISTS (
+          SELECT 1 FROM user_preference_overrides
+          WHERE user_id = ${userId} AND key = 'shareDeviceWithAgents' AND value = 'false'::jsonb
+        )
       ON CONFLICT (workspace_id, user_id) DO UPDATE SET
         layout = EXCLUDED.layout,
         os = EXCLUDED.os,
-        installed = EXCLUDED.installed,
-        updated_at = NOW()
+        installed = EXCLUDED.installed
       WHERE (user_device_contexts.layout, user_device_contexts.os, user_device_contexts.installed)
         IS DISTINCT FROM (EXCLUDED.layout, EXCLUDED.os, EXCLUDED.installed)
     `)
-    return (result.rowCount ?? 0) > 0
   },
 
   async find(db: Querier, workspaceId: string, userId: string): Promise<DeviceContext | null> {

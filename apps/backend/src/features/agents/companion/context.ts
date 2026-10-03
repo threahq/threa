@@ -188,8 +188,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       userPreferencesService.getPreferences(workspaceId, invokingUserId),
       UserRepository.findById(db, workspaceId, invokingUserId),
     ])
-    // Read only while sharing is on: a heartbeat in flight when the user turned
-    // it off can still land a row, and it must never reach the prompt.
+    // Read only while sharing is on: a report racing the switch can still land
+    // a row, and it must never reach the prompt.
     if (preferences?.shareDeviceWithAgents) {
       deviceContext = await UserDeviceContextRepository.find(db, workspaceId, invokingUserId)
     }

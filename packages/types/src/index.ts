@@ -1244,15 +1244,7 @@ export {
 } from "./user-status"
 
 // Device context
-export {
-  DEVICE_LAYOUTS,
-  DEVICE_OSES,
-  deviceContextSchema,
-  parseDeviceContext,
-  type DeviceLayout,
-  type DeviceOs,
-  type DeviceContext,
-} from "./device-context"
+export { parseDeviceContext, type DeviceOs, type DeviceContext } from "./device-context"
 
 // Sidebar configuration
 export {

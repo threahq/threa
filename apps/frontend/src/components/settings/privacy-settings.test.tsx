@@ -65,7 +65,7 @@ describe("PrivacySettings", () => {
     expect(updatePreference).toHaveBeenCalledWith("analyticsConsent", "granted")
   })
 
-  it("reports a failed update with an error toast", async () => {
+  it("should show an error toast when the update fails", async () => {
     updatePreference.mockRejectedValue(new Error("nope"))
     const error = vi.spyOn(toast, "error")
     mount("unset")
@@ -78,32 +78,34 @@ describe("PrivacySettings", () => {
   describe("device sharing", () => {
     const deviceSwitch = () => screen.getByRole("switch", { name: /tell agents which device i'm on/i })
 
-    it("is on until the user turns it off", () => {
+    it("should show on when the preference is unset", () => {
       mount("unset")
       expect(deviceSwitch()).toBeChecked()
     })
 
-    it("reflects an explicit off", () => {
+    it("should show off when the user turned it off", () => {
       mount("unset", undefined, false)
       expect(deviceSwitch()).not.toBeChecked()
     })
 
-    it("writes false when switched off", async () => {
+    it("should write false when switched off", async () => {
       mount("unset")
       await userEvent.click(deviceSwitch())
       expect(updatePreference).toHaveBeenCalledWith("shareDeviceWithAgents", false)
     })
 
-    it("writes true when switched back on", async () => {
+    it("should write true when switched back on", async () => {
       mount("unset", undefined, false)
       await userEvent.click(deviceSwitch())
       expect(updatePreference).toHaveBeenCalledWith("shareDeviceWithAgents", true)
     })
 
-    it("discloses what is shared", () => {
+    it("should disclose what is shared and kept", () => {
       mount("unset")
       expect(
-        screen.getByText(/mobile or desktop layout, your operating system, and whether Threa is installed/)
+        screen.getByText(
+          /mobile or desktop layout, your operating system, and whether Threa is installed.*Only the latest is kept, and turning this off deletes it/
+        )
       ).toBeTruthy()
     })
   })
