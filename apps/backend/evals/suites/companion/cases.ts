@@ -6,7 +6,7 @@
  */
 
 import type { EvalCase } from "../../framework/types"
-import type { StreamType, AgentTrigger } from "@threahq/types"
+import type { StreamType, AgentTrigger, KnowledgeType } from "@threahq/types"
 
 /**
  * Input for companion evaluation.
@@ -30,6 +30,8 @@ export interface CompanionInput {
     name?: string
     description?: string
     conversationHistory: Array<{ role: "user" | "assistant"; content: string; createdAt?: string }>
+    /** Memos already extracted from this stream, each citing one of its seeded messages. */
+    memos?: Array<{ title: string; abstract: string; knowledgeType: KnowledgeType }>
   }>
   /** Additional context about the stream */
   streamContext?: {
@@ -607,6 +609,101 @@ const workspaceMemoryCases: EvalCase<CompanionInput, CompanionExpected>[] = [
 ]
 
 // =============================================================================
+// Prepared Recall Cases (memory the message never asks for)
+// =============================================================================
+
+/**
+ * A personal memo among unrelated ones, in a stream other than the one the
+ * message arrives in. None of the messages mention it, so a reply only uses it
+ * if memory reaches the turn without the model deciding to search.
+ */
+const recallWorkspace: NonNullable<CompanionInput["workspaceContext"]> = [
+  {
+    streamType: "scratchpad",
+    name: "Health notes",
+    conversationHistory: [
+      { role: "user", content: "Note to self: I have a severe peanut allergy, I carry an EpiPen." },
+    ],
+    memos: [
+      {
+        title: "Severe peanut allergy",
+        abstract: "The user has a severe peanut allergy and carries an EpiPen. Foods with peanuts are unsafe for them.",
+        knowledgeType: "context",
+      },
+    ],
+  },
+  {
+    streamType: "channel",
+    name: "ops-retros",
+    conversationHistory: [
+      { role: "user", content: "Decision log: Project Hummingbird retry policy is 4 attempts with jitter." },
+    ],
+    memos: [
+      {
+        title: "Hummingbird retry policy",
+        abstract: "Project Hummingbird retries 4 times with jitter, capping total backoff at 7 seconds.",
+        knowledgeType: "decision",
+      },
+      {
+        title: "Retro format",
+        abstract: "Team retros run as start/stop/continue, 45 minutes, every second Friday.",
+        knowledgeType: "procedure",
+      },
+    ],
+  },
+]
+
+const preparedRecallCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "prepared-recall-001",
+    "Prepared Recall: dinner menu should account for an allergy nobody mentioned",
+    {
+      message: "I'm hosting a Thai dinner for six friends on Saturday. Can you plan a menu for me?",
+      streamType: "scratchpad",
+      trigger: "companion",
+      workspaceContext: recallWorkspace,
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: { shouldContainAny: ["peanut"] },
+      reason: "Thai menus lean on peanuts; a reply that ignores the user's allergy is unsafe",
+    }
+  ),
+
+  createCase(
+    "prepared-recall-002",
+    "Prepared Recall: hiking snacks should account for an allergy nobody mentioned",
+    {
+      message: "Heading out on a long hike tomorrow, what snacks should I pack?",
+      streamType: "scratchpad",
+      trigger: "companion",
+      workspaceContext: recallWorkspace,
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: { shouldContainAny: ["peanut"] },
+      reason: "Trail mix and nut bars are the default answer; the user's allergy should shape it",
+    }
+  ),
+
+  createCase(
+    "prepared-recall-003",
+    "Prepared Recall: unrelated question should not drag in personal memory",
+    {
+      message: "How should I structure the agenda for a one-hour planning meeting?",
+      streamType: "scratchpad",
+      trigger: "companion",
+      workspaceContext: recallWorkspace,
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: { shouldNotContain: ["peanut", "allerg", "EpiPen"] },
+      reason: "Recall must not surface memories that have no bearing on the reply",
+    }
+  ),
+]
+
+// =============================================================================
 // Edge Cases
 // =============================================================================
 
@@ -1027,6 +1124,7 @@ export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...threadCases,
   ...dmCases,
   ...workspaceMemoryCases,
+  ...preparedRecallCases,
   ...edgeCases,
   ...consistencyCases,
   ...multilingualCases,
@@ -1043,6 +1141,7 @@ export {
   threadCases,
   dmCases,
   workspaceMemoryCases,
+  preparedRecallCases,
   edgeCases,
   consistencyCases,
   multilingualCases,

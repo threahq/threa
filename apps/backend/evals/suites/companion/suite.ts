@@ -66,7 +66,13 @@ import {
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
 import { SearchService, SearchQueryExpander, SearchRefiner } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
-import { DecisionsRelevanceScorer, EmbeddingService, MemoExplorerService, Reranker } from "../../../src/features/memos"
+import {
+  DecisionsRelevanceScorer,
+  EmbeddingService,
+  MemoExplorerService,
+  MemoRepository,
+  Reranker,
+} from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
 import { MessageRepository } from "../../../src/features/messaging"
@@ -76,9 +82,9 @@ import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import { EventService } from "../../../src/features/messaging"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threahq/prosemirror"
-import { AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes } from "@threahq/types"
+import { AuthorTypes, ContextIntents, ContextRefKinds, MemoTypes, StreamTypes } from "@threahq/types"
 import { ulid } from "ulid"
-import { streamId as generateStreamId, userId as generateUserId } from "../../../src/lib/id"
+import { memoId as generateMemoId, streamId as generateStreamId, userId as generateUserId } from "../../../src/lib/id"
 import { insertEvalPersona } from "../../framework/eval-persona"
 
 /**
@@ -271,6 +277,30 @@ async function setupTestData(
 
       await StreamMemberRepository.insert(pool, contextStreamId, ctx.userId)
       await seedConversationHistory(contextStreamId, contextStream.conversationHistory, input.currentTime)
+
+      if (contextStream.memos && contextStream.memos.length > 0) {
+        const [firstMessage] = await MessageRepository.list(pool, contextStreamId, { limit: 1 })
+        if (!firstMessage) throw new Error("workspaceContext memos need seeded conversationHistory to cite")
+        const embeddings = await new EmbeddingService({ ai: ctx.ai }).embedBatch(
+          contextStream.memos.map((memo) => memo.abstract),
+          { workspaceId: ctx.workspaceId, functionId: "memo-embedding" }
+        )
+        for (const [index, memo] of contextStream.memos.entries()) {
+          const id = generateMemoId()
+          await MemoRepository.insert(pool, {
+            id,
+            workspaceId: ctx.workspaceId,
+            memoType: MemoTypes.MESSAGE,
+            sourceMessageId: firstMessage.id,
+            title: memo.title,
+            abstract: memo.abstract,
+            sourceMessageIds: [firstMessage.id],
+            participantIds: [ctx.userId],
+            knowledgeType: memo.knowledgeType,
+          })
+          await MemoRepository.updateEmbedding(pool, id, embeddings[index])
+        }
+      }
     }
   }
 
@@ -522,12 +552,16 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       memoExplorerService,
       preparedRecall: new PreparedRecall({
         memoExplorerService,
-        scorer: new DecisionsRelevanceScorer({
-          ai: ctx.ai,
-          subject: "knowledge memos",
-          question: PREPARED_RECALL_QUESTION,
-          functionId: "prepared-recall-score",
-        }),
+        // `EVAL_PREPARED_RECALL=off` is the no-recall arm: an unscored pool recalls nothing.
+        scorer:
+          process.env.EVAL_PREPARED_RECALL === "off"
+            ? { score: async () => null }
+            : new DecisionsRelevanceScorer({
+                ai: ctx.ai,
+                subject: "knowledge memos",
+                question: PREPARED_RECALL_QUESTION,
+                functionId: "prepared-recall-score",
+              }),
       }),
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
