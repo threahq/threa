@@ -218,10 +218,13 @@ export class RegionalClient {
     await this.postInternal(region, "/internal/stream-connections", snapshot, "Regional stream connection sync")
   }
 
-  /** The host channel's current name, and whether it is still an active, unencrypted channel with sharing on. */
+  /**
+   * The host channel's current name, and whether it is still an active,
+   * unencrypted channel with sharing on that the link's creator may still share.
+   */
   async describeStreamConnectionChannel(
     region: string,
-    params: { workspaceId: string; streamId: string }
+    params: { workspaceId: string; streamId: string; invitedBy: string }
   ): Promise<StreamConnectionChannel> {
     const query = new URLSearchParams(params)
     const res = await this.requestInternal(

@@ -57,6 +57,7 @@ export class StreamConnectionService {
     userId: string
   }): Promise<CreateStreamConnectionInviteResponse> {
     await this.assertEnabled(params.workspaceId)
+    await this.requireAdmin(params)
     const cp = this.requireControlPlane()
     const stream = await this.requireStream(params)
     if (!isShareable(stream)) {
@@ -77,6 +78,7 @@ export class StreamConnectionService {
 
   async revokeInvite(params: { workspaceId: string; connectionId: string; userId: string }): Promise<StreamConnection> {
     await this.assertEnabled(params.workspaceId)
+    await this.requireAdmin(params)
     const cp = this.requireControlPlane()
     const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
     if (!connection || connection.role !== "host") {
@@ -92,8 +94,9 @@ export class StreamConnectionService {
     return this.readBack(params.workspaceId, snapshot.id)
   }
 
-  async assertCanAccept(workspaceId: string): Promise<void> {
-    await this.assertEnabled(workspaceId)
+  async assertCanAccept(params: { workspaceId: string; userId: string }): Promise<void> {
+    await this.assertEnabled(params.workspaceId)
+    await this.requireAdmin(params)
     this.requireControlPlane()
   }
 
@@ -103,7 +106,7 @@ export class StreamConnectionService {
     token: string
     visibility: Visibility
   }): Promise<StreamConnection> {
-    await this.assertCanAccept(params.workspaceId)
+    await this.assertCanAccept(params)
     const snapshot = await this.requireControlPlane().acceptStreamConnection({
       token: params.token,
       partnerWorkspaceId: params.workspaceId,
@@ -116,6 +119,7 @@ export class StreamConnectionService {
 
   async listForStream(params: { workspaceId: string; streamId: string; userId: string }): Promise<StreamConnection[]> {
     await this.assertEnabled(params.workspaceId)
+    await this.requireAdmin(params)
     await this.requireStream(params)
     const connections = await StreamConnectionRepository.listLiveForStream(
       this.pool,
@@ -150,17 +154,48 @@ export class StreamConnectionService {
    * The control plane keeps no copy of the channel, so it asks here before an
    * accept and to name the channel on the invite page.
    */
-  async describeChannel(params: { workspaceId: string; streamId: string }): Promise<StreamConnectionChannel> {
+  async describeChannel(params: {
+    workspaceId: string
+    streamId: string
+    invitedBy: string
+  }): Promise<StreamConnectionChannel> {
     if (!(await WorkspaceRepository.findById(this.pool, params.workspaceId))) {
       throw new HttpError("This workspace does not live in this region", { status: 404, code: "WORKSPACE_NOT_FOUND" })
     }
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, params.streamId, params.workspaceId)
     if (!stream) return { shareable: false, slug: null, displayName: null }
     return {
-      shareable: isShareable(stream) && (await this.isEnabled(params.workspaceId)),
+      shareable:
+        isShareable(stream) && (await this.isEnabled(params.workspaceId)) && (await this.inviterMayShare(params)),
       slug: stream.slug,
       displayName: stream.displayName,
     }
+  }
+
+  /** A link carries its creator's authority, so it lapses once they stop being an admin who can read the channel. */
+  private async inviterMayShare(params: {
+    workspaceId: string
+    streamId: string
+    invitedBy: string
+  }): Promise<boolean> {
+    if (!(await this.isCurrentAdmin(params.workspaceId, params.invitedBy))) return false
+    return (await checkStreamAccess(this.pool, params.streamId, params.workspaceId, params.invitedBy)) !== null
+  }
+
+  /**
+   * The route gate trusts the session's permission claim, which lags a
+   * demotion. A connection hands the channel to another tenant, so every action
+   * also checks the member's current role here.
+   */
+  private async requireAdmin(params: { workspaceId: string; userId: string }): Promise<void> {
+    if (!(await this.isCurrentAdmin(params.workspaceId, params.userId))) {
+      throw new HttpError("Insufficient permissions", { status: 403, code: "FORBIDDEN" })
+    }
+  }
+
+  private async isCurrentAdmin(workspaceId: string, userId: string): Promise<boolean> {
+    const user = await UserRepository.findById(this.pool, workspaceId, userId)
+    return user !== null && isAdmin(user.role)
   }
 
   /** Projects a control-plane snapshot. Safe to repeat and to receive out of order. */

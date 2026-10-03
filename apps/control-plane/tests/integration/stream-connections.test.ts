@@ -73,7 +73,8 @@ describe("StreamConnectionService", () => {
   }
 
   function channelLookup(workspaceId: string, streamId: string) {
-    return `/internal/stream-connections/channel?${new URLSearchParams({ workspaceId, streamId })}`
+    const query = new URLSearchParams({ workspaceId, streamId, invitedBy: "usr_inviter" })
+    return `/internal/stream-connections/channel?${query}`
   }
 
   beforeAll(async () => {
@@ -372,6 +373,27 @@ describe("StreamConnectionService", () => {
     expect((await liveConnections(host)).toSorted((a, b) => a.id.localeCompare(b.id))).toEqual(
       minted.map((m) => ({ id: m.snapshot.id, state: "invited" })).toSorted((a, b) => a.id.localeCompare(b.id))
     )
+  })
+
+  test("should cap a channel's open links even when they're minted at once, and free a slot on revoke", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const stream = `stream_capped_${crypto.randomUUID()}`
+
+    const results = await Promise.allSettled(Array.from({ length: 26 }, () => invite(host, stream)))
+    const outcomes = results.map((r) => outcomeOf(r, "minted"))
+    const [first] = results.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+    await service.revokeInvite({ connectionId: first.snapshot.id, hostWorkspaceId: host })
+    const afterRevoke = await invite(host, stream)
+
+    expect({
+      minted: outcomes.filter((o) => o === "minted").length,
+      refused: outcomes.filter((o) => o !== "minted"),
+      afterRevoke: afterRevoke.snapshot.state,
+    }).toEqual({
+      minted: 25,
+      refused: [StreamConnectionErrorCodes.TOO_MANY_INVITES],
+      afterRevoke: "invited",
+    })
   })
 
   test("should refuse to revoke an accepted share without touching it", async () => {

@@ -118,11 +118,21 @@ export const StreamConnectionRepository = {
     )
   },
 
-  /** Serializes changes to one channel's partners until the transaction ends. */
+  /** Serializes changes to one channel's links and partners until the transaction ends. */
   async lockChannel(db: Querier, hostWorkspaceId: string, hostStreamId: string): Promise<void> {
     await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
       `stream_connections:${hostWorkspaceId}:${hostStreamId}`,
     ])
+  },
+
+  /** Links of the channel still waiting for a workspace to accept them. */
+  async countPendingInvites(db: Querier, hostWorkspaceId: string, hostStreamId: string): Promise<number> {
+    const result = await db.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM stream_connections
+       WHERE host_workspace_id = $1 AND host_stream_id = $2 AND state = 'invited' AND expires_at > NOW()`,
+      [hostWorkspaceId, hostStreamId]
+    )
+    return Number(result.rows[0].count)
   },
 
   /** Locks the connection a token names. Call inside a transaction. */

@@ -9,7 +9,8 @@ import {
 } from "@threahq/types"
 import { streamConnectionId } from "@threahq/backend-common"
 import { setupTestDatabase, addTestMember } from "./setup"
-import { WorkspaceRepository } from "../../src/features/workspaces"
+import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
+import { WorkspaceUserPermissionsRepository } from "../../src/features/workspace-authz"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
@@ -593,14 +594,15 @@ describe("StreamConnectionService", () => {
     })
     const offChannel = await seedStream(switchedOff.id, switchedOff.adminId)
 
+    const inHost = { workspaceId: host.id, invitedBy: host.adminId }
     const answers = await Promise.all([
-      service.describeChannel({ workspaceId: host.id, streamId: channel.id }),
-      service.describeChannel({ workspaceId: host.id, streamId: dm.id }),
-      service.describeChannel({ workspaceId: host.id, streamId: archived.id }),
-      service.describeChannel({ workspaceId: host.id, streamId: sealed.id }),
-      service.describeChannel({ workspaceId: host.id, streamId: streamId() }),
-      service.describeChannel({ workspaceId: host.id, streamId: offChannel.id }),
-      service.describeChannel({ workspaceId: switchedOff.id, streamId: offChannel.id }),
+      service.describeChannel({ ...inHost, streamId: channel.id }),
+      service.describeChannel({ ...inHost, streamId: dm.id }),
+      service.describeChannel({ ...inHost, streamId: archived.id }),
+      service.describeChannel({ ...inHost, streamId: sealed.id }),
+      service.describeChannel({ ...inHost, streamId: streamId() }),
+      service.describeChannel({ ...inHost, streamId: offChannel.id }),
+      service.describeChannel({ workspaceId: switchedOff.id, streamId: offChannel.id, invitedBy: switchedOff.adminId }),
     ])
 
     const named = (stream: { slug: string | null }, shareable: boolean) => ({
@@ -620,8 +622,51 @@ describe("StreamConnectionService", () => {
     ])
   })
 
+  test("should stop calling a channel shareable once the link's creator is demoted, removed, or out of the private channel", async () => {
+    const host = await seedWorkspace("Acme")
+    const publicChannel = await seedStream(host.id, host.adminId)
+    const privateChannel = await seedStream(host.id, host.adminId, StreamTypes.CHANNEL, "private")
+    const [stillAdmin, demoted, removed, leftChannel, neverMember] = await Promise.all(
+      ["still", "demoted", "removed", "left", "never"].map((name) =>
+        addTestMember(pool, host.id, `${name}-${host.id}`, "admin")
+      )
+    )
+    for (const user of [stillAdmin, leftChannel]) await StreamMemberRepository.insert(pool, privateChannel.id, user.id)
+    await WorkspaceUserPermissionsRepository.upsert(pool, {
+      workspaceId: host.id,
+      workosUserId: demoted.workosUserId,
+      roleSlugs: ["member"],
+      status: "active",
+      lastEventAt: new Date(),
+    })
+    await UserRepository.remove(pool, host.id, removed.id)
+    await StreamMemberRepository.delete(pool, privateChannel.id, leftChannel.id)
+
+    const shareable = async (streamId: string, invitedBy: string) =>
+      (await service.describeChannel({ workspaceId: host.id, streamId, invitedBy })).shareable
+    const answers = {
+      stillAdmin: await shareable(privateChannel.id, stillAdmin.id),
+      demoted: await shareable(publicChannel.id, demoted.id),
+      removed: await shareable(publicChannel.id, removed.id),
+      leftChannel: await shareable(privateChannel.id, leftChannel.id),
+      neverMember: await shareable(privateChannel.id, neverMember.id),
+      neverMemberOnPublic: await shareable(publicChannel.id, neverMember.id),
+    }
+
+    expect(answers).toEqual({
+      stillAdmin: true,
+      demoted: false,
+      removed: false,
+      leftChannel: false,
+      neverMember: false,
+      neverMemberOnPublic: true,
+    })
+  })
+
   test("should refuse to describe a channel for a workspace this region doesn't hold", async () => {
-    await expect(service.describeChannel({ workspaceId: workspaceId(), streamId: streamId() })).rejects.toMatchObject({
+    await expect(
+      service.describeChannel({ workspaceId: workspaceId(), streamId: streamId(), invitedBy: userId() })
+    ).rejects.toMatchObject({
       status: 404,
       code: "WORKSPACE_NOT_FOUND",
     })
@@ -637,11 +682,40 @@ describe("StreamConnectionService", () => {
       service.listForStream(ids),
       service.revokeInvite({ workspaceId: host.id, connectionId: streamConnectionId(), userId: host.adminId }),
       service.accept({ workspaceId: host.id, userId: host.adminId, token: "tok", visibility: "public" }),
-      service.assertCanAccept(host.id),
+      service.assertCanAccept({ workspaceId: host.id, userId: host.adminId }),
     ])
 
     expect(outcomes.map((o) => (o.status === "rejected" ? (o.reason as { status: number; code: string }) : o))).toEqual(
       Array(5).fill(expect.objectContaining({ status: 404, code: StreamConnectionErrorCodes.DISABLED }))
+    )
+    expect(cp.requests).toEqual([])
+  })
+
+  test("should refuse every action from an admin demoted since signing in, before asking the control plane", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const pending = snapshot(host, stream.id)
+    await service.applySnapshot(pending)
+    const demoted = await addTestMember(pool, host.id, `demoted-${host.id}`, "admin")
+    await WorkspaceUserPermissionsRepository.upsert(pool, {
+      workspaceId: host.id,
+      workosUserId: demoted.workosUserId,
+      roleSlugs: ["member"],
+      status: "active",
+      lastEventAt: new Date(),
+    })
+    const ids = { workspaceId: host.id, streamId: stream.id, userId: demoted.id }
+
+    const outcomes = await Promise.allSettled([
+      service.createInvite(ids),
+      service.listForStream(ids),
+      service.revokeInvite({ workspaceId: host.id, connectionId: pending.id, userId: demoted.id }),
+      service.accept({ workspaceId: host.id, userId: demoted.id, token: "tok", visibility: "public" }),
+      service.assertCanAccept({ workspaceId: host.id, userId: demoted.id }),
+    ])
+
+    expect(outcomes.map((o) => (o.status === "rejected" ? (o.reason as { status: number; code: string }) : o))).toEqual(
+      Array(5).fill(expect.objectContaining({ status: 403, code: "FORBIDDEN" }))
     )
     expect(cp.requests).toEqual([])
   })

@@ -14,6 +14,8 @@ export {
   userGroup,
   permissionGroup,
   permissionGroupsForRole,
+  permissionRoomsFor,
+  syncPermissionRooms,
 } from "./delivery-groups"
 export { parseMessagePayload, type NormalizedMessagePayload } from "./payload-parsers"
 export {

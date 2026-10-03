@@ -389,6 +389,10 @@ describe("ConnectTab", () => {
       error: new ApiError(409, StreamConnectionErrorCodes.NOT_SHAREABLE, "not shareable"),
       message: "Only active, unencrypted channels can be shared.",
     },
+    {
+      error: new ApiError(409, StreamConnectionErrorCodes.TOO_MANY_INVITES, "too many"),
+      message: "This channel has too many open links. Revoke one to create another.",
+    },
     { error: new ApiError(500, "INTERNAL", "boom"), message: "Couldn't create the link. Try again." },
   ])("should say why creating the link failed and let the admin retry ($error.code)", async ({ error, message }) => {
     vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])

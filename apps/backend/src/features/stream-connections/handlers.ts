@@ -6,7 +6,11 @@ import type { StreamConnectionService } from "./service"
 
 const streamParamsSchema = z.object({ streamId: z.string().min(1) })
 const connectionParamsSchema = z.object({ connectionId: streamConnectionIdSchema })
-const channelQuerySchema = z.object({ workspaceId: z.string().min(1), streamId: z.string().min(1) })
+const channelQuerySchema = z.object({
+  workspaceId: z.string().min(1),
+  streamId: z.string().min(1),
+  invitedBy: z.string().min(1),
+})
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -47,7 +51,7 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
     /** The invite page's workspace picker: answers with the same refusals accept would. */
     async canAccept(req: Request, res: Response) {
-      await streamConnectionService.assertCanAccept(req.workspaceId!)
+      await streamConnectionService.assertCanAccept({ workspaceId: req.workspaceId!, userId: req.user!.id })
       res.status(204).send()
     },
 

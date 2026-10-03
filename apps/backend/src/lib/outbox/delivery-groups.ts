@@ -116,6 +116,38 @@ export function permissionGroupsForRole(role: WorkspaceRoleSlug): string[] {
 }
 
 /**
+ * Moves a member's live sockets into exactly the permission rooms `role`
+ * grants, so a role change takes effect without a rejoin. `null` (removed)
+ * leaves them all.
+ */
+export function syncPermissionRooms(
+  io: Server,
+  workspaceId: string,
+  userId: string,
+  role: WorkspaceRoleSlug | null
+): void {
+  const { held, stale } = permissionRoomsFor(workspaceId, role)
+  const sockets = io.in(groupToRoom(workspaceId, userGroup(userId)))
+  if (stale.length > 0) sockets.socketsLeave(stale)
+  if (held.length > 0) sockets.socketsJoin(held)
+}
+
+/** A workspace's permission rooms, split into those `role` grants and the rest. `null` holds none. */
+export function permissionRoomsFor(
+  workspaceId: string,
+  role: WorkspaceRoleSlug | null
+): { held: string[]; stale: string[] } {
+  const held = role ? permissionGroupsForRole(role) : []
+  const toRoom = (group: string) => groupToRoom(workspaceId, group)
+  return {
+    held: held.map(toRoom),
+    stale: DELIVERED_PERMISSION_SCOPES.map(permissionGroup)
+      .filter((group) => !held.includes(group))
+      .map(toRoom),
+  }
+}
+
+/**
  * Socket.io room for a delivery group. Rooms are the group name prefixed with
  * the workspace scope: `ws:<wsId>`, `ws:<wsId>:stream:<id>`, `ws:<wsId>:user:<id>`.
  */

@@ -19,11 +19,13 @@ import { useWorkspaceUsers } from "@/stores/workspace-store"
 
 const HOUR_MS = 60 * 60_000
 
+const CREATE_ERROR_COPY: Partial<Record<string, string>> = {
+  [StreamConnectionErrorCodes.NOT_SHAREABLE]: "Only active, unencrypted channels can be shared.",
+  [StreamConnectionErrorCodes.TOO_MANY_INVITES]: "This channel has too many open links. Revoke one to create another.",
+}
+
 function createErrorMessage(error: unknown): string {
-  if (ApiError.isApiError(error) && error.code === StreamConnectionErrorCodes.NOT_SHAREABLE) {
-    return "Only active, unencrypted channels can be shared."
-  }
-  return "Couldn't create the link. Try again."
+  return (ApiError.isApiError(error) && CREATE_ERROR_COPY[error.code]) || "Couldn't create the link. Try again."
 }
 
 const REVOKE_ERROR_COPY: Partial<Record<string, string>> = {

@@ -19,8 +19,10 @@ import {
   type StreamDelegationStatusChangedOutboxPayload,
   type StreamBotAccessStatusChangedOutboxPayload,
   type CallTransportTransferChangedOutboxPayload,
+  type WorkspaceUserRemovedOutboxPayload,
+  type WorkspaceUserUpdatedOutboxPayload,
 } from "./repository"
-import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
+import { resolveDeliveryGroups, emitToGroups, syncPermissionRooms } from "./delivery-groups"
 import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
@@ -227,6 +229,15 @@ export class BroadcastHandler implements OutboxHandler {
     if (groups === null) {
       this.dispatchBotEvent(event)
       return
+    }
+
+    if (isOutboxEventType(event, "workspace_user:updated")) {
+      const { workspaceId, user } = event.payload as WorkspaceUserUpdatedOutboxPayload
+      syncPermissionRooms(this.io, workspaceId, user.id, user.role)
+    }
+    if (isOutboxEventType(event, "workspace_user:removed")) {
+      const { workspaceId, removedUserId } = event.payload as WorkspaceUserRemovedOutboxPayload
+      syncPermissionRooms(this.io, workspaceId, removedUserId, null)
     }
 
     emitToGroups(this.io, event, groups, routedEvent?.syncId)

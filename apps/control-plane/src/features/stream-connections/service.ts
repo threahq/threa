@@ -17,6 +17,8 @@ import { RegionUnavailableError, type RegionalClient } from "../../lib/regional-
 export const OUTBOX_STREAM_CONNECTION_SYNC = "stream_connection_sync"
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** Each link is a credential in flight, so a channel can't pile up an unbounded number of them. */
+const MAX_PENDING_INVITES = 25
 
 /** Carries only the id; the handler re-reads current state, so replays are idempotent. */
 export interface StreamConnectionSyncPayload extends Record<string, unknown> {
@@ -80,6 +82,13 @@ function alreadyAccepted(): HttpError {
   return new HttpError("Invite already accepted", { status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED })
 }
 
+function tooManyInvites(): HttpError {
+  return new HttpError("This channel has too many open invite links", {
+    status: 409,
+    code: StreamConnectionErrorCodes.TOO_MANY_INVITES,
+  })
+}
+
 function hostRegionUnavailable(): HttpError {
   return new HttpError("The channel's region didn't answer", {
     status: 503,
@@ -136,6 +145,13 @@ export class StreamConnectionService {
     const id = streamConnectionId()
     const token = randomBytes(32).toString("base64url")
     await withTransaction(this.pool, async (client) => {
+      await StreamConnectionRepository.lockChannel(client, params.hostWorkspaceId, params.hostStreamId)
+      const pending = await StreamConnectionRepository.countPendingInvites(
+        client,
+        params.hostWorkspaceId,
+        params.hostStreamId
+      )
+      if (pending >= MAX_PENDING_INVITES) throw tooManyInvites()
       await StreamConnectionRepository.insert(client, {
         id,
         hostWorkspaceId: params.hostWorkspaceId,
@@ -179,8 +195,9 @@ export class StreamConnectionService {
     if (!found) throw notFound()
     const early = refusalFor({ ...found, expiresAt: new Date(found.expiresAt) }, params.partnerWorkspaceId)
     if (early) throw early
-    // The host may have archived the channel or switched sharing off since the
-    // link was minted. Asked before the transaction so no lock waits on the region.
+    // Since the link was minted the host may have archived the channel or
+    // switched sharing off, or its creator may have lost admin or the channel.
+    // Asked before the transaction so no lock waits on the region.
     if (found.state === StreamConnectionStates.INVITED && !(await this.describeChannel(found)).shareable) {
       throw notShareable()
     }
@@ -311,6 +328,7 @@ export class StreamConnectionService {
       return await this.regionalClient.describeStreamConnectionChannel(snapshot.hostRegion, {
         workspaceId: snapshot.hostWorkspaceId,
         streamId: snapshot.hostStreamId,
+        invitedBy: snapshot.invitedBy,
       })
     } catch (err) {
       if (!(err instanceof RegionUnavailableError)) throw err
