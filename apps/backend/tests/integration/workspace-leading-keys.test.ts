@@ -238,10 +238,10 @@ describe("workspace-leading twin keys", () => {
     expect(violations).toEqual([])
   })
 
-  test("should open every twin migration with SET LOCAL lock_timeout when it builds its index under a table lock", () => {
+  test("should open every key and bridge migration with SET LOCAL lock_timeout when it takes a table lock", () => {
     const openingLines = Object.fromEntries(
       readdirSync(MIGRATIONS_DIR)
-        .filter((file) => file.includes("_workspace_leading_keys_"))
+        .filter((file) => file.includes("_workspace_leading_keys_") || file.includes("_workspace_id_bridge_drop_"))
         .map((file) => [file, readFileSync(path.join(MIGRATIONS_DIR, file), "utf8").split("\n")[0]])
     )
 
