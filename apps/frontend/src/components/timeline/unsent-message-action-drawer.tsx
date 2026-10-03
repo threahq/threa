@@ -67,7 +67,7 @@ export function UnsentMessageActionDrawer({
             <Pencil className="h-[18px] w-[18px] text-muted-foreground shrink-0" />
             <span>Edit</span>
           </button>
-          <Separator className="mx-3 my-1 bg-border/50" />
+          <Separator className="mx-3 my-1 w-auto bg-border/50" />
           <button
             type="button"
             className={cn(

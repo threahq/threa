@@ -625,5 +625,5 @@ function SidebarActionDrawerRow({
 }
 
 function Divider() {
-  return <Separator className="mx-3 my-1 bg-border/50" />
+  return <Separator className="mx-3 my-1 w-auto bg-border/50" />
 }
