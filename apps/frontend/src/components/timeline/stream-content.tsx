@@ -2941,8 +2941,9 @@ export function StreamContent({
                           <EventList
                             timelineItems={timelineItems}
                             isLoading={isLoading}
-                            // Rows that exist but are all hidden in a thread (membership) are an answer too.
-                            isConfirmedEmpty={isConfirmedEmpty || events.length > 0}
+                            // Rows that are all hidden in a thread (membership) are an answer too,
+                            // once the server has given one: a cache can hold them and miss the replies.
+                            isConfirmedEmpty={isConfirmedEmpty || (events.length > 0 && bootstrap !== undefined)}
                             workspaceId={workspaceId}
                             streamId={streamId}
                             highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}

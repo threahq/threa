@@ -15,6 +15,12 @@ import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk 
 test.describe.configure({ timeout: 120_000 })
 
 const PHONE = { width: 412, height: 800 }
+// UNREAD_MARKER_TOP_GAP_PX: where a marker landing puts the first unread row.
+const LANDING_TOP_PX = 56
+// The "Loading older messages..." row (36 px) comes and goes above the reader;
+// without scroll anchoring nothing absorbs it.
+const LOADING_ROW_PX = 36
+const SLACK_PX = 8
 const FILLER = "with enough filler text that the row wraps across a few lines on a phone-width timeline"
 
 function extractIds(page: Page): { workspaceId: string; streamId: string } {
@@ -241,10 +247,11 @@ for (const anchoring of [true, false]) {
     const frames = await readFrames()
     const withRows = frames.filter((f) => f.rows > 0)
     const first = withRows[0]
-    const offMarker = withRows.filter((f) => f.markerTop === null || f.markerTop < 0 || f.markerTop > 200)
+    const maxDrift = (anchoring ? 0 : LOADING_ROW_PX) + SLACK_PX
+    const offMarker = (f: Frame) => f.markerTop === null || Math.abs(f.markerTop - LANDING_TOP_PX) > maxDrift
     expect({
-      firstFrameAtMarker: first.markerTop !== null && first.markerTop >= 0 && first.markerTop <= 200,
-      framesOffMarker: offMarker.slice(0, 3),
+      firstFrameAtMarker: !offMarker(first),
+      framesOffMarker: withRows.filter(offMarker).slice(0, 3),
       windowGrewUpward: withRows.at(-1)!.rows > rowsBeforeOlderPage,
       emptyStateFrames: frames.filter((f) => f.empty).length,
     }).toEqual({
