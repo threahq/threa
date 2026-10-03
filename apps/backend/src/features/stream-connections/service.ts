@@ -197,7 +197,7 @@ export class StreamConnectionService {
 
   private async isCurrentAdmin(workspaceId: string, userId: string): Promise<boolean> {
     const user = await UserRepository.findById(this.pool, workspaceId, userId)
-    if (!user || !isAdmin(user.role)) return false
+    if (!user?.workosUserId || !isAdmin(user.role)) return false
     const membership = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(
       this.pool,
       workspaceId,
