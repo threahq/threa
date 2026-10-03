@@ -98,6 +98,8 @@ const PER_TURN_SENTINEL_VALUES: Record<string, Partial<SystemPromptInputs>> = {
       updatedAt: "2026-01-01T00:00:00.000Z",
     } satisfies UserPreferences,
   },
+  // Layout is the one free-text slot in the rendered line, so it carries the sentinel.
+  deviceContext: { deviceContext: { layout: SENTINEL as never, os: "android", installed: true } },
   followUp: {
     purpose: { kind: "follow_up", followUpId: "fup_1" },
     followUp: { note: SENTINEL, scheduledFor: new Date("2026-07-04T09:00:00.000Z") },

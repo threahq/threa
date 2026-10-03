@@ -48,6 +48,12 @@ describe("buildHowIWorkSection", () => {
     expect(card).toContain("Memory capture is on here")
   })
 
+  test("should say the device the user shares is part of what it sees", () => {
+    const card = buildHowIWorkSection(ariadne, privateScratchpad, [])
+
+    expect(card).toContain("and, if the user shares it, which layout and device they're using. You don't watch")
+  })
+
   test("should give every agent tool a capability line except replying and reporting back", () => {
     const toolsWithoutLine = Object.values(AgentToolNames).filter((tool) =>
       capabilities(buildHowIWorkSection(ariadne, privateScratchpad, [tool]))[0]!.startsWith("Nothing")

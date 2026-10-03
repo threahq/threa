@@ -4,6 +4,7 @@ import { DEFAULT_BOARD_LEDGER_ROWS } from "@threahq/types"
 import { UserPreferencesService } from "./service"
 import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { UserDeviceContextRepository } from "../device-context"
 import { PersonaRepository } from "../agents"
 import * as dbModule from "../../db"
 
@@ -292,5 +293,46 @@ describe("UserPreferencesService.updatePreferences pushQuickReaction", () => {
 
     expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "pushQuickReaction", value: "🎉" }])
     expect(prefs.pushQuickReaction).toBe("🎉")
+  })
+})
+
+describe("UserPreferencesService.updatePreferences shareDeviceWithAgents", () => {
+  afterEach(() => mock.restore())
+
+  function setup() {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const deleteDevice = spyOn(UserDeviceContextRepository, "delete").mockResolvedValue(undefined)
+    return { bulkSet, bulkDelete, deleteDevice, service: new UserPreferencesService({} as any) }
+  }
+
+  it("deletes the stored device in the same transaction when sharing is turned off", async () => {
+    const { bulkSet, deleteDevice, service } = setup()
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: false })
+
+    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "shareDeviceWithAgents", value: false }])
+    expect(deleteDevice).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID)
+  })
+
+  it("keeps the stored device when sharing is turned on", async () => {
+    const { bulkDelete, deleteDevice, service } = setup()
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: true })
+
+    // On is the default, so it clears the override rather than storing one.
+    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["shareDeviceWithAgents"])
+    expect(deleteDevice).not.toHaveBeenCalled()
+  })
+
+  it("leaves the stored device alone on unrelated updates", async () => {
+    const { deleteDevice, service } = setup()
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { sidebarCollapsed: true })
+
+    expect(deleteDevice).not.toHaveBeenCalled()
   })
 })

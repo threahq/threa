@@ -4,6 +4,7 @@ import { WorkspaceRepository, Workspace } from "./repository"
 import { UserRepository, type User } from "./user-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository, StreamMemberRepository, ReadStateRepository } from "../streams"
+import { UserDeviceContextRepository } from "../device-context"
 import { EmojiUsageRepository } from "../emoji"
 import { PersonaRepository, type Persona } from "../agents"
 import { workspaceId, userId as generateUserId, streamId, avatarUploadId } from "../../lib/id"
@@ -324,6 +325,7 @@ export class WorkspaceService {
       // stream_members is orphaned here rather than deleted, so this is the
       // user-lifecycle cleanup site, not a mirror of a membership delete.
       await ReadStateRepository.deleteForUser(client, workspaceId, userId)
+      await UserDeviceContextRepository.delete(client, workspaceId, userId)
 
       await OutboxRepository.insert(client, "workspace_user:removed", {
         workspaceId,

@@ -4,6 +4,7 @@ import { UserPreferencesRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { assertAssignablePersona } from "../agents"
 import { toShortcode } from "../emoji"
+import { UserDeviceContextRepository } from "../device-context"
 import { ReadStateRepository, releaseInboxHold } from "../streams"
 import { HttpError } from "../../lib/errors"
 import {
@@ -112,6 +113,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "performanceDiagnosticsOptIn",
     "analyticsConsent",
     "sessionReplayOptIn",
+    "shareDeviceWithAgents",
   ] as const
 
   // Replay rides on analytics consent: withdrawing consent withdraws replay
@@ -219,6 +221,12 @@ export class UserPreferencesService {
       }
       if (toDelete.length > 0) {
         await UserPreferencesRepository.bulkDeleteOverrides(client, userId, toDelete)
+      }
+
+      // The stored device goes with the consent, atomically: a failed write
+      // must not leave sharing off while the last device is still stored.
+      if (updates.shareDeviceWithAgents === false) {
+        await UserDeviceContextRepository.delete(client, workspaceId, userId)
       }
 
       if (updates.inboxClearMode === "read") {

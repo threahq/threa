@@ -11,10 +11,11 @@ const updatePreference = vi.fn()
 
 function mount(
   consent: "unset" | "granted" | "denied",
-  analytics: object | null = { posthogToken: "tok", posthogHost: "https://eu.example.com" }
+  analytics: object | null = { posthogToken: "tok", posthogHost: "https://eu.example.com" },
+  shareDeviceWithAgents?: boolean
 ) {
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
-    preferences: { analyticsConsent: consent },
+    preferences: { analyticsConsent: consent, shareDeviceWithAgents },
     updatePreference,
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
   vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockReturnValue({
@@ -72,5 +73,38 @@ describe("PrivacySettings", () => {
     await userEvent.click(screen.getByRole("switch", { name: /send crash reports and usage data/i }))
 
     expect(error).toHaveBeenCalledWith("Failed to update the privacy preference")
+  })
+
+  describe("device sharing", () => {
+    const deviceSwitch = () => screen.getByRole("switch", { name: /tell agents which device i'm on/i })
+
+    it("is on until the user turns it off", () => {
+      mount("unset")
+      expect(deviceSwitch()).toBeChecked()
+    })
+
+    it("reflects an explicit off", () => {
+      mount("unset", undefined, false)
+      expect(deviceSwitch()).not.toBeChecked()
+    })
+
+    it("writes false when switched off", async () => {
+      mount("unset")
+      await userEvent.click(deviceSwitch())
+      expect(updatePreference).toHaveBeenCalledWith("shareDeviceWithAgents", false)
+    })
+
+    it("writes true when switched back on", async () => {
+      mount("unset", undefined, false)
+      await userEvent.click(deviceSwitch())
+      expect(updatePreference).toHaveBeenCalledWith("shareDeviceWithAgents", true)
+    })
+
+    it("discloses what is shared", () => {
+      mount("unset")
+      expect(
+        screen.getByText(/mobile or desktop layout, your operating system, and whether Threa is installed/)
+      ).toBeTruthy()
+    })
   })
 })

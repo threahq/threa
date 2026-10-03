@@ -13,6 +13,7 @@ import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
 import { UserRepository, type WorkspaceService } from "./features/workspaces"
+import { DeviceHeartbeatSync } from "./features/device-context"
 import {
   enqueueVisiblePreviewRefreshes,
   VISIBLE_REFRESH_MAX_IDS,
@@ -650,39 +651,48 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     )
 
     let lastHeartbeatAt = 0
+    const deviceSync = new DeviceHeartbeatSync(pool)
     // Interaction-driven heartbeats bypass the throttle: the client only emits
     // them on the first interaction after a quiet stretch, and we want the
     // backend to learn about renewed activity within seconds, not up to 30s.
-    socket.on("heartbeat", (payload?: { focused?: boolean; interacted?: boolean; timezone?: string }) => {
-      // Device-timezone refresh runs before the push gate — it must work even
-      // when push is disabled. Validate only on change; steady-state heartbeats
-      // repeat the same string.
-      if (
-        typeof payload?.timezone === "string" &&
-        payload.timezone !== deviceTimezone &&
-        isValidIanaTimezone(payload.timezone)
-      ) {
-        deviceTimezone = payload.timezone
-        for (const [wsId, entry] of userRooms) syncDeviceTimezone(wsId, entry)
-      }
+    socket.on(
+      "heartbeat",
+      (payload?: { focused?: boolean; interacted?: boolean; timezone?: string; device?: unknown }) => {
+        // Device-timezone refresh runs before the push gate — it must work even
+        // when push is disabled. Validate only on change; steady-state heartbeats
+        // repeat the same string.
+        if (
+          typeof payload?.timezone === "string" &&
+          payload.timezone !== deviceTimezone &&
+          isValidIanaTimezone(payload.timezone)
+        ) {
+          deviceTimezone = payload.timezone
+          for (const [wsId, entry] of userRooms) syncDeviceTimezone(wsId, entry)
+        }
 
-      if (!pushService.isEnabled()) return
-      const interacted = payload?.interacted === true
-      const now = Date.now()
-      if (!interacted && now - lastHeartbeatAt < HEARTBEAT_INTERACTION_THROTTLE_MS) return
-      lastHeartbeatAt = now
-      const deviceKey = deriveDeviceKey(socket.handshake.headers["user-agent"])
-      const focused = payload?.focused === true
-      const entries = Array.from(userRooms, ([wsId, entry]) => ({
-        workspaceId: wsId,
-        userId: entry.userId,
-        deviceKey,
-      }))
-      if (entries.length === 0) return
-      pushService.upsertSessionsBatch(entries, { focused, interacted }).catch((err) => {
-        logger.warn({ err }, "Failed to upsert sessions on heartbeat")
-      })
-    })
+        deviceSync.handle(
+          { device: payload?.device, interacted: payload?.interacted === true },
+          Array.from(userRooms, ([workspaceId, entry]) => ({ workspaceId, userId: entry.userId }))
+        )
+
+        if (!pushService.isEnabled()) return
+        const interacted = payload?.interacted === true
+        const now = Date.now()
+        if (!interacted && now - lastHeartbeatAt < HEARTBEAT_INTERACTION_THROTTLE_MS) return
+        lastHeartbeatAt = now
+        const deviceKey = deriveDeviceKey(socket.handshake.headers["user-agent"])
+        const focused = payload?.focused === true
+        const entries = Array.from(userRooms, ([wsId, entry]) => ({
+          workspaceId: wsId,
+          userId: entry.userId,
+          deviceKey,
+        }))
+        if (entries.length === 0) return
+        pushService.upsertSessionsBatch(entries, { focused, interacted }).catch((err) => {
+          logger.warn({ err }, "Failed to upsert sessions on heartbeat")
+        })
+      }
+    )
 
     // Viewport nudge: the client reports which provider preview cards are on
     // screen so the worker can run a conditional (ETag-gated) refresh for repos

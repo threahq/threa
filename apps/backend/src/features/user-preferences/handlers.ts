@@ -178,6 +178,7 @@ const updatePreferencesSchema = z.object({
   performanceDiagnosticsOptIn: z.boolean().optional(),
   analyticsConsent: z.enum(ANALYTICS_CONSENT_OPTIONS).optional(),
   sessionReplayOptIn: z.boolean().optional(),
+  shareDeviceWithAgents: z.boolean().optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({

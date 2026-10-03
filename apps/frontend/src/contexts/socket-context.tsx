@@ -6,6 +6,8 @@ import { useAccountScopeOptional } from "@/auth/account-scope"
 import { getAssertedAccount, reportAccountMismatch } from "@/api/account-assertion"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { setPreviewVisibilityEmitter } from "@/lib/preview-visibility"
+import { buildHeartbeatPayload } from "@/lib/device"
+import { useWorkspaceUserPreferences } from "@/stores/workspace-store"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
 import { useSwPresence } from "@/hooks/use-sw-presence"
@@ -67,6 +69,10 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
   const pageActivity = usePageActivity()
   const pageInteraction = usePageInteraction()
   const accountId = useAccountScopeOptional()?.activeWorkosUserId ?? null
+  // SocketProvider sits outside PreferencesProvider, so read the store directly. A ref keeps
+  // the heartbeat effects from re-subscribing when the toggle flips.
+  const shareDeviceWithAgentsRef = useRef(true)
+  shareDeviceWithAgentsRef.current = useWorkspaceUserPreferences(workspaceId)?.shareDeviceWithAgents !== false
 
   // Track if we've ever been connected (to distinguish initial connect from reconnect)
   const hasEverConnectedRef = useRef(false)
@@ -300,14 +306,14 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       const lastInteractionAt = pageInteraction.getLastInteractionAt()
       const interacted = lastInteractionAt > lastSentInteractionAtRef.current
       if (interacted) lastSentInteractionAtRef.current = lastInteractionAt
-      socket.emit("heartbeat", {
-        focused: pageFocusedRef.current,
-        interacted,
-        // Resolved per emit (not cached) so travel/DST changes reach the backend
-        // on the next beat — it keeps users.timezone matching the device, which
-        // grounds agent runs in the user's actual local time.
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      })
+      socket.emit(
+        "heartbeat",
+        buildHeartbeatPayload({
+          focused: pageFocusedRef.current,
+          interacted,
+          shareDeviceWithAgents: shareDeviceWithAgentsRef.current,
+        })
+      )
     }
 
     // Emit immediately so the backend knows this tab is active right away
@@ -353,11 +359,14 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
     const now = Date.now()
     if (gainedFocus || now - focusChangeThrottleRef.current > FOCUS_CHANGE_HEARTBEAT_THROTTLE_MS) {
       focusChangeThrottleRef.current = now
-      socket.emit("heartbeat", {
-        focused: pageActivity.isFocused,
-        interacted: false,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      })
+      socket.emit(
+        "heartbeat",
+        buildHeartbeatPayload({
+          focused: pageActivity.isFocused,
+          interacted: false,
+          shareDeviceWithAgents: shareDeviceWithAgentsRef.current,
+        })
+      )
     }
   }, [socket, status, pageActivity])
 

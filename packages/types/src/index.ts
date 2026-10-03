@@ -1243,6 +1243,17 @@ export {
   MAX_STATUS_PRESETS,
 } from "./user-status"
 
+// Device context
+export {
+  DEVICE_LAYOUTS,
+  DEVICE_OSES,
+  deviceContextSchema,
+  parseDeviceContext,
+  type DeviceLayout,
+  type DeviceOs,
+  type DeviceContext,
+} from "./device-context"
+
 // Sidebar configuration
 export {
   SIDEBAR_SECTION_KEYS,

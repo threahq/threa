@@ -508,6 +508,12 @@ export interface UserPreferences {
    * recording on a PostHog instance that consent already brought up.
    */
   sessionReplayOptIn: boolean
+  /**
+   * Whether agents may know which layout, OS and install state the user's
+   * current device has. On by default; turning it off stops the client
+   * reporting it and deletes the stored value.
+   */
+  shareDeviceWithAgents: boolean
   createdAt: string
   updatedAt: string
 }
@@ -565,6 +571,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   performanceDiagnosticsOptIn: false,
   analyticsConsent: "unset",
   sessionReplayOptIn: false,
+  shareDeviceWithAgents: true,
 }
 
 /**
@@ -620,6 +627,7 @@ export interface UpdateUserPreferencesInput {
   performanceDiagnosticsOptIn?: boolean
   analyticsConsent?: AnalyticsConsent
   sessionReplayOptIn?: boolean
+  shareDeviceWithAgents?: boolean
 }
 
 /**

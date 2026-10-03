@@ -31,6 +31,14 @@ export function PrivacySettings() {
     }
   }
 
+  async function toggleDevice(checked: boolean) {
+    try {
+      await updatePreference("shareDeviceWithAgents", checked)
+    } catch (err) {
+      toast.error(ApiError.isApiError(err) ? err.message : "Failed to update the privacy preference")
+    }
+  }
+
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -69,6 +77,24 @@ export function PrivacySettings() {
             checked={replayOptIn}
             disabled={!granted}
             onCheckedChange={(checked) => void toggleReplay(checked)}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="share-device-with-agents">Tell agents which device I&apos;m on</Label>
+            <p className="text-sm text-muted-foreground">
+              Agents see whether you&apos;re on the mobile or desktop layout, your operating system, and whether Threa
+              is installed, so their directions match your screen.
+            </p>
+          </div>
+          <Switch
+            className="shrink-0"
+            id="share-device-with-agents"
+            checked={preferences?.shareDeviceWithAgents !== false}
+            onCheckedChange={(checked) => void toggleDevice(checked)}
           />
         </div>
       </section>
