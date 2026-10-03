@@ -45,7 +45,7 @@ export { prependThreadNamingAnchor, renderNamingEventAnchor } from "./naming-con
 
 export { publishThreadUpdated } from "./thread-updated"
 export type { ThreadUpdatedSource } from "./thread-updated"
-export { adjustStreamMessageCount } from "./message-count"
+export { adjustStreamMessageCount, lockMessageCountStreams } from "./message-count"
 export { registerStreamMessageCountBackfill } from "./message-count-backfill"
 
 export { NOTIFICATION_CONFIG, isAllowedLevel, getDefaultLevel, getEffectiveLevel } from "./notification-config"

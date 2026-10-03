@@ -643,6 +643,35 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(row?.archivedAt).toBe("2026-01-01T00:00:00Z")
   })
 
+  it("keeps an archived root's newer count and title over an older bootstrap snapshot", async () => {
+    const fetchStartedAt = Date.now()
+    const current = makeStream("stream_arch_revision", {
+      archivedAt: "2026-01-01T00:00:00Z",
+      displayName: "new title",
+      displayNameRevision: 4,
+      messageCount: 12,
+      messageCountRevision: 12,
+    })
+    await db.streams.put({ ...current, _cachedAt: fetchStartedAt - 1000 })
+
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        archivedStreams: [
+          { ...current, displayName: "old title", displayNameRevision: 2, messageCount: 9, messageCountRevision: 9 },
+        ],
+      }),
+      fetchStartedAt
+    )
+
+    expect(await db.streams.get(current.id)).toMatchObject({
+      displayName: "new title",
+      displayNameRevision: 4,
+      messageCount: 12,
+      messageCountRevision: 12,
+    })
+  })
+
   it("seeds archived roots into the synchronous in-memory cache (no first-paint flash)", async () => {
     const fetchStartedAt = Date.now()
     const archivedRoot = makeStream("stream_arch_seed", { archivedAt: "2026-01-01T00:00:00Z" })

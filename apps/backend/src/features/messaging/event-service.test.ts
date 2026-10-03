@@ -39,6 +39,8 @@ beforeEach(() => {
   spyOn(StreamContextRepository, "deleteByMessageId").mockResolvedValue(0)
   spyOn(StreamContextRepository, "reparentMessages").mockResolvedValue(0)
   spyOn(StreamRepository, "adjustMessageCount").mockResolvedValue(null)
+  spyOn(StreamRepository, "listAncestorChainIds").mockImplementation(async (_db, _ws, ids) => [...ids])
+  spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue([])
   // Default inboxClearMode ("interaction", no override) for every hold/clear
   // site `resolveInboxClearMode` reaches on the shared `{}` fixture client.
   spyOn(UserPreferencesRepository, "findOverride").mockResolvedValue(null)
@@ -1752,6 +1754,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
       payload: { sourceStreamId: "stream_src", targetMessageId: "msg_target", messageIds: ["msg_a"] },
     } as any)
     spyOn(StreamRepository, "findById").mockResolvedValue(sourceStream as any)
+    spyOn(StreamRepository, "findByAnchor").mockResolvedValue(null)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({
       id: "msg_target",

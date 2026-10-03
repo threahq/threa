@@ -5,6 +5,7 @@ import {
   StreamRepository,
   publishThreadUpdated,
   adjustStreamMessageCount,
+  lockMessageCountStreams,
   type Stream,
   type ThreadUpdatedSource,
 } from "../streams"
@@ -1628,6 +1629,8 @@ export class EventService {
             streamId,
             principal: authority.principal,
           })
+        } else {
+          await lockMessageCountStreams(client, params.workspaceId, [streamId])
         }
         const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
         if (!existing || existing.deletedAt) return { kind: "done" as const, value: null }
@@ -1747,17 +1750,20 @@ export class EventService {
         })
       }
 
+      const existingDestination = await StreamRepository.findByAnchor(
+        client,
+        params.sourceStreamId,
+        params.targetMessageId
+      )
+      const streamIds = [params.sourceStreamId, ...(existingDestination ? [existingDestination.id] : [])]
       if (authority.kind === "principal") {
-        const existingDestination = await StreamRepository.findByAnchor(
-          client,
-          params.sourceStreamId,
-          params.targetMessageId
-        )
         await assertStreamsWritable(client, {
           workspaceId: params.workspaceId,
-          streamIds: [params.sourceStreamId, ...(existingDestination ? [existingDestination.id] : [])],
+          streamIds,
           principal: authority.principal,
         })
+      } else {
+        await lockMessageCountStreams(client, params.workspaceId, streamIds)
       }
 
       const sourceStream = await StreamRepository.findById(client, params.sourceStreamId)

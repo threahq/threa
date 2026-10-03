@@ -2789,7 +2789,10 @@ function mapArchivedStreamRows(
   existingByStreamId: Map<string, CachedStream>,
   now: number
 ): CachedStream[] {
-  return archivedStreams.map((s) => ({ ...existingByStreamId.get(s.id), ...s, _cachedAt: now }))
+  return archivedStreams.map((s) => {
+    const existing = existingByStreamId.get(s.id)
+    return { ...(existing ? mergeStreamByRevision(existing, s) : s), _cachedAt: now }
+  })
 }
 
 export async function applyWorkspaceBootstrap(

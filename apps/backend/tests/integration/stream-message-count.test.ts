@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { Pool } from "pg"
+import { Pool, type PoolClient } from "pg"
 import { setupTestDatabase, testMessageContent, addTestMember } from "./setup"
 import { StreamMemberRepository, StreamRepository, StreamService } from "../../src/features/streams"
 import { processChunk } from "../../src/features/streams/message-count-backfill"
@@ -123,6 +123,117 @@ describe("Stream all-time message count", () => {
         messageCountRevision: 1,
       },
     })
+  })
+
+  /** Whether some backend queues on a lock `holder` owns within two seconds. */
+  async function waitForLockWaiter(holder: PoolClient): Promise<boolean> {
+    const { rows } = await holder.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")
+    for (let i = 0; i < 40; i++) {
+      const waiting = await pool.query("SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", [
+        rows[0]!.pid,
+      ])
+      if ((waiting.rowCount ?? 0) > 0) return true
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return false
+  }
+
+  async function settle<T>(work: Promise<T>): Promise<string> {
+    return work.then(
+      () => "ok",
+      (error: { code?: string; message?: string }) => error.code ?? error.message ?? "failed"
+    )
+  }
+
+  test("should route a thread's count event by the visibility its root commits, not a stale snapshot", async () => {
+    const { wsId, sid, actorId } = await setup(Visibilities.PUBLIC)
+    const anchor = await send(wsId, sid, actorId, "anchor")
+    const threadId = streamId()
+    await StreamRepository.insert(pool, {
+      id: threadId,
+      workspaceId: wsId,
+      type: "thread",
+      visibility: Visibilities.PUBLIC,
+      parentStreamId: sid,
+      parentAnchorId: anchor,
+      rootStreamId: sid,
+      createdBy: actorId,
+    })
+    await pool.query("UPDATE streams SET message_count = 0 WHERE id = $1", [threadId])
+
+    const holder = await pool.connect()
+    try {
+      await holder.query("BEGIN")
+      await holder.query("UPDATE streams SET visibility = 'private' WHERE id = $1", [sid])
+      const sent = send(wsId, threadId, actorId, "reply")
+      const waited = await waitForLockWaiter(holder)
+      await holder.query("COMMIT")
+      await sent
+      expect({ waited, visibility: (await published(threadId)).at(-1)?.streamVisibility }).toEqual({
+        waited: true,
+        visibility: Visibilities.PRIVATE,
+      })
+    } finally {
+      holder.release()
+    }
+  })
+
+  test("should lock the stream before the message on internal deletes and moves, as principal writes do", async () => {
+    const { wsId, sid, actorId } = await setup()
+    const target = await send(wsId, sid, actorId, "target")
+    const deleted = await send(wsId, sid, actorId, "deleted")
+    const moved = await send(wsId, sid, actorId, "moved")
+    const validation = await eventService.validateMoveMessagesToThread({
+      workspaceId: wsId,
+      sourceStreamId: sid,
+      targetMessageId: target,
+      messageIds: [moved],
+      actorId,
+    })
+
+    const writes = [
+      {
+        messageId: deleted,
+        run: () =>
+          eventService.deleteMessageInternal({ workspaceId: wsId, messageId: deleted, streamId: sid, actorId }),
+      },
+      {
+        messageId: moved,
+        run: () =>
+          eventService.moveMessagesToThreadInternal({
+            workspaceId: wsId,
+            sourceStreamId: sid,
+            targetMessageId: target,
+            messageIds: [moved],
+            actorId,
+            leaseKey: validation.leaseKey,
+          }),
+      },
+    ]
+    const outcomes = []
+    for (const write of writes) {
+      const holder = await pool.connect()
+      try {
+        // The principal order: stream row first, then the message row. The
+        // lock timeout sits under deadlock_timeout, so an internal write that
+        // already holds the message fails here instead of being retried away.
+        await holder.query("BEGIN")
+        await holder.query("SET LOCAL lock_timeout = '500ms'")
+        await holder.query("SELECT id FROM streams WHERE id = $1 FOR UPDATE", [sid])
+        const internal = settle(write.run())
+        const waited = await waitForLockWaiter(holder)
+        const principal = await settle(
+          holder.query("SELECT id FROM messages WHERE id = $1 FOR UPDATE", [write.messageId])
+        )
+        await holder.query(principal === "ok" ? "COMMIT" : "ROLLBACK")
+        outcomes.push({ waited, principal, internal: await internal })
+      } finally {
+        holder.release()
+      }
+    }
+
+    const done = { waited: true, principal: "ok", internal: "ok" }
+    expect({ outcomes, count: (await stored(sid)).count }).toEqual({ outcomes: [done, done], count: 1 })
   })
 
   test("should count every concurrent send exactly once", async () => {

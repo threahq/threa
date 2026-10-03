@@ -1,5 +1,5 @@
 import { db, getActiveDb, sequenceToNum, type CachedEvent, type ThreaDatabase, type AccountWriteContext } from "@/db"
-import { mergeStreamByRevision, persistStreamByRevision } from "@/lib/title-merge"
+import { mergeStreamByRevision, persistStreamByRevision, withStreamRevisions } from "@/lib/title-merge"
 import { getAccountGeneration, isNoOpRewrite, putEventsBounded } from "@/db/event-writes"
 import {
   StreamTypes,
@@ -530,6 +530,8 @@ async function writeBootstrapEventsAndStream(
   }
   const cachedStream = await db.streams.get(stream.id)
   const fullStreamData = cachedStream ? mergeStreamByRevision(cachedStream, incomingStreamData) : incomingStreamData
+  // The envelope is cached too (as with readState above), so it carries the revisions IDB kept.
+  bootstrap.stream = withStreamRevisions(bootstrap.stream, fullStreamData)
 
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
   if (isDmWithNullName) {

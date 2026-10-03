@@ -1,6 +1,6 @@
 import { composeSql, withTransaction } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
-import { publishStreamMessageCount } from "./message-count"
+import { lockMessageCountStreams, publishStreamMessageCount } from "./message-count"
 import { StreamRepository } from "./repository"
 
 const STREAM_MESSAGE_COUNT_BACKFILL_NAME = "stream-message-count"
@@ -16,8 +16,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<S
 
 /**
  * Recounts every stream rather than only uncounted ones, so a rerun also heals
- * drift. One short transaction per stream keeps each row lock brief and never
- * holds two stream locks at once.
+ * drift. One short transaction per stream keeps each row lock brief.
  */
 export async function processChunk(
   ctx: BackfillContext,
@@ -27,6 +26,7 @@ export async function processChunk(
   let processed = 0
   for (const streamId of chunk.ids) {
     await withTransaction(ctx.pool, async (client) => {
+      await lockMessageCountStreams(client, workspaceId, [streamId])
       const change = await StreamRepository.recountMessages(client, workspaceId, streamId)
       if (!change) return
       await publishStreamMessageCount(client, change)
