@@ -1,6 +1,15 @@
-import { describe, it, expect } from "vitest"
+import { beforeEach, describe, it, expect, vi } from "vitest"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { renderHook, waitFor } from "@testing-library/react"
+import { MessageSquare } from "lucide-react"
+import { createElement, type ReactNode } from "react"
 import type { MessageLinkPreviewData } from "@threahq/types"
-import { buildMessageChipLabel, buildLocalMessageParts } from "./use-in-app-link-chip"
+import { AuthContext } from "@/auth/context"
+import { db, type CachedWorkspaceUser } from "@/db"
+import { resetActorLookups } from "@/stores/actor-lookup"
+import { resetWorkspaceStoreCache } from "@/stores/workspace-store"
+import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
+import { buildMessageChipLabel, buildLocalMessageParts, useInAppLinkChip } from "./use-in-app-link-chip"
 
 function messageData(overrides: Partial<MessageLinkPreviewData>): MessageLinkPreviewData {
   return { kind: "message", accessTier: "full", ...overrides }
@@ -111,5 +120,103 @@ describe("buildLocalMessageParts", () => {
         resolveName,
       })
     ).toEqual({ lead: "Pierre Boberg", tail: "" })
+  })
+})
+
+describe("useInAppLinkChip", () => {
+  function workspaceUser(workspaceId: string, id: string, name: string): CachedWorkspaceUser {
+    return {
+      id,
+      workspaceId,
+      workosUserId: `workos_${id}`,
+      email: `${id}@example.com`,
+      role: "member",
+      slug: id,
+      name,
+      description: null,
+      avatarUrl: null,
+      timezone: null,
+      locale: null,
+      pronouns: null,
+      phone: null,
+      githubUsername: null,
+      statusEmoji: null,
+      statusText: null,
+      statusExpiresAt: null,
+      statusPausesNotifications: false,
+      notificationsPausedUntil: null,
+      notificationsPausedIndefinitely: false,
+      setupCompleted: true,
+      joinedAt: "2026-03-01T10:00:00Z",
+      _cachedAt: 1,
+    }
+  }
+
+  function copiedMessage(workspaceId: string, actorId: string) {
+    return {
+      id: "evt_copied",
+      workspaceId,
+      streamId: "stream_src",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: "message_created" as const,
+      payload: { messageId: "msg_copied", contentMarkdown: "hello" },
+      actorId,
+      actorType: "user" as const,
+      createdAt: "2026-04-23T10:00:00Z",
+      _cachedAt: 1,
+    }
+  }
+
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+
+  function wrapper({ children }: { children: ReactNode }) {
+    return createElement(
+      QueryClientProvider,
+      { client: queryClient },
+      createElement(
+        AuthContext.Provider,
+        {
+          value: {
+            user: { id: "workos_viewer", email: "viewer@example.com", name: "Viewer" },
+            activeWorkosUserId: "workos_viewer",
+            loading: false,
+            error: null,
+            login: vi.fn(),
+            logout: vi.fn(),
+            activateAccount: vi.fn(),
+            refetch: vi.fn(),
+          },
+        },
+        children
+      )
+    )
+  }
+
+  beforeEach(async () => {
+    resetWorkspaceTableRegistry()
+    resetWorkspaceStoreCache()
+    resetActorLookups()
+    await db.events.clear()
+    await db.workspaceUsers.clear()
+  })
+
+  it("should name a message from the requested workspace's cached copy when another workspace holds the same ids", async () => {
+    await db.workspaceUsers.bulkPut([workspaceUser("ws_1", "usr_1", "Ada"), workspaceUser("ws_2", "usr_2", "Grace")])
+    await db.events.bulkPut([copiedMessage("ws_1", "usr_1"), copiedMessage("ws_2", "usr_2")])
+
+    const { result } = renderHook(
+      () =>
+        useInAppLinkChip({
+          workspaceId: "ws_2",
+          streamId: "stream_src",
+          messageId: "msg_copied",
+          isMessage: true,
+          url: "https://app.threa.io/w/ws_2/s/stream_src?m=msg_copied",
+        }),
+      { wrapper }
+    )
+
+    await waitFor(() => expect(result.current).toEqual({ status: "resolved", icon: MessageSquare, label: "Grace" }))
   })
 })

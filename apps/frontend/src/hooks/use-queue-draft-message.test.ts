@@ -180,6 +180,7 @@ describe("useQueueDraftMessage", () => {
     })
 
     expect(replySpy).toHaveBeenCalledWith(
+      WORKSPACE_ID,
       threadCreation.parentStreamId,
       threadCreation.parentMessageId,
       createDraftPanelId(threadCreation.parentStreamId, threadCreation.parentMessageId),
@@ -209,7 +210,7 @@ describe("useQueueDraftMessage", () => {
       )
     })
 
-    expect(replySpy.mock.calls[0][3]?.latestReply.contentMarkdown).toBe("")
+    expect(replySpy.mock.calls[0][4]?.latestReply.contentMarkdown).toBe("")
   })
 
   it("refuses to queue an encrypted draft when the session is locked", async () => {
@@ -342,8 +343,8 @@ describe("useQueueDraftMessage", () => {
     // Both helpers default to the *active* database. Reading it inside the
     // transaction would look at the replacement account after a switch, so the
     // captured handle has to be passed explicitly.
-    expect(anchorSpy).toHaveBeenCalledWith(PANEL_ID, captured)
-    expect(nextSpy).toHaveBeenCalledWith(PANEL_ID, undefined, captured)
+    expect(anchorSpy).toHaveBeenCalledWith(WORKSPACE_ID, PANEL_ID, captured)
+    expect(nextSpy).toHaveBeenCalledWith(WORKSPACE_ID, PANEL_ID, undefined, captured)
     expect(mockEventsAdd).toHaveBeenCalledWith(
       expect.objectContaining({ sequence: "42", _sequenceNum: 42, _anchorSequenceNum: 41 })
     )

@@ -6,12 +6,12 @@ afterEach(() => {
 import Dexie from "dexie"
 import { ThreaDatabase } from "./database"
 
-describe("v47 payload.messageId index", () => {
-  it("opening at v47 indexes payload.messageId over pre-existing rows", async () => {
+describe("events upgraded from v46", () => {
+  it("should keep v46 rows reachable through the workspace-led indexes when opened at the current version", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
 
-    // Seed at the v46 events shape — the last version before the dotted-key-path
-    // index — so the row exists before the index does.
+    // Seed at the v46 events shape so the rows predate every events index added
+    // since, the dotted payload.messageId key path included.
     const legacy = new Dexie(name)
     legacy.version(46).stores({
       events:
@@ -45,23 +45,25 @@ describe("v47 payload.messageId index", () => {
     const db = new ThreaDatabase(name)
     await db.open()
 
-    // The engine built the index over the pre-existing row: the query finds it
-    // without any row having been rewritten, and the payload is intact.
-    const matched = await db.events.where("payload.messageId").equals("msg_1").toArray()
+    // The pre-existing row is reachable through the workspace-led message index
+    // with its payload intact.
+    const matched = await db.events.where("[workspaceId+payload.messageId]").equals(["ws_1", "msg_1"]).toArray()
     expect(matched.map((row) => ({ id: row.id, payload: row.payload }))).toEqual([
       { id: "event_1", payload: { messageId: "msg_1", contentMarkdown: "hello" } },
     ])
 
     // Sparse: the row carrying no payload.messageId is not in the index.
-    const all = await db.events.where("payload.messageId").notEqual("").count()
+    const all = await db.events
+      .where("[workspaceId+payload.messageId]")
+      .between(["ws_1", Dexie.minKey], ["ws_1", Dexie.maxKey])
+      .count()
     expect(all).toBe(1)
 
-    // The upgrade ADDS an index; it must not drop the ones the v46 store
-    // declared. Querying them on the upgraded handle is what makes a silently
-    // dropped index red instead of invisible.
+    // The stream/type and _status indexes answer on the upgraded handle too, so a
+    // silently dropped index goes red instead of invisible.
     const byStreamAndType = await db.events
-      .where("[streamId+eventType]")
-      .equals(["stream_1", "message_created"])
+      .where("[workspaceId+streamId+eventType]")
+      .equals(["ws_1", "stream_1", "message_created"])
       .count()
     const byStatus = await db.events.where("_status").equals("pending").count()
     expect({ byStreamAndType, byStatus }).toEqual({ byStreamAndType: 1, byStatus: 0 })

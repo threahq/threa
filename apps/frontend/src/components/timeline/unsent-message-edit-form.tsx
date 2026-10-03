@@ -105,9 +105,9 @@ export function UnsentMessageEditForm({
   }, [contentJson, initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone, steerAvailable])
 
   const handleDelete = useCallback(async () => {
-    await deleteMessage(messageId)
+    await deleteMessage(workspaceId, messageId)
     onDone()
-  }, [messageId, deleteMessage, onDone])
+  }, [workspaceId, messageId, deleteMessage, onDone])
 
   const handleDocEditorSend = useCallback(
     async (markdown: string) => {

@@ -131,9 +131,9 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     () => (draftInfo ? idbStreams.find((candidate) => candidate.id === draftInfo.parentStreamId) : undefined),
     [draftInfo, idbStreams]
   )
-  const parentCachedEvents = useStreamEvents(draftInfo?.parentStreamId)
+  const parentCachedEvents = useStreamEvents(workspaceId, draftInfo?.parentStreamId)
   // Query pending events for the draft thread panel (uses panelId as synthetic streamId)
-  const draftThreadPendingEvents = useStreamEvents(isDraft ? (panelId ?? undefined) : undefined)
+  const draftThreadPendingEvents = useStreamEvents(workspaceId, isDraft ? (panelId ?? undefined) : undefined)
   const hasDraftThreadPendingEvents = isDraft && draftThreadPendingEvents && draftThreadPendingEvents.length > 0
   const draftThreadTimelineItems = useMemo(
     () =>

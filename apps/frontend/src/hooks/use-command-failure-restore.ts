@@ -14,13 +14,17 @@ interface CommandOutcome {
  * the command fails. Tracking is component state, so the restore only ever
  * lands in the still-mounted sender; leaving the composer drops the claim.
  *
+ * @param workspaceId - Workspace that owns the stream.
  * @param streamId - Stream whose commands this composer dispatches.
  * @returns `remember`, called with the optimistic event id and the doc that was sent.
  * @example
- * const remember = useCommandFailureRestore(streamId)
+ * const remember = useCommandFailureRestore(workspaceId, streamId)
  * remember(await queueCommand(params), content)
  */
-export function useCommandFailureRestore(streamId: string): (optimisticEventId: string, content: JSONContent) => void {
+export function useCommandFailureRestore(
+  workspaceId: string,
+  streamId: string
+): (optimisticEventId: string, content: JSONContent) => void {
   const [tracked, setTracked] = useState<ReadonlyMap<string, JSONContent>>(() => new Map())
   const handledRef = useRef<Set<string>>(new Set())
 
@@ -31,10 +35,9 @@ export function useCommandFailureRestore(streamId: string): (optimisticEventId: 
   const outcomes = useLiveQuery<CommandOutcome[]>(async () => {
     if (tracked.size === 0) return []
     const dispatched = await db.events
-      .where("eventType")
-      .equals("command_dispatched")
+      .where("[workspaceId+streamId+eventType]")
+      .equals([workspaceId, streamId, "command_dispatched"])
       .filter((event) => {
-        if (event.streamId !== streamId) return false
         const payload = event.payload as CommandDispatchedPayload
         return tracked.has(event.id) || (payload.clientCommandId != null && tracked.has(payload.clientCommandId))
       })
@@ -49,19 +52,19 @@ export function useCommandFailureRestore(streamId: string): (optimisticEventId: 
     }
 
     const terminal = await db.events
-      .where("eventType")
-      .anyOf(["command_failed", "command_completed"])
-      .filter(
-        (event) =>
-          event.streamId === streamId && optimisticByCommandId.has((event.payload as CommandFailedPayload).commandId)
-      )
+      .where("[workspaceId+streamId+eventType]")
+      .anyOf([
+        [workspaceId, streamId, "command_failed"],
+        [workspaceId, streamId, "command_completed"],
+      ])
+      .filter((event) => optimisticByCommandId.has((event.payload as CommandFailedPayload).commandId))
       .toArray()
 
     return terminal.map((event) => ({
       optimisticId: optimisticByCommandId.get((event.payload as CommandFailedPayload).commandId)!,
       failed: event.eventType === "command_failed",
     }))
-  }, [streamId, tracked])
+  }, [workspaceId, streamId, tracked])
 
   useEffect(() => {
     if (!outcomes?.length) return

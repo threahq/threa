@@ -63,7 +63,7 @@ const serverDispatched = () =>
   })
 
 function render() {
-  return renderHook(() => useCommandFailureRestore(streamId), {
+  return renderHook(() => useCommandFailureRestore(workspaceId, streamId), {
     wrapper: ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>,
   })
 }
@@ -187,6 +187,42 @@ describe("useCommandFailureRestore", () => {
 
     expect(peekShareHandoffBatch(streamId)).toBeNull()
     expect(peekShareHandoffBatch("stream_other")).toBeNull()
+  })
+
+  it("should not restore when the same stream id fails in another workspace", async () => {
+    const { result } = render()
+    act(() => result.current(optimisticId, commandDoc))
+
+    await db.events.bulkPut([
+      optimisticDispatched(),
+      event(
+        `${optimisticId}:failed`,
+        "command_failed",
+        { commandId: optimisticId, error: "Unknown command" },
+        { workspaceId: "ws_2", _status: "failed" }
+      ),
+    ])
+    await settle()
+
+    expect(peekShareHandoffBatch(streamId)).toBeNull()
+  })
+
+  it("should not restore when the dispatch lives in another workspace and only the failure shares this one", async () => {
+    const { result } = render()
+    act(() => result.current(optimisticId, commandDoc))
+
+    await db.events.bulkPut([
+      event(
+        optimisticId,
+        "command_dispatched",
+        { commandId: optimisticId, name: "spawn", args: "x", status: "dispatched" },
+        { workspaceId: "ws_2" }
+      ),
+      event(`${optimisticId}:failed`, "command_failed", { commandId: optimisticId, error: "Unknown command" }),
+    ])
+    await settle()
+
+    expect(peekShareHandoffBatch(streamId)).toBeNull()
   })
 
   it("should restore once when the same failure is observed again", async () => {

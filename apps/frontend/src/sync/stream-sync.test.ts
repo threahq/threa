@@ -4,6 +4,7 @@ import type { Socket } from "socket.io-client"
 import { db, type CachedEvent } from "@/db"
 import {
   applyStreamBootstrap,
+  bumpLaterOptimisticAnchors,
   detectSequenceGap,
   getLatestPersistedSequence,
   getPersistedTail,
@@ -115,7 +116,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
     // All three events must be in IDB
-    const allEvents = await db.events.where("streamId").equals(streamId).toArray()
+    const allEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     const ids = allEvents.map((e) => e.id).sort()
     expect(ids).toEqual(["evt_A", "evt_B", "evt_X"])
   })
@@ -166,7 +167,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([completed], streamId))
 
-    expect(await db.events.get(completed.id)).toMatchObject(completed)
+    expect(await db.events.get(["ws_1", completed.id])).toMatchObject(completed)
     expect(getAgentActivityForStream("ws_1", streamId)).toEqual([])
   })
 
@@ -276,7 +277,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([current], streamId))
 
-    expect(await db.events.get(oldStarted.id)).toBeDefined()
+    expect(await db.events.get(["ws_1", oldStarted.id])).toBeDefined()
     expect(getAgentActivityForStream("ws_1", streamId)).toEqual([])
   })
 
@@ -291,8 +292,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect(await db.events.get("evt_old")).toBeDefined()
-    expect(await db.events.get("evt_A")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_old"])).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_A"])).toBeDefined()
   })
 
   it("prunes stale cached events that fall inside the fetched bootstrap window", async () => {
@@ -331,11 +332,11 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect(await db.events.get("evt_old_page")).toBeDefined()
-    expect(await db.events.get("evt_A")).toBeDefined()
-    expect(await db.events.get("evt_B")).toBeDefined()
-    expect(await db.events.get("evt_socket_new")).toBeDefined()
-    expect(await db.events.get("evt_ghost")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_old_page"])).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_A"])).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_B"])).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_socket_new"])).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_ghost"])).toBeUndefined()
   })
 
   it("removes stale optimistic events (temp_*) not in the send queue", async () => {
@@ -360,8 +361,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect(await db.events.get("temp_stale")).toBeUndefined()
-    expect(await db.events.get("evt_A")).toBeDefined()
+    expect(await db.events.get(["ws_1", "temp_stale"])).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_A"])).toBeDefined()
   })
 
   it("keeps a sent optimistic row whose send landed after the bootstrap fetch started", async () => {
@@ -386,8 +387,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
     await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
 
-    expect(await db.events.get("temp_sent_unechoed")).toMatchObject({ streamId, _status: "pending" })
-    expect(await db.events.get("evt_A")).toBeDefined()
+    expect(await db.events.get(["ws_1", "temp_sent_unechoed"])).toMatchObject({ streamId, _status: "pending" })
+    expect(await db.events.get(["ws_1", "evt_A"])).toBeDefined()
   })
 
   it("removes a sent optimistic row a later bootstrap fetch no longer carries", async () => {
@@ -412,7 +413,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     const bootstrap = makeBootstrap([makeEvent({ id: "evt_A", streamId, sequence: "100" })], streamId)
     await applyStreamBootstrap("ws_1", streamId, bootstrap, { fetchStartedAt })
 
-    expect(await db.events.get("temp_sent_stale")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "temp_sent_stale"])).toBeUndefined()
   })
 
   it("preserves payload fields from a socket update when the bootstrap omits them", async () => {
@@ -471,7 +472,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const merged = await db.events.get("evt_parent")
+    const merged = await db.events.get(["ws_1", "evt_parent"])
     expect(merged?.payload).toMatchObject({
       threadId: "stream_thread",
       replyCount: 1,
@@ -526,7 +527,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const merged = await db.events.get("evt_parent")
+    const merged = await db.events.get(["ws_1", "evt_parent"])
     expect(merged?.payload).toMatchObject({
       threadId: "stream_thread",
       replyCount: 3,
@@ -587,7 +588,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const merged = await db.events.get("evt_M")
+    const merged = await db.events.get(["ws_1", "evt_M"])
     expect((merged?.payload as { reactions: Record<string, string[]> }).reactions).toEqual({ "🎉": ["user_2"] })
   })
 
@@ -634,7 +635,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const merged = await db.events.get("evt_M")
+    const merged = await db.events.get(["ws_1", "evt_M"])
     expect((merged?.payload as { reactions: Record<string, string[]> }).reactions).toEqual({
       "👀": ["user_3"],
       "🚀": ["user_4"],
@@ -681,7 +682,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const merged = await db.events.get("evt_M")
+    const merged = await db.events.get(["ws_1", "evt_M"])
     expect(merged?._patchedAt).toBe(patchAt)
     expect((merged?.payload as { replyCount: number }).replyCount).toBe(2)
   })
@@ -726,7 +727,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const merged = await db.events.get("evt_M")
+    const merged = await db.events.get(["ws_1", "evt_M"])
     const payload = merged?.payload as Record<string, unknown>
     // Per-field merge: bootstrap fields applied, omitted fields preserved.
     expect(payload.threadId).toBe("thread_1")
@@ -768,8 +769,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     )
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect((await db.events.get("temp_pending"))?._anchorSequenceNum).toBe(100)
-    expect(await db.events.get("evt_A")).toBeDefined()
+    expect((await db.events.get(["ws_1", "temp_pending"]))?._anchorSequenceNum).toBe(100)
+    expect(await db.events.get(["ws_1", "evt_A"])).toBeDefined()
   })
 
   it("anchors a legacy failed row by its chronology during bootstrap", async () => {
@@ -803,7 +804,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([before, after], streamId))
 
-    expect((await db.events.get("temp_legacy_failed"))?._anchorSequenceNum).toBe(100)
+    expect((await db.events.get(["ws_1", "temp_legacy_failed"]))?._anchorSequenceNum).toBe(100)
   })
 
   it("collapses an optimistic command when bootstrap carries its idempotent server copy", async () => {
@@ -824,7 +825,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
       _cachedAt: 1,
     })
     await db.events.put({
-      ...((await db.events.get("temp_command")) as CachedEvent),
+      ...((await db.events.get(["ws_1", "temp_command"])) as CachedEvent),
       id: "temp_command:failed",
       eventType: "command_failed",
       payload: { commandId: "temp_command", error: "Timed out" },
@@ -852,9 +853,9 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
 
     expect({
-      server: (await db.events.get("evt_command"))?.id,
-      optimistic: await db.events.get("temp_command"),
-      failed: await db.events.get("temp_command:failed"),
+      server: (await db.events.get(["ws_1", "evt_command"]))?.id,
+      optimistic: await db.events.get(["ws_1", "temp_command"]),
+      failed: await db.events.get(["ws_1", "temp_command:failed"]),
       operation: await db.pendingOperations.get("op_command"),
     }).toEqual({ server: "evt_command", optimistic: undefined, failed: undefined, operation: undefined })
   })
@@ -895,8 +896,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     serverCopy.payload = { messageId: "msg_1", contentMarkdown: "hello", clientMessageId: "temp_reload" }
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
 
-    expect(await db.events.get("evt_real")).toBeDefined()
-    expect(await db.events.get("temp_reload")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_real"])).toBeDefined()
+    expect(await db.events.get(["ws_1", "temp_reload"])).toBeUndefined()
     expect(await db.pendingMessages.get("temp_reload")).toBeUndefined()
   })
 
@@ -933,9 +934,9 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     serverCopy.payload = { messageId: "msg_2", contentMarkdown: "board reply", clientMessageId: "temp_conv" }
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
 
-    const swapped = await db.events.get("evt_conv_real")
+    const swapped = await db.events.get(["ws_1", "evt_conv_real"])
     expect((swapped?.payload as { conversationId?: string }).conversationId).toBe("conv_1")
-    expect(await db.events.get("temp_conv")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "temp_conv"])).toBeUndefined()
   })
 
   it("seeds the decrypt cache from the optimistic plaintext when the bootstrap swaps in an encrypted server copy", async () => {
@@ -978,8 +979,8 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     }
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([serverCopy], streamId))
 
-    expect(await db.events.get("temp_e2e")).toBeUndefined()
-    expect(await db.events.get("evt_e2e_real")).toBeDefined()
+    expect(await db.events.get(["ws_1", "temp_e2e"])).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_e2e_real"])).toBeDefined()
     const cached = getCachedDecryption("evt_e2e_real")
     expect(cached?.status).toBe("decrypted")
     expect(cached?.value?.contentMarkdown).toBe("secret")
@@ -1014,7 +1015,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, appendBootstrap)
 
-    const allEvents = await db.events.where("streamId").equals(streamId).sortBy("_sequenceNum")
+    const allEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).sortBy("_sequenceNum")
     expect(allEvents.map((event) => event.id)).toEqual(["evt_A", "evt_B", "evt_C"])
   })
 
@@ -1087,7 +1088,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([e2eEvent], streamId))
 
-    const persisted = await db.events.get(e2eEvent.id)
+    const persisted = await db.events.get(["ws_1", e2eEvent.id])
     const payload = persisted?.payload as {
       contentMarkdown: string
       ciphertext?: string
@@ -1116,7 +1117,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
       },
     ])
 
-    expect(await getLatestPersistedSequence(streamId)).toBe("200")
+    expect(await getLatestPersistedSequence("ws_1", streamId)).toBe("200")
   })
 })
 
@@ -1539,11 +1540,11 @@ describe("updateMemoEmbedSummary", () => {
       { ...SUMMARY, title: "Launch in May" },
     ])
 
-    await updateMemoEmbedSummary(streamId, SUMMARY)
+    await updateMemoEmbedSummary("ws_1", streamId, SUMMARY)
 
-    const first = await db.events.get("evt_1")
+    const first = await db.events.get(["ws_1", "evt_1"])
     expect((first?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds[0].title).toBe("Launch in June")
-    const second = await db.events.get("evt_2")
+    const second = await db.events.get(["ws_1", "evt_2"])
     const embeds = (second?.payload as { memoEmbeds: Array<{ memoId: string; title: string }> }).memoEmbeds
     expect(embeds.map((e) => e.title)).toEqual(["Untouched", "Launch in June"])
   })
@@ -1555,18 +1556,18 @@ describe("updateMemoEmbedSummary", () => {
     const streamId = "stream_memo_absent"
     await seed(streamId, "evt_bare", undefined)
 
-    await updateMemoEmbedSummary(streamId, SUMMARY)
+    await updateMemoEmbedSummary("ws_1", streamId, SUMMARY)
 
-    expect((await db.events.get("evt_bare"))?.payload).not.toHaveProperty("memoEmbeds.0")
+    expect((await db.events.get(["ws_1", "evt_bare"]))?.payload).not.toHaveProperty("memoEmbeds.0")
   })
 
   it("leaves other streams alone", async () => {
     await seed("stream_a", "evt_a", [{ ...SUMMARY, title: "Launch in May" }])
     await seed("stream_b", "evt_b", [{ ...SUMMARY, title: "Launch in May" }])
 
-    await updateMemoEmbedSummary("stream_a", SUMMARY)
+    await updateMemoEmbedSummary("ws_1", "stream_a", SUMMARY)
 
-    const untouched = await db.events.get("evt_b")
+    const untouched = await db.events.get(["ws_1", "evt_b"])
     expect((untouched?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds[0].title).toBe("Launch in May")
   })
 })
@@ -1586,9 +1587,9 @@ describe("updateMessageEvent", () => {
       _cachedAt: Date.now(),
     })
 
-    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, replyCount: 5 }))
+    await updateMessageEvent("ws_1", streamId, messageId, (p) => ({ ...p, replyCount: 5 }))
 
-    const event = await db.events.get("evt_1")
+    const event = await db.events.get(["ws_1", "evt_1"])
     expect((event?.payload as Record<string, unknown>).replyCount).toBe(5)
   })
 
@@ -1603,9 +1604,9 @@ describe("updateMessageEvent", () => {
       _cachedAt: before - 10000,
     })
 
-    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, replyCount: 1 }))
+    await updateMessageEvent("ws_1", streamId, messageId, (p) => ({ ...p, replyCount: 1 }))
 
-    const event = await db.events.get("evt_patched")
+    const event = await db.events.get(["ws_1", "evt_patched"])
     expect(event?._patchedAt).toBeDefined()
     expect(event?._patchedAt).toBeGreaterThanOrEqual(before)
   })
@@ -1625,18 +1626,18 @@ describe("updateMessageEvent", () => {
     // concurrently. With the old read-then-update implementation the last
     // write would overwrite earlier ones and lose fields.
     await Promise.all([
-      updateMessageEvent(streamId, messageId, (p) => ({
+      updateMessageEvent("ws_1", streamId, messageId, (p) => ({
         ...p,
         replyCount: 3,
         threadSummary: { lastReplyContentMarkdown: "hi", participantIds: ["u1"] },
       })),
-      updateMessageEvent(streamId, messageId, (p) => ({
+      updateMessageEvent("ws_1", streamId, messageId, (p) => ({
         ...p,
         threadId: "thread_123",
       })),
     ])
 
-    const event = await db.events.get("evt_race")
+    const event = await db.events.get(["ws_1", "evt_race"])
     const payload = event?.payload as Record<string, unknown>
     expect(payload.threadId).toBe("thread_123")
     expect(payload.replyCount).toBe(3)
@@ -1747,11 +1748,11 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
     await seedLargeStream(streamId, 1000, messageId)
 
     const indexed = trackCursor()
-    await updateMessageEvent(streamId, messageId, (p) => ({ ...p, reactions: ["👍"] }))
-    expect(indexed.indexes).toEqual(["payload.messageId"])
+    await updateMessageEvent("ws_1", streamId, messageId, (p) => ({ ...p, reactions: ["👍"] }))
+    expect(indexed.indexes).toEqual(["[workspaceId+payload.messageId]"])
     expect({ filtered: indexed.filtered, visited: indexed.visited }).toEqual({ filtered: 0, visited: 1 })
 
-    const patched = await db.events.get("evt_bulk_998")
+    const patched = await db.events.get(["ws_1", "evt_bulk_998"])
     expect((patched?.payload as Record<string, unknown>).reactions).toEqual(["👍"])
   }, 20000)
 
@@ -1763,10 +1764,10 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
     ])
 
     const counts = trackCursor()
-    await updateMessageEvent("stream_here", messageId, (p) => ({ ...p, replyCount: 7 }))
+    await updateMessageEvent("ws_1", "stream_here", messageId, (p) => ({ ...p, replyCount: 7 }))
 
-    const here = await db.events.get("evt_here")
-    const there = await db.events.get("evt_there")
+    const here = await db.events.get(["ws_1", "evt_here"])
+    const there = await db.events.get(["ws_1", "evt_there"])
     expect({
       here: (here?.payload as Record<string, unknown>).replyCount,
       there: (there?.payload as Record<string, unknown>).replyCount,
@@ -1790,10 +1791,10 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
     ])
 
     const counts = trackCursor()
-    await updateMessageEvent("stream_typed", messageId, (p) => ({ ...p, replyCount: 9 }))
+    await updateMessageEvent("ws_1", "stream_typed", messageId, (p) => ({ ...p, replyCount: 9 }))
 
-    const created = await db.events.get("evt_created")
-    const edited = await db.events.get("evt_edited")
+    const created = await db.events.get(["ws_1", "evt_created"])
+    const edited = await db.events.get(["ws_1", "evt_edited"])
     expect({
       created: (created?.payload as Record<string, unknown>).replyCount,
       edited: (edited?.payload as Record<string, unknown>).replyCount,
@@ -1810,11 +1811,11 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
     )
 
     await Promise.all([
-      updateMessageEvent("stream_race", messageId, (p) => ({ ...p, replyCount: 3 })),
-      updateMessageEvent("stream_race", messageId, (p) => ({ ...p, threadId: "thread_1" })),
+      updateMessageEvent("ws_1", "stream_race", messageId, (p) => ({ ...p, replyCount: 3 })),
+      updateMessageEvent("ws_1", "stream_race", messageId, (p) => ({ ...p, threadId: "thread_1" })),
     ])
 
-    const event = await db.events.get("evt_race_indexed")
+    const event = await db.events.get(["ws_1", "evt_race_indexed"])
     expect(event?.payload).toEqual({ messageId, replyCount: 3, threadId: "thread_1" })
   })
 
@@ -1835,10 +1836,10 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
       }),
     ])
 
-    await updateMessageEvent("stream_sparse", "msg_sparse", (p) => ({ ...p, replyCount: 1 }))
+    await updateMessageEvent("ws_1", "stream_sparse", "msg_sparse", (p) => ({ ...p, replyCount: 1 }))
 
-    const untouched = await db.events.get("evt_no_message_id")
-    const patched = await db.events.get("evt_with_message_id")
+    const untouched = await db.events.get(["ws_1", "evt_no_message_id"])
+    const patched = await db.events.get(["ws_1", "evt_with_message_id"])
     expect({
       untouched: untouched?.payload,
       untouchedPatchedAt: untouched?._patchedAt,
@@ -1857,9 +1858,12 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
       seedRow({ id: "evt_new_stream", streamId: "stream_new", sequence: "1", payload: { messageId, tag: "new" } }),
     ])
 
-    await updateMessageEvent("stream_new", messageId, (p) => ({ ...p, tag: "patched" }))
+    await updateMessageEvent("ws_1", "stream_new", messageId, (p) => ({ ...p, tag: "patched" }))
 
-    const rows = await db.events.bulkGet(["evt_old_stream", "evt_new_stream"])
+    const rows = await db.events.bulkGet([
+      ["ws_1", "evt_old_stream"],
+      ["ws_1", "evt_new_stream"],
+    ])
     expect(rows.map((row) => (row?.payload as Record<string, unknown>).tag)).toEqual(["old", "patched"])
   })
 
@@ -1881,23 +1885,19 @@ describe("updateMessageEvent — indexed payload.messageId lookup", () => {
       }),
     ])
 
-    await updateMessageEvent(streamId, "msg_edit", (p) => ({ ...p, contentMarkdown: "edited", editedAt: "t" }))
-    await updateMessageEvent(streamId, "msg_delete", (p) => ({ ...p, deletedAt: "t" }))
-    await updateMessageEvent(streamId, "msg_move", (p) => ({ ...p, movedToStreamId: "stream_other" }))
-    await updateMessageEvent(streamId, "msg_reaction", (p) => ({ ...p, reactions: ["👍"] }))
-    await updateMessageEvent(streamId, "msg_preview", (p) => ({ ...p, linkPreviews: [{ url: "u" }] }))
-    await updateEventByAnchor(streamId, "msg_heal", (p) => ({ ...p, threadId: "thread_healed" }))
-    await updateEventByAnchor(streamId, "evt_card", (p) => ({ ...p, threadId: "thread_card" }))
+    await updateMessageEvent("ws_1", streamId, "msg_edit", (p) => ({ ...p, contentMarkdown: "edited", editedAt: "t" }))
+    await updateMessageEvent("ws_1", streamId, "msg_delete", (p) => ({ ...p, deletedAt: "t" }))
+    await updateMessageEvent("ws_1", streamId, "msg_move", (p) => ({ ...p, movedToStreamId: "stream_other" }))
+    await updateMessageEvent("ws_1", streamId, "msg_reaction", (p) => ({ ...p, reactions: ["👍"] }))
+    await updateMessageEvent("ws_1", streamId, "msg_preview", (p) => ({ ...p, linkPreviews: [{ url: "u" }] }))
+    await updateEventByAnchor("ws_1", streamId, "msg_heal", (p) => ({ ...p, threadId: "thread_healed" }))
+    await updateEventByAnchor("ws_1", streamId, "evt_card", (p) => ({ ...p, threadId: "thread_card" }))
 
-    const rows = await db.events.bulkGet([
-      "evt_edit",
-      "evt_delete",
-      "evt_move",
-      "evt_reaction",
-      "evt_preview",
-      "evt_heal",
-      "evt_card",
-    ])
+    const rows = await db.events.bulkGet(
+      ["evt_edit", "evt_delete", "evt_move", "evt_reaction", "evt_preview", "evt_heal", "evt_card"].map(
+        (id): [string, string] => ["ws_1", id]
+      )
+    )
     expect(rows.map((row) => row?.payload)).toEqual([
       { messageId: "msg_edit", contentMarkdown: "edited", editedAt: "t" },
       { messageId: "msg_delete", deletedAt: "t" },
@@ -1935,9 +1935,9 @@ describe("optimisticReplyCountUpdate", () => {
   it("writes the summary alongside the count so the card keeps its preview row", async () => {
     await seedAnchor("evt_first", { messageId: "msg_anchor", replyCount: 0 })
 
-    await optimisticReplyCountUpdate(streamId, "msg_anchor", "draft_panel", summary)
+    await optimisticReplyCountUpdate("ws_1", streamId, "msg_anchor", "draft_panel", summary)
 
-    const row = await db.events.get("evt_first")
+    const row = await db.events.get(["ws_1", "evt_first"])
     expect(row?.payload).toEqual({
       messageId: "msg_anchor",
       threadId: "draft_panel",
@@ -1959,9 +1959,9 @@ describe("optimisticReplyCountUpdate", () => {
     }
     await seedAnchor("evt_merge", { messageId: "msg_anchor", replyCount: 1, threadSummary: existing })
 
-    await optimisticReplyCountUpdate(streamId, "msg_anchor", "draft_panel", summary)
+    await optimisticReplyCountUpdate("ws_1", streamId, "msg_anchor", "draft_panel", summary)
 
-    const row = await db.events.get("evt_merge")
+    const row = await db.events.get(["ws_1", "evt_merge"])
     expect(row?.payload).toEqual({
       messageId: "msg_anchor",
       threadId: "draft_panel",
@@ -1996,10 +1996,13 @@ describe("optimisticReplyCountUpdate", () => {
       threadSummary: { lastReplyAt: "2026-08-11T09:00:00.000Z", participants: full, latestReply },
     })
 
-    await optimisticReplyCountUpdate(streamId, "msg_dedupe", "draft_panel", summary)
-    await optimisticReplyCountUpdate(streamId, "msg_capped", "draft_panel", summary)
+    await optimisticReplyCountUpdate("ws_1", streamId, "msg_dedupe", "draft_panel", summary)
+    await optimisticReplyCountUpdate("ws_1", streamId, "msg_capped", "draft_panel", summary)
 
-    const rows = await db.events.bulkGet(["evt_dedupe", "evt_capped"])
+    const rows = await db.events.bulkGet([
+      ["ws_1", "evt_dedupe"],
+      ["ws_1", "evt_capped"],
+    ])
     expect(rows.map((row) => (row?.payload as { threadSummary: ThreadSummary }).threadSummary.participants)).toEqual([
       alreadyIn,
       full,
@@ -2009,9 +2012,9 @@ describe("optimisticReplyCountUpdate", () => {
   it("leaves the payload's summary untouched when no summary is passed", async () => {
     await seedAnchor("evt_nosummary", { messageId: "msg_anchor", replyCount: 2, contentMarkdown: "parent" })
 
-    await optimisticReplyCountUpdate(streamId, "msg_anchor", "draft_panel")
+    await optimisticReplyCountUpdate("ws_1", streamId, "msg_anchor", "draft_panel")
 
-    const row = await db.events.get("evt_nosummary")
+    const row = await db.events.get(["ws_1", "evt_nosummary"])
     expect(row?.payload).toEqual({
       messageId: "msg_anchor",
       contentMarkdown: "parent",
@@ -2433,8 +2436,8 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
 
     // Optimistic row swapped for the server row, and the decrypt cache is
     // pre-seeded so the encrypted server event never flashes "decrypting".
-    expect(await db.events.get("temp_1")).toBeUndefined()
-    expect(await db.events.get("evt_server")).toBeDefined()
+    expect(await db.events.get(["ws_1", "temp_1"])).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_server"])).toBeDefined()
     const cached = getCachedDecryption("evt_server")
     expect(cached?.status).toBe("decrypted")
     expect(cached?.value?.contentMarkdown).toBe("secret")
@@ -2494,8 +2497,13 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
       },
     })
 
-    expect(await db.events.bulkGet(["temp_command_echo", "temp_command_echo:failed"])).toEqual([undefined, undefined])
-    expect(await db.events.get("evt_command_echo")).toBeDefined()
+    expect(
+      await db.events.bulkGet([
+        ["ws_1", "temp_command_echo"],
+        ["ws_1", "temp_command_echo:failed"],
+      ])
+    ).toEqual([undefined, undefined])
+    expect(await db.events.get(["ws_1", "evt_command_echo"])).toBeDefined()
 
     cleanup()
   })
@@ -2630,8 +2638,8 @@ describe("registerStreamSocketHandlers — board reply conversationId carry-forw
       },
     })
 
-    expect(await db.events.get("temp_reply")).toBeUndefined()
-    const real = await db.events.get("msg_real")
+    expect(await db.events.get(["ws_1", "temp_reply"])).toBeUndefined()
+    const real = await db.events.get(["ws_1", "msg_real"])
     expect((real?.payload as { conversationId?: string }).conversationId).toBe("conv_42")
 
     cleanup()
@@ -2678,7 +2686,7 @@ describe("registerStreamSocketHandlers — board reply conversationId carry-forw
       },
     })
 
-    const real = await db.events.get("msg_plain")
+    const real = await db.events.get(["ws_1", "msg_plain"])
     expect((real?.payload as { conversationId?: string }).conversationId).toBeUndefined()
 
     cleanup()
@@ -2756,7 +2764,7 @@ describe("registerStreamSocketHandlers — sequence gap detection (INV-53)", () 
 
     expect(onSequenceGap).toHaveBeenCalledWith({ streamId, afterSequence: "100" })
     // The gap-revealing event itself is still written.
-    expect(await db.events.get("evt_102")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_102"])).toBeDefined()
     cleanup()
   })
 
@@ -2835,7 +2843,7 @@ describe("registerStreamSocketHandlers — sequence gap detection (INV-53)", () 
     })
 
     expect(onSequenceGap).toHaveBeenCalledWith({ streamId, afterSequence: "100" })
-    expect(await db.events.get("evt_103")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_103"])).toBeDefined()
     cleanup()
   })
 
@@ -2995,7 +3003,7 @@ describe("getPersistedTail", () => {
       },
     ])
 
-    expect(await getPersistedTail(streamId)).toEqual({ latestSequence: "101", latestBroadcastSequence: "50" })
+    expect(await getPersistedTail("ws_1", streamId)).toEqual({ latestSequence: "101", latestBroadcastSequence: "50" })
   })
 
   it("excludes pending/failed optimistic rows from both cursors", async () => {
@@ -3019,11 +3027,14 @@ describe("getPersistedTail", () => {
       },
     ])
 
-    expect(await getPersistedTail(streamId)).toEqual({ latestSequence: "100", latestBroadcastSequence: "50" })
+    expect(await getPersistedTail("ws_1", streamId)).toEqual({ latestSequence: "100", latestBroadcastSequence: "50" })
   })
 
   it("returns nulls for an empty stream", async () => {
-    expect(await getPersistedTail("stream_tail_empty")).toEqual({ latestSequence: null, latestBroadcastSequence: null })
+    expect(await getPersistedTail("ws_1", "stream_tail_empty")).toEqual({
+      latestSequence: null,
+      latestBroadcastSequence: null,
+    })
   })
 })
 
@@ -3043,13 +3054,13 @@ describe("bootstrap no-op rewrite skip (perceived-perf: silence spurious liveQue
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap(events, streamId))
     // Sentinel: if the second apply rewrites the row, _cachedAt jumps to "now"
     // and the assertion below catches it even when both applies share a ms.
-    await db.events.update("evt_1", { _cachedAt: 12345 })
-    const first = await db.events.get("evt_1")
+    await db.events.update(["ws_1", "evt_1"], { _cachedAt: 12345 })
+    const first = await db.events.get(["ws_1", "evt_1"])
 
     // Same content arrives again (cold open re-bootstrap). Without the skip,
     // every row would be re-put with a fresh _cachedAt.
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap(events, streamId))
-    const second = await db.events.get("evt_1")
+    const second = await db.events.get(["ws_1", "evt_1"])
 
     expect(second).toEqual(first)
     expect(second?._cachedAt).toBe(12345)
@@ -3066,7 +3077,7 @@ describe("bootstrap no-op rewrite skip (perceived-perf: silence spurious liveQue
     }
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([edited], streamId))
 
-    const row = await db.events.get("evt_1")
+    const row = await db.events.get(["ws_1", "evt_1"])
     expect((row?.payload as { contentMarkdown?: string }).contentMarkdown).toBe("edited content")
   })
 
@@ -3083,7 +3094,7 @@ describe("bootstrap no-op rewrite skip (perceived-perf: silence spurious liveQue
 
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([event], streamId))
 
-    const row = await db.events.get("evt_1")
+    const row = await db.events.get(["ws_1", "evt_1"])
     expect(row?._status).toBeUndefined()
   })
 
@@ -3091,11 +3102,11 @@ describe("bootstrap no-op rewrite skip (perceived-perf: silence spurious liveQue
     const streamId = "stream_member"
     const joined = makeEvent({ id: "evt_join", streamId, sequence: "100", eventType: "member_joined" })
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([joined], streamId))
-    await db.events.update("evt_join", { _cachedAt: 12345 })
-    const first = await db.events.get("evt_join")
+    await db.events.update(["ws_1", "evt_join"], { _cachedAt: 12345 })
+    const first = await db.events.get(["ws_1", "evt_join"])
 
     await applyStreamBootstrap("ws_1", streamId, makeBootstrap([joined], streamId))
-    const second = await db.events.get("evt_join")
+    const second = await db.events.get(["ws_1", "evt_join"])
 
     expect(second).toEqual(first)
     expect(second?._cachedAt).toBe(12345)
@@ -3310,7 +3321,7 @@ describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic
       threadSummary: summary,
     })
 
-    const row = await db.events.get("evt_msg_parent")
+    const row = await db.events.get(["ws_1", "evt_msg_parent"])
     expect(row?.payload).toMatchObject({
       messageId: "msg_anchor",
       threadId: "stream_thread_m",
@@ -3344,7 +3355,7 @@ describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic
       threadSummary: summary,
     })
 
-    const row = await db.events.get("event_card1")
+    const row = await db.events.get(["ws_1", "event_card1"])
     expect(row?.payload).toMatchObject({
       delegationId: "dlg_1",
       threadId: "stream_thread_c",
@@ -3387,7 +3398,7 @@ describe("registerStreamSocketHandlers — thread:updated patch (anchor-agnostic
       threadSummary: summary,
     })
 
-    const row = await db.events.get("evt_double_parent")
+    const row = await db.events.get(["ws_1", "evt_double_parent"])
     expect(row?.payload).toMatchObject({ replyCount: 4, threadId: "stream_thread_d", threadSummary: summary })
     cleanup()
   })
@@ -3435,7 +3446,7 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const row = await db.events.get("evt_stale_parent")
+    const row = await db.events.get(["ws_1", "evt_stale_parent"])
     expect(row?.payload).toMatchObject({
       messageId: "msg_stale_parent",
       threadId: "stream_thread_1",
@@ -3476,7 +3487,7 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const row = await db.events.get("evt_fresh_parent")
+    const row = await db.events.get(["ws_1", "evt_fresh_parent"])
     expect(row?.payload).toMatchObject({ replyCount: 7, threadId: "stream_thread_2" })
   })
 
@@ -3514,7 +3525,7 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const row = await db.events.get("evt_noop_parent")
+    const row = await db.events.get(["ws_1", "evt_noop_parent"])
     expect(row?._cachedAt).toBe(cachedAt)
   })
 
@@ -3546,7 +3557,7 @@ describe("applyStreamBootstrap — threadStates healing (append mode)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const row = await db.events.get("event_card_stale")
+    const row = await db.events.get(["ws_1", "event_card_stale"])
     expect(row?.payload).toMatchObject({
       delegationId: "dlg_9",
       threadId: "stream_thread_card",
@@ -3861,7 +3872,7 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
       })
       cleanup()
 
-      const row = await db.events.get(id)
+      const row = await db.events.get(["ws_1", id])
       expect((row?.payload as { memoEmbeds: unknown }).memoEmbeds).toEqual(memoEmbeds)
     }
   })
@@ -3908,7 +3919,7 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
     })
     cleanup()
 
-    const row = await db.events.get("evt_raced")
+    const row = await db.events.get(["ws_1", "evt_raced"])
     expect((row?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds).toEqual([patched])
   })
 
@@ -3954,7 +3965,7 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
     })
     cleanup()
 
-    const row = await db.events.get("evt_tied")
+    const row = await db.events.get(["ws_1", "evt_tied"])
     expect((row?.payload as { memoEmbeds: Array<{ title: string }> }).memoEmbeds).toEqual([patched])
   })
 
@@ -3969,6 +3980,7 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
     const { socket, emit } = createTestSocket()
     const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
     await emit("memo:updated", {
+      workspaceId: "ws_1",
       streamId,
       memoId: "memo_a",
       summary: {
@@ -4911,7 +4923,7 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
 
     expect({
       scopeReads: scopeReads.mock.calls.length,
-      persisted: (await db.events.get("evt_shared"))?.sequence,
+      persisted: (await db.events.get(["ws_1", "evt_shared"]))?.sequence,
     }).toEqual({ scopeReads: 1, persisted: "10" })
 
     releaseA()
@@ -4928,11 +4940,11 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
 
     releaseA()
     await emit("message:created", messageCreated(streamId, "evt_after_first_release", "10"))
-    expect(await db.events.get("evt_after_first_release")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_after_first_release"])).toBeDefined()
 
     releaseB()
     await emit("message:created", messageCreated(streamId, "evt_after_last_release", "11"))
-    expect(await db.events.get("evt_after_last_release")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_after_last_release"])).toBeUndefined()
   })
 
   it("releasing twice does not tear down a live registration", async () => {
@@ -4949,7 +4961,7 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     releaseB()
 
     await emit("message:created", messageCreated(streamId, "evt_strictmode", "10"))
-    expect(await db.events.get("evt_strictmode")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_strictmode"])).toBeDefined()
   })
 
   it("a registration without an engine is not shared with the gated one", async () => {
@@ -4962,11 +4974,11 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     const releaseRaw = registerStreamSocketHandlers(raw.socket, "ws_1", streamId, queryClient)
 
     await gated.emit("message:created", messageCreated(streamId, "evt_gated_only", "9"))
-    expect(await db.events.get("evt_gated_only")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_gated_only"])).toBeDefined()
 
     releaseGated()
     await raw.emit("message:created", messageCreated(streamId, "evt_raw_only", "10"))
-    expect(await db.events.get("evt_raw_only")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_raw_only"])).toBeDefined()
 
     releaseRaw()
   })
@@ -5134,7 +5146,7 @@ describe("registerStreamSocketHandlers — one handler set per (event source, st
     })
 
     await emit("message:created", messageCreated(streamId, "evt_registry_drop", "10"))
-    expect(await db.events.get("evt_registry_drop")).toBeDefined()
+    expect(await db.events.get(["ws_1", "evt_registry_drop"])).toBeDefined()
 
     releaseC()
   })
@@ -5230,7 +5242,7 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
     await emit("message:created", messageCreated(streamId, "evt_single", "10"))
 
     expect({
-      persisted: (await db.events.get("evt_single"))?.sequence,
+      persisted: (await db.events.get(["ws_1", "evt_single"]))?.sequence,
       preview: (await db.streams.get(["ws_1", streamId]))?.lastMessagePreview,
       bootstrapUnchanged: queryClient.getQueryData(workspaceKeys.bootstrap("ws_1")) === bootstrapBefore,
     }).toEqual({ persisted: "10", preview: bootstrapPreview, bootstrapUnchanged: true })
@@ -5251,7 +5263,7 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
     await emit("message:created", messageCreated(streamId, "evt_no_engine", "10"))
 
     expect({
-      persisted: (await db.events.get("evt_no_engine"))?.sequence,
+      persisted: (await db.events.get(["ws_1", "evt_no_engine"]))?.sequence,
       row: await db.streams.get(["ws_1", streamId]),
     }).toEqual({ persisted: "10", row: undefined })
 
@@ -5350,7 +5362,7 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
       streamId: "stream_aside_1",
       stream: anchored("stream_aside_1", "aside"),
     })
-    expect((await db.events.get("evt_anchor"))?.payload).not.toHaveProperty("threadId")
+    expect((await db.events.get(["ws_1", "evt_anchor"]))?.payload).not.toHaveProperty("threadId")
     expect(await db.streams.get(["ws_1", "stream_aside_1"])).toBeUndefined()
 
     await emit("stream:created", {
@@ -5358,7 +5370,7 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
       streamId: "stream_thread_1",
       stream: anchored("stream_thread_1", "thread"),
     })
-    expect((await db.events.get("evt_anchor"))?.payload).toMatchObject({ threadId: "stream_thread_1" })
+    expect((await db.events.get(["ws_1", "evt_anchor"]))?.payload).toMatchObject({ threadId: "stream_thread_1" })
 
     cleanup()
   })
@@ -5458,8 +5470,354 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
     }
 
     await emit("stream:created", { workspaceId: "ws_1", streamId: hostId, stream: thread })
-    expect((await db.events.get("evt_anchor_legacy"))?.payload).toMatchObject({ threadId: "stream_thread_legacy" })
+    expect((await db.events.get(["ws_1", "evt_anchor_legacy"]))?.payload).toMatchObject({
+      threadId: "stream_thread_legacy",
+    })
 
     cleanup()
+  })
+})
+
+describe("registerStreamSocketHandlers — workspace isolation", () => {
+  const STREAM_ID = "stream_copied"
+  const NOW = 1_700_000_000_000
+  const CREATED_AT = "2026-08-20T10:00:00.000Z"
+
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function cachedMessage(workspaceId: string, contentMarkdown: string, payload: Record<string, unknown> = {}) {
+    return {
+      ...makeEvent({ id: "evt_copied", streamId: STREAM_ID, sequence: "7", createdAt: CREATED_AT }),
+      payload: { messageId: "msg_copied", contentMarkdown, ...payload },
+      workspaceId,
+      _sequenceNum: 7,
+      _cachedAt: 1,
+    } satisfies CachedEvent
+  }
+
+  function sharedSlot(workspaceId: string, contentMarkdown: string) {
+    const value: SharedMessageSlot = {
+      type: "sharedMessage",
+      state: "ok",
+      messageId: "msg_src",
+      streamId: "stream_src",
+      authorId: "usr_9",
+      authorType: "user",
+      authorName: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown,
+      editedAt: null,
+      createdAt: CREATED_AT,
+      attachments: [],
+    }
+    return {
+      workspaceId,
+      streamId: STREAM_ID,
+      slotKey: sharedMessageSlotKey("msg_src"),
+      value,
+      _cachedAt: 1,
+    }
+  }
+
+  function cachedMessageAt(
+    workspaceId: string,
+    contentMarkdown: string,
+    sequence: number,
+    overrides: Partial<CachedEvent> = {}
+  ): CachedEvent {
+    return {
+      ...cachedMessage(workspaceId, contentMarkdown),
+      sequence: String(sequence),
+      _sequenceNum: sequence,
+      ...overrides,
+    }
+  }
+
+  function optimisticCopy(workspaceId: string, id: string, anchor: number | undefined): CachedEvent {
+    return {
+      id,
+      workspaceId,
+      streamId: STREAM_ID,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: { messageId: id, contentMarkdown: "sending" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: CREATED_AT,
+      _status: "pending",
+      ...(anchor === undefined ? {} : { _anchorSequenceNum: anchor }),
+      _cachedAt: 1,
+    }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.slots.clear()
+    await db.streams.clear()
+    await db.pendingMessages.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should patch only this workspace's copy when reaction:added arrives and another workspace holds the same message id", async () => {
+    const rowA = cachedMessage("ws_a", "from a")
+    const rowB = cachedMessage("ws_b", "from b", { reactions: { "🔥": ["usr_b"] } })
+    await db.events.bulkPut([rowA, rowB])
+    vi.spyOn(Date, "now").mockReturnValue(NOW)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_a", STREAM_ID, new QueryClient())
+    await emit("reaction:added", {
+      workspaceId: "ws_a",
+      streamId: STREAM_ID,
+      messageId: "msg_copied",
+      emoji: "👍",
+      userId: "usr_a",
+    })
+    cleanup()
+
+    expect(await db.events.toArray()).toEqual([
+      { ...rowA, payload: { ...rowA.payload, reactions: { "👍": ["usr_a"] } }, _cachedAt: NOW, _patchedAt: NOW },
+      rowB,
+    ])
+  })
+
+  it("should patch only this workspace's copy when message:edited arrives and another workspace holds the same message id", async () => {
+    const rowA = cachedMessage("ws_a", "from a")
+    const rowB = cachedMessage("ws_b", "from b")
+    await db.events.bulkPut([rowA, rowB])
+    vi.spyOn(Date, "now").mockReturnValue(NOW)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_a", STREAM_ID, new QueryClient())
+    await emit("message:edited", {
+      workspaceId: "ws_a",
+      streamId: STREAM_ID,
+      event: makeEvent({
+        id: "evt_copied_edit",
+        streamId: STREAM_ID,
+        sequence: "8",
+        createdAt: "2026-08-20T10:05:00.000Z",
+        eventType: "message_edited",
+        payload: {
+          messageId: "msg_copied",
+          contentJson: { type: "doc", content: [] },
+          contentMarkdown: "edited in a",
+          memoEmbeds: [],
+        },
+      }),
+    })
+    cleanup()
+
+    expect(await db.events.toArray()).toEqual([
+      {
+        ...rowA,
+        payload: {
+          ...rowA.payload,
+          contentJson: { type: "doc", content: [] },
+          contentMarkdown: "edited in a",
+          memoEmbeds: [],
+          editedAt: "2026-08-20T10:05:00.000Z",
+        },
+        _cachedAt: NOW,
+        _patchedAt: NOW,
+      },
+      rowB,
+    ])
+  })
+
+  it("should leave this workspace's rows untouched when message:created arrives for another workspace", async () => {
+    const optimistic: CachedEvent = {
+      id: "temp_echo",
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: { messageId: "temp_echo", contentMarkdown: "sending" },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: CREATED_AT,
+      _status: "pending",
+      _cachedAt: 1,
+    }
+    const pending = {
+      clientId: "temp_echo",
+      workspaceId: "ws_1",
+      streamId: STREAM_ID,
+      content: "sending",
+      contentFormat: "markdown" as const,
+      createdAt: 1,
+      retryCount: 0,
+    }
+    const slot = sharedSlot("ws_1", "stale content")
+    await db.events.put(optimistic)
+    await db.pendingMessages.add(pending)
+    await db.slots.put(slot)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", STREAM_ID, new QueryClient())
+    await emit("message:created", {
+      workspaceId: "ws_other",
+      streamId: STREAM_ID,
+      event: makeEvent({
+        id: "evt_foreign",
+        streamId: STREAM_ID,
+        sequence: "10",
+        createdAt: CREATED_AT,
+        payload: {
+          messageId: "msg_foreign",
+          clientMessageId: "temp_echo",
+          contentMarkdown: "from the other workspace",
+          contentJson: {
+            type: "doc",
+            content: [{ type: "paragraph", content: [{ type: "text", text: "from the other workspace" }] }],
+          },
+        },
+      }),
+      slots: { [sharedMessageSlotKey("msg_src")]: sharedSlot("ws_other", "fresh content").value },
+    })
+    cleanup()
+
+    expect({
+      events: await db.events.toArray(),
+      pendingMessages: await db.pendingMessages.toArray(),
+      slots: await db.slots.toArray(),
+    }).toEqual({ events: [optimistic], pendingMessages: [pending], slots: [slot] })
+  })
+
+  it("should leave this workspace's memo summaries untouched when memo:updated arrives for another workspace", async () => {
+    const stale = {
+      memoId: "memo_copied",
+      title: "Launch in May",
+      knowledgeType: "decision" as const,
+      memoType: "conversation" as const,
+      tags: [],
+      updatedAt: "2026-07-01T00:00:00.000Z",
+    }
+    const row = cachedMessage("ws_1", "mentions a memo", { memoEmbeds: [stale] })
+    await db.events.put(row)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", STREAM_ID, new QueryClient())
+    await emit("memo:updated", {
+      workspaceId: "ws_other",
+      streamId: STREAM_ID,
+      memoId: "memo_copied",
+      summary: { ...stale, title: "Launch in June", updatedAt: "2026-07-31T12:00:00.000Z" },
+    })
+    cleanup()
+
+    expect(await db.events.toArray()).toEqual([row])
+  })
+
+  it("should leave this workspace's slots untouched when pointer:invalidated arrives for another workspace", async () => {
+    const slot = sharedSlot("ws_1", "stale content")
+    await db.slots.put(slot)
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", STREAM_ID, new QueryClient())
+    await emit("pointer:invalidated", {
+      workspaceId: "ws_other",
+      targetStreamId: STREAM_ID,
+      sourceMessageId: "msg_src",
+      slots: { [sharedMessageSlotKey("msg_src")]: sharedSlot("ws_other", "fresh content").value },
+    })
+    cleanup()
+
+    expect(await db.slots.toArray()).toEqual([slot])
+  })
+
+  it("should read this workspace's tail when another workspace holds the same stream at a higher sequence", async () => {
+    await db.events.bulkPut([
+      cachedMessageAt("ws_a", "from a", 7, { broadcastSequence: "3" }),
+      cachedMessageAt("ws_b", "from b", 17, { broadcastSequence: "13" }),
+    ])
+
+    expect({
+      latestPersistedSequence: await getLatestPersistedSequence("ws_a", STREAM_ID),
+      persistedTail: await getPersistedTail("ws_a", STREAM_ID),
+    }).toEqual({
+      latestPersistedSequence: "7",
+      persistedTail: { latestSequence: "7", latestBroadcastSequence: "3" },
+    })
+  })
+
+  it("should leave another workspace's pending row untouched when this workspace bumps later optimistic anchors", async () => {
+    const rowA = optimisticCopy("ws_a", "temp_copy", 5)
+    const rowB = optimisticCopy("ws_b", "temp_copy", 5)
+    await db.events.bulkPut([rowA, rowB])
+    vi.spyOn(Date, "now").mockReturnValue(NOW)
+
+    await bumpLaterOptimisticAnchors("ws_a", STREAM_ID, 998, 20, "temp_other")
+
+    expect(await db.events.toArray()).toEqual([{ ...rowA, _anchorSequenceNum: 20, _cachedAt: NOW }, rowB])
+  })
+
+  it("should leave another workspace's rows untouched when this workspace applies a replace bootstrap over the same stream id", async () => {
+    const rowsB = [
+      cachedMessageAt("ws_b", "from b", 17, {
+        payload: { messageId: "msg_copied", contentMarkdown: "from b", reactions: { "🔥": ["usr_b"] } },
+      }),
+      { ...cachedMessageAt("ws_b", "stale b", 30), id: "evt_stale" },
+      { ...optimisticCopy("ws_b", "temp_copy", 17), _sentAt: 5 },
+      optimisticCopy("ws_b", "temp_unanchored", undefined),
+    ]
+    await db.events.bulkPut([
+      cachedMessageAt("ws_a", "from a", 7),
+      { ...cachedMessageAt("ws_a", "stale a", 8), id: "evt_stale" },
+      optimisticCopy("ws_a", "temp_copy", 7),
+      ...rowsB,
+    ])
+    vi.spyOn(Date, "now").mockReturnValue(NOW)
+    const refreshed = makeEvent({
+      id: "evt_copied",
+      streamId: STREAM_ID,
+      sequence: "7",
+      createdAt: CREATED_AT,
+      payload: { messageId: "msg_copied", contentMarkdown: "fresh a" },
+    })
+    const tail = makeEvent({ id: "evt_tail", streamId: STREAM_ID, sequence: "20", createdAt: CREATED_AT })
+    const bootstrap = makeBootstrap([refreshed, tail], STREAM_ID)
+
+    await applyStreamBootstrap("ws_a", STREAM_ID, {
+      ...bootstrap,
+      stream: { ...bootstrap.stream, workspaceId: "ws_a" },
+    })
+
+    const rows = await db.events.toArray()
+    expect({
+      ws_a: rows.filter((row) => row.workspaceId === "ws_a"),
+      ws_b: rows.filter((row) => row.workspaceId === "ws_b"),
+    }).toEqual({
+      ws_a: [
+        { ...refreshed, workspaceId: "ws_a", _sequenceNum: 7, _cachedAt: NOW },
+        { ...tail, workspaceId: "ws_a", _sequenceNum: 20, _cachedAt: NOW },
+      ],
+      ws_b: rowsB,
+    })
   })
 })

@@ -144,7 +144,7 @@ async function promoteDraft(
   }
 
   // Move the optimistic event from draft streamId to real streamId
-  const optimisticEvent = await database.events.get(next.clientId)
+  const optimisticEvent = await database.events.get([next.workspaceId, next.clientId])
   const movedEvent = optimisticEvent
     ? { ...optimisticEvent, streamId: realStreamId, _sequenceNum: sequenceToNum(optimisticEvent.sequence) }
     : undefined
@@ -170,7 +170,7 @@ async function promoteDraft(
   // re-increment here.
   const anchorId = creation.parentAnchorId ?? creation.parentMessageId
   if (creation.type === StreamTypes.THREAD && creation.parentStreamId && anchorId) {
-    await setParentThreadId(creation.parentStreamId, anchorId, realStreamId, database)
+    await setParentThreadId(next.workspaceId, creation.parentStreamId, anchorId, realStreamId, database)
     if (fence.isRetired()) return null
   }
 
@@ -308,7 +308,7 @@ export function useMessageQueue(workspaceId: string): void {
         }
 
         markPending(next.clientId)
-        await database.events.update(next.clientId, { _status: "pending" })
+        await database.events.update([next.workspaceId, next.clientId], { _status: "pending" })
 
         try {
           // If this message needs a stream created first, promote the draft
@@ -371,7 +371,7 @@ export function useMessageQueue(workspaceId: string): void {
                 if (stream) {
                   // The optimistic event carries the attachment summaries (the send
                   // response doesn't), so the card renders thumbnails immediately.
-                  const optimisticEvent = await database.events.get(next.clientId)
+                  const optimisticEvent = await database.events.get([next.workspaceId, next.clientId])
                   const attachments = (optimisticEvent?.payload as { attachments?: AttachmentSummary[] } | undefined)
                     ?.attachments
                   await reconcileOptimisticBoardPost(
@@ -404,7 +404,7 @@ export function useMessageQueue(workspaceId: string): void {
           // Marked before the queue row goes: a bootstrap applied between the two
           // writes would otherwise read the optimistic row as stale and drop it
           // ahead of the socket echo.
-          await database.events.update(next.clientId, { _sentAt: Date.now() })
+          await database.events.update([next.workspaceId, next.clientId], { _sentAt: Date.now() })
           await database.pendingMessages.delete(next.clientId)
 
           // Do NOT delete the optimistic event from db.events here.
@@ -434,10 +434,13 @@ export function useMessageQueue(workspaceId: string): void {
                 status: "blocked-privacy",
                 retryAfter: undefined,
               }),
-              database.events.update(next.clientId, { _status: "failed" }),
+              database.events.update([next.workspaceId, next.clientId], { _status: "failed" }),
             ])
             markFailed(next.clientId)
-            surfacePrivacyBlockToast(next.clientId, { retryMessage, deleteMessage })
+            surfacePrivacyBlockToast(next.clientId, {
+              retryMessage,
+              deleteMessage: (id) => deleteMessage(next.workspaceId, id),
+            })
             skippedIds.add(next.clientId)
             continue
           }
@@ -464,7 +467,7 @@ export function useMessageQueue(workspaceId: string): void {
                 terminalFailure: true,
                 retryAfter: undefined,
               }),
-              database.events.update(next.clientId, { _status: "failed" }),
+              database.events.update([next.workspaceId, next.clientId], { _status: "failed" }),
             ])
             markFailed(next.clientId)
             skippedIds.add(next.clientId)
@@ -483,7 +486,7 @@ export function useMessageQueue(workspaceId: string): void {
             retryCount,
             retryAfter: Date.now() + delay,
           })
-          await database.events.update(next.clientId, { _status: "failed" })
+          await database.events.update([next.workspaceId, next.clientId], { _status: "failed" })
           markFailed(next.clientId)
           // Skip this message for the rest of this drain cycle so newer
           // messages are not blocked behind it.

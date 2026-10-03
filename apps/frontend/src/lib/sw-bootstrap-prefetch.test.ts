@@ -81,14 +81,14 @@ describe("runBootstrapSync account routing", () => {
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    const accountEvents = await accountDb.events.where("streamId").equals(streamId).toArray()
+    const accountEvents = await accountDb.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(accountEvents.map((e) => e.id).sort()).toEqual(["evt_1", "evt_2"])
     expect(accountEvents[0].workspaceId).toBe("ws_1")
     expect(accountEvents[0]._sequenceNum).toBe(1)
 
     // The default (pre-auth) database the signed-in app never reads must stay
     // untouched — writing there is exactly the bug this guards against.
-    const defaultEvents = await db.events.where("streamId").equals(streamId).toArray()
+    const defaultEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(defaultEvents).toEqual([])
   })
 
@@ -111,7 +111,7 @@ describe("runBootstrapSync account routing", () => {
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_pushed", workosUserId })
 
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    const events = await accountDb.events.where("streamId").equals(streamId).toArray()
+    const events = await accountDb.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(events.map((e) => e.id).sort()).toEqual(["evt_old", "evt_pushed"])
   })
 
@@ -206,7 +206,7 @@ describe("runBootstrapSync account routing", () => {
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    expect(await accountDb.events.where("streamId").equals(streamId).toArray()).toEqual([])
+    expect(await accountDb.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()).toEqual([])
     // Only the identity probe ran; no workspace or stream data was fetched.
     expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(["/api/auth/me"])
   })
@@ -240,7 +240,7 @@ describe("runBootstrapSync account routing", () => {
       expect(headers?.[ACCOUNT_ASSERTION_HEADER]).toBe(workosUserId)
     }
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    expect(await accountDb.events.where("streamId").equals(streamId).toArray()).toEqual([])
+    expect(await accountDb.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()).toEqual([])
   })
 
   it("prefetches nothing when the target carries no account id", async () => {
@@ -257,7 +257,7 @@ describe("runBootstrapSync account routing", () => {
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_n1", workosUserId: null })
 
-    const defaultEvents = await db.events.where("streamId").equals(streamId).toArray()
+    const defaultEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(defaultEvents).toEqual([])
     // Nothing is fetched at all: an unattributed target has no owner to write
     // under, and the workspace snapshot is as viewer-specific as the stream one.

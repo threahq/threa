@@ -207,7 +207,7 @@ const EMPTY_ANCHOR_CONTEXT: ThreadAnchorContext = {
 }
 
 // Both reads are keyed lookups over the ids actually referenced: the sparse
-// `payload.messageId` index (v47) for message anchors, the primary key for card
+// `[workspaceId+payload.messageId]` index for message anchors, the primary key for card
 // anchors and for the conversation-backfill rows. Nothing scans the events table
 // or the whole workspace, so an always-mounted composer's subscription re-fires
 // only on writes touching an id it asked for.
@@ -216,17 +216,18 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
   const anchorIds = anchorIdKey.split("|")
 
   const streamByAnchorId = new Map<string, { streamId: string; anchorId: string }>()
-  const messageRows = await db.events.where("payload.messageId").anyOf(anchorIds).toArray()
+  const messageRows = await db.events
+    .where("[workspaceId+payload.messageId]")
+    .anyOf(anchorIds.map((id) => [workspaceId, id]))
+    .toArray()
   for (const event of messageRows) {
     if (event.eventType !== "message_created") continue
-    if (event.workspaceId != null && event.workspaceId !== workspaceId) continue
     const messageId = (event.payload as { messageId?: string }).messageId
     if (messageId) streamByAnchorId.set(messageId, { streamId: event.streamId, anchorId: messageId })
   }
-  const cardRows = await db.events.bulkGet(anchorIds)
+  const cardRows = await db.events.bulkGet(anchorIds.map((id) => [workspaceId, id]))
   for (const event of cardRows) {
     if (!event || !THREAD_ANCHORABLE_EVENT_TYPES.includes(event.eventType)) continue
-    if (event.workspaceId != null && event.workspaceId !== workspaceId) continue
     streamByAnchorId.set(event.id, { streamId: event.streamId, anchorId: event.id })
   }
 

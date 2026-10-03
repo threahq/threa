@@ -116,18 +116,19 @@ export function toCachedStreamBootstrap(
 }
 
 async function resolveUnknownOptimisticAnchors(
+  workspaceId: string,
   streamId: string,
   database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
   const db = database
   const unresolved = (await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()).filter(
-    (event) => event.streamId === streamId && event._anchorSequenceNum == null
+    (event) => event.workspaceId === workspaceId && event.streamId === streamId && event._anchorSequenceNum == null
   )
   if (unresolved.length === 0) return
 
   const persistedEvents = await db.events
-    .where("[streamId+_sequenceNum]")
-    .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
+    .where("[workspaceId+streamId+_sequenceNum]")
+    .between([workspaceId, streamId, 0], [workspaceId, streamId, Number.MAX_SAFE_INTEGER], true, true)
     .filter((event) => event._status == null)
     .toArray()
   if (persistedEvents.length === 0) return
@@ -147,6 +148,7 @@ async function resolveUnknownOptimisticAnchors(
 }
 
 export async function bumpLaterOptimisticAnchors(
+  workspaceId: string,
   streamId: string,
   confirmedOptimisticSequence: number,
   confirmedPersistedSequence: number,
@@ -159,6 +161,7 @@ export async function bumpLaterOptimisticAnchors(
     .anyOf(["pending", "failed", "editing"])
     .filter(
       (event) =>
+        event.workspaceId === workspaceId &&
         event.streamId === streamId &&
         (event._sequenceNum > confirmedOptimisticSequence ||
           (event._sequenceNum === confirmedOptimisticSequence && event.id.localeCompare(confirmedOptimisticId) > 0)) &&
@@ -171,12 +174,13 @@ export async function bumpLaterOptimisticAnchors(
 }
 
 export async function getLatestPersistedSequence(
+  workspaceId: string,
   streamId: string,
   database: ThreaDatabase = getActiveDb()
 ): Promise<string | null> {
   const latestEvent = await database.events
-    .where("[streamId+_sequenceNum]")
-    .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
+    .where("[workspaceId+streamId+_sequenceNum]")
+    .between([workspaceId, streamId, 0], [workspaceId, streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
     .filter((event) => event._status == null)
     .first()
@@ -202,10 +206,10 @@ export interface PersistedTail {
  */
 const TAIL_SCAN_LIMIT = 50
 
-export async function getPersistedTail(streamId: string): Promise<PersistedTail> {
+export async function getPersistedTail(workspaceId: string, streamId: string): Promise<PersistedTail> {
   const recent = await db.events
-    .where("[streamId+_sequenceNum]")
-    .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
+    .where("[workspaceId+streamId+_sequenceNum]")
+    .between([workspaceId, streamId, 0], [workspaceId, streamId, Number.MAX_SAFE_INTEGER], true, true)
     .reverse()
     .filter((event) => event._status == null)
     .limit(TAIL_SCAN_LIMIT)
@@ -239,14 +243,15 @@ function getBootstrapWindowCeiling(events: StreamEvent[], latestSequence: string
  * and the socket echo (or a later bootstrap) still owns the swap.
  */
 async function cleanupStaleOptimisticEvents(
+  workspaceId: string,
   streamId: string,
   database: ThreaDatabase,
   fetchStartedAt?: number
 ): Promise<void> {
   const db = database
   const tempEvents = await db.events
-    .where("streamId")
-    .equals(streamId)
+    .where("[workspaceId+streamId]")
+    .equals([workspaceId, streamId])
     .filter((e) => e.id.startsWith("temp_"))
     .toArray()
 
@@ -261,7 +266,7 @@ async function cleanupStaleOptimisticEvents(
     if (temp._sentAt !== undefined && (fetchStartedAt === undefined || temp._sentAt >= fetchStartedAt)) continue
     const stillPending = await db.pendingMessages.get(temp.id)
     if (!stillPending && !pendingCommandEventIds.has(temp.id)) {
-      await db.events.delete(temp.id)
+      await db.events.delete([workspaceId, temp.id])
     }
   }
 }
@@ -273,6 +278,7 @@ type BootstrapHistory = Pick<
   Partial<Pick<StreamBootstrap, "membership" | "contextBag" | "readState" | "threadStates">>
 
 async function pruneBootstrapReplaceWindow(
+  workspaceId: string,
   streamId: string,
   bootstrap: BootstrapHistory,
   database: ThreaDatabase
@@ -290,8 +296,8 @@ async function pruneBootstrapReplaceWindow(
   const bootstrapWindowCeiling = getBootstrapWindowCeiling(bootstrap.events, bootstrap.latestSequence)
 
   const staleWindowEvents = await db.events
-    .where("streamId")
-    .equals(streamId)
+    .where("[workspaceId+streamId]")
+    .equals([workspaceId, streamId])
     .filter((event) => {
       if (bootstrapEventIds.has(event.id)) return false
       if (event._status === "pending" || event._status === "failed") return false
@@ -301,7 +307,7 @@ async function pruneBootstrapReplaceWindow(
     .toArray()
 
   for (const staleEvent of staleWindowEvents) {
-    await db.events.delete(staleEvent.id)
+    await db.events.delete([workspaceId, staleEvent.id])
   }
 }
 
@@ -320,10 +326,10 @@ async function writeBootstrapEventsAndStream(
   preserveExistingStream = false
 ): Promise<StreamReadFrontier | undefined> {
   const db = account.database
-  await cleanupStaleOptimisticEvents(streamId, db, fetchStartedAt)
+  await cleanupStaleOptimisticEvents(workspaceId, streamId, db, fetchStartedAt)
 
   if (bootstrap.syncMode !== "append") {
-    await pruneBootstrapReplaceWindow(streamId, bootstrap, db)
+    await pruneBootstrapReplaceWindow(workspaceId, streamId, bootstrap, db)
   }
 
   // Persist the bootstrap's slot carrier in the same transaction as its events.
@@ -370,7 +376,7 @@ async function writeBootstrapEventsAndStream(
     // Every other event type's payload IS immutable post-creation, so a plain
     // overwrite is equivalent for them.
     const snapshotMs = bootstrap.snapshotAt ? Date.parse(bootstrap.snapshotAt) : null
-    const existingRows = await db.events.bulkGet(bootstrap.events.map((e) => e.id))
+    const existingRows = await db.events.bulkGet(bootstrap.events.map((e) => [workspaceId, e.id]))
     const existingById = new Map(
       existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
     )
@@ -390,7 +396,9 @@ async function writeBootstrapEventsAndStream(
       .filter((e) => e.eventType === "message_created")
       .map((e) => ({ realEvent: e, clientMessageId: (e.payload as { clientMessageId?: string }).clientMessageId }))
       .filter((pair): pair is { realEvent: StreamEvent; clientMessageId: string } => !!pair.clientMessageId)
-    const optimisticRows = await db.events.bulkGet(messageCreatedWithClientId.map((pair) => pair.clientMessageId))
+    const optimisticRows = await db.events.bulkGet(
+      messageCreatedWithClientId.map((pair) => [workspaceId, pair.clientMessageId])
+    )
     const optimisticSwaps = messageCreatedWithClientId.flatMap(({ realEvent }, i) => {
       const optimistic = optimisticRows[i]
       return optimistic ? [{ realEvent, optimistic }] : []
@@ -404,7 +412,7 @@ async function writeBootstrapEventsAndStream(
       }))
       .filter((pair): pair is { realEvent: StreamEvent; clientCommandId: string } => !!pair.clientCommandId)
     const optimisticCommandRows = await db.events.bulkGet(
-      commandDispatchedWithClientId.map((pair) => pair.clientCommandId)
+      commandDispatchedWithClientId.map((pair) => [workspaceId, pair.clientCommandId])
     )
     const optimisticCommandSwaps = commandDispatchedWithClientId.flatMap(({ realEvent }, index) => {
       const optimistic = optimisticCommandRows[index]
@@ -478,7 +486,7 @@ async function writeBootstrapEventsAndStream(
     }
 
     await putEventsBounded(db.events, toWrite)
-    await resolveUnknownOptimisticAnchors(streamId, db)
+    await resolveUnknownOptimisticAnchors(workspaceId, streamId, db)
 
     // Real rows are in place (bulkPut above, or already present via a skipped
     // rewrite) — now drop the optimistic copies and their outbox entries so a
@@ -486,13 +494,14 @@ async function writeBootstrapEventsAndStream(
     // stops the queue from replaying a send the server already committed.
     for (const { realEvent, optimistic } of optimisticSwaps) {
       await bumpLaterOptimisticAnchors(
+        workspaceId,
         streamId,
         optimistic._sequenceNum,
         sequenceToNum(realEvent.sequence),
         optimistic.id,
         db
       )
-      await db.events.delete(optimistic.id)
+      await db.events.delete([workspaceId, optimistic.id])
       await db.pendingMessages.delete(optimistic.id)
       const plaintext = readPlaintextContent(optimistic.payload)
       if (plaintext && isEncryptedPayload(realEvent.payload) && getAccountGeneration() === account.generation) {
@@ -501,13 +510,17 @@ async function writeBootstrapEventsAndStream(
     }
     for (const { realEvent, optimistic } of optimisticCommandSwaps) {
       await bumpLaterOptimisticAnchors(
+        workspaceId,
         streamId,
         optimistic._sequenceNum,
         sequenceToNum(realEvent.sequence),
         optimistic.id,
         db
       )
-      await db.events.bulkDelete([optimistic.id, `${optimistic.id}:failed`])
+      await db.events.bulkDelete([
+        [workspaceId, optimistic.id],
+        [workspaceId, `${optimistic.id}:failed`],
+      ])
       const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
       await db.pendingOperations.bulkDelete(
         operations
@@ -517,7 +530,7 @@ async function writeBootstrapEventsAndStream(
     }
   }
 
-  await applyBootstrapThreadStates(streamId, bootstrap, now, db)
+  await applyBootstrapThreadStates(workspaceId, streamId, bootstrap, now, db)
 
   // Merge stream metadata without destroying fields that only exist on the
   // workspace bootstrap's StreamWithPreview (e.g. lastMessagePreview, which
@@ -635,6 +648,7 @@ async function persistBootstrapReadState(
 type BootstrapThreadState = NonNullable<StreamBootstrap["threadStates"]>[number]
 
 async function applyBootstrapThreadStates(
+  workspaceId: string,
   streamId: string,
   bootstrap: BootstrapHistory,
   now: number,
@@ -679,8 +693,8 @@ async function applyBootstrapThreadStates(
 
   if (messageStateByAnchor.size > 0) {
     await db.events
-      .where("[streamId+eventType]")
-      .equals([streamId, "message_created"])
+      .where("[workspaceId+streamId+eventType]")
+      .equals([workspaceId, streamId, "message_created"])
       .filter((event) => {
         const state = messageStateByAnchor.get((event.payload as { messageId?: string })?.messageId ?? "")
         if (!state || isStale(event)) return false
@@ -694,8 +708,8 @@ async function applyBootstrapThreadStates(
 
   for (const state of eventAnchorStates) {
     await db.events
-      .where("id")
-      .equals(anchorIdOf(state) as string)
+      .where("[workspaceId+id]")
+      .equals([workspaceId, anchorIdOf(state) as string])
       .modify((event) => {
         if (event.streamId !== streamId || isStale(event)) return
         if (differs(event.payload as Record<string, unknown>, state)) heal(event, state)
@@ -1082,10 +1096,14 @@ export function preserveBakedInAppData(
  * the server decided per room what may be shown, and an event arriving for a
  * stream is not permission to add a card to a message that never had one.
  */
-export async function updateMemoEmbedSummary(streamId: string, summary: MemoEmbedSummary): Promise<void> {
+export async function updateMemoEmbedSummary(
+  workspaceId: string,
+  streamId: string,
+  summary: MemoEmbedSummary
+): Promise<void> {
   await db.events
-    .where("[streamId+eventType]")
-    .equals([streamId, "message_created"])
+    .where("[workspaceId+streamId+eventType]")
+    .equals([workspaceId, streamId, "message_created"])
     .filter((e) => {
       const embeds = (e.payload as { memoEmbeds?: MemoEmbedSummary[] })?.memoEmbeds
       return Array.isArray(embeds) && embeds.some((entry) => entry.memoId === summary.memoId)
@@ -1103,6 +1121,7 @@ export async function updateMemoEmbedSummary(streamId: string, summary: MemoEmbe
 }
 
 export async function updateMessageEvent(
+  workspaceId: string,
   streamId: string,
   messageId: string,
   updater: (payload: Record<string, unknown>) => Record<string, unknown>,
@@ -1124,15 +1143,15 @@ export async function updateMessageEvent(
     event._patchedAt = now
   }
 
-  // The `payload.messageId` sparse index (v47) makes this a direct lookup.
+  // The `[workspaceId+payload.messageId]` sparse index makes this a direct lookup.
   // The stream/type guard stays inside the cursor so a message that moved
   // streams is still not patched in its old stream — today's semantics.
   // `false` (not a bare return) is what tells Dexie to SKIP the row: any
   // other return value re-puts it, which would fire observability for every
   // same-id row in another stream.
   await database.events
-    .where("payload.messageId")
-    .equals(messageId)
+    .where("[workspaceId+payload.messageId]")
+    .equals([workspaceId, messageId])
     .modify((event) => {
       if (event.streamId !== streamId || event.eventType !== "message_created") return false
       patch(event)
@@ -1147,18 +1166,19 @@ export async function updateMessageEvent(
  * for messages, event id for cards).
  */
 export async function updateEventByAnchor(
+  workspaceId: string,
   streamId: string,
   anchorId: string,
   updater: (payload: Record<string, unknown>) => Record<string, unknown>,
   database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
   if (anchorId.startsWith("msg_")) {
-    await updateMessageEvent(streamId, anchorId, updater, database)
+    await updateMessageEvent(workspaceId, streamId, anchorId, updater, database)
     return
   }
   await database.events
-    .where("id")
-    .equals(anchorId)
+    .where("[workspaceId+id]")
+    .equals([workspaceId, anchorId])
     .modify((event) => {
       if (event.streamId !== streamId) return
       const now = Date.now()
@@ -1199,12 +1219,13 @@ function mergeThreadSummary(existing: ThreadSummary | undefined, next: ThreadSum
  * makes the heal a visually identical no-op.
  */
 export async function optimisticReplyCountUpdate(
+  workspaceId: string,
   parentStreamId: string,
   anchorId: string,
   threadId: string,
   summary?: ThreadSummary
 ): Promise<void> {
-  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({
+  await updateEventByAnchor(workspaceId, parentStreamId, anchorId, (p) => ({
     ...p,
     threadId,
     replyCount: ((p.replyCount as number) ?? 0) + 1,
@@ -1222,12 +1243,13 @@ export async function optimisticReplyCountUpdate(
  * targets the real thread.
  */
 export async function setParentThreadId(
+  workspaceId: string,
   parentStreamId: string,
   anchorId: string,
   threadId: string,
   database: ThreaDatabase = getActiveDb()
 ): Promise<void> {
-  await updateEventByAnchor(parentStreamId, anchorId, (p) => ({ ...p, threadId }), database)
+  await updateEventByAnchor(workspaceId, parentStreamId, anchorId, (p) => ({ ...p, threadId }), database)
 }
 
 // ============================================================================
@@ -1303,7 +1325,7 @@ async function applyContextRowsForEvent(
   const rows = contextItemsFromEvent(
     event,
     await resolveContextScope(workspaceId, streamId),
-    await resolveMemoSourceEvents(streamId, event)
+    await resolveMemoSourceEvents(workspaceId, streamId, event)
   )
   if (opts?.replaceMessageId) {
     await replaceContextRowsForMessage(workspaceId, opts.replaceMessageId, rows)
@@ -1319,15 +1341,19 @@ async function applyContextRowsForEvent(
  * `indexCapturedMemos` resolves the same way, and the two must agree or they
  * write different identity keys. Empty for every other event type.
  */
-async function resolveMemoSourceEvents(streamId: string, event: CachedEvent): Promise<Map<string, CachedEvent>> {
+async function resolveMemoSourceEvents(
+  workspaceId: string,
+  streamId: string,
+  event: CachedEvent
+): Promise<Map<string, CachedEvent>> {
   const resolved = new Map<string, CachedEvent>()
   if (event.eventType !== "memos:captured") return resolved
   const payload = event.payload as { memos?: { sourceMessageIds?: string[] }[] } | undefined
   const wanted = new Set((payload?.memos ?? []).flatMap((memo) => memo.sourceMessageIds ?? []))
   if (wanted.size === 0) return resolved
   await db.events
-    .where("[streamId+eventType]")
-    .equals([streamId, "message_created"])
+    .where("[workspaceId+streamId+eventType]")
+    .equals([workspaceId, streamId, "message_created"])
     .each((candidate) => {
       const messageId = (candidate.payload as { messageId?: string })?.messageId
       if (messageId && wanted.has(messageId)) resolved.set(messageId, candidate)
@@ -1437,7 +1463,7 @@ function bindStreamSocketHandlers(
             cachedAt: now,
           })
 
-          const existing = await db.events.get(newEvent.id)
+          const existing = await db.events.get([workspaceId, newEvent.id])
           if (existing) {
             alreadyPersisted = true
             return
@@ -1445,7 +1471,7 @@ function bindStreamSocketHandlers(
 
           // Tail-gap check must read the latest BEFORE this write advances it.
           if (wantsSequenceGap()) {
-            gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
+            gapAfterSequence = detectSequenceGap(await getPersistedTail(workspaceId, streamId), newEvent)
           }
 
           // Read the optimistic row (keyed by the client id the server echoes back)
@@ -1454,7 +1480,7 @@ function bindStreamSocketHandlers(
           let carriedConversationId: string | undefined
           let optimistic: CachedEvent | undefined
           if (newPayload.clientMessageId) {
-            optimistic = await db.events.get(newPayload.clientMessageId)
+            optimistic = await db.events.get([workspaceId, newPayload.clientMessageId])
             optimisticPlaintext = readPlaintextContent(optimistic?.payload)
             // A board reply tags its optimistic event with the conversation it
             // attaches to; the server `message:created` does NOT carry that (the
@@ -1481,18 +1507,19 @@ function bindStreamSocketHandlers(
             _sequenceNum: sequenceToNum(newEvent.sequence),
             _cachedAt: now,
           })
-          await resolveUnknownOptimisticAnchors(streamId)
+          await resolveUnknownOptimisticAnchors(workspaceId, streamId)
 
           if (newPayload.clientMessageId) {
             if (optimistic) {
               await bumpLaterOptimisticAnchors(
+                workspaceId,
                 streamId,
                 optimistic._sequenceNum,
                 sequenceToNum(newEvent.sequence),
                 optimistic.id
               )
             }
-            await db.events.delete(newPayload.clientMessageId).catch(() => {})
+            await db.events.delete([workspaceId, newPayload.clientMessageId]).catch(() => {})
             await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
           }
         })
@@ -1542,9 +1569,14 @@ function bindStreamSocketHandlers(
    * room may see the memo, and only for a real edit — it is the one thing that
    * may redraw a card, since nothing here loads late.
    */
-  const handleMemoUpdated = async (payload: { streamId: string; memoId: string; summary: MemoEmbedSummary }) => {
+  const handleMemoUpdated = async (payload: {
+    workspaceId: string
+    streamId: string
+    memoId: string
+    summary: MemoEmbedSummary
+  }) => {
     if (payload.streamId !== streamId) return
-    await updateMemoEmbedSummary(streamId, payload.summary)
+    await updateMemoEmbedSummary(workspaceId, streamId, payload.summary)
     await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
     // Label pages render from their own query, not db.events, and the backend
     // resolves their summaries fresh at read — an invalidation IS the repaint.
@@ -1565,7 +1597,7 @@ function bindStreamSocketHandlers(
 
     const now = Date.now()
     await db.transaction("rw", [db.events, db.slots], async () => {
-      await updateMessageEvent(streamId, editPayload.messageId, (p) => ({
+      await updateMessageEvent(workspaceId, streamId, editPayload.messageId, (p) => ({
         ...p,
         contentJson: editPayload.contentJson,
         contentMarkdown: editPayload.contentMarkdown,
@@ -1604,8 +1636,8 @@ function bindStreamSocketHandlers(
     // deleting without rebuilding would drop the seeded server rows of an older
     // message with nothing to write back.
     const editedEvent = await db.events
-      .where("[streamId+eventType]")
-      .equals([streamId, "message_created"])
+      .where("[workspaceId+streamId+eventType]")
+      .equals([workspaceId, streamId, "message_created"])
       .filter((e) => (e.payload as { messageId?: string })?.messageId === editPayload.messageId)
       .first()
     if (editedEvent) {
@@ -1621,7 +1653,7 @@ function bindStreamSocketHandlers(
 
   const handleMessageDeleted = async (payload: MessageDeletedPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => ({
+    await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => ({
       ...p,
       deletedAt: payload.deletedAt,
     }))
@@ -1637,13 +1669,12 @@ function bindStreamSocketHandlers(
   }
 
   const handleMessagesMoved = async (payload: MessagesMovedPayload) => {
-    if (payload.workspaceId !== workspaceId) return
     if (payload.sourceStreamId !== streamId && payload.destinationStreamId !== streamId) return
 
     const now = Date.now()
     await db.transaction("rw", [db.events, db.streams, db.slots], async () => {
       if (payload.sourceStreamId === streamId) {
-        await db.events.bulkDelete(payload.removedEventIds)
+        await db.events.bulkDelete(payload.removedEventIds.map((id) => [workspaceId, id]))
         // Append the source tombstone after the deletes so the timeline
         // shows a "moved 3 messages → thread" trace where the messages
         // used to be. The event was assigned a fresh sequence in the
@@ -1662,7 +1693,7 @@ function bindStreamSocketHandlers(
         // identical result. This makes `messages:moved` self-sufficient:
         // the thread card surfaces with the right count even if
         // `thread:updated` is delayed or lost.
-        await updateMessageEvent(streamId, payload.targetMessageId, (p) => ({
+        await updateMessageEvent(workspaceId, streamId, payload.targetMessageId, (p) => ({
           ...p,
           threadId: payload.thread.id,
           replyCount: payload.parentReplyCount,
@@ -1742,7 +1773,7 @@ function bindStreamSocketHandlers(
 
   const handleReactionAdded = async (payload: ReactionPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => {
+    await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => {
       const reactions = { ...((p.reactions as Record<string, string[]>) ?? {}) }
       const existing = reactions[payload.emoji] || []
       if (!existing.includes(payload.userId)) {
@@ -1761,7 +1792,7 @@ function bindStreamSocketHandlers(
 
   const handleReactionRemoved = async (payload: ReactionPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => {
+    await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => {
       const reactions = { ...((p.reactions as Record<string, string[]>) ?? {}) }
       if (reactions[payload.emoji]) {
         reactions[payload.emoji] = reactions[payload.emoji].filter((id) => id !== payload.userId)
@@ -1788,7 +1819,6 @@ function bindStreamSocketHandlers(
   }
 
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {
-    if (payload.workspaceId !== workspaceId) return
     if ((payload.stream.parentStreamId ?? payload.streamId) !== streamId) return
     const stream = payload.stream
     // An aside is anchored like a thread but is never the anchor's thread:
@@ -1800,7 +1830,7 @@ function bindStreamSocketHandlers(
     const anchorId = stream.parentAnchorId
     if (!anchorId) return
 
-    await updateEventByAnchor(streamId, anchorId, (p) => ({
+    await updateEventByAnchor(workspaceId, streamId, anchorId, (p) => ({
       ...p,
       threadId: stream.id,
     }))
@@ -1831,7 +1861,7 @@ function bindStreamSocketHandlers(
     // Heal only the fields the patch carries: the edit path omits replyCount
     // (summary-only refresh) so it can't overwrite a concurrent create/delete's
     // authoritative count.
-    await updateEventByAnchor(streamId, payload.anchorId, (p) => ({
+    await updateEventByAnchor(workspaceId, streamId, payload.anchorId, (p) => ({
       ...p,
       ...(payload.replyCount !== undefined ? { replyCount: payload.replyCount } : {}),
       ...(payload.threadSummary !== undefined ? { threadSummary: payload.threadSummary } : {}),
@@ -1866,17 +1896,17 @@ function bindStreamSocketHandlers(
     // put must be atomic, or a concurrent append can land between the gap read
     // and this write and make the cursor lie in either direction.
     await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-      const existing = await db.events.get(payload.event.id)
+      const existing = await db.events.get([workspaceId, payload.event.id])
       if (existing) return
       // Tail-gap check must read the latest BEFORE this write advances it.
       if (wantsSequenceGap()) {
-        gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
+        gapAfterSequence = detectSequenceGap(await getPersistedTail(workspaceId, streamId), payload.event)
       }
       const commandClientId =
         payload.event.eventType === "command_dispatched"
           ? (payload.event.payload as { clientCommandId?: string }).clientCommandId
           : undefined
-      const commandCandidate = commandClientId ? await db.events.get(commandClientId) : undefined
+      const commandCandidate = commandClientId ? await db.events.get([workspaceId, commandClientId]) : undefined
       const optimisticCommand = commandCandidate?._status != null ? commandCandidate : undefined
       await db.events.put({
         ...payload.event,
@@ -1884,15 +1914,19 @@ function bindStreamSocketHandlers(
         _sequenceNum: sequenceToNum(payload.event.sequence),
         _cachedAt: now,
       })
-      await resolveUnknownOptimisticAnchors(streamId)
+      await resolveUnknownOptimisticAnchors(workspaceId, streamId)
       if (commandClientId && optimisticCommand) {
         await bumpLaterOptimisticAnchors(
+          workspaceId,
           streamId,
           optimisticCommand._sequenceNum,
           sequenceToNum(payload.event.sequence),
           optimisticCommand.id
         )
-        await db.events.bulkDelete([commandClientId, `${commandClientId}:failed`])
+        await db.events.bulkDelete([
+          [workspaceId, commandClientId],
+          [workspaceId, `${commandClientId}:failed`],
+        ])
         const operations = await db.pendingOperations.where("type").equals("dispatch_command").toArray()
         await db.pendingOperations.bulkDelete(
           operations
@@ -1930,6 +1964,7 @@ function bindStreamSocketHandlers(
   // call:participants_changed is stream-scoped and carries NO timeline row — it
   // only refreshes the live card's roster in the active-calls store.
   const handleCallParticipantsChanged = (payload: {
+    workspaceId: string
     streamId: string
     callId: string
     participantCount: number
@@ -1978,7 +2013,7 @@ function bindStreamSocketHandlers(
 
   const handleLinkPreviewReady = async (payload: LinkPreviewReadyPayload) => {
     if (payload.streamId !== streamId) return
-    await updateMessageEvent(streamId, payload.messageId, (p) => ({
+    await updateMessageEvent(workspaceId, streamId, payload.messageId, (p) => ({
       ...p,
       linkPreviews: preserveBakedInAppData(payload.previews, p.linkPreviews as LinkPreviewSummary[] | undefined),
     }))
@@ -1993,6 +2028,7 @@ function bindStreamSocketHandlers(
    * slot store so the pointer card updates in place, no refetch.
    */
   const handlePointerInvalidated = async (payload: {
+    workspaceId: string
     targetStreamId: string
     sourceMessageId: string
     slots?: SlotMap
@@ -2081,98 +2117,66 @@ function bindStreamSocketHandlers(
     }
   }
 
-  socket.on("message:created", handleMessageCreated)
-  socket.on("message:edited", handleMessageEdited)
-  socket.on("memo:updated", handleMemoUpdated)
-  socket.on("message:deleted", handleMessageDeleted)
-  socket.on("messages:moved", handleMessagesMoved)
-  socket.on("reaction:added", handleReactionAdded)
-  socket.on("reaction:removed", handleReactionRemoved)
-  socket.on("stream:created", handleStreamCreated)
-  socket.on("thread:updated", handleThreadUpdated)
-  socket.on("stream:member_joined", handleAppendEvent)
-  socket.on("stream:member_added", handleAppendEvent)
-  socket.on("stream:member_removed", handleAppendEvent)
-  socket.on("command:dispatched", handleAppendEvent)
-  socket.on("command:completed", handleAppendEvent)
-  socket.on("command:failed", handleAppendEvent)
-  socket.on("command:progress", handleAppendEvent)
-  socket.on("stream:aside_anchored", handleAppendEvent)
-  socket.on("agent_session:started", handleAppendEvent)
-  socket.on("agent_session:completed", handleAppendEvent)
-  socket.on("agent_session:failed", handleAppendEvent)
-  socket.on("agent_session:interrupted", handleAppendEvent)
-  socket.on("agent_session:deleted", handleAppendEvent)
-  socket.on("stream:memos_captured", handleAppendEvent)
-  socket.on("stream:agent_follow_up_scheduled", handleFollowUpEvent)
-  socket.on("stream:agent_follow_up_cancelled", handleFollowUpEvent)
-  socket.on("stream:delegation_created", handleDelegationEvent)
-  socket.on("stream:delegation_status_changed", handleDelegationEvent)
-  socket.on("stream:subagent_created", handleSubagentEvent)
-  socket.on("stream:subagent_status_changed", handleSubagentEvent)
+  // Handlers stamp this workspace's id onto every row they write, and a copied
+  // stream shares its id across workspaces, so another workspace's payload must
+  // never reach them.
+  const cleanups: Array<() => void> = []
+  const on = <P extends { workspaceId: string }>(event: string, handler: (payload: P) => unknown) => {
+    const guarded = (payload: P) => (payload.workspaceId === workspaceId ? handler(payload) : undefined)
+    socket.on(event, guarded)
+    cleanups.push(() => socket.off(event, guarded))
+  }
+
+  on("message:created", handleMessageCreated)
+  on("message:edited", handleMessageEdited)
+  on("memo:updated", handleMemoUpdated)
+  on("message:deleted", handleMessageDeleted)
+  on("messages:moved", handleMessagesMoved)
+  on("reaction:added", handleReactionAdded)
+  on("reaction:removed", handleReactionRemoved)
+  on("stream:created", handleStreamCreated)
+  on("thread:updated", handleThreadUpdated)
+  on("stream:member_joined", handleAppendEvent)
+  on("stream:member_added", handleAppendEvent)
+  on("stream:member_removed", handleAppendEvent)
+  on("command:dispatched", handleAppendEvent)
+  on("command:completed", handleAppendEvent)
+  on("command:failed", handleAppendEvent)
+  on("command:progress", handleAppendEvent)
+  on("stream:aside_anchored", handleAppendEvent)
+  on("agent_session:started", handleAppendEvent)
+  on("agent_session:completed", handleAppendEvent)
+  on("agent_session:failed", handleAppendEvent)
+  on("agent_session:interrupted", handleAppendEvent)
+  on("agent_session:deleted", handleAppendEvent)
+  on("stream:memos_captured", handleAppendEvent)
+  on("stream:agent_follow_up_scheduled", handleFollowUpEvent)
+  on("stream:agent_follow_up_cancelled", handleFollowUpEvent)
+  on("stream:delegation_created", handleDelegationEvent)
+  on("stream:delegation_status_changed", handleDelegationEvent)
+  on("stream:subagent_created", handleSubagentEvent)
+  on("stream:subagent_status_changed", handleSubagentEvent)
   // Bot-access request/resolution rows append to the timeline like any other
   // broadcast/patch event; there is no list hook behind them (the card renders
   // from the payload snapshot + the in-window status patch), so a plain append
   // is all that's needed.
-  socket.on("stream:bot_access_requested", handleAppendEvent)
-  socket.on("stream:bot_access_status_changed", handleAppendEvent)
-  socket.on("stream:decision_requested", handleAppendEvent)
-  socket.on("stream:decision_resolved", handleAppendEvent)
-  socket.on("stream:brief_updated", handleAppendEvent)
-  socket.on("stream:call_started", handleAppendEvent)
-  socket.on("stream:call_ended", handleAppendEvent)
-  socket.on("call:participants_changed", handleCallParticipantsChanged)
-  socket.on("stream:archived", handleAppendEvent)
-  socket.on("stream:unarchived", handleAppendEvent)
-  socket.on("stream:description_set", handleAppendEvent)
-  socket.on("link_preview:ready", handleLinkPreviewReady)
-  socket.on("pointer:invalidated", handlePointerInvalidated)
-  socket.on("bot_runtime:presence", handleBotRuntimePresence)
+  on("stream:bot_access_requested", handleAppendEvent)
+  on("stream:bot_access_status_changed", handleAppendEvent)
+  on("stream:decision_requested", handleAppendEvent)
+  on("stream:decision_resolved", handleAppendEvent)
+  on("stream:brief_updated", handleAppendEvent)
+  on("stream:call_started", handleAppendEvent)
+  on("stream:call_ended", handleAppendEvent)
+  on("call:participants_changed", handleCallParticipantsChanged)
+  on("stream:archived", handleAppendEvent)
+  on("stream:unarchived", handleAppendEvent)
+  on("stream:description_set", handleAppendEvent)
+  on("link_preview:ready", handleLinkPreviewReady)
+  on("pointer:invalidated", handlePointerInvalidated)
+  on("bot_runtime:presence", handleBotRuntimePresence)
 
   return () => {
-    socket.off("message:created", handleMessageCreated)
-    socket.off("message:edited", handleMessageEdited)
-    socket.off("memo:updated", handleMemoUpdated)
-    socket.off("message:deleted", handleMessageDeleted)
-    socket.off("messages:moved", handleMessagesMoved)
-    socket.off("reaction:added", handleReactionAdded)
-    socket.off("reaction:removed", handleReactionRemoved)
-    socket.off("stream:created", handleStreamCreated)
-    socket.off("thread:updated", handleThreadUpdated)
-    socket.off("stream:member_joined", handleAppendEvent)
-    socket.off("stream:member_added", handleAppendEvent)
-    socket.off("stream:member_removed", handleAppendEvent)
-    socket.off("command:dispatched", handleAppendEvent)
-    socket.off("command:completed", handleAppendEvent)
-    socket.off("command:failed", handleAppendEvent)
-    socket.off("command:progress", handleAppendEvent)
-    socket.off("stream:aside_anchored", handleAppendEvent)
-    socket.off("agent_session:started", handleAppendEvent)
-    socket.off("agent_session:completed", handleAppendEvent)
-    socket.off("agent_session:failed", handleAppendEvent)
-    socket.off("agent_session:interrupted", handleAppendEvent)
-    socket.off("agent_session:deleted", handleAppendEvent)
-    socket.off("stream:memos_captured", handleAppendEvent)
-    socket.off("stream:agent_follow_up_scheduled", handleFollowUpEvent)
-    socket.off("stream:agent_follow_up_cancelled", handleFollowUpEvent)
-    socket.off("stream:delegation_created", handleDelegationEvent)
-    socket.off("stream:delegation_status_changed", handleDelegationEvent)
-    socket.off("stream:subagent_created", handleSubagentEvent)
-    socket.off("stream:subagent_status_changed", handleSubagentEvent)
-    socket.off("stream:bot_access_requested", handleAppendEvent)
-    socket.off("stream:bot_access_status_changed", handleAppendEvent)
-    socket.off("stream:decision_requested", handleAppendEvent)
-    socket.off("stream:decision_resolved", handleAppendEvent)
-    socket.off("stream:brief_updated", handleAppendEvent)
-    socket.off("stream:call_started", handleAppendEvent)
-    socket.off("stream:call_ended", handleAppendEvent)
-    socket.off("call:participants_changed", handleCallParticipantsChanged)
-    socket.off("stream:archived", handleAppendEvent)
-    socket.off("stream:unarchived", handleAppendEvent)
-    socket.off("stream:description_set", handleAppendEvent)
-    socket.off("link_preview:ready", handleLinkPreviewReady)
-    socket.off("pointer:invalidated", handlePointerInvalidated)
-    socket.off("bot_runtime:presence", handleBotRuntimePresence)
+    for (const cleanup of cleanups) cleanup()
   }
 }
 

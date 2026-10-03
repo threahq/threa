@@ -732,7 +732,7 @@ export function StreamContent({
   // `parentMessageId`; read it off the cached row so an offline-first startup
   // resolves the anchor before the next online bootstrap rewrites the row.
   const anchorId = stream ? (stream.parentAnchorId ?? idbStream?.parentMessageId ?? null) : null
-  const parentCachedEvents = useStreamEvents(parentStreamId ?? undefined)
+  const parentCachedEvents = useStreamEvents(workspaceId, parentStreamId ?? undefined)
   const cachedAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId || !parentCachedEvents) return null
     return parentCachedEvents.find((event) => matchesDeepLinkTarget(event, anchorId))
@@ -878,7 +878,7 @@ export function StreamContent({
 
   // For drafts, query pending/failed events directly from IDB so optimistic
   // messages are visible while offline or waiting for queue processing.
-  const draftPendingEvents = useStreamEvents(isDraft ? streamId : undefined)
+  const draftPendingEvents = useStreamEvents(workspaceId, isDraft ? streamId : undefined)
   const hasDraftPendingEvents = isDraft && draftPendingEvents && draftPendingEvents.length > 0
 
   const editLastMessageCtx = useEditLastMessageTrigger(events, currentWorkspaceUserId)

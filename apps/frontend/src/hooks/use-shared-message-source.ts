@@ -91,6 +91,7 @@ const SKELETON_DELAY_MS = 300
  * hydrates at whatever the source reads now.
  */
 export interface SharedMessageReference {
+  workspaceId: string | undefined
   messageId: string
   streamId: string
   version: number | null
@@ -116,7 +117,7 @@ export interface SharedMessageReference {
  * hydration map.
  */
 export function useSharedMessageSource(reference: SharedMessageReference): SharedMessageSource {
-  const { messageId, streamId: sourceStreamId, version } = reference
+  const { workspaceId, messageId, streamId: sourceStreamId, version } = reference
   // The range arrives as a fresh object on every render (node attrs, parsed
   // href), so memo deps ride on its numbers, not its identity.
   const rangeFrom = reference.range?.from ?? null
@@ -129,15 +130,15 @@ export function useSharedMessageSource(reference: SharedMessageReference): Share
 
   const cachedEvent = useLiveQuery(
     async () => {
-      if (!sourceStreamId || !messageId) return null
+      if (!workspaceId || !sourceStreamId || !messageId) return null
       const events = await db.events
-        .where("[streamId+eventType]")
-        .equals([sourceStreamId, "message_created"])
+        .where("[workspaceId+streamId+eventType]")
+        .equals([workspaceId, sourceStreamId, "message_created"])
         .filter((e) => (e.payload as { messageId?: string })?.messageId === messageId)
         .toArray()
       return events[0] ?? null
     },
-    [messageId, sourceStreamId],
+    [workspaceId, messageId, sourceStreamId],
     null
   )
 
