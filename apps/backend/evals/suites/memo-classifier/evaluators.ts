@@ -6,9 +6,13 @@ import type { Evaluator, EvaluatorResult, RunEvaluator, CaseResult } from "../..
 import { MEMO_GEM_CONFIDENCE_FLOOR } from "../../../src/features/memos"
 import type { MemoClassifierOutput, MemoClassifierExpected } from "./types"
 
-/** What production acts on: a worthy call below the confidence floor captures nothing. */
+/**
+ * What production acts on: a worthy call below the confidence floor captures
+ * nothing, and with existing memos neither does one that revises nothing.
+ */
 function captures(output: MemoClassifierOutput): boolean {
-  return output.isKnowledgeWorthy && output.confidence >= MEMO_GEM_CONFIDENCE_FLOOR
+  const revises = !output.input.existingMemos?.length || output.shouldReviseExisting
+  return output.isKnowledgeWorthy && output.confidence >= MEMO_GEM_CONFIDENCE_FLOOR && revises
 }
 
 /** Core gate: did the classifier make the right knowledge-worthiness call? */
