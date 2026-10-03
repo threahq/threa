@@ -16,16 +16,16 @@ function target(host: string, workspaceId: string, scope: string): ComposerTarge
   return { host, workspaceId, scope }
 }
 
-async function seedV53(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
+async function seedV54(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(53).stores({ composerLoaded: V34_COMPOSER_LOADED, composerTarget: V48_COMPOSER_TARGET })
+  legacy.version(54).stores({ composerLoaded: V34_COMPOSER_LOADED, composerTarget: V48_COMPOSER_TARGET })
   await legacy.open()
   await seed(legacy)
   legacy.close()
 }
 
-describe("v54 composer pointers keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v53", async () => {
+describe("v55 composer pointers keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v54", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const pointerA = loadedPointer("stream:stream_a", "ws_1", "draft_a")
     const pointerB = loadedPointer("thread:msg_b", "ws_2", null)
@@ -34,7 +34,7 @@ describe("v54 composer pointers keyed by workspace", () => {
     const targetB = target("stream:stream_b", "ws_2", "board:reply:conv_b")
     const targetOrphan = target("stream:stream_orphan", "ws_1", "board:reply:conv_orphan")
 
-    await seedV53(name, async (legacy) => {
+    await seedV54(name, async (legacy) => {
       await legacy.table("composerLoaded").bulkPut([pointerB, withoutWorkspace(pointerOrphan), pointerA])
       await legacy.table("composerTarget").bulkPut([targetB, withoutWorkspace(targetOrphan), targetA])
     })
@@ -79,7 +79,7 @@ describe("v54 composer pointers keyed by workspace", () => {
     const targetA = target("stream:stream_copied", "ws_a", "board:reply:conv_a")
     const targetB = target("stream:stream_copied", "ws_b", "board:reply:conv_b")
 
-    await seedV53(name, async (legacy) => {
+    await seedV54(name, async (legacy) => {
       await legacy.table("composerLoaded").put(pointerA)
       await legacy.table("composerTarget").put(targetA)
     })

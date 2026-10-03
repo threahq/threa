@@ -1788,15 +1788,15 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "personas", PERSONAS_STORE)
       })
 
-    // v54: composer pointers are keyed by workspace like v50-v53. Scopes and hosts
+    // v55: composer pointers are keyed by workspace like v51-v54. Scopes and hosts
     // are built from stream, message and conversation ids, which Connect copies
     // into a partner workspace, so one workspace's checkout or target overwrote
     // the other's pointer. Rows without a `workspaceId` cannot be keyed and are
     // dropped; the pointers are device-local, so nothing refetches them.
-    // One-way door: once a client has opened at v54, code declaring only v53
+    // One-way door: once a client has opened at v55, code declaring only v54
     // cannot open the database (IndexedDB refuses a version downgrade), so a
-    // revert of this bump is not available — reverting means a v55.
-    this.version(54)
+    // revert of this bump is not available — reverting means a v56.
+    this.version(55)
       .stores({
         [COMPOSER_LOADED_STORE]: "[workspaceId+scope], workspaceId",
         [COMPOSER_TARGET_STORE]: "[workspaceId+host], workspaceId",
