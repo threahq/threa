@@ -486,9 +486,37 @@ describe("PersonaAgent subagent kickoff", () => {
     expect(capturedVolatilePrompts[0]).toContain("give a short tour")
   })
 
-  it("should run a plain catch-up in any other scratchpad", async () => {
+  it("should carry the tour into a follow-up that degrades to a catch-up", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? stream : null
+    )
     const { capturedVolatilePrompts } = await runSupersedeRerun({
       supersededFailedValidation: false,
+      purpose: { kind: "follow_up", followUpId: "followup_gone" },
+    })
+
+    expect(capturedVolatilePrompts[0]).toContain("give a short tour")
+  })
+
+  it("should run a plain catch-up in a scratchpad other than the user's Meet Ariadne one", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? { ...stream, id: "stream_meet_ariadne" } : null
+    )
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(capturedVolatilePrompts[0]).not.toContain("## First meeting")
+  })
+
+  it("should drop the tour once the Meet Ariadne conversation is past its opening", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? stream : null
+    )
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      streamOverride: { messageCount: 4 },
       purpose: { kind: "catch_up" },
     })
 

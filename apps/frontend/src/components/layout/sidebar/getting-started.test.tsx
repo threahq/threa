@@ -197,6 +197,22 @@ describe("GettingStarted", () => {
     })
   })
 
+  it("should still open the Ariadne scratchpad when caching its id fails", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(onboardingApi, "meetAriadne").mockResolvedValue({ streamId: "stream_onboarding" })
+    vi.spyOn(db.workspaceMetadata, "update").mockRejectedValue(new Error("QuotaExceededError"))
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("t")
+    renderCard()
+
+    await user.click(screen.getByRole("button", { name: "Meet Ariadne" }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location-path")).toHaveTextContent("/w/workspace_1/s/stream_onboarding")
+    )
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
   it("should toast an error and stay put when Meet Ariadne fails", async () => {
     const user = userEvent.setup()
     vi.spyOn(onboardingApi, "meetAriadne").mockRejectedValue(new Error("boom"))

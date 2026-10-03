@@ -2991,6 +2991,8 @@ export async function applyWorkspaceBootstrap(
       const botsDiff = diffRows(byId(existingBots), botRows)
       const labelsDiff = diffRows(byId(existingLabels), labelRows)
       const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
+      // Meet Ariadne never un-happens: a snapshot fetched before the click must not clear it.
+      metadataRow.onboardingStreamId ??= existingMetadata?.onboardingStreamId ?? null
       const metadataDiff = diffSingleton(existingMetadata, metadataRow)
       stopDiff()
 
@@ -3474,6 +3476,8 @@ export async function applyReconnectBootstrapBatch(
       const labelsDiff = diffRows(byId(existingLabels), labelRows)
       const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
       const unreadDiff = diffSingleton(existingUnread, unreadRow)
+      // Meet Ariadne never un-happens: a snapshot fetched before the click must not clear it.
+      metadataRow.onboardingStreamId ??= existingMetadata?.onboardingStreamId ?? null
       const metadataDiff = diffSingleton(existingMetadata, metadataRow)
       stopDiff()
 

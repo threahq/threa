@@ -92,14 +92,19 @@ export function useGettingStarted({
   }, [collapseOnMobile, openSettings])
 
   const meetAriadne = useCallback(async () => {
+    let streamId: string
     try {
-      const { streamId } = await onboardingApi.meetAriadne(workspaceId)
-      await db.workspaceMetadata.update(workspaceId, { onboardingStreamId: streamId })
-      collapseOnMobile()
-      navigate(`/w/${workspaceId}/s/${streamId}`)
+      ;({ streamId } = await onboardingApi.meetAriadne(workspaceId))
     } catch {
       toast.error("Couldn't start the conversation with Ariadne")
+      return
     }
+    // Bootstrap and stream:created also record it, so a failed cache write must not block opening the stream.
+    await db.workspaceMetadata
+      .update(workspaceId, { onboardingStreamId: streamId })
+      .catch((error) => console.warn("Failed to cache the Meet Ariadne stream", error))
+    collapseOnMobile()
+    navigate(`/w/${workspaceId}/s/${streamId}`)
   }, [workspaceId, collapseOnMobile, navigate])
 
   const openInvites = useCallback(() => {

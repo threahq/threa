@@ -133,7 +133,7 @@ function buildOnboardingTourSection(): string {
 
 ## First meeting
 
-This scratchpad is where the user first met you: your first message asked what they want to use Threa for. If they are answering that, give a short tour that follows what they said instead of covering everything:
+This scratchpad is where the user first met you from the getting-started checklist. If your first message here asked what they want to use Threa for and they are answering it, give a short tour that follows what they said instead of covering everything:
 - A few concrete places, each as an \`app:\` link, with one line on what it is for.
 - Directions for their layout when the prompt has a Device section; without one, keep directions short enough to hold on both phone and desktop.
 - Use \`threa_guide\` for anything deeper than a pointer, and send the tour as a few short messages rather than one long one.

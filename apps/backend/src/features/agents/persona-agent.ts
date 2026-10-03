@@ -541,8 +541,11 @@ export class PersonaAgent {
       if (purpose.kind === "onboarding_greeting" && (stream.messageCount ?? 0) > 0) {
         return { skip: true as const, reason: "onboarding stream already has messages" }
       }
-      const isOnboardingStream =
+      // The tour answers the greeting's question, so it only rides the first few
+      // messages: greeting, answer, maybe a second line before she replies.
+      const isOnboardingTour =
         stream.type === StreamTypes.SCRATCHPAD &&
+        (stream.messageCount ?? 0) <= 3 &&
         (
           await StreamRepository.findByUniquenessKey(
             client,
@@ -579,7 +582,7 @@ export class PersonaAgent {
         streamToolPolicy,
         rootStreamType,
         rootStreamCreatedBy,
-        isOnboardingStream,
+        isOnboardingTour,
       }
     })
 
@@ -614,7 +617,7 @@ export class PersonaAgent {
       streamToolPolicy,
       rootStreamType,
       rootStreamCreatedBy,
-      isOnboardingStream,
+      isOnboardingTour,
     } = precheck
 
     // The live subagent run this stream is the thread of, if any. One query,
@@ -1003,14 +1006,14 @@ export class PersonaAgent {
 
         // The purpose as it effectively behaves this turn: a supersede rerun
         // whose target session vanished (no reusable plan), or a follow-up whose
-        // row failed to load, degrades to a plain catch-up; a catch-up in the
-        // user's Meet Ariadne scratchpad carries the tour. The purpose prompt
+        // row failed to load, degrades to a plain catch-up; any catch-up early in
+        // the user's Meet Ariadne scratchpad carries the tour. The purpose prompt
         // section and the derived runtime flags both key off this, so wording and
         // behavior match what the turn actually does.
         let effectivePurpose: TurnPurpose = purpose
         if (purpose.kind === "supersede_rerun" && !isSupersedeRerun) effectivePurpose = { kind: "catch_up" }
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
-        else if (purpose.kind === "catch_up" && isOnboardingStream) effectivePurpose = { kind: "onboarding_tour" }
+        if (effectivePurpose.kind === "catch_up" && isOnboardingTour) effectivePurpose = { kind: "onboarding_tour" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
         // Per-turn model resolution (roadmap 2.3), at the dispatch seam like

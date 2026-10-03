@@ -635,6 +635,13 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
   })
 
+  it("should keep the Meet Ariadne stream id when a snapshot fetched before the click lacks it", async () => {
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: "stream_meet" }))
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: null }))
+
+    expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
+  })
+
   it("persists archived roots from bootstrap.archivedStreams and the sweep keeps them", async () => {
     const fetchStartedAt = Date.now()
     const archivedRoot = makeStream("stream_arch_root", { archivedAt: "2026-01-01T00:00:00Z" })
