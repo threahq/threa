@@ -41,6 +41,8 @@ export interface CompanionInput {
   }
   /** Name of the user sending the message */
   userName?: string
+  /** Prepared recall arm; falls back to `EVAL_PREPARED_RECALL`, on when neither is set. */
+  preparedRecall?: "on" | "off"
   /**
    * For `streamType: "aside"`: the host stream the aside is anchored to, seeded
    * as its own stream with this history, plus a viewport context bag on the

@@ -24,6 +24,9 @@ export interface CompanionTrajectoryStep {
   completed: boolean
   /** URLs the step attached as sources — the citation trail behind the reply. */
   sourceUrls: string[]
+  /** Workspace memos and streams the step's sources point at. */
+  sourceMemoIds: string[]
+  sourceStreamIds: string[]
   /** Truncated step content, kept only for tool_call/tool_error steps. */
   content?: string | null
 }
@@ -45,6 +48,10 @@ export interface CompanionOutput {
   }>
   /** Every trace step the turn produced, in order. */
   trajectory?: CompanionTrajectoryStep[]
+  /** Milliseconds from the start of the turn to the agent's first message. */
+  firstReplyMs?: number
+  /** Memos prepared recall injected before the first model call. */
+  recalledMemoIds?: string[]
   /** Error if the task failed */
   error?: string
 }

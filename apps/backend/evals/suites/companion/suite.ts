@@ -358,13 +358,25 @@ async function setupTestData(
   }
 }
 
+/** The memos prepared recall put in front of the model, from the turn's leading `context_received` step. */
+function readRecalledMemoIds(steps: Array<{ stepType: string; content: unknown }>): string[] {
+  const step = steps.find((s) => s.stepType === "context_received")
+  if (typeof step?.content !== "string") return []
+  const { recalledMemos } = JSON.parse(step.content) as { recalledMemos?: Array<{ memoId?: string }> }
+  return (recalledMemos ?? []).flatMap((memo) => (memo.memoId ? [memo.memoId] : []))
+}
+
 /**
  * Task function that runs the companion agent using production code paths.
  *
  * Uses PersonaAgent.run() directly - the same code path as production.
  * No duplicated prompts, no manual graph creation.
  */
-async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promise<CompanionOutput> {
+export async function runCompanionTask(
+  input: CompanionInput,
+  ctx: EvalContext,
+  { requireWebSearch = true }: { requireWebSearch?: boolean } = {}
+): Promise<CompanionOutput> {
   // Skip empty messages
   if (!input.message.trim()) {
     return {
@@ -375,7 +387,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
   }
 
   try {
-    if (ctx.credentials.webSearchEngines.length === 0) {
+    if (requireWebSearch && ctx.credentials.webSearchEngines.length === 0) {
       throw new Error(
         "Companion evals need a web search engine with its key (EXA_API_KEY and/or SERPER_API_KEY) for full web_search tool access"
       )
@@ -395,6 +407,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       embeddingService,
     })
     const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
+    const recallOff = (input.preparedRecall ?? process.env.EVAL_PREPARED_RECALL) === "off"
     const memoExplorerService = new MemoExplorerService({
       pool: ctx.pool,
       embeddingService,
@@ -420,7 +433,10 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     // Create message and thread callbacks using EventService
     const evalEventService = new EventService(ctx.pool)
 
+    let runStartedAt = 0
+    let firstReplyMs: number | undefined
     const createMessage: PersonaAgentDeps["createMessage"] = async (params) => {
+      firstReplyMs ??= Date.now() - runStartedAt
       const message = await evalEventService.createMessage({
         workspaceId: params.workspaceId,
         streamId: params.streamId,
@@ -553,17 +569,15 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       memoExplorerService,
       preparedRecall: new PreparedRecall({
         analyticsReporter: new DisabledAnalyticsReporter(),
-        memoExplorerService,
-        // `EVAL_PREPARED_RECALL=off` is the no-recall arm: an unscored pool recalls nothing.
-        scorer:
-          process.env.EVAL_PREPARED_RECALL === "off"
-            ? { score: async () => null }
-            : new DecisionsRelevanceScorer({
-                ai: ctx.ai,
-                subject: "knowledge memos",
-                question: PREPARED_RECALL_QUESTION,
-                functionId: "prepared-recall-score",
-              }),
+        // The no-recall arm (`preparedRecall: "off"` or `EVAL_PREPARED_RECALL=off`) finds no candidates, so it
+        // pays for no memo search or query embedding.
+        memoExplorerService: recallOff ? { search: async () => [] } : memoExplorerService,
+        scorer: new DecisionsRelevanceScorer({
+          ai: ctx.ai,
+          subject: "knowledge memos",
+          question: PREPARED_RECALL_QUESTION,
+          functionId: "prepared-recall-score",
+        }),
       }),
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
@@ -588,7 +602,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       currentTime: input.currentTime ? new Date(input.currentTime) : undefined,
     }
 
-    // Run the agent!
+    runStartedAt = Date.now()
     const runResult = await personaAgent.run(agentInput)
 
     // Read back messages sent by the agent.
@@ -620,9 +634,9 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     const trajectory: CompanionTrajectoryStep[] = steps.map((step) => ({
       stepType: step.stepType,
       completed: step.completedAt !== null,
-      sourceUrls: (step.sources ?? [])
-        .map((source) => source.url)
-        .filter((url): url is string => typeof url === "string"),
+      sourceUrls: (step.sources ?? []).flatMap((source) => (typeof source.url === "string" ? [source.url] : [])),
+      sourceMemoIds: (step.sources ?? []).flatMap((source) => (source.memoId ? [source.memoId] : [])),
+      sourceStreamIds: (step.sources ?? []).flatMap((source) => (source.streamId ? [source.streamId] : [])),
       ...(step.stepType === "tool_error" || step.stepType === "tool_call"
         ? { content: typeof step.content === "string" ? step.content.slice(0, 500) : null }
         : {}),
@@ -634,6 +648,8 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       responded: messages.length > 0,
       toolCalls,
       trajectory,
+      firstReplyMs,
+      recalledMemoIds: readRecalledMemoIds(steps),
     }
   } catch (error) {
     return {
@@ -654,7 +670,7 @@ export const companionSuite: EvalSuite<CompanionInput, CompanionOutput, Companio
 
   cases: companionCases,
 
-  task: runCompanionTask,
+  task: (input, ctx) => runCompanionTask(input, ctx),
 
   evaluators: [
     shouldRespondEvaluator,
