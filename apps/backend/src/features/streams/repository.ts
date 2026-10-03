@@ -1615,8 +1615,8 @@ export const StreamRepository = {
    * is covered by a test that asserts both entry points return the same
    * `ThreadSummary` for a given parent.
    *
-   * `parentStreamId` correlates the leading column of `idx_streams_thread_anchor_typed
-   * (parent_stream_id, parent_anchor_id)` so this runs as an index seek — it fires
+   * `workspaceId` and `parentStreamId` correlate the leading columns of `idx_streams_thread_anchor_typed
+   * (workspace_id, parent_stream_id, parent_anchor_id)` so this runs as an index seek — it fires
    * on every reply create/edit/delete via `emitThreadUpdate`, so a per-row streams
    * scan on the anchor alone would be a hot-path footgun (INV-20 sibling concern).
    */

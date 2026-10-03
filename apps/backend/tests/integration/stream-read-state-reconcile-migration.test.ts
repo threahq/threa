@@ -58,8 +58,8 @@ describe("reconcile stream_read_state migration", () => {
     sequence: number
   ): Promise<void> {
     await client.query(
-      `INSERT INTO stream_events (id, stream_id, sequence, event_type, payload)
-       VALUES ($1, $2, $3, 'message_created', '{}'::jsonb)`,
+      `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload)
+       VALUES ($1, (SELECT workspace_id FROM streams WHERE id = $2), $2, $3, 'message_created', '{}'::jsonb)`,
       [eventId, streamId, sequence]
     )
   }
@@ -72,8 +72,8 @@ describe("reconcile stream_read_state migration", () => {
     lastReadAt: string
   ): Promise<void> {
     await client.query(
-      `INSERT INTO stream_members (stream_id, member_id, last_read_event_id, last_read_at)
-       VALUES ($1, $2, $3, $4)`,
+      `INSERT INTO stream_members (workspace_id, stream_id, member_id, last_read_event_id, last_read_at)
+       VALUES ((SELECT workspace_id FROM streams WHERE id = $1), $1, $2, $3, $4)`,
       [streamId, userId, eventId, lastReadAt]
     )
   }

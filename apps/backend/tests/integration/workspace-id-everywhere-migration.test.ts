@@ -11,8 +11,8 @@ const ROLLOUT_MIGRATIONS = readdirSync(MIGRATIONS_DIR)
   .filter((file) => /^20261001230\d{3}_workspace_id_/.test(file))
   .sort()
 
-const PARENT_WORKSPACE = "ws_bridge"
-const EXPLICIT_WORKSPACE = "ws_explicit"
+const PARENT_WORKSPACE = "ws_parent"
+const STALE_WORKSPACE = "ws_stale"
 
 interface Child {
   table: string
@@ -97,17 +97,15 @@ function allWorkspaceIds(workspaceId: string): Record<string, string> {
 }
 
 /**
- * The bridge exists for replicas that predate workspace_id: their INSERTs omit
- * it, and the trigger must still land the row. The backfill UPDATEs run against
- * a fresh migrated database with no rows, so only seeded rows here prove the
- * join columns are right.
+ * The backfill UPDATEs run against a fresh migrated database with no rows, so
+ * only seeded rows here prove the join columns are right.
  */
-describe("workspace_id bridge and backfill migrations", () => {
+describe("workspace_id rollout migrations", () => {
   let pool: Pool
   let cleanup: () => Promise<void>
 
   beforeAll(async () => {
-    const isolated = await setupIsolatedTestDatabase("workspace_id_bridge")
+    const isolated = await setupIsolatedTestDatabase("workspace_id_rollout")
     pool = isolated.pool
     cleanup = isolated.cleanup
   }, 30_000)
@@ -116,31 +114,13 @@ describe("workspace_id bridge and backfill migrations", () => {
     await cleanup()
   }, 30_000)
 
-  test("an INSERT that omits workspace_id takes it from the parent, on every table", async () => {
-    const filled = await withTestTransaction(pool, async (client) => {
-      await seedParents(client)
-      await insertChildren(client)
-      return readWorkspaceIds(client)
-    })
-
-    expect(filled).toEqual(allWorkspaceIds(PARENT_WORKSPACE))
-  })
-
-  test("an INSERT whose parent is missing fails NOT NULL, one table per parent kind", async () => {
-    const orphans: Record<string, string> = {
-      stream_members: "INSERT INTO stream_members (stream_id, member_id) VALUES ('stream_gone', 'member_b')",
-      reactions: "INSERT INTO reactions (message_id, emoji, user_id) VALUES ('msg_gone', ':+1:', 'usr_b')",
-      agent_session_steps:
-        "INSERT INTO agent_session_steps (id, session_id, step_number, step_type) VALUES ('step_o', 'session_gone', 1, 'thinking')",
-      user_preference_overrides:
-        "INSERT INTO user_preference_overrides (key, value, user_id) VALUES ('theme', '\"dark\"', 'usr_gone')",
-    }
-
+  test("should reject an insert that omits workspace_id when the bridge is gone", async () => {
     const failures: Record<string, { code?: string; column?: string }> = {}
-    for (const [table, sql] of Object.entries(orphans)) {
-      failures[table] = await withTestTransaction(pool, async (client) => {
+    for (const child of CHILDREN) {
+      failures[child.table] = await withTestTransaction(pool, async (client) => {
+        await seedParents(client)
         try {
-          await client.query(sql)
+          await client.query(insertStatement(child))
           return {}
         } catch (error) {
           const { code, column } = error as { code?: string; column?: string }
@@ -150,18 +130,8 @@ describe("workspace_id bridge and backfill migrations", () => {
     }
 
     expect(failures).toEqual(
-      Object.fromEntries(Object.keys(orphans).map((table) => [table, { code: "23502", column: "workspace_id" }]))
+      Object.fromEntries(CHILDREN.map((child) => [child.table, { code: "23502", column: "workspace_id" }]))
     )
-  })
-
-  test("an explicit workspace_id is kept as given, on every table", async () => {
-    const kept = await withTestTransaction(pool, async (client) => {
-      await seedParents(client)
-      await insertChildren(client, EXPLICIT_WORKSPACE)
-      return readWorkspaceIds(client)
-    })
-
-    expect(kept).toEqual(allWorkspaceIds(EXPLICIT_WORKSPACE))
   })
 
   test("the backfill UPDATEs fill every table from its parent and keep value_generation", async () => {
@@ -171,17 +141,16 @@ describe("workspace_id bridge and backfill migrations", () => {
 
     const outcome = await withTestTransaction(pool, async (client) => {
       await seedParents(client)
-      await insertChildren(client)
+      await insertChildren(client, PARENT_WORKSPACE)
       const generation = async () =>
         (await client.query<{ value_generation: string }>("SELECT value_generation FROM user_preference_overrides"))
           .rows[0]?.value_generation
 
       const before = await generation()
       for (const child of CHILDREN) {
-        await client.query(`ALTER TABLE ${child.table} ALTER COLUMN workspace_id DROP NOT NULL`)
-        await client.query(`UPDATE ${child.table} SET workspace_id = NULL`)
+        await client.query(`UPDATE ${child.table} SET workspace_id = '${STALE_WORKSPACE}'`)
       }
-      const cleared = await readWorkspaceIds(client)
+      const stale = await readWorkspaceIds(client)
 
       for (const sql of updates) await client.query(sql)
       const backfilled = await readWorkspaceIds(client)
@@ -191,7 +160,7 @@ describe("workspace_id bridge and backfill migrations", () => {
       const afterValueChange = await generation()
 
       return {
-        cleared,
+        stale,
         backfilled,
         generationKept: afterBackfill === before,
         valueChangeBumpsGeneration: afterValueChange !== before,
@@ -200,7 +169,7 @@ describe("workspace_id bridge and backfill migrations", () => {
     })
 
     expect(outcome).toEqual({
-      cleared: Object.fromEntries(CHILDREN.map((child) => [child.table, null])),
+      stale: allWorkspaceIds(STALE_WORKSPACE),
       backfilled: allWorkspaceIds(PARENT_WORKSPACE),
       generationKept: true,
       valueChangeBumpsGeneration: true,

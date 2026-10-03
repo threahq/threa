@@ -6,16 +6,10 @@ import { setupIsolatedTestDatabase } from "./setup"
 
 /** Old key names that already have a workspace-leading `<name>_ws` twin. */
 const TWINNED_KEYS: string[] = [
-  "streams_pkey",
-  "idx_streams_thread_anchor_typed",
-  "stream_events_pkey",
-  "stream_events_stream_id_sequence_key",
-  "idx_stream_events_stream_broadcast_seq",
   "stream_members_pkey",
   "stream_sequences_pkey",
   "stream_policies_pkey",
   "idx_stream_briefs_stream",
-  "users_pkey",
   "idx_sca_stream_intent_unique",
   "stream_persona_participants_pkey",
   "stream_persona_roster_pkey",
@@ -23,18 +17,14 @@ const TWINNED_KEYS: string[] = [
   "idx_agent_conversation_summaries_stream_persona",
   "idx_agent_sessions_one_running_per_stream",
   "idx_subagent_runs_one_active",
-  "messages_pkey",
-  "messages_stream_id_client_message_id_unique",
   "message_versions_pkey",
   "idx_message_versions_message_seq",
   "message_compose_traces_pkey",
   "message_conversation_state_pkey",
-  "reactions_pkey",
   "researcher_cache_message_id_key",
   "conversations_pkey",
   "memos_pkey",
   "link_previews_pkey",
-  "attachments_pkey",
   "attachment_references_pkey",
   "attachment_references_pair_idx",
   "attachment_extractions_pkey",
@@ -54,6 +44,50 @@ const TWINNED_KEYS: string[] = [
   "user_preference_overrides_pkey",
 ]
 
+/** Keys whose old single-id definition is gone: the old name now leads with workspace_id. */
+const CONTRACTED_KEYS: Record<string, { primary: boolean; def: string }> = {
+  streams_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX streams_pkey ON public.streams USING btree (workspace_id, id)",
+  },
+  idx_streams_thread_anchor_typed: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_streams_thread_anchor_typed ON public.streams USING btree (workspace_id, parent_stream_id, parent_anchor_id) WHERE ((parent_anchor_id IS NOT NULL) AND (type = 'thread'::text))",
+  },
+  stream_events_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_events_pkey ON public.stream_events USING btree (workspace_id, id)",
+  },
+  stream_events_stream_id_sequence_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX stream_events_stream_id_sequence_key ON public.stream_events USING btree (workspace_id, stream_id, sequence)",
+  },
+  idx_stream_events_stream_broadcast_seq: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_stream_events_stream_broadcast_seq ON public.stream_events USING btree (workspace_id, stream_id, broadcast_sequence) WHERE (broadcast_sequence IS NOT NULL)",
+  },
+  messages_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX messages_pkey ON public.messages USING btree (workspace_id, id)",
+  },
+  messages_stream_id_client_message_id_unique: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX messages_stream_id_client_message_id_unique ON public.messages USING btree (workspace_id, stream_id, client_message_id) WHERE (client_message_id IS NOT NULL)",
+  },
+  reactions_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX reactions_pkey ON public.reactions USING btree (workspace_id, message_id, user_id, emoji)",
+  },
+  attachments_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX attachments_pkey ON public.attachments USING btree (workspace_id, id)",
+  },
+  users_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (workspace_id, id)",
+  },
+}
+
 /** Unique keys that need no twin of their own, each with its reason. */
 const EXEMPT_KEYS: Record<string, string> = {
   access_log_pkey: "partition key carries occurred_at; ids are generated locally (accessLogId)",
@@ -71,7 +105,6 @@ const EXEMPT_KEYS: Record<string, string> = {
     "hash of a random invitation token; looked up by hash alone before the workspace is known",
   idx_sync_log_outbox_event: "outbox event ids come from one global BIGINT sequence",
   idx_workspace_invitations_parent_email: "parent_link_id is an invitation id generated in this workspace",
-  users_id_key: "same (id) columns as users_pkey, so users_pkey_ws already covers it",
   backfill_runs_backfill_name_workspace_id_key: "code-defined backfill name plus workspace_id; no copied id in the key",
   cron_schedules_queue_workspace_key:
     "code-defined queue name plus workspace_id (NULL when system-wide); no copied id in the key",
@@ -132,6 +165,38 @@ describe("workspace-leading twin keys", () => {
     expect(actual).toEqual(expected)
   })
 
+  test("should keep each contracted key under its old name leading with workspace_id when the contract migrations have run", async () => {
+    const result = await pool.query<{ name: string; def: string; primary: boolean }>(
+      `
+      SELECT i.relname AS name, pg_get_indexdef(i.oid) AS def, ix.indisprimary AS primary
+      FROM pg_class i
+      JOIN pg_index ix ON ix.indexrelid = i.oid
+      JOIN pg_namespace n ON n.oid = i.relnamespace
+      WHERE n.nspname = 'public' AND i.relname = ANY($1)
+    `,
+      [Object.keys(CONTRACTED_KEYS)]
+    )
+
+    expect(Object.fromEntries(result.rows.map((row) => [row.name, { primary: row.primary, def: row.def }]))).toEqual(
+      CONTRACTED_KEYS
+    )
+  })
+
+  test("should leave no twin index or duplicate users key behind when the contract migrations have run", async () => {
+    const result = await pool.query<{ name: string }>(
+      `
+      SELECT i.relname AS name
+      FROM pg_class i
+      JOIN pg_namespace n ON n.oid = i.relnamespace
+      WHERE n.nspname = 'public' AND i.relkind = 'i' AND i.relname = ANY($1)
+      ORDER BY i.relname
+    `,
+      [[...Object.keys(CONTRACTED_KEYS).map((name) => `${name}_ws`), "users_id_key"]]
+    )
+
+    expect(result.rows).toEqual([])
+  })
+
   test("should list every non-workspace-leading unique key in exactly one list when a table carries workspace_id", async () => {
     const result = await pool.query<{ name: string; skipped: boolean }>(`
       -- Plain (id) primary keys are mostly locally generated ids; copied tables list theirs by hand.
@@ -149,6 +214,7 @@ describe("workspace-leading twin keys", () => {
     const existing = new Set(result.rows.map((row) => row.name))
     const lists: Record<string, Set<string>> = {
       TWINNED_KEYS: new Set(TWINNED_KEYS),
+      CONTRACTED_KEYS: new Set(Object.keys(CONTRACTED_KEYS)),
       EXEMPT_KEYS: new Set(Object.keys(EXEMPT_KEYS)),
     }
     const listsNaming = (name: string) =>

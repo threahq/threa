@@ -47,19 +47,19 @@ describe("bot invocation source revisions migration", () => {
     )
     await pool.query(
       `INSERT INTO messages
-         (id, stream_id, sequence, author_id, author_type, content_json, content_markdown, revision, deleted_at)
+         (id, workspace_id, stream_id, sequence, author_id, author_type, content_json, content_markdown, revision, deleted_at)
        VALUES
-         ('msg_initial', 'stream_migration', 1, 'usr_1', 'user', '{"type":"doc"}', 'initial', 1, NULL),
-         ('msg_edited', 'stream_migration', 2, 'usr_1', 'user', '{"type":"doc"}', 'third', 3, NULL),
-         ('msg_deleted', 'stream_migration', 3, 'usr_1', 'user', '{"type":"doc"}', 'gone', 2, NOW())`
+         ('msg_initial', 'ws_migration', 'stream_migration', 1, 'usr_1', 'user', '{"type":"doc"}', 'initial', 1, NULL),
+         ('msg_edited', 'ws_migration', 'stream_migration', 2, 'usr_1', 'user', '{"type":"doc"}', 'third', 3, NULL),
+         ('msg_deleted', 'ws_migration', 'stream_migration', 3, 'usr_1', 'user', '{"type":"doc"}', 'gone', 2, NOW())`
     )
     await pool.query(
       `INSERT INTO message_versions
-         (id, message_id, version_number, content_json, content_markdown, edited_by)
+         (id, workspace_id, message_id, version_number, content_json, content_markdown, edited_by)
        VALUES
-         ('mver_1', 'msg_edited', 1, '{"type":"doc"}', 'initial', 'usr_1'),
-         ('mver_2', 'msg_edited', 2, '{"type":"doc"}', 'second', 'usr_1'),
-         ('mver_deleted', 'msg_deleted', 1, '{"type":"doc"}', 'before deletion', 'usr_1')`
+         ('mver_1', 'ws_migration', 'msg_edited', 1, '{"type":"doc"}', 'initial', 'usr_1'),
+         ('mver_2', 'ws_migration', 'msg_edited', 2, '{"type":"doc"}', 'second', 'usr_1'),
+         ('mver_deleted', 'ws_migration', 'msg_deleted', 1, '{"type":"doc"}', 'before deletion', 'usr_1')`
     )
     await pool.query(
       `INSERT INTO bot_invocations

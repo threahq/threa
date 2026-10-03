@@ -142,10 +142,10 @@ describe("message revision", () => {
     // An old-code replica during the rollout: it inserts MAX+1 and rewrites the
     // body without touching `revision`.
     await pool.query(
-      `INSERT INTO message_versions (id, message_id, version_number, content_json, content_markdown, edited_by)
-       SELECT $1, $2, COALESCE(MAX(version_number), 0) + 1, '{"type":"doc"}', 'v2 body', $3
+      `INSERT INTO message_versions (id, workspace_id, message_id, version_number, content_json, content_markdown, edited_by)
+       SELECT $1, $4, $2, COALESCE(MAX(version_number), 0) + 1, '{"type":"doc"}', 'v2 body', $3
        FROM message_versions WHERE message_id = $2`,
-      [messageVersionId(), message.id, testUserId]
+      [messageVersionId(), message.id, testUserId, testWorkspaceId]
     )
     await pool.query(`UPDATE messages SET content_markdown = 'v3 body (old writer)' WHERE id = $1`, [message.id])
     expect((await MessageRepository.findById(pool, testWorkspaceId, message.id))?.revision).toBe(2)
@@ -193,10 +193,10 @@ describe("message revision", () => {
         // Pre-migration state: the derived number lived only in message_versions.
         await client.query(`UPDATE messages SET revision = 1 WHERE id = ANY($1)`, [[edited, untouched]])
         await client.query(
-          `INSERT INTO message_versions (id, message_id, version_number, content_json, content_markdown, edited_by)
-           VALUES ('mver_bf1', $1, 1, '{"type":"doc","content":[]}', 'v1', $2),
-                  ('mver_bf2', $1, 2, '{"type":"doc","content":[]}', 'v2', $2)`,
-          [edited, testUserId]
+          `INSERT INTO message_versions (id, workspace_id, message_id, version_number, content_json, content_markdown, edited_by)
+           VALUES ('mver_bf1', $3, $1, 1, '{"type":"doc","content":[]}', 'v1', $2),
+                  ('mver_bf2', $3, $1, 2, '{"type":"doc","content":[]}', 'v2', $2)`,
+          [edited, testUserId, testWorkspaceId]
         )
 
         await client.query(migrationSql)
