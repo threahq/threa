@@ -395,7 +395,19 @@ export class MemoService implements MemoServiceLike {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, conv.messageIds)
           conversationMessages.set(convId, new Map([...msgs].filter(([, message]) => !message.deletedAt)))
-          const existingMemos = await MemoRepository.findActiveBySourceConversation(client, convId)
+          // A saved or reflective memo citing a message edited since is shown
+          // beside the conversation's own memos, so the classifier keeps it
+          // through a typo fix and a revision can supersede it. Same tier only:
+          // a private memo must never feed a shared revision.
+          const existingMemos = [
+            ...(await MemoRepository.findActiveBySourceConversation(client, convId)),
+            ...(await MemoRepository.findActiveMessageMemosCitingEdited(
+              client,
+              workspaceId,
+              conv.messageIds,
+              memoScope
+            )),
+          ]
           existingConversationMemos.set(convId, existingMemos)
         }
       }

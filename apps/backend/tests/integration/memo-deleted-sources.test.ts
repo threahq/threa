@@ -499,6 +499,112 @@ describe("memo sources: deleted and edited messages", () => {
     expect(await isQueued(seeded)).toBe(true)
   })
 
+  describe("editing a source of a saved memo", () => {
+    async function seedSavedMemo(
+      seeded: Seeded,
+      tier: { scope: "workspace" | "user"; scopeUserId: string | null } = { scope: "workspace", scopeUserId: null }
+    ): Promise<string> {
+      const id = memoId()
+      await MemoRepository.insert(pool, {
+        id,
+        workspaceId: testWorkspaceId,
+        memoType: "message",
+        sourceMessageId: seeded.messageIds[0],
+        title: "Rollout plan",
+        abstract: "The rollout starts on Monday with the flag off.",
+        keyPoints: [],
+        sourceMessageIds: seeded.messageIds,
+        participantIds: [testUserId],
+        knowledgeType: "decision",
+        tags: [],
+        status: MemoStatuses.ACTIVE,
+        ...tier,
+      })
+      return id
+    }
+
+    async function edit(seeded: Seeded, text: string): Promise<void> {
+      const { contentJson, contentMarkdown } = testMessageContent(text)
+      await MessageRepository.updateContent(pool, seeded.messageIds[0], contentJson, contentMarkdown)
+      await editMessage(seeded, seeded.messageIds[0])
+    }
+
+    /** Runs a batch whose classifier answers `revise`, returning the memo ids it was shown. */
+    async function reconsider(seeded: Seeded, revise: boolean, supersedes: string[] = []): Promise<string[]> {
+      const shown: string[] = []
+      await new MemoService({
+        analyticsReporter: new DisabledAnalyticsReporter(),
+        pool,
+        classifier: {
+          classifyConversation: async (_conversation: unknown, _formatted: string, existing: { id: string }[]) => {
+            shown.push(...existing.map((memo) => memo.id))
+            return { ...worthy, shouldReviseExisting: revise }
+          },
+        },
+        memorizer: {
+          memorizeConversation: async () => [],
+          reviseMemo: async (_formatted: string, context: { content: { id: string }[] }) => [
+            {
+              title: "Rollout plan",
+              abstract: "The rollout starts on Tuesday with the flag off.",
+              keyPoints: [],
+              sourceMessageIds: context.content.map((m) => m.id),
+              knowledgeType: "decision",
+              tags: [],
+              supersedesMemoIds: supersedes,
+            },
+          ],
+        } as never,
+        embeddingService: {
+          embedBatch: async () => [Array.from({ length: 1536 }, (_, i) => (i === 1 ? 1 : 0))],
+        } as never,
+        messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
+      }).processBatch(testWorkspaceId, seeded.streamId)
+      return shown
+    }
+
+    test("a typo fix keeps the memo", async () => {
+      const seeded = await seedConversation()
+      const memo = await seedSavedMemo(seeded)
+
+      await edit(seeded, "the rollout starts on Monday!")
+      const shown = await reconsider(seeded, false)
+
+      expect({ shown, status: await memoStatus(memo) }).toEqual({ shown: [memo], status: MemoStatuses.ACTIVE })
+    })
+
+    test("an edit that changes the knowledge lets the revision supersede the memo", async () => {
+      const seeded = await seedConversation()
+      const memo = await seedSavedMemo(seeded)
+
+      await edit(seeded, "the rollout starts on Tuesday")
+      await reconsider(seeded, true, [memo])
+      const revised = (await MemoRepository.findActiveCitingMessage(pool, testWorkspaceId, seeded.messageIds[0])).map(
+        ({ memo: active }) => ({ parentMemoId: active.parentMemoId, abstract: active.abstract })
+      )
+
+      expect({ status: await memoStatus(memo), revised }).toEqual({
+        status: MemoStatuses.SUPERSEDED,
+        revised: [{ parentMemoId: memo, abstract: "The rollout starts on Tuesday with the flag off." }],
+      })
+    })
+
+    test("a private memo, or one made after the edit, is not shown to the channel's batch", async () => {
+      const seeded = await seedConversation()
+      const privateMemo = await seedSavedMemo(seeded, { scope: "user", scopeUserId: testUserId })
+
+      await edit(seeded, "the rollout starts on Tuesday")
+      const afterEdit = await seedSavedMemo(seeded)
+      const shown = await reconsider(seeded, false)
+
+      expect({
+        shown,
+        privateMemo: await memoStatus(privateMemo),
+        afterEdit: await memoStatus(afterEdit),
+      }).toEqual({ shown: [], privateMemo: MemoStatuses.ACTIVE, afterEdit: MemoStatuses.ACTIVE })
+    })
+  })
+
   test("the backfill retires memos whose sources were deleted before deletes retired them", async () => {
     const seeded = await seedConversation()
     const [deletedId, liveId] = seeded.messageIds
