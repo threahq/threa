@@ -85,7 +85,7 @@ export async function writeSlotCarrier(params: SlotWriteParams): Promise<void> {
     if (params.mode === "replace") {
       const referencedKeys = collectReferencedSlotKeys(params.windowEvents)
       if (referencedKeys.size > 0) {
-        await table.bulkDelete([...referencedKeys].map((slotKey) => [streamId, slotKey] as [string, string]))
+        await table.bulkDelete([...referencedKeys].map((slotKey) => [workspaceId, streamId, slotKey]))
       }
       if (slotKeys.length === 0) return
       await table.bulkPut(
@@ -103,7 +103,7 @@ export async function writeSlotCarrier(params: SlotWriteParams): Promise<void> {
     if (slotKeys.length === 0) return
     // A plain bulkPut can't see existing state, so read the colliding keys
     // first to apply the B1 guard per key.
-    const existingRows = await table.bulkGet(slotKeys.map((slotKey) => [streamId, slotKey] as [string, string]))
+    const existingRows = await table.bulkGet(slotKeys.map((slotKey) => [workspaceId, streamId, slotKey]))
     const rows: CachedSlot[] = []
     for (let i = 0; i < slotKeys.length; i++) {
       const slotKey = slotKeys[i]
@@ -120,12 +120,19 @@ export async function writeSlotCarrier(params: SlotWriteParams): Promise<void> {
 }
 
 /** Drop every slot row for one stream (stream eviction / archive / member removal). */
-export async function deleteStreamSlots(database: ThreaDatabase, streamId: string): Promise<void> {
-  await database.slots.where("streamId").equals(streamId).delete()
+export async function deleteStreamSlots(database: ThreaDatabase, workspaceId: string, streamId: string): Promise<void> {
+  await database.slots.where("[workspaceId+streamId]").equals([workspaceId, streamId]).delete()
 }
 
 /** Drop slot rows for a set of evicted streams in one indexed query. */
-export async function deleteSlotsForStreams(database: ThreaDatabase, streamIds: readonly string[]): Promise<void> {
+export async function deleteSlotsForStreams(
+  database: ThreaDatabase,
+  workspaceId: string,
+  streamIds: readonly string[]
+): Promise<void> {
   if (streamIds.length === 0) return
-  await database.slots.where("streamId").anyOf(streamIds).delete()
+  await database.slots
+    .where("[workspaceId+streamId]")
+    .anyOf(streamIds.map((streamId) => [workspaceId, streamId]))
+    .delete()
 }

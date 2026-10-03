@@ -181,7 +181,7 @@ async function promoteDraft(
     await database.transaction("rw", database.draftScratchpads, database.streams, async () => {
       await database.draftScratchpads.delete(next.draftId!)
       if (draftStreamId !== realStreamId) {
-        await database.streams.delete(draftStreamId)
+        await database.streams.delete([next.workspaceId, draftStreamId])
       }
     })
     if (fence.isRetired()) return null
@@ -367,7 +367,7 @@ export function useMessageQueue(workspaceId: string): void {
             // into the retry/failed path for a delivered message.
             if (conversationId && next.conversation?.intent === "new") {
               try {
-                const stream = await database.streams.get(next.streamId)
+                const stream = await database.streams.get([next.workspaceId, next.streamId])
                 if (stream) {
                   // The optimistic event carries the attachment summaries (the send
                   // response doesn't), so the card renders thumbnails immediately.

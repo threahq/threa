@@ -41,7 +41,7 @@ export function AsideHeaderChip({ workspaceId, stream, compact = false }: AsideH
         .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0],
     [streams, stream.id]
   )
-  const root = useStreamFromStore(stream.rootStreamId ?? undefined)
+  const root = useStreamFromStore(workspaceId, stream.rootStreamId ?? undefined)
   const open = useAsideState()
   const openAside = useOpenAside(workspaceId)
   const resume = useResumeAside()

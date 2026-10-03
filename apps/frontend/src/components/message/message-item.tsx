@@ -239,7 +239,7 @@ export function MessageItem({
   const attachments = message.attachments ?? []
   const linkPreviews = message.linkPreviews ?? []
   // The row's own stream — only to pick the "View in channel/thread/…" noun.
-  const rowStream = useStreamFromStore(streamId)
+  const rowStream = useStreamFromStore(workspaceId, streamId)
 
   // Quote reply routes to the conversation's reply composer through the provider
   // the conversation surfaces (board card, panel) wrap this row in. Absent on the
@@ -301,7 +301,7 @@ export function MessageItem({
   // Gated on the HOST (the conversation's root), not the row's own stream: a
   // thread row's stream is never the host, so its type and E2E state say
   // nothing about whether the server would accept the aside.
-  const conversationRootStream = useStreamFromStore(conversationRootStreamId)
+  const conversationRootStream = useStreamFromStore(workspaceId, conversationRootStreamId)
   const canOpenAside =
     canAnchorConversation &&
     isAsideHostType(conversationRootStream?.type ?? "") &&

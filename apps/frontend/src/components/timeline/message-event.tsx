@@ -952,9 +952,9 @@ function SentMessageEvent({
   const quoteReplyCtx = useQuoteReply()
   const navigate = useNavigate()
   const location = useLocation()
-  const currentStream = useStreamFromStore(streamId)
-  const parentStream = useStreamFromStore(currentStream?.parentStreamId ?? undefined)
-  const rootStream = useStreamFromStore(currentStream?.rootStreamId ?? undefined)
+  const currentStream = useStreamFromStore(workspaceId, streamId)
+  const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined)
+  const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined)
   // Gate the read-state actions by where this row sits relative to the read
   // pointer: "Mark as read" only on unread rows, "Mark as unread" only on read
   // rows. Ungated (no resolved frontier) shows both.

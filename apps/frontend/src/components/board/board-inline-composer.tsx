@@ -187,7 +187,7 @@ export function InlineComposerForm({
   const streamContext = useMentionStreamContext(workspaceId, hostStream)
   // E2E state from the synced IDB row as authority (a thread host is absent from
   // the workspace cache but the board syncs its row), OR the workspace cache.
-  const idbHostStream = useStreamFromStore(streamId)
+  const idbHostStream = useStreamFromStore(workspaceId, streamId)
   const hostIsE2e = hostStream?.e2eEnabled === true || idbHostStream?.e2eEnabled === true
 
   const composer = useDraftComposer({ workspaceId, draftKey, scopeId: draftKey })

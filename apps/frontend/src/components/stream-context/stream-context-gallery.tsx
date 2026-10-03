@@ -33,8 +33,8 @@ export function StreamContextGallery({
   onClose,
 }: StreamContextGalleryProps) {
   const events = useStreamEvents(streamId)
-  const stream = useStreamFromStore(streamId)
-  const { rootStreamId, scope } = useStreamContextScope(streamId)
+  const stream = useStreamFromStore(workspaceId, streamId)
+  const { rootStreamId, scope } = useStreamContextScope(workspaceId, streamId)
   // The panel's rows come from the server index, so they routinely point at
   // attachments outside the loaded event window (older, or in a thread).
   // Deriving here would leave those rows opening nothing, so the gallery reads

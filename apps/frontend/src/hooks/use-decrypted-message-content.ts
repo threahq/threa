@@ -74,7 +74,7 @@ export function useDecryptedMessageContent(
   // The session + root-SSK resolution and the "hold until the stream row hydrates"
   // guard (a doomed thread-id decrypt poisons the cache forever) live in
   // `resolveDecryptContext` — see it for why an unhydrated row must hold.
-  const stream = useStreamFromStore(event.streamId)
+  const stream = useStreamFromStore(workspaceId, event.streamId)
   const ctx = resolveDecryptContext(workspaceId, event.streamId, session, stream)
   const opts = ctx.ready ? ctx.opts : null
 

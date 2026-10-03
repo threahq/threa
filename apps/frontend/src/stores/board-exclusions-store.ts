@@ -76,6 +76,6 @@ export async function putMuted(workspaceId: string, streamId: string): Promise<v
   await db.boardMutedStreams.put({ id: streamId, workspaceId, _cachedAt: Date.now() })
 }
 
-export async function deleteMuted(streamId: string): Promise<void> {
-  await db.boardMutedStreams.delete(streamId)
+export async function deleteMuted(workspaceId: string, streamId: string): Promise<void> {
+  await db.boardMutedStreams.delete([workspaceId, streamId])
 }

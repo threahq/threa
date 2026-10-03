@@ -270,9 +270,9 @@ async function prefetchStreamBootstrap(workosUserId: string, workspaceId: string
       const patch: { _cachedAt: number; lastMessagePreview?: LastMessagePreview } = { _cachedAt: now }
       if (derivedPreview) patch.lastMessagePreview = derivedPreview
 
-      const updated = await db.streams.update(bootstrap.stream.id, patch)
+      const updated = await db.streams.update([workspaceId, bootstrap.stream.id], patch)
       if (updated === 0) {
-        await db.streams.put({ ...bootstrap.stream, ...patch })
+        await db.streams.put({ ...bootstrap.stream, ...patch, workspaceId })
       }
     })
   } catch {

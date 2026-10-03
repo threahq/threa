@@ -77,7 +77,7 @@ interface OwnerWrapRepair {
 function useOwnerWrapRepair(workspaceId: string, streamId: string): OwnerWrapRepair | null {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
-  const stream = useStreamFromStore(streamId)
+  const stream = useStreamFromStore(workspaceId, streamId)
   const queryClient = useQueryClient()
 
   const isRootScratchpad = stream != null && stream.rootStreamId == null
@@ -132,7 +132,7 @@ function useOwnerWrapRepair(workspaceId: string, streamId: string): OwnerWrapRep
 function useActorWrapRevive(workspaceId: string, streamId: string): void {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
-  const stream = useStreamFromStore(streamId)
+  const stream = useStreamFromStore(workspaceId, streamId)
   const queryClient = useQueryClient()
   const attemptedRef = useRef<string | null>(null)
 

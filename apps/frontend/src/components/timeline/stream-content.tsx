@@ -872,8 +872,8 @@ export function StreamContent({
   // parent stream's rows (the one parent anchor's pointers live there). Current
   // wins a collision because the provider primarily renders current-stream
   // events; parent rows are fallback for the anchor.
-  const currentSlots = useStreamSlots(streamId)
-  const parentSlots = useStreamSlots(isThread ? parentStreamId : null)
+  const currentSlots = useStreamSlots(workspaceId, streamId)
+  const parentSlots = useStreamSlots(workspaceId, isThread ? parentStreamId : null)
   const mergedSlots = useMemo(() => ({ ...parentSlots, ...currentSlots }), [parentSlots, currentSlots])
 
   // For drafts, query pending/failed events directly from IDB so optimistic

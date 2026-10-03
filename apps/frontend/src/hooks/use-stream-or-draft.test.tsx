@@ -656,7 +656,7 @@ describe("useStreamOrDraft draft DM send", () => {
       })
     })
 
-    expect(await db.streams.get("stream_dm_1")).toMatchObject({
+    expect(await db.streams.get(["ws_1", "stream_dm_1"])).toMatchObject({
       id: "stream_dm_1",
       workspaceId: "ws_1",
       type: "dm",
@@ -875,7 +875,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
     // ciphertext, so the header/sidebar render it immediately (no flicker).
     expect(getCachedStreamName(streamNameCacheKey("ws_1", streamId, "Y3Q="))).toBe("Therapy notes")
 
-    const persisted = await db.streams.get(streamId)
+    const persisted = await db.streams.get(["ws_1", streamId])
     expect(persisted).toMatchObject({ sealedNameCiphertext: "Y3Q=", displayName: null })
 
     // This hook subscribes to the E2E session store. Unmount it before afterEach
@@ -928,7 +928,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
       displayNameSource: "explicit",
       displayNameRevision: 2,
     })
-    const newer = (await db.streams.get(streamId))!
+    const newer = (await db.streams.get(["ws_1", streamId]))!
     const delayed = {
       ...newer,
       displayName: "Stale response title",
@@ -950,7 +950,7 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
       await result.current.rename("Attempted rename")
     })
 
-    expect((await db.streams.get(streamId))?.displayName).toBe("Newer socket title")
+    expect((await db.streams.get(["ws_1", streamId]))?.displayName).toBe("Newer socket title")
     expect(queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", streamId))?.displayName).toBe(
       "Newer socket title"
     )
