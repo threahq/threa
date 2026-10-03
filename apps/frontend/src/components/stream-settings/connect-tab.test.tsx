@@ -614,4 +614,17 @@ describe("ConnectTab", () => {
     expect(screen.getByText(WAITING)).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument()
   })
+
+  it("should offer only a retry, not the share prompt, when the load fails and the cache holds only a revoked invite", async () => {
+    await putStreamConnection("ws_host", makeConnection({ state: "revoked", revision: 2 }))
+    vi.spyOn(streamConnectionsApi, "list").mockRejectedValue(new ApiError(500, "INTERNAL", "boom"))
+
+    renderTab()
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't load this channel's connections.")
+    expect({
+      retry: screen.queryByRole("button", { name: "Try again" }) !== null,
+      create: screen.queryByRole("button", { name: "Create invite link" }) !== null,
+    }).toEqual({ retry: true, create: false })
+  })
 })

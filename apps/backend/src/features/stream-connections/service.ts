@@ -203,9 +203,10 @@ export class StreamConnectionService {
       user.workosUserId
     )
     if (membership) return membership.status === "active"
-    // Without an active mirror row `role` is the stale users.role. That is the
-    // only role a workspace WorkOS doesn't mirror has (dev, pre-mirror
-    // workspaces). In one it mirrors, a missing row is a removed membership.
+    // No row: either WorkOS doesn't mirror this workspace (dev, pre-mirror) and
+    // users.role is the only role there is, or the membership isn't mirrored yet
+    // (invite accepted, poll pending). The second is refused until the poll
+    // lands, since an accepted link replicates the channel to another org.
     return !(await WorkspaceUserPermissionsRepository.existsForWorkspace(this.pool, workspaceId))
   }
 

@@ -709,14 +709,16 @@ describe("StreamConnectionService", () => {
         lastEventAt: new Date(Date.now() - 60_000),
       })
     }
-    await WorkspaceUserPermissionsRepository.delete(pool, {
-      workspaceId: host.id,
-      workosUserId: removed.workosUserId,
-      eventCreatedAt: new Date(),
-    })
-
+    const remove = (workosUserId: string) =>
+      WorkspaceUserPermissionsRepository.markRemoved(pool, {
+        workspaceId: host.id,
+        workosUserId,
+        eventCreatedAt: new Date(),
+      })
     const shareable = async (invitedBy: string) =>
       (await service.describeChannel({ workspaceId: host.id, streamId: stream.id, invitedBy })).shareable
+
+    await remove(removed.workosUserId)
     const answers = {
       kept: await shareable(kept.id),
       removed: await shareable(removed.id),
@@ -724,8 +726,13 @@ describe("StreamConnectionService", () => {
         .createInvite({ workspaceId: host.id, streamId: stream.id, userId: removed.id })
         .catch((err: { status: number; code: string }) => ({ status: err.status, code: err.code })),
     }
+    await remove(kept.workosUserId)
+    const afterLastRemoved = { kept: await shareable(kept.id), removed: await shareable(removed.id) }
 
-    expect(answers).toEqual({ kept: true, removed: false, removedCreates: { status: 403, code: "FORBIDDEN" } })
+    expect({ answers, afterLastRemoved }).toEqual({
+      answers: { kept: true, removed: false, removedCreates: { status: 403, code: "FORBIDDEN" } },
+      afterLastRemoved: { kept: false, removed: false },
+    })
     expect(cp.requests).toEqual([])
   })
 

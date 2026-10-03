@@ -114,11 +114,11 @@ export class WorkspaceAuthzService {
   }
 
   async applyMembershipRemoval(input: ApplyMembershipRemovalInput): Promise<void> {
-    const removed = await WorkspaceUserPermissionsRepository.delete(this.pool, input)
+    const removed = await WorkspaceUserPermissionsRepository.markRemoved(this.pool, input)
     if (!removed) {
       logger.debug(
         { workspaceId: input.workspaceId, workosUserId: input.workosUserId },
-        "workspace_user_permissions delete ignored as stale"
+        "workspace_user_permissions removal ignored as stale"
       )
     }
   }
