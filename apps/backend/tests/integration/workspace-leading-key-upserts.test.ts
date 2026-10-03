@@ -1,0 +1,354 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import type { Pool } from "pg"
+import { AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes, Visibilities } from "@threahq/types"
+import { setupTestDatabase, withClient } from "./setup"
+import {
+  ContextBagRepository,
+  ConversationSummaryRepository,
+  StreamPersonaParticipantRepository,
+} from "../../src/features/agents"
+import {
+  StreamBriefRepository,
+  StreamEventRepository,
+  StreamMemberRepository,
+  StreamPoliciesRepository,
+  StreamRepository,
+} from "../../src/features/streams"
+import {
+  agentConversationSummaryId,
+  messageId,
+  personaId,
+  streamBriefId,
+  streamId,
+  userId,
+  workspaceId,
+} from "../../src/lib/id"
+
+/**
+ * Each statement below names a workspace-leading twin key in its ON CONFLICT
+ * target. Postgres infers the arbiter at plan time, so a statement that runs
+ * proves the target matches a real index; running it twice takes the conflict
+ * path.
+ */
+describe("workspace-leading ON CONFLICT arbiters", () => {
+  let pool: Pool
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  test("should return the existing thread when a thread is created twice for one anchor", async () => {
+    const ws = workspaceId()
+    const root = streamId()
+    const creator = userId()
+    const anchor = messageId()
+    const params = (id: string) => ({
+      id,
+      workspaceId: ws,
+      type: StreamTypes.THREAD,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: root,
+      parentAnchorId: anchor,
+      rootStreamId: root,
+      createdBy: creator,
+    })
+    const firstId = streamId()
+
+    const first = await StreamRepository.insertThreadOrFind(pool, params(firstId))
+    const second = await StreamRepository.insertThreadOrFind(pool, params(streamId()))
+
+    expect([
+      { created: first.created, id: first.stream.id },
+      { created: second.created, id: second.stream.id },
+    ]).toEqual([
+      { created: true, id: firstId },
+      { created: false, id: firstId },
+    ])
+  })
+
+  test("should keep one member row when the same member is inserted twice", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+    const member = userId()
+    const other = userId()
+
+    await StreamMemberRepository.insert(pool, ws, stream, member)
+    await StreamMemberRepository.insert(pool, ws, stream, member)
+    await StreamMemberRepository.insertMany(pool, ws, stream, [member, other])
+
+    const rows = await pool.query<{ member_id: string }>(
+      "SELECT member_id FROM stream_members WHERE workspace_id = $1 AND stream_id = $2 ORDER BY member_id",
+      [ws, stream]
+    )
+    expect(rows.rows.map((row) => row.member_id)).toEqual([member, other].sort())
+  })
+
+  test("should hand out consecutive sequence ranges when a stream allocates twice", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+
+    const first = await StreamEventRepository.allocateSequences(pool, ws, stream, { total: 2, broadcast: 1 })
+    const second = await StreamEventRepository.allocateSequences(pool, ws, stream, { total: 3, broadcast: 2 })
+
+    const rows = await pool.query<{ next_sequence: string; next_broadcast_sequence: string }>(
+      "SELECT next_sequence, next_broadcast_sequence FROM stream_sequences WHERE workspace_id = $1 AND stream_id = $2",
+      [ws, stream]
+    )
+    expect({ first, second, rows: rows.rows }).toEqual({
+      first: { firstSequence: 1n, firstBroadcastSequence: 1n },
+      second: { firstSequence: 3n, firstBroadcastSequence: 2n },
+      rows: [{ next_sequence: "6", next_broadcast_sequence: "4" }],
+    })
+  })
+
+  test("should replace the stored policy when a stream's tool policy is set twice", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+
+    await StreamPoliciesRepository.setToolPolicy(pool, ws, stream, ["web"])
+    await StreamPoliciesRepository.setToolPolicy(pool, ws, stream, ["workspace"])
+
+    expect(await StreamPoliciesRepository.getToolPolicy(pool, ws, stream)).toEqual(["workspace"])
+  })
+
+  test("should keep the first brief when a second create loses the race", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+    const author = userId()
+    const insert = (id: string, content: string) =>
+      StreamBriefRepository.insertFirstVersion(pool, {
+        id,
+        workspaceId: ws,
+        streamId: stream,
+        content,
+        updatedByKind: AuthorTypes.USER,
+        updatedById: author,
+      })
+    const firstId = streamBriefId()
+
+    const first = await insert(firstId, "Goal: ship v2")
+    const second = await insert(streamBriefId(), "Goal: ship v3")
+    const stored = await StreamBriefRepository.findByStreamId(pool, ws, stream)
+
+    expect({ first: first?.id, second, stored: { id: stored?.id, content: stored?.content } }).toEqual({
+      first: firstId,
+      second: null,
+      stored: { id: firstId, content: "Goal: ship v2" },
+    })
+  })
+
+  test("should replace the refs on the original row when a context bag is saved twice for one intent", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+    const creator = userId()
+    const insert = (refStreamId: string) =>
+      ContextBagRepository.insert(pool, {
+        workspaceId: ws,
+        streamId: stream,
+        intent: ContextIntents.DISCUSS_THREAD,
+        refs: [{ kind: ContextRefKinds.THREAD, streamId: refStreamId }],
+        createdBy: creator,
+      })
+    const secondRefStream = streamId()
+
+    const first = await insert(streamId())
+    const second = await insert(secondRefStream)
+
+    expect({ id: second.id, refs: second.refs }).toEqual({
+      id: first.id,
+      refs: [{ kind: ContextRefKinds.THREAD, streamId: secondRefStream }],
+    })
+  })
+
+  test("should keep one summary row when a conversation summary is upserted twice", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+    const persona = personaId()
+    const firstId = agentConversationSummaryId()
+    const upsert = (id: string, summary: string, lastSummarizedSequence: bigint) =>
+      ConversationSummaryRepository.upsert(pool, {
+        id,
+        workspaceId: ws,
+        streamId: stream,
+        personaId: persona,
+        summary,
+        lastSummarizedSequence,
+      })
+
+    await upsert(firstId, "first", 1n)
+    const second = await upsert(agentConversationSummaryId(), "second", 2n)
+
+    expect({ id: second.id, summary: second.summary, lastSummarizedSequence: second.lastSummarizedSequence }).toEqual({
+      id: firstId,
+      summary: "second",
+      lastSummarizedSequence: 2n,
+    })
+  })
+
+  test("should record a persona once when it participates twice in a stream", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+    const persona = personaId()
+
+    await withClient(pool, async (client) => {
+      await StreamPersonaParticipantRepository.recordParticipation(client, ws, stream, persona)
+      await StreamPersonaParticipantRepository.recordParticipation(client, ws, stream, persona)
+    })
+
+    const rows = await pool.query<{ persona_id: string }>(
+      "SELECT persona_id FROM stream_persona_participants WHERE workspace_id = $1 AND stream_id = $2",
+      [ws, stream]
+    )
+    expect(rows.rows).toEqual([{ persona_id: persona }])
+  })
+
+  interface SharedIds {
+    root: string
+    anchor: string
+    stream: string
+    member: string
+    persona: string
+    refStreams: [string, string]
+  }
+
+  const firstRow = (columns: string, table: string) => async (ws: string, ids: SharedIds) =>
+    (await pool.query(`SELECT ${columns} FROM ${table} WHERE workspace_id = $1 AND stream_id = $2`, [ws, ids.stream]))
+      .rows[0] ?? null
+
+  const sharedKeyCases: Array<{
+    name: string
+    oldKey: string
+    write: (ws: string, ids: SharedIds, writer: 0 | 1) => Promise<unknown>
+    read: (ws: string, ids: SharedIds) => Promise<unknown>
+  }> = [
+    {
+      name: "a thread anchor",
+      oldKey: "idx_streams_thread_anchor_typed",
+      write: (ws, ids) =>
+        StreamRepository.insertThreadOrFind(pool, {
+          id: streamId(),
+          workspaceId: ws,
+          type: StreamTypes.THREAD,
+          visibility: Visibilities.PRIVATE,
+          parentStreamId: ids.root,
+          parentAnchorId: ids.anchor,
+          rootStreamId: ids.root,
+          createdBy: userId(),
+        }),
+      read: async (ws, ids) => (await StreamRepository.findByAnchor(pool, ws, ids.root, ids.anchor))?.id ?? null,
+    },
+    {
+      name: "a member through insert",
+      oldKey: "stream_members_pkey",
+      write: (ws, ids) => StreamMemberRepository.insert(pool, ws, ids.stream, ids.member),
+      read: firstRow("member_id", "stream_members"),
+    },
+    {
+      name: "a member through insertMany",
+      oldKey: "stream_members_pkey",
+      write: (ws, ids) => StreamMemberRepository.insertMany(pool, ws, ids.stream, [ids.member]),
+      read: firstRow("member_id", "stream_members"),
+    },
+    {
+      name: "a sequence counter",
+      oldKey: "stream_sequences_pkey",
+      write: (ws, ids, writer) =>
+        StreamEventRepository.allocateSequences(pool, ws, ids.stream, { total: writer + 2, broadcast: 1 }),
+      read: firstRow("next_sequence, next_broadcast_sequence", "stream_sequences"),
+    },
+    {
+      name: "a tool policy",
+      oldKey: "stream_policies_pkey",
+      write: (ws, ids, writer) =>
+        StreamPoliciesRepository.setToolPolicy(pool, ws, ids.stream, writer === 0 ? ["web"] : ["workspace"]),
+      read: (ws, ids) => StreamPoliciesRepository.getToolPolicy(pool, ws, ids.stream),
+    },
+    {
+      name: "a brief",
+      oldKey: "idx_stream_briefs_stream",
+      write: (ws, ids, writer) =>
+        StreamBriefRepository.insertFirstVersion(pool, {
+          id: streamBriefId(),
+          workspaceId: ws,
+          streamId: ids.stream,
+          content: `Goal ${writer}`,
+          updatedByKind: AuthorTypes.USER,
+          updatedById: userId(),
+        }),
+      read: (ws, ids) => StreamBriefRepository.findByStreamId(pool, ws, ids.stream),
+    },
+    {
+      name: "a context bag",
+      oldKey: "idx_sca_stream_intent_unique",
+      write: (ws, ids, writer) =>
+        ContextBagRepository.insert(pool, {
+          workspaceId: ws,
+          streamId: ids.stream,
+          intent: ContextIntents.DISCUSS_THREAD,
+          refs: [{ kind: ContextRefKinds.THREAD, streamId: ids.refStreams[writer] }],
+          createdBy: userId(),
+        }),
+      read: (ws, ids) => ContextBagRepository.findByStream(pool, ws, ids.stream),
+    },
+    {
+      name: "a conversation summary",
+      oldKey: "idx_agent_conversation_summaries_stream_persona",
+      write: (ws, ids, writer) =>
+        ConversationSummaryRepository.upsert(pool, {
+          id: agentConversationSummaryId(),
+          workspaceId: ws,
+          streamId: ids.stream,
+          personaId: ids.persona,
+          summary: `summary ${writer}`,
+          lastSummarizedSequence: BigInt(writer + 1),
+        }),
+      read: (ws, ids) => ConversationSummaryRepository.findByStreamAndPersona(pool, ws, ids.stream, ids.persona),
+    },
+    {
+      name: "a persona participation",
+      oldKey: "stream_persona_participants_pkey",
+      write: (ws, ids) =>
+        withClient(pool, (client) =>
+          StreamPersonaParticipantRepository.recordParticipation(client, ws, ids.stream, ids.persona)
+        ),
+      read: firstRow("persona_id", "stream_persona_participants"),
+    },
+  ]
+
+  // While the old keys exist, workspace B's write for a shared id is rejected by the old key. An arbiter still
+  // on the old key would instead take the conflict path: update A's row or drop B's write without an error.
+  for (const { name, oldKey, write, read } of sharedKeyCases) {
+    test(`should leave workspace A's row untouched when workspace B writes ${name} for the same ids`, async () => {
+      const wsA = workspaceId()
+      const wsB = workspaceId()
+      const ids: SharedIds = {
+        root: streamId(),
+        anchor: messageId(),
+        stream: streamId(),
+        member: userId(),
+        persona: personaId(),
+        refStreams: [streamId(), streamId()],
+      }
+
+      await write(wsA, ids, 0)
+      const seededA = await read(wsA, ids)
+      const rejectedBy = await write(wsB, ids, 1).then(
+        () => null,
+        (error: { code?: string; constraint?: string }) => {
+          if (error.code !== "23505") throw error
+          return error.constraint
+        }
+      )
+      const storedB = await read(wsB, ids)
+
+      expect({
+        a: await read(wsA, ids),
+        b: rejectedBy ?? (storedB === null ? "dropped silently" : "landed"),
+      }).toEqual({ a: seededA, b: oldKey })
+    })
+  }
+})

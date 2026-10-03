@@ -33,7 +33,7 @@ describe("SyncLogRepository catch-up reads", () => {
   async function addMembership(workspaceId: string, streamId: string, userId: string): Promise<void> {
     await pool.query(
       `INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)
-       ON CONFLICT (stream_id, member_id) DO NOTHING`,
+       ON CONFLICT (workspace_id, stream_id, member_id) DO NOTHING`,
       [workspaceId, streamId, userId]
     )
   }

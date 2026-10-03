@@ -127,7 +127,7 @@ export const StreamEventRepository = {
     const result = await db.query<{ first_sequence: string; first_broadcast_sequence: string }>(sql`
       INSERT INTO stream_sequences (workspace_id, stream_id, next_sequence, next_broadcast_sequence)
       VALUES (${workspaceId}, ${streamId}, ${total + 1}, ${broadcast + 1})
-      ON CONFLICT (stream_id) DO UPDATE
+      ON CONFLICT (workspace_id, stream_id) DO UPDATE
         SET next_sequence = stream_sequences.next_sequence + ${total},
             next_broadcast_sequence = stream_sequences.next_broadcast_sequence + ${broadcast}
       RETURNING next_sequence - ${total} AS first_sequence,
