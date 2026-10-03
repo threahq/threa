@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ResponsiveDialog,
@@ -46,6 +46,12 @@ interface StreamSettingsDialogProps {
 
 export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps) {
   const { isOpen, activeTab, streamId, closeStreamSettings, setTab } = useStreamSettings()
+  // A created invite link exists only in its create response, and the Connect
+  // tab unmounts on a tab switch, so the links live here until the dialog closes.
+  const [inviteLinks, setInviteLinks] = useState<ReadonlyMap<string, string>>(() => new Map())
+  useEffect(() => {
+    if (!isOpen) setInviteLinks(new Map())
+  }, [isOpen])
 
   const queryClient = useQueryClient()
   const idbStreams = useWorkspaceStreams(workspaceId)
@@ -179,7 +185,14 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
                   <MembersTab workspaceId={workspaceId} streamId={streamId} currentUserId={currentUserId} />
                 </TabsContent>
                 <TabsContent value="connect" className="mt-0">
-                  <ConnectTab workspaceId={workspaceId} stream={resolvedStream} />
+                  <ConnectTab
+                    workspaceId={workspaceId}
+                    stream={resolvedStream}
+                    inviteLinks={inviteLinks}
+                    onInviteLinkCreated={(connectionId, url) =>
+                      setInviteLinks((links) => new Map(links).set(connectionId, url))
+                    }
+                  />
                 </TabsContent>
               </div>
             </div>

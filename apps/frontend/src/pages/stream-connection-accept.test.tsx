@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -164,6 +165,10 @@ describe("StreamConnectionAcceptPage", () => {
     {
       code: StreamConnectionErrorCodes.NOT_SHAREABLE,
       message: "The host stopped sharing this channel. Ask the channel's admin about it.",
+    },
+    {
+      code: StreamConnectionErrorCodes.HOST_REGION_UNAVAILABLE,
+      message: "Couldn't reach the channel's workspace. Try again in a moment.",
     },
   ])("should say why accepting failed ($code)", async ({ code, message }) => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
@@ -335,9 +340,14 @@ describe("StreamConnectionAcceptPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Accept" }))
 
     expect(await screen.findByText("Beta is already in this channel.")).toBeInTheDocument()
-    expect({ selected: screen.getByRole("combobox").textContent, alert: screen.queryByRole("alert") }).toEqual({
-      selected: "Gamma",
+    expect({
+      selected: screen.getByRole("combobox").textContent,
+      alert: screen.queryByRole("alert"),
+      acceptEnabled: !screen.getByRole("button", { name: "Accept" }).hasAttribute("disabled"),
+    }).toEqual({
+      selected: "Choose a workspace",
       alert: null,
+      acceptEnabled: false,
     })
   })
 
@@ -356,6 +366,7 @@ describe("StreamConnectionAcceptPage", () => {
     { status: 409, code: StreamConnectionErrorCodes.REVOKED, heading: "Invite revoked" },
     { status: 409, code: StreamConnectionErrorCodes.EXPIRED, heading: "Invite expired" },
     { status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, heading: "Invite already used" },
+    { status: 409, code: StreamConnectionErrorCodes.NOT_SHAREABLE, heading: "Channel no longer shared" },
     { status: 400, code: "VALIDATION_ERROR", heading: "Invite not found" },
   ])("should say why the link is dead and offer a way out ($code)", async ({ status, code, heading }) => {
     mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
@@ -394,15 +405,64 @@ describe("StreamConnectionAcceptPage", () => {
     expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled()
   })
 
-  it("should offer a retry when the viewer's workspaces fail to load", async () => {
+  it("should show the form once a retry loads the viewer's workspaces", async () => {
     mockSession({ id: "user_1" }, undefined)
+    vi.spyOn(hooksModule, "useWorkspaces").mockImplementation(function useRetryableWorkspaces() {
+      const [workspaces, setWorkspaces] = useState<Workspace[] | undefined>(undefined)
+      return {
+        workspaces,
+        isLoading: false,
+        refetch: () => setWorkspaces([makeWorkspace("ws_beta", "Beta")]),
+      } as unknown as ReturnType<typeof hooksModule.useWorkspaces>
+    })
     vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
 
     renderPage()
-    await userEvent.click(await screen.findByRole("button", { name: "Try again" }))
+    expect(await screen.findByRole("heading", { name: "Couldn't load your workspaces" })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }))
 
-    expect(screen.getByRole("heading", { name: "Couldn't load your workspaces" })).toBeInTheDocument()
-    expect(refetchWorkspaces).toHaveBeenCalled()
+    expect(await screen.findByRole("combobox")).toHaveTextContent("Beta")
+  })
+
+  it("should keep one page shell from loading to the form so the entrance doesn't replay", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    let finishLookup: (lookup: StreamConnectionLookupResponse) => void = () => {}
+    vi.spyOn(streamConnectionsApi, "lookup").mockImplementation(
+      () => new Promise((resolve) => (finishLookup = resolve))
+    )
+
+    renderPage()
+    expect(await screen.findByText("Loading invite…")).toBeInTheDocument()
+    const logoWhileLoading = screen.getByRole("img", { name: "Threa logo" })
+    finishLookup(makeLookup())
+
+    expect(await screen.findByRole("button", { name: "Accept" })).toBeInTheDocument()
+    expect(screen.getByRole("img", { name: "Threa logo" })).toBe(logoWhileLoading)
+  })
+
+  it("should send a viewer with no workspace to create one", async () => {
+    mockSession({ id: "user_1" }, [])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup())
+
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "You don't have a workspace yet" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Create a workspace" })).toHaveAttribute("href", "/workspaces")
+  })
+
+  it("should say the host is unreachable and recover on retry when the invite can't be loaded", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "lookup")
+      .mockRejectedValueOnce(new ApiError(503, StreamConnectionErrorCodes.HOST_REGION_UNAVAILABLE, "unreachable"))
+      .mockResolvedValue(makeLookup())
+
+    renderPage()
+    expect(
+      await screen.findByText("Couldn't reach the channel's workspace. Try again in a moment.")
+    ).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }))
+
+    expect(await screen.findByRole("heading", { name: "#design from Acme" })).toBeInTheDocument()
   })
 
   it("should show where the channel went when the invite was already accepted", async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
-import { Check, Copy, Link as LinkIcon } from "lucide-react"
+import { Link as LinkIcon } from "lucide-react"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -9,6 +9,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { Button } from "@/components/ui/button"
+import { CopyableLink } from "@/components/copyable-link"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { invitationsApi } from "@/api/invitations"
@@ -49,8 +50,6 @@ export function CreateInviteLinkDialog({
   const [settings, setSettings] = useState<InviteLinkSettingsValue>(initialSettings)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [createdToken, setCreatedToken] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
-  const [copyError, setCopyError] = useState<string | null>(null)
   const generationRef = useRef(0)
 
   const createMutation = useMutation({
@@ -74,8 +73,6 @@ export function CreateInviteLinkDialog({
     setSettings(initialSettings())
     setValidationError(null)
     setCreatedToken(null)
-    setCopied(false)
-    setCopyError(null)
     createMutation.reset()
   }, [open])
 
@@ -94,18 +91,6 @@ export function CreateInviteLinkDialog({
     })
   }
 
-  const copy = async () => {
-    if (!createdToken) return
-    try {
-      await navigator.clipboard.writeText(buildJoinUrl(createdToken))
-      setCopyError(null)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      setCopyError("Could not copy the link. Select it and copy it manually.")
-    }
-  }
-
   return (
     <ResponsiveDialog
       open={open}
@@ -120,29 +105,7 @@ export function CreateInviteLinkDialog({
 
         {createdToken ? (
           <div className="space-y-5 px-4 sm:px-6">
-            <div className="flex items-center gap-2 rounded-md border px-3 py-2">
-              <input
-                readOnly
-                value={buildJoinUrl(createdToken)}
-                onFocus={(event) => event.currentTarget.select()}
-                aria-label="Share link"
-                className="min-w-0 flex-1 bg-transparent font-mono text-xs outline-none"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={copy}
-                aria-label={copied ? "Copied" : "Copy link"}
-              >
-                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-              </Button>
-            </div>
-            {copyError && (
-              <p role="alert" className="text-sm text-destructive">
-                {copyError}
-              </p>
-            )}
+            <CopyableLink url={buildJoinUrl(createdToken)} label="Share link" />
             <p className="text-sm text-muted-foreground">
               Copy this link now. It cannot be shown again after you close this dialog.
             </p>

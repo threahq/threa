@@ -373,8 +373,6 @@ export class ControlPlaneClient {
   async createStreamConnectionInvite(params: {
     hostWorkspaceId: string
     hostStreamId: string
-    hostStreamSlug: string | null
-    hostStreamDisplayName: string | null
     invitedBy: string
   }): Promise<z.infer<typeof createdInviteSchema>> {
     const body = await this.postStreamConnection("/internal/stream-connections", params, "create share link")
@@ -433,7 +431,7 @@ export class ControlPlaneClient {
       const body = await res.text().catch(() => "")
       const error = toControlPlaneHttpError(res.status, body, `Failed to ${action}`)
       // Only the invite's own outcomes reach the browser; a CP 401 forwarded as-is would sign the admin out.
-      if (res.status < 500 && error.code && streamConnectionOutcomeCodes.has(error.code)) {
+      if (error.code && streamConnectionOutcomeCodes.has(error.code)) {
         logger.info({ path, status: res.status, code: error.code }, `Failed to ${action}`)
         throw error
       }

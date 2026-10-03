@@ -9,8 +9,6 @@ CREATE TABLE stream_connections (
     role TEXT NOT NULL,
     state TEXT NOT NULL,
     stream_id TEXT NOT NULL,
-    stream_slug TEXT,
-    stream_display_name TEXT,
     remote_workspace_id TEXT,
     remote_workspace_name TEXT,
     partner_visibility TEXT,

@@ -450,7 +450,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
     app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
     app.post("/internal/stream-connections", internalAuth, streamConnections.sync)
-    app.get("/internal/stream-connections/shareable", internalAuth, streamConnections.shareable)
+    app.get("/internal/stream-connections/channel", internalAuth, streamConnections.channel)
   }
 
   // Enclave runtime registry — gated by the dedicated enclave credential

@@ -1,13 +1,15 @@
 import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@threahq/backend-common"
-import type { FeatureFlagScope, StreamConnectionSnapshot } from "@threahq/types"
-import { z } from "zod/v4"
+import {
+  streamConnectionChannelSchema,
+  type FeatureFlagScope,
+  type StreamConnectionChannel,
+  type StreamConnectionSnapshot,
+} from "@threahq/types"
 import type { RegionConfig } from "../config"
 
 const REGIONAL_REQUEST_TIMEOUT_MS = 15_000
-// Below the backend's 10s budget for the accept call that waits on this check.
-const SHAREABLE_CHECK_TIMEOUT_MS = 5_000
-
-const shareableResponseSchema = z.object({ shareable: z.boolean() })
+// Below the backend's 10s budget for the accept call that waits on this lookup.
+const CHANNEL_LOOKUP_TIMEOUT_MS = 5_000
 
 export class RegionalClient {
   constructor(
@@ -178,13 +180,14 @@ export class RegionalClient {
       })
     } catch (err) {
       logger.error({ err, region, url }, `${logContext} request failed`)
-      throw err
+      throw new RegionUnavailableError(err instanceof Error ? err.message : String(err), { cause: err })
     }
 
     if (!res.ok) {
       const responseBody = await res.text().catch(() => "")
       logger.error({ region, status: res.status, body: responseBody }, `${logContext} failed`)
-      throw new Error(`Regional backend returned ${res.status}: ${responseBody}`)
+      const message = `Regional backend returned ${res.status}: ${responseBody}`
+      throw res.status >= 500 ? new RegionUnavailableError(message) : new Error(message)
     }
     return res
   }
@@ -215,17 +218,20 @@ export class RegionalClient {
     await this.postInternal(region, "/internal/stream-connections", snapshot, "Regional stream connection sync")
   }
 
-  /** Whether the host channel still exists as an active, unencrypted channel with sharing switched on. */
-  async isStreamShareable(region: string, params: { workspaceId: string; streamId: string }): Promise<boolean> {
+  /** The host channel's current name, and whether it is still an active, unencrypted channel with sharing on. */
+  async describeStreamConnectionChannel(
+    region: string,
+    params: { workspaceId: string; streamId: string }
+  ): Promise<StreamConnectionChannel> {
     const query = new URLSearchParams(params)
     const res = await this.requestInternal(
       region,
-      `/internal/stream-connections/shareable?${query}`,
+      `/internal/stream-connections/channel?${query}`,
       { method: "GET" },
-      "Regional stream shareable check",
-      SHAREABLE_CHECK_TIMEOUT_MS
+      "Regional stream connection channel lookup",
+      CHANNEL_LOOKUP_TIMEOUT_MS
     )
-    return shareableResponseSchema.parse(await res.json()).shareable
+    return streamConnectionChannelSchema.parse(await res.json())
   }
 
   /**
@@ -293,6 +299,14 @@ export class RegionalClient {
     }
 
     return res.json()
+  }
+}
+
+/** The region didn't answer or failed on its side, so the same request may succeed later. */
+export class RegionUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = "RegionUnavailableError"
   }
 }
 

@@ -1,5 +1,12 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, expectApiOk, createDmDraftId, generateTestId } from "./helpers"
+import {
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  expectApiOk,
+  createDmDraftId,
+  enrollWorkspaceFlag,
+  generateTestId,
+} from "./helpers"
 import {
   expectDecodedMediaOnEveryEdge,
   hasAppliedHeldPeerOffer,
@@ -99,7 +106,7 @@ async function setUpDmPair(
   if (!workspaceId) throw new Error("Could not resolve workspaceId from owner URL")
 
   if (options.p2p === true) {
-    await enrollCallsP2p(ownerPage, workspaceId)
+    await enrollWorkspaceFlag(ownerPage, workspaceId, "callsP2p")
     await ownerPage.reload()
   }
 
@@ -153,19 +160,6 @@ async function setUpDmPair(
     ownerEmail: owner.email,
     ownerName: owner.name,
   }
-}
-
-async function enrollCallsP2p(page: Page, workspaceId: string): Promise<void> {
-  const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
-  const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
-  if (!backendPort || !internalApiKey) throw new Error("Browser test feature-flag fixture is unavailable")
-  await expectApiOk(
-    await page.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
-      headers: { "x-internal-api-key": internalApiKey },
-      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { callsP2p: "on" } },
-    }),
-    "Enroll workspace in callsP2p"
-  )
 }
 
 async function startCallFromHeader(page: Page): Promise<void> {
@@ -579,7 +573,7 @@ test.describe("1:1 DM calls", () => {
         }
       }
       expect(await getSnapshot(a)).toMatchObject({ mediaTransport: "sfu", transportGeneration: 1 })
-      await enrollCallsP2p(a, workspaceId)
+      await enrollWorkspaceFlag(a, workspaceId, "callsP2p")
       const capturesBeforeForward = await Promise.all(
         [a, b].map((page) =>
           page.evaluate(

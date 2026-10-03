@@ -2,18 +2,21 @@ import { createHash, randomBytes } from "node:crypto"
 import type { Pool, PoolClient } from "pg"
 import { HttpError, OutboxRepository, logger, streamConnectionId, withTransaction } from "@threahq/backend-common"
 import {
-  STREAM_CONNECTION_INVITE_TTL_MS,
   StreamConnectionErrorCodes,
   StreamConnectionStates,
+  type StreamConnectionChannel,
   type StreamConnectionLookupResponse,
   type StreamConnectionSnapshot,
+  type StreamConnectionState,
   type Visibility,
 } from "@threahq/types"
 import { StreamConnectionRepository } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
-import type { RegionalClient } from "../../lib/regional-client"
+import { RegionUnavailableError, type RegionalClient } from "../../lib/regional-client"
 
 export const OUTBOX_STREAM_CONNECTION_SYNC = "stream_connection_sync"
+
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /** Carries only the id; the handler re-reads current state, so replays are idempotent. */
 export interface StreamConnectionSyncPayload extends Record<string, unknown> {
@@ -23,8 +26,6 @@ export interface StreamConnectionSyncPayload extends Record<string, unknown> {
 export interface CreateInviteParams {
   hostWorkspaceId: string
   hostStreamId: string
-  hostStreamSlug: string | null
-  hostStreamDisplayName: string | null
   invitedBy: string
 }
 
@@ -79,6 +80,42 @@ function alreadyAccepted(): HttpError {
   return new HttpError("Invite already accepted", { status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED })
 }
 
+function hostRegionUnavailable(): HttpError {
+  return new HttpError("The channel's region didn't answer", {
+    status: 503,
+    code: StreamConnectionErrorCodes.HOST_REGION_UNAVAILABLE,
+  })
+}
+
+/**
+ * Why the workspace can't accept this invite, or null when it can. An active
+ * invite already accepted by the same workspace is a retry, not a refusal.
+ * Checked before asking the host's region and again under the lock, so both
+ * give the same answer.
+ */
+function refusalFor(
+  invite: { state: StreamConnectionState; expiresAt: Date; hostWorkspaceId: string; partnerWorkspaceId: string | null },
+  partnerWorkspaceId: string
+): HttpError | null {
+  if (invite.state === StreamConnectionStates.ACTIVE) {
+    return invite.partnerWorkspaceId === partnerWorkspaceId ? null : alreadyAccepted()
+  }
+  if (invite.state === StreamConnectionStates.REVOKED) return revoked()
+  if (invite.expiresAt <= new Date()) return expired()
+  if (invite.hostWorkspaceId === partnerWorkspaceId) return alreadyConnected()
+  return null
+}
+
+function lookupBase(snapshot: StreamConnectionSnapshot, channel: StreamConnectionChannel) {
+  return {
+    hostWorkspaceId: snapshot.hostWorkspaceId,
+    hostWorkspaceName: snapshot.hostWorkspaceName,
+    hostRegion: snapshot.hostRegion,
+    streamDisplayName: channel.displayName,
+    streamSlug: channel.slug,
+  }
+}
+
 /** Source of truth for shared channels. Every state change bumps the revision and fans out a snapshot. */
 export class StreamConnectionService {
   private pool: Pool
@@ -103,11 +140,9 @@ export class StreamConnectionService {
         id,
         hostWorkspaceId: params.hostWorkspaceId,
         hostStreamId: params.hostStreamId,
-        hostStreamSlug: params.hostStreamSlug,
-        hostStreamDisplayName: params.hostStreamDisplayName,
         invitedBy: params.invitedBy,
         tokenHash: hashToken(token),
-        expiresAt: new Date(Date.now() + STREAM_CONNECTION_INVITE_TTL_MS),
+        expiresAt: new Date(Date.now() + INVITE_TTL_MS),
       })
       await this.enqueueSync(client, [id])
     })
@@ -142,18 +177,11 @@ export class StreamConnectionService {
     const tokenHash = hashToken(params.token)
     const found = await StreamConnectionRepository.findSnapshotByTokenHash(this.pool, tokenHash)
     if (!found) throw notFound()
+    const early = refusalFor({ ...found, expiresAt: new Date(found.expiresAt) }, params.partnerWorkspaceId)
+    if (early) throw early
     // The host may have archived the channel or switched sharing off since the
-    // link was minted. Asked before the transaction so no lock waits on the region,
-    // and only for an invite the transaction would otherwise activate.
-    if (
-      found.state === StreamConnectionStates.INVITED &&
-      new Date(found.expiresAt) > new Date() &&
-      found.hostWorkspaceId !== params.partnerWorkspaceId &&
-      !(await this.regionalClient.isStreamShareable(found.hostRegion, {
-        workspaceId: found.hostWorkspaceId,
-        streamId: found.hostStreamId,
-      }))
-    ) {
+    // link was minted. Asked before the transaction so no lock waits on the region.
+    if (found.state === StreamConnectionStates.INVITED && !(await this.describeChannel(found)).shareable) {
       throw notShareable()
     }
 
@@ -165,18 +193,9 @@ export class StreamConnectionService {
       await StreamConnectionRepository.lockChannel(client, found.hostWorkspaceId, found.hostStreamId)
       const record = await StreamConnectionRepository.lockByTokenHash(client, tokenHash)
       if (!record) throw notFound()
-      if (record.state === StreamConnectionStates.ACTIVE) {
-        if (record.partnerWorkspaceId === params.partnerWorkspaceId) return record.id
-        throw alreadyAccepted()
-      }
-      if (record.state === StreamConnectionStates.REVOKED) throw revoked()
-      if (record.expiresAt <= new Date()) throw expired()
-      if (record.hostWorkspaceId === params.partnerWorkspaceId) {
-        throw new HttpError("A channel can't be shared with its own workspace", {
-          status: 400,
-          code: StreamConnectionErrorCodes.SAME_WORKSPACE,
-        })
-      }
+      const refusal = refusalFor(record, params.partnerWorkspaceId)
+      if (refusal) throw refusal
+      if (record.state === StreamConnectionStates.ACTIVE) return record.id
       const partners = await StreamConnectionRepository.listPartners(
         client,
         record.hostWorkspaceId,
@@ -191,7 +210,9 @@ export class StreamConnectionService {
         acceptedBy: params.acceptedBy,
       })
       // Every partner already in the channel gains a peer, so their connections fan out again too.
-      await this.enqueueSync(client, [record.id, ...partners.map((p) => p.connectionId)])
+      const partnerConnectionIds = partners.map((p) => p.connectionId)
+      await StreamConnectionRepository.bumpRevisions(client, partnerConnectionIds)
+      await this.enqueueSync(client, [record.id, ...partnerConnectionIds])
       return record.id
     })
     return this.requireSnapshot(connectionId)
@@ -214,28 +235,25 @@ export class StreamConnectionService {
     const snapshot = await StreamConnectionRepository.findSnapshotByTokenHash(this.pool, hashToken(token))
     if (!snapshot) throw notFound()
     if (snapshot.state === StreamConnectionStates.REVOKED) throw revoked()
-    const base = {
-      hostWorkspaceId: snapshot.hostWorkspaceId,
-      hostWorkspaceName: snapshot.hostWorkspaceName,
-      hostRegion: snapshot.hostRegion,
-      streamDisplayName: snapshot.hostStreamDisplayName,
-      streamSlug: snapshot.hostStreamSlug,
-    }
+
     if (snapshot.state === StreamConnectionStates.INVITED) {
       if (new Date(snapshot.expiresAt) <= new Date()) throw expired()
+      const channel = await this.describeChannel(snapshot)
+      if (!channel.shareable) throw notShareable()
       const partners = await StreamConnectionRepository.listPartners(
         this.pool,
         snapshot.hostWorkspaceId,
         snapshot.hostStreamId
       )
       return {
-        ...base,
+        ...lookupBase(snapshot, channel),
         state: snapshot.state,
         partnerWorkspaceId: null,
         partnerWorkspaceName: null,
         partners: partners.map(({ workspaceId, workspaceName }) => ({ workspaceId, workspaceName })),
       }
     }
+
     // A used link tells only the accepting workspace's members where the channel went.
     const { partnerWorkspaceId, partnerWorkspaceName } = snapshot
     if (
@@ -245,7 +263,12 @@ export class StreamConnectionService {
     ) {
       throw alreadyAccepted()
     }
-    return { ...base, state: snapshot.state, partnerWorkspaceId, partnerWorkspaceName }
+    return {
+      ...lookupBase(snapshot, await this.describeChannel(snapshot)),
+      state: snapshot.state,
+      partnerWorkspaceId,
+      partnerWorkspaceName,
+    }
   }
 
   /**
@@ -280,6 +303,22 @@ export class StreamConnectionService {
         failures.map((f) => f.reason),
         `Stream connection sync failed (${detail})`
       )
+    }
+  }
+
+  private async describeChannel(snapshot: StreamConnectionSnapshot): Promise<StreamConnectionChannel> {
+    try {
+      return await this.regionalClient.describeStreamConnectionChannel(snapshot.hostRegion, {
+        workspaceId: snapshot.hostWorkspaceId,
+        streamId: snapshot.hostStreamId,
+      })
+    } catch (err) {
+      if (!(err instanceof RegionUnavailableError)) throw err
+      logger.warn(
+        { err, connectionId: snapshot.id, region: snapshot.hostRegion },
+        "Stream connection channel lookup failed"
+      )
+      throw hostRegionUnavailable()
     }
   }
 

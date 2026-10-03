@@ -1,50 +1,45 @@
-import { useId, useState } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Building2, Check, Copy, Link as LinkIcon } from "lucide-react"
-import { StreamConnectionErrorCodes, StreamConnectionStates, type Stream, type StreamConnection } from "@threahq/types"
+import { useEffect, useId, useState } from "react"
+import { Building2, Link as LinkIcon } from "lucide-react"
+import { StreamConnectionErrorCodes, StreamConnectionStates, type Stream } from "@threahq/types"
 import { ApiError } from "@/api/client"
-import { streamConnectionsApi } from "@/api/stream-connections"
+import { CopyableLink } from "@/components/copyable-link"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences } from "@/contexts"
 import { formatFutureTime, formatTime, type TimePrefs } from "@/lib/dates"
 import { buildStreamConnectionInviteLink } from "@/lib/stream-links"
+import {
+  createStreamConnectionInvite,
+  revokeStreamConnection,
+  useLoadStreamConnections,
+  useStreamConnections,
+} from "@/stores/stream-connections-store"
+import { useWorkspaceUsers } from "@/stores/workspace-store"
 
-const COPY_CONFIRMATION_MS = 2_000
-/** Picks up a partner's accept while the host has the tab open. */
-const PENDING_INVITE_POLL_MS = 15_000
 const HOUR_MS = 60 * 60_000
 
-function connectionsKey(workspaceId: string, streamId: string) {
-  return ["stream-connections", workspaceId, streamId] as const
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (!ApiError.isApiError(error)) return fallback
-  switch (error.code) {
-    case StreamConnectionErrorCodes.NOT_SHAREABLE:
-      return "Only active, unencrypted channels can be shared."
-    case StreamConnectionErrorCodes.ALREADY_ACCEPTED:
-      return "Another workspace already accepted this invite."
-    default:
-      return fallback
+function createErrorMessage(error: unknown): string {
+  if (ApiError.isApiError(error) && error.code === StreamConnectionErrorCodes.NOT_SHAREABLE) {
+    return "Only active, unencrypted channels can be shared."
   }
+  return "Couldn't create the link. Try again."
 }
 
-/** A partner accepted the link under us. The list shows them once this region's copy catches up. */
-function isStaleState(error: unknown): boolean {
-  return ApiError.isApiError(error) && error.code === StreamConnectionErrorCodes.ALREADY_ACCEPTED
+const REVOKE_ERROR_COPY: Partial<Record<string, string>> = {
+  [StreamConnectionErrorCodes.ALREADY_ACCEPTED]: "Another workspace already accepted this invite.",
+  [StreamConnectionErrorCodes.NOT_FOUND]: "This link no longer exists.",
 }
 
-function isPendingInvite(connection: StreamConnection): boolean {
-  return connection.state === StreamConnectionStates.INVITED && new Date(connection.expiresAt).getTime() > Date.now()
+function revokeErrorMessage(error: unknown): string {
+  return (ApiError.isApiError(error) && REVOKE_ERROR_COPY[error.code]) || "Couldn't revoke the link. Try again."
 }
 
 /** formatFutureTime counts down minutes inside the last hour, which an open tab would leave stale. */
-function expiryTime(expiresAt: Date, prefs: TimePrefs): string {
-  if (expiresAt.getTime() - Date.now() < HOUR_MS) return formatTime(expiresAt, prefs)
-  return formatFutureTime(expiresAt, new Date(), prefs)
+function expiryTime(expiresAt: number, prefs: TimePrefs): string {
+  const date = new Date(expiresAt)
+  if (expiresAt - Date.now() < HOUR_MS) return formatTime(date, prefs)
+  return formatFutureTime(date, new Date(), prefs)
 }
 
 function unshareableReason(stream: Stream): string | null {
@@ -56,55 +51,33 @@ function unshareableReason(stream: Stream): string | null {
 interface ConnectTabProps {
   workspaceId: string
   stream: Stream
+  /** Links created while the dialog is open, by connection id. */
+  inviteLinks: ReadonlyMap<string, string>
+  onInviteLinkCreated: (connectionId: string, url: string) => void
 }
 
-export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
-  const queryClient = useQueryClient()
-  const queryKey = connectionsKey(workspaceId, stream.id)
+export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreated }: ConnectTabProps) {
   const { preferences } = usePreferences()
-  // The plaintext link exists only in the create response, so it lives here
-  // until the tab closes.
-  const [created, setCreated] = useState<{ connectionId: string; url: string } | null>(null)
-  const [actionError, setActionError] = useState<string | null>(null)
+  const users = useWorkspaceUsers(workspaceId)
+  const load = useLoadStreamConnections(workspaceId, stream.id)
+  const rows = useStreamConnections(workspaceId, stream.id)
+  const [creating, setCreating] = useState(false)
+  const [revokingId, setRevokingId] = useState<string | null>(null)
+  // A revoke's error sits above the lists, a create's beside its button: each where the admin is looking.
+  const [actionError, setActionError] = useState<{ action: "create" | "revoke"; message: string } | null>(null)
 
-  const connectionsQuery = useQuery({
-    queryKey,
-    queryFn: () => streamConnectionsApi.list(workspaceId, stream.id),
-    refetchInterval: (query) => (query.state.data?.some(isPendingInvite) ? PENDING_INVITE_POLL_MS : false),
-  })
+  const [now, setNow] = useState(Date.now)
+  const pending = (rows ?? []).filter(
+    (row) => row.state === StreamConnectionStates.INVITED && Date.parse(row.expiresAt) > now
+  )
+  const nextExpiry = pending.length > 0 ? Math.min(...pending.map((row) => Date.parse(row.expiresAt))) : null
+  useEffect(() => {
+    if (nextExpiry === null) return
+    const timer = window.setTimeout(() => setNow(Date.now()), nextExpiry - Date.now())
+    return () => window.clearTimeout(timer)
+  }, [nextExpiry, now])
 
-  const create = useMutation({
-    mutationFn: () => streamConnectionsApi.createInvite(workspaceId, stream.id),
-    onMutate: () => setActionError(null),
-    onSuccess: async ({ connection, token }) => {
-      // A poll still in flight would land the pre-create list and hide the only copy of the link.
-      await queryClient.cancelQueries({ queryKey })
-      queryClient.setQueryData<StreamConnection[]>(queryKey, (current = []) => [
-        connection,
-        ...current.filter((c) => c.id !== connection.id),
-      ])
-      setCreated({ connectionId: connection.id, url: buildStreamConnectionInviteLink(token) })
-    },
-    onError: (error) => {
-      setActionError(errorMessage(error, "Couldn't create the link. Try again."))
-      if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
-    },
-  })
-
-  const revoke = useMutation({
-    mutationFn: (connectionId: string) => streamConnectionsApi.revoke(workspaceId, connectionId),
-    onMutate: () => setActionError(null),
-    onSuccess: async (_, connectionId) => {
-      await queryClient.invalidateQueries({ queryKey })
-      setCreated((current) => (current?.connectionId === connectionId ? null : current))
-    },
-    onError: (error) => {
-      setActionError(errorMessage(error, "Couldn't revoke the link. Try again."))
-      if (isStaleState(error)) void queryClient.invalidateQueries({ queryKey })
-    },
-  })
-
-  if (connectionsQuery.isPending) {
+  if (rows === undefined || (load.status === "loading" && rows.length === 0)) {
     return (
       <div className="space-y-3 p-1">
         <Skeleton className="h-4 w-32" />
@@ -113,30 +86,54 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
     )
   }
 
-  // A failed background refetch keeps showing the last list it loaded.
-  const connections = connectionsQuery.data
-  if (connections === undefined) {
-    return (
-      <div className="space-y-3 p-1">
-        <p role="alert" className="text-sm text-destructive">
-          Couldn't load this channel's connections.
-        </p>
-        <Button variant="outline" size="sm" onClick={() => void connectionsQuery.refetch()}>
-          Try again
-        </Button>
-      </div>
-    )
+  const loadFailed = load.status === "failed" && (
+    <div className="space-y-3">
+      <p role="alert" className="text-sm text-destructive">
+        Couldn't load this channel's connections.
+      </p>
+      <Button variant="outline" size="sm" onClick={load.retry}>
+        Try again
+      </Button>
+    </div>
+  )
+  if (loadFailed && rows.length === 0) return <div className="p-1">{loadFailed}</div>
+
+  const create = async () => {
+    setActionError(null)
+    setCreating(true)
+    try {
+      await createStreamConnectionInvite(workspaceId, stream.id, (connectionId, token) =>
+        onInviteLinkCreated(connectionId, buildStreamConnectionInviteLink(token))
+      )
+    } catch (error) {
+      setActionError({ action: "create", message: createErrorMessage(error) })
+    } finally {
+      setCreating(false)
+    }
   }
 
-  const connected = connections.filter((c) => c.state === StreamConnectionStates.ACTIVE)
-  const pending = connections.filter(isPendingInvite)
+  const revoke = async (connectionId: string) => {
+    setActionError(null)
+    setRevokingId(connectionId)
+    try {
+      await revokeStreamConnection(workspaceId, stream.id, connectionId)
+    } catch (error) {
+      setActionError({ action: "revoke", message: revokeErrorMessage(error) })
+    } finally {
+      setRevokingId(null)
+    }
+  }
+
+  const connected = rows.filter((row) => row.state === StreamConnectionStates.ACTIVE)
   const empty = connected.length === 0 && pending.length === 0
   const blocked = unshareableReason(stream)
-  const busy = create.isPending || revoke.isPending
+  const busy = creating || revokingId !== null
   const timePrefs = { timeFormat: preferences?.timeFormat }
 
   return (
     <div className="space-y-5 p-1">
+      {loadFailed}
+      {actionError?.action === "revoke" && <ActionError message={actionError.message} />}
       {connected.length > 0 && (
         <section className="space-y-2">
           <Label className="text-sm font-medium">Shared with</Label>
@@ -157,12 +154,13 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
             {pending.map((connection) => (
               <PendingInvite
                 key={connection.id}
-                expiresAt={new Date(connection.expiresAt)}
-                link={created?.connectionId === connection.id ? created.url : null}
+                expiresAt={Date.parse(connection.expiresAt)}
+                link={inviteLinks.get(connection.id) ?? null}
+                inviterName={users.find((user) => user.id === connection.invitedBy)?.name ?? null}
                 timePrefs={timePrefs}
-                revoking={revoke.isPending && revoke.variables === connection.id}
+                revoking={revokingId === connection.id}
                 disabled={busy}
-                onRevoke={() => revoke.mutate(connection.id)}
+                onRevoke={() => void revoke(connection.id)}
               />
             ))}
           </ul>
@@ -176,45 +174,50 @@ export function ConnectTab({ workspaceId, stream }: ConnectTabProps) {
           </p>
         )}
         {!blocked && (
-          <Button variant={empty ? "default" : "outline"} onClick={() => create.mutate()} disabled={busy}>
+          <Button variant={empty ? "default" : "outline"} onClick={() => void create()} disabled={busy}>
             <LinkIcon className="mr-2 h-4 w-4" />
-            {create.isPending ? "Creating…" : "Create invite link"}
+            {creating ? "Creating…" : "Create invite link"}
           </Button>
         )}
+        {actionError?.action === "create" && <ActionError message={actionError.message} />}
       </section>
-      {actionError && (
-        <p role="alert" className="text-sm text-destructive">
-          {actionError}
-        </p>
-      )}
     </div>
+  )
+}
+
+function ActionError({ message }: { message: string }) {
+  return (
+    <p role="alert" className="text-sm text-destructive">
+      {message}
+    </p>
   )
 }
 
 function PendingInvite({
   expiresAt,
   link,
+  inviterName,
   timePrefs,
   revoking,
   disabled,
   onRevoke,
 }: {
-  expiresAt: Date
+  expiresAt: number
   link: string | null
+  inviterName: string | null
   timePrefs: TimePrefs
   revoking: boolean
   disabled: boolean
   onRevoke: () => void
 }) {
   const noteId = useId()
-  const note = [link && "Copy it now, it won't be shown again.", `Expires ${expiryTime(expiresAt, timePrefs)}.`]
-    .filter(Boolean)
-    .join(" ")
+  const origin = link ? "Copy it now, it won't be shown again." : inviterName && `Created by ${inviterName}.`
+  const note = [origin, `Expires ${expiryTime(expiresAt, timePrefs)}.`].filter(Boolean).join(" ")
 
   return (
     <li className="space-y-2">
       {link ? (
-        <InviteLink url={link} />
+        <CopyableLink url={link} label="Invite link" />
       ) : (
         <div className="rounded-lg border px-3 py-3 text-sm text-muted-foreground">
           Waiting for a workspace to accept.
@@ -229,49 +232,5 @@ function PendingInvite({
         </Button>
       </div>
     </li>
-  )
-}
-
-function InviteLink({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false)
-  const [copyFailed, setCopyFailed] = useState(false)
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopyFailed(false)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), COPY_CONFIRMATION_MS)
-    } catch {
-      setCopyFailed(true)
-    }
-  }
-
-  return (
-    <>
-      <div className="flex items-center gap-2 rounded-lg border px-3 py-2">
-        <input
-          readOnly
-          value={url}
-          onFocus={(event) => event.currentTarget.select()}
-          aria-label="Invite link"
-          className="min-w-0 flex-1 bg-transparent font-mono text-xs outline-none"
-        />
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => void copy()}
-          aria-label={copied ? "Copied" : "Copy link"}
-        >
-          {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-        </Button>
-      </div>
-      {copyFailed && (
-        <p role="alert" className="text-sm text-destructive">
-          Couldn't copy the link. Select it and copy it yourself.
-        </p>
-      )}
-    </>
   )
 }

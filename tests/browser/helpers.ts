@@ -19,6 +19,20 @@ export async function expectApiOk(response: APIResponse, action: string): Promis
   throw new Error(`${action} failed: ${response.status()} ${response.statusText()} - ${body}`)
 }
 
+/** Turns a feature flag on for one workspace through the backend's internal API, replacing its other flag overrides. */
+export async function enrollWorkspaceFlag(page: Page, workspaceId: string, flag: string): Promise<void> {
+  const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
+  const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
+  if (!backendPort || !internalApiKey) throw new Error("Browser test feature-flag fixture is unavailable")
+  await expectApiOk(
+    await page.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
+      headers: { "x-internal-api-key": internalApiKey },
+      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { [flag]: "on" } },
+    }),
+    `Enroll workspace in ${flag}`
+  )
+}
+
 /** The stub auth user, as `/api/dev/login` returns it. */
 export interface DevLoginUser {
   id: string

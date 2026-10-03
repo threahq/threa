@@ -6,6 +6,7 @@ import {
   StreamConnectionService,
   type StreamConnectionSyncPayload,
 } from "../../src/features/stream-connections"
+import { StreamConnectionRepository } from "../../src/features/stream-connections/repository"
 import { WorkspaceRegistryRepository } from "../../src/features/workspaces"
 import { RegionalClient } from "../../src/lib/regional-client"
 import { startMockRegionalBackend, type MockRegionalBackend } from "../mock-regional-backend"
@@ -35,8 +36,6 @@ describe("StreamConnectionService", () => {
     return service.createInvite({
       hostWorkspaceId,
       hostStreamId,
-      hostStreamSlug: "launch",
-      hostStreamDisplayName: "Launch",
       invitedBy: "usr_inviter",
     })
   }
@@ -69,8 +68,12 @@ describe("StreamConnectionService", () => {
     return region.requests.filter((r) => r.method === "POST").map((r) => ({ url: r.url, body: r.body }))
   }
 
-  function shareableChecks(region: MockRegionalBackend) {
+  function channelLookups(region: MockRegionalBackend) {
     return region.requests.filter((r) => r.method === "GET").map((r) => r.url)
+  }
+
+  function channelLookup(workspaceId: string, streamId: string) {
+    return `/internal/stream-connections/channel?${new URLSearchParams({ workspaceId, streamId })}`
   }
 
   beforeAll(async () => {
@@ -231,7 +234,7 @@ describe("StreamConnectionService", () => {
     expect(losers).toMatchObject([{ status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED }])
   })
 
-  test("should let a third workspace join and push every connection to the region of every workspace in it", async () => {
+  test("should let a third workspace join and push every connection, newly revised, to every workspace in it", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const second = await seedWorkspace("us", "Globex")
     const third = await seedWorkspace("eu", "Initech")
@@ -247,7 +250,8 @@ describe("StreamConnectionService", () => {
     await service.syncToRegions({ connectionId: thirdConnection.id })
     await service.syncToRegions({ connectionId: secondConnection.id })
 
-    const secondNow = { ...secondConnection, peerWorkspaceIds: [third] }
+    // A region keeps a snapshot only when its revision is newer, so the new peer bumps it.
+    const secondNow = { ...secondConnection, revision: 3, peerWorkspaceIds: [third] }
     expect({
       thirdConnection,
       resynced,
@@ -417,34 +421,36 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot, token } = await invite(host)
-    eu.setStreamShareable(false)
+    eu.setStreamChannel({ shareable: false, slug: "launch", displayName: "Launch" })
 
     await expect(accept(token, partner)).rejects.toMatchObject({
       status: 409,
       code: StreamConnectionErrorCodes.NOT_SHAREABLE,
     })
 
-    const query = new URLSearchParams({ workspaceId: host, streamId: snapshot.hostStreamId })
     expect({
-      eu: shareableChecks(eu),
-      us: shareableChecks(us),
+      eu: channelLookups(eu),
+      us: channelLookups(us),
       live: await liveConnections(host),
       events: await syncEvents(snapshot.id),
     }).toEqual({
-      eu: [`/internal/stream-connections/shareable?${query}`],
+      eu: [channelLookup(host, snapshot.hostStreamId)],
       us: [],
       live: [{ id: snapshot.id, state: "invited" }],
       events: [{ connectionId: snapshot.id }],
     })
   })
 
-  test("should leave the invite pending when the host region can't answer the shareable check", async () => {
+  test("should leave the invite pending when the host region can't describe the channel", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot, token } = await invite(host)
-    eu.setStreamShareable("error")
+    eu.setStreamChannel("error")
 
-    await expect(accept(token, partner)).rejects.toThrow("Regional backend returned 503")
+    await expect(accept(token, partner)).rejects.toMatchObject({
+      status: 503,
+      code: StreamConnectionErrorCodes.HOST_REGION_UNAVAILABLE,
+    })
 
     expect({
       live: await liveConnections(host),
@@ -461,11 +467,11 @@ describe("StreamConnectionService", () => {
     const { snapshot, token } = await invite(host)
     await accept(token, partner)
     eu.reset()
-    eu.setStreamShareable("error")
+    eu.setStreamChannel("error")
 
     const retried = await accept(token, partner)
 
-    expect({ state: retried.state, checks: shareableChecks(eu), events: await syncEvents(snapshot.id) }).toEqual({
+    expect({ state: retried.state, checks: channelLookups(eu), events: await syncEvents(snapshot.id) }).toEqual({
       state: "active",
       checks: [],
       events: [{ connectionId: snapshot.id }, { connectionId: snapshot.id }],
@@ -483,7 +489,7 @@ describe("StreamConnectionService", () => {
     ])
     const ownInvite = await invite(host)
     // Each refusal is about the invite itself, so it wins over the channel no longer being shareable.
-    eu.setStreamShareable(false)
+    eu.setStreamChannel({ shareable: false, slug: "launch", displayName: "Launch" })
 
     const outcomes = await Promise.allSettled([
       accept("not-a-token", partner),
@@ -494,13 +500,13 @@ describe("StreamConnectionService", () => {
 
     expect({
       outcomes: outcomes.map((o) => (o.status === "rejected" ? (o.reason as { code: string }).code : "accepted")),
-      checks: shareableChecks(eu),
+      checks: channelLookups(eu),
     }).toEqual({
       outcomes: [
         StreamConnectionErrorCodes.NOT_FOUND,
         StreamConnectionErrorCodes.REVOKED,
         StreamConnectionErrorCodes.EXPIRED,
-        StreamConnectionErrorCodes.SAME_WORKSPACE,
+        StreamConnectionErrorCodes.ALREADY_CONNECTED,
       ],
       checks: [],
     })
@@ -508,6 +514,90 @@ describe("StreamConnectionService", () => {
       code: StreamConnectionErrorCodes.EXPIRED,
     })
   })
+
+  test("should name the channel as its region does now, and refuse to show a link it can no longer honor", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const { snapshot, token } = await invite(host)
+
+    eu.setStreamChannel({ shareable: true, slug: "launch-2", displayName: "Launch, renamed" })
+    const renamed = await service.lookup(token, "workos_viewer")
+    eu.setStreamChannel({ shareable: false, slug: "launch-2", displayName: "Launch, renamed" })
+    const archived = service.lookup(token, "workos_viewer")
+    await expect(archived).rejects.toMatchObject({ status: 409, code: StreamConnectionErrorCodes.NOT_SHAREABLE })
+    eu.setStreamChannel("error")
+    const unreachable = service.lookup(token, "workos_viewer")
+    await expect(unreachable).rejects.toMatchObject({
+      status: 503,
+      code: StreamConnectionErrorCodes.HOST_REGION_UNAVAILABLE,
+    })
+
+    expect({
+      names: { slug: renamed.streamSlug, displayName: renamed.streamDisplayName },
+      lookups: channelLookups(eu),
+    }).toEqual({
+      names: { slug: "launch-2", displayName: "Launch, renamed" },
+      lookups: Array(3).fill(channelLookup(host, snapshot.hostStreamId)),
+    })
+  })
+
+  test("should make an accept wait for one already joining the channel, so each learns of the other", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partners = [await seedWorkspace("us", "Globex"), await seedWorkspace("eu", "Initech")]
+    const stream = `stream_turns_${crypto.randomUUID()}`
+    const links = [await invite(host, stream), await invite(host, stream)]
+
+    // Stand in for an accept of the first link that holds the channel until the second has started.
+    const first = await pool.connect()
+    let second: Promise<unknown>
+    try {
+      await first.query("BEGIN")
+      await StreamConnectionRepository.lockChannel(first, host, stream)
+      await StreamConnectionRepository.activate(first, {
+        id: links[0].snapshot.id,
+        partnerWorkspaceId: partners[0],
+        partnerVisibility: "public",
+        acceptedBy: "usr_first",
+      })
+      second = accept(links[1].token, partners[1])
+      await waitForChannelLockWaiter(host, stream)
+      await first.query("COMMIT")
+    } finally {
+      // Destroyed, not pooled: a failure above would otherwise hand the pool a connection still holding the lock.
+      first.release(true)
+    }
+
+    const joined = (await second) as { peerWorkspaceIds: string[] }
+    const firstNow = await service.listForWorkspace({ workspaceId: partners[0], streamId: stream, includeIds: [] })
+    expect({
+      joinedPeers: joined.peerWorkspaceIds,
+      firstNow: firstNow.map((c) => ({ id: c.id, revision: c.revision, peers: c.peerWorkspaceIds })),
+      firstEvents: await syncEvents(links[0].snapshot.id),
+    }).toEqual({
+      joinedPeers: [partners[0]],
+      firstNow: [
+        { id: links[0].snapshot.id, revision: 3, peers: [partners[1]] },
+        { id: links[1].snapshot.id, revision: 2, peers: [partners[0]] },
+      ],
+      firstEvents: [{ connectionId: links[0].snapshot.id }, { connectionId: links[0].snapshot.id }],
+    })
+  })
+
+  async function waitForChannelLockWaiter(hostWorkspaceId: string, hostStreamId: string): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      // A bigint advisory key sits in pg_locks split into classid (high 32 bits) and objid (low 32 bits).
+      const result = await pool.query<{ waiting: number }>(
+        `SELECT count(*)::int AS waiting
+         FROM pg_locks, (SELECT hashtextextended($1, 0) AS k) AS key
+         WHERE locktype = 'advisory' AND NOT granted AND objsubid = 1
+           AND classid = ((key.k >> 32) & 4294967295)::oid
+           AND objid = (key.k & 4294967295)::oid`,
+        [`stream_connections:${hostWorkspaceId}:${hostStreamId}`]
+      )
+      if (result.rows[0].waiting > 0) return
+      await Bun.sleep(10)
+    }
+    throw new Error("No accept ever waited on the channel lock")
+  }
 
   test("should list a channel's connections to the workspaces that hold them, and settled ones only on request", async () => {
     const host = await seedWorkspace("eu", "Acme")

@@ -15,6 +15,7 @@ function event<T extends OutboxEventType>(eventType: T, payload: Record<string, 
 }
 
 const MEMBERS_WRITE_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
+const WORKSPACE_ADMIN_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
 
 describe("permissionGroup", () => {
   it("names the members:write delivery group on the wire", () => {
@@ -393,13 +394,36 @@ describe("resolveDeliveryGroups — call lifecycle (roadmap 1.4)", () => {
 })
 
 describe("permissionGroupsForRole", () => {
-  it("grants the members:write delivery group to admins and owners", () => {
-    expect(permissionGroupsForRole("admin")).toEqual([MEMBERS_WRITE_GROUP])
-    expect(permissionGroupsForRole("owner")).toEqual([MEMBERS_WRITE_GROUP])
+  it("grants the members:write and admin delivery groups to admins and owners", () => {
+    expect(permissionGroupsForRole("admin")).toEqual([MEMBERS_WRITE_GROUP, WORKSPACE_ADMIN_GROUP])
+    expect(permissionGroupsForRole("owner")).toEqual([MEMBERS_WRITE_GROUP, WORKSPACE_ADMIN_GROUP])
   })
 
   it("grants no permission delivery groups to plain members", () => {
     expect(permissionGroupsForRole("member")).toEqual([])
+  })
+})
+
+describe("resolveDeliveryGroups — stream connections", () => {
+  const payload = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    adminMemberUserIds: ["usr_admin_a", "usr_admin_b"],
+    connection: { id: "sconn_1" },
+  }
+
+  it("should reach every admin when the channel is public", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream_connection:updated", { ...payload, streamVisibility: Visibilities.PUBLIC })
+    )
+    expect(groups).toEqual([WORKSPACE_ADMIN_GROUP])
+  })
+
+  it("should reach only the admins in the channel when it is private", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream_connection:updated", { ...payload, streamVisibility: Visibilities.PRIVATE })
+    )
+    expect(groups).toEqual([userGroup("usr_admin_a"), userGroup("usr_admin_b")])
   })
 })
 

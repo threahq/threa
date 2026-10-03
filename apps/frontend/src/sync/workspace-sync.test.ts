@@ -31,6 +31,7 @@ import {
   type ScheduledMessageView,
   type Stream,
   type StreamBootstrap,
+  type StreamConnection,
   type StreamMember,
   type StreamWithPreview,
   type WorkspaceBootstrap,
@@ -2022,6 +2023,36 @@ describe("registerWorkspaceSocketHandlers", () => {
       queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]?.messageCount
     ).toBe(12)
     await vi.waitFor(async () => expect((await db.streams.get(current.id))?.messageCount).toBe(12))
+    cleanup()
+  })
+
+  it("should keep the newest revision of a Connect row and ignore another workspace's when stream_connection:updated arrives", async () => {
+    await db.streamConnections.clear()
+    const accepted: StreamConnection = {
+      id: "strconn_1",
+      role: "host",
+      state: "active",
+      revision: 2,
+      streamId: "stream_shared",
+      remoteWorkspaceId: "ws_partner",
+      remoteWorkspaceName: "Partner",
+      partnerVisibility: "public",
+      invitedBy: "member_1",
+      acceptedBy: null,
+      expiresAt: "2026-10-08T00:00:00.000Z",
+    }
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", new QueryClient(), handlerRefs)
+
+    const update = (workspaceId: string, connection: StreamConnection) =>
+      emitAsync("stream_connection:updated", { workspaceId, streamId: connection.streamId, connection })
+    await update("ws_1", accepted)
+    await update("ws_1", { ...accepted, state: "invited", revision: 1, remoteWorkspaceId: null })
+    await update("ws_other", { ...accepted, state: "revoked", revision: 3 })
+
+    expect(await db.streamConnections.toArray()).toEqual([
+      { ...accepted, workspaceId: "ws_1", _cachedAt: expect.any(Number) },
+    ])
     cleanup()
   })
 

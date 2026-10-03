@@ -4,7 +4,7 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http"
-import { streamConnectionSnapshotSchema } from "@threahq/types"
+import { streamConnectionSnapshotSchema, type StreamConnectionChannel } from "@threahq/types"
 
 export interface MockRegionalBackend {
   url: string
@@ -13,8 +13,8 @@ export interface MockRegionalBackend {
   requests: Array<{ method: string; url: string; body: unknown }>
   /** Status the stream-connection sync endpoint answers a valid snapshot with; 204 by default. */
   setStreamConnectionStatus: (status: number) => void
-  /** What the shareable check answers, or "error" for a 503; true by default. */
-  setStreamShareable: (answer: boolean | "error") => void
+  /** What the channel lookup answers, or "error" for a 503; a shareable channel named Launch by default. */
+  setStreamChannel: (answer: StreamConnectionChannel | "error") => void
   /** Reset recorded requests and configured statuses */
   reset: () => void
   stop: () => Promise<void>
@@ -38,7 +38,8 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
 export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
   const requests: MockRegionalBackend["requests"] = []
   let streamConnectionStatus = 204
-  let streamShareable: boolean | "error" = true
+  const shareableChannel: StreamConnectionChannel = { shareable: true, slug: "launch", displayName: "Launch" }
+  let streamChannel: StreamConnectionChannel | "error" = shareableChannel
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const body = await parseBody(req)
@@ -79,15 +80,15 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
-    // GET /internal/stream-connections/shareable — the host check before an accept
-    if (req.method === "GET" && url.startsWith("/internal/stream-connections/shareable?")) {
-      if (streamShareable === "error") {
+    // GET /internal/stream-connections/channel — the host channel, for the invite page and before an accept
+    if (req.method === "GET" && url.startsWith("/internal/stream-connections/channel?")) {
+      if (streamChannel === "error") {
         res.writeHead(503)
         res.end()
         return
       }
       res.writeHead(200, { "Content-Type": "application/json" })
-      res.end(JSON.stringify({ shareable: streamShareable }))
+      res.end(JSON.stringify(streamChannel))
       return
     }
 
@@ -115,13 +116,13 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
     setStreamConnectionStatus: (status) => {
       streamConnectionStatus = status
     },
-    setStreamShareable: (answer) => {
-      streamShareable = answer
+    setStreamChannel: (answer) => {
+      streamChannel = answer
     },
     reset: () => {
       requests.length = 0
       streamConnectionStatus = 204
-      streamShareable = true
+      streamChannel = shareableChannel
     },
     stop: () =>
       new Promise<void>((resolve) => {

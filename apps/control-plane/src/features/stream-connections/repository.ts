@@ -18,8 +18,6 @@ interface SnapshotRow {
   host_workspace_name: string
   host_region: string
   host_stream_id: string
-  host_stream_slug: string | null
-  host_stream_display_name: string | null
   invited_by: string
   partner_workspace_id: string | null
   partner_workspace_name: string | null
@@ -49,8 +47,6 @@ export interface InsertStreamConnectionParams {
   id: string
   hostWorkspaceId: string
   hostStreamId: string
-  hostStreamSlug: string | null
-  hostStreamDisplayName: string | null
   invitedBy: string
   tokenHash: string
   expiresAt: Date
@@ -66,12 +62,11 @@ export interface ActivateStreamConnectionParams {
 const RECORD_COLUMNS = "id, host_workspace_id, host_stream_id, partner_workspace_id, state, expires_at"
 
 // A connection's peers are the channel's other partners. They're derived on
-// every read rather than stored, so a partner joining or leaving changes each
-// connection's fan-out without rewriting its row.
+// every read rather than stored, so a partner joining changes each connection's
+// fan-out without rewriting its row; the accept bumps their revisions instead.
 const SNAPSHOT_SELECT = `
   SELECT sc.id, sc.revision, sc.state, sc.host_workspace_id, hw.name AS host_workspace_name,
-         hw.region AS host_region, sc.host_stream_id, sc.host_stream_slug, sc.host_stream_display_name,
-         sc.invited_by, sc.partner_workspace_id, pw.name AS partner_workspace_name, pw.region AS partner_region,
+         hw.region AS host_region, sc.host_stream_id, sc.invited_by, sc.partner_workspace_id, pw.name AS partner_workspace_name, pw.region AS partner_region,
          sc.partner_visibility, sc.accepted_by, sc.expires_at,
          ARRAY(
            SELECT peer.partner_workspace_id FROM stream_connections peer
@@ -103,8 +98,6 @@ function mapSnapshot(row: SnapshotRow): StreamConnectionSnapshot {
     hostWorkspaceName: row.host_workspace_name,
     hostRegion: row.host_region,
     hostStreamId: row.host_stream_id,
-    hostStreamSlug: row.host_stream_slug,
-    hostStreamDisplayName: row.host_stream_display_name,
     invitedBy: row.invited_by,
     partnerWorkspaceId: row.partner_workspace_id,
     partnerWorkspaceName: row.partner_workspace_name,
@@ -119,20 +112,9 @@ function mapSnapshot(row: SnapshotRow): StreamConnectionSnapshot {
 export const StreamConnectionRepository = {
   async insert(db: Querier, params: InsertStreamConnectionParams): Promise<void> {
     await db.query(
-      `INSERT INTO stream_connections (
-         id, host_workspace_id, host_stream_id, host_stream_slug, host_stream_display_name,
-         invited_by, state, token_hash, expires_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, 'invited', $7, $8)`,
-      [
-        params.id,
-        params.hostWorkspaceId,
-        params.hostStreamId,
-        params.hostStreamSlug,
-        params.hostStreamDisplayName,
-        params.invitedBy,
-        params.tokenHash,
-        params.expiresAt,
-      ]
+      `INSERT INTO stream_connections (id, host_workspace_id, host_stream_id, invited_by, state, token_hash, expires_at)
+       VALUES ($1, $2, $3, $4, 'invited', $5, $6)`,
+      [params.id, params.hostWorkspaceId, params.hostStreamId, params.invitedBy, params.tokenHash, params.expiresAt]
     )
   },
 
@@ -182,6 +164,18 @@ export const StreamConnectionRepository = {
     )
   },
 
+  /**
+   * A change to a connection's peers changes its snapshot, so its revision
+   * moves too; regions drop a snapshot whose revision they already hold.
+   */
+  async bumpRevisions(db: Querier, ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    await db.query(
+      `UPDATE stream_connections SET revision = revision + 1, updated_at = NOW() WHERE id = ANY($1::text[])`,
+      [ids]
+    )
+  },
+
   /** The workspaces that have accepted an invite to the channel, by name. */
   async listPartners(db: Querier, hostWorkspaceId: string, hostStreamId: string): Promise<ChannelPartner[]> {
     const result = await db.query<{ id: string; partner_workspace_id: string; name: string }>(
@@ -212,33 +206,23 @@ export const StreamConnectionRepository = {
 
   /**
    * Every connection of a channel that the workspace holds a projection row
-   * for, by the same rule the fan-out uses: it is the host, the connection's
-   * partner, or a partner in the channel while the connection has one too.
-   * Settled connections come back only when named in `includeIds`, so the list
-   * stays bounded while a region can still learn that a row it shows went stale.
+   * for, by the rule the fan-out uses: host, partner or peer. Settled
+   * connections come back only when named in `includeIds`, so the list stays
+   * bounded while a region can still learn that a row it shows went stale.
    */
   async listSnapshotsForWorkspace(
     db: Querier,
     params: { workspaceId: string; streamId: string; includeIds: string[] }
   ): Promise<StreamConnectionSnapshot[]> {
     const result = await db.query<SnapshotRow>(
-      `${SNAPSHOT_SELECT}
-       WHERE sc.host_stream_id = $2
+      `SELECT * FROM (${SNAPSHOT_SELECT} WHERE sc.host_stream_id = $2) snapshot
+       WHERE (host_workspace_id = $1 OR partner_workspace_id = $1 OR $1 = ANY(peer_workspace_ids))
          AND (
-           sc.host_workspace_id = $1
-           OR sc.partner_workspace_id = $1
-           OR (sc.partner_workspace_id IS NOT NULL AND EXISTS (
-             SELECT 1 FROM stream_connections own
-             WHERE own.host_workspace_id = sc.host_workspace_id AND own.host_stream_id = sc.host_stream_id
-               AND own.partner_workspace_id = $1 AND own.state = 'active'
-           ))
+           state = 'active'
+           OR (state = 'invited' AND expires_at > NOW())
+           OR id = ANY($3::text[])
          )
-         AND (
-           sc.state = 'active'
-           OR (sc.state = 'invited' AND sc.expires_at > NOW())
-           OR sc.id = ANY($3::text[])
-         )
-       ORDER BY sc.created_at, sc.id`,
+       ORDER BY id`,
       [params.workspaceId, params.streamId, params.includeIds]
     )
     return result.rows.map(mapSnapshot)

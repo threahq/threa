@@ -1,12 +1,12 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
-import { acceptStreamConnectionSchema, streamConnectionSnapshotSchema } from "@threahq/types"
+import { acceptStreamConnectionSchema, streamConnectionIdSchema, streamConnectionSnapshotSchema } from "@threahq/types"
 import { validateRequest } from "../../lib/validation"
 import type { StreamConnectionService } from "./service"
 
 const streamParamsSchema = z.object({ streamId: z.string().min(1) })
-const connectionParamsSchema = z.object({ connectionId: z.string().min(1) })
-const shareableQuerySchema = z.object({ workspaceId: z.string().min(1), streamId: z.string().min(1) })
+const connectionParamsSchema = z.object({ connectionId: streamConnectionIdSchema })
+const channelQuerySchema = z.object({ workspaceId: z.string().min(1), streamId: z.string().min(1) })
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -37,7 +37,11 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
     async revokeInvite(req: Request, res: Response) {
       const { connectionId } = validateRequest(connectionParamsSchema, req.params)
-      const connection = await streamConnectionService.revokeInvite({ workspaceId: req.workspaceId!, connectionId })
+      const connection = await streamConnectionService.revokeInvite({
+        workspaceId: req.workspaceId!,
+        connectionId,
+        userId: req.user!.id,
+      })
       res.json({ connection })
     },
 
@@ -57,9 +61,9 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
       res.json({ connection })
     },
 
-    async shareable(req: Request, res: Response) {
-      const query = validateRequest(shareableQuerySchema, req.query)
-      res.json({ shareable: await streamConnectionService.isStreamShareable(query) })
+    async channel(req: Request, res: Response) {
+      const query = validateRequest(channelQuerySchema, req.query)
+      res.json(await streamConnectionService.describeChannel(query))
     },
 
     /** Control-plane fan-out: the full current state, so replays are idempotent. */

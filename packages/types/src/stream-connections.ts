@@ -27,18 +27,19 @@ export const StreamConnectionErrorCodes = {
   EXPIRED: "STREAM_CONNECTION_EXPIRED",
   ALREADY_ACCEPTED: "STREAM_CONNECTION_ALREADY_ACCEPTED",
   ALREADY_CONNECTED: "STREAM_CONNECTION_ALREADY_CONNECTED",
-  SAME_WORKSPACE: "STREAM_CONNECTION_SAME_WORKSPACE",
   NOT_SHAREABLE: "STREAM_NOT_SHAREABLE",
+  /** The host's region didn't answer, so the invite can be neither shown nor accepted for now. */
+  HOST_REGION_UNAVAILABLE: "STREAM_CONNECTION_HOST_REGION_UNAVAILABLE",
 } as const
 export type StreamConnectionErrorCode = (typeof StreamConnectionErrorCodes)[keyof typeof StreamConnectionErrorCodes]
 
-/** How long an invite link stays valid. */
-export const STREAM_CONNECTION_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+export const streamConnectionIdSchema = z.string().min(1).max(64)
 
 /**
  * Control plane → region wire format: the full current state of one connection.
- * Unknown keys are dropped rather than rejected, so a control plane that adds a
- * field ahead of a region's deploy doesn't dead-letter the sync.
+ * Unknown keys are dropped, so a control plane that adds a field ahead of a
+ * region's deploy doesn't dead-letter the sync. A new state value is rejected,
+ * so a change that adds one deploys the regions first.
  */
 export const streamConnectionSnapshotSchema = z.object({
   id: z.string().min(1),
@@ -48,8 +49,6 @@ export const streamConnectionSnapshotSchema = z.object({
   hostWorkspaceName: z.string(),
   hostRegion: z.string().min(1),
   hostStreamId: z.string().min(1),
-  hostStreamSlug: z.string().nullable(),
-  hostStreamDisplayName: z.string().nullable(),
   /** A user of the host workspace. */
   invitedBy: z.string().min(1),
   partnerWorkspaceId: z.string().min(1).nullable(),
@@ -64,15 +63,26 @@ export const streamConnectionSnapshotSchema = z.object({
 })
 export type StreamConnectionSnapshot = z.infer<typeof streamConnectionSnapshotSchema>
 
+/**
+ * Region → control plane: the host channel as it stands now. The control plane
+ * keeps no copy of the channel's name, so a rename shows on the invite page.
+ */
+export const streamConnectionChannelSchema = z.object({
+  shareable: z.boolean(),
+  slug: z.string().nullable(),
+  displayName: z.string().nullable(),
+})
+export type StreamConnectionChannel = z.infer<typeof streamConnectionChannelSchema>
+
 /** One side's view of a connection, as the regional API returns it. */
 export interface StreamConnection {
   id: string
   role: StreamConnectionRole
   state: StreamConnectionState
-  /** The host's stream id. Both sides use it, since the partner's copy keeps the host's ids. */
+  /** Orders updates to this row: a higher revision is newer. */
+  revision: number
+  /** The host channel's id. Only the host's row names a stream of its own workspace. */
   streamId: string
-  streamSlug: string | null
-  streamDisplayName: string | null
   remoteWorkspaceId: string | null
   remoteWorkspaceName: string | null
   /** The partner admin's choice at accept. Null until accepted. */
@@ -96,6 +106,13 @@ export interface ListStreamConnectionsResponse {
 }
 
 export interface StreamConnectionResponse {
+  connection: StreamConnection
+}
+
+/** Socket event `stream_connection:updated`: a row of this workspace changed. */
+export interface StreamConnectionUpdatedPayload {
+  workspaceId: string
+  streamId: string
   connection: StreamConnection
 }
 

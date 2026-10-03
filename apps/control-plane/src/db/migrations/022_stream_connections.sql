@@ -8,8 +8,6 @@ CREATE TABLE stream_connections (
     id TEXT PRIMARY KEY,
     host_workspace_id TEXT NOT NULL,
     host_stream_id TEXT NOT NULL,
-    host_stream_slug TEXT,
-    host_stream_display_name TEXT,
     invited_by TEXT NOT NULL,
     partner_workspace_id TEXT,
     partner_visibility TEXT,

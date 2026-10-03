@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test"
 import { streamConnectionId } from "@threahq/backend-common"
 import type { StreamConnectionSnapshot } from "@threahq/types"
-import { TestClient, createChannel, createWorkspace, joinWorkspace, loginAs } from "../client"
+import { TestClient, createChannel, createWorkspace, joinWorkspace, loginAs, type Stream } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
 
@@ -9,14 +9,14 @@ describe("Stream connections E2E", () => {
   let owner: TestClient
   let member: TestClient
   let workspaceId: string
-  let channelId: string
+  let channel: Stream
 
   beforeAll(async () => {
     owner = new TestClient()
     member = new TestClient()
     await loginAs(owner, `strconn-owner-${testRunId}@test.com`, "Connect Owner")
     workspaceId = (await createWorkspace(owner, `Connect WS ${testRunId}`)).id
-    channelId = (await createChannel(owner, workspaceId, `connect-${testRunId}`)).id
+    channel = await createChannel(owner, workspaceId, `connect-${testRunId}`)
     await loginAs(member, `strconn-member-${testRunId}@test.com`, "Connect Member")
     await joinWorkspace(member, workspaceId, "member")
   })
@@ -24,8 +24,8 @@ describe("Stream connections E2E", () => {
   test("should refuse every share action to a workspace member who isn't an admin", async () => {
     const base = `/api/workspaces/${workspaceId}`
     const responses = await Promise.all([
-      member.get(`${base}/streams/${channelId}/connections`),
-      member.post(`${base}/streams/${channelId}/connection-invites`, {}),
+      member.get(`${base}/streams/${channel.id}/connections`),
+      member.post(`${base}/streams/${channel.id}/connection-invites`, {}),
       member.post(`${base}/stream-connections/${streamConnectionId()}/revoke`, {}),
       member.post(`${base}/stream-connections/accept`, { token: "tok", visibility: "private" }),
       member.get(`${base}/stream-connections/can-accept`),
@@ -43,13 +43,13 @@ describe("Stream connections E2E", () => {
     })
   })
 
-  test("should report a channel as not shareable while the workspace flag is off", async () => {
-    const query = new URLSearchParams({ workspaceId, streamId: channelId })
-    const response = await owner.internalRequest("GET", `/internal/stream-connections/shareable?${query}`)
+  test("should name a channel but call it not shareable while the workspace flag is off", async () => {
+    const query = new URLSearchParams({ workspaceId, streamId: channel.id })
+    const response = await owner.internalRequest("GET", `/internal/stream-connections/channel?${query}`)
 
     expect({ status: response.status, body: response.data }).toEqual({
       status: 200,
-      body: { shareable: false },
+      body: { shareable: false, slug: channel.slug, displayName: channel.displayName },
     })
   })
 
@@ -61,9 +61,7 @@ describe("Stream connections E2E", () => {
       hostWorkspaceId: workspaceId,
       hostWorkspaceName: `Connect WS ${testRunId}`,
       hostRegion: "local",
-      hostStreamId: channelId,
-      hostStreamSlug: `connect-${testRunId}`,
-      hostStreamDisplayName: null,
+      hostStreamId: channel.id,
       invitedBy: "usr_inviter",
       partnerWorkspaceId: null,
       partnerWorkspaceName: null,

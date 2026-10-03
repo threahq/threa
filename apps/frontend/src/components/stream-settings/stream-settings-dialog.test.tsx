@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamBootstrap } from "@threahq/types"
 import * as hooksModule from "@/hooks"
@@ -243,5 +243,55 @@ describe("StreamSettingsDialog", () => {
     )
 
     expect(await screen.findByText("Ada Lovelace Settings")).toBeInTheDocument()
+  })
+
+  it("should keep a created invite link across tab switches and drop it once the dialog closes", async () => {
+    const settings = (overrides: { isOpen?: boolean; activeTab?: string }) =>
+      useStreamSettingsMock.mockReturnValue({
+        isOpen: true,
+        activeTab: "connect",
+        streamId: "stream_design",
+        closeStreamSettings,
+        setTab,
+        ...overrides,
+      })
+    settings({})
+    useWorkspaceStreamsMock.mockReturnValue([
+      makeStream({ id: "stream_design", type: StreamTypes.CHANNEL, displayName: null, slug: "design" }),
+    ])
+    vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on" as never)
+    vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
+      viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN],
+    } as unknown as ReturnType<typeof useWorkspacesModule.useCachedWorkspaceBootstrap>)
+    let createLink!: () => void
+    vi.spyOn(connectTabModule, "ConnectTab").mockImplementation((({
+      inviteLinks,
+      onInviteLinkCreated,
+    }: Parameters<typeof connectTabModule.ConnectTab>[0]) => {
+      createLink = () => onInviteLinkCreated("strconn_1", "https://app.example/connections/tok")
+      return <div>{inviteLinks.get("strconn_1") ?? "No link"}</div>
+    }) as unknown as typeof connectTabModule.ConnectTab)
+    const dialog = () => (
+      <QueryClientProvider client={queryClient}>
+        <StreamSettingsDialog workspaceId="ws_1" />
+      </QueryClientProvider>
+    )
+
+    const { rerender } = render(dialog())
+    act(() => createLink())
+    settings({ activeTab: "general" })
+    rerender(dialog())
+    settings({})
+    rerender(dialog())
+    const afterTabSwitch = screen.getByText(/connections\/tok|No link/).textContent
+    settings({ isOpen: false })
+    rerender(dialog())
+    settings({})
+    rerender(dialog())
+
+    expect({ afterTabSwitch, afterReopen: (await screen.findByText(/connections\/tok|No link/)).textContent }).toEqual({
+      afterTabSwitch: "https://app.example/connections/tok",
+      afterReopen: "No link",
+    })
   })
 })

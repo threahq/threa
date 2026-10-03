@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threahq/backend-common"
-import { VISIBILITY_OPTIONS, streamConnectionTokenSchema } from "@threahq/types"
+import { VISIBILITY_OPTIONS, streamConnectionIdSchema, streamConnectionTokenSchema } from "@threahq/types"
 import { parseRequest } from "../../lib/validation"
 import type { StreamConnectionService } from "./service"
 
@@ -10,8 +10,6 @@ const idSchema = z.string().min(1).max(64)
 const createInviteSchema = z.object({
   hostWorkspaceId: idSchema,
   hostStreamId: idSchema,
-  hostStreamSlug: z.string().nullable(),
-  hostStreamDisplayName: z.string().nullable(),
   invitedBy: idSchema,
 })
 const revokeSchema = z.object({ hostWorkspaceId: idSchema })
@@ -22,7 +20,11 @@ const acceptSchema = z.object({
   acceptedBy: idSchema,
 })
 const lookupSchema = z.object({ token: streamConnectionTokenSchema })
-const listSchema = z.object({ workspaceId: idSchema, streamId: idSchema, includeIds: z.array(idSchema) })
+const listSchema = z.object({
+  workspaceId: idSchema,
+  streamId: idSchema,
+  includeIds: z.array(streamConnectionIdSchema),
+})
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -37,7 +39,7 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
     async revokeInvite(req: Request, res: Response) {
       const body = parseRequest(revokeSchema, req.body)
-      const connectionId = parseRequest(idSchema, req.params.id)
+      const connectionId = parseRequest(streamConnectionIdSchema, req.params.id)
       res.json({ snapshot: await streamConnectionService.revokeInvite({ connectionId, ...body }) })
     },
 

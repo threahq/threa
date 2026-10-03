@@ -37,6 +37,7 @@ import {
   type StreamCallStartedOutboxPayload,
   type StreamCallEndedOutboxPayload,
   type StreamMessageCountOutboxPayload,
+  type StreamConnectionUpdatedOutboxPayload,
 } from "./repository"
 
 /**
@@ -94,6 +95,8 @@ const PERMISSION_SCOPED_EVENTS = {
     "invitation:link-created",
     "invitation:link-claimed",
   ],
+  // Public channels only: a private channel's change goes to its admin members, routed in resolveDeliveryGroups.
+  [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN]: ["stream_connection:updated"],
 } as const satisfies Partial<Record<WorkspacePermissionSlug, readonly OutboxEventType[]>>
 
 /** Permission scopes that get their own delivery group (keys of the routing map). */
@@ -375,6 +378,15 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     const payload = event.payload as MemoCreatedOutboxPayload
     if (payload.scopeUserId) return [userGroup(payload.scopeUserId)]
     return payload.streamId ? [streamGroup(payload.streamId)] : []
+  }
+
+  // Only admins manage a channel's connections. A private channel's must not
+  // reach admins outside it, so it goes to its admin members one by one.
+  if (isOutboxEventType(event, "stream_connection:updated")) {
+    const payload = event.payload as StreamConnectionUpdatedOutboxPayload
+    return payload.streamVisibility === Visibilities.PUBLIC
+      ? [permissionGroup(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)]
+      : payload.adminMemberUserIds.map(userGroup)
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

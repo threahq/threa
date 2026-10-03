@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
+import { enrollWorkspaceFlag, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
 
 /**
  * Sharing a channel across workspaces: the host admin mints an invite link from
@@ -11,23 +11,10 @@ test.describe.configure({ timeout: 90_000 })
 
 const PHONE = { width: 390, height: 844 }
 
-async function enrollStreamConnections(page: Page, workspaceId: string): Promise<void> {
-  const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
-  const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
-  if (!backendPort || !internalApiKey) throw new Error("Browser test feature-flag fixture is unavailable")
-  await expectApiOk(
-    await page.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
-      headers: { "x-internal-api-key": internalApiKey },
-      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { streamConnections: "on" } },
-    }),
-    "Enroll workspace in streamConnections"
-  )
-}
-
 async function setUpWorkspace(page: Page, prefix: string) {
   const created = await loginAndCreateWorkspace(page, prefix)
   const workspaceId = workspaceIdFromUrl(page)
-  await enrollStreamConnections(page, workspaceId)
+  await enrollWorkspaceFlag(page, workspaceId, "streamConnections")
   return { ...created, workspaceId }
 }
 
@@ -120,6 +107,34 @@ test.describe("Stream connections", () => {
       await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName, third.workspaceName])
     } finally {
       await Promise.all(contexts.map((context) => context.close()))
+    }
+  })
+
+  test("should bring a signed-out admin back to the invite after they sign in", async ({ browser, page }) => {
+    const partnerContext = await browser.newContext()
+    const signedOutContext = await browser.newContext()
+    try {
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, await partnerContext.newPage())
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      const invitePath = await createInviteLink(page)
+
+      const visitor = await signedOutContext.newPage()
+      await visitor.goto(invitePath)
+      await expect(visitor.getByRole("heading", { name: "Sign in to connect a shared channel" })).toBeVisible()
+      await visitor.getByRole("button", { name: "Sign in" }).click()
+      await expect(visitor.getByRole("heading", { name: "Test Login" })).toBeVisible()
+      await visitor.getByLabel("Email").fill(partner.email)
+      await visitor.getByLabel("Name").fill(partner.name)
+      await visitor.getByRole("button", { name: "Sign In" }).click()
+
+      await expect(visitor).toHaveURL(new RegExp(`${invitePath}$`))
+      await expect(visitor.getByRole("heading", { name: `#${slug} from ${host.workspaceName}` })).toBeVisible()
+      await visitor.getByRole("button", { name: "Accept" }).click()
+      await expect(
+        visitor.getByRole("heading", { name: `#${slug} is shared with ${partner.workspaceName}` })
+      ).toBeVisible()
+    } finally {
+      await Promise.all([partnerContext.close(), signedOutContext.close()])
     }
   })
 
