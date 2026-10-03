@@ -91,6 +91,7 @@ function boardTypeCondSql(scopeStreamTypes: string[] | undefined) {
   return composeSql`AND EXISTS (
     SELECT 1 FROM streams type_s
     JOIN streams type_root ON type_root.id = COALESCE(type_s.root_stream_id, type_s.id)
+      AND type_root.workspace_id = type_s.workspace_id
     WHERE type_s.id = conversations.stream_id
       AND type_s.workspace_id = conversations.workspace_id
       AND type_root.type = ANY(${scopeStreamTypes})
@@ -103,6 +104,7 @@ function boardTypeExcludeCondSql(excludeStreamTypes: string[] | undefined) {
   return composeSql`AND NOT EXISTS (
     SELECT 1 FROM streams xt_s
     JOIN streams xt_root ON xt_root.id = COALESCE(xt_s.root_stream_id, xt_s.id)
+      AND xt_root.workspace_id = xt_s.workspace_id
     WHERE xt_s.id = conversations.stream_id
       AND xt_s.workspace_id = conversations.workspace_id
       AND xt_root.type = ANY(${excludeStreamTypes})
@@ -311,9 +313,9 @@ const SELECT_FIELDS = `
 `
 
 export const ConversationRepository = {
-  async findById(db: Querier, id: string): Promise<Conversation | null> {
+  async findById(db: Querier, workspaceId: string, id: string): Promise<Conversation | null> {
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations WHERE id = ${id}
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
@@ -352,6 +354,7 @@ export const ConversationRepository = {
 
   async findByStream(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     options?: { status?: ConversationStatus; limit?: number }
   ): Promise<Conversation[]> {
@@ -360,7 +363,7 @@ export const ConversationRepository = {
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
         SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-        WHERE stream_id = ${streamId} AND status = ${options.status}
+        WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND status = ${options.status}
         ORDER BY last_activity_at DESC
         LIMIT ${limit}
       `)
@@ -369,7 +372,7 @@ export const ConversationRepository = {
 
     const result = await db.query<ConversationRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE stream_id = ${streamId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
       ORDER BY last_activity_at DESC
       LIMIT ${limit}
     `)
@@ -383,6 +386,7 @@ export const ConversationRepository = {
    */
   async findByStreamIncludingThreads(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     options?: { status?: ConversationStatus; limit?: number }
   ): Promise<Conversation[]> {
@@ -391,11 +395,12 @@ export const ConversationRepository = {
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
         SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-        WHERE (
+        WHERE workspace_id = ${workspaceId}
+        AND (
           stream_id = ${streamId}
           OR stream_id IN (
             SELECT s.id FROM streams s
-            WHERE s.type = 'thread' AND s.parent_stream_id = ${streamId}
+            WHERE s.workspace_id = ${workspaceId} AND s.type = 'thread' AND s.parent_stream_id = ${streamId}
           )
         )
         AND status = ${options.status}
@@ -407,11 +412,14 @@ export const ConversationRepository = {
 
     const result = await db.query<ConversationRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE stream_id = ${streamId}
-         OR stream_id IN (
-           SELECT s.id FROM streams s
-           WHERE s.type = 'thread' AND s.parent_stream_id = ${streamId}
-         )
+      WHERE workspace_id = ${workspaceId}
+        AND (
+          stream_id = ${streamId}
+          OR stream_id IN (
+            SELECT s.id FROM streams s
+            WHERE s.workspace_id = ${workspaceId} AND s.type = 'thread' AND s.parent_stream_id = ${streamId}
+          )
+        )
       ORDER BY last_activity_at DESC
       LIMIT ${limit}
     `)
@@ -445,8 +453,8 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
-  async findActiveByStream(db: Querier, streamId: string, limit = 50): Promise<Conversation[]> {
-    return this.findByStream(db, streamId, { status: "active", limit })
+  async findActiveByStream(db: Querier, workspaceId: string, streamId: string, limit = 50): Promise<Conversation[]> {
+    return this.findByStream(db, workspaceId, streamId, { status: "active", limit })
   },
 
   /**
@@ -681,6 +689,7 @@ export const ConversationRepository = {
           JOIN streams eff_root ON eff_root.id = COALESCE(eff_s.root_stream_id, eff_s.id)
           WHERE eff_s.id = conversations.stream_id
             AND eff_s.workspace_id = ${workspaceId}
+            AND eff_root.workspace_id = ${workspaceId}
             AND eff_root.id = ANY(${rootStreamIds}::text[])
             AND NOT ${sql`${sql.raw(effectivelyArchivedSql("eff_s"))}`}
         )
@@ -1084,9 +1093,10 @@ export const ConversationRepository = {
     db: Querier,
     params: { stalledAfterSeconds: number; resolvedAfterSeconds: number; limit: number }
   ): Promise<Conversation[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the staleness sweep covers every workspace
     const result = await db.query<ConversationRow>(sql`
       WITH candidates AS (
-        SELECT id,
+        SELECT id, workspace_id,
           CASE
             WHEN last_activity_at < NOW() - make_interval(secs => ${params.resolvedAfterSeconds})
               THEN ${ConversationStatuses.RESOLVED}
@@ -1107,7 +1117,7 @@ export const ConversationRepository = {
       UPDATE conversations c
       SET status = candidates.next_status, updated_at = NOW()
       FROM candidates
-      WHERE c.id = candidates.id
+      WHERE c.id = candidates.id AND c.workspace_id = candidates.workspace_id
       RETURNING ${sql.raw(
         SELECT_FIELDS.split(",")
           .map((f) => `c.${f.trim()}`)
@@ -1125,11 +1135,6 @@ export const ConversationRepository = {
       SET last_activity_at = NOW(), updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
     `)
-  },
-
-  async delete(db: Querier, id: string): Promise<boolean> {
-    const result = await db.query(sql`DELETE FROM conversations WHERE id = ${id}`)
-    return result.rowCount !== null && result.rowCount > 0
   },
 }
 

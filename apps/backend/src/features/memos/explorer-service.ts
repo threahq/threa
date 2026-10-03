@@ -469,7 +469,11 @@ export class MemoExplorerService {
       const sourceMessage = await MessageRepository.findById(this.pool, memo.workspaceId, memo.sourceMessageId)
       sourceStreamId = sourceMessage?.streamId ?? null
     } else if (memo.sourceConversationId) {
-      const sourceConversation = await ConversationRepository.findById(this.pool, memo.sourceConversationId)
+      const sourceConversation = await ConversationRepository.findById(
+        this.pool,
+        memo.workspaceId,
+        memo.sourceConversationId
+      )
       sourceStreamId = sourceConversation?.streamId ?? null
     }
 

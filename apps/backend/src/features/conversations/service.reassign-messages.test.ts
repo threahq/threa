@@ -110,8 +110,8 @@ function setup(options: {
   spyOn(ConversationRepository, "findByIds").mockImplementation(async (_c, _ws, ids: string[]) =>
     ids.map((id) => options.conversations[id]).filter((c): c is Conversation => c !== undefined)
   )
-  spyOn(ConversationRepository, "findById").mockImplementation(
-    async (_c: unknown, id: string) => options.conversations[id] ?? null
+  spyOn(ConversationRepository, "findById").mockImplementation(async (_c: unknown, workspaceId: string, id: string) =>
+    workspaceId === WORKSPACE_ID ? (options.conversations[id] ?? null) : null
   )
 
   const insert = spyOn(ConversationRepository, "insert").mockImplementation(async (_c, params) => {

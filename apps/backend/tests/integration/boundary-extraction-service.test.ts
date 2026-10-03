@@ -9,7 +9,7 @@
  * 5. Participant is added to conversation
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test"
 import { Pool } from "pg"
 import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -113,6 +113,29 @@ describe("BoundaryExtractionService", () => {
     })
     stubExtractor.resetCallCount()
   })
+
+  async function countConversations(localStreamId: string): Promise<number> {
+    const { rows } = await pool.query(
+      sql`SELECT COUNT(*)::int AS n FROM conversations WHERE stream_id = ${localStreamId} AND workspace_id = ${testWorkspaceId}`
+    )
+    return rows[0].n
+  }
+
+  async function insertPersonaReply(localStreamId: string): Promise<string> {
+    const replyId = messageId()
+    await withTransaction(pool, async (client) => {
+      await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
+        id: replyId,
+        streamId: localStreamId,
+        sequence: BigInt(2),
+        authorId: "persona_test",
+        authorType: "persona",
+        ...testMessageContent("Agent reply"),
+      })
+    })
+    return replyId
+  }
 
   describe("processMessage", () => {
     test("creates new conversation when extractor returns null conversationId", async () => {
@@ -265,7 +288,7 @@ describe("BoundaryExtractionService", () => {
 
       // Check that conv1 was updated
       const updatedConv = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, conv1Id)
+        return ConversationRepository.findById(client, testWorkspaceId, conv1Id)
       })
 
       expect(updatedConv?.completenessScore).toBe(6)
@@ -461,6 +484,30 @@ describe("BoundaryExtractionService", () => {
       expect(result?.participantIds).toContain(testUserId)
       expect(result?.participantIds).toContain(user2UserId)
     })
+
+    test("joins the stream's active conversation when an agent replies in a channel", async () => {
+      const humanId = messageId()
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: humanId,
+          streamId: testStreamId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("A question"),
+        })
+      })
+      const asked = await service.processMessage(humanId, testStreamId, testWorkspaceId)
+      const replyId = await insertPersonaReply(testStreamId)
+
+      const answered = await service.processMessage(replyId, testStreamId, testWorkspaceId)
+
+      expect({ joined: answered?.id, conversations: await countConversations(testStreamId) }).toEqual({
+        joined: asked!.id,
+        conversations: 1,
+      })
+    })
   })
 
   describe("multi-assignment", () => {
@@ -521,7 +568,7 @@ describe("BoundaryExtractionService", () => {
 
       // Existing conv picks up msg2 as a secondary, not a primary.
       const updatedExisting = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, existingConvId)
+        return ConversationRepository.findById(client, testWorkspaceId, existingConvId)
       })
       expect(updatedExisting?.messageIds).toEqual([msg1Id])
       expect(updatedExisting?.secondaryMessageIds).toContain(msg2Id)
@@ -614,7 +661,7 @@ describe("BoundaryExtractionService", () => {
 
       // Parent conv gets the thread root as a secondary membership.
       const updatedParent = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, parentConvId)
+        return ConversationRepository.findById(client, testWorkspaceId, parentConvId)
       })
       expect(updatedParent?.messageIds).toEqual([parentMsgId])
       expect(updatedParent?.secondaryMessageIds).toContain(threadRootMsgId)
@@ -807,7 +854,7 @@ describe("BoundaryExtractionService", () => {
       expect(result?.messageIds).toEqual(expect.arrayContaining([msg2Id, msg3Id]))
 
       const convA = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, convAId)
+        return ConversationRepository.findById(client, testWorkspaceId, convAId)
       })
       expect(convA?.messageIds).toEqual([msg1Id])
       expect(convA?.messageIds).not.toContain(msg2Id)
@@ -879,7 +926,7 @@ describe("BoundaryExtractionService", () => {
       expect(result?.messageIds).toEqual(expect.arrayContaining([msg2Id, msg3Id]))
 
       const convA = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, convAId)
+        return ConversationRepository.findById(client, testWorkspaceId, convAId)
       })
       expect(convA?.messageIds).toEqual([msg1Id])
     })
@@ -1121,6 +1168,90 @@ describe("BoundaryExtractionService", () => {
       expect(result2?.id).toBe(conversationId1)
       expect(result2?.status).toBe("active")
       expect(result2?.messageIds).toContain(msg2Id)
+    })
+
+    async function seedScratchpadWithConversation(): Promise<{ streamId: string; conversationId: string }> {
+      const localStreamId = streamId()
+      const msgId = messageId()
+      await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: localStreamId,
+          workspaceId: testWorkspaceId,
+          type: "scratchpad",
+          displayName: "Notes",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: msgId,
+          streamId: localStreamId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("First note"),
+        })
+      })
+      const first = await service.processMessage(msgId, localStreamId, testWorkspaceId)
+      return { streamId: localStreamId, conversationId: first!.id }
+    }
+
+    test("joins the active scratchpad conversation when an agent replies", async () => {
+      const seeded = await seedScratchpadWithConversation()
+      const replyId = await insertPersonaReply(seeded.streamId)
+
+      const result = await service.processMessage(replyId, seeded.streamId, testWorkspaceId)
+
+      expect({ id: result?.id, created: await countConversations(seeded.streamId) }).toEqual({
+        id: seeded.conversationId,
+        created: 1,
+      })
+    })
+
+    test("reuses a faded scratchpad conversation when an agent replies", async () => {
+      const seeded = await seedScratchpadWithConversation()
+      await pool.query(sql`UPDATE conversations SET status = 'stalled' WHERE id = ${seeded.conversationId}`)
+      const replyId = await insertPersonaReply(seeded.streamId)
+
+      const result = await service.processMessage(replyId, seeded.streamId, testWorkspaceId)
+
+      expect({ id: result?.id, created: await countConversations(seeded.streamId) }).toEqual({
+        id: seeded.conversationId,
+        created: 1,
+      })
+    })
+
+    test("joins the conversation a concurrent pass created after this pass looked", async () => {
+      const seeded = await seedScratchpadWithConversation()
+      const msgId = messageId()
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: msgId,
+          streamId: seeded.streamId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Second note"),
+        })
+      })
+      try {
+        const realFindByStream = ConversationRepository.findByStream.bind(ConversationRepository)
+        let lookups = 0
+        spyOn(ConversationRepository, "findByStream").mockImplementation(async (...args) =>
+          lookups++ === 0 ? [] : realFindByStream(...args)
+        )
+
+        const result = await service.processMessage(msgId, seeded.streamId, testWorkspaceId)
+
+        expect({ id: result?.id, created: await countConversations(seeded.streamId) }).toEqual({
+          id: seeded.conversationId,
+          created: 1,
+        })
+      } finally {
+        mock.restore()
+      }
     })
 
     test("leaves the conversation topic null when the scratchpad stream has a title", async () => {

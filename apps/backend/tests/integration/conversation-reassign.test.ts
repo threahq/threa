@@ -177,8 +177,12 @@ describe("ConversationService.reassignMessage", () => {
     expect(result.conversation).toMatchObject({ id: convBId, messageIds: [msg0Id, msg2Id] })
     expect(result.previousConversation).toMatchObject({ id: convAId, messageIds: [msg1Id] })
 
-    const convA = await withTransaction(pool, (client) => ConversationRepository.findById(client, convAId))
-    const convB = await withTransaction(pool, (client) => ConversationRepository.findById(client, convBId))
+    const convA = await withTransaction(pool, (client) =>
+      ConversationRepository.findById(client, testWorkspaceId, convAId)
+    )
+    const convB = await withTransaction(pool, (client) =>
+      ConversationRepository.findById(client, testWorkspaceId, convBId)
+    )
     expect(convA?.messageIds).toEqual([msg1Id])
     expect(convB?.messageIds).toEqual([msg0Id, msg2Id])
   })
@@ -291,7 +295,9 @@ describe("ConversationService.reassignMessage", () => {
 
     expect(result.previousConversation).toMatchObject({ id: convBId, messageIds: [], status: "resolved" })
 
-    const convB = await withTransaction(pool, (client) => ConversationRepository.findById(client, convBId))
+    const convB = await withTransaction(pool, (client) =>
+      ConversationRepository.findById(client, testWorkspaceId, convBId)
+    )
     expect(convB?.status).toBe("resolved")
 
     // The conversation:updated payload must carry the new status (INV-4, INV-7).
@@ -331,7 +337,9 @@ describe("ConversationService.reassignMessage", () => {
       status: "active",
     })
 
-    const convB = await withTransaction(pool, (client) => ConversationRepository.findById(client, convBId))
+    const convB = await withTransaction(pool, (client) =>
+      ConversationRepository.findById(client, testWorkspaceId, convBId)
+    )
     expect(convB?.status).toBe("active")
   })
 
