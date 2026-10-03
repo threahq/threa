@@ -164,6 +164,7 @@ export const WorkspaceIntegrationRepository = {
     installationId: string
   ): Promise<WorkspaceIntegrationRecord[]> {
     const result = await querier.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- a GitHub installation fans out to every subscribed workspace; the installation id discovers them
       sql`SELECT * FROM workspace_integrations
           WHERE provider = $1 AND installation_id = $2 AND status = $3`,
       [provider, installationId, WorkspaceIntegrationStatuses.ACTIVE]

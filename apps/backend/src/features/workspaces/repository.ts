@@ -55,13 +55,16 @@ export const WorkspaceRepository = {
   },
 
   async list(db: Querier, filters: { workosUserId: string }): Promise<Workspace[]> {
-    const result = await db.query<WorkspaceRow>(sql`
-      SELECT w.id, w.name, w.slug, w.created_by, w.created_at, w.updated_at
-      FROM workspaces w
-      JOIN users u ON u.workspace_id = w.id
-      WHERE u.workos_user_id = ${filters.workosUserId}
-      ORDER BY w.created_at DESC
-    `)
+    const result = await db.query<WorkspaceRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- the WorkOS identity discovers every workspace it belongs to
+      sql`
+        SELECT w.id, w.name, w.slug, w.created_by, w.created_at, w.updated_at
+        FROM workspaces w
+        JOIN users u ON u.workspace_id = w.id
+        WHERE u.workos_user_id = ${filters.workosUserId}
+        ORDER BY w.created_at DESC
+      `
+    )
     return result.rows.map(mapRowToWorkspace)
   },
 
