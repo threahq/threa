@@ -1,5 +1,5 @@
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { usePanel } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 import { memoDeepLink } from "@/lib/memo-url"
 import { StreamContextGallery } from "./stream-context-gallery"
 import { StreamContextSurface } from "./stream-context-surface"
@@ -16,15 +16,17 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
   const [, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
   const { openPanel } = usePanel()
+  const { isMobile } = useSidebar()
   const gallery = useStreamGallery()
 
-  // Dismiss the overlay so the message is visible underneath. A fresh push
-  // gives StreamContent's `?m=` effect a new location key to act on.
+  // The desktop dock sits beside the stream, so it stays open; the phone's
+  // drawer covers it and steps aside. A fresh push gives StreamContent's `?m=`
+  // effect a new location key to act on.
   const jumpToMessage = (messageId: string) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       next.set("m", messageId)
-      next.delete("context")
+      if (isMobile) next.delete("context")
       return next
     })
   }

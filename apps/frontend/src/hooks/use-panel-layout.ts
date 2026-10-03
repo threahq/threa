@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, type RefObject } from "react"
 import { useResizeDrag } from "./use-resize-drag"
 import { useElementWidth } from "./use-element-width"
 
 const DEFAULT_PANEL_WIDTH = 480
-const MIN_PANEL_WIDTH = 300
+export const MIN_PANEL_WIDTH = 300
 const MAX_PANEL_RATIO = 0.7
 // Keep the main stream column wide enough to stay usable — below this the
 // composer toolbar can't lay out and the timeline gets unreadably narrow. The
@@ -20,11 +20,19 @@ function panelMaxWidth(containerWidth: number): number {
   return Math.max(MIN_PANEL_WIDTH, Math.min(ratioCap, mainFloorCap))
 }
 
-export function usePanelLayout(isPanelOpen: boolean) {
+interface PanelLayoutOptions {
+  /** Measure a container another layout already owns, for a second column in the same row. */
+  containerRef?: RefObject<HTMLDivElement | null>
+  /** Width other docked columns in the row already take; the panel clamps against what is left. */
+  reservedWidth?: number
+}
+
+export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions = {}) {
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
   const [enableTransition, setEnableTransition] = useState(false)
   const [showContent, setShowContent] = useState(isPanelOpen)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const ownContainerRef = useRef<HTMLDivElement>(null)
+  const containerRef = options.containerRef ?? ownContainerRef
   const closedDuringResizeRef = useRef(false)
 
   // Live-clamped panel width: opening a panel — or a smaller window / sidebar
@@ -34,7 +42,8 @@ export function usePanelLayout(isPanelOpen: boolean) {
   // real measurement so the first pre-measure render doesn't collapse the panel
   // to MIN and flash. Drag and keyboard resize base off this clamped value (not
   // the raw state) so they don't jump on a constrained window.
-  const containerWidth = useElementWidth(containerRef)
+  const measuredWidth = useElementWidth(containerRef)
+  const containerWidth = measuredWidth > 0 ? Math.max(1, measuredWidth - (options.reservedWidth ?? 0)) : 0
   const maxWidth = panelMaxWidth(containerWidth)
   const effectiveWidth = containerWidth > 0 ? Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, panelWidth)) : panelWidth
 

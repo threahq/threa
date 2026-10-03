@@ -77,7 +77,7 @@ function backdateAllButNewest(streamId: string): void {
 
 function panelScroller(page: Page) {
   // The panel's own scroller — the element the virtualizer reads metrics from.
-  return page.locator('[role="dialog"] .overflow-y-auto').first()
+  return page.getByRole("complementary", { name: "In this stream" }).locator(".overflow-y-auto").first()
 }
 
 test("windows its rows and jumps to a date from a day marker", async ({ page }) => {
@@ -99,7 +99,9 @@ test("windows its rows and jumps to a date from a day marker", async ({ page }) 
   const scroller = panelScroller(page)
   await expect(scroller).toBeVisible()
   // Link rows carry the host as their title; wait for the feed to render.
-  await expect(page.locator('[role="dialog"]').getByText("example.com").first()).toBeVisible()
+  await expect(
+    page.getByRole("complementary", { name: "In this stream" }).getByText("example.com").first()
+  ).toBeVisible()
 
   // ── Windowing: the scroller reserves the full list height, but only a slice
   // of the rows is mounted. Without virtua every row would be in the DOM.

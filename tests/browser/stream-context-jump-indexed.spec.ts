@@ -40,7 +40,7 @@ async function seedLinkMessages(page: Page, workspaceId: string, streamId: strin
 }
 
 function panelScroller(page: Page) {
-  return page.locator('[role="dialog"] .overflow-y-auto').first()
+  return page.getByRole("complementary", { name: "In this stream" }).locator(".overflow-y-auto").first()
 }
 
 test("jumps past the start of history on the indexed path", async ({ page }) => {
@@ -80,7 +80,9 @@ test("jumps past the start of history on the indexed path", async ({ page }) => 
   // The search box exists only on the indexed path — proves this stream is indexed
   // rather than having quietly fallen through to the sealed-stream panel.
   await expect(page.getByPlaceholder(/Search this stream/)).toBeVisible()
-  await expect(page.locator('[role="dialog"]').getByText("example.com").first()).toBeVisible()
+  await expect(
+    page.getByRole("complementary", { name: "In this stream" }).getByText("example.com").first()
+  ).toBeVisible()
 
   await scroller.evaluate((el) => el.scrollTo({ top: 0 }))
   await expect.poll(async () => scroller.evaluate((el) => el.scrollTop)).toBeLessThan(50)

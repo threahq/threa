@@ -58,7 +58,7 @@ import {
   AgentActivityHeaderChip,
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
-import { StreamContextOverlay, useStreamContextOpen } from "@/components/stream-context"
+import { StreamContextOverlay, useStreamContextDock, useStreamContextOpen } from "@/components/stream-context"
 import { cn } from "@/lib/utils"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
@@ -94,6 +94,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const [isContextOpen, setContextOpen] = useStreamContextOpen()
+  const contextDock = useStreamContextDock()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const isMainViewStream = (streamId: string) => {
@@ -573,7 +574,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             className="flex-shrink-0"
           />
         )}
-        {!isDraft && stream && !isMobile && (
+        {!isDraft && stream && !isMobile && contextDock && (
           <Button
             variant="ghost"
             size="icon"

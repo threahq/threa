@@ -70,7 +70,14 @@ import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
-import { StreamContextOverlay, useStreamContextOpen } from "@/components/stream-context"
+import {
+  StreamContextDockProvider,
+  StreamContextDockSlot,
+  StreamContextOverlay,
+  useStreamContextDockLayout,
+  useStreamContextOpen,
+} from "@/components/stream-context"
+import { MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -82,6 +89,9 @@ export function StreamPage() {
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
+  // "In this stream" overview. While a panel is open, `?context` is the panel's.
+  const [isContextOpen, setContextOpen] = useStreamContextOpen()
+  const isDockOpen = isContextOpen && !isMobile
   const {
     containerRef,
     panelWidth,
@@ -96,7 +106,8 @@ export function StreamPage() {
     handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen)
+  } = usePanelLayout(isPanelOpen, { reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
+  const dock = useStreamContextDockLayout(containerRef, isDockOpen, displayWidth)
   const asideHostKey = useAsideHost()
   // The stage replaces this page's timeline; the phone's sheet sits over one
   // that has to stay where it was. `useAsideIsSheet` is the slot's own
@@ -148,8 +159,6 @@ export function StreamPage() {
     })
   }
 
-  // "In this stream" overview. While a panel is open, `?context` is the panel's.
-  const [isContextOpen, setContextOpen] = useStreamContextOpen()
   const isPageContextOpen = isContextOpen && !isPanelOpen
   // The page's own overview takes the right edge back from an open panel.
   const togglePageContext = () => {
@@ -876,8 +885,10 @@ export function StreamPage() {
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const layout = panelTakeoverClasses(mobileTakeover)
 
+  const panelInset = displayWidth + dock.layout.displayWidth
+
   return (
-    <>
+    <StreamContextDockProvider value={{ target: dock.target }}>
       <div ref={containerRef} className={layout.container}>
         <div
           className={layout.main}
@@ -911,11 +922,13 @@ export function StreamPage() {
             onResizeMove={handleResizeMove}
             onResizeEnd={handleResizeEnd}
             onResizeKeyDown={handleResizeKeyDown}
+            insetRight={panelInset}
             inert={asideStage}
           >
             <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
+        {!isMobile && <StreamContextDockSlot dock={dock} insetRight={panelInset} inert={asideStage} />}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
       </div>
       {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover
@@ -923,6 +936,6 @@ export function StreamPage() {
           `?convView` state survives in the URL and returns when the panel closes. */}
       {!mobileTakeover && conversationPanel}
       {streamContextOverlay}
-    </>
+    </StreamContextDockProvider>
   )
 }
