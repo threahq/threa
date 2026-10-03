@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { render, screen, userEvent, waitFor } from "@/test"
 import { onboardingApi } from "@/api"
+// eslint-disable-next-line no-restricted-imports -- test seeds and inspects IDB directly to observe the Meet Ariadne cache write
 import { db } from "@/db"
 import {
   GettingStarted,

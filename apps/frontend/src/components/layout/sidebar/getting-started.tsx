@@ -2,10 +2,9 @@ import { useCallback } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Bell, Camera, Check, PenLine, Sparkles, UserPlus, X } from "lucide-react"
-import { onboardingApi } from "@/api"
-import { db } from "@/db"
 import { useSettings, useSidebar, usePreferencesOptional } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
+import { useMeetAriadne } from "@/hooks/use-meet-ariadne"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { cn } from "@/lib/utils"
 import { StreamTypes, WORKSPACE_ROLE_SLUGS, type Stream, type User } from "@threahq/types"
@@ -91,21 +90,18 @@ export function useGettingStarted({
     openSettings("profile")
   }, [collapseOnMobile, openSettings])
 
+  const startMeetAriadne = useMeetAriadne(workspaceId)
   const meetAriadne = useCallback(async () => {
     let streamId: string
     try {
-      ;({ streamId } = await onboardingApi.meetAriadne(workspaceId))
+      streamId = await startMeetAriadne()
     } catch {
       toast.error("Couldn't start the conversation with Ariadne")
       return
     }
-    // Bootstrap and stream:created also record it, so a failed cache write must not block opening the stream.
-    await db.workspaceMetadata
-      .update(workspaceId, { onboardingStreamId: streamId })
-      .catch((error) => console.warn("Failed to cache the Meet Ariadne stream", error))
     collapseOnMobile()
     navigate(`/w/${workspaceId}/s/${streamId}`)
-  }, [workspaceId, collapseOnMobile, navigate])
+  }, [workspaceId, startMeetAriadne, collapseOnMobile, navigate])
 
   const openInvites = useCallback(() => {
     collapseOnMobile()
