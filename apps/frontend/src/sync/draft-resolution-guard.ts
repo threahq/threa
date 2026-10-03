@@ -26,16 +26,19 @@
  *    not tied to the debounce.
  */
 
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
+
 const scopeResolveSeq = new Map<string, number>()
 
 /** Bump a scope's resolve sequence — called when a draft is resolved-on-send. */
-export function recordScopeResolved(scope: string): void {
-  scopeResolveSeq.set(scope, (scopeResolveSeq.get(scope) ?? 0) + 1)
+export function recordScopeResolved(workspaceId: string, scope: string): void {
+  const key = workspaceScopedKey(workspaceId, scope)
+  scopeResolveSeq.set(key, (scopeResolveSeq.get(key) ?? 0) + 1)
 }
 
 /** Current resolve sequence for a scope (0 if never resolved). */
-export function getScopeResolveSeq(scope: string): number {
-  return scopeResolveSeq.get(scope) ?? 0
+export function getScopeResolveSeq(workspaceId: string, scope: string): number {
+  return scopeResolveSeq.get(workspaceScopedKey(workspaceId, scope)) ?? 0
 }
 
 const ECHO_TTL_MS = 60_000

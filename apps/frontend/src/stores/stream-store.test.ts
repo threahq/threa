@@ -1022,7 +1022,7 @@ describe("useStreamEvents across a draft promotion", () => {
     // Spread off the window's `__workspaceId`/`__streamId`/`__tailFloor` stamps so the rows
     // themselves are what gets compared.
     expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
-    await waitFor(() => expect(getDraftPromotionEvents(realId)).toBeNull())
+    await waitFor(() => expect(getDraftPromotionEvents(WORKSPACE_ID, realId)).toBeNull())
     expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
   })
 
@@ -1039,7 +1039,7 @@ describe("useStreamEvents across a draft promotion", () => {
     await waitFor(() => expect(result.current).toBeDefined())
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(result.current?.map((event) => event.id)).toEqual(["temp_pending"])
-    expect(getDraftPromotionEvents(realId)).toEqual([moved])
+    expect(getDraftPromotionEvents(WORKSPACE_ID, realId)).toEqual([moved])
   })
 
   it("keeps the draft id painted after its rows moved onto the real stream", async () => {
@@ -1054,7 +1054,46 @@ describe("useStreamEvents across a draft promotion", () => {
     await waitFor(() => expect(result.current).toBeDefined())
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(result.current?.map((event) => event.id)).toEqual(["temp_moved"])
-    expect(getDraftPromotionEvents(draftId)).toEqual([moved])
+    expect(getDraftPromotionEvents(WORKSPACE_ID, draftId)).toEqual([moved])
+  })
+
+  it("should not paint another workspace's handoff rows when a copied stream id is read", async () => {
+    const realId = "stream_promo_copied"
+    const moved: CachedEvent = {
+      ...makeRealEvent(realId, String(Date.now())),
+      workspaceId: "ws_a",
+      id: "temp_copied",
+      _status: "pending",
+    }
+    emitDraftPromoted({ draftId: "draft_promo_copied", realStreamId: realId, workspaceId: "ws_a", events: [moved] })
+
+    const { result } = renderHook(() => useStreamEvents("ws_b", realId, null))
+
+    await waitFor(() => expect(result.current).toBeDefined())
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(result.current?.map((event) => event.id)).toEqual([])
+  })
+
+  it("should release only its own workspace's handoff when a copied stream id carries rows", async () => {
+    const realId = "stream_promo_copied_release"
+    const movedA: CachedEvent = {
+      ...makeRealEvent(realId, String(Date.now())),
+      workspaceId: "ws_a",
+      id: "temp_copied_a",
+      _status: "pending",
+    }
+    const movedB: CachedEvent = { ...movedA, workspaceId: "ws_b", id: "temp_copied_b" }
+    await db.events.put(movedB)
+    emitDraftPromoted({ draftId: "draft_promo_copied", realStreamId: realId, workspaceId: "ws_a", events: [movedA] })
+    emitDraftPromoted({ draftId: "draft_promo_copied", realStreamId: realId, workspaceId: "ws_b", events: [movedB] })
+
+    const { result } = renderHook(() => useStreamEvents("ws_b", realId, null))
+
+    await waitFor(() => expect(getDraftPromotionEvents("ws_b", realId)).toBeNull())
+    expect({
+      painted: result.current?.map((event) => event.id),
+      heldForA: getDraftPromotionEvents("ws_a", realId),
+    }).toEqual({ painted: ["temp_copied_b"], heldForA: [movedA] })
   })
 })
 

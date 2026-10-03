@@ -19,6 +19,7 @@ import {
   consumeConversationReplyOpen,
   resetConversationReplyOpenStoreCache,
 } from "@/stores/conversation-reply-open-store"
+import { queueSnippetRequest, resetSnippetRequestStoreCache } from "@/stores/snippet-request-store"
 import * as composerModule from "@/components/composer"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
@@ -82,6 +83,7 @@ const mockHandleRemoveAttachment = vi.fn()
 const mockHandleFileSelect = vi.fn()
 const mockComposerFocus = vi.fn()
 const mockComposerFocusAfterQuoteReply = vi.fn()
+const mockOpenSnippetEditor = vi.fn()
 let mockSubmitContentOverride: JSONContent | undefined
 let registeredQuoteReplyHandler: ((data: QuoteReplyData) => void) | null = null
 let registeredConversationReplyHandler: ((data: { conversationId: string }) => void) | null = null
@@ -121,6 +123,7 @@ beforeEach(async () => {
   mockOpenPanel.mockReset()
   infoToastSpy = vi.spyOn(toast, "info").mockImplementation(() => "toast-id")
   resetConversationReplyOpenStoreCache()
+  resetSnippetRequestStoreCache()
   mockNavigate.mockReset()
   mockMessageSendMode = "enter"
   mockComposerState = {
@@ -138,6 +141,7 @@ beforeEach(async () => {
   registeredConversationReplyHandler = null
   mockComposerFocus.mockReset()
   mockComposerFocusAfterQuoteReply.mockReset()
+  mockOpenSnippetEditor.mockReset()
 
   vi.spyOn(contextsModule, "usePreferences").mockImplementation(
     () =>
@@ -313,7 +317,9 @@ beforeEach(async () => {
     isSubmitting: boolean
     hasFailed: boolean
     pendingAttachments: Array<{ id: string; filename: string; sizeBytes: number; status: string }>
-    composerRef?: { current: { focus: () => void; focusAfterQuoteReply: () => void } | null }
+    composerRef?: {
+      current: { focus: () => void; focusAfterQuoteReply: () => void; openSnippetEditor: () => void } | null
+    }
     scheduledMessagesTrigger?: ReactNode
     stashedDrafts?: unknown
     onExpandClick?: () => void
@@ -322,6 +328,7 @@ beforeEach(async () => {
       composerRef.current = {
         focus: mockComposerFocus,
         focusAfterQuoteReply: mockComposerFocusAfterQuoteReply,
+        openSnippetEditor: mockOpenSnippetEditor,
       }
     }
 
@@ -836,7 +843,7 @@ describe("MessageInput", () => {
         expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
       )
       // The panel's composer is asked to open, and no inline strip is left behind.
-      expect(consumeConversationReplyOpen("conv_1")).toBe(true)
+      expect(consumeConversationReplyOpen(workspaceId, "conv_1")).toBe(true)
       await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
       // The channel composer is never focused — focus would pop the mobile keyboard
       // on the composer we're about to leave for the panel.
@@ -863,7 +870,7 @@ describe("MessageInput", () => {
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
       expect(mockOpenPanel).toHaveBeenCalledWith(contextsModule.createConversationPanelId("conv_1"))
-      expect(consumeConversationReplyOpen("conv_1")).toBe(true)
+      expect(consumeConversationReplyOpen(workspaceId, "conv_1")).toBe(true)
       // No flat send — routing was unresolved, so the directive send never fired.
       expect(mockSendMessage).not.toHaveBeenCalled()
       // The redirect is signalled — the panel can cover this view, so the kept
@@ -924,6 +931,19 @@ describe("MessageInput", () => {
 
       expect(mockOpenPanel).not.toHaveBeenCalled()
       expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
+    })
+  })
+
+  describe("snippet requests", () => {
+    it("should open the snippet editor for its own workspace's request and ignore the same stream id queued under another workspace", () => {
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+
+      act(() => queueSnippetRequest(workspaceId, streamId))
+      const opensAfterOwn = mockOpenSnippetEditor.mock.calls.length
+      act(() => queueSnippetRequest("ws_other", streamId))
+      const opensAfterOther = mockOpenSnippetEditor.mock.calls.length
+
+      expect({ opensAfterOwn, opensAfterOther }).toEqual({ opensAfterOwn: 1, opensAfterOther: 1 })
     })
   })
 

@@ -1311,7 +1311,7 @@ function SentMessageEvent({
         : undefined,
       onShareToRoot: rootStream
         ? () => {
-            queueShareHandoff(rootStream.id, {
+            queueShareHandoff(workspaceId, rootStream.id, {
               messageId: payload.messageId,
               streamId,
               authorName: actorName,
@@ -1327,7 +1327,7 @@ function SentMessageEvent({
       onShareToParent:
         showParentEntry && parentStream
           ? () => {
-              queueShareHandoff(parentStream.id, {
+              queueShareHandoff(workspaceId, parentStream.id, {
                 messageId: payload.messageId,
                 streamId,
                 authorName: actorName,

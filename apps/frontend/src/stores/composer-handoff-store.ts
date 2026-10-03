@@ -1,6 +1,7 @@
 import type { JSONContent } from "@threahq/types"
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
 import type { DraftAttachment } from "@/db"
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
 
 /**
  * Ephemeral per-stream "hand-off" of content into a target stream's composer:
@@ -71,8 +72,8 @@ function settleDelivery(queueId: number, delivered: boolean): void {
   resolve(delivered)
 }
 
-function liveQueue(streamId: string): QueuedShareHandoff[] {
-  const queued = cache.get(streamId)
+function liveQueue(key: string): QueuedShareHandoff[] {
+  const queued = cache.get(key)
   if (!queued) return []
   const now = Date.now()
   for (let index = queued.length - 1; index >= 0; index--) {
@@ -81,21 +82,21 @@ function liveQueue(streamId: string): QueuedShareHandoff[] {
       queued.splice(index, 1)
     }
   }
-  if (queued.length === 0) cache.delete(streamId)
+  if (queued.length === 0) cache.delete(key)
   return queued
 }
 
-function consumeKind(streamId: string, kind: QueuedShareHandoff["kind"]): QueuedShareHandoff | null {
-  const queued = liveQueue(streamId)
+function consumeKind(key: string, kind: QueuedShareHandoff["kind"]): QueuedShareHandoff | null {
+  const queued = liveQueue(key)
   const index = queued.findIndex((entry) => entry.kind === kind)
   if (index < 0) return null
   const [entry] = queued.splice(index, 1)
-  if (queued.length === 0) cache.delete(streamId)
+  if (queued.length === 0) cache.delete(key)
   return entry
 }
 
-function peekKind(streamId: string, kind: QueuedShareHandoff["kind"]): QueuedShareHandoff | null {
-  return liveQueue(streamId).find((entry) => entry.kind === kind) ?? null
+function peekKind(key: string, kind: QueuedShareHandoff["kind"]): QueuedShareHandoff | null {
+  return liveQueue(key).find((entry) => entry.kind === kind) ?? null
 }
 
 /**
@@ -104,11 +105,12 @@ function peekKind(streamId: string, kind: QueuedShareHandoff["kind"]): QueuedSha
  * picks the share up without remounting (e.g. sharing back into the stream the
  * user is already viewing).
  */
-export function queueShareHandoff(targetStreamId: string, attrs: SharedMessageAttrs): void {
-  const queued = cache.get(targetStreamId) ?? []
+export function queueShareHandoff(workspaceId: string, targetStreamId: string, attrs: SharedMessageAttrs): void {
+  const key = workspaceScopedKey(workspaceId, targetStreamId)
+  const queued = cache.get(key) ?? []
   queued.push({ queueId: ++nextQueueId, kind: "pointer", attrs, expiresAt: Date.now() + HANDOFF_TTL_MS })
-  cache.set(targetStreamId, queued)
-  const subs = listeners.get(targetStreamId)
+  cache.set(key, queued)
+  const subs = listeners.get(key)
   if (subs) {
     for (const listener of subs) listener()
   }
@@ -119,8 +121,14 @@ export function queueShareHandoff(targetStreamId: string, attrs: SharedMessageAt
  * target stream's composer. Same hop + TTL + subscriber notification as the
  * pointer hand-off; consumed via {@link consumePlaintextShareHandoff}.
  */
-export function queuePlaintextShareHandoff(targetStreamId: string, markdown: string, attrs: SharedMessageAttrs): void {
-  const queued = cache.get(targetStreamId) ?? []
+export function queuePlaintextShareHandoff(
+  workspaceId: string,
+  targetStreamId: string,
+  markdown: string,
+  attrs: SharedMessageAttrs
+): void {
+  const key = workspaceScopedKey(workspaceId, targetStreamId)
+  const queued = cache.get(key) ?? []
   queued.push({
     queueId: ++nextQueueId,
     kind: "plaintext",
@@ -128,8 +136,8 @@ export function queuePlaintextShareHandoff(targetStreamId: string, markdown: str
     attrs,
     expiresAt: Date.now() + HANDOFF_TTL_MS,
   })
-  cache.set(targetStreamId, queued)
-  const subs = listeners.get(targetStreamId)
+  cache.set(key, queued)
+  const subs = listeners.get(key)
   if (subs) {
     for (const listener of subs) listener()
   }
@@ -141,16 +149,18 @@ export function queuePlaintextShareHandoff(targetStreamId: string, markdown: str
  * draft already in the destination is stashed rather than overwritten.
  */
 export function queueContentHandoff(
+  workspaceId: string,
   targetStreamId: string,
   content: JSONContent[],
   attachments: DraftAttachment[] = []
 ): { delivered: Promise<boolean> } {
-  const queued = cache.get(targetStreamId) ?? []
+  const key = workspaceScopedKey(workspaceId, targetStreamId)
+  const queued = cache.get(key) ?? []
   const queueId = ++nextQueueId
   const delivered = new Promise<boolean>((resolve) => deliveryResolvers.set(queueId, resolve))
   queued.push({ queueId, kind: "content", content, attachments, expiresAt: Date.now() + HANDOFF_TTL_MS })
-  cache.set(targetStreamId, queued)
-  const subs = listeners.get(targetStreamId)
+  cache.set(key, queued)
+  const subs = listeners.get(key)
   if (subs) {
     for (const listener of subs) listener()
   }
@@ -168,22 +178,28 @@ export function settleShareHandoffBatch(batch: ShareHandoffBatch, delivered: boo
 }
 
 /** Read + clear the oldest pending plaintext (decrypted E2E) share for the stream. */
-export function consumePlaintextShareHandoff(targetStreamId: string): PlaintextShareHandoffEntry | null {
-  const entry = consumeKind(targetStreamId, "plaintext")
+export function consumePlaintextShareHandoff(
+  workspaceId: string,
+  targetStreamId: string
+): PlaintextShareHandoffEntry | null {
+  const entry = consumeKind(workspaceScopedKey(workspaceId, targetStreamId), "plaintext")
   if (!entry || entry.kind !== "plaintext") return null
   return { markdown: entry.markdown, attrs: entry.attrs, expiresAt: entry.expiresAt }
 }
 
 /** Non-consuming read of the oldest pending plaintext share. */
-export function peekPlaintextShareHandoff(targetStreamId: string): PlaintextShareHandoffEntry | null {
-  const entry = peekKind(targetStreamId, "plaintext")
+export function peekPlaintextShareHandoff(
+  workspaceId: string,
+  targetStreamId: string
+): PlaintextShareHandoffEntry | null {
+  const entry = peekKind(workspaceScopedKey(workspaceId, targetStreamId), "plaintext")
   if (!entry || entry.kind !== "plaintext") return null
   return { markdown: entry.markdown, attrs: entry.attrs, expiresAt: entry.expiresAt }
 }
 
 /** Snapshot every pending handoff in queue order without consuming it. */
-export function peekShareHandoffBatch(targetStreamId: string): ShareHandoffBatch | null {
-  const queued = liveQueue(targetStreamId)
+export function peekShareHandoffBatch(workspaceId: string, targetStreamId: string): ShareHandoffBatch | null {
+  const queued = liveQueue(workspaceScopedKey(workspaceId, targetStreamId))
   if (queued.length === 0) return null
   return {
     ids: queued.map((entry) => entry.queueId),
@@ -196,13 +212,18 @@ export function peekShareHandoffBatch(targetStreamId: string): ShareHandoffBatch
 }
 
 /** Remove only the entries represented by a previously-read batch. */
-export function acknowledgeShareHandoffBatch(targetStreamId: string, batch: ShareHandoffBatch): void {
-  const queued = cache.get(targetStreamId)
+export function acknowledgeShareHandoffBatch(
+  workspaceId: string,
+  targetStreamId: string,
+  batch: ShareHandoffBatch
+): void {
+  const key = workspaceScopedKey(workspaceId, targetStreamId)
+  const queued = cache.get(key)
   if (!queued) return
   const acknowledged = new Set(batch.ids)
   const remaining = queued.filter((entry) => !acknowledged.has(entry.queueId))
-  if (remaining.length > 0) cache.set(targetStreamId, remaining)
-  else cache.delete(targetStreamId)
+  if (remaining.length > 0) cache.set(key, remaining)
+  else cache.delete(key)
 }
 
 /**
@@ -211,18 +232,19 @@ export function acknowledgeShareHandoffBatch(targetStreamId: string, batch: Shar
  * read so they pick up shares queued while they were live. Returns an
  * unsubscribe function.
  */
-export function subscribeShareHandoff(targetStreamId: string, listener: () => void): () => void {
-  let subs = listeners.get(targetStreamId)
+export function subscribeShareHandoff(workspaceId: string, targetStreamId: string, listener: () => void): () => void {
+  const key = workspaceScopedKey(workspaceId, targetStreamId)
+  let subs = listeners.get(key)
   if (!subs) {
     subs = new Set()
-    listeners.set(targetStreamId, subs)
+    listeners.set(key, subs)
   }
   subs.add(listener)
   return () => {
-    const set = listeners.get(targetStreamId)
+    const set = listeners.get(key)
     if (!set) return
     set.delete(listener)
-    if (set.size === 0) listeners.delete(targetStreamId)
+    if (set.size === 0) listeners.delete(key)
   }
 }
 
@@ -230,8 +252,8 @@ export function subscribeShareHandoff(targetStreamId: string, listener: () => vo
  * Read + clear the pending share for the given stream. Returns null when
  * nothing is queued or the entry has expired (and evicts it).
  */
-export function consumeShareHandoff(targetStreamId: string): SharedMessageAttrs | null {
-  const entry = consumeKind(targetStreamId, "pointer")
+export function consumeShareHandoff(workspaceId: string, targetStreamId: string): SharedMessageAttrs | null {
+  const entry = consumeKind(workspaceScopedKey(workspaceId, targetStreamId), "pointer")
   return entry?.kind === "pointer" ? entry.attrs : null
 }
 
@@ -239,8 +261,8 @@ export function consumeShareHandoff(targetStreamId: string): SharedMessageAttrs 
  * Non-consuming peek. Returns whether a share is currently queued for the
  * stream. Mostly for tests and debug panels.
  */
-export function peekShareHandoff(targetStreamId: string): SharedMessageAttrs | null {
-  const entry = peekKind(targetStreamId, "pointer")
+export function peekShareHandoff(workspaceId: string, targetStreamId: string): SharedMessageAttrs | null {
+  const entry = peekKind(workspaceScopedKey(workspaceId, targetStreamId), "pointer")
   return entry?.kind === "pointer" ? entry.attrs : null
 }
 

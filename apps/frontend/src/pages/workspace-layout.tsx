@@ -69,7 +69,7 @@ import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { useAccountScope, useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
+import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
 import { useOpenAside } from "@/hooks/use-open-aside"
@@ -238,7 +238,7 @@ function SearchKeyboardHandler() {
  * The engine owns bootstrap, reconnection, and all workspace-level socket
  * event handlers.
  */
-function WorkspaceSyncHandler({
+export function WorkspaceSyncHandler({
   workspaceId,
   visibleStreamIds,
   children,
@@ -261,13 +261,11 @@ function WorkspaceSyncHandler({
   const isOnline = useOnlineStatus()
   const { streamId: currentStreamId } = useParams<{ streamId: string }>()
   const wasOfflineRef = useRef(!navigator.onLine)
-  // Construct SyncEngine once per workspace. Use ref to survive StrictMode
-  // double-render — useMemo + destroy effect breaks because the cleanup
-  // destroys the engine before the socket connect effect fires.
+  // One SyncEngine per mount (the layout remounts per workspace); rebuilt only
+  // after it destroys itself on an account switch.
   const syncEngineRef = useRef<SyncEngine | null>(null)
   let syncEngine = syncEngineRef.current
-  if (!syncEngine || !isSyncEngineCurrent(syncEngine, workspaceId)) {
-    syncEngine?.destroy()
+  if (!syncEngine || syncEngine.isDestroyed) {
     syncEngine = new SyncEngine({
       workspaceId,
       syncStatus: syncStatusStore!,
@@ -355,9 +353,19 @@ function WorkspaceSyncHandler({
     void syncEngine.handlePageResume()
   }, 0)
 
-  // No destroy effect — StrictMode's effect cleanup cycle would destroy the
-  // engine before the socket connect effect re-runs. The engine is destroyed
-  // on workspace change (line above) and on page unload (browser handles it).
+  // StrictMode runs cleanup then setup synchronously and would hand the socket
+  // connect effect a destroyed engine, so destroy waits a microtask and only
+  // runs if no setup followed — i.e. a real unmount (workspace switch remount).
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      queueMicrotask(() => {
+        if (!mountedRef.current) syncEngineRef.current?.destroy()
+      })
+    }
+  }, [])
 
   // A push for a parked account stashes its recipient id (notification-intent);
   // flip the active account in place before this deep link bootstraps wrong.
@@ -368,25 +376,20 @@ function WorkspaceSyncHandler({
   // this deep link — resolve→flip in place, else bounce to the list.
   useResolveOrBounce(workspaceId, syncEngine)
 
-  // The outbound read-commit pipeline, one owner per workspace (same ref-based
-  // lifecycle as the SyncEngine above). Disposing the outgoing queue flushes
-  // through ITS OWN commitRef — still the old workspace's markAsRead, updated
-  // only below once the current-workspace check has passed — so a pending mark
-  // never lands in the wrong workspace on a switch.
+  // The outbound read-commit pipeline, one owner per mount (same ref-based
+  // lifecycle as the SyncEngine above).
   const { markAsRead } = useUnreadCounts(workspaceId)
   const readCommitQueueRef = useRef<ReadCommitQueue | null>(null)
   let readCommitQueue = readCommitQueueRef.current
-  if (!readCommitQueue || readCommitQueue.workspaceId !== workspaceId || readCommitQueue.isDisposed) {
-    readCommitQueue?.dispose()
-    readCommitQueue = new ReadCommitQueue({ workspaceId, commitRef: { current: markAsRead } })
+  if (!readCommitQueue || readCommitQueue.isDisposed) {
+    readCommitQueue = new ReadCommitQueue({ commitRef: { current: markAsRead } })
     readCommitQueueRef.current = readCommitQueue
   }
   readCommitQueue.commitRef.current = markAsRead
-  // Unlike the SyncEngine (whose destroy would break the socket-connect
-  // effect under StrictMode), the queue is safe to dispose on unmount — the
-  // recreate check above sees a disposed queue and builds a fresh one on the
-  // StrictMode remount. Without this, the pagehide listener held the queue
-  // alive after leaving the workspace layout.
+  // Unlike the SyncEngine's deferred destroy, the queue disposes synchronously
+  // on unmount: the recreate check above rebuilds a disposed queue on the next
+  // render. Without this, the pagehide listener held the queue alive after
+  // leaving the workspace layout.
   useEffect(() => {
     return () => {
       readCommitQueueRef.current?.dispose()
@@ -505,6 +508,12 @@ function WorkspaceQuickSwitcher(props: Omit<ComponentProps<typeof QuickSwitcher>
 }
 
 export function WorkspaceLayout() {
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+  // Connect copies share ids across workspaces: no state mounted for one workspace survives into another.
+  return <WorkspaceLayoutContent key={workspaceId} />
+}
+
+function WorkspaceLayoutContent() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const [searchParams] = useSearchParams()
   const [switcherOpen, setSwitcherOpen] = useState(false)

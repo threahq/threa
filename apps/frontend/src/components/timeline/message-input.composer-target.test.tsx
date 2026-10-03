@@ -326,7 +326,7 @@ describe("the timeline composer's durable target", () => {
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("keep this"))
     await userEvent.click(screen.getByRole("button", { name: "type" }))
 
-    queueShareHandoff(streamId, {
+    queueShareHandoff(workspaceId, streamId, {
       messageId: "msg_shared",
       streamId: "stream_source",
       authorName: "Ada",
@@ -383,7 +383,12 @@ describe("the timeline composer's durable target", () => {
     await waitFor(() => expect(screen.getByTestId("editor-body")).toBeInTheDocument())
     const file = { id: "attach_brief", filename: "brief.pdf", mimeType: "application/pdf", sizeBytes: 1200 }
 
-    queueContentHandoff(streamId, [{ type: "paragraph", content: [{ type: "text", text: "from the aside" }] }], [file])
+    queueContentHandoff(
+      workspaceId,
+      streamId,
+      [{ type: "paragraph", content: [{ type: "text", text: "from the aside" }] }],
+      [file]
+    )
 
     await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent("from the aside"), {
       timeout: 7000,
@@ -413,7 +418,7 @@ describe("the timeline composer's durable target", () => {
     vi.spyOn(draftMessageModule, "stashLoadedDraft").mockRejectedValueOnce(new Error("IDB unavailable"))
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     const toastSpy = vi.spyOn(toast, "error").mockImplementation(() => "toast-id")
-    queueShareHandoff(streamId, {
+    queueShareHandoff(workspaceId, streamId, {
       messageId: "msg_retry",
       streamId: "stream_source",
       authorName: "Ada",
@@ -429,7 +434,7 @@ describe("the timeline composer's durable target", () => {
     expect(screen.getByTestId("editor-body")).toHaveTextContent("keep this")
     expect((await db.composerLoaded.get([workspaceId, hostScope]))?.draftId).toBe(original.id)
     expect((await db.drafts.get(original.id))?.stashedAt).toBeUndefined()
-    expect(peekShareHandoff(streamId)?.messageId).toBe("msg_retry")
+    expect(peekShareHandoff(workspaceId, streamId)?.messageId).toBe("msg_retry")
     expect(errorSpy).toHaveBeenCalled()
   }, 10_000)
 
@@ -441,7 +446,7 @@ describe("the timeline composer's durable target", () => {
     editorRunResult = false
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
     const toastSpy = vi.spyOn(toast, "error").mockImplementation(() => "toast-id")
-    queueShareHandoff(streamId, {
+    queueShareHandoff(workspaceId, streamId, {
       messageId: "msg_rejected",
       streamId: "stream_source",
       authorName: "Ada",
@@ -455,7 +460,7 @@ describe("the timeline composer's durable target", () => {
       expect(toastSpy).toHaveBeenCalledWith("Couldn't prepare this composer for sharing. Your draft was kept.")
     )
     expect(screen.getByTestId("editor-json")).not.toHaveTextContent('"messageId":"msg_rejected"')
-    expect(peekShareHandoff(streamId)?.messageId).toBe("msg_rejected")
+    expect(peekShareHandoff(workspaceId, streamId)?.messageId).toBe("msg_rejected")
     expect(await db.composerLoaded.get([workspaceId, hostScope])).toBeUndefined()
     expect(errorSpy).toHaveBeenCalled()
   }, 10_000)
@@ -464,7 +469,7 @@ describe("the timeline composer's durable target", () => {
     await act(async () => {
       await seedDraftCacheFromIdb(workspaceId)
     })
-    queueShareHandoff(streamId, {
+    queueShareHandoff(workspaceId, streamId, {
       messageId: "msg_strict",
       streamId: "stream_source",
       authorName: "Ada",
@@ -502,7 +507,7 @@ describe("the timeline composer's durable target", () => {
 
     const view = mount()
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("source body"))
-    queueShareHandoff(targetStreamId, {
+    queueShareHandoff(workspaceId, targetStreamId, {
       messageId: "msg_target",
       streamId: "stream_source",
       authorName: "Ada",

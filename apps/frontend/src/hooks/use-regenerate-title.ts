@@ -62,7 +62,7 @@ export function useRegenerateTitle(workspaceId: string, target: RegenerationTarg
         conversationKeys.byId(workspaceId, target.conversationId),
         (old) => (old ? mergeConversationByTitleRevision(old, result.conversation) : result.conversation)
       )
-      queryClient.setQueryData<BoardPost>(conversationKeys.boardPost(target.conversationId), (old) =>
+      queryClient.setQueryData<BoardPost>(conversationKeys.boardPost(workspaceId, target.conversationId), (old) =>
         old
           ? {
               ...old,

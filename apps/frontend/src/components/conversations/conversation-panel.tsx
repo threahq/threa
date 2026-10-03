@@ -338,11 +338,11 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   useEffect(() => {
     if (!conversationId) return
     const bump = () => {
-      if (consumeConversationReplyOpen(conversationId)) setOpenReplySignal((n) => n + 1)
+      if (consumeConversationReplyOpen(workspaceId, conversationId)) setOpenReplySignal((n) => n + 1)
     }
     bump()
-    return subscribeConversationReplyOpen(conversationId, bump)
-  }, [conversationId])
+    return subscribeConversationReplyOpen(workspaceId, conversationId, bump)
+  }, [workspaceId, conversationId])
 
   // A drafts-explorer deep link (`?panel=conv:<id>&stash=<draftId>`): the docked
   // footer composer is always mounted, and its own `useStashComposer` URL effect

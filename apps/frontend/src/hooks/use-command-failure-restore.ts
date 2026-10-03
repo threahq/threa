@@ -74,7 +74,7 @@ export function useCommandFailureRestore(
       handledRef.current.add(outcome.optimisticId)
       settled.push(outcome.optimisticId)
       const content = tracked.get(outcome.optimisticId)
-      if (outcome.failed && content) queueContentHandoff(streamId, content.content ?? [])
+      if (outcome.failed && content) queueContentHandoff(workspaceId, streamId, content.content ?? [])
     }
     if (settled.length === 0) return
     setTracked((previous) => {
@@ -82,7 +82,7 @@ export function useCommandFailureRestore(
       for (const id of settled) next.delete(id)
       return next
     })
-  }, [outcomes, streamId, tracked])
+  }, [outcomes, workspaceId, streamId, tracked])
 
   return remember
 }

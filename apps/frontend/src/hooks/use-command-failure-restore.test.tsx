@@ -75,7 +75,7 @@ async function settle() {
 }
 
 function restoredNodes(): JSONContent[] | null {
-  const batch = peekShareHandoffBatch(streamId)
+  const batch = peekShareHandoffBatch(workspaceId, streamId)
   if (!batch) return null
   const handoff = batch.handoffs.find((entry) => entry.kind === "content")
   return handoff?.kind === "content" ? [...handoff.content] : null
@@ -145,7 +145,7 @@ describe("useCommandFailureRestore", () => {
     )
     await settle()
 
-    expect(peekShareHandoffBatch(streamId)).toBeNull()
+    expect(peekShareHandoffBatch(workspaceId, streamId)).toBeNull()
   })
 
   it("should ignore a failure for a command this composer never dispatched", async () => {
@@ -162,7 +162,7 @@ describe("useCommandFailureRestore", () => {
     ])
     await settle()
 
-    expect(peekShareHandoffBatch(streamId)).toBeNull()
+    expect(peekShareHandoffBatch(workspaceId, streamId)).toBeNull()
   })
 
   it("should ignore a failure that lands in another stream", async () => {
@@ -185,8 +185,8 @@ describe("useCommandFailureRestore", () => {
     ])
     await settle()
 
-    expect(peekShareHandoffBatch(streamId)).toBeNull()
-    expect(peekShareHandoffBatch("stream_other")).toBeNull()
+    expect(peekShareHandoffBatch(workspaceId, streamId)).toBeNull()
+    expect(peekShareHandoffBatch(workspaceId, "stream_other")).toBeNull()
   })
 
   it("should not restore when the same stream id fails in another workspace", async () => {
@@ -204,7 +204,7 @@ describe("useCommandFailureRestore", () => {
     ])
     await settle()
 
-    expect(peekShareHandoffBatch(streamId)).toBeNull()
+    expect(peekShareHandoffBatch(workspaceId, streamId)).toBeNull()
   })
 
   it("should not restore when the dispatch lives in another workspace and only the failure shares this one", async () => {
@@ -222,7 +222,7 @@ describe("useCommandFailureRestore", () => {
     ])
     await settle()
 
-    expect(peekShareHandoffBatch(streamId)).toBeNull()
+    expect(peekShareHandoffBatch(workspaceId, streamId)).toBeNull()
   })
 
   it("should restore once when the same failure is observed again", async () => {
@@ -240,6 +240,6 @@ describe("useCommandFailureRestore", () => {
     await db.events.put({ ...failed, _cachedAt: 2 })
     await settle()
 
-    expect(peekShareHandoffBatch(streamId)?.handoffs).toHaveLength(1)
+    expect(peekShareHandoffBatch(workspaceId, streamId)?.handoffs).toHaveLength(1)
   })
 })
