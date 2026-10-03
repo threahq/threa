@@ -55,6 +55,18 @@ describe("buildHowIWorkSection", () => {
     expect(card).toContain("No one triggered this turn")
   })
 
+  test("should drop tools built from workspace deps and keep save_memo when no one triggered the turn", () => {
+    const card = buildHowIWorkSection(
+      {
+        ...ariadne,
+        enabledTools: [AgentToolNames.SEARCH_MESSAGES, AgentToolNames.REACT_TO_MESSAGE, AgentToolNames.SAVE_MEMO],
+      },
+      { ...privateScratchpad, access: null }
+    )
+
+    expect(capabilities(card)).toEqual(["Save something to memory when someone asks."])
+  })
+
   test("should say private conversations stay out when the channel is public", () => {
     const card = buildHowIWorkSection(ariadne, { access: "public_only", memoryCapture: "off", sealed: false })
 

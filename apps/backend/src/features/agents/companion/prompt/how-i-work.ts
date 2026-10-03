@@ -2,12 +2,7 @@ import { AgentToolNames, type AgentToolName } from "@threahq/types"
 import type { AgentAccessSpec } from "../../researcher/access-spec"
 import { isToolEnabled } from "../../tools"
 
-/**
- * What the self-description card is built from. Every field holds for the
- * conversation's lifetime, so the card sits in the cached half of the prompt:
- * it is derived from the persona's CONFIGURED tools and the stream's access
- * rule, never from the toolset wired for one turn.
- */
+/** Conversation-stable inputs of the card, so it can sit in the cached half of the prompt. */
 export interface SelfKnowledge {
   /** `null` when no human triggered the turn, so there is no one's access to borrow. */
   access: AgentAccessSpec["type"] | null
@@ -26,7 +21,8 @@ interface CardPersona {
 /** The tools the enclave wires for a sealed turn, besides send_message. */
 const SEALED_TOOLS: ReadonlySet<AgentToolName> = new Set([AgentToolNames.WEB_SEARCH, AgentToolNames.READ_URL])
 
-const CAPABILITIES: Array<{ tools: AgentToolName[]; line: string }> = [
+/** `workspace` marks tools built only from workspace deps, which exist only when a human triggered the turn. */
+const CAPABILITIES: Array<{ tools: AgentToolName[]; line: string; workspace?: true }> = [
   { tools: [AgentToolNames.WEB_SEARCH, AgentToolNames.READ_URL], line: "Search the web and read web pages." },
   {
     tools: [AgentToolNames.GENERAL_RESEARCH],
@@ -40,20 +36,21 @@ const CAPABILITIES: Array<{ tools: AgentToolName[]; line: string }> = [
       AgentToolNames.GET_STREAM_MESSAGES,
     ],
     line: "Search messages, streams and people, and read a stream's history, within the reach described above.",
+    workspace: true,
   },
   {
     tools: [AgentToolNames.SEARCH_ATTACHMENTS, AgentToolNames.READ_ATTACHMENT],
     line: "Find and read files shared in the workspace: documents, PDFs, spreadsheets and images.",
+    workspace: true,
   },
   {
     tools: [AgentToolNames.RUN_COMMAND],
     line: "Run code and shell commands in a sandbox tied to this stream, when the workspace has sandboxes.",
+    workspace: true,
   },
-  {
-    tools: [AgentToolNames.DESCRIBE_MEMO, AgentToolNames.SAVE_MEMO],
-    line: "Open memos to see their sources, and save something to memory when someone asks.",
-  },
-  { tools: [AgentToolNames.REACT_TO_MESSAGE], line: "React to messages with an emoji." },
+  { tools: [AgentToolNames.DESCRIBE_MEMO], line: "Open memos to see their sources.", workspace: true },
+  { tools: [AgentToolNames.SAVE_MEMO], line: "Save something to memory when someone asks." },
+  { tools: [AgentToolNames.REACT_TO_MESSAGE], line: "React to messages with an emoji.", workspace: true },
   {
     tools: [
       AgentToolNames.SCHEDULE_FOLLOW_UP,
@@ -66,7 +63,7 @@ const CAPABILITIES: Array<{ tools: AgentToolName[]; line: string }> = [
   { tools: [AgentToolNames.UPDATE_STREAM_BRIEF], line: "Keep this stream's brief up to date." },
   {
     tools: [AgentToolNames.START_SUBAGENT],
-    line: "Start a subagent in a thread to work a side task in parallel, when a person asked for the work.",
+    line: "Hand a question to another model, which answers in a thread under a card in this stream, when a person asks for a second opinion or names a model.",
   },
   {
     tools: [AgentToolNames.DELEGATE_TASK],
@@ -119,6 +116,7 @@ function capabilityLines(persona: CardPersona, self: SelfKnowledge): string[] {
     lines.push("Research the workspace: messages, memos and files within the reach described above.")
   }
   for (const capability of CAPABILITIES) {
+    if (capability.workspace && self.access === null) continue
     if (capability.tools.some(enabled)) lines.push(capability.line)
   }
   return lines

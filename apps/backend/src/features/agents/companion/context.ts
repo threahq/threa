@@ -232,7 +232,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   const selfKnowledge: SelfKnowledge = {
     access: accessType,
     memoryCapture: isMemoryAutomationOn(memoryModeStream) ? "on" : "off",
-    sealed: false,
+    sealed: stream.e2eEnabled === true,
   }
 
   // Recall runs beside the window build: its embedding and scoring calls are

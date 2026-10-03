@@ -69,7 +69,7 @@ describe("buildEnclaveSystemPrompt", () => {
       systemPrompt: "You are Ariadne.",
       model: "openrouter:openai/gpt-6-luna",
       escalationModel: null,
-      enabledTools: [],
+      enabledTools: [] as BuiltInAgentConfig["enabledTools"],
       tonePreset: "direct",
       brevityPreset: "thorough",
       tonePrompt: null,
