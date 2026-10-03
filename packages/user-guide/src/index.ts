@@ -18,6 +18,8 @@ export const GUIDE_SECTIONS = [
 
 export type GuideSectionId = (typeof GUIDE_SECTIONS)[number]["id"]
 
+export const GUIDE_URL = "https://threa.io/guide"
+
 export interface GuideArticle {
   slug: string
   title: string
@@ -89,6 +91,14 @@ export function sortGuideArticles(articles: GuideArticle[]): GuideArticle[] {
   return [...articles].sort(
     (a, b) => sectionIndex(a.section) - sectionIndex(b.section) || a.order - b.order || a.slug.localeCompare(b.slug)
   )
+}
+
+/** Sections in guide order with their articles, leaving out sections that have none yet. */
+export function groupGuideArticles(articles: readonly GuideArticle[]) {
+  return GUIDE_SECTIONS.map((section) => ({
+    ...section,
+    articles: articles.filter((a) => a.section === section.id),
+  })).filter((s) => s.articles.length > 0)
 }
 
 /** Articles from `content/*.md`, keyed by any path ending in the file name, in reading order. */

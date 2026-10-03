@@ -1,5 +1,5 @@
 import { createMarkdownProcessor } from "@astrojs/markdown-remark"
-import { GUIDE_SECTIONS, guideArticlesFromFiles, type GuideArticle } from "@threahq/user-guide"
+import { groupGuideArticles, guideArticlesFromFiles, type GuideArticle } from "@threahq/user-guide"
 
 import { apiBase } from "./config"
 import { rehypeAppLinks } from "./rehype-app-links"
@@ -15,10 +15,7 @@ const files = import.meta.glob<string>("../../../../packages/user-guide/content/
 
 export const guideArticles: GuideArticle[] = guideArticlesFromFiles(files)
 
-export const guideSections = GUIDE_SECTIONS.map((section) => ({
-  ...section,
-  articles: guideArticles.filter((a) => a.section === section.id),
-})).filter((s) => s.articles.length > 0)
+export const guideSections = groupGuideArticles(guideArticles)
 
 /** The overview page is "index"; DocsLayout matches `current` against these slugs. */
 export const guideNav = [

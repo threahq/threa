@@ -21,7 +21,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import { GUIDE_SECTIONS, loadGuideArticles } from "@threahq/user-guide"
+import { groupGuideArticles, loadGuideArticles } from "@threahq/user-guide"
 import TurndownService from "turndown"
 
 import { MIRROR_PREFIX } from "../functions/_middleware"
@@ -445,11 +445,10 @@ const GUIDE_APP_LINKS =
 const GUIDE_NOTES = `Rough draft of the Threa user guide, generated from the article's own markdown. ${GUIDE_APP_LINKS} The developer docs start at https://threa.io/llms.txt.`
 
 function guideIndexMarkdown(): string {
-  const sections = GUIDE_SECTIONS.flatMap((section) => {
-    const articles = GUIDE_ARTICLES.filter((a) => a.section === section.id)
-    if (articles.length === 0) return []
-    return [`## ${section.title}`, articles.map((a) => `- [${a.title}](/guide/${a.slug}): ${a.summary}`).join("\n")]
-  })
+  const sections = groupGuideArticles(GUIDE_ARTICLES).flatMap((section) => [
+    `## ${section.title}`,
+    section.articles.map((a) => `- [${a.title}](/guide/${a.slug}): ${a.summary}`).join("\n"),
+  ])
   return ["# Threa user guide", ...sections].join("\n\n")
 }
 
