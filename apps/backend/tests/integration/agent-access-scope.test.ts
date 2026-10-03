@@ -214,7 +214,7 @@ describe("Agent Access Scope", () => {
       await threadUnder(sharedChannelThreadId, sharedPrivateChannelId, Visibilities.PRIVATE)
       await threadUnder(publicChannelThreadId, publicChannelId, Visibilities.PUBLIC)
 
-      const sharedDm = await StreamRepository.findById(client, sharedDmId)
+      const sharedDm = await StreamRepository.findById(client, testWorkspaceId, sharedDmId)
       const accessSpec = await computeAgentAccessSpec(client, {
         stream: sharedDm!,
         invokingUserId: ownerMember.id,
