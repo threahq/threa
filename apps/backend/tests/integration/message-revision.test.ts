@@ -66,7 +66,7 @@ describe("message revision", () => {
     })
 
     expect(message.revision).toBe(1)
-    expect(await MessageVersionRepository.getCurrentRevision(pool, message.id)).toBe(1)
+    expect(await MessageVersionRepository.getCurrentRevision(pool, testWorkspaceId, message.id)).toBe(1)
 
     const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
     const created = events.find(
@@ -96,9 +96,9 @@ describe("message revision", () => {
 
     const stored = await MessageRepository.findById(pool, testWorkspaceId, message.id)
     expect(stored?.revision).toBe(3)
-    expect(await MessageVersionRepository.getCurrentRevision(pool, message.id)).toBe(3)
+    expect(await MessageVersionRepository.getCurrentRevision(pool, testWorkspaceId, message.id)).toBe(3)
 
-    const versions = await MessageVersionRepository.listByMessageId(pool, message.id)
+    const versions = await MessageVersionRepository.listByMessageId(pool, testWorkspaceId, message.id)
     expect(versions.map((v) => ({ versionNumber: v.versionNumber, contentMarkdown: v.contentMarkdown }))).toEqual([
       { versionNumber: 1, contentMarkdown: "v1 body" },
       { versionNumber: 2, contentMarkdown: "v2 body" },
@@ -158,7 +158,7 @@ describe("message revision", () => {
       ...testMessageContent("v4 body"),
     })
 
-    const versions = await MessageVersionRepository.listByMessageId(pool, message.id)
+    const versions = await MessageVersionRepository.listByMessageId(pool, testWorkspaceId, message.id)
     expect(versions.map((v) => v.versionNumber)).toEqual([1, 2, 3])
     expect((await MessageRepository.findById(pool, testWorkspaceId, message.id))?.revision).toBe(4)
     const lastEdit = (await eventService.listEvents(testWorkspaceId, channel, { limit: 200 }))
@@ -169,7 +169,7 @@ describe("message revision", () => {
   })
 
   test("getCurrentRevision is null for a message that does not exist", async () => {
-    expect(await MessageVersionRepository.getCurrentRevision(pool, "msg_missing")).toBeNull()
+    expect(await MessageVersionRepository.getCurrentRevision(pool, testWorkspaceId, "msg_missing")).toBeNull()
   })
 
   describe("migration backfill", () => {

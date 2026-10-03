@@ -186,14 +186,18 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
       return
     }
 
-    const currentRevision = await MessageVersionRepository.getCurrentRevision(this.db, payload.messageId)
+    const currentRevision = await MessageVersionRepository.getCurrentRevision(
+      this.db,
+      payload.workspaceId,
+      payload.messageId
+    )
     if (currentRevision === null) return
 
     if (latestSession.triggerMessageRevision !== null && latestSession.triggerMessageRevision >= currentRevision) {
       return
     }
 
-    const editContext = await this.getEditContext(payload.messageId, payload.editedContentMarkdown)
+    const editContext = await this.getEditContext(payload.workspaceId, payload.messageId, payload.editedContentMarkdown)
 
     await this.supersedeAndDispatchRerun({
       session: latestSession,
@@ -248,7 +252,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
       return
     }
 
-    const editContext = await this.getEditContext(payload.messageId, payload.editedContentMarkdown)
+    const editContext = await this.getEditContext(payload.workspaceId, payload.messageId, payload.editedContentMarkdown)
 
     await this.supersedeAndDispatchRerun({
       session: latestSession,
@@ -298,12 +302,13 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
   }
 
   private async getEditContext(
+    workspaceId: string,
     messageId: string,
     editedContentMarkdown: string | null
   ): Promise<{ before: string | null; after: string | null }> {
     const after = toContextPreview(editedContentMarkdown)
     try {
-      const previousVersion = await MessageVersionRepository.findLatestByMessageId(this.db, messageId)
+      const previousVersion = await MessageVersionRepository.findLatestByMessageId(this.db, workspaceId, messageId)
       return {
         before: toContextPreview(previousVersion?.contentMarkdown ?? null),
         after,

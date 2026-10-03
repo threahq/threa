@@ -136,7 +136,12 @@ async function applyEditedSourceFraming(
   })
   const staleRevisions = [...new Set([...answered.values()].filter((revision) => revision < source.revision))]
   if (staleRevisions.length === 0) return routes
-  const versions = await MessageVersionRepository.findByVersionNumbers(db, source.messageId, staleRevisions)
+  const versions = await MessageVersionRepository.findByVersionNumbers(
+    db,
+    source.workspaceId,
+    source.messageId,
+    staleRevisions
+  )
   const markdownByRevision = new Map(versions.map((version) => [version.versionNumber, version.contentMarkdown]))
   return routes.map((route) => {
     const previousRevision = answered.get(route.actorId)

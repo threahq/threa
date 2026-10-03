@@ -679,7 +679,7 @@ export function createMessageHandlers({
         throw new MessageNotFoundError()
       }
 
-      const versions = await eventService.getMessageVersions(messageId)
+      const versions = await eventService.getMessageVersions(workspaceId, messageId)
       res.json({ versions: versions.map(serializeBigInt) })
     },
   }
