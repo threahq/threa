@@ -3,7 +3,13 @@
  */
 
 import type { Evaluator, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
+import { MEMO_GEM_CONFIDENCE_FLOOR } from "../../../src/features/memos"
 import type { MemoClassifierOutput, MemoClassifierExpected } from "./types"
+
+/** What production acts on: a worthy call below the confidence floor captures nothing. */
+function captures(output: MemoClassifierOutput): boolean {
+  return output.isKnowledgeWorthy && output.confidence >= MEMO_GEM_CONFIDENCE_FLOOR
+}
 
 /** Core gate: did the classifier make the right knowledge-worthiness call? */
 export const worthinessEvaluator: Evaluator<MemoClassifierOutput, MemoClassifierExpected> = {
@@ -12,14 +18,14 @@ export const worthinessEvaluator: Evaluator<MemoClassifierOutput, MemoClassifier
     if (output.error) {
       return { name: "worthiness", score: 0, passed: false, details: `Error: ${output.error}` }
     }
-    const passed = output.isKnowledgeWorthy === expected.expectKnowledgeWorthy
+    const passed = captures(output) === expected.expectKnowledgeWorthy
     return {
       name: "worthiness",
       score: passed ? 1 : 0,
       passed,
       details: passed
         ? undefined
-        : `Expected isKnowledgeWorthy=${expected.expectKnowledgeWorthy}, got ${output.isKnowledgeWorthy} (confidence ${output.confidence.toFixed(2)})`,
+        : `Expected capture=${expected.expectKnowledgeWorthy}, got isKnowledgeWorthy=${output.isKnowledgeWorthy} at confidence ${output.confidence.toFixed(2)} (floor ${MEMO_GEM_CONFIDENCE_FLOOR})`,
     }
   },
 }
@@ -66,7 +72,7 @@ export const garbageLeakRateEvaluator: RunEvaluator<MemoClassifierOutput, MemoCl
     if (notWorthy.length === 0) {
       return { name: "garbage-leak-rate", score: 1, passed: true, details: "No not-worthy cases in run" }
     }
-    const leaked = notWorthy.filter((c) => c.output!.isKnowledgeWorthy)
+    const leaked = notWorthy.filter((c) => captures(c.output!))
     const rate = leaked.length / notWorthy.length
     return {
       name: "garbage-leak-rate",
