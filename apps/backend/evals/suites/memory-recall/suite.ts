@@ -280,6 +280,8 @@ const judgeSchema = z.object({
   reasoning: z.string(),
 })
 
+const JUDGE_ERROR = "judge error"
+
 const correctnessEvaluator: Evaluator<MemoryRecallOutput, MemoryRecallExpected> = {
   name: "correct",
   evaluate: async (output, expected, ctx) => {
@@ -311,7 +313,7 @@ Score 1.0 when the reply states what the expected answer requires and contradict
         name: "correct",
         score: 0,
         passed: false,
-        details: `judge error: ${error instanceof Error ? error.message : String(error)}`,
+        details: `${JUDGE_ERROR}: ${error instanceof Error ? error.message : String(error)}`,
       }
     }
   },
@@ -324,6 +326,11 @@ Score 1.0 when the reply states what the expected answer requires and contradict
 type Result = CaseResult<MemoryRecallOutput, MemoryRecallExpected>
 
 const passed = (result: Result, name: string) => result.evaluations.find((e) => e.name === name)?.passed === true
+
+/** A turn that errored, or whose judge did, says nothing about whether the arm answers right. */
+const errored = (result: Result) =>
+  result.output.error !== undefined ||
+  result.evaluations.some((e) => e.name === "correct" && e.details?.startsWith(JUDGE_ERROR))
 
 /** Errored cases carry no output; they count against neither arm's numbers. */
 function byArm(results: Result[]): Record<Arm, Result[]> {
@@ -345,6 +352,7 @@ const share = (count: number, total: number) => `${count}/${total}`
 
 interface ArmStats {
   turns: number
+  errors: number
   correct: number
   correctWithoutRetrieval: number
   retrievalTurns: number
@@ -358,11 +366,12 @@ interface ArmStats {
 }
 
 function armStats(results: Result[]): ArmStats {
-  const correct = results.filter((r) => passed(r, "correct"))
+  const correct = results.filter((r) => !errored(r) && passed(r, "correct"))
   const supportedMs = correct.flatMap((r) => (r.output.firstReplyMs === undefined ? [] : [r.output.firstReplyMs]))
   const irrelevant = (r: Result) => r.output.recalledScenarios.filter((key) => !r.expectedOutput.relevant.includes(key))
   return {
     turns: results.length,
+    errors: results.filter(errored).length,
     correct: correct.length,
     correctWithoutRetrieval: correct.filter((r) => r.output.retrievalSteps === 0).length,
     retrievalTurns: results.filter((r) => r.output.retrievalSteps > 0).length,
@@ -378,7 +387,8 @@ function armStats(results: Result[]): ArmStats {
 
 function armLine(arm: Arm, s: ArmStats): string {
   return [
-    `${arm}: correct ${share(s.correct, s.turns)}`,
+    `${arm}: correct ${share(s.correct, s.turns - s.errors)}`,
+    `errored ${s.errors}`,
     `correct without a retrieval round ${share(s.correctWithoutRetrieval, s.turns)}`,
     `first supported answer p50 ${seconds(s.supportedP50)} p95 ${seconds(s.supportedP95)}`,
     `turns that researched ${share(s.retrievalTurns, s.turns)}`,
@@ -390,7 +400,8 @@ function armLine(arm: Arm, s: ArmStats): string {
 
 /**
  * The stage 2 gate: B reaches a supported answer sooner than A, is no less
- * often right, and leaks nothing out of audience.
+ * often right, and leaks nothing out of audience. Any errored turn leaves it
+ * inconclusive: an arm that did not answer cannot show it is right or leak-free.
  */
 const stageGateEvaluator: RunEvaluator<MemoryRecallOutput, MemoryRecallExpected> = {
   name: "stage-2-gate",
@@ -401,12 +412,13 @@ const stageGateEvaluator: RunEvaluator<MemoryRecallOutput, MemoryRecallExpected>
     const faster = b.supportedP50 !== undefined && a.supportedP50 !== undefined && b.supportedP50 < a.supportedP50
     const noLessRight = b.correct >= a.correct
     const noLeak = a.audienceFails === 0 && b.audienceFails === 0
-    const open = faster && noLessRight && noLeak
+    const conclusive = a.errors === 0 && b.errors === 0
+    const open = conclusive && faster && noLessRight && noLeak
     return {
       name: "stage-2-gate",
       score: open ? 1 : 0,
       passed: open,
-      details: `${armLine("A", a)}\n${armLine("B", b)}\ngate: faster=${faster} noLessRight=${noLessRight} noLeak=${noLeak}`,
+      details: `${armLine("A", a)}\n${armLine("B", b)}\ngate: conclusive=${conclusive} faster=${faster} noLessRight=${noLessRight} noLeak=${noLeak}`,
     }
   },
 }
