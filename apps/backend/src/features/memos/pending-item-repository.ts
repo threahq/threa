@@ -11,6 +11,7 @@ interface PendingItemRow {
   queued_at: Date
   processed_at: Date | null
   classified_fingerprint: string | null
+  version: number
 }
 
 export interface PendingMemoItem {
@@ -23,7 +24,11 @@ export interface PendingMemoItem {
   processedAt: Date | null
   /** Digest of the classifier inputs at the last pass; null = never classified. */
   classifiedFingerprint: string | null
+  /** Bumped on every queue; a batch acknowledges only the version it read. */
+  version: number
 }
+
+export type PendingItemVersion = Pick<PendingMemoItem, "id" | "version">
 
 export interface QueuePendingItemParams {
   id: string
@@ -43,10 +48,11 @@ function mapRowToPendingItem(row: PendingItemRow): PendingMemoItem {
     queuedAt: row.queued_at,
     processedAt: row.processed_at,
     classifiedFingerprint: row.classified_fingerprint,
+    version: row.version,
   }
 }
 
-const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint`
+const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint, version`
 
 export const PendingItemRepository = {
   async queue(client: PoolClient, items: QueuePendingItemParams[]): Promise<PendingMemoItem[]> {
@@ -62,10 +68,10 @@ export const PendingItemRepository = {
         ${items.map((i) => i.itemId)}::text[]
       )
       ON CONFLICT (workspace_id, item_type, item_id) DO UPDATE
-      SET queued_at = EXCLUDED.queued_at,
+      SET version = memo_pending_items.version + 1,
+          queued_at = CASE WHEN memo_pending_items.processed_at IS NULL THEN memo_pending_items.queued_at ELSE EXCLUDED.queued_at END,
           processed_at = NULL,
           failed_attempts = 0
-      WHERE memo_pending_items.processed_at IS NOT NULL
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows.map(mapRowToPendingItem)
@@ -90,34 +96,38 @@ export const PendingItemRepository = {
     return result.rows.map(mapRowToPendingItem)
   },
 
-  async markProcessed(client: PoolClient, ids: string[]): Promise<void> {
-    if (ids.length === 0) return
+  /** Items requeued since they were read keep their newer version and stay pending. */
+  async markProcessed(client: PoolClient, items: PendingItemVersion[]): Promise<void> {
+    if (items.length === 0) return
 
     await client.query(sql`
-      UPDATE memo_pending_items
+      UPDATE memo_pending_items AS p
       SET processed_at = NOW()
-      WHERE id = ANY(${ids})
+      FROM UNNEST(${items.map((i) => i.id)}::text[], ${items.map((i) => i.version)}::int[]) AS v(id, version)
+      WHERE p.id = v.id AND p.version = v.version
     `)
   },
 
   /**
-   * Count a failed attempt on each item. An item that reaches `maxAttempts` is
-   * marked processed, so it stops retrying until its next requeue.
+   * Count a failed attempt on each item still at the version read. An item that
+   * reaches `maxAttempts` is marked processed, so it stops retrying until its
+   * next requeue.
    */
   async recordFailedAttempts(
     client: PoolClient,
     workspaceId: string,
-    ids: string[],
+    items: PendingItemVersion[],
     maxAttempts: number
   ): Promise<PendingMemoItem[]> {
-    if (ids.length === 0) return []
+    if (items.length === 0) return []
 
     const result = await client.query<PendingItemRow>(sql`
-      UPDATE memo_pending_items
-      SET failed_attempts = failed_attempts + 1,
-          processed_at = CASE WHEN failed_attempts + 1 >= ${maxAttempts} THEN NOW() END
-      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
-      RETURNING ${sql.raw(SELECT_FIELDS)}
+      UPDATE memo_pending_items AS p
+      SET failed_attempts = p.failed_attempts + 1,
+          processed_at = CASE WHEN p.failed_attempts + 1 >= ${maxAttempts} THEN NOW() END
+      FROM UNNEST(${items.map((i) => i.id)}::text[], ${items.map((i) => i.version)}::int[]) AS v(id, version)
+      WHERE p.workspace_id = ${workspaceId} AND p.id = v.id AND p.version = v.version
+      RETURNING p.*
     `)
     return result.rows.map(mapRowToPendingItem)
   },

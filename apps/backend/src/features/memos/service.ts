@@ -843,17 +843,14 @@ export class MemoService implements MemoServiceLike {
 
       const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id) && !failedItemIds.has(p.id))
       if (itemsToMark.length > 0) {
-        await PendingItemRepository.markProcessed(
-          client,
-          itemsToMark.map((p) => p.id)
-        )
+        await PendingItemRepository.markProcessed(client, itemsToMark)
       }
 
       const givenUp = (
         await PendingItemRepository.recordFailedAttempts(
           client,
           workspaceId,
-          [...failedItemIds],
+          fetchedData.pending.filter((p) => failedItemIds.has(p.id)),
           MEMO_MAX_FAILED_ATTEMPTS
         )
       ).filter((p) => p.processedAt !== null)

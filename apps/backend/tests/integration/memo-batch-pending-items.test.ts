@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { ConversationStatuses } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository } from "../../src/features/memos"
@@ -29,13 +29,13 @@ async function fail(): Promise<never> {
   throw new Error("provider unavailable")
 }
 
-describe("memo batch: failed items", () => {
+describe("memo batch: pending items", () => {
   let pool: Pool
   let testWorkspaceId: string
   let testUserId: string
 
   function serviceWith(overrides: {
-    classify?: () => Promise<ConversationClassification>
+    classify?: (conversation: { messageIds: string[] }) => Promise<ConversationClassification>
     embed?: () => Promise<number[][]>
   }): MemoService {
     return new MemoService({
@@ -60,7 +60,7 @@ describe("memo batch: failed items", () => {
 
   /** A settled two-message conversation in its own stream, queued for capture. */
   async function seedQueuedConversation() {
-    const ids = { streamId: streamId(), conversationId: conversationId(), pendingId: pendingItemId() }
+    const ids = { streamId: streamId(), conversationId: conversationId() }
     await withTransaction(pool, async (client) => {
       await StreamRepository.insert(client, {
         id: ids.streamId,
@@ -77,32 +77,54 @@ describe("memo batch: failed items", () => {
         status: ConversationStatuses.RESOLVED,
       })
       for (const sequence of [1n, 2n]) {
-        const id = messageId()
-        await MessageRepository.insert(client, {
-          id,
-          streamId: ids.streamId,
-          sequence,
-          authorId: testUserId,
-          authorType: "user",
-          ...testMessageContent("we start the migration with the auth service"),
-        })
-        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, ids.conversationId, id, testUserId)
+        await addMessage(client, ids, sequence)
       }
-      await PendingItemRepository.queue(client, [
-        {
-          id: ids.pendingId,
-          workspaceId: testWorkspaceId,
-          streamId: ids.streamId,
-          itemType: "conversation",
-          itemId: ids.conversationId,
-        },
-      ])
+      await requeue(client, ids)
     })
     return ids
   }
 
-  async function pendingState(pendingId: string) {
-    const { rows } = await pool.query(`SELECT * FROM memo_pending_items WHERE id = $1`, [pendingId])
+  async function addMessage(
+    client: PoolClient,
+    ids: { streamId: string; conversationId: string },
+    sequence: bigint
+  ): Promise<string> {
+    const id = messageId()
+    await MessageRepository.insert(client, {
+      id,
+      streamId: ids.streamId,
+      sequence,
+      authorId: testUserId,
+      authorType: "user",
+      ...testMessageContent("we start the migration with the auth service"),
+    })
+    await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, ids.conversationId, id, testUserId)
+    return id
+  }
+
+  async function requeue(client: PoolClient, ids: { streamId: string; conversationId: string }) {
+    await PendingItemRepository.queue(client, [
+      {
+        id: pendingItemId(),
+        workspaceId: testWorkspaceId,
+        streamId: ids.streamId,
+        itemType: "conversation",
+        itemId: ids.conversationId,
+      },
+    ])
+  }
+
+  /** A reply landing and requeueing the conversation while the batch's model call is in flight. */
+  async function replyMidFlight(ids: { streamId: string; conversationId: string }): Promise<string> {
+    return withTransaction(pool, async (client) => {
+      const id = await addMessage(client, ids, 3n)
+      await requeue(client, ids)
+      return id
+    })
+  }
+
+  async function pendingState(convId: string) {
+    const { rows } = await pool.query(`SELECT * FROM memo_pending_items WHERE item_id = $1`, [convId])
     return {
       processed: rows[0].processed_at !== null,
       fingerprint: rows[0].classified_fingerprint,
@@ -121,8 +143,8 @@ describe("memo batch: failed items", () => {
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
         id: testWorkspaceId,
-        name: "Memo Batch Failures",
-        slug: `memo-batch-failures-${testWorkspaceId}`,
+        name: "Memo Batch Pending Items",
+        slug: `memo-batch-pending-items-${testWorkspaceId}`,
         createdBy: workosUserId,
       })
       testUserId = (await addTestMember(client, testWorkspaceId, workosUserId)).id
@@ -138,7 +160,11 @@ describe("memo batch: failed items", () => {
 
     await serviceWith({ classify: fail }).processBatch(testWorkspaceId, seeded.streamId)
 
-    expect(await pendingState(seeded.pendingId)).toEqual({ processed: false, fingerprint: null, failedAttempts: 1 })
+    expect(await pendingState(seeded.conversationId)).toEqual({
+      processed: false,
+      fingerprint: null,
+      failedAttempts: 1,
+    })
   })
 
   test("an embedding failure after classification leaves the item pending with no fingerprint", async () => {
@@ -146,7 +172,11 @@ describe("memo batch: failed items", () => {
 
     await serviceWith({ embed: fail }).processBatch(testWorkspaceId, seeded.streamId)
 
-    expect(await pendingState(seeded.pendingId)).toEqual({ processed: false, fingerprint: null, failedAttempts: 1 })
+    expect(await pendingState(seeded.conversationId)).toEqual({
+      processed: false,
+      fingerprint: null,
+      failedAttempts: 1,
+    })
     expect(await memoCount(seeded.conversationId)).toBe(0)
   })
 
@@ -156,7 +186,7 @@ describe("memo batch: failed items", () => {
     await serviceWith({ classify: fail }).processBatch(testWorkspaceId, seeded.streamId)
     await serviceWith({}).processBatch(testWorkspaceId, seeded.streamId)
 
-    expect(await pendingState(seeded.pendingId)).toEqual({
+    expect(await pendingState(seeded.conversationId)).toEqual({
       processed: true,
       fingerprint: expect.any(String),
       failedAttempts: 1,
@@ -172,7 +202,7 @@ describe("memo batch: failed items", () => {
       await failing.processBatch(testWorkspaceId, seeded.streamId)
     }
 
-    expect(await pendingState(seeded.pendingId)).toEqual({
+    expect(await pendingState(seeded.conversationId)).toEqual({
       processed: true,
       fingerprint: null,
       failedAttempts: MEMO_MAX_FAILED_ATTEMPTS,
@@ -186,19 +216,48 @@ describe("memo batch: failed items", () => {
       await failing.processBatch(testWorkspaceId, seeded.streamId)
     }
 
-    await withTransaction(pool, (client) =>
-      PendingItemRepository.queue(client, [
-        {
-          id: pendingItemId(),
-          workspaceId: testWorkspaceId,
-          streamId: seeded.streamId,
-          itemType: "conversation",
-          itemId: seeded.conversationId,
-        },
-      ])
-    )
+    await withTransaction(pool, (client) => requeue(client, seeded))
     await failing.processBatch(testWorkspaceId, seeded.streamId)
 
-    expect(await pendingState(seeded.pendingId)).toEqual({ processed: false, fingerprint: null, failedAttempts: 1 })
+    expect(await pendingState(seeded.conversationId)).toEqual({
+      processed: false,
+      fingerprint: null,
+      failedAttempts: 1,
+    })
+  })
+
+  test("a reply that requeues the conversation mid-batch keeps it pending for the next batch", async () => {
+    const seeded = await seedQueuedConversation()
+    let reply = ""
+    const classified: string[][] = []
+    const classify = async (conversation: { messageIds: string[] }) => {
+      classified.push(conversation.messageIds)
+      reply ||= await replyMidFlight(seeded)
+      return worthy
+    }
+
+    await serviceWith({ classify }).processBatch(testWorkspaceId, seeded.streamId)
+    expect(await pendingState(seeded.conversationId)).toMatchObject({ processed: false })
+
+    await serviceWith({ classify }).processBatch(testWorkspaceId, seeded.streamId)
+    expect(await pendingState(seeded.conversationId)).toMatchObject({ processed: true })
+    expect(classified.map((ids) => ids.includes(reply))).toEqual([false, true])
+  })
+
+  test("a failure in a batch the conversation was requeued during does not count against it", async () => {
+    const seeded = await seedQueuedConversation()
+
+    await serviceWith({
+      classify: async () => {
+        await replyMidFlight(seeded)
+        throw new Error("provider unavailable")
+      },
+    }).processBatch(testWorkspaceId, seeded.streamId)
+
+    expect(await pendingState(seeded.conversationId)).toEqual({
+      processed: false,
+      fingerprint: null,
+      failedAttempts: 0,
+    })
   })
 })
