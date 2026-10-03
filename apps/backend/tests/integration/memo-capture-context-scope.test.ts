@@ -59,9 +59,12 @@ describe("memo capture: model context honors memo scope", () => {
       memorizer: {
         memorizeConversation: async (
           _formatted: string,
-          context: { memoryContext: string[]; existingTags: string[]; content: { id: string }[] }
+          context: { memoryContext: { abstract: string }[]; existingTags: string[]; content: { id: string }[] }
         ) => {
-          memorizerContexts.push({ memoryContext: context.memoryContext, existingTags: context.existingTags })
+          memorizerContexts.push({
+            memoryContext: context.memoryContext.map((m) => m.abstract),
+            existingTags: context.existingTags,
+          })
           return [
             {
               title: "Start with auth",
