@@ -613,6 +613,60 @@ describe("access-log socket capture", () => {
     await pool.query(`DELETE FROM stream_events WHERE stream_id = $1`, [streamId])
   })
 
+  test("should not report a same-stream event from another workspace when reconstructing deliveries", async () => {
+    const wsId = `workspace_recon_a_${testRunId}`
+    const otherWsId = `workspace_recon_b_${testRunId}`
+    const streamId = `stream_recon_scope_${testRunId}`
+    const sconn = `sconn_recon_scope_${testRunId}`
+    const userId = `usr_recon_scope_${testRunId}`
+    const nowUtc = new Date()
+    const base = Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), 15, 10, 0, 0)
+    const at = (offsetMs: number) => new Date(base + offsetMs).toISOString()
+
+    await pool.query(`DELETE FROM access_log WHERE workspace_id = $1`, [wsId])
+    await pool.query(`DELETE FROM stream_events WHERE stream_id = $1`, [streamId])
+
+    const insertAccess = (kind: string, occurredAt: string) =>
+      pool.query(
+        `INSERT INTO access_log (id, workspace_id, occurred_at, actor_type, actor_id, auth_ref, operation, access_kind, outcome, subjects)
+         VALUES ($1,$2,$3,'user',$4,$5,$6,$7,'success',$8::jsonb)`,
+        [
+          `acc_${Math.random().toString(36).slice(2)}`,
+          wsId,
+          occurredAt,
+          userId,
+          sconn,
+          `socket.${kind}`,
+          kind,
+          JSON.stringify([{ type: "stream", id: streamId }]),
+        ]
+      )
+    const insertEvent = (workspaceId: string, seq: number, createdAt: string) =>
+      pool.query(
+        `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, actor_id, actor_type, payload, created_at)
+         VALUES ($1,$2,$3,$4,'message_created',$5,'user','{}'::jsonb,$6)`,
+        [`evt_${Math.random().toString(36).slice(2)}`, workspaceId, streamId, seq, userId, createdAt]
+      )
+
+    await insertAccess("subscribe", at(0))
+    await insertEvent(wsId, 1, at(1000))
+    await insertEvent(otherWsId, 2, at(2000))
+    await insertAccess("unsubscribe", at(4000))
+
+    const delivered = await AccessLogRepository.reconstructDeliveredEvents(pool, {
+      clockSkewToleranceMs: 0,
+      workspaceId: wsId,
+      streamId,
+      from: new Date(base - 60_000),
+      to: new Date(base + 60_000),
+    })
+
+    expect(delivered.map((e) => e.sequence)).toEqual([1])
+
+    await pool.query(`DELETE FROM access_log WHERE workspace_id = $1`, [wsId])
+    await pool.query(`DELETE FROM stream_events WHERE stream_id = $1`, [streamId])
+  })
+
   test("reconstructDeliveredEvents treats an unclosed interval as open-ended", async () => {
     const client = new TestClient()
     const user = await loginAs(client, email("open"), "Open Interval")

@@ -113,15 +113,17 @@ const SELECT_FIELDS = `
 /** Parents without remaining capacity are not pending, matching the CP shadow filter. */
 const PARENT_HAS_CAPACITY = `(parent.id IS NULL OR parent.max_uses IS NULL OR ${USE_COUNT_EXPR("parent")} < parent.max_uses)`
 
-async function findById(db: Querier, id: string, forUpdate = false): Promise<Invitation | null> {
+async function findById(db: Querier, workspaceId: string, id: string, forUpdate = false): Promise<Invitation | null> {
   if (forUpdate) {
-    const locked = await db.query(sql`SELECT id FROM workspace_invitations WHERE id = ${id} FOR UPDATE`)
+    const locked = await db.query(
+      sql`SELECT id FROM workspace_invitations WHERE workspace_id = ${workspaceId} AND id = ${id} FOR UPDATE`
+    )
     if (locked.rows.length === 0) return null
   }
   const result = await db.query<InvitationRow>(sql`
     SELECT ${sql.raw(SELECT_FIELDS)}
     FROM workspace_invitations wi
-    WHERE wi.id = ${id}
+    WHERE wi.workspace_id = ${workspaceId} AND wi.id = ${id}
   `)
   return result.rows[0] ? mapRow(result.rows[0]) : null
 }
@@ -165,7 +167,7 @@ export const InvitationRepository = {
         AND (expires_at IS NULL OR expires_at > NOW())
       RETURNING id
     `)
-    return result.rows[0] ? findById(db, result.rows[0].id) : null
+    return result.rows[0] ? findById(db, workspaceId, result.rows[0].id) : null
   },
 
   async findLinkChild(
@@ -178,7 +180,7 @@ export const InvitationRepository = {
       SELECT id FROM workspace_invitations
       WHERE workspace_id = ${workspaceId} AND parent_link_id = ${parentLinkId} AND lower(email) = lower(${email})
     `)
-    return result.rows[0] ? findById(db, result.rows[0].id) : null
+    return result.rows[0] ? findById(db, workspaceId, result.rows[0].id) : null
   },
 
   async countPendingLinkChildren(db: Querier, workspaceId: string, parentLinkId: string): Promise<number> {
@@ -203,24 +205,35 @@ export const InvitationRepository = {
       DO UPDATE SET email = EXCLUDED.email
       RETURNING id
     `)
-    return (await findById(db, result.rows[0].id))!
+    return (await findById(db, params.parent.workspaceId, result.rows[0].id))!
   },
 
   async findRootByTokenHashForUpdate(db: Querier, tokenHash: string): Promise<Invitation | null> {
-    const result = await db.query<{ id: string }>(sql`
-      SELECT id FROM workspace_invitations
-      WHERE token_hash = ${tokenHash} AND kind = 'link' AND parent_link_id IS NULL
-      FOR UPDATE
-    `)
-    return result.rows[0] ? findById(db, result.rows[0].id) : null
+    const result = await db.query<{ id: string; workspace_id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- pre-auth: the token hash discovers the workspace
+      sql`
+        SELECT id, workspace_id FROM workspace_invitations
+        WHERE token_hash = ${tokenHash} AND kind = 'link' AND parent_link_id IS NULL
+        FOR UPDATE
+      `
+    )
+    return result.rows[0] ? findById(db, result.rows[0].workspace_id, result.rows[0].id) : null
   },
 
-  findById(db: Querier, id: string): Promise<Invitation | null> {
-    return findById(db, id)
+  async findWorkspaceIdByInvitationId(db: Querier, id: string): Promise<string | null> {
+    const result = await db.query<{ workspace_id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- the invitation id discovers the workspace; the control plane sends no workspace id
+      sql`SELECT workspace_id FROM workspace_invitations WHERE id = ${id}`
+    )
+    return result.rows[0]?.workspace_id ?? null
   },
 
-  findByIdForUpdate(db: Querier, id: string): Promise<Invitation | null> {
-    return findById(db, id, true)
+  findById(db: Querier, workspaceId: string, id: string): Promise<Invitation | null> {
+    return findById(db, workspaceId, id)
+  },
+
+  findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<Invitation | null> {
+    return findById(db, workspaceId, id, true)
   },
 
   async lockMembershipIdentity(db: Querier, workspaceId: string, workosUserId: string): Promise<void> {
@@ -247,17 +260,20 @@ export const InvitationRepository = {
   },
 
   async findPendingByEmail(db: Querier, email: string): Promise<Invitation[]> {
-    const result = await db.query<InvitationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM workspace_invitations wi
-      LEFT JOIN workspace_invitations parent
-        ON parent.id = wi.parent_link_id AND parent.workspace_id = wi.workspace_id
-      WHERE wi.email = ${email} AND wi.status = 'pending'
-        AND (CASE WHEN parent.id IS NULL THEN wi.status ELSE parent.status END) <> 'revoked'
-        AND (CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END IS NULL
-          OR CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END > NOW())
-        AND ${sql.raw(PARENT_HAS_CAPACITY)}
-      ORDER BY wi.created_at DESC
-    `)
+    const result = await db.query<InvitationRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- pre-auth login lookup: the email discovers every workspace that invited it
+      sql`
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM workspace_invitations wi
+        LEFT JOIN workspace_invitations parent
+          ON parent.id = wi.parent_link_id AND parent.workspace_id = wi.workspace_id
+        WHERE wi.email = ${email} AND wi.status = 'pending'
+          AND (CASE WHEN parent.id IS NULL THEN wi.status ELSE parent.status END) <> 'revoked'
+          AND (CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END IS NULL
+            OR CASE WHEN parent.id IS NULL THEN wi.expires_at ELSE parent.expires_at END > NOW())
+          AND ${sql.raw(PARENT_HAS_CAPACITY)}
+        ORDER BY wi.created_at DESC
+      `
+    )
     return result.rows.map(mapRow)
   },
 
@@ -278,6 +294,7 @@ export const InvitationRepository = {
 
   async accept(
     db: Querier,
+    workspaceId: string,
     id: string,
     acceptedAt: Date,
     acceptedWorkosUserId: string | null,
@@ -287,14 +304,14 @@ export const InvitationRepository = {
       UPDATE workspace_invitations
       SET status = 'accepted', accepted_at = ${acceptedAt}, accepted_workos_user_id = ${acceptedWorkosUserId},
           acceptance_consumes_capacity = ${consumesCapacity}
-      WHERE id = ${id} AND status = 'pending'
+      WHERE workspace_id = ${workspaceId} AND id = ${id} AND status = 'pending'
     `)
     return (result.rowCount ?? 0) > 0
   },
 
-  async incrementRevision(db: Querier, id: string): Promise<void> {
+  async incrementRevision(db: Querier, workspaceId: string, id: string): Promise<void> {
     await db.query(sql`
-      UPDATE workspace_invitations SET revision = revision + 1 WHERE id = ${id}
+      UPDATE workspace_invitations SET revision = revision + 1 WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
   },
 
@@ -304,14 +321,8 @@ export const InvitationRepository = {
     workspaceId: string,
     params: { maxUses?: number | null; expiresAt?: Date | null }
   ): Promise<Invitation | null> {
-    const current = await findById(db, id, true)
-    if (
-      !current ||
-      current.workspaceId !== workspaceId ||
-      current.kind !== "link" ||
-      current.parentLinkId ||
-      current.status === "revoked"
-    ) {
+    const current = await findById(db, workspaceId, id, true)
+    if (!current || current.kind !== "link" || current.parentLinkId || current.status === "revoked") {
       return null
     }
     if (current.role === "admin" && params.maxUses !== undefined && params.maxUses !== 1) return null
@@ -324,7 +335,7 @@ export const InvitationRepository = {
           status = CASE WHEN status = 'expired' THEN 'pending' ELSE status END
       WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
-    return findById(db, id)
+    return findById(db, workspaceId, id)
   },
 
   async revoke(db: Querier, id: string, workspaceId: string, revokedAt: Date): Promise<Invitation | null> {
@@ -335,7 +346,7 @@ export const InvitationRepository = {
         AND (status = 'pending' OR (kind = 'link' AND parent_link_id IS NULL))
       RETURNING id
     `)
-    return result.rows[0] ? findById(db, result.rows[0].id) : null
+    return result.rows[0] ? findById(db, workspaceId, result.rows[0].id) : null
   },
 
   async markExpired(db: Querier, workspaceId: string): Promise<number> {

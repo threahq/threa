@@ -95,7 +95,7 @@ describe("multi-use invitation lifecycle", () => {
         name: "Email Invite",
       })
     ).resolves.toBe(fixture.workspaceId)
-    expect(await InvitationRepository.findById(fixture.pool, sent.sent[0].id)).toMatchObject({
+    expect(await InvitationRepository.findById(fixture.pool, fixture.workspaceId, sent.sent[0].id)).toMatchObject({
       kind: "email",
       status: "accepted",
       maxUses: null,
@@ -180,7 +180,9 @@ describe("multi-use invitation lifecycle", () => {
 
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(2)
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1)
-    expect((await InvitationRepository.findById(fixture.pool, created.invitation.id))?.useCount).toBe(2)
+    expect(
+      (await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id))?.useCount
+    ).toBe(2)
   })
 
   test("should reject a limit below completed joins without changing the link", async () => {
@@ -195,7 +197,7 @@ describe("multi-use invitation lifecycle", () => {
     const candidates = [identity(50), identity(51)]
     const children = await Promise.all(candidates.map((candidate) => claim(fixture, created.token, candidate.email)))
     await Promise.all(children.map((id, index) => fixture.service.acceptInvitation(id, candidates[index])))
-    const before = await InvitationRepository.findById(fixture.pool, created.invitation.id)
+    const before = await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id)
     await expect(
       fixture.service.updateLink({
         workspaceId: fixture.workspaceId,
@@ -203,7 +205,9 @@ describe("multi-use invitation lifecycle", () => {
         maxUses: 1,
       })
     ).resolves.toBeNull()
-    expect(await InvitationRepository.findById(fixture.pool, created.invitation.id)).toEqual(before)
+    expect(await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id)).toEqual(
+      before
+    )
     expect(before).toMatchObject({ maxUses: 3, useCount: 2 })
   })
 
@@ -227,7 +231,9 @@ describe("multi-use invitation lifecycle", () => {
     await fixture.service.revokeInvitation(created.invitation.id, fixture.workspaceId)
 
     await expect(fixture.service.acceptInvitation(children[0], candidates[0])).resolves.toBe(fixture.workspaceId)
-    expect((await InvitationRepository.findById(fixture.pool, created.invitation.id))?.useCount).toBe(3)
+    expect(
+      (await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id))?.useCount
+    ).toBe(3)
   })
 
   test("should not count wrong-email, duplicate, or existing-member paths", async () => {
@@ -245,17 +251,23 @@ describe("multi-use invitation lifecycle", () => {
     await expect(
       fixture.service.acceptInvitation(childId, { ...candidate, email: "wrong@example.com" })
     ).rejects.toMatchObject({ code: "INVITATION_EMAIL_MISMATCH" })
-    expect((await InvitationRepository.findById(fixture.pool, created.invitation.id))?.useCount).toBe(0)
+    expect(
+      (await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id))?.useCount
+    ).toBe(0)
 
     await fixture.service.acceptInvitation(childId, candidate)
     await fixture.service.acceptInvitation(childId, candidate)
-    expect((await InvitationRepository.findById(fixture.pool, created.invitation.id))?.useCount).toBe(1)
+    expect(
+      (await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id))?.useCount
+    ).toBe(1)
 
     const existingEmail = `${fixture.inviterId.toLowerCase()}@example.com`
     await expect(fixture.service.claimLinkByToken(created.token, existingEmail)).resolves.toEqual({
       alreadyMember: { workspaceId: fixture.workspaceId },
     })
-    expect((await InvitationRepository.findById(fixture.pool, created.invitation.id))?.useCount).toBe(1)
+    expect(
+      (await InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id))?.useCount
+    ).toBe(1)
   })
 
   test("should emit a fresh claim for a removed user whose durable user row remains", async () => {
@@ -332,8 +344,8 @@ describe("multi-use invitation lifecycle", () => {
       fixture.service.acceptInvitation(secondChild, candidate),
     ])
     const [firstRoot, secondRoot] = await Promise.all([
-      InvitationRepository.findById(fixture.pool, first.invitation.id),
-      InvitationRepository.findById(fixture.pool, second.invitation.id),
+      InvitationRepository.findById(fixture.pool, fixture.workspaceId, first.invitation.id),
+      InvitationRepository.findById(fixture.pool, fixture.workspaceId, second.invitation.id),
     ])
     expect((firstRoot?.useCount ?? 0) + (secondRoot?.useCount ?? 0)).toBe(1)
   })
@@ -433,8 +445,8 @@ describe("multi-use invitation lifecycle", () => {
 
     expect(revokeResult).toEqual({ status: "fulfilled", value: true })
     const [parent, acceptedChild] = await Promise.all([
-      InvitationRepository.findById(fixture.pool, created.invitation.id),
-      InvitationRepository.findById(fixture.pool, childId),
+      InvitationRepository.findById(fixture.pool, fixture.workspaceId, created.invitation.id),
+      InvitationRepository.findById(fixture.pool, fixture.workspaceId, childId),
     ])
     expect(parent?.status).toBe("revoked")
     if (acceptResult.status === "fulfilled") {
@@ -521,7 +533,7 @@ describe("multi-use invitation lifecycle", () => {
       email,
       name: "Invite admin",
     })
-    expect(await InvitationRepository.findById(fixture.pool, id)).toMatchObject({
+    expect(await InvitationRepository.findById(fixture.pool, fixture.workspaceId, id)).toMatchObject({
       status: "accepted",
       useCount: 0,
       acceptanceConsumesCapacity: false,
@@ -544,7 +556,7 @@ describe("multi-use invitation lifecycle", () => {
       [id]
     )
 
-    expect(await InvitationRepository.findById(fixture.pool, id)).toMatchObject({
+    expect(await InvitationRepository.findById(fixture.pool, fixture.workspaceId, id)).toMatchObject({
       useCount: 1,
       acceptanceConsumesCapacity: null,
     })
@@ -828,7 +840,7 @@ describe("multi-use invitation lifecycle", () => {
     await expect(
       fixture.service.updateLink({ workspaceId: fixture.workspaceId, invitationId: id, maxUses: 2 })
     ).resolves.toBeNull()
-    expect(await InvitationRepository.findById(fixture.pool, id)).toMatchObject({
+    expect(await InvitationRepository.findById(fixture.pool, fixture.workspaceId, id)).toMatchObject({
       email: "first-admin@example.com",
       maxUses: 1,
       expiresAt: null,
@@ -845,7 +857,7 @@ describe("multi-use invitation lifecycle", () => {
        VALUES ($1, $2, 'link', 'legacy@example.com', 'member', $3, $4, 'accepted', NULL, NOW(), 1)`,
       [id, fixture.workspaceId, fixture.inviterId, hashInvitationToken(token)]
     )
-    expect((await InvitationRepository.findById(fixture.pool, id))?.useCount).toBe(1)
+    expect((await InvitationRepository.findById(fixture.pool, fixture.workspaceId, id))?.useCount).toBe(1)
 
     await fixture.service.updateLink({
       workspaceId: fixture.workspaceId,
@@ -859,7 +871,7 @@ describe("multi-use invitation lifecycle", () => {
       email: "legacy-second@example.com",
       name: "Legacy Second",
     })
-    const row = await InvitationRepository.findById(fixture.pool, id)
+    const row = await InvitationRepository.findById(fixture.pool, fixture.workspaceId, id)
     expect(row).toMatchObject({ maxUses: 2, useCount: 2 })
 
     const outbox = await fixture.pool.query<{ payload: Record<string, unknown> }>(

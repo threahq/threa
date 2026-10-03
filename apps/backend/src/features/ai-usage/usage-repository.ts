@@ -160,15 +160,6 @@ export const AIUsageRepository = {
     return mapRowToRecord(result.rows[0])
   },
 
-  async findById(db: Querier, id: string): Promise<AIUsageRecord | null> {
-    const result = await db.query<AIUsageRecordRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM ai_usage_records
-      WHERE id = ${id}
-    `)
-    if (!result.rows[0]) return null
-    return mapRowToRecord(result.rows[0])
-  },
-
   async getWorkspaceUsage(db: Querier, workspaceId: string, periodStart: Date, periodEnd: Date): Promise<UsageSummary> {
     const result = await db.query<{
       total_cost_usd: string | null
@@ -391,22 +382,21 @@ export const AIUsageRepository = {
     options?: { limit?: number; userId?: string }
   ): Promise<AIUsageRecord[]> {
     const limit = options?.limit ?? 50
-    const conditions: string[] = [`workspace_id = $1`]
     const values: unknown[] = [workspaceId]
-    let paramIndex = 2
+    let userClause = ""
 
     if (options?.userId) {
-      conditions.push(`user_id = $${paramIndex++}`)
       values.push(options.userId)
+      userClause = `AND user_id = $${values.length}`
     }
 
     values.push(limit)
 
     const query = `
       SELECT ${SELECT_FIELDS} FROM ai_usage_records
-      WHERE ${conditions.join(" AND ")}
+      WHERE workspace_id = $1 ${userClause}
       ORDER BY created_at DESC
-      LIMIT $${paramIndex}
+      LIMIT $${values.length}
     `
 
     const result = await db.query<AIUsageRecordRow>(query, values)
