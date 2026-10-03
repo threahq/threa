@@ -763,9 +763,21 @@ export class MemoService implements MemoServiceLike {
         // subsumes the in-batch check. Same-conversation repeats are gated
         // here too — the revision prompt alone demonstrably re-emits
         // near-identical memos when a conversation is re-processed.
-        const explicitSupersedeIds = (memoData.supersedesMemoIds ?? []).filter(
-          (id) => !createdMemos.some((m) => m.id === id)
-        )
+        const citedIds = (memoData.supersedesMemoIds ?? []).filter((id) => !createdMemos.some((m) => m.id === id))
+        const explicitSupersedeIds = await MemoRepository.filterSupersedable(client, workspaceId, citedIds, {
+          conversationId: memoData.sourceConversationId ?? null,
+          sourceMessageIds: memoData.sourceMessageIds,
+        })
+        if (explicitSupersedeIds.length < citedIds.length) {
+          logger.info(
+            {
+              conversationId: memoData.sourceConversationId,
+              memoId: memoData.id,
+              keptIds: citedIds.filter((id) => !explicitSupersedeIds.includes(id)),
+            },
+            "Kept cited memo(s) whose sources are newer than the capture citing them"
+          )
+        }
 
         // A memo this one explicitly retires is never its dedup blocker: a
         // correction of an inverted conclusion shares nearly all its text with

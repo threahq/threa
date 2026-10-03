@@ -137,6 +137,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
   spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
   spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
+  spyOn(MemoRepository, "filterSupersedable").mockImplementation(async (_db, _workspaceId, ids) => ids)
   spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
