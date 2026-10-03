@@ -97,14 +97,14 @@ describe("read state — non-member unlock", () => {
 
       // The viewer has NO stream_members row — only their own read-state row,
       // advanced through the second event (sequence-resolved in SQL).
-      await ReadStateRepository.advance(pool, sid, viewer, events[1].id, { holdInInbox: false })
+      await ReadStateRepository.advance(pool, wid, sid, viewer, events[1].id, { holdInInbox: false })
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [viewer], events[1].sequence)
       expect(readThrough).toEqual(new Set([viewer]))
 
       // A row below the target sequence does not qualify.
       const fresh = userId()
-      await ReadStateRepository.advance(pool, sid, fresh, events[0].id, { holdInInbox: false })
+      await ReadStateRepository.advance(pool, wid, sid, fresh, events[0].id, { holdInInbox: false })
       const notYet = await usersReadThroughEffective(pool, wid, sid, [fresh], events[1].sequence)
       expect(notYet).toEqual(new Set())
     })
@@ -121,7 +121,7 @@ describe("read state — non-member unlock", () => {
       // An explicit unread-to-zero: the row exists with a NULL watermark, which
       // reads as "before the first message" and never qualifies.
       await StreamMemberRepository.insert(pool, wid, sid, member)
-      await ReadStateRepository.set(pool, sid, member, null)
+      await ReadStateRepository.set(pool, wid, sid, member, null)
 
       const readThrough = await usersReadThroughEffective(pool, wid, sid, [member], events[0].sequence)
       expect(readThrough).toEqual(new Set())
@@ -194,7 +194,7 @@ describe("read state — non-member unlock", () => {
       expect(membership).toBeNull()
       expect(await membershipCount(sid, viewer)).toBe(0)
 
-      const row = await ReadStateRepository.get(pool, sid, viewer)
+      const row = await ReadStateRepository.get(pool, wid, sid, viewer)
       expect(row?.lastReadEventId).toBe(events[1].id)
       expect(row?.workspaceId).toBe(wid)
 
@@ -225,7 +225,7 @@ describe("read state — non-member unlock", () => {
       await streamService.markAsRead(wid, sid, viewer, events[2].id)
       await streamService.markAsRead(wid, sid, viewer, events[0].id)
 
-      const row = await ReadStateRepository.get(pool, sid, viewer)
+      const row = await ReadStateRepository.get(pool, wid, sid, viewer)
       expect(row?.lastReadEventId).toBe(events[2].id)
       // Both writes emit author-scoped stream:read; the stale one carries the
       // post-write frontier, not the regressed event.
@@ -251,7 +251,7 @@ describe("read state — non-member unlock", () => {
       })
       expect(await membershipCount(sid, viewer)).toBe(0)
 
-      const row = await ReadStateRepository.get(pool, sid, viewer)
+      const row = await ReadStateRepository.get(pool, wid, sid, viewer)
       expect(row?.lastReadEventId).toBe(events[0].id)
 
       const emitted = await outboxFor("stream:read_set", sid)
@@ -284,7 +284,7 @@ describe("read state — non-member unlock", () => {
         readState: {
           lastReadEventId: events[1].id,
           lastReadSequence: events[1].sequence.toString(),
-          lastReadAt: (await ReadStateRepository.get(pool, sid, viewer))!.lastReadAt!.toISOString(),
+          lastReadAt: (await ReadStateRepository.get(pool, wid, sid, viewer))!.lastReadAt!.toISOString(),
         },
         lastReadOrdinal: 2,
         readMessageIds: [],
@@ -337,7 +337,7 @@ describe("read state — non-member unlock", () => {
         readMessageIds: null,
         inboxHeld: null,
       })
-      const row = await ReadStateRepository.get(pool, sid, viewer)
+      const row = await ReadStateRepository.get(pool, wid, sid, viewer)
       expect(row?.lastReadEventId).toBe(events[0].id)
       // Only the seeding read emitted — neither no-op did.
       expect((await outboxFor("stream:read", sid)).map((p) => p.lastReadEventId)).toEqual([events[0].id])
@@ -371,7 +371,7 @@ describe("read state — non-member unlock", () => {
         readMessageIds: null,
         inboxHeld: null,
       })
-      expect((await ReadStateRepository.get(pool, sid, viewer))?.lastReadEventId).toBe(target.id)
+      expect((await ReadStateRepository.get(pool, wid, sid, viewer))?.lastReadEventId).toBe(target.id)
     })
 
     test("markUnread on the first message parks the frontier before it (null watermark)", async () => {
@@ -388,7 +388,7 @@ describe("read state — non-member unlock", () => {
         membership: null,
         readState: { lastReadEventId: null, lastReadSequence: null },
       })
-      const row = await ReadStateRepository.get(pool, sid, viewer)
+      const row = await ReadStateRepository.get(pool, wid, sid, viewer)
       expect(row).not.toBeNull()
       expect(row?.lastReadEventId).toBeNull()
     })
