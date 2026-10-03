@@ -85,6 +85,8 @@ export interface ContextParams {
    * `assertStreamWritable` before the turn does any work.
    */
   invokingUserOverride?: string
+  /** The delegated model of the live subagent run this stream is the thread of, when there is one. */
+  subagentModel?: string
 }
 
 export interface AgentContext {
@@ -170,6 +172,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     followUp,
     subagentBrief,
     invokingUserOverride,
+    subagentModel,
   } = params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
@@ -229,11 +232,15 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessType = accessSpec.type
   }
   const memoryModeStream = stream.rootStreamId ? await findMemoryModeStream(db, workspaceId, stream.id) : stream
-  const selfKnowledge: SelfKnowledge = {
-    access: accessType,
-    memoryCapture: isMemoryAutomationOn(memoryModeStream) ? "on" : "off",
-    sealed: stream.e2eEnabled === true,
-  }
+  const selfKnowledge: SelfKnowledge =
+    stream.e2eEnabled === true
+      ? { sealed: true }
+      : {
+          sealed: false,
+          access: accessType,
+          memoryCapture: isMemoryAutomationOn(memoryModeStream) ? "on" : "off",
+          subagentModel: subagentModel ?? null,
+        }
 
   // Recall runs beside the window build: its embedding and scoring calls are
   // the slow part, and nothing in the window depends on them.

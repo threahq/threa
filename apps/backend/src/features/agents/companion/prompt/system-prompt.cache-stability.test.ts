@@ -73,7 +73,7 @@ const BASE_PREFERENCES: UserPreferences = {
 const BASE: SystemPromptInputs = {
   persona,
   context,
-  selfKnowledge: { access: "user_full_access", memoryCapture: "on", sealed: false },
+  selfKnowledge: { sealed: false, access: "user_full_access", memoryCapture: "on", subagentModel: null },
 }
 
 /**

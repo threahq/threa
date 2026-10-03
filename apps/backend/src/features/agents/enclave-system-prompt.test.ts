@@ -50,7 +50,7 @@ describe("buildEnclaveSystemPrompt", () => {
     const [inputs] = build.mock.calls[0]!
     expect(inputs.rollingConversationSummary).toBeNull() // no plaintext history to summarize
     expect(inputs.tools).toEqual([]) // tool prose is assembled in-enclave (run-turn)
-    expect(inputs.selfKnowledge).toEqual({ access: null, memoryCapture: "off", sealed: true })
+    expect(inputs.selfKnowledge).toEqual({ sealed: true })
   })
 
   it("carries the persona's tone/brevity preset fragments into the prompt (enclave parity)", async () => {
@@ -81,5 +81,7 @@ describe("buildEnclaveSystemPrompt", () => {
     expect(result.stable + result.volatile).toContain(
       `## Response Style\n\n${BREVITY_PRESET_FRAGMENTS.thorough} ${TONE_PRESET_FRAGMENTS.direct}`
     )
+    // The sealed card sits in the cached half, like the in-process one.
+    expect(result.stable).toContain("This is an end-to-end-encrypted scratchpad.")
   })
 })
