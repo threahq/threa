@@ -16,6 +16,7 @@
  *   bun run eval -- -s memory-recall -c offsite-reversed-b
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import type { EvalContext, EvalSuite, Evaluator, RunEvaluator, CaseResult } from "../../framework/types"
 import { createAdditionalUser } from "../../fixtures/workspace"
 import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
@@ -130,6 +131,7 @@ async function seedAndCapture(ctx: EvalContext): Promise<void> {
   const messageFormatter = new MessageFormatter()
   const memoService = new MemoService({
     pool,
+    analyticsReporter: new DisabledAnalyticsReporter(),
     classifier: new ResidencyRoutedMemoClassifier({
       residency: new WorkspaceAIResidencyPolicy({ pool }),
       decisions: new DecisionsMemoClassifier(ctx.ai),

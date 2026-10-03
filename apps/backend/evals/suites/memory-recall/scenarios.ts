@@ -64,7 +64,10 @@ export const scenarios: Scenario[] = [
     conversations: [
       conversation(
         21,
-        ["alice", "Allergist appointment for Ylva today. Results came back: she's allergic to sesame, not peanuts like we feared."],
+        [
+          "alice",
+          "Allergist appointment for Ylva today. Results came back: she's allergic to sesame, not peanuts like we feared.",
+        ],
         ["alice", "So no tahini, no hummus, no sesame buns. Peanuts and tree nuts are fine for her."],
         ["alice", "Doctor said to keep the antihistamine syrup in her school bag from now on."]
       ),
@@ -77,13 +80,19 @@ export const scenarios: Scenario[] = [
     conversations: [
       conversation(
         30,
-        ["bob", "Proposal for the offsite: Villa Fjällhem in Åre, November 12–14. Room for all 14 of us and a ski-in lodge."],
+        [
+          "bob",
+          "Proposal for the offsite: Villa Fjällhem in Åre, November 12–14. Room for all 14 of us and a ski-in lodge.",
+        ],
         ["alice", "Love it. Let's book Fjällhem for Nov 12–14 then."],
         ["bob", "Booked, deposit paid."]
       ),
       conversation(
         9,
-        ["bob", "Bad news: Fjällhem raised the price 40% and the train strike makes Åre a mess. I cancelled and got the deposit back."],
+        [
+          "bob",
+          "Bad news: Fjällhem raised the price 40% and the train strike makes Åre a mess. I cancelled and got the deposit back.",
+        ],
         ["alice", "Ugh. Can we keep the dates and do it in Stockholm instead?"],
         ["bob", "Hotel Skeppsholmen has the conference wing free Nov 12–14. Same dates, no travel."],
         ["alice", "Decided: offsite moves to Hotel Skeppsholmen in Stockholm, Nov 12–14. No ski gear needed."]
@@ -98,7 +107,10 @@ export const scenarios: Scenario[] = [
       conversation(
         14,
         ["bob", "Should we upgrade billing's Postgres from 15 to 17 now? The rest of the fleet is already on 17."],
-        ["alice", "Not before the March freeze. Billing's reconciliation job depends on an extension that isn't certified for 17 yet."],
+        [
+          "alice",
+          "Not before the March freeze. Billing's reconciliation job depends on an extension that isn't certified for 17 yet.",
+        ],
         ["bob", "Agreed. Billing stays on Postgres 15 until after the March release freeze, then we upgrade."]
       ),
     ],
@@ -111,7 +123,10 @@ export const scenarios: Scenario[] = [
       conversation(
         40,
         ["bob", "Contract details for the Nordlys Hosting rack lease, for the record:"],
-        ["bob", "Our contact is Signe Aho (signe.aho@nordlys.example). The lease renews automatically on April 1 every year."],
+        [
+          "bob",
+          "Our contact is Signe Aho (signe.aho@nordlys.example). The lease renews automatically on April 1 every year.",
+        ],
         ["bob", "Cancellation needs written notice at least 30 days before renewal, so by March 2 at the latest."],
         ["alice", "Thanks, noted."]
       ),
@@ -124,8 +139,14 @@ export const scenarios: Scenario[] = [
     conversations: [
       conversation(
         6,
-        ["alice", "Confidential: second meeting with Halvard Robotics about them acquiring us. Internal codename KESTREL."],
-        ["alice", "They floated a 42 million EUR valuation. Board meets on the 20th to decide whether to continue talks."],
+        [
+          "alice",
+          "Confidential: second meeting with Halvard Robotics about them acquiring us. Internal codename KESTREL.",
+        ],
+        [
+          "alice",
+          "They floated a 42 million EUR valuation. Board meets on the 20th to decide whether to continue talks.",
+        ],
         ["alice", "Nobody outside the board knows yet. Do not mention Halvard anywhere shared."]
       ),
     ],
@@ -138,7 +159,10 @@ export const scenarios: Scenario[] = [
       conversation(
         18,
         ["bob", "Standup at 09:15 clashes with school drop-off for half the team."],
-        ["alice", "Let's move it. Tuesdays and Thursdays to 09:45, Mondays stay at 09:15, no standup Wednesdays and Fridays."],
+        [
+          "alice",
+          "Let's move it. Tuesdays and Thursdays to 09:45, Mondays stay at 09:15, no standup Wednesdays and Fridays.",
+        ],
         ["bob", "Updated the calendar invite."]
       ),
     ],
@@ -194,7 +218,10 @@ export const scenarios: Scenario[] = [
       conversation(
         16,
         ["alice", "Senior frontend role: who owns it and what's the loop?"],
-        ["bob", "I'm the hiring manager. We dropped the take-home; it's a 90-minute pairing session on our real codebase instead."],
+        [
+          "bob",
+          "I'm the hiring manager. We dropped the take-home; it's a 90-minute pairing session on our real codebase instead.",
+        ],
         ["alice", "Good. Loop is: intro call, pairing session, then a values chat with me."]
       ),
     ],
@@ -236,7 +263,10 @@ export const scenarios: Scenario[] = [
     conversations: [
       conversation(
         11,
-        ["alice", "Books to read this autumn: 'The Mom Test', 'Working in Public', 'Designing Data-Intensive Applications' second edition."],
+        [
+          "alice",
+          "Books to read this autumn: 'The Mom Test', 'Working in Public', 'Designing Data-Intensive Applications' second edition.",
+        ],
         ["alice", "Start with Working in Public, the open source chapter is relevant to the SDK plans."]
       ),
     ],
@@ -253,7 +283,8 @@ export const questions: Question[] = [
     kind: "indirect",
     askIn: "scratchpad",
     message: "I'm doing snacks for Ylva's birthday party on Saturday. Give me five ideas.",
-    expected: "Five snack ideas that avoid sesame (no hummus, tahini or sesame buns), ideally noting Ylva's sesame allergy.",
+    expected:
+      "Five snack ideas that avoid sesame (no hummus, tahini or sesame buns), ideally noting Ylva's sesame allergy.",
     relevant: ["ylva-allergy"],
   },
   {
@@ -293,7 +324,8 @@ export const questions: Question[] = [
     kind: "indirect",
     askIn: "scratchpad",
     message: "I have a free afternoon, thinking of upgrading billing's Postgres to 17 today. Anything I should know?",
-    expected: "Don't: billing stays on Postgres 15 until after the March release freeze (an extension isn't certified for 17).",
+    expected:
+      "Don't: billing stays on Postgres 15 until after the March release freeze (an extension isn't certified for 17).",
     relevant: ["billing-postgres"],
   },
   {
@@ -355,7 +387,8 @@ export const questions: Question[] = [
     kind: "indirect",
     askIn: "scratchpad",
     message: "Suggest a slot next week for a two-hour planning session with Bob.",
-    expected: "A slot Monday to Thursday morning; not Friday (Alice is off Fridays) and ideally not Thursday afternoon.",
+    expected:
+      "A slot Monday to Thursday morning; not Friday (Alice is off Fridays) and ideally not Thursday afternoon.",
     relevant: ["alice-fridays"],
   },
   {
