@@ -179,7 +179,8 @@ export async function startTestServer(): Promise<TestServer> {
   process.env.CALL_SWEEP_INTERVAL_MS = String(60 * 60 * 1000)
 
   // Stream connection tests assert on the exact pulls a poke queues; the sweep
-  // queues one for every active connection and would land between them.
+  // queues one for every active connection and would land between them. Its
+  // first run still fires at boot, before any test has shared a channel.
   process.env.STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS = String(60 * 60)
 
   // CORS: allow test origin
