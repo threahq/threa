@@ -480,6 +480,8 @@ export interface StreamCreatedOutboxPayload extends WorkspaceScopedPayload {
   streamId: string
   stream: Stream
   dmUserIds?: [string, string]
+  /** The creator's Meet Ariadne scratchpad. */
+  onboarding?: true
 }
 
 export interface StreamUpdatedOutboxPayload extends WorkspaceScopedPayload {

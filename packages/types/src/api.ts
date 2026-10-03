@@ -1896,6 +1896,12 @@ export interface WorkspaceBootstrap {
    * cached before this field shipped lack it.
    */
   inboxArrivedAt?: Record<string, string>
+  /**
+   * The viewer's "Meet Ariadne" onboarding scratchpad, or null before they
+   * opened it. Server-derived, so the checklist item reads the same on every
+   * device. Optional: payloads cached before this field shipped lack it.
+   */
+  onboardingStreamId?: string | null
   dmPeers: Array<{ userId: string; streamId: string }>
   personas: Persona[]
   bots: Bot[]

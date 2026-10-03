@@ -183,6 +183,8 @@ interface StreamPayload {
   streamId: string
   stream: Stream
   dmUserIds?: [string, string]
+  /** On create: the creator's Meet Ariadne scratchpad. */
+  onboarding?: true
   /** On archive/unarchive: the live descendants sealed or released with the stream. */
   threadStreamIds?: string[]
 }
@@ -874,6 +876,7 @@ export function registerWorkspaceSocketHandlers(
           shouldAddDmPeer && dmPeerUserId != null
             ? [...old.dmPeers, { userId: dmPeerUserId, streamId: payload.stream.id }]
             : old.dmPeers,
+        ...(payload.onboarding && isCreator && { onboardingStreamId: payload.stream.id }),
       }
     })
 
@@ -2723,6 +2726,7 @@ const BOOTSTRAP_NON_ROW_FIELDS = [
   "readMessageIds",
   "inboxHeldStreamIds",
   "inboxArrivedAt",
+  "onboardingStreamId",
   "mutedStreamIds",
   "boardViews",
   "invitations",

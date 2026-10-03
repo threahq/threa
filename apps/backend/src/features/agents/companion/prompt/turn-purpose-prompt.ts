@@ -41,6 +41,8 @@ export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurpose
       return ctx.followUp ? buildFollowUpSection(ctx.context, ctx.followUp) : ""
     case "subagent_kickoff":
       return ctx.subagentBrief ? buildSubagentKickoffSection(ctx.subagentBrief) : ""
+    case "onboarding_greeting":
+      return buildOnboardingGreetingSection()
     case "catch_up":
     case "supersede_rerun":
     // A draft-test turn adds no section on purpose: the editor is judging the
@@ -104,6 +106,29 @@ Another model handed you this question because the user asked for you, or becaus
 Answer the brief now. Use your tools to find whatever the brief assumes you can look up; if something load-bearing is genuinely missing, ask the user here rather than guessing. Do not delegate this onward.
 
 When the question is settled, call \`report_back\` once with your closing answer — that posts it and closes the delegation. Until then, keep talking with the user in this thread as normal.`
+}
+
+/** The only history a greeting turn opens on: the user just arrived and has said nothing. */
+export const ONBOARDING_GREETING_OPENER = "(The user has just opened this conversation. Greet them.)"
+
+function buildOnboardingGreetingSection(): string {
+  return `
+
+## First meeting
+
+This is the user's first conversation with you in Threa. They opened it from the getting-started checklist and have not written anything yet, so you speak first. Write in the user's language if their profile or preferences show one, otherwise English.
+
+Post one short greeting with \`send_message\`, then stop and wait:
+- Say hello and, in one or two sentences, what you can help with in Threa.
+- Ask exactly ONE question: what they want to use Threa for.
+- Say that once they tell you, you will show them around. Your greeting stays in this conversation's history and is the only thing that carries this plan to the next turn, so make that promise explicit.
+
+Do not tour, list features or ask anything else yet.
+
+When they answer, give a short tour that follows what they said instead of covering everything:
+- A few concrete places, each as an \`app:\` link, with one line on what it is for.
+- Directions that match their layout (the device line tells you whether they are on mobile or desktop).
+- Use \`threa_guide\` for anything deeper than a pointer, and send the tour as a few short messages rather than one long one.`
 }
 
 function buildSupersedeSection(rerunContext?: AgentSessionRerunContext): string {

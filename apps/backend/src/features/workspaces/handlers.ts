@@ -14,6 +14,7 @@ import type { BoardViewService } from "../board-views"
 import type { InvitationService } from "../invitations"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import type { ActivityService } from "../activity"
+import type { OnboardingService } from "../onboarding"
 import type { CommandAvailabilityService } from "../commands"
 import type { AvatarService } from "./avatar-service"
 import type { LabelService, LabelAssignmentService } from "../labels"
@@ -84,6 +85,7 @@ interface Dependencies {
   avatarService: AvatarService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
+  onboardingService: OnboardingService
   workosOrgService: WorkosOrgService
   callService?: import("../calls").CallService
   pool: import("pg").Pool
@@ -107,6 +109,7 @@ export function createWorkspaceHandlers({
   avatarService,
   labelService,
   labelAssignmentService,
+  onboardingService,
   workosOrgService,
   callService,
   pool,
@@ -194,6 +197,7 @@ export function createWorkspaceHandlers({
         runningSessions,
         archivedStreams,
         inboxHeldStreamIds,
+        onboardingStreamId,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -220,6 +224,7 @@ export function createWorkspaceHandlers({
         // name resolution).
         streamService.listArchivedStreams(workspaceId, userId),
         streamService.listInboxHeldStreamIds(workspaceId, userId),
+        onboardingService.findMeetAriadneStreamId(workspaceId, userId),
       ])
 
       if (!workspace) {
@@ -375,6 +380,7 @@ export function createWorkspaceHandlers({
         readMessageIds,
         inboxHeldStreamIds,
         inboxArrivedAt,
+        onboardingStreamId,
         personas,
         bots: bots.map(serializeBot),
         emojis: getEmojiList(),

@@ -222,6 +222,7 @@ import { SavedMessagesService, createSavedReminderWorker } from "./features/save
 import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-suggestions"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
+import { OnboardingService } from "./features/onboarding"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import { StreamConnectionExportService, StreamConnectionService } from "./features/stream-connections"
 import {
@@ -779,6 +780,7 @@ export async function startServer(): Promise<ServerInstance> {
       userPreferencesService.getPreferences(workspaceId, userId),
   }
   const draftsService = new DraftsService({ pool })
+  const onboardingService = new OnboardingService({ pool, streamService })
   const labelService = new LabelService({ pool })
   // Push queue workers share the main pool so fan-out cannot starve realtime broadcast queries.
   const pushTelemetry = new PushTelemetry({ reporter: analyticsReporter })
@@ -1014,6 +1016,7 @@ export async function startServer(): Promise<ServerInstance> {
     decisionService,
     subagentService,
     draftsService,
+    onboardingService,
     labelService,
     labelAssignmentService,
     labelMessageService,

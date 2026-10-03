@@ -437,6 +437,30 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("## Superseded Session Reconciliation")
   })
 
+  test("injects the first-meeting section, in the volatile half, for an onboarding greeting turn", () => {
+    const split = buildSystemPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "onboarding_greeting" },
+    })
+
+    expect(split.volatile).toContain("## First meeting")
+    expect(split.volatile).toContain("exactly ONE question")
+    expect(split.stable).not.toContain("## First meeting")
+  })
+
+  test("omits the first-meeting section for a catch-up turn", () => {
+    const prompt = buildJoinedPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(prompt).not.toContain("## First meeting")
+  })
+
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {
     const prompt = buildJoinedPrompt({
       selfKnowledge: null,

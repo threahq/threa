@@ -13,6 +13,7 @@ import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./se
 import type { SubagentRun } from "../subagents"
 import { SessionAbortRegistry } from "./session-abort-registry"
 import { TraceEmitter } from "./trace-emitter"
+import { ONBOARDING_GREETING_OPENER } from "./companion/prompt/turn-purpose-prompt"
 
 const SONNET = "openrouter:anthropic/claude-sonnet-4.6"
 const OPUS = "openrouter:anthropic/claude-opus-4.8"
@@ -244,6 +245,7 @@ async function runSupersedeRerun(params: {
   const capturedStablePrompts: string[] = []
   const capturedMessages: Array<Array<{ role: string; content: unknown }>> = []
   const capturedToolNames: string[][] = []
+  const preferenceUserIds: string[] = []
   const ai = {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
@@ -295,7 +297,12 @@ async function runSupersedeRerun(params: {
     ai,
     traceEmitter: new TraceEmitter({ io: makeFakeIo(), pool: emptyDb }),
     sessionAbortRegistry: new SessionAbortRegistry(),
-    userPreferencesService: { getPreferences: async () => ({}) },
+    userPreferencesService: {
+      getPreferences: async (_workspaceId: string, userId: string) => {
+        preferenceUserIds.push(userId)
+        return {}
+      },
+    },
     workspaceAgent: { search: async () => ({}) },
     generalResearcher: { research: research as unknown as () => Promise<unknown> },
     searchService: {},
@@ -344,6 +351,7 @@ async function runSupersedeRerun(params: {
     capturedStablePrompts,
     capturedMessages,
     capturedToolNames,
+    preferenceUserIds,
     escalationSteps,
     markResponseValidationFailed,
     createMessage,
@@ -435,6 +443,18 @@ describe("PersonaAgent subagent kickoff", () => {
     expect(first?.role).toBe("user")
     expect(String(first?.content)).toContain("Plan the identification search")
     expect(String(first?.content)).toContain("Find the TV host who alighted at Nacka strand this morning.")
+  })
+
+  it("should open an empty onboarding greeting turn with the opener and read the invoking user's preferences", async () => {
+    const { result, capturedMessages, capturedVolatilePrompts, preferenceUserIds } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "onboarding_greeting" },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedMessages[0]).toEqual([{ role: "user", content: ONBOARDING_GREETING_OPENER }])
+    expect(capturedVolatilePrompts[0]).toContain("## First meeting")
+    expect(preferenceUserIds).toEqual(["usr_1"])
   })
 
   it("skips a kickoff whose run is no longer active instead of calling the provider on an empty thread", async () => {

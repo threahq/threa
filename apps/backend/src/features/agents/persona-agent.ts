@@ -53,6 +53,7 @@ import {
   type WithSessionResult,
 } from "./companion"
 import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
+import { ONBOARDING_GREETING_OPENER } from "./companion/prompt/turn-purpose-prompt"
 import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
@@ -652,6 +653,12 @@ export class PersonaAgent {
       }
     }
 
+    // Neither has a trigger message to name the user; both principals are
+    // re-checked against `assertStreamWritable` below.
+    let invokingUserOverride: string | undefined
+    if (subagentKickoffBrief) invokingUserOverride = activeSubagentRun?.createdBy
+    else if (purpose.kind === "onboarding_greeting") invokingUserOverride = input.initiatingUserId
+
     const sessionOptions = (targetStreamId: string, targetInitialSequence: bigint) => ({
       pool,
       triggerMessageId: messageId,
@@ -842,10 +849,7 @@ export class PersonaAgent {
             currentTime,
             followUp: followUpContext,
             subagentBrief: subagentKickoffBrief ? { title: subagentKickoffBrief.title } : undefined,
-            // A kickoff has no trigger message, so the run's `createdBy` is the
-            // invoking user — already re-checked against `assertStreamWritable`
-            // above as this turn's principal.
-            invokingUserOverride: subagentKickoffBrief ? activeSubagentRun?.createdBy : undefined,
+            invokingUserOverride,
             subagentModel: activeSubagentRun?.model,
           }
         )
@@ -1528,6 +1532,24 @@ export class PersonaAgent {
           ? { stable: withBag.stable, volatile: [withBag.volatile, asideDrafts].filter(Boolean).join("\n\n") }
           : withBag
 
+        // A kickoff or greeting thread starts empty, and the provider refuses an
+        // empty history. The kickoff brief IS the relayed user request, so it
+        // opens the history as a user message — on requeue too, since the
+        // synthetic message is never persisted. The purpose section never
+        // carries the brief body (one carrier).
+        let modelHistory = agentContext.messages
+        if (subagentKickoffBrief) {
+          modelHistory = [
+            {
+              role: "user" as const,
+              content: `Hand-off brief — "${subagentKickoffBrief.title}":\n\n${subagentKickoffBrief.brief}`,
+            },
+            ...modelHistory,
+          ]
+        } else if (effectivePurpose.kind === "onboarding_greeting") {
+          modelHistory = [{ role: "user" as const, content: ONBOARDING_GREETING_OPENER }, ...modelHistory]
+        }
+
         // The turn as dispatch mints it: delivery + model binding + this
         // turn's prompt, history, toolset, and sampling params.
         const turnRequest: TurnRequest = {
@@ -1547,21 +1569,7 @@ export class PersonaAgent {
           // one dispatch, no bespoke supersede wrap at the call site (roadmap 1.5).
           systemPrompt: composedPrompt.stable,
           volatileSystemPrompt: composedPrompt.volatile,
-          // A kickoff thread starts empty, and the provider refuses an empty
-          // history. The brief IS the relayed user request, so it opens the
-          // history as a user message — on requeue too, since the synthetic
-          // message is never persisted and an earlier attempt's thread holds
-          // only what was actually said. The purpose section frames the
-          // situation but never carries the brief body (one carrier).
-          messages: subagentKickoffBrief
-            ? [
-                {
-                  role: "user" as const,
-                  content: `Hand-off brief — "${subagentKickoffBrief.title}":\n\n${subagentKickoffBrief.brief}`,
-                },
-                ...agentContext.messages,
-              ]
-            : agentContext.messages,
+          messages: modelHistory,
           initialContext,
           tools,
           // A follow-up or a kickoff answers something other than the message

@@ -2986,6 +2986,52 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("should mark Meet Ariadne done when the creator's onboarding scratchpad is created on another device", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [makeWorkspaceUser()], streams: [], streamMemberships: [], onboardingStreamId: null })
+    )
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_meet",
+      onboarding: true,
+      stream: {
+        id: "stream_meet",
+        workspaceId: "ws_1",
+        type: "scratchpad",
+        displayName: null,
+        slug: null,
+        description: null,
+        visibility: "private",
+        parentStreamId: null,
+        rootStreamId: null,
+        companionMode: "on",
+        companionPersonaId: "persona_system_ariadne",
+        createdBy: "member_1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      },
+    })
+
+    await Promise.resolve()
+
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.onboardingStreamId).toBe(
+      "stream_meet"
+    )
+
+    cleanup()
+  })
+
   it("excludes a persona-test scratchpad from the sidebar cache and IDB on live create", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
