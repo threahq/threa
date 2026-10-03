@@ -385,13 +385,14 @@ describe("thread archival chain", () => {
         runtimeSessionId,
       })
 
-    await service.archiveStream(ids.B, workspace, author)
+    // Repo flips, not the service: the preloaded server's outbox consumer would race these links.
+    await StreamRepository.update(pool, ids.B, { archivedAt: new Date() })
     const cascade = [ids.B, ...(await StreamRepository.listArchivalCascadeIds(pool, workspace, ids.B))]
     await BotRuntimeSessionLinkRepository.archiveActiveByStreams(pool, { workspaceId: workspace, streamIds: cascade })
     const afterArchive = await statuses()
     const reattachWhileSealed = await reattach("sess_d")
 
-    await service.unarchiveStream(ids.B, workspace, author)
+    await StreamRepository.update(pool, ids.B, { archivedAt: null })
     const reattachAfterRelease = await reattach("sess_d")
 
     expect({
