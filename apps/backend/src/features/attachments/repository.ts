@@ -148,6 +148,32 @@ export const AttachmentRepository = {
     return result.rows.map(mapRowToAttachment)
   },
 
+  /**
+   * The ids among `ids` that a reader of `streamIds` can open: uploaded to one
+   * of those streams, or referenced inline from a message in one of them.
+   */
+  async listReachableFromStreams(
+    client: Querier,
+    workspaceId: string,
+    ids: string[],
+    streamIds: string[]
+  ): Promise<Set<string>> {
+    if (ids.length === 0) return new Set()
+    const result = await client.query<{ id: string }>(sql`
+      SELECT a.id FROM attachments a
+      WHERE a.workspace_id = ${workspaceId}
+        AND a.id = ANY(${ids})
+        AND (
+          a.stream_id = ANY(${streamIds})
+          OR EXISTS (
+            SELECT 1 FROM attachment_references r
+            WHERE r.workspace_id = ${workspaceId} AND r.attachment_id = a.id AND r.stream_id = ANY(${streamIds})
+          )
+        )
+    `)
+    return new Set(result.rows.map((row) => row.id))
+  },
+
   async findByMessageId(client: Querier, messageId: string): Promise<Attachment[]> {
     const result = await client.query<AttachmentRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE message_id = ${messageId}`

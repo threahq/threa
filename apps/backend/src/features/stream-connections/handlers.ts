@@ -1,8 +1,26 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
-import { acceptStreamConnectionSchema, streamConnectionIdSchema, streamConnectionSnapshotSchema } from "@threahq/types"
+import {
+  BRIDGE_WORKSPACE_HEADER,
+  StreamConnectionErrorCodes,
+  acceptStreamConnectionSchema,
+  streamConnectionIdSchema,
+  streamConnectionSnapshotSchema,
+} from "@threahq/types"
+import { HttpError } from "../../lib/errors"
+import { setAuditSubjects } from "../access-log"
 import { validateRequest } from "../../lib/validation"
+import type { StreamConnectionExportService } from "./export"
 import type { StreamConnectionService } from "./service"
+
+declare global {
+  namespace Express {
+    interface Request {
+      /** Set on a partner region's bridge read once it names its workspace. */
+      bridgeCaller?: { workspaceId: string; connectionId: string }
+    }
+  }
+}
 
 const streamParamsSchema = z.object({ streamId: z.string().min(1) })
 const connectionParamsSchema = z.object({ connectionId: streamConnectionIdSchema })
@@ -77,4 +95,66 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
       res.status(204).send()
     },
   }
+}
+
+const bridgeParamsSchema = z.object({ workspaceId: z.string().min(1), connectionId: streamConnectionIdSchema })
+const bridgeStreamParamsSchema = bridgeParamsSchema.extend({ streamId: z.string().min(1) })
+const bridgeEventsQuerySchema = z.object({
+  after: z
+    .string()
+    .regex(/^\d{1,19}$/)
+    .default("0"),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+})
+
+interface BridgeDependencies {
+  streamConnectionExportService: StreamConnectionExportService
+}
+
+/** The partner region's reads of a channel this workspace hosts. */
+export function createStreamConnectionBridgeHandlers({ streamConnectionExportService }: BridgeDependencies) {
+  return {
+    async manifest(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      const manifest = await streamConnectionExportService.getManifest({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(
+        res,
+        manifest.streams.map((stream) => ({ type: "stream", id: stream.id }))
+      )
+      res.setHeader("Cache-Control", "no-store")
+      res.json(manifest)
+    },
+
+    async events(req: Request, res: Response) {
+      const params = validateRequest(bridgeStreamParamsSchema, req.params)
+      const { after, limit } = validateRequest(bridgeEventsQuerySchema, req.query)
+      const events = await streamConnectionExportService.listEvents({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+        after: BigInt(after),
+        limit,
+      })
+      setAuditSubjects(res, [
+        { type: "stream", id: params.streamId, fromSeq: Number(after), toSeq: Number(events.cursor) },
+        ...events.changes.map((change) => ({
+          type: "message",
+          id: change.kind === "message" ? change.message.id : change.messageId,
+        })),
+      ])
+      res.setHeader("Cache-Control", "no-store")
+      res.json(events)
+    },
+  }
+}
+
+/** The partner workspace the request names itself as, recorded as the access log's actor. */
+function identifyCaller(req: Request, connectionId: string): string {
+  const workspaceId = req.get(BRIDGE_WORKSPACE_HEADER)
+  if (!workspaceId)
+    throw new HttpError("Connection not found", { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
+  req.bridgeCaller = { workspaceId, connectionId }
+  return workspaceId
 }

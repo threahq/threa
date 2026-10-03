@@ -1453,4 +1453,13 @@ export {
   type StreamConnectionResponse,
   type AcceptStreamConnectionInput,
   type StreamConnectionLookupResponse,
+  BRIDGE_WORKSPACE_HEADER,
+  bridgeManifestSchema,
+  bridgeEventsSchema,
+  type BridgeStream,
+  type BridgeManifest,
+  type BridgeAttachment,
+  type BridgeMessage,
+  type BridgeChange,
+  type BridgeEvents,
 } from "./stream-connections"

@@ -54,6 +54,10 @@ function resolveIdentity(req: Request): Identity | null {
       detail: { sessionId: req.sandboxSession.sessionId },
     }
   }
+  if (req.bridgeCaller) {
+    // A partner region reading a shared channel: the workspace it names, under the connection it read through.
+    return { actorType: "system", actorId: req.bridgeCaller.workspaceId, authRef: req.bridgeCaller.connectionId }
+  }
   if (req.userApiKey) {
     return { actorType: "user", actorId: req.userApiKey.userId, authRef: req.userApiKey.id }
   }

@@ -598,6 +598,15 @@ export const StreamRepository = {
     return result.rows.map((row) => row.id)
   },
 
+  /** Every thread under the channel `rootStreamId`, at any depth. */
+  async listThreadsByRoot(db: Querier, workspaceId: string, rootStreamId: string): Promise<Stream[]> {
+    const result = await db.query<StreamRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
+      WHERE workspace_id = ${workspaceId} AND root_stream_id = ${rootStreamId} AND type = ${StreamTypes.THREAD}
+    `)
+    return result.rows.map(mapRowToStream)
+  },
+
   /**
    * The descendants whose effective archived state flips with `streamId`:
    * everything below it down `parent_stream_id`, stopping at (and excluding)

@@ -44,7 +44,12 @@ import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createDraftsHandlers } from "./features/drafts"
 import { createLabelHandlers } from "./features/labels"
-import { createStreamConnectionHandlers, type StreamConnectionService } from "./features/stream-connections"
+import {
+  createStreamConnectionBridgeHandlers,
+  createStreamConnectionHandlers,
+  type StreamConnectionExportService,
+  type StreamConnectionService,
+} from "./features/stream-connections"
 import { createPushHandlers, pushReceiptBodyParser, pushReceiptErrors } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
 import { createInternalHandlers } from "./handlers/internal-handlers"
@@ -189,6 +194,7 @@ interface Dependencies {
   labelAssignmentService: LabelAssignmentService
   labelMessageService: LabelMessageService
   streamConnectionService: StreamConnectionService
+  streamConnectionExportService: StreamConnectionExportService
   pushService: PushService
   perfDiagnosticsService: PerfDiagnosticsService
   s3Config: S3Config
@@ -200,6 +206,8 @@ interface Dependencies {
   internalApiKey: string | null
   /** Dedicated enclave-channel secret, distinct from internalApiKey (Phase 2.4c, E2EE-22). */
   enclaveInternalApiKey: string | null
+  /** Shared by every region; a partner region presents it to read a channel shared with its workspace. */
+  bridgeApiKey: string | null
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
   linkPreviewService: LinkPreviewService
@@ -269,6 +277,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     labelAssignmentService,
     labelMessageService,
     streamConnectionService,
+    streamConnectionExportService,
     pushService,
     perfDiagnosticsService,
     s3Config,
@@ -279,6 +288,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     allowDevAuthRoutes,
     internalApiKey,
     enclaveInternalApiKey,
+    bridgeApiKey,
     apiKeyService,
     botChannelService,
     linkPreviewService,
@@ -488,6 +498,24 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/enclave-runtimes/sessions/:id/substeps", enclaveAuth, enclaveSession.substep)
     app.post("/internal/enclave-runtimes/sessions/:id/complete", enclaveAuth, enclaveSession.complete)
     app.post("/internal/enclave-runtimes/sessions/:id/fail", enclaveAuth, enclaveSession.fail)
+  }
+
+  // Mounted under the host workspace's path so the workspace router lands it in the host's region.
+  if (bridgeApiKey) {
+    const bridgeAuth = createInternalAuthMiddleware(bridgeApiKey)
+    const bridge = createStreamConnectionBridgeHandlers({ streamConnectionExportService })
+    app.get(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/manifest",
+      audit("stream_connections.bridge_manifest", "disclose"),
+      bridgeAuth,
+      bridge.manifest
+    )
+    app.get(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/streams/:streamId/events",
+      audit("stream_connections.bridge_events", "disclose"),
+      bridgeAuth,
+      bridge.events
+    )
   }
 
   // Global baseline rate limit
