@@ -1634,6 +1634,7 @@ export function StreamContent({
     isFetchingNewer,
     resetKey: streamId,
     content: plainContentEl,
+    firstItemKey: !useVirtualized ? displayEvents[0]?.id : undefined,
     // Only treat the user as "at the bottom" when they are essentially flush.
     // A small scroll-up to reference older messages while typing should not be
     // snapped back when the composer grows.
@@ -1732,7 +1733,10 @@ export function StreamContent({
         if (useVirtualized) {
           virtualScrollToBottomRef.current({ force: opts.initial })
         } else {
-          plainScrollToBottomRef.current({ force: opts.initial })
+          // Never forced: the virtualized follow/hold refs above don't track
+          // the plain scroller, so its own follow flag is the only guard that
+          // keeps a thread landed on its unread marker detached.
+          plainScrollToBottomRef.current()
         }
       }
       if (opts.initial) {
@@ -2937,6 +2941,8 @@ export function StreamContent({
                           <EventList
                             timelineItems={timelineItems}
                             isLoading={isLoading}
+                            // Rows that exist but are all hidden in a thread (membership) are an answer too.
+                            isConfirmedEmpty={isConfirmedEmpty || events.length > 0}
                             workspaceId={workspaceId}
                             streamId={streamId}
                             highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}

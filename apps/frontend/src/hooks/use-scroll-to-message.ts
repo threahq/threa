@@ -248,6 +248,10 @@ export function useScrollToMessage({
           const desiredTop = sr.top + topOffsetPx
           const delta = align === "start" ? er.top - desiredTop : (er.top + er.bottom) / 2 - scCenter
           if (Math.abs(delta) > 2) {
+            // Re-detach on every correction: a scroll event at the bottom (or a
+            // tail append) can re-arm follow between ticks, and a correction
+            // away from the tail inside its grace window would leave it armed.
+            disableAutoScroll()
             programmaticScrollAtRef.current = performance.now()
             scroller.scrollTop += delta
             stableTicks = 0

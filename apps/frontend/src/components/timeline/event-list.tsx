@@ -41,6 +41,11 @@ import type { ConversationWithStaleness } from "@threahq/types"
 interface EventListProps {
   timelineItems: TimelineItem[]
   isLoading: boolean
+  /**
+   * False while the source may still deliver rows: an empty list then renders
+   * nothing rather than "No messages yet". Lists built from local rows omit it.
+   */
+  isConfirmedEmpty?: boolean
   workspaceId: string
   streamId: string
   highlightMessageId?: string | null
@@ -1355,6 +1360,7 @@ export const TimelineItemContent = memo(TimelineItemContentImpl, timelineRowProp
 export function EventList({
   timelineItems,
   isLoading,
+  isConfirmedEmpty = true,
   workspaceId,
   streamId,
   highlightMessageId,
@@ -1422,6 +1428,7 @@ export function EventList({
   const callEndedPatches = collectCallEndedPatches(timelineItems)
 
   if (timelineItems.length === 0) {
+    if (!isConfirmedEmpty) return null
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
