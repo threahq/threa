@@ -138,7 +138,7 @@ export class StreamConnectionExportService {
     return withClient(this.pool, async (client) => {
       const tree = await this.loadSharedTree(client, caller)
       const treeIds = new Set(tree.map((stream) => stream.id))
-      const heads = await StreamEventRepository.listHeadSequences(client, [...treeIds])
+      const heads = await StreamEventRepository.listHeadSequences(client, caller.workspaceId, [...treeIds])
       const descriptions = tree.flatMap((stream) => (stream.descriptionJson ? [stream.descriptionJson] : []))
       const scope = await loadContentScope(client, caller.workspaceId, treeIds, descriptions)
       return { streams: tree.map((stream) => toBridgeStream(stream, heads.get(stream.id) ?? 0n, scope)) }
@@ -156,7 +156,7 @@ export class StreamConnectionExportService {
       // until its transaction commits. A short page can then move the cursor
       // to the head, past sequences that hold nothing for this stream (events
       // moved away with their messages, events the host keeps to itself).
-      const heads = await StreamEventRepository.listHeadSequences(client, [caller.streamId])
+      const heads = await StreamEventRepository.listHeadSequences(client, caller.workspaceId, [caller.streamId])
       const head = heads.get(caller.streamId) ?? 0n
       const events = await StreamEventRepository.list(client, caller.streamId, {
         afterSequence: caller.after,
