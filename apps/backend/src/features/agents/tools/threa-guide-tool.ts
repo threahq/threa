@@ -44,7 +44,7 @@ export function createThreaGuideTool({ articles }: { articles: readonly GuideArt
           title: article.title,
           url: `${GUIDE_URL}/${article.slug}`,
           // Article links are site-relative; the reader is not on the site.
-          markdown: article.body.replaceAll("](/guide/", `](${GUIDE_URL}/`),
+          markdown: article.body.replaceAll("](/", `](${new URL(GUIDE_URL).origin}/`),
         }),
       }
     },

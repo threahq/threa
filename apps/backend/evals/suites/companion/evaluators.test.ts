@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test"
+import { loadGuideArticles } from "@threahq/user-guide"
 import { guideUsageEvaluator } from "./evaluators"
 import type { CompanionExpected, CompanionOutput, CompanionTrajectoryStep } from "./types"
+
+const KNOWN_SLUG = loadGuideArticles()[0]!.slug
 
 const wantsGuide: CompanionExpected = {
   shouldRespond: true,
@@ -38,7 +41,7 @@ describe("guideUsageEvaluator", () => {
   })
 
   it("should pass when a completed threa_guide call reads an existing article", () => {
-    expect(evaluate(output([guideCall("meet-ariadne")]))).toEqual({
+    expect(evaluate(output([guideCall(KNOWN_SLUG)]))).toEqual({
       name: "guide-usage",
       score: 1,
       passed: true,
@@ -54,7 +57,7 @@ describe("guideUsageEvaluator", () => {
   }
 
   it("should fail when the threa_guide call did not complete", () => {
-    expect(evaluate(output([guideCall("meet-ariadne", false)]))).toEqual(failed)
+    expect(evaluate(output([guideCall(KNOWN_SLUG, false)]))).toEqual(failed)
   })
 
   it("should fail when the call names an article that does not exist", () => {
@@ -62,7 +65,7 @@ describe("guideUsageEvaluator", () => {
   })
 
   it("should fail when only another tool ran", () => {
-    expect(evaluate(output([call(JSON.stringify({ tool: "web_search", article: "meet-ariadne" }))]))).toEqual(failed)
+    expect(evaluate(output([call(JSON.stringify({ tool: "web_search", article: KNOWN_SLUG }))]))).toEqual(failed)
   })
 
   it("should fail when the step content is not JSON", () => {

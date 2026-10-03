@@ -1003,10 +1003,10 @@ const multilingualCases: EvalCase<CompanionInput, CompanionExpected>[] = [
 
 const guideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   createCase(
-    "guide-push-notifications-001",
-    "Guide: reads the user guide to explain push notifications for replies",
+    "guide-quiet-companion-001",
+    "Guide: reads the user guide to explain stopping Ariadne replying to everything",
     {
-      message: "How do I turn on push notifications for when someone replies to me?",
+      message: "How do I stop Ariadne from replying to everything I write in my scratchpad?",
       streamType: "scratchpad",
       trigger: "companion",
     },
@@ -1022,10 +1022,10 @@ const guideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ),
 
   createCase(
-    "guide-push-notifications-swedish-001",
+    "guide-quiet-companion-swedish-001",
     "Guide: Swedish how-to question reads the guide and answers in Swedish",
     {
-      message: "Hur slår jag på pushnotiser när någon svarar mig?",
+      message: "Hur får jag Ariadne att sluta svara på allt jag skriver i min scratchpad?",
       streamType: "scratchpad",
       trigger: "companion",
     },
