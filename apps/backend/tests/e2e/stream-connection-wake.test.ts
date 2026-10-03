@@ -56,7 +56,10 @@ describe("Stream connection wake", () => {
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     }
     await syncConnection(hostClient, connection)
-    return { hostClient, partnerClient, host, partner, channel, connection }
+    // Activating the connection queues the partner's first pull; tests start from an empty queue.
+    const activationPulls = await pulls(partner.id, connection.id)
+    await clearPulls(partner.id, connection.id)
+    return { hostClient, partnerClient, host, partner, channel, connection, activationPulls }
   }
 
   async function setConnectFlag(client: TestClient, wsId: string, value: "on" | "off") {
@@ -124,6 +127,28 @@ describe("Stream connection wake", () => {
     )
   }
 
+  type PokeLogRow = { outcome: string; subjects: { type: string; id: string }[] }
+
+  function byConnection(a: PokeLogRow, b: PokeLogRow) {
+    return a.subjects[0].id.localeCompare(b.subjects[0].id)
+  }
+
+  /** The access-log rows for pokes into the workspace, once `expected` of them have landed. */
+  async function pokeLog(targetWorkspaceId: string, expected: number, timeoutMs = 5_000) {
+    const deadline = Date.now() + timeoutMs
+    let rows: PokeLogRow[] = []
+    while (Date.now() < deadline) {
+      ;({ rows } = await pool.query<PokeLogRow>(
+        `SELECT outcome, subjects FROM access_log
+         WHERE workspace_id = $1 AND operation = 'stream_connections.bridge_poke'`,
+        [targetWorkspaceId]
+      ))
+      if (rows.length >= expected) break
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    return rows.sort(byConnection)
+  }
+
   async function waitForPull(partnerWorkspaceId: string, connectionId: string, timeoutMs = 10_000) {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
@@ -133,6 +158,14 @@ describe("Stream connection wake", () => {
     }
     return pulls(partnerWorkspaceId, connectionId)
   }
+
+  test("should queue a pull in the partner workspace when its connection turns active", async () => {
+    const { partner, connection, activationPulls } = await setup()
+
+    expect(activationPulls).toEqual([
+      { payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true },
+    ])
+  })
 
   test("should queue a pull in the partner workspace when the host posts in the shared channel or one of its threads", async () => {
     const { hostClient, host, partner, channel, connection } = await setup()
@@ -153,15 +186,34 @@ describe("Stream connection wake", () => {
     })
   }, 30_000)
 
+  test("should keep waking a partner when an earlier poke to it was refused", async () => {
+    const { hostClient, partnerClient, host, partner, channel, connection } = await setup()
+
+    await setConnectFlag(partnerClient, partner.id, "off")
+    await sendMessage(hostClient, host.id, channel.id, "while the partner has Connect off")
+    await pokerCaughtUp()
+    const whileRefusing = await pulls(partner.id, connection.id)
+
+    await setConnectFlag(partnerClient, partner.id, "on")
+    await sendMessage(hostClient, host.id, channel.id, "once it is back on")
+    const afterRecovery = await waitForPull(partner.id, connection.id)
+
+    expect({ whileRefusing, afterRecovery }).toEqual({
+      whileRefusing: [],
+      afterRecovery: [{ payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true }],
+    })
+  }, 30_000)
+
   test("should refuse with the same 404 every poke but the host's for an active connection the partner has on", async () => {
     const { hostClient, partnerClient, host, partner, connection } = await setup()
     const notFound = { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" }
 
+    const otherConnectionId = streamConnectionId()
     const refusals = {
       noKey: await poke(partner.id, connection.id, { [BRIDGE_WORKSPACE_HEADER]: host.id }),
       noCaller: await poke(partner.id, connection.id, { [INTERNAL_API_KEY_HEADER]: BRIDGE_KEY }),
       otherCaller: await poke(partner.id, connection.id, hostHeaders(workspaceId())),
-      otherConnection: await poke(partner.id, streamConnectionId(), hostHeaders(host.id)),
+      otherConnection: await poke(partner.id, otherConnectionId, hostHeaders(host.id)),
       hostSide: await poke(host.id, connection.id, hostHeaders(partner.id)),
       flagOff: await (async () => {
         await setConnectFlag(partnerClient, partner.id, "off")
@@ -175,7 +227,13 @@ describe("Stream connection wake", () => {
       })(),
     }
 
-    expect({ refusals, queued: await pulls(partner.id, connection.id) }).toEqual({
+    const denied = (id: string) => ({ outcome: "denied", subjects: [{ type: "param", id }] })
+
+    expect({
+      refusals,
+      queued: await pulls(partner.id, connection.id),
+      logged: await pokeLog(partner.id, 6),
+    }).toEqual({
       refusals: {
         noKey: { status: 401, code: "UNAUTHORIZED" },
         noCaller: notFound,
@@ -186,6 +244,7 @@ describe("Stream connection wake", () => {
         revoked: notFound,
       },
       queued: [],
+      logged: [...Array.from({ length: 5 }, () => denied(connection.id)), denied(otherConnectionId)].sort(byConnection),
     })
   })
 
@@ -197,9 +256,12 @@ describe("Stream connection wake", () => {
     )
     const queued = await pulls(partner.id, connection.id)
 
+    const pull = { payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true }
+
     expect(outcomes.map((outcome) => outcome.status)).toEqual([204, 204, 204, 204, 204])
     // A burst can straddle a second boundary, so it may take two windows, never more.
     expect(queued.length).toBeGreaterThanOrEqual(1)
     expect(queued.length).toBeLessThanOrEqual(2)
+    expect(queued).toEqual(queued.map(() => pull))
   })
 })

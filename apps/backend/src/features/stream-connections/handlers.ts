@@ -158,6 +158,8 @@ export function createStreamConnectionBridgeHandlers({
         ...params,
         callerWorkspaceId: identifyCaller(req, params.connectionId),
       })
+      // Every shared-channel change sends one and it carries no data, so only a refusal earns a row.
+      res.locals.auditSkip = true
       res.status(204).end()
     },
   }

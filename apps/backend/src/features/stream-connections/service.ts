@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import {
   StreamConnectionErrorCodes,
+  StreamConnectionStates,
   StreamTypes,
   Visibilities,
   WORKSPACE_PERMISSION_SCOPES,
@@ -22,6 +23,7 @@ import { StreamMemberRepository, StreamRepository, checkStreamAccess, type Strea
 import { WorkspaceUserPermissionsRepository } from "../workspace-authz"
 import { UserRepository, WorkspaceRepository } from "../workspaces"
 import { connectionNotFound } from "./errors"
+import { enqueuePulls } from "./import"
 import { StreamConnectionRepository, type AppliedStreamConnection } from "./repository"
 
 interface Dependencies {
@@ -219,11 +221,24 @@ export class StreamConnectionService {
     }
   }
 
-  /** Writes the snapshots and an event for each row they changed in one transaction. Returns the local row count. */
+  /**
+   * Writes the snapshots, an event for each row they changed, and a pull of
+   * each active partner row they changed, in one transaction: a partner that
+   * just accepted reads the channel's history without waiting for the host to
+   * post. Returns the local row count.
+   */
   private async project(snapshots: StreamConnectionSnapshot[]): Promise<number> {
     return withTransaction(this.pool, async (client) => {
       const { localRows, changed } = await StreamConnectionRepository.applySnapshots(client, snapshots)
       await this.publishChanges(client, changed)
+      await enqueuePulls(
+        client,
+        changed
+          .filter(
+            ({ connection }) => connection.role === "partner" && connection.state === StreamConnectionStates.ACTIVE
+          )
+          .map(({ workspaceId, connection }) => ({ workspaceId, connectionId: connection.id }))
+      )
       return localRows
     })
   }

@@ -525,7 +525,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     // Mounted under the partner workspace's path, the other way round.
     app.post(
       "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/poke",
-      audit.none("region-to-region wake signal: carries and returns no data, fires on every shared-channel change"),
+      audit("stream_connections.bridge_poke", "write"),
       bridgeAuth,
       bridge.poke
     )

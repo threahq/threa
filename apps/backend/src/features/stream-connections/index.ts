@@ -4,4 +4,4 @@ export { createStreamConnectionBridgeHandlers, createStreamConnectionHandlers } 
 export { StreamConnectionImportService } from "./import"
 export { StreamConnectionPokeHandler } from "./poke-outbox-handler"
 export { StreamConnectionService } from "./service"
-export { createStreamConnectionSweepWorker } from "./sweep-worker"
+export { STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS, createStreamConnectionSweepWorker } from "./sweep-worker"

@@ -106,6 +106,8 @@ const MUTABLE_TABLES = [
   "call_transport_transfers",
   "call_transport_sessions",
   "call_transfer_obligations",
+  "cron_schedules",
+  "cron_ticks",
 ]
 
 async function cleanupStaleData(): Promise<void> {
@@ -175,6 +177,10 @@ export async function startTestServer(): Promise<TestServer> {
   // Call tests drive every sweep themselves; a 15 s background sweeper would
   // race their hand-built call states (rollout_safety transfers mid-assert).
   process.env.CALL_SWEEP_INTERVAL_MS = String(60 * 60 * 1000)
+
+  // Stream connection tests assert on the exact pulls a poke queues; the sweep
+  // queues one for every active connection and would land between them.
+  process.env.STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS = String(60 * 60)
 
   // CORS: allow test origin
   process.env.CORS_ALLOWED_ORIGINS = `http://localhost:${port},http://127.0.0.1:${port}`

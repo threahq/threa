@@ -229,6 +229,7 @@ import {
   StreamConnectionPokeHandler,
   StreamConnectionService,
   createStreamConnectionSweepWorker,
+  STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS,
 } from "./features/stream-connections"
 import {
   PushService,
@@ -540,10 +541,7 @@ export async function startServer(): Promise<ServerInstance> {
   const streamConnectionService = new StreamConnectionService({ pool, controlPlaneClient, featureFlagService })
   const streamConnectionExportService = new StreamConnectionExportService({ pool, featureFlagService })
   const streamConnectionImportService = new StreamConnectionImportService({ pool, featureFlagService })
-  const bridgeClient =
-    config.bridgeApiKey && config.workspaceRouterUrl
-      ? new BridgeClient({ routerUrl: config.workspaceRouterUrl, apiKey: config.bridgeApiKey })
-      : null
+  const bridgeClient = config.bridge ? new BridgeClient(config.bridge) : null
 
   const scheduleManager = new ScheduleManager(pool, {
     lookaheadSeconds: 60,
@@ -1041,7 +1039,7 @@ export async function startServer(): Promise<ServerInstance> {
     allowDevAuthRoutes: config.useStubAuth && !isProduction,
     internalApiKey: config.internalApiKey,
     enclaveInternalApiKey: config.enclaveInternalApiKey,
-    bridgeApiKey: config.bridgeApiKey,
+    bridgeApiKey: config.bridge?.apiKey ?? null,
     apiKeyService,
     botChannelService,
     linkPreviewService,
@@ -1852,7 +1850,12 @@ export async function startServer(): Promise<ServerInstance> {
   // test fixtures — safe to run everywhere.
   await jobQueue.schedule(JobQueues.ATTACHMENT_UPLOAD_SWEEP, 900, { workspaceId: "system" }, null)
   if (bridgeClient) {
-    await jobQueue.schedule(JobQueues.STREAM_CONNECTION_SWEEP, 300, { workspaceId: "system" }, null)
+    await jobQueue.schedule(
+      JobQueues.STREAM_CONNECTION_SWEEP,
+      Number(process.env.STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS) || STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS,
+      { workspaceId: "system" },
+      null
+    )
   }
 
   // Outbox dispatcher - single LISTEN connection fans out to all handlers

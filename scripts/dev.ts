@@ -460,6 +460,7 @@ async function main() {
   // The second region is for work that crosses regions, such as shared
   // channels. Its backend starts on an empty database and has no enclave.
   const regions = [{ id: "local", port: "3002", databaseUrl: dbBase }]
+  const routerPort = "3001"
   if (secondRegion) {
     const databaseUrl = siblingDatabaseUrl(dbBase, "_r2")
     await ensureDatabase(databaseUrl, "local-2")
@@ -530,7 +531,7 @@ async function main() {
         INTERNAL_API_KEY: internalApiKey,
         ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
         BRIDGE_API_KEY: bridgeApiKey,
-        WORKSPACE_ROUTER_URL: "http://localhost:3001",
+        WORKSPACE_ROUTER_URL: `http://localhost:${routerPort}`,
         CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
         DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "8",
         DATABASE_LISTEN_POOL_MAX: process.env.DATABASE_LISTEN_POOL_MAX ?? "4",
@@ -547,7 +548,15 @@ async function main() {
       { apiUrl: `http://localhost:${r.port}`, wsUrl: remoteOrigin ?? `ws://localhost:${r.port}` },
     ])
   )
-  const routerArgs = ["bunx", "wrangler", "dev", "--port", "3001", "--var", `REGIONS:${JSON.stringify(routerRegions)}`]
+  const routerArgs = [
+    "bunx",
+    "wrangler",
+    "dev",
+    "--port",
+    routerPort,
+    "--var",
+    `REGIONS:${JSON.stringify(routerRegions)}`,
+  ]
   const router = Bun.spawn(routerArgs, {
     cwd: routerDir,
     stdout: "inherit",

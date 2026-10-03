@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import type { Querier } from "../../db"
 import { StreamConnectionStates } from "@threahq/types"
 import { JobQueues, QueueRepository, type StreamConnectionPullJobData } from "../../lib/queue"
 import type { FeatureFlagService } from "../feature-flags"
@@ -7,7 +8,10 @@ import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 /**
  * Pokes that land in one window share a pull, which runs once the window has
- * closed and so reads every change a poke in it announced.
+ * closed and so reads every change a poke in it announced. Windows come from
+ * the local clock, so a replica running behind another can fold a poke into a
+ * window whose pull already ran; that change waits for the next poke or the
+ * sweep.
  */
 const PULL_COALESCE_MS = 1_000
 
@@ -45,12 +49,13 @@ export class StreamConnectionImportService {
   }
 }
 
-async function enqueuePulls(pool: Pool, connections: ConnectionRef[]): Promise<void> {
+/** Queues a pull of each connection, folded into the current window's pull when one is already queued. */
+export async function enqueuePulls(db: Querier, connections: ConnectionRef[]): Promise<void> {
   const now = Date.now()
   const window = Math.floor(now / PULL_COALESCE_MS)
   const processAfter = new Date((window + 1) * PULL_COALESCE_MS)
   await QueueRepository.batchInsert(
-    pool,
+    db,
     connections.map(({ workspaceId, connectionId }) => {
       const payload: StreamConnectionPullJobData = { workspaceId, connectionId }
       return {
