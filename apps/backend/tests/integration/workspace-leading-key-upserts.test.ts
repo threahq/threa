@@ -566,7 +566,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a read watermark through ensureForUpdate",
       oldKey: "stream_read_state_pkey",
-      write: async (ws, ids, writer) => {
+      write: async (ws, ids) => {
         await seedStream(ws, ids)
         return ReadStateRepository.ensureForUpdate(pool, ws, ids.stream, ids.member)
       },
@@ -575,7 +575,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a read watermark through ensureBatchForUpdate",
       oldKey: "stream_read_state_pkey",
-      write: async (ws, ids, writer) => {
+      write: async (ws, ids) => {
         await seedStream(ws, ids)
         return ReadStateRepository.ensureBatchForUpdate(pool, ws, ids.member, [ids.stream])
       },

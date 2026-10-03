@@ -163,7 +163,7 @@ describe("same-id copies across workspaces", () => {
     expect(await readWorkspace(wsB, ids)).toEqual(expectedRows(wsB, ids, "b", reactions))
   })
 
-  test("should leave the first workspace's rows unchanged when the second one writes through the old arbiters", async () => {
+  test("should leave the first workspace's rows unchanged when the second one writes the same ids again", async () => {
     const { wsA, wsB, ids } = await seedPair()
 
     const writes = {
@@ -193,12 +193,16 @@ describe("same-id copies across workspaces", () => {
     }
 
     expect({
-      threadAgain: { id: writes.threadAgain.stream.id, created: writes.threadAgain.created },
+      threadAgain: {
+        id: writes.threadAgain.stream.id,
+        workspaceId: writes.threadAgain.stream.workspaceId,
+        created: writes.threadAgain.created,
+      },
       messageAgain: { id: writes.messageAgain.id, contentMarkdown: writes.messageAgain.contentMarkdown },
       reactionAgain: writes.reactionAgain?.reactions,
       reactionAdded: writes.reactionAdded?.reactions,
     }).toEqual({
-      threadAgain: { id: ids.thread, created: false },
+      threadAgain: { id: ids.thread, workspaceId: wsB, created: false },
       messageAgain: { id: ids.message, contentMarkdown: "message b" },
       reactionAgain: { "👍": [ids.user] },
       reactionAdded: { "👍": [ids.user], "🎉": [ids.user] },

@@ -108,11 +108,12 @@ describe("workspace_id rollout migrations", () => {
     await cleanup()
   }, 30_000)
 
-  test("should reject an insert that omits workspace_id when the bridge is gone", async () => {
+  test("should reject an insert on every child table when it omits workspace_id", async () => {
     const failures: Record<string, { code?: string; column?: string }> = {}
-    for (const child of CHILDREN) {
+    for (const [index, child] of CHILDREN.entries()) {
       failures[child.table] = await withTestTransaction(pool, async (client) => {
         await seedParents(client)
+        for (const parent of CHILDREN.slice(0, index)) await client.query(insertStatement(parent, PARENT_WORKSPACE))
         try {
           await client.query(insertStatement(child))
           return {}
