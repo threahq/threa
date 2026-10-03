@@ -1193,8 +1193,6 @@ export const unscopedSqlAllowlist = {
   "apps/backend/src/features/invitations/repository.ts": 7,
   "apps/backend/src/features/link-previews/repository.ts": 2,
   "apps/backend/src/features/memos/message-embedding-backfill.ts": 3,
-  "apps/backend/src/features/memos/pending-item-repository.ts": 2,
-  "apps/backend/src/features/memos/repository.ts": 56,
   "apps/backend/src/features/mentions/mention-backfill.ts": 8,
   "apps/backend/src/features/perf-diagnostics/repository.ts": 2,
   "apps/backend/src/features/public-api/bot-api-key-repository.ts": 2,

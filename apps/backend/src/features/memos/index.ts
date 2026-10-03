@@ -11,7 +11,6 @@ export type {
   UpdateMemoParams,
   MemoSearchFilters,
   MemoSearchResult,
-  SemanticSearchParams,
   FullTextSearchParams,
   HybridSearchParams,
 } from "./repository"

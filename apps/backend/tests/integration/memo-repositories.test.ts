@@ -134,7 +134,7 @@ describe("Memo Repositories", () => {
               itemId,
             },
           ])
-          await PendingItemRepository.markProcessed(client, [firstId])
+          await PendingItemRepository.markProcessed(client, testWorkspaceId, [firstId])
         })
 
         // Queue same item again - should work since previous was processed
@@ -190,7 +190,7 @@ describe("Memo Repositories", () => {
             },
           ])
 
-          await PendingItemRepository.markProcessed(client, [processedPendingId])
+          await PendingItemRepository.markProcessed(client, testWorkspaceId, [processedPendingId])
         })
 
         const unprocessed = await withTransaction(pool, async (client) => {
@@ -258,7 +258,7 @@ describe("Memo Repositories", () => {
         expect(beforeProcess.some((i) => i.id === pendingId)).toBe(true)
 
         await withTransaction(pool, async (client) => {
-          await PendingItemRepository.markProcessed(client, [pendingId])
+          await PendingItemRepository.markProcessed(client, testWorkspaceId, [pendingId])
         })
 
         const afterProcess = await withTransaction(pool, async (client) => {
@@ -639,7 +639,7 @@ describe("Memo Repositories", () => {
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findById(client, id)
+          return MemoRepository.findById(client, testWorkspaceId, id)
         })
 
         expect(found).not.toBeNull()
@@ -649,7 +649,7 @@ describe("Memo Repositories", () => {
 
       test("returns null when not exists", async () => {
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findById(client, "memo_nonexistent")
+          return MemoRepository.findById(client, testWorkspaceId, "memo_nonexistent")
         })
 
         expect(found).toBeNull()
@@ -691,7 +691,7 @@ describe("Memo Repositories", () => {
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findActiveBySourceConversation(client, convId)
+          return MemoRepository.findActiveBySourceConversation(client, testWorkspaceId, convId)
         })
 
         expect(found.map((m) => m.id).sort()).toEqual([firstId, secondId].sort())
@@ -725,7 +725,7 @@ describe("Memo Repositories", () => {
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findActiveBySourceConversation(client, convId)
+          return MemoRepository.findActiveBySourceConversation(client, testWorkspaceId, convId)
         })
 
         expect(found).toEqual([])
@@ -865,7 +865,7 @@ describe("Memo Repositories", () => {
         })
 
         const memos = await withTransaction(pool, async (client) => {
-          return MemoRepository.findByStream(client, localStreamId, { status: "active" })
+          return MemoRepository.findByStream(client, testWorkspaceId, localStreamId, { status: "active" })
         })
 
         const memo1Index = memos.findIndex((m) => m.id === memo1Id)
@@ -914,7 +914,7 @@ describe("Memo Repositories", () => {
         })
 
         const memos = await withTransaction(pool, async (client) => {
-          return MemoRepository.findByStream(client, localStreamId, { limit: 3 })
+          return MemoRepository.findByStream(client, testWorkspaceId, localStreamId, { limit: 3 })
         })
 
         expect(memos.length).toBe(3)
