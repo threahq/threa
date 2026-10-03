@@ -6,11 +6,18 @@ on:
     types: [completed]
     branches: [main]
 
-# actions:read lists prior deploy runs; contents:read walks the commit range
-# between the last deploy and this one. Both are reads — no write scope needed.
+# actions:read inspects the deploy run's jobs; contents:write reads and moves the
+# release ledger ref (refs/deploys/main) and walks the commit range.
 permissions:
   actions: read
-  contents: read
+  contents: write
+
+# Serializes announcements so two runs never read the same ledger and both move it.
+# queue: max keeps every pending run; the default replaces it, dropping its alert.
+concurrency:
+  group: notify-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+  queue: max
 
 jobs:
   notify:
@@ -28,6 +35,7 @@ jobs:
             const headSha = run.head_sha
             const runUrl = run.html_url
             const actor = run.triggering_actor?.login ?? run.actor?.login ?? "unknown"
+            const repo = { owner: context.repo.owner, repo: context.repo.repo }
 
             // Deploy: every conclusion worth surfacing. CI: only failures (success is
             // implied by the deploy that follows it).
@@ -44,46 +52,69 @@ jobs:
             const short = (s) => s.slice(0, 7)
             const firstLine = (msg) => (msg ?? "").split("\n", 1)[0]
 
-            // A deploy announces every commit since the last successful deploy, not just its
-            // tip. Close-together merges collapse into one deploy — the intermediate deploys
-            // are cancelled by concurrency (deploy-cloudflare.yml), so without this their
-            // commits would never be announced. The compare API walks prev-tip → this-tip;
-            // any failure falls back to the single head commit.
+            // A deploy announces every commit since the last announced release, read from
+            // the ledger ref and moved only after a successful deploy is posted — so a
+            // failed deploy's commits roll into the next success. The runs-list API is not
+            // a usable ledger: it intermittently serves stale snapshots, which turned
+            // single-commit deploys into 300-commit posts.
+            const LEDGER_REF = "deploys/main"
             const MAX_LISTED = 20
             let commits = [{ sha: headSha, message: run.head_commit?.message }]
             let omitted = 0
+            let ledgerSha = null
             if (workflow === "Deploy Cloudflare") {
-              try {
-                const { data } = await github.rest.actions.listWorkflowRuns({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: "deploy-cloudflare.yml",
-                  branch: "main",
-                  status: "success",
-                  // Max page — the previous distinct-commit deploy is normally run N-1, but a
-                  // burst of same-sha re-runs could push it back; 100 is a comfortable margin
-                  // before the graceful head-commit-only fallback kicks in.
-                  per_page: 100,
+              if (conclusion === "success") {
+                // check-tip skips every deploy job for a sha main has moved past, and the
+                // run still concludes success. Nothing was released.
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+                  ...repo,
+                  run_id: run.id,
                 })
-                const prev = data.workflow_runs.find((r) => r.id < run.id && r.head_sha !== headSha)
-                if (prev) {
-                  const cmp = await github.rest.repos.compareCommitsWithBasehead({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    basehead: `${prev.head_sha}...${headSha}`,
-                  })
-                  const list = (cmp.data.commits ?? []).map((c) => ({ sha: c.sha, message: c.commit.message }))
-                  if (list.length > 0) {
-                    // compareCommitsWithBasehead caps `commits` at 250; total_commits is the true
-                    // range size, so the "N commits" header and the omitted count stay honest even
-                    // when the listed bullets are capped.
-                    const total = cmp.data.total_commits ?? list.length
+                if (!jobs.some((j) => j.name.startsWith("Deploy ") && j.conclusion === "success")) {
+                  core.info(`No deploy job ran for ${headSha}; not a release`)
+                  return
+                }
+              }
+
+              try {
+                try {
+                  const { data } = await github.rest.git.getRef({ ...repo, ref: LEDGER_REF })
+                  ledgerSha = data.object.sha
+                } catch (err) {
+                  if (err.status !== 404) throw err
+                  core.warning(`${LEDGER_REF} missing; announcing the head commit and creating it`)
+                }
+
+                if (ledgerSha) {
+                  const basehead = `${ledgerSha}...${headSha}`
+                  const cmp = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead })
+                  if (cmp.data.status === "ahead") {
+                    // The unpaged response holds the OLDEST 250 commits; past that, fetch the
+                    // last two MAX_LISTED pages so the bullets end at the released head.
+                    const total = cmp.data.total_commits
+                    let raw = cmp.data.commits
+                    if (total > raw.length) {
+                      const last = Math.ceil(total / MAX_LISTED)
+                      raw = []
+                      for (const page of [last - 1, last]) {
+                        const { data } = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead, per_page: MAX_LISTED, page })
+                        raw.push(...data.commits)
+                      }
+                    }
+                    const list = raw.map((c) => ({ sha: c.sha, message: c.commit.message }))
                     commits = list.slice(-MAX_LISTED)
-                    omitted = Math.max(0, total - commits.length)
+                    omitted = total - commits.length
+                  } else if (conclusion === "success") {
+                    core.info(`${headSha} already announced (${cmp.data.status} vs ${LEDGER_REF} ${ledgerSha})`)
+                    return
                   }
                 }
               } catch (err) {
-                core.warning(`commit range lookup failed, using head commit only: ${err.message}`)
+                // A success must not move the ledger on a guess; a failure alert still goes out.
+                if (conclusion === "success") throw err
+                core.warning(`commit range lookup failed, announcing the head commit only: ${err.message}`)
+                commits = [{ sha: headSha, message: run.head_commit?.message }]
+                omitted = 0
               }
             }
 
@@ -135,4 +166,12 @@ jobs:
             )
             if (!res.ok) {
               throw new Error(`Threa API ${res.status}: ${await res.text()}`)
+            }
+
+            if (workflow === "Deploy Cloudflare" && conclusion === "success") {
+              if (ledgerSha) {
+                await github.rest.git.updateRef({ ...repo, ref: LEDGER_REF, sha: headSha, force: true })
+              } else {
+                await github.rest.git.createRef({ ...repo, ref: `refs/${LEDGER_REF}`, sha: headSha })
+              }
             }
