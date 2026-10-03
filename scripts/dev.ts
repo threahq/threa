@@ -235,6 +235,25 @@ async function ensureWorktreeEnv(): Promise<void> {
   }
 }
 
+/** The same server and credentials as `base`, with `suffix` appended to the database name. */
+function siblingDatabaseUrl(base: string, suffix: string): string {
+  return base.replace(/\/([^/?]+)(\?.*)?$/, `/$1${suffix}$2`)
+}
+
+async function ensureDatabase(databaseUrl: string, label: string): Promise<void> {
+  if (!(await isPostgresReachable())) return
+  const name = databaseUrl.match(/\/([^/?]+?)(?:\?.*)?$/)?.[1]
+  if (!name) throw new Error(`No database name in ${label} DATABASE_URL`)
+  const checkResult =
+    await $`docker exec threa-postgres-1 psql -U threa -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${name}'"`
+      .quiet()
+      .nothrow()
+  if (checkResult.stdout.toString().trim() !== "1") {
+    console.log(`Creating ${label} database '${name}'...`)
+    await $`docker exec threa-postgres-1 psql -U threa -d postgres -c "CREATE DATABASE ${name}"`.quiet()
+  }
+}
+
 async function isPostgresReachable(): Promise<boolean> {
   try {
     const socket = await Bun.connect({
@@ -375,26 +394,21 @@ async function main() {
   const internalApiKey = backendEnv.INTERNAL_API_KEY ?? "dev-internal-key"
   const enclaveInternalApiKey = backendEnv.ENCLAVE_INTERNAL_API_KEY ?? "dev-enclave-internal-key"
 
-  // Derive control-plane DB URL from the backend's DATABASE_URL by appending _cp
-  const cpDbUrl = dbBase.replace(/\/([^/?]+)(\?.*)?$/, "/$1_cp$2")
-
-  if (await isPostgresReachable()) {
-    const cpDbName = cpDbUrl.match(/\/([^/?]+?)(?:\?.*)?$/)?.[1] ?? "threa_cp"
-    const checkResult =
-      await $`docker exec threa-postgres-1 psql -U threa -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='${cpDbName}'"`
-        .quiet()
-        .nothrow()
-    if (checkResult.stdout.toString().trim() !== "1") {
-      console.log(`Creating control-plane database '${cpDbName}'...`)
-      await $`docker exec threa-postgres-1 psql -U threa -d postgres -c "CREATE DATABASE ${cpDbName}"`.quiet()
-    }
-  }
+  const cpDbUrl = siblingDatabaseUrl(dbBase, "_cp")
+  await ensureDatabase(cpDbUrl, "control-plane")
 
   // Mobile mode exposes the ordinary HTTP dev ports to LAN/tailnet devices.
   // Remote mode adds a temporary HTTPS Tailscale Serve origin and routes the
   // browser-facing socket through the frontend proxy.
   const explicitLanHost = getExplicitLanHost()
   const remoteMode = process.env.TAILSCALE_MODE === "true" || process.argv.includes("--remote")
+  const secondRegion = process.env.SECOND_REGION === "true" || process.argv.includes("--second-region")
+  if (secondRegion && remoteMode) {
+    // Remote mode serves every socket through the one Tailscale origin, which
+    // proxies to the first region's backend only.
+    console.error("--second-region can't run in remote mode")
+    process.exit(1)
+  }
   const lanMode = remoteMode || process.env.LAN_MODE === "true" || process.argv.includes("--lan") || !!explicitLanHost
   const tailscale = lanMode ? await getTailscaleNode() : undefined
   const tailscaleHttpsPort = Number(process.env.TAILSCALE_HTTPS_PORT ?? "443")
@@ -442,6 +456,16 @@ async function main() {
   for (const host of lanHosts) corsOrigins.push(`http://${host}:${FRONTEND_PORT}`)
   if (remoteOrigin) corsOrigins.push(remoteOrigin)
 
+  // The second region is for work that crosses regions, such as shared
+  // channels. Its backend starts on an empty database and has no enclave.
+  const regions = [{ id: "local", port: "3002", databaseUrl: dbBase }]
+  if (secondRegion) {
+    const databaseUrl = siblingDatabaseUrl(dbBase, "_r2")
+    await ensureDatabase(databaseUrl, "local-2")
+    regions.push({ id: "local-2", port: "3012", databaseUrl })
+    console.log("Second region: local-2 (pick it when creating a workspace)")
+  }
+
   const cpEnvOverrides: Record<string, string> = {}
   const authOrigin = remoteOrigin ?? (primaryLanHost ? `http://${primaryLanHost}:${FRONTEND_PORT}` : undefined)
   const configuredWorkosRedirectUri = cpEnv.WORKOS_REDIRECT_URI ?? process.env.WORKOS_REDIRECT_URI
@@ -481,40 +505,46 @@ async function main() {
       DATABASE_URL: cpDbUrl,
       USE_STUB_AUTH: useStubAuth,
       INTERNAL_API_KEY: cpEnv.INTERNAL_API_KEY ?? "dev-internal-key",
-      REGIONS: JSON.stringify({ local: { internalUrl: "http://localhost:3002" } }),
+      REGIONS: JSON.stringify(
+        Object.fromEntries(regions.map((r) => [r.id, { internalUrl: `http://localhost:${r.port}` }]))
+      ),
       CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
       WORKSPACE_CREATION_SKIP_INVITE: "true",
       PLATFORM_ADMIN_WORKOS_USER_IDS: platformAdminIds,
     },
   })
 
-  const backend = Bun.spawn(["bun", "--hot", "apps/backend/src/index.ts"], {
-    stdout: "inherit",
-    stderr: "inherit",
-    env: {
-      ...process.env,
-      ...backendEnv,
-      FAST_SHUTDOWN: "true",
-      PORT: "3002",
-      DATABASE_URL: dbBase,
-      USE_STUB_AUTH: useStubAuth,
-      CONTROL_PLANE_URL: "http://localhost:3003",
-      INTERNAL_API_KEY: internalApiKey,
-      ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
-      CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
-      DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "8",
-      DATABASE_LISTEN_POOL_MAX: process.env.DATABASE_LISTEN_POOL_MAX ?? "4",
-      DATABASE_REALTIME_POOL_MAX: process.env.DATABASE_REALTIME_POOL_MAX ?? "4",
-      REGION: "local",
-    },
-  })
+  const backends = regions.map((region) =>
+    Bun.spawn(["bun", "--hot", "apps/backend/src/index.ts"], {
+      stdout: "inherit",
+      stderr: "inherit",
+      env: {
+        ...process.env,
+        ...backendEnv,
+        FAST_SHUTDOWN: "true",
+        PORT: region.port,
+        DATABASE_URL: region.databaseUrl,
+        USE_STUB_AUTH: useStubAuth,
+        CONTROL_PLANE_URL: "http://localhost:3003",
+        INTERNAL_API_KEY: internalApiKey,
+        ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
+        CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
+        DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "8",
+        DATABASE_LISTEN_POOL_MAX: process.env.DATABASE_LISTEN_POOL_MAX ?? "4",
+        DATABASE_REALTIME_POOL_MAX: process.env.DATABASE_REALTIME_POOL_MAX ?? "4",
+        REGION: region.id,
+      },
+    })
+  )
 
   const routerDir = path.join(process.cwd(), "apps/workspace-router")
-  const routerArgs = ["bunx", "wrangler", "dev", "--port", "3001"]
-  if (remoteOrigin) {
-    const regions = JSON.stringify({ local: { apiUrl: "http://localhost:3002", wsUrl: remoteOrigin } })
-    routerArgs.push("--var", `REGIONS:${regions}`)
-  }
+  const routerRegions = Object.fromEntries(
+    regions.map((r) => [
+      r.id,
+      { apiUrl: `http://localhost:${r.port}`, wsUrl: remoteOrigin ?? `ws://localhost:${r.port}` },
+    ])
+  )
+  const routerArgs = ["bunx", "wrangler", "dev", "--port", "3001", "--var", `REGIONS:${JSON.stringify(routerRegions)}`]
   const router = Bun.spawn(routerArgs, {
     cwd: routerDir,
     stdout: "inherit",
@@ -602,7 +632,7 @@ async function main() {
 
   const processes = [
     controlPlane,
-    backend,
+    ...backends,
     router,
     backofficeRouter,
     frontend,

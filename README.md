@@ -94,7 +94,8 @@ bun run dev        # control-plane, workspace-router, backend, frontend, backoff
 
 The app comes up at `http://localhost:3000`. For device testing, use
 `bun run dev:mobile` on the local network or `bun run dev:remote` for a temporary
-HTTPS Tailscale Serve URL.
+HTTPS Tailscale Serve URL. `bun run dev:regions` adds a second region, `local-2`,
+for work that crosses regions.
 
 ```bash
 bun run test       # unit/integration (backend)
