@@ -24,7 +24,7 @@ export function useChangeWorkspaceMemberRole(workspaceId: string) {
       return params
     },
     onMutate: async ({ userId, roleSlug }) => {
-      const current = await db.workspaceUsers.get(userId)
+      const current = await db.workspaceUsers.get([workspaceId, userId])
       if (!current || current.role === roleSlug) {
         return { previousRole: current?.role ?? null }
       }
@@ -37,7 +37,7 @@ export function useChangeWorkspaceMemberRole(workspaceId: string) {
     onError: async (_err, { userId }, context) => {
       if (!context?.previousRole) return
       const previousRole = context.previousRole
-      const current = await db.workspaceUsers.get(userId)
+      const current = await db.workspaceUsers.get([workspaceId, userId])
       if (current) {
         void db.workspaceUsers.put({ ...current, role: previousRole, _cachedAt: Date.now() })
       }
@@ -56,9 +56,9 @@ export function useRemoveWorkspaceMember(workspaceId: string) {
       return params
     },
     onMutate: async ({ userId }) => {
-      const snapshot = await db.workspaceUsers.get(userId)
+      const snapshot = await db.workspaceUsers.get([workspaceId, userId])
       if (snapshot) {
-        await db.workspaceUsers.delete(userId)
+        await db.workspaceUsers.delete([workspaceId, userId])
       }
       const previousUser = queryClient
         .getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))

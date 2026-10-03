@@ -1304,7 +1304,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     expect({
       workspaceName: (await db.workspaces.get("ws_1"))?.name,
-      keptUser: (await db.workspaceUsers.get("user_kept"))?.id,
+      keptUser: (await db.workspaceUsers.get(["ws_1", "user_kept"]))?.id,
       status: deps.syncStatus.get("workspace:ws_1"),
       cursor: engine.getSyncCursor(),
     }).toEqual({ workspaceName: "Cached", keptUser: "user_kept", status: "stale", cursor: "10" })
@@ -1331,7 +1331,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
     expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", expect.objectContaining({ after: "5" }), expect.any(AbortSignal))
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_missed")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "user_missed"])).toBeDefined())
     engine.destroy()
   })
 
@@ -1360,8 +1360,8 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await engine.onConnect(asSocket(new MockSocket()))
 
     await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_a")).toBeDefined()
-      expect(await db.workspaceUsers.get("user_b")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_a"])).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_b"])).toBeDefined()
     })
     expect(engine.getSyncCursor()).toBe("12")
     engine.destroy()
@@ -1415,11 +1415,11 @@ describe("SyncEngine sync cursor (active mode)", () => {
       expect({
         cursor: engine.getSyncCursor(),
         persistedCursor: (await db.syncCursors.get("ws_1:sync-log"))?.cursor,
-        bufferedUser: await db.workspaceUsers.get("user_buffered"),
+        bufferedUser: await db.workspaceUsers.get(["ws_1", "user_buffered"]),
       }).toEqual({ cursor: "10", persistedCursor: "10", bufferedUser: undefined })
 
       await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("501"), { timeout: 2_000 })
-      expect(await db.workspaceUsers.get("user_buffered")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_buffered"])).toBeDefined()
       expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(3)
     } finally {
       errorSpy.mockRestore()
@@ -1588,9 +1588,12 @@ describe("SyncEngine sync cursor (active mode)", () => {
       }
       socket.trigger("workspace_user:added", userAddedLivePayload("3000", "user_after_failed_page"))
 
-      await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_after_failed_page")).toBeDefined(), {
-        timeout: 2_000,
-      })
+      await vi.waitFor(
+        async () => expect(await db.workspaceUsers.get(["ws_1", "user_after_failed_page"])).toBeDefined(),
+        {
+          timeout: 2_000,
+        }
+      )
       expect({ catchUpCalls: catchUp.mock.calls.length, cursor: engine.getSyncCursor() }).toEqual({
         catchUpCalls: 3,
         cursor: "3000",
@@ -1660,7 +1663,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
       socket.trigger("workspace_user:added", userAddedLivePayload("5010", "user_after_overflow"))
       resolveCatchUp!(emptyPage("10"))
 
-      await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_after_overflow")).toBeDefined(), {
+      await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "user_after_overflow"])).toBeDefined(), {
         timeout: 2_000,
       })
       expect(engine.getSyncCursor()).toBe("5010")
@@ -1693,7 +1696,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
     // The big page's entries were NOT replayed one by one — collapsing skips the
     // per-entry handler dispatch entirely, so no handler IDB write landed.
-    expect(await db.workspaceUsers.get("user_0")).toBeUndefined()
+    expect(await db.workspaceUsers.get(["ws_1", "user_0"])).toBeUndefined()
     // Skipping replay means the replay-healed lists (saved/scheduled/activity,
     // which the bootstrap doesn't re-derive) must be invalidated so an open view
     // refetches instead of sitting stale.
@@ -1800,7 +1803,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
       await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledWith("Sync catch-up failed", expect.anything()))
       expect(engine.getSyncCursor()).toBe("11")
-      expect(await db.workspaceUsers.get("user_c")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_c"])).toBeDefined()
       expect(isApplyWindowOpen()).toBe(false)
     } finally {
       errorSpy.mockRestore()
@@ -1862,7 +1865,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     await engine.onConnect(asSocket(new MockSocket()))
 
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("small_user_2")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "small_user_2"])).toBeDefined())
     expect(engine.getSyncCursor()).toBe("13")
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
     // A page shorter than the limit ends the run; no confirming empty fetch.
@@ -1912,7 +1915,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     resolveFirstPage!(emptyPage("10"))
 
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_live")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "user_live"])).toBeDefined())
     // The splice is a write like any replayed entry: it lands behind the window
     // so the batched hooks re-read once, after it.
     applyWindow.stop()
@@ -1976,13 +1979,13 @@ describe("SyncEngine sync cursor (active mode)", () => {
 
     // Lands while catch-up pages: buffered, not applied.
     socket.trigger("workspace_user:added", userAddedLivePayload("12", "user_live"))
-    expect(await db.workspaceUsers.get("user_live")).toBeUndefined()
+    expect(await db.workspaceUsers.get(["ws_1", "user_live"])).toBeUndefined()
 
     resolveFirstPage!({ entries: [userAddedEntry("11", "user_log")], head: "11" })
 
     await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_log")).toBeDefined()
-      expect(await db.workspaceUsers.get("user_live")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_log"])).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_live"])).toBeDefined()
     })
     expect(engine.getSyncCursor()).toBe("12")
     engine.destroy()
@@ -2282,7 +2285,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     })
 
     await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_resumed")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_resumed"])).toBeDefined()
     })
     expect(errorSpy).toHaveBeenCalledWith(
       "Sync catch-up batch flush failed",
@@ -2317,7 +2320,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     resolveFirstPage!({ entries: [], head: "11" })
 
     await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_after_reject")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_after_reject"])).toBeDefined()
     })
 
     errorSpy.mockRestore()
@@ -2408,8 +2411,8 @@ describe("SyncEngine sync cursor (active mode)", () => {
     resolveFirstPage!({ entries: [userAddedEntry("11", "user_log")], head: "11" })
 
     await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_log")).toBeDefined()
-      expect(await db.workspaceUsers.get("user_live")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_log"])).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_live"])).toBeDefined()
     })
     expect(engine.getSyncCursor()).toBe("20")
     // The new cycle ran its own catch-up from the stale run's end position.
@@ -2442,7 +2445,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
       resolveRetrySeed!(emptyPage("42"))
 
       await vi.waitFor(async () => {
-        expect(await db.workspaceUsers.get("user_live")).toBeDefined()
+        expect(await db.workspaceUsers.get(["ws_1", "user_live"])).toBeDefined()
       })
       expect(engine.getSyncCursor()).toBe("42")
       engine.destroy()
@@ -2499,7 +2502,7 @@ describe("SyncEngine sync cursor (active mode)", () => {
     engine.destroy()
     await new Promise((resolve) => setTimeout(resolve, 10))
 
-    expect(await db.workspaceUsers.get("user_live")).toBeUndefined()
+    expect(await db.workspaceUsers.get(["ws_1", "user_live"])).toBeUndefined()
   })
 })
 
@@ -2619,8 +2622,8 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
     vi.useRealTimers()
 
     await vi.waitFor(async () => {
-      expect(await db.workspaceUsers.get("user_a")).toBeDefined()
-      expect(await db.workspaceUsers.get("user_b")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_a"])).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "user_b"])).toBeDefined()
     })
     expect(engine.getSyncCursor()).toBe("12")
     engine.destroy()
@@ -2698,7 +2701,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
     socket.trigger("sync:heartbeat", heartbeat("15"))
     vi.advanceTimersByTime(2_500)
     vi.useRealTimers()
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_a")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "user_a"])).toBeDefined())
     await new Promise((resolve) => setTimeout(resolve, 0))
     const afterRunOne = catchUp.mock.calls.length
 
@@ -2716,7 +2719,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
     vi.advanceTimersByTime(2_500)
     vi.useRealTimers()
 
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_b")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "user_b"])).toBeDefined())
     expect(engine.getSyncCursor()).toBe("12")
     errorSpy.mockRestore()
     engine.destroy()
