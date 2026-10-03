@@ -19,6 +19,17 @@ export interface RelevanceScorerLike {
   score(query: string, candidates: RerankCandidate[], context: RerankContext): Promise<number[] | null>
 }
 
+export interface RelevanceQuestion {
+  instructions: (candidateIndex: number) => string
+  /** The ladder, lowest rung first; the answer is rescaled to [0, 1] across it. */
+  criteria: readonly string[]
+}
+
+const SEARCH_RELEVANCE_QUESTION: RelevanceQuestion = {
+  instructions: (index) => `How well does candidate [${index}] in the candidates list answer the search query?`,
+  criteria: RELEVANCE_SCORE_LADDER,
+}
+
 /**
  * Scores every candidate in one decisions call: the candidate list is the
  * shared state and each candidate gets its own ladder question, answered in
@@ -31,6 +42,7 @@ export interface RelevanceScorerLike {
 export class DecisionsRelevanceScorer implements RelevanceScorerLike {
   private readonly ai: AI
   private readonly subject: string
+  private readonly question: RelevanceQuestion
   private readonly functionId: string
   private readonly model: string
   private readonly timeoutMs: number
@@ -39,12 +51,15 @@ export class DecisionsRelevanceScorer implements RelevanceScorerLike {
     ai: AI
     /** Noun phrase describing the candidates, e.g. "chat messages". */
     subject: string
+    /** What each candidate is judged against the query for; defaults to answering it as a search. */
+    question?: RelevanceQuestion
     functionId: string
     model?: string
     timeoutMs?: number
   }) {
     this.ai = config.ai
     this.subject = config.subject
+    this.question = config.question ?? SEARCH_RELEVANCE_QUESTION
     this.functionId = config.functionId
     this.model = config.model ?? RELEVANCE_SCORER_MODEL_ID
     this.timeoutMs = config.timeoutMs ?? RELEVANCE_SCORER_TIMEOUT_MS
@@ -67,8 +82,8 @@ export class DecisionsRelevanceScorer implements RelevanceScorerLike {
       candidates.forEach((_, index) => {
         questions[questionKey(index)] = {
           type: "score",
-          instructions: `How well does candidate [${index}] in the candidates list answer the search query?`,
-          criteria: [...RELEVANCE_SCORE_LADDER],
+          instructions: this.question.instructions(index),
+          criteria: [...this.question.criteria],
         }
       })
 

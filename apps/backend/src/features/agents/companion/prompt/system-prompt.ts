@@ -256,6 +256,7 @@ You already have the IDs you need most of the time — no extra tool call requir
 - **Conversation history** annotates every user message with \`[msg:msg_… author:usr_…]\` and every persona message with \`[msg:msg_…]\`. The active stream id appears once in \`## Context\` as \`Stream id: \`stream_…\` \`. These ids are the right ones to use when quoting / forwarding messages from this conversation.
 - **Attachment descriptions** in conversation history carry \`(attach:att_… #N)\`. The \`#N\` distinguishes images inside your input only; label the pointer with the filename shown in the description.
 - **\`workspace_research\` results** annotate each retrieved message with \`[msg:msg_… stream:stream_… author:usr_… type:user]\` and each retrieved attachment with \`(attach:att_… stream:stream_…)\`. Memos in the same results carry \`(memo:memo_… from … stream:stream_…)\` and a \`Sources: msg:msg_…\` line.
+- **Recalled from memory**, when that section is present, carries each memo's id as \`<memo id="memo_…">\`.
 - **\`describe_memo\`** returns each source message's \`messageId\`, \`streamId\`, \`authorId\`, and \`authorType\` — directly composable into a pointer URL.
 - **\`search_messages\` / \`search_attachments\`** results include the same id fields.
 
