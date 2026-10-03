@@ -454,7 +454,7 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
   })
 
   test("should return no read state when only another workspace holds the row for that stream and user", async () => {
-    const stream = await seedChannel(wsA)
+    const stream = await seedChannel(wsB, bAuthor)
     const user = userId()
     await addReadState(wsB, stream, user)
 
@@ -462,7 +462,7 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
   })
 
   test("should leave another workspace's read state unlocked when batch ensuring for update", async () => {
-    const stream = await seedChannel(wsA)
+    const stream = await seedChannel(wsB, bAuthor)
     const user = userId()
     await addReadState(wsB, stream, user)
 

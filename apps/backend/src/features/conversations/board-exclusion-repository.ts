@@ -21,7 +21,7 @@ export const BoardExclusionRepository = {
     const result = await db.query<{ hidden_at: Date }>(sql`
       INSERT INTO board_hidden_conversations (workspace_id, conversation_id, user_id)
       VALUES (${params.workspaceId}, ${params.conversationId}, ${params.userId})
-      ON CONFLICT (conversation_id, user_id) DO UPDATE SET hidden_at = NOW()
+      ON CONFLICT (workspace_id, conversation_id, user_id) DO UPDATE SET hidden_at = NOW()
       RETURNING hidden_at
     `)
     return { hiddenAt: result.rows[0]!.hidden_at }
@@ -38,7 +38,7 @@ export const BoardExclusionRepository = {
     await db.query(sql`
       INSERT INTO board_muted_streams (workspace_id, stream_id, user_id)
       VALUES (${params.workspaceId}, ${params.streamId}, ${params.userId})
-      ON CONFLICT (stream_id, user_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, user_id) DO NOTHING
     `)
   },
 

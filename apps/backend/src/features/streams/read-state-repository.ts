@@ -42,7 +42,7 @@ const SELECT_FIELDS =
 
 /**
  * The per-user read watermark — the sole read truth (membership ≠ access ≠ read
- * state). Keyed by (stream, user); a row exists only after the user's first
+ * state). Keyed by (workspace, stream, user); a row exists only after the user's first
  * read-state write for that stream — absence means "never read" (frontier before
  * the first message).
  *
@@ -122,7 +122,7 @@ export const ReadStateRepository = {
         SELECT s.workspace_id, $2, $3, $4, NOW(), NOW(), COALESCE((SELECT hold FROM should_hold), false)
         FROM streams s
         WHERE s.workspace_id = $1 AND s.id = $2
-        ON CONFLICT (stream_id, user_id) DO UPDATE
+        ON CONFLICT (workspace_id, stream_id, user_id) DO UPDATE
         SET last_read_event_id = EXCLUDED.last_read_event_id,
             last_read_at = EXCLUDED.last_read_at,
             updated_at = EXCLUDED.updated_at,
@@ -180,7 +180,7 @@ export const ReadStateRepository = {
       SELECT s.workspace_id, $2, $3, $4, NOW(), NOW()
       FROM streams s
       WHERE s.workspace_id = $1 AND s.id = $2
-      ON CONFLICT (stream_id, user_id) DO UPDATE
+      ON CONFLICT (workspace_id, stream_id, user_id) DO UPDATE
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
@@ -227,7 +227,7 @@ export const ReadStateRepository = {
       SELECT s.workspace_id, i.stream_id, $4, i.event_id, NOW(), NOW()
       FROM input i
       JOIN streams s ON s.id = i.stream_id AND s.workspace_id = $1
-      ON CONFLICT (stream_id, user_id) DO UPDATE
+      ON CONFLICT (workspace_id, stream_id, user_id) DO UPDATE
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
@@ -269,7 +269,7 @@ export const ReadStateRepository = {
       FROM streams s
       WHERE s.workspace_id = ${workspaceId} AND s.id = ANY(${streamIds})
       ORDER BY s.id
-      ON CONFLICT (stream_id, user_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, user_id) DO NOTHING
     `)
     await db.query(sql`
       SELECT stream_id
@@ -378,7 +378,7 @@ export const ReadStateRepository = {
       SELECT s.workspace_id, $2, u.user_id, $3, NOW(), NOW()
       FROM streams s, unnest($4::text[]) AS u(user_id)
       WHERE s.workspace_id = $1 AND s.id = $2
-      ON CONFLICT (stream_id, user_id) DO UPDATE
+      ON CONFLICT (workspace_id, stream_id, user_id) DO UPDATE
       SET last_read_event_id = EXCLUDED.last_read_event_id,
           last_read_at = EXCLUDED.last_read_at,
           updated_at = EXCLUDED.updated_at
@@ -476,7 +476,7 @@ export const ReadStateRepository = {
       SELECT s.workspace_id, $2, $3, NULL, NULL, NOW()
       FROM streams s
       WHERE s.workspace_id = $1 AND s.id = $2
-      ON CONFLICT (stream_id, user_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, user_id) DO NOTHING
       `,
       [workspaceId, streamId, userId]
     )

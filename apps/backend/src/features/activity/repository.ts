@@ -126,9 +126,10 @@ const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXIST
 
 /**
  * Pick the ON CONFLICT target for the given activity type. Reactions dedup by
- * (user, message, actor, emoji); most other types dedup by (user, message,
- * type, actor). Both are partial unique indexes — the WHERE clause is required
- * so Postgres can match the conflict target to the correct index.
+ * (workspace, user, message, actor, emoji); most other types dedup by
+ * (workspace, user, message, type, actor). Both are partial unique indexes —
+ * the WHERE clause is required so Postgres can match the conflict target to
+ * the correct index.
  *
  * `saved_reminder` is intentionally excluded from the non-reaction dedup index
  * (see migration 20260417200220) because the firing service is already
@@ -139,7 +140,7 @@ const STREAM_NOT_SEALED = sql.raw(`(user_activity.stream_id IS NULL OR NOT EXIST
 function conflictClauseFor(activityType: string) {
   if (activityType === ActivityTypes.REACTION) {
     return sql.raw(
-      "ON CONFLICT (user_id, message_id, actor_id, emoji) WHERE activity_type = 'reaction' DO UPDATE SET read_at = COALESCE(user_activity.read_at, EXCLUDED.read_at)"
+      "ON CONFLICT (workspace_id, user_id, message_id, actor_id, emoji) WHERE activity_type = 'reaction' DO UPDATE SET read_at = COALESCE(user_activity.read_at, EXCLUDED.read_at)"
     )
   }
   if (activityType === ActivityTypes.SAVED_REMINDER || activityType === ActivityTypes.MISSED_CALL) {
@@ -148,7 +149,7 @@ function conflictClauseFor(activityType: string) {
     return sql.raw("")
   }
   return sql.raw(
-    "ON CONFLICT (user_id, message_id, activity_type, actor_id) WHERE activity_type NOT IN ('reaction', 'saved_reminder') DO UPDATE SET read_at = COALESCE(user_activity.read_at, EXCLUDED.read_at)"
+    "ON CONFLICT (workspace_id, user_id, message_id, activity_type, actor_id) WHERE activity_type NOT IN ('reaction', 'saved_reminder') DO UPDATE SET read_at = COALESCE(user_activity.read_at, EXCLUDED.read_at)"
   )
 }
 
@@ -398,8 +399,8 @@ export const ActivityRepository = {
   /**
    * Of `messageIds`, which ones `@`-mentioned `userId` — the Mine-lens signal
    * (board `buildBoardPosts`). One batched presence read (INV-56), index-backed by
-   * `idx_user_activity_dedup_non_reaction (user_id, message_id, activity_type,
-   * actor_id) WHERE activity_type <> 'reaction'` (mention is non-reaction).
+   * the non-reaction dedup key on (workspace, user, message, type, actor)
+   * (mention is non-reaction).
    * Workspace-scoped (INV-8); `ActivityTypes.MENTION`, not a literal (INV-33).
    */
   async findMentionedMessageIds(

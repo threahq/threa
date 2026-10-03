@@ -82,7 +82,7 @@ export const UserPreferencesRepository = {
     await db.query(sql`
       INSERT INTO user_preference_overrides (workspace_id, user_id, key, value)
       VALUES (${workspaceId}, ${userId}, ${key}, ${JSON.stringify(value)}::jsonb)
-      ON CONFLICT (user_id, key) DO UPDATE SET
+      ON CONFLICT (workspace_id, user_id, key) DO UPDATE SET
         value = ${JSON.stringify(value)}::jsonb,
         updated_at = NOW()
     `)
@@ -108,7 +108,7 @@ export const UserPreferencesRepository = {
     await db.query(
       `INSERT INTO user_preference_overrides (workspace_id, user_id, key, value)
        VALUES ${placeholders.join(", ")}
-       ON CONFLICT (user_id, key) DO UPDATE SET
+       ON CONFLICT (workspace_id, user_id, key) DO UPDATE SET
          value = EXCLUDED.value,
          updated_at = NOW()`,
       values
