@@ -74,7 +74,7 @@ describe("memo sources: deleted and edited messages", () => {
         createdBy: testUserId,
         memoryMode,
       })
-      await StreamMemberRepository.insert(client, seeded.streamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, seeded.streamId, testUserId)
       await ConversationRepository.insert(client, {
         id: seeded.conversationId,
         streamId: seeded.streamId,
