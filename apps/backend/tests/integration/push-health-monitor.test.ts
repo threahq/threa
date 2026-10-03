@@ -124,10 +124,10 @@ describe("monitor push probe", () => {
   }
 
   const currentGrant = (uid: string) =>
-    UserPreferencesRepository.findOverrideGeneration(pool, uid, ANALYTICS_CONSENT_KEY, ANALYTICS_CONSENT_GRANTED)
+    UserPreferencesRepository.findOverrideGeneration(pool, ws, uid, ANALYTICS_CONSENT_KEY, ANALYTICS_CONSENT_GRANTED)
 
   async function setConsent(uid: string, consent: "granted" | "denied" | null) {
-    if (consent === null) await UserPreferencesRepository.deleteOverride(pool, uid, ANALYTICS_CONSENT_KEY)
+    if (consent === null) await UserPreferencesRepository.bulkDeleteOverrides(pool, ws, uid, [ANALYTICS_CONSENT_KEY])
     else await UserPreferencesRepository.setOverride(pool, ws, uid, ANALYTICS_CONSENT_KEY, consent)
   }
 
@@ -139,7 +139,7 @@ describe("monitor push probe", () => {
   async function armingGrant(uid: string): Promise<string> {
     const current = await currentGrant(uid)
     if (current !== null) return current
-    const prior = await UserPreferencesRepository.findOverride(pool, uid, ANALYTICS_CONSENT_KEY)
+    const prior = await UserPreferencesRepository.findOverride(pool, ws, uid, ANALYTICS_CONSENT_KEY)
     await setConsent(uid, "granted")
     const grant = (await currentGrant(uid))!
     await setConsent(uid, (prior?.value as "granted" | "denied" | undefined) ?? null)
@@ -164,7 +164,8 @@ describe("monitor push probe", () => {
         resolveActivityPush: unused,
         resolveFiredReminder: unused,
         isRewrapOutstanding: unused,
-        findAnalyticsConsentGrant: (db, uid) => preferences.findAnalyticsConsentGrant(db, uid),
+        findAnalyticsConsentGrant: (db, workspaceId, uid) =>
+          preferences.findAnalyticsConsentGrant(db, workspaceId, uid),
         isE2eRootedStream: async (db, workspaceId, streamId) =>
           (await E2eStreamsRepository.excludeE2eRootedStreamIds(db, [{ workspaceId, streamId }])).length === 0,
       },

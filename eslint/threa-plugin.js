@@ -1179,7 +1179,6 @@ export const unscopedSqlAllowlist = {
   "apps/backend/src/features/ai-usage/usage-repository.ts": 2,
   "apps/backend/src/features/invitations/repository.ts": 7,
   "apps/backend/src/features/perf-diagnostics/repository.ts": 2,
-  "apps/backend/src/features/user-preferences/repository.ts": 7,
   "apps/backend/src/features/workspace-integrations/repository.ts": 1,
   "apps/backend/src/features/workspaces/repository.ts": 1,
   "apps/backend/src/features/workspaces/user-repository.ts": 2,

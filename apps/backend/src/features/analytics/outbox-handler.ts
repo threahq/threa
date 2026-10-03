@@ -12,7 +12,7 @@ import {
   type StreamMemberJoinedOutboxPayload,
 } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { UserPreferencesRepository } from "../user-preferences"
+import { UserPreferencesRepository, userOverrideRefKey } from "../user-preferences"
 
 interface Candidate {
   actorId: string
@@ -147,14 +147,21 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
         )
       )
       const reportable = candidates.filter((candidate) => nonE2eStreamIds.has(candidate.streamId))
-      const consentByActorId = await UserPreferencesRepository.findOverrideForUsers(
+      const actorRefs = new Map(
+        reportable.map(({ workspaceId, actorId }) => [
+          userOverrideRefKey(workspaceId, actorId),
+          { workspaceId, userId: actorId },
+        ])
+      )
+      const consentByActorRef = await UserPreferencesRepository.findOverrideForUsers(
         this.db,
-        Array.from(new Set(reportable.map((candidate) => candidate.actorId))),
+        Array.from(actorRefs.values()),
         ANALYTICS_CONSENT_KEY
       )
 
       for (const candidate of reportable) {
-        if (consentByActorId.get(candidate.actorId) !== ANALYTICS_CONSENT_GRANTED) continue
+        const consent = consentByActorRef.get(userOverrideRefKey(candidate.workspaceId, candidate.actorId))
+        if (consent !== ANALYTICS_CONSENT_GRANTED) continue
         this.reporter.captureEvent({
           uuid: candidate.uuid,
           distinctId: candidate.actorId,

@@ -116,7 +116,7 @@ export async function applySparseRead(db: Querier, params: ApplySparseReadParams
     // store (locked by the seed above). A compaction target is always a real
     // event, so the watermark is non-null here.
     if (watermarkEventId) {
-      const inboxClearMode = await resolveInboxClearMode(db, memberId)
+      const inboxClearMode = await resolveInboxClearMode(db, workspaceId, memberId)
       const { held } = await ReadStateRepository.advance(db, workspaceId, streamId, memberId, watermarkEventId, {
         holdInInbox: inboxClearMode !== "read",
       })

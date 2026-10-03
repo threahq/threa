@@ -30,7 +30,7 @@ describe("resolveDefaultPersona", () => {
   })
 
   it("prefers the user preference over the workspace setting", async () => {
-    stubUserOverride("persona_user")
+    const userOverride = stubUserOverride("persona_user")
     stubWorkspaceOverride("persona_workspace")
     const findById = spyOn(PersonaRepository, "findById").mockResolvedValue(persona("persona_user"))
     const systemDefault = spyOn(PersonaRepository, "getSystemDefault")
@@ -38,6 +38,7 @@ describe("resolveDefaultPersona", () => {
     const result = await resolveDefaultPersona(db, WORKSPACE_ID, OWNER_ID)
 
     expect(result).toEqual(persona("persona_user"))
+    expect(userOverride.mock.calls).toEqual([[db, WORKSPACE_ID, OWNER_ID, "defaultCompanionPersonaId"]])
     expect(findById).toHaveBeenCalledWith(db, WORKSPACE_ID, "persona_user")
     expect(systemDefault).not.toHaveBeenCalled()
   })
