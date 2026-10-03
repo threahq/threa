@@ -37,6 +37,8 @@ const CONVERSATIONS_STORE = "conversationsByWorkspace"
 const CONVERSATION_MESSAGES_STORE = "conversationMessagesByWorkspace"
 const BOARD_HIDDEN_CONVERSATIONS_STORE = "boardHiddenConversationsByWorkspace"
 const STREAM_CONTEXT_ITEMS_STORE = "streamContextItemsByWorkspace"
+const COMPOSER_LOADED_STORE = "composerLoadedByWorkspace"
+const COMPOSER_TARGET_STORE = "composerTargetByWorkspace"
 const LEGACY_WORKSPACE_USERS_STORE = "workspaceMembers"
 
 export interface CachedWorkspace {
@@ -590,11 +592,10 @@ export interface CachedDraft {
  * Device-local pointer: which draft (if any) is checked out into the composer
  * for a scope. Persisted so a reload restores it, but never synced — a fresh
  * device opens the composer empty and the user picks a draft from the stash to
- * load it. One row per scope; `workspaceId` is carried for workspace-scoped
- * cache seeding, not because the pointer is shared.
+ * load it. One row per workspace and scope.
  */
 export interface ComposerLoaded {
-  /** Primary key: "stream:{streamId}" or "thread:{parentMessageId}". */
+  /** Primary key with `workspaceId`: "stream:{streamId}" or "thread:{parentMessageId}". */
   scope: string
   workspaceId: string
   draftId: string | null
@@ -609,7 +610,7 @@ export interface ComposerLoaded {
  * part of the in-progress work the drafts themselves survive with.
  */
 export interface ComposerTarget {
-  /** Primary key: the host composer's own scope, e.g. "stream:{streamId}". */
+  /** Primary key with `workspaceId`: the host composer's own scope, e.g. "stream:{streamId}". */
   host: string
   workspaceId: string
   /** The draft scope this host composes into instead of `host`. */
@@ -1140,8 +1141,8 @@ export class ThreaDatabase extends Dexie {
   syncCursors!: EntityTable<SyncCursor, "key">
   draftScratchpads!: EntityTable<DraftScratchpad, "id">
   drafts!: EntityTable<CachedDraft, "id">
-  composerLoaded!: EntityTable<ComposerLoaded, "scope">
-  composerTarget!: EntityTable<ComposerTarget, "host">
+  composerLoaded!: Table<ComposerLoaded, [string, string]>
+  composerTarget!: Table<ComposerTarget, [string, string]>
   unreadState!: EntityTable<CachedUnreadState, "id">
   userPreferences!: EntityTable<CachedUserPreferences, "id">
   workspaceMetadata!: EntityTable<CachedWorkspaceMetadata, "id">
@@ -1765,6 +1766,28 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "personas", PERSONAS_STORE)
       })
 
+    // v54: composer pointers are keyed by workspace like v50-v53. Scopes and hosts
+    // are built from stream, message and conversation ids, which Connect copies
+    // into a partner workspace, so one workspace's checkout or target overwrote
+    // the other's pointer. Rows without a `workspaceId` cannot be keyed and are
+    // dropped; the pointers are device-local, so nothing refetches them.
+    // One-way door: once a client has opened at v54, code declaring only v53
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v55.
+    this.version(54)
+      .stores({
+        [COMPOSER_LOADED_STORE]: "[workspaceId+scope], workspaceId",
+        [COMPOSER_TARGET_STORE]: "[workspaceId+host], workspaceId",
+        composerLoaded: null,
+        composerTarget: null,
+      })
+      .upgrade(async (tx) => {
+        await moveRows(tx, "composerLoaded", COMPOSER_LOADED_STORE)
+        await moveRows(tx, "composerTarget", COMPOSER_TARGET_STORE)
+      })
+
+    this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
+    this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
     this.personas = this.table(PERSONAS_STORE)
     this.streams = this.table(STREAMS_STORE)

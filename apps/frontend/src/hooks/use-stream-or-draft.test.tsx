@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type MessageService, type StreamService } from "@/contexts"
 import { PendingMessagesProvider } from "@/contexts/pending-messages-context"
-import { clearAllCachedData, db } from "@/db"
+import { clearAllCachedData, db, type CachedDraft } from "@/db"
 import { AuthContext } from "@/auth/context"
 import { streamKeys } from "./use-streams"
 import { seedWorkspaceCache } from "@/stores/workspace-store"
@@ -19,6 +19,8 @@ import { clearStreamNameCache, getCachedStreamName, streamNameCacheKey } from "@
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
+import { seedWorkspaceUser } from "@/test/workspace-rows"
+import type { JSONContent } from "@threahq/types"
 
 function createWrapper(
   queryClient: QueryClient,
@@ -962,5 +964,94 @@ describe("useStreamOrDraft scratchpad rename (top-bar editor path)", () => {
       queryClient.getQueryData<{ streams: Array<{ displayName: string }> }>(workspaceKeys.bootstrap("ws_1"))?.streams[0]
         ?.displayName
     ).toBe("Newer socket title")
+  })
+})
+
+describe("useStreamOrDraft virtual DM redirect keeps drafts per workspace", () => {
+  const virtualScope = "stream:draft_dm_member_2"
+  const realScope = "stream:stream_dm_1"
+
+  const doc = (text: string): JSONContent => ({
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+  })
+
+  function draft(id: string, workspaceId: string, scope: string, text: string, clientUpdatedAt: number): CachedDraft {
+    return { id, workspaceId, scope, contentJson: doc(text), attachments: [], clientUpdatedAt }
+  }
+
+  async function seedDrafts(rows: Array<[CachedDraft, loaded: boolean]>): Promise<void> {
+    await db.drafts.bulkPut(rows.map(([row]) => row))
+    await db.composerLoaded.bulkPut(
+      rows
+        .filter(([, loaded]) => loaded)
+        .map(([row]) => ({ scope: row.scope, workspaceId: row.workspaceId, draftId: row.id }))
+    )
+  }
+
+  async function stateOf(workspaceId: string) {
+    const drafts = (await db.drafts.toArray()).filter((row) => row.workspaceId === workspaceId)
+    return {
+      pointers: await db.composerLoaded.where("workspaceId").equals(workspaceId).toArray(),
+      drafts: drafts.map(({ scope, contentJson }) => ({ scope, contentJson })),
+    }
+  }
+
+  beforeEach(async () => {
+    await clearAllCachedData()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.pendingOperations.clear()
+    await seedWorkspaceUser("ws_1", "member_1")
+    await db.workspaceUsers.update(["ws_1", "member_1"], { workosUserId: "workos_1" })
+    await seedWorkspaceUser("ws_1", "member_2")
+    await db.dmPeers.put({
+      id: "ws_1:stream_dm_1",
+      workspaceId: "ws_1",
+      userId: "member_2",
+      streamId: "stream_dm_1",
+      _cachedAt: 1,
+    })
+  })
+
+  it("should move its own workspace's virtual draft onto the real DM scope when another workspace has one at the same scope", async () => {
+    const otherDraft = draft("draft_other", "ws_2", virtualScope, "typed in ws_2", 1000)
+    await seedDrafts([
+      [draft("draft_mine", "ws_1", virtualScope, "typed in ws_1", 1000), true],
+      [otherDraft, true],
+    ])
+
+    renderHook(() => useStreamOrDraft("ws_1", "draft_dm_member_2"), {
+      wrapper: createWrapper(new QueryClient()),
+    })
+    await waitFor(async () => expect(await db.drafts.get("draft_mine")).toBeUndefined())
+
+    expect({ ws1: await stateOf("ws_1"), ws2: await stateOf("ws_2") }).toEqual({
+      ws1: {
+        pointers: [{ scope: realScope, workspaceId: "ws_1", draftId: expect.any(String) }],
+        drafts: [{ scope: realScope, contentJson: doc("typed in ws_1") }],
+      },
+      ws2: {
+        pointers: [{ scope: virtualScope, workspaceId: "ws_2", draftId: "draft_other" }],
+        drafts: [{ scope: virtualScope, contentJson: otherDraft.contentJson }],
+      },
+    })
+  })
+
+  it("should keep the newer draft already on the real DM scope instead of overwriting it with the older virtual draft", async () => {
+    await seedDrafts([
+      [draft("draft_virtual", "ws_1", virtualScope, "older virtual", 1000), true],
+      [draft("draft_real", "ws_1", realScope, "newer real", 2000), true],
+    ])
+
+    renderHook(() => useStreamOrDraft("ws_1", "draft_dm_member_2"), {
+      wrapper: createWrapper(new QueryClient()),
+    })
+    await waitFor(async () => expect(await db.drafts.get("draft_virtual")).toBeUndefined())
+
+    expect(await stateOf("ws_1")).toEqual({
+      pointers: [{ scope: realScope, workspaceId: "ws_1", draftId: "draft_real" }],
+      drafts: [{ scope: realScope, contentJson: doc("newer real") }],
+    })
   })
 })

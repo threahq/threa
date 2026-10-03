@@ -352,7 +352,7 @@ describe("processOperationQueue database capture", () => {
     // server-minted id (composer following it) and the kept copy seeded back.
     expect(await claimedDb.drafts.get("draft_new")).toMatchObject({ id: "draft_new", baseVersion: 6 })
     expect(await claimedDb.drafts.get("draft_x")).toMatchObject({ id: "draft_x", baseVersion: 7 })
-    expect((await claimedDb.composerLoaded.get("stream:stream_1"))?.draftId).toBe("draft_new")
+    expect((await claimedDb.composerLoaded.get([workspaceId, "stream:stream_1"]))?.draftId).toBe("draft_new")
     // The re-enqueued push for the migrated id was queued in — and drained
     // from — the claimed database, so it actually reached the server.
     expect(draftsService.upsert.mock.calls.map((call) => call[1])).toEqual(["draft_x", "draft_new"])

@@ -153,7 +153,7 @@ export function useShareTarget() {
 
       // Merge the shared files into the scope's loaded draft (or mint one).
       const scope = getDraftMessageKey({ type: "stream", streamId })
-      const loadedId = (await account.database.composerLoaded.get(scope))?.draftId ?? null
+      const loadedId = (await account.database.composerLoaded.get([workspaceId, scope]))?.draftId ?? null
       const existing = loadedId ? await account.database.drafts.get(loadedId) : undefined
       assertSameAccount(account)
       const mergedAttachments = [...(existing?.attachments ?? []), ...uploadedAttachments]
