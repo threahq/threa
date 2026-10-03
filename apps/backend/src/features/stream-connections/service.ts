@@ -164,7 +164,7 @@ export class StreamConnectionService {
     if (!(await WorkspaceRepository.findById(this.pool, params.workspaceId))) {
       throw new HttpError("This workspace does not live in this region", { status: 404, code: "WORKSPACE_NOT_FOUND" })
     }
-    const stream = await StreamRepository.findByIdForWorkspace(this.pool, params.streamId, params.workspaceId)
+    const stream = await StreamRepository.findById(this.pool, params.workspaceId, params.streamId)
     if (!stream) return { shareable: false, slug: null, displayName: null }
     return {
       shareable:
