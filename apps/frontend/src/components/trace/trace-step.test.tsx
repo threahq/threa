@@ -210,6 +210,50 @@ describe("TraceStep", () => {
     expect(screen.queryByText(/\*\*AI\*\*/)).not.toBeInTheDocument()
   })
 
+  it("lists the memos recalled before the first model call, each linking to the memory explorer", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "context_received",
+            content: JSON.stringify({
+              messages: [
+                {
+                  messageId: "msg_trigger",
+                  authorName: "Kris",
+                  authorType: "user",
+                  createdAt: "2026-02-19T18:00:00.000Z",
+                  content: "Plan a Thai dinner menu",
+                  isTrigger: true,
+                },
+              ],
+              recalledMemos: [
+                {
+                  type: "workspace_memo",
+                  title: "Severe peanut allergy",
+                  memoId: "memo_allergy",
+                  snippet: "Kris carries an EpiPen.",
+                },
+              ],
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect({
+      heading: screen.getByText("Recalled from memory:").textContent,
+      href: screen.getByRole("link", { name: "Severe peanut allergy" }).getAttribute("href"),
+      snippet: screen.getByText("Kris carries an EpiPen.").textContent,
+    }).toEqual({
+      heading: "Recalled from memory:",
+      href: "/w/ws_1/memory?memo=memo_allergy",
+      snippet: "Kris carries an EpiPen.",
+    })
+  })
+
   it("labels a synthesized context step as reconstructed", () => {
     render(
       <MemoryRouter>

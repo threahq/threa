@@ -13,6 +13,7 @@ import {
   type ConversationDirective,
   type FeatureFlagValue,
   type SourceItem,
+  type TraceSource,
 } from "@threahq/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
@@ -915,6 +916,16 @@ export class PersonaAgent {
             extras: {
               rerunContext: toTraceRerunContext(rerunContext),
               ...(attachedContext && { attachedContext }),
+              ...(agentContext.recalledMemos.length > 0 && {
+                recalledMemos: agentContext.recalledMemos.map(
+                  (memo): TraceSource => ({
+                    type: "workspace_memo",
+                    title: memo.title,
+                    memoId: memo.id,
+                    snippet: memo.abstract,
+                  })
+                ),
+              }),
             },
           }
         }
