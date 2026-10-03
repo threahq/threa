@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto"
 import type { Pool } from "pg"
 import { ActivityTypes, PrefNotificationLevels, type PrefNotificationLevel } from "@threahq/types"
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
-import { PushService } from "./service"
+import { PushService, streamPushTopic } from "./service"
 import { PushTelemetry } from "./telemetry"
 import { PushSubscriptionRepository } from "./repository"
 import type { ActivityCreatedOutboxPayload } from "../../lib/outbox"
@@ -226,5 +226,21 @@ describe("PushService delivery options", () => {
       failed: 1,
       devices: [{ subscriptionId: subscription.id, outcome: "invalid_registration", statusCode: null }],
     })
+  })
+})
+
+describe("streamPushTopic", () => {
+  it("should give the same stream id a distinct URL-safe topic of at most 32 characters when pushed in two workspaces", () => {
+    const streamId = "stream_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+    const topics = [
+      streamPushTopic("ws_01BX5ZZKBKACTAV9WEVGEMMVRY", streamId),
+      streamPushTopic("ws_01BX5ZZKBKACTAV9WEVGEMMVRZ", streamId),
+      streamPushTopic("ws_01BX5ZZKBKACTAV9WEVGEMMVRY", streamId, "m"),
+    ]
+
+    expect({
+      distinct: new Set(topics).size,
+      wellFormed: topics.map((topic) => /^[A-Za-z0-9_-]{1,32}$/.test(topic)),
+    }).toEqual({ distinct: 3, wellFormed: [true, true, true] })
   })
 })

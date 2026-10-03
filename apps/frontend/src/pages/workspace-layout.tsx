@@ -428,8 +428,8 @@ function NotificationSweeper({ workspaceId }: { workspaceId: string }) {
  * for push suppression. `conv:` panels resolve their stream ids only after
  * their post loads, so the conversation panel registers those itself.
  */
-function VisibleStreamPresence({ streamIds }: { streamIds: string[] }) {
-  useVisibleStreams(streamIds.filter(isServerStreamId))
+function VisibleStreamPresence({ workspaceId, streamIds }: { workspaceId: string; streamIds: string[] }) {
+  useVisibleStreams(workspaceId, streamIds.filter(isServerStreamId))
   return null
 }
 
@@ -580,7 +580,7 @@ function WorkspaceLayoutContent() {
           <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
             <UnreadTabIndicator workspaceId={workspaceId} />
             <NotificationSweeper workspaceId={workspaceId} />
-            <VisibleStreamPresence streamIds={streamIds} />
+            <VisibleStreamPresence workspaceId={workspaceId} streamIds={streamIds} />
             <AppUpdateChecker />
             <FreshnessWatchers />
             <MessageQueueHandler workspaceId={workspaceId} />

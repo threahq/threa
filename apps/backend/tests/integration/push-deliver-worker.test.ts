@@ -33,6 +33,7 @@ import {
   createPushSessionCleanup,
   type PushSourceEvent,
 } from "../../src/features/push"
+import { streamPushTopic } from "../../src/features/push/service"
 import { ActivityRepository, ActivityService, type ActivityPushResolution } from "../../src/features/activity"
 import { SavedMessagesService, type FiredReminderSource } from "../../src/features/saved-messages"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
@@ -881,13 +882,13 @@ describe("durable push delivery", () => {
               authorAvatarUrl: "/api/workspaces/ws_1/users/usr_2/avatar/1700.64.webp",
               emoji: "👍",
             },
-            options: options("01PLANNED"),
+            options: options(streamPushTopic(ws, "stream_01PLANNED")),
           },
         ],
         mention: [
           {
             data: { ...activityData, activityType: ActivityTypes.MENTION, contentPreview: "hi @kris" },
-            options: options("01PLANNEDm"),
+            options: options(streamPushTopic(ws, "stream_01PLANNED", "m")),
           },
         ],
         reminder: [

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 import {
   appendMessage,
   resolveTag,
+  resolveRewrapTag,
   formatTitle,
   formatBody,
+  isStreamOnScreen,
   isViewingStream,
   resolveActions,
   resolvePushActionLimit,
@@ -43,16 +45,68 @@ describe("resolveLatestMessageId", () => {
 })
 
 describe("resolveTag", () => {
-  it("returns streamId for message activity", () => {
-    expect(resolveTag("stream_123", "message")).toBe("stream_123")
+  it("returns the workspace-scoped stream key for message activity", () => {
+    expect(resolveTag("ws_1", "stream_123", "message")).toBe("ws_1/stream_123")
   })
 
-  it("returns streamId:mention for mention activity", () => {
-    expect(resolveTag("stream_123", "mention")).toBe("stream_123:mention")
+  it("returns the workspace-scoped stream key:mention for mention activity", () => {
+    expect(resolveTag("ws_1", "stream_123", "mention")).toBe("ws_1/stream_123:mention")
   })
 
-  it("returns streamId when activityType is undefined", () => {
-    expect(resolveTag("stream_123")).toBe("stream_123")
+  it("returns the workspace-scoped stream key when activityType is undefined", () => {
+    expect(resolveTag("ws_1", "stream_123")).toBe("ws_1/stream_123")
+  })
+
+  it("should give the same stream id a different tag in each workspace when a copied stream pushes in both", () => {
+    expect({
+      message: [resolveTag("ws_a", "stream_1"), resolveTag("ws_b", "stream_1")],
+      mention: [resolveTag("ws_a", "stream_1", "mention"), resolveTag("ws_b", "stream_1", "mention")],
+    }).toEqual({
+      message: ["ws_a/stream_1", "ws_b/stream_1"],
+      mention: ["ws_a/stream_1:mention", "ws_b/stream_1:mention"],
+    })
+  })
+})
+
+describe("resolveRewrapTag", () => {
+  it("should give the same stream id a different rewrap tag in each workspace when both need an unlock", () => {
+    expect([resolveRewrapTag("ws_a", "stream_1"), resolveRewrapTag("ws_b", "stream_1")]).toEqual([
+      "rewrap:ws_a/stream_1",
+      "rewrap:ws_b/stream_1",
+    ])
+  })
+})
+
+describe("isStreamOnScreen", () => {
+  const ORIGIN = "https://app.threa.io"
+  const OTHER_URL = `${ORIGIN}/w/ws_a/saved`
+
+  it("should suppress a push when its stream is registered visible under the push's workspace", () => {
+    expect(isStreamOnScreen([OTHER_URL], new Set(["ws_a/stream_1"]), "ws_a", "stream_1")).toBe(true)
+  })
+
+  it("should not suppress ws_b's push when only ws_a's copy of the same stream id is visible", () => {
+    expect(isStreamOnScreen([OTHER_URL], new Set(["ws_a/stream_1"]), "ws_b", "stream_1")).toBe(false)
+  })
+
+  it("should not suppress a push when a page registered the bare stream id", () => {
+    expect(isStreamOnScreen([OTHER_URL], new Set(["stream_1"]), "ws_a", "stream_1")).toBe(false)
+  })
+
+  it("should suppress a push when a focused window's URL is on the stream", () => {
+    expect(isStreamOnScreen([`${ORIGIN}/w/ws_a/s/stream_1`], new Set(), "ws_a", "stream_1")).toBe(true)
+  })
+
+  it("should not suppress a push when no window is focused, whatever is registered visible", () => {
+    expect(isStreamOnScreen([], new Set(["ws_a/stream_1"]), "ws_a", "stream_1")).toBe(false)
+  })
+
+  it("should not suppress a push when it lacks the workspace or stream id", () => {
+    const visible = new Set(["ws_a/stream_1", "stream_1"])
+    expect([
+      isStreamOnScreen([OTHER_URL], visible, undefined, "stream_1"),
+      isStreamOnScreen([OTHER_URL], visible, "ws_a", undefined),
+    ]).toEqual([false, false])
   })
 })
 

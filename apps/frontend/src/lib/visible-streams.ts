@@ -8,7 +8,8 @@ import { PRESENCE_CACHE } from "./sw-presence"
  * The SW can't derive this from window URLs alone: threads and conversations
  * open as `?panel=` params on whatever route is current, and a conversation
  * panel's underlying stream ids aren't in the URL at all. So the surfaces that
- * render a stream register their ids here, and the SW checks membership when
+ * render a stream register their workspace-scoped keys here (a copied stream
+ * keeps its id across workspaces), and the SW checks membership when
  * deciding whether a push is for something the user can already see.
  *
  * The cache entry is last-writer-wins across tabs, so it carries a strict
@@ -26,19 +27,19 @@ import { PRESENCE_CACHE } from "./sw-presence"
 const VISIBLE_STREAMS_KEY = "https://threa.local/__presence__/visible-streams"
 
 export interface VisibleStreamRegistry {
-  /** Register stream ids as visible; returns an unregister function. Refcounted. */
-  register(streamIds: readonly string[]): () => void
+  /** Register workspace-scoped stream keys as visible; returns an unregister function. Refcounted. */
+  register(streamKeys: readonly string[]): () => void
   /** Re-publish the current set (e.g. when this tab regains focus). */
   republish(): void
   snapshot(): string[]
 }
 
 /**
- * Refcounted registry of on-screen stream ids. Publishes the deduped set via
- * `publish` on every change, coalesced to one call per microtask so a panel
- * swap (unregister + register in one render) publishes once.
+ * Refcounted registry of on-screen workspace-scoped stream keys. Publishes the
+ * deduped set via `publish` on every change, coalesced to one call per
+ * microtask so a panel swap (unregister + register in one render) publishes once.
  */
-export function createVisibleStreamRegistry(publish: (streamIds: string[]) => void): VisibleStreamRegistry {
+export function createVisibleStreamRegistry(publish: (streamKeys: string[]) => void): VisibleStreamRegistry {
   const counts = new Map<string, number>()
   let queued = false
 
@@ -53,17 +54,17 @@ export function createVisibleStreamRegistry(publish: (streamIds: string[]) => vo
   }
 
   return {
-    register(streamIds: readonly string[]): () => void {
-      for (const id of streamIds) counts.set(id, (counts.get(id) ?? 0) + 1)
+    register(streamKeys: readonly string[]): () => void {
+      for (const key of streamKeys) counts.set(key, (counts.get(key) ?? 0) + 1)
       schedule()
       let released = false
       return () => {
         if (released) return
         released = true
-        for (const id of streamIds) {
-          const next = (counts.get(id) ?? 1) - 1
-          if (next <= 0) counts.delete(id)
-          else counts.set(id, next)
+        for (const key of streamKeys) {
+          const next = (counts.get(key) ?? 1) - 1
+          if (next <= 0) counts.delete(key)
+          else counts.set(key, next)
         }
         schedule()
       }
@@ -74,10 +75,10 @@ export function createVisibleStreamRegistry(publish: (streamIds: string[]) => vo
 }
 
 /** Best-effort write; a failure just means the SW falls back to URL matching. */
-export async function publishVisibleStreams(streamIds: string[]): Promise<void> {
+export async function publishVisibleStreams(streamKeys: string[]): Promise<void> {
   try {
     const cache = await caches.open(PRESENCE_CACHE)
-    await cache.put(VISIBLE_STREAMS_KEY, new Response(JSON.stringify(streamIds)))
+    await cache.put(VISIBLE_STREAMS_KEY, new Response(JSON.stringify(streamKeys)))
   } catch {
     // ignore — fails open to showing notifications
   }
