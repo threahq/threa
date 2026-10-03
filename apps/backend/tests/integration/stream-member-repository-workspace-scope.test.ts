@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes, NotificationLevels, StreamTypes, Visibilities } from "@threahq/types"
+import { AuthorTypes, NotificationLevels, StreamTypes, Visibilities, type Visibility } from "@threahq/types"
 import { addTestMember, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
 import { composeSql } from "../../src/db"
 import { EventService, MessageRepository } from "../../src/features/messaging"
@@ -49,7 +49,7 @@ describe("StreamMemberRepository workspace scope (INV-8)", () => {
     return { wsA: a.id, wsB: b.id, userA1: a.userIds[0], userA2: a.userIds[1], userB: b.userIds[0] }
   }
 
-  function createChannel(workspace: string, createdBy: string, visibility: Visibilities) {
+  function createChannel(workspace: string, createdBy: string, visibility: Visibility) {
     counter += 1
     return streamService.createChannel({
       workspaceId: workspace,

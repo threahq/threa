@@ -58,7 +58,7 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
       if (effectiveStream.visibility !== Visibilities.PRIVATE) return { type: "public_only" }
       // Adding someone to a scratchpad's thread adds them to the scratchpad, so
       // its audience is only the invoker when no one else is a member.
-      const members = await StreamMemberRepository.list(db, { streamId: effectiveStream.id })
+      const members = await StreamMemberRepository.list(db, stream.workspaceId, { streamId: effectiveStream.id })
       return members.every((m) => m.memberId === invokingUserId)
         ? { type: "user_full_access", userId: invokingUserId }
         : { type: "public_plus_stream", streamId: effectiveStream.id }
