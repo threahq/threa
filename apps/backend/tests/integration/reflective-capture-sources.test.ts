@@ -29,17 +29,13 @@ describe("reflective capture: research sources", () => {
   let pool: Pool
   let testWorkspaceId: string
   let testUserId: string
-  let classifyCalls = 0
 
   function captureService(): ReflectiveCaptureService {
     const memoService = new MemoService({
       analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: {
-        classifyConversation: async () => {
-          classifyCalls++
-          return worthy
-        },
+        classifyConversation: async () => worthy,
       },
       memorizer: {
         memorizeConversation: async () => [
@@ -150,17 +146,15 @@ describe("reflective capture: research sources", () => {
     await pool.end()
   })
 
-  test("a channel session whose research cites another channel captures nothing", async () => {
+  test("a channel session whose research cites another channel captures, sourced only from its own root", async () => {
     const channel = await seedStream({ type: "channel", visibility: "public" })
     const other = await seedStream({ type: "channel", visibility: "private" })
-    const session = await seedSession(channel, await seedMessage(channel), [
-      { streamId: other, messageId: await seedMessage(other) },
-    ])
-    classifyCalls = 0
+    const trigger = await seedMessage(channel)
+    const session = await seedSession(channel, trigger, [{ streamId: other, messageId: await seedMessage(other) }])
 
     await captureService().capture({ workspaceId: testWorkspaceId, sessionId: session })
 
-    expect({ classifyCalls, memos: await capturedMemos(session) }).toEqual({ classifyCalls: 0, memos: [] })
+    expect(await capturedMemos(session)).toEqual([{ scope: "workspace", sourceMessageIds: [trigger] }])
   })
 
   test("a private scratchpad session whose research cites a channel still captures into its owner's tier", async () => {
