@@ -96,7 +96,8 @@ describe("EnclaveInvocationsRepository.claimNext", () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [makeRow()])
 
-    const claimed = await EnclaveInvocationsRepository.claimNext(db, {
+    const claimed = await EnclaveInvocationsRepository.claimNext(db, "ws_1", {
+      invocationId: "einv_1",
       keyId: "eik_live",
       claimToken: "cbtok_1",
       claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
@@ -114,9 +115,10 @@ describe("EnclaveInvocationsRepository.claimNext", () => {
     // …and the prompt's (the trigger envelope's).
     expect(captured.text).toContain("(m.envelope ->> 'keyGeneration')::int")
     expect(captured.text).toContain("recipient_kind = 'enclave'")
-    // Oldest first, attempts incremented, token + TTL stamped.
-    expect(captured.text).toContain("ORDER BY i.created_at ASC, i.id ASC")
+    // Attempts incremented, token + TTL stamped.
     expect(captured.text).toContain("attempts = attempts + 1")
+    expect(captured.values).toContain("ws_1")
+    expect(captured.values).toContain("einv_1")
     expect(captured.values).toContain("eik_live")
     expect(captured.values).toContain("cbtok_1")
     expect(claimed).toMatchObject({ id: "einv_1", status: "claimed", claimToken: "cbtok_1" })
@@ -124,7 +126,8 @@ describe("EnclaveInvocationsRepository.claimNext", () => {
 
   it("returns null when nothing is claimable", async () => {
     const db = createQuerier({ text: null, values: null }, [])
-    const claimed = await EnclaveInvocationsRepository.claimNext(db, {
+    const claimed = await EnclaveInvocationsRepository.claimNext(db, "ws_1", {
+      invocationId: "einv_1",
       keyId: "eik_live",
       claimToken: "cbtok_1",
       claimTtlSeconds: 60,
@@ -137,16 +140,17 @@ describe("EnclaveInvocationsRepository.claimNext", () => {
 describe("EnclaveInvocationsRepository claim lifecycle by session", () => {
   it("completes only the live claim for the session", async () => {
     const captured: Captured = { text: null, values: null }
-    await EnclaveInvocationsRepository.completeBySession(createQuerier(captured), "session_1")
+    await EnclaveInvocationsRepository.completeBySession(createQuerier(captured), "ws_1", "session_1")
     expect(captured.text).toContain("SET status = 'completed'")
-    expect(captured.text).toContain("WHERE session_id = $")
+    expect(captured.text).toContain("AND session_id = $")
     expect(captured.text).toContain("status = 'claimed'")
-    expect(captured.values).toEqual(["session_1"])
+    expect(captured.values).toEqual(["ws_1", "session_1"])
   })
 
   it("fails the claim terminally with the error preserved", async () => {
     const captured: Captured = { text: null, values: null }
     await EnclaveInvocationsRepository.failBySession(createQuerier(captured), {
+      workspaceId: "ws_1",
       sessionId: "session_1",
       errorMessage: "Enclave session failed: AbortError",
     })
@@ -158,6 +162,7 @@ describe("EnclaveInvocationsRepository claim lifecycle by session", () => {
   it("renews only a still-live claim — an expired one may already be re-claimed elsewhere (INV-20)", async () => {
     const captured: Captured = { text: null, values: null }
     await EnclaveInvocationsRepository.renewBySession(createQuerier(captured), {
+      workspaceId: "ws_1",
       sessionId: "session_1",
       claimTtlSeconds: 60,
     })
