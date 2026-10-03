@@ -922,7 +922,7 @@ export class PersonaAgent {
                     type: "workspace_memo",
                     title: memo.title,
                     memoId: memo.id,
-                    snippet: memo.abstract,
+                    snippet: memo.abstract.slice(0, 200),
                   })
                 ),
               }),

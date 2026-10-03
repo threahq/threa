@@ -483,7 +483,7 @@ function renderStepContent(
         const messages = structured.messages as MessageInfo[]
         const rerunContext = (structured.rerunContext as RerunContextInfo | undefined) ?? null
         const attachedContext = (structured.attachedContext as AttachedContextInfo | undefined) ?? null
-        const recalledMemos = (structured.recalledMemos as TraceSource[] | undefined) ?? []
+        const recalledMemos = Array.isArray(structured.recalledMemos) ? (structured.recalledMemos as TraceSource[]) : []
         const triggerMessage = messages.find((m) => m.isTrigger)
         const contextMessages = messages.filter((m) => !m.isTrigger)
 

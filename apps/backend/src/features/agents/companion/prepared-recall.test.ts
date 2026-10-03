@@ -9,6 +9,7 @@ function result(id: string, title: string): MemoExplorerResult {
       title,
       abstract: `${title} abstract`,
       knowledgeType: "context",
+      sourceMessageIds: [] as string[],
       createdAt: new Date("2026-09-30T10:00:00Z"),
     },
     distance: 0,
@@ -57,6 +58,27 @@ describe("PreparedRecall", () => {
     expect(await recall.recall(params)).toEqual([])
   })
 
+  it("goes on without recall when the search stalls or fails", async () => {
+    const stalled = new PreparedRecall({
+      memoExplorerService: { search: () => new Promise(() => {}) },
+      scorer: { score: async () => [] },
+      timeoutMs: 10,
+    })
+    const failing = new PreparedRecall({
+      memoExplorerService: {
+        search: async () => {
+          throw new Error("db down")
+        },
+      },
+      scorer: { score: async () => [] },
+    })
+
+    expect({ stalled: await stalled.recall(params), failing: await failing.recall(params) }).toEqual({
+      stalled: [],
+      failing: [],
+    })
+  })
+
   it("does not search for an empty message", async () => {
     const search = mock(async () => [])
     const recall = new PreparedRecall({ memoExplorerService: { search }, scorer: { score: async () => [] } })
@@ -68,7 +90,7 @@ describe("PreparedRecall", () => {
 })
 
 describe("formatRecalledMemosBlock", () => {
-  it("renders each memo with its id and capture date, and nothing when none were recalled", async () => {
+  it("renders each memo escaped, with its id and capture date, and nothing when none were recalled", async () => {
     const recall = new PreparedRecall({
       memoExplorerService: { search: async () => [result("memo_allergy", "Peanut <allergy>")] },
       scorer: { score: async () => [1] },
@@ -78,7 +100,7 @@ describe("formatRecalledMemosBlock", () => {
 
     expect({ block, empty: formatRecalledMemosBlock([]) }).toEqual({
       block: expect.stringContaining(
-        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" captured="2026-09-30">\nPeanut <allergy> abstract\n</memo>'
+        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" captured="2026-09-30">\nPeanut &lt;allergy&gt; abstract\n</memo>'
       ),
       empty: null,
     })

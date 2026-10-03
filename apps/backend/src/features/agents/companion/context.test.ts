@@ -7,6 +7,7 @@ import type { PreparedRecallParams } from "./prepared-recall"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository } from "../persona-attachment-repository"
 import { joinSystemPrompt } from "./prompt/system-prompt"
+import * as contextBuilder from "../context-builder"
 
 const persona: Persona = {
   id: "persona_1",
@@ -120,22 +121,35 @@ describe("buildAgentContext stream brief (roadmap 4.1)", () => {
 describe("buildAgentContext prepared recall", () => {
   afterEach(() => mock.restore())
 
-  it("recalls against the invoking user's message and puts the memos in the volatile prompt", async () => {
-    spyOn(MessageRepository, "findById").mockResolvedValue({
+  it("recalls against the invoking user's message and puts the memos the window doesn't carry in the volatile prompt", async () => {
+    const trigger = {
       id: "msg_1",
+      streamId: "stream_pad",
       authorType: "user",
       authorId: "usr_1",
       contentMarkdown: "What should I bring to the picnic?",
-    } as never)
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    }
+    spyOn(MessageRepository, "findById").mockResolvedValue(trigger as never)
+    const buildStreamContext = contextBuilder.buildStreamContext
+    spyOn(contextBuilder, "buildStreamContext").mockImplementation(async (...args) => ({
+      ...(await buildStreamContext(...args)),
+      conversationHistory: [trigger as never],
+    }))
+    const memo = (id: string, sourceMessageId: string) => ({
+      id,
+      title: id,
+      abstract: `${id} abstract`,
+      knowledgeType: "context" as const,
+      sourceMessageIds: [sourceMessageId],
+      createdAt: new Date("2026-09-30T10:00:00Z"),
+      score: 1,
+    })
     const recall = mock(async (_params: PreparedRecallParams) => [
-      {
-        id: "memo_allergy",
-        title: "Peanut allergy",
-        abstract: "Kris is allergic to peanuts.",
-        knowledgeType: "context" as const,
-        createdAt: new Date("2026-09-30T10:00:00Z"),
-        score: 1,
-      },
+      memo("memo_allergy", "msg_elsewhere"),
+      memo("memo_picnic", "msg_1"),
     ])
 
     const context = await buildAgentContext(
@@ -162,9 +176,11 @@ describe("buildAgentContext prepared recall", () => {
     expect({
       query: recall.mock.calls[0]?.[0],
       volatile: context.composeSystemPrompt([], { kind: "catch_up" }).volatile,
+      recalled: context.recalledMemos.map((m) => m.id),
     }).toEqual({
       query: expect.objectContaining({ invokingUserId: "usr_1", query: "What should I bring to the picnic?" }),
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
+      recalled: ["memo_allergy"],
     })
   })
 })

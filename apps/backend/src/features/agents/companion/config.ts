@@ -92,3 +92,5 @@ export const PREPARED_RECALL_CANDIDATE_LIMIT = 30
 export const PREPARED_RECALL_MAX_MEMOS = 5
 /** Long pastes carry their point early; the rest only dilutes the embedding. */
 export const PREPARED_RECALL_QUERY_MAX_CHARS = 2000
+/** The query embedding has no deadline of its own; scoring stops itself at 3 s. */
+export const PREPARED_RECALL_TIMEOUT_MS = 5000

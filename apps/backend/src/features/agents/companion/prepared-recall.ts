@@ -7,6 +7,7 @@ import {
   PREPARED_RECALL_MAX_MEMOS,
   PREPARED_RECALL_MIN_SCORE,
   PREPARED_RECALL_QUERY_MAX_CHARS,
+  PREPARED_RECALL_TIMEOUT_MS,
 } from "./config"
 
 export interface RecalledMemo {
@@ -14,6 +15,7 @@ export interface RecalledMemo {
   title: string
   abstract: string
   knowledgeType: KnowledgeType
+  sourceMessageIds: string[]
   createdAt: Date
   score: number
 }
@@ -37,17 +39,41 @@ export interface PreparedRecallParams {
  * matters, and injecting it every turn would be noise the model has to ignore.
  * That happens for residency-pinned workspaces and when the decision model is
  * unavailable, and is logged. `workspace_research` stays the deep path either way.
+ * Recall is enrichment: past its deadline or on failure the turn goes on without it.
  */
 export class PreparedRecall {
   private readonly memoExplorerService: Pick<MemoExplorerService, "search">
   private readonly scorer: RelevanceScorerLike
+  private readonly timeoutMs: number
 
-  constructor(deps: { memoExplorerService: Pick<MemoExplorerService, "search">; scorer: RelevanceScorerLike }) {
+  constructor(deps: {
+    memoExplorerService: Pick<MemoExplorerService, "search">
+    scorer: RelevanceScorerLike
+    timeoutMs?: number
+  }) {
     this.memoExplorerService = deps.memoExplorerService
     this.scorer = deps.scorer
+    this.timeoutMs = deps.timeoutMs ?? PREPARED_RECALL_TIMEOUT_MS
   }
 
   async recall(params: PreparedRecallParams): Promise<RecalledMemo[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), this.timeoutMs)
+    })
+    try {
+      const recalled = await Promise.race([this.find(params), deadline])
+      if (recalled !== "timeout") return recalled
+      logger.warn({ workspaceId: params.workspaceId, timeoutMs: this.timeoutMs }, "Prepared recall timed out")
+    } catch (error) {
+      logger.warn({ err: error, workspaceId: params.workspaceId }, "Prepared recall failed")
+    } finally {
+      clearTimeout(timer)
+    }
+    return []
+  }
+
+  private async find(params: PreparedRecallParams): Promise<RecalledMemo[]> {
     const { workspaceId, invokingUserId, accessibleStreamIds, memoViewerUserId } = params
     const query = params.query.trim().slice(0, PREPARED_RECALL_QUERY_MAX_CHARS)
     if (!query || accessibleStreamIds.size === 0) return []
@@ -84,6 +110,7 @@ export class PreparedRecall {
         title: memo.title,
         abstract: memo.abstract,
         knowledgeType: memo.knowledgeType,
+        sourceMessageIds: memo.sourceMessageIds,
         createdAt: memo.createdAt,
         score: scores[index],
       }))
@@ -108,7 +135,7 @@ export function formatRecalledMemosBlock(memos: RecalledMemo[]): string | null {
   if (memos.length === 0) return null
   const entries = memos.map(
     (memo) =>
-      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" captured="${memo.createdAt.toISOString().slice(0, 10)}">\n${memo.abstract}\n</memo>`
+      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" captured="${memo.createdAt.toISOString().slice(0, 10)}">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
   )
   return `## Recalled from memory
 
