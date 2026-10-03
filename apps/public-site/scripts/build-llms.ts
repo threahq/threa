@@ -11,8 +11,9 @@
  * The mirrors are what functions/_middleware.ts serves to a request carrying
  * `Accept: text/markdown`, so every page route has one.
  *
- * The markdown is converted from the same HTML the site ships, so it cannot
- * drift from the pages. Code samples are taken from each block's raw
+ * Developer markdown is converted from the same HTML the site ships, so it cannot
+ * drift from the pages. Guide mirrors are the articles' own markdown, which the
+ * guide pages render from. Code samples are taken from each block's raw
  * data-template (the visible HTML renders {{tokens}} as empty chips that the
  * playground fills client-side, so converting the <pre> would drop them) and
  * the tokens become literal placeholders an agent can substitute.
@@ -439,8 +440,9 @@ function withMirrorHeader(page: Page, notes: string, md: string): string {
   return mirror
 }
 
-const GUIDE_NOTES =
-  "Rough draft of the Threa user guide, generated from the article's own markdown. An app:<page> link (app:memory, app:settings/ai) names a place inside the Threa app; it opens from the app, not from here. The developer docs start at https://threa.io/llms.txt."
+const GUIDE_APP_LINKS =
+  "An app:<page> link (app:memory, app:settings/ai) names a place inside the Threa app; it opens from the app, not from here."
+const GUIDE_NOTES = `Rough draft of the Threa user guide, generated from the article's own markdown. ${GUIDE_APP_LINKS} The developer docs start at https://threa.io/llms.txt.`
 
 function guideIndexMarkdown(): string {
   const sections = GUIDE_SECTIONS.flatMap((section) => {
@@ -523,7 +525,8 @@ const llmsTxt = `# Threa
 > read. The public REST API lives at https://app.threa.io under
 > /api/v1/workspaces/{workspaceId}/… and authenticates every request with
 > "Authorization: Bearer <api key>". Keys are created in the app (Settings > API keys)
-> and carry scopes; GET /me verifies a key with no scope required.
+> and carry scopes; GET /me verifies a key with no scope required. How to use the app
+> itself is in the user guide (rough draft) at https://threa.io/guide, listed below.
 
 Threa is open source (https://github.com/threahq/threa) and self-hostable. Things
 an agent can do over the API today:
@@ -571,7 +574,7 @@ writeFileSync(dist("llms.txt"), llmsTxt)
 // One fetch for everything: the mirrors with their front matter swapped for a
 // plain source line, so the only `---` lines are the page separators.
 const llmsFull = [
-  `# Threa docs (full)\n\n> Concatenation of every page under ${SITE}/developers and ${SITE}/guide, generated at build. The user guide is a rough draft.\n> The canonical API contract is the OpenAPI spec: ${SITE}/openapi.json\n> Placeholders: YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.`,
+  `# Threa docs (full)\n\n> Concatenation of every page under ${SITE}/developers and ${SITE}/guide, generated at build.\n> Developer docs: the canonical API contract is the OpenAPI spec: ${SITE}/openapi.json\n> Developer docs placeholders: YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.\n> User guide (rough draft): ${GUIDE_APP_LINKS}`,
   ...[...mirrors, ...guideMirrors].map(
     ({ page, md }) => `*Source: ${SITE}${page.route}*\n\n${md.replace(/^---\n[\s\S]*?\n---\n\n/, "")}`
   ),

@@ -80,6 +80,7 @@ const AREAS = {
     ],
     credentials: true,
     draft: false,
+    articleClass: null,
   },
   guide: {
     name: "Guide",
@@ -101,6 +102,7 @@ const AREAS = {
     footLinks: [{ href: "/llms.txt", label: "llms.txt" }],
     credentials: false,
     draft: true,
+    articleClass: "is-guide",
   },
 } as const
 const areaConfig = AREAS[area]
@@ -391,7 +393,7 @@ const schema: Record<string, unknown>[] = [
             be out of date. Building on Threa instead? See the <a href="/developers">developer docs</a>.
           </p>
         )}
-        <article class:list={["docs-article", split && "is-split", area === "guide" && "is-guide"]}>
+        <article class:list={["docs-article", split && "is-split", areaConfig.articleClass]}>
           <slot />
         </article>
 
