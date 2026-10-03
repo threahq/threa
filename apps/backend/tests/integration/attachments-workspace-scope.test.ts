@@ -259,7 +259,7 @@ describe("Attachments, uploads, extractions, PDF/video jobs and avatar uploads w
           .sort((left, right) => left.id.localeCompare(right.id))
       ).toEqual(
         [
-          { id: withOwn, extraction: { contentType: "chart", summary: "own summary", fullText: null } },
+          { id: withOwn, extraction: { contentType: "chart" as const, summary: "own summary", fullText: null } },
           { id: withForeign, extraction: null },
         ].sort((left, right) => left.id.localeCompare(right.id))
       )
@@ -662,17 +662,17 @@ describe("Attachments, uploads, extractions, PDF/video jobs and avatar uploads w
     test.each([
       [
         "markUploading",
-        "uploading",
+        "uploading" as const,
         (db: Pool, ws: string, id: string) => AttachmentUploadRepository.markUploading(db, ws, id),
       ],
       [
         "markUploaded",
-        "uploaded",
+        "uploaded" as const,
         (db: Pool, ws: string, id: string) => AttachmentUploadRepository.markUploaded(db, ws, id),
       ],
       [
         "markFailed",
-        "failed",
+        "failed" as const,
         (db: Pool, ws: string, id: string) => AttachmentUploadRepository.markFailed(db, ws, id, { code: "scope" }),
       ],
     ])(
@@ -699,20 +699,20 @@ describe("Attachments, uploads, extractions, PDF/video jobs and avatar uploads w
     test.each([
       [
         "failStale",
-        "reserved",
-        "failed",
+        "reserved" as const,
+        "failed" as const,
         (olderThan: Date) => AttachmentUploadRepository.failStale(pool, { olderThan, limit: 100 }),
       ],
       [
         "abandonStaleFailed",
-        "failed",
-        "abandoned",
+        "failed" as const,
+        "abandoned" as const,
         (olderThan: Date) => AttachmentUploadRepository.abandonStaleFailed(pool, { olderThan, limit: 100 }),
       ],
       [
         "deleteStaleUploaded",
-        "uploaded",
-        "uploaded",
+        "uploaded" as const,
+        "uploaded" as const,
         (olderThan: Date) => AttachmentUploadRepository.deleteStaleUploaded(pool, { olderThan, limit: 100 }),
       ],
     ])(
