@@ -67,6 +67,7 @@ export const TOOL_TIERS_BY_NAME = {
   search_attachments: 1,
   read_attachment: 1,
   describe_memo: 1,
+  threa_guide: 1,
   github_repos: 1,
   github_commits: 1,
   github_pulls: 1,

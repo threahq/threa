@@ -75,6 +75,7 @@ import {
 import { InvitationService, InvitationShadowSyncHandler } from "./features/invitations"
 import { WorkosOrgServiceImpl, StubWorkosOrgService } from "@threahq/backend-common"
 import { PartitionMaintenanceWorker } from "@threahq/backend-common"
+import { loadGuideArticles } from "@threahq/user-guide"
 import { AccessLogService, createAiAccessLogSink } from "./features/access-log"
 import { StreamService, StreamBriefService, registerStreamMessageCountBackfill } from "./features/streams"
 import {
@@ -1211,6 +1212,7 @@ export async function startServer(): Promise<ServerInstance> {
         }
       : undefined,
     webSearchEngines: createWebSearchEngines(config.ai.webSearchKeys),
+    guideArticles: loadGuideArticles(),
     pageBrowser: config.ai.browserbaseApiKey ? createBrowserbasePageBrowser(config.ai.browserbaseApiKey) : undefined,
     injectionScreen: config.useStubAI
       ? undefined

@@ -53,6 +53,7 @@ export {
 export { createReadAttachmentTool, type ReadAttachmentInput } from "./read-attachment-tool"
 export { createRunCommandTool, bindStreamSandbox, type StreamSandboxDeps } from "./run-command-tool"
 export { createDescribeMemoTool, type DescribeMemoInput } from "./describe-memo-tool"
+export { createThreaGuideTool, type ThreaGuideInput } from "./threa-guide-tool"
 export { createReactToMessageTool, type ReactToMessageInput } from "./react-to-message-tool"
 export { createScheduleFollowUpTool, type ScheduleFollowUpInput } from "./schedule-follow-up-tool"
 export { createListFollowUpsTool, type ListFollowUpsInput } from "./list-follow-ups-tool"

@@ -94,6 +94,10 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // the thread it is running in: a reply, by another name.
   start_subagent: ["messaging"],
   report_back: ["messaging"],
+  // Bundled public product docs: reads no workspace or user data and sends
+  // nothing out, so it rides the always-allowed class and a locked-down
+  // scratchpad still lets the agent explain the app.
+  threa_guide: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],

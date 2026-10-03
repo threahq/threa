@@ -351,6 +351,36 @@ export const webSearchUsageEvaluator: Evaluator<CompanionOutput, CompanionExpect
 }
 
 /**
+ * Evaluates whether the agent called the expected tool, read off the turn's
+ * completed `tool_call` steps (their content carries the tool name).
+ */
+export const toolUsageEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
+  name: "tool-usage",
+  evaluate: (output: CompanionOutput, expected: CompanionExpected): EvaluatorResult => {
+    const tool = expected.responseCharacteristics?.shouldUseTool
+    if (!tool) {
+      return { name: "tool-usage", score: 1, passed: true, details: "No tool requirement" }
+    }
+
+    const called = (output.trajectory ?? []).some((step) => {
+      if (step.stepType !== "tool_call" || !step.completed || !step.content) return false
+      try {
+        return (JSON.parse(step.content) as { tool?: unknown }).tool === tool
+      } catch {
+        return false
+      }
+    })
+
+    return {
+      name: "tool-usage",
+      score: called ? 1 : 0,
+      passed: called,
+      details: called ? undefined : `Expected a completed ${tool} call`,
+    }
+  },
+}
+
+/**
  * Evaluates whether web search queries include expected temporal grounding terms.
  */
 export const webSearchQueryEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {

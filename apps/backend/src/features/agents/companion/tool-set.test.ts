@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AgentToolNames, DEFAULT_USER_PREFERENCES, type UserPreferences } from "@threahq/types"
+import { parseGuideArticle } from "@threahq/user-guide"
 import { buildToolSet, type ToolSetConfig } from "./tool-set"
 import type { WorkspaceToolDeps } from "../tools/tool-deps"
 
@@ -128,5 +129,24 @@ describe("run_command availability", () => {
 
   test("is absent without workspace deps", () => {
     expect(toolNames({ sandbox })).not.toContain(AgentToolNames.RUN_COMMAND)
+  })
+})
+
+describe("threa_guide availability", () => {
+  const guideArticles = [
+    parseGuideArticle(
+      "meet-ariadne",
+      "---\ntitle: Meet Ariadne\nsummary: What she is\nsection: agents\norder: 1\n---\n\n# Meet Ariadne\n\nBody."
+    ),
+  ]
+
+  test("should build threa_guide only when guide articles are provided and the tool is enabled", () => {
+    expect({
+      provided: toolNames({ guideArticles }).includes(AgentToolNames.THREA_GUIDE),
+      withoutArticles: toolNames({}).includes(AgentToolNames.THREA_GUIDE),
+      disabled: toolNames({ guideArticles, enabledTools: [AgentToolNames.WEB_SEARCH] }).includes(
+        AgentToolNames.THREA_GUIDE
+      ),
+    }).toEqual({ provided: true, withoutArticles: false, disabled: false })
   })
 })

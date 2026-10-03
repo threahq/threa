@@ -37,6 +37,7 @@ import {
   asksQuestionEvaluator,
   webSearchUsageEvaluator,
   webSearchQueryEvaluator,
+  toolUsageEvaluator,
   createResponseQualityEvaluator,
   createToneEvaluator,
   createLanguageEvaluator,
@@ -87,6 +88,7 @@ import { AuthorTypes, ContextIntents, ContextRefKinds, MemoTypes, StreamTypes } 
 import { ulid } from "ulid"
 import { memoId as generateMemoId, streamId as generateStreamId, userId as generateUserId } from "../../../src/lib/id"
 import { insertEvalPersona } from "../../framework/eval-persona"
+import { loadGuideArticles } from "@threahq/user-guide"
 
 /**
  * Get model configuration from context.
@@ -582,6 +584,7 @@ export async function runCompanionTask(
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
       webSearchEngines: ctx.credentials.webSearchEngines,
+      guideArticles: loadGuideArticles(),
       createMessage,
       editMessage,
       deleteMessage,
@@ -681,6 +684,7 @@ export const companionSuite: EvalSuite<CompanionInput, CompanionOutput, Companio
     asksQuestionEvaluator,
     webSearchUsageEvaluator,
     webSearchQueryEvaluator,
+    toolUsageEvaluator,
     createResponseQualityEvaluator(),
     createToneEvaluator(),
     createLanguageEvaluator(),

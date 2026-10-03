@@ -22,6 +22,8 @@ const TOOL_HELP: Partial<Record<AgentToolName, string>> = {
   [AgentToolNames.GENERAL_RESEARCH]:
     "Runs a multi-step research loop over the workspace — hybrid semantic + keyword search across messages and memory, gathering and synthesizing sources into an answer. This is the assistant's main retrieval path (it replaced immediate repo search); the raw search tools below are lower-level, per-turn lookups that are usually unnecessary when this is on.",
   [AgentToolNames.WEB_SEARCH]: "Searches the public web for current information beyond the workspace.",
+  [AgentToolNames.THREA_GUIDE]:
+    "Reads Threa's public user guide to answer how-to questions about the app. Reads no workspace data.",
 }
 
 /**

@@ -101,6 +101,7 @@ export const MUTATING_TOOLS = {
   search_attachments: false,
   read_attachment: false,
   describe_memo: false,
+  threa_guide: false,
   github_repos: false,
   github_commits: false,
   github_pulls: false,
