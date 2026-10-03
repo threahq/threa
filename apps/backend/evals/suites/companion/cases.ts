@@ -85,8 +85,8 @@ export interface CompanionExpected {
     shouldAskQuestion?: boolean
     /** Should use web search */
     shouldUseWebSearch?: boolean
-    /** The agent should call this tool (by name) at least once. */
-    shouldUseTool?: string
+    /** The agent should read an existing user-guide article with threa_guide. */
+    shouldReadGuide?: boolean
     /** Web search query should include these terms */
     webSearchQueryShouldContain?: string[]
     /**
@@ -1013,7 +1013,7 @@ const guideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldUseTool: "threa_guide",
+        shouldReadGuide: true,
         responseLanguage: "English",
       },
       reason:
@@ -1032,7 +1032,7 @@ const guideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
     {
       shouldRespond: true,
       responseCharacteristics: {
-        shouldUseTool: "threa_guide",
+        shouldReadGuide: true,
         responseLanguage: "Swedish",
       },
       reason:

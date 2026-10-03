@@ -7,6 +7,8 @@
 import type { Evaluator, EvalContext, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
 import { llmJudgeEvaluator } from "../../framework/evaluators/llm-judge"
 import type { CompanionOutput, CompanionExpected } from "./types"
+import { AgentToolNames } from "@threahq/types"
+import { loadGuideArticles } from "@threahq/user-guide"
 
 // The judge receives the case's expected-behavior descriptor as "Expected Output" and the
 // runner's raw record as "Actual Output"; without this it docks points for the two JSON
@@ -350,32 +352,35 @@ export const webSearchUsageEvaluator: Evaluator<CompanionOutput, CompanionExpect
   },
 }
 
+const GUIDE_SLUGS = new Set(loadGuideArticles().map((article) => article.slug))
+
 /**
- * Evaluates whether the agent called the expected tool, read off the turn's
- * completed `tool_call` steps (their content carries the tool name).
+ * Evaluates whether the agent read a real user-guide article, from the turn's
+ * completed `tool_call` steps (their content carries the tool and the slug). A
+ * made-up slug completes too, with an error payload, so the slug is checked.
  */
-export const toolUsageEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
-  name: "tool-usage",
+export const guideUsageEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
+  name: "guide-usage",
   evaluate: (output: CompanionOutput, expected: CompanionExpected): EvaluatorResult => {
-    const tool = expected.responseCharacteristics?.shouldUseTool
-    if (!tool) {
-      return { name: "tool-usage", score: 1, passed: true, details: "No tool requirement" }
+    if (!expected.responseCharacteristics?.shouldReadGuide) {
+      return { name: "guide-usage", score: 1, passed: true, details: "No guide requirement" }
     }
 
-    const called = (output.trajectory ?? []).some((step) => {
+    const read = (output.trajectory ?? []).some((step) => {
       if (step.stepType !== "tool_call" || !step.completed || !step.content) return false
       try {
-        return (JSON.parse(step.content) as { tool?: unknown }).tool === tool
+        const call = JSON.parse(step.content) as { tool?: unknown; article?: unknown }
+        return call.tool === AgentToolNames.THREA_GUIDE && GUIDE_SLUGS.has(String(call.article))
       } catch {
         return false
       }
     })
 
     return {
-      name: "tool-usage",
-      score: called ? 1 : 0,
-      passed: called,
-      details: called ? undefined : `Expected a completed ${tool} call`,
+      name: "guide-usage",
+      score: read ? 1 : 0,
+      passed: read,
+      details: read ? undefined : "Expected a completed threa_guide call for an existing article",
     }
   },
 }

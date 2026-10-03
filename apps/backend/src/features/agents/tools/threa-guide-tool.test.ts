@@ -4,15 +4,22 @@ import { createThreaGuideTool } from "./threa-guide-tool"
 
 const toolOpts = { toolCallId: "test" }
 
-function article(slug: string, title: string, summary: string, section: string, order = 1) {
+function article(slug: string, title: string, summary: string, section: string, order = 1, body = `Body of ${slug}.`) {
   return parseGuideArticle(
     slug,
-    `---\ntitle: ${title}\nsummary: ${summary}\nsection: ${section}\norder: ${order}\n---\n\n# ${title}\n\nBody of ${slug}.`
+    `---\ntitle: ${title}\nsummary: ${summary}\nsection: ${section}\norder: ${order}\n---\n\n# ${title}\n\n${body}`
   )
 }
 
 const articles = [
-  article("meet-ariadne", "Meet Ariadne", "What she is and what she can do", "agents"),
+  article(
+    "meet-ariadne",
+    "Meet Ariadne",
+    "What she is and what she can do",
+    "agents",
+    1,
+    "Start with [Quick start](/guide/quick-start) and open [Memory](app:memory)."
+  ),
   article("quick-start", "Quick start", "Your first five minutes", "getting-started"),
   article("ask-ariadne", "Ask Ariadne", "Start a conversation", "agents", 2),
 ]
@@ -33,17 +40,16 @@ describe("threa_guide tool", () => {
     )
   })
 
-  test("should return the article markdown when the slug exists", async () => {
+  test("should return the article markdown with absolute guide links when the slug exists", async () => {
     const tool = createThreaGuideTool({ articles })
 
     const { output } = await tool.config.execute({ article: "meet-ariadne" }, toolOpts)
 
     expect(JSON.parse(output)).toEqual({
-      slug: "meet-ariadne",
       title: "Meet Ariadne",
-      section: "agents",
       url: "https://threa.io/guide/meet-ariadne",
-      markdown: "# Meet Ariadne\n\nBody of meet-ariadne.",
+      markdown:
+        "# Meet Ariadne\n\nStart with [Quick start](https://threa.io/guide/quick-start) and open [Memory](app:memory).",
     })
   })
 

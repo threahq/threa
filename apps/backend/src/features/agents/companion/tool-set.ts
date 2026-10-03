@@ -67,7 +67,6 @@ import {
 export interface ToolSetConfig {
   enabledTools: string[] | null
   webSearchEngines?: WebSearchEngine[]
-  /** Parsed user-guide articles gating `threa_guide`; loaded once at boot and passed only to the persona's own turn. */
   guideArticles?: readonly GuideArticle[]
   pageBrowser?: PageBrowser
   /** Judges web tool output for text aimed at the agent. Absent on stub AI, where every output goes unjudged. */
