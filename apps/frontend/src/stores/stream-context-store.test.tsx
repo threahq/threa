@@ -340,7 +340,9 @@ describe("stream-context-store workspace isolation — a copied stream keeps its
 
     const tree = renderHook(() => useStreamContextRows("ws_b", ROOT, ROOT, "tree"))
     const stream = renderHook(() => useStreamContextRows("ws_b", ROOT, ROOT, "stream"))
-    const occurrences = renderHook(() => useStreamContextOccurrences("ws_b", ROOT, "link:https://example.com/a"))
+    const occurrences = renderHook(() =>
+      useStreamContextOccurrences("ws_b", ROOT, ROOT, "tree", "link:https://example.com/a")
+    )
     await waitFor(() => {
       expect(tree.result.current).toBeDefined()
       expect(stream.result.current).toBeDefined()
@@ -369,7 +371,7 @@ describe("stream-context-store workspace isolation — a copied stream keeps its
     const { result, rerender } = renderHook(
       ({ workspaceId }) => ({
         feed: useStreamContextRows(workspaceId, ROOT, ROOT, "tree"),
-        occurrences: useStreamContextOccurrences(workspaceId, ROOT, "link:https://example.com/a"),
+        occurrences: useStreamContextOccurrences(workspaceId, ROOT, ROOT, "tree", "link:https://example.com/a"),
       }),
       { initialProps: { workspaceId: "ws_a" } }
     )
