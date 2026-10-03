@@ -983,6 +983,8 @@ const reflectionInput = {
   digest: "Trigger message:\nhow do we deploy?\n\nWhat the assistant researched:\nDeploys run Fridays after smoke.",
   anchorMessageId: "msg_trigger",
   participantIds: ["usr_1"],
+  citedStreamIds: [],
+  citedMessageIds: [],
 }
 
 describe("MemoService.captureSessionReflection — reflective capture (roadmap 6.3)", () => {

@@ -85,6 +85,8 @@ export class ReflectiveCaptureService {
         digest: digest.text,
         anchorMessageId: digest.anchorMessageId,
         participantIds: digest.participantUserIds,
+        citedStreamIds: digest.citedStreamIds,
+        citedMessageIds: digest.citedMessageIds,
       })
       logger.info({ sessionId, workspaceId, ...result }, "reflective capture processed")
       return { captured: result.captured }

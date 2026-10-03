@@ -161,7 +161,9 @@ export function parseTurnDigestStepContent(raw: unknown): TurnDigestStepContent 
     toolsCalled: Array.isArray(record.toolsCalled)
       ? record.toolsCalled.filter((t): t is string => typeof t === "string")
       : [],
-    sources: Array.isArray(record.sources) ? (record.sources as TraceSource[]) : [],
+    sources: Array.isArray(record.sources)
+      ? record.sources.filter((s): s is TraceSource => typeof s === "object" && s !== null)
+      : [],
     sourceStreamIds: Array.isArray(record.sourceStreamIds)
       ? record.sourceStreamIds.filter((s): s is string => typeof s === "string")
       : [],

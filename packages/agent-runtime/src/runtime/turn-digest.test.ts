@@ -193,6 +193,12 @@ describe("parseTurnDigestStepContent", () => {
     expect(parseTurnDigestStepContent(JSON.stringify({ findings: "   " }))).toBeNull()
   })
 
+  it("drops source entries that are not objects", () => {
+    expect(
+      parseTurnDigestStepContent(JSON.stringify({ ...valid, sources: [null, "x", ...valid.sources] }))?.sources
+    ).toEqual(valid.sources)
+  })
+
   it("rejects non-JSON and non-object content", () => {
     expect(parseTurnDigestStepContent("not json")).toBeNull()
     expect(parseTurnDigestStepContent(null)).toBeNull()

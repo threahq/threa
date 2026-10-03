@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import { parseTurnDigestStepContent } from "@threahq/agent-runtime"
-import { AgentStepTypes, AuthorTypes } from "@threahq/types"
+import { AgentStepTypes, AuthorTypes, type TurnDigestStepContent } from "@threahq/types"
 import { MessageRepository } from "../messaging"
 import { AgentSessionRepository, type AgentSession } from "./session-repository"
 
@@ -25,6 +25,10 @@ export interface SessionDigest {
   anchorMessageId: string | null
   /** Distinct human authors across the trigger + replies (a memo's `participant_ids`). */
   participantUserIds: string[]
+  /** Streams the research cited, across every turn digest. */
+  citedStreamIds: string[]
+  /** Messages the research cited, across every turn digest. */
+  citedMessageIds: string[]
 }
 
 /**
@@ -45,13 +49,13 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
   }
 
   const steps = await AgentSessionRepository.findStepsBySession(pool, session.id)
-  const findings = steps
+  const digests = steps
     .filter((s) => s.stepType === AgentStepTypes.TURN_DIGEST)
-    .map((s) => parseTurnDigestStepContent(s.content)?.findings?.trim())
-    .filter((f): f is string => !!f)
-  const hasResearch = findings.length > 0
+    .map((s) => parseTurnDigestStepContent(s.content))
+    .filter((d): d is TurnDigestStepContent => d !== null)
+  const hasResearch = digests.length > 0
   if (hasResearch) {
-    sections.push(`What the assistant researched:\n${findings.join("\n\n")}`)
+    sections.push(`What the assistant researched:\n${digests.map((d) => d.findings.trim()).join("\n\n")}`)
   }
 
   // Prefer the real trigger as the anchor; otherwise fall back to the last real reply.
@@ -79,5 +83,7 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
     hasResearch,
     anchorMessageId,
     participantUserIds: Array.from(participantUserIds),
+    citedStreamIds: [...new Set(digests.flatMap((d) => d.sourceStreamIds))],
+    citedMessageIds: [...new Set(digests.flatMap((d) => d.sources.flatMap((s) => (s.messageId ? [s.messageId] : []))))],
   }
 }
