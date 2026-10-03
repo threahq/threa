@@ -166,16 +166,15 @@ const GUIDE_INDEX: Page = {
   title: "User guide",
   blurb: "Every article in the guide, by topic.",
 }
-const GUIDE_PAGES: Page[] = [
-  GUIDE_INDEX,
-  ...GUIDE_ARTICLES.map((a) => ({
-    route: `/guide/${a.slug}`,
-    html: `guide/${a.slug}/index.html`,
-    md: `guide/${a.slug}.md`,
-    title: a.title,
-    blurb: a.summary,
-  })),
-]
+const GUIDE_ARTICLE_PAGES: Array<Page & { body: string }> = GUIDE_ARTICLES.map((a) => ({
+  route: `/guide/${a.slug}`,
+  html: `guide/${a.slug}/index.html`,
+  md: `guide/${a.slug}.md`,
+  title: a.title,
+  blurb: a.summary,
+  body: a.body,
+}))
+const GUIDE_PAGES: Page[] = [GUIDE_INDEX, ...GUIDE_ARTICLE_PAGES]
 
 const ALL_PAGES = [...PAGES, ...SITE_PAGES, ...GUIDE_PAGES]
 
@@ -452,9 +451,7 @@ function guideIndexMarkdown(): string {
   return ["# Threa user guide", ...sections].join("\n\n")
 }
 
-function guideToMarkdown(page: Page): string {
-  const article = GUIDE_ARTICLES.find((a) => `/guide/${a.slug}` === page.route)
-  const body = article ? article.body : guideIndexMarkdown()
+function guideToMarkdown(page: Page, body: string): string {
   return withMirrorHeader(page, GUIDE_NOTES, rewriteLinks(body))
 }
 
@@ -512,7 +509,12 @@ const mirrors = PAGES.map((page) => {
 })
 
 for (const page of SITE_PAGES) writeFileSync(dist(page.md), pageToMarkdown(page))
-for (const page of GUIDE_PAGES) writeFileSync(dist(page.md), guideToMarkdown(page))
+writeFileSync(dist(GUIDE_INDEX.md), guideToMarkdown(GUIDE_INDEX, guideIndexMarkdown()))
+const guideMirrors = GUIDE_ARTICLE_PAGES.map((page) => {
+  const md = guideToMarkdown(page, page.body)
+  writeFileSync(dist(page.md), md)
+  return { page, md }
+})
 
 const llmsTxt = `# Threa
 
@@ -553,7 +555,7 @@ ${GUIDE_PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n
 ## Machine-readable
 
 - [OpenAPI 3.0 spec](${SITE}/openapi.json): the canonical contract — every endpoint, schema, scope, and error. This is the current version; each dated version has its own spec at ${SITE}/openapi/<version>.json.
-- [Full docs in one file](${SITE}/llms-full.txt): all pages above concatenated
+- [Full docs in one file](${SITE}/llms-full.txt): the docs and user guide pages above concatenated
 - [API catalog](${SITE}/.well-known/api-catalog): RFC 9727 linkset naming the spec, the docs, and this index
 - [Agent skills index](${SITE}/.well-known/agent-skills/index.json): installable skills for working against a Threa workspace
 - [auth.md](${SITE}/auth.md): how an agent obtains and uses a key
@@ -569,11 +571,13 @@ writeFileSync(dist("llms.txt"), llmsTxt)
 // One fetch for everything: the mirrors with their front matter swapped for a
 // plain source line, so the only `---` lines are the page separators.
 const llmsFull = [
-  `# Threa developer docs (full)\n\n> Concatenation of every page under ${SITE}/developers, generated at build.\n> The canonical API contract is the OpenAPI spec: ${SITE}/openapi.json\n> Placeholders: YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.`,
-  ...mirrors.map(({ page, md }) => `*Source: ${SITE}${page.route}*\n\n${md.replace(/^---\n[\s\S]*?\n---\n\n/, "")}`),
+  `# Threa docs (full)\n\n> Concatenation of every page under ${SITE}/developers and ${SITE}/guide, generated at build. The user guide is a rough draft.\n> The canonical API contract is the OpenAPI spec: ${SITE}/openapi.json\n> Placeholders: YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.`,
+  ...[...mirrors, ...guideMirrors].map(
+    ({ page, md }) => `*Source: ${SITE}${page.route}*\n\n${md.replace(/^---\n[\s\S]*?\n---\n\n/, "")}`
+  ),
 ].join("\n\n---\n\n")
 writeFileSync(dist("llms-full.txt"), llmsFull)
 
 console.log(
-  `Wrote ${mirrors.length} markdown mirrors, llms.txt, llms-full.txt (${(llmsFull.length / 1024).toFixed(0)} KB full)`
+  `Wrote ${mirrors.length + guideMirrors.length} markdown mirrors, llms.txt, llms-full.txt (${(llmsFull.length / 1024).toFixed(0)} KB full)`
 )

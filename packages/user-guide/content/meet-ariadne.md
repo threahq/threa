@@ -12,9 +12,9 @@ Ariadne is the AI agent built into every Threa workspace. She is a thinking comp
 ## Talking to her
 
 - **In a scratchpad with Companion on**, she reads each new message and replies in the conversation. See [Your first scratchpad](/guide/your-first-scratchpad).
-- **Anywhere else**, mention her with `@ariadne`. In a channel she starts a thread on your message and answers there. In a direct message, a thread or a scratchpad she answers in place.
+- **Anywhere else**, mention her with `@ariadne`. In a channel she starts a thread on your message and answers there. In a direct message, a thread or a Quiet scratchpad she answers in place. Mentions don't reach her in an encrypted scratchpad, where only Companion mode brings her in.
 
-Ask her what she can do, and she'll answer from a description of her own setup instead of guessing. When she points you at a place in the app, such as the [Memory](app:memory) page or your [notification settings](app:settings/notifications), the link opens it for you.
+Ask her what she can do, and she'll answer from a description of her own setup instead of guessing. When she points you at a place in the app, such as the [Memory](app:memory) page or your [notification settings](app:settings/notifications), she links straight to it.
 
 ## What she can do
 
@@ -26,7 +26,7 @@ What she can do depends on the conversation, but the usual set is:
 - Save something to memory when you ask.
 - Run code and shell commands in a sandbox tied to the conversation.
 - Schedule a follow-up, so she returns to the conversation at a time you choose.
-- Change your own settings when you ask, such as theme, timezone or notifications.
+- Change your own settings when you ask in one of your scratchpads, such as theme, timezone or notifications.
 - Hand a question to another model for a second opinion, or hand a longer task to your own local coding agent when you ask for that.
 
 She can't click around the app for you, invite people, create channels or change workspace settings.
@@ -42,7 +42,7 @@ Ariadne only reaches what the conversation allows:
 
 ## Memory
 
-Where memory capture is on, decisions and facts from the conversation can become memos that the workspace, and Ariadne, can recall later. Between conversations she remembers through memos and summaries of her earlier sessions in the same stream. Where capture is off, nothing is saved unless you ask her to.
+Where **Automatic memory** is on, decisions and facts from the conversation can become memos that the workspace, and Ariadne, can recall later. Between conversations she remembers through memos and summaries of her earlier sessions in the same stream. Where it is off, nothing is saved unless you ask her to. It starts off in scratchpads where she replies; see [Your first scratchpad](/guide/your-first-scratchpad).
 
 ## Choose a different agent
 

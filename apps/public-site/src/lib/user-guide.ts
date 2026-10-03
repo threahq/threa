@@ -1,23 +1,19 @@
 import { createMarkdownProcessor } from "@astrojs/markdown-remark"
-import { GUIDE_SECTIONS, parseGuideArticle, sortGuideArticles, type GuideArticle } from "@threahq/user-guide"
+import { GUIDE_SECTIONS, guideArticlesFromFiles, type GuideArticle } from "@threahq/user-guide"
 
 import { apiBase } from "./config"
 import { rehypeAppLinks } from "./rehype-app-links"
 
 // The package's own loader reads from disk relative to its module, which no
 // longer points at the content once Astro has bundled this code; the glob
-// inlines the files instead and the shared parser still owns their format.
+// inlines the files instead and the package still owns their format.
 const files = import.meta.glob<string>("../../../../packages/user-guide/content/*.md", {
   query: "?raw",
   import: "default",
   eager: true,
 })
 
-export const guideArticles: GuideArticle[] = sortGuideArticles(
-  Object.entries(files).map(([path, raw]) =>
-    parseGuideArticle(path.slice(path.lastIndexOf("/") + 1, -".md".length), raw)
-  )
-)
+export const guideArticles: GuideArticle[] = guideArticlesFromFiles(files)
 
 export const guideSections = GUIDE_SECTIONS.map((section) => ({
   ...section,
@@ -33,9 +29,15 @@ export const guideNav = [
   })),
 ]
 
-const processor = createMarkdownProcessor({ rehypePlugins: [[rehypeAppLinks, { appUrl: apiBase }]] })
+// Every docs page imports this module for the nav, so the processor is built
+// only once an article actually renders.
+let processor: ReturnType<typeof createMarkdownProcessor> | undefined
 
 export async function renderGuideArticle(article: GuideArticle) {
+  processor ??= createMarkdownProcessor({
+    syntaxHighlight: false,
+    rehypePlugins: [[rehypeAppLinks, { appUrl: apiBase }]],
+  })
   const { code, metadata } = await (await processor).render(article.body)
   return {
     html: code,

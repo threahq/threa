@@ -33,7 +33,7 @@ describe("user guide pages", () => {
   test("renders app: links as chips into the app and leaves no raw app: href behind", () => {
     const html = read("guide/meet-ariadne/index.html")
     expect(html).toContain(
-      '<a href="https://app.threa.io" class="app-link" data-app-link="settings/ai" title="Opens in the Threa app">AI settings</a>'
+      '<a href="https://app.threa.io" class="app-link" title="Opens in the Threa app">AI settings</a>'
     )
     expect(html).not.toContain('href="app:')
   })
@@ -46,10 +46,13 @@ describe("user guide pages", () => {
     expect(html).not.toContain('id="pg-panel"')
   })
 
-  test("lists the guide in llms.txt and routes /guide through the markdown middleware", () => {
+  test("lists the guide in llms.txt, carries it in llms-full.txt and routes /guide through the markdown middleware", () => {
     const llms = read("llms.txt")
     expect(llms).toContain("## User guide (rough draft)")
     for (const a of articles) expect(llms).toContain(`(https://threa.io/guide/${a.slug}.md)`)
+
+    const full = read("llms-full.txt")
+    for (const a of articles) expect(full).toContain(`*Source: https://threa.io/guide/${a.slug}*\n\n# ${a.title}\n`)
 
     const routes = JSON.parse(read("_routes.json")) as { include: string[] }
     expect(routes.include).toEqual(expect.arrayContaining(["/guide", "/guide/*"]))
@@ -93,7 +96,6 @@ describe("rehypeAppLinks", () => {
     expect(a.properties).toEqual({
       href: "https://app.example",
       className: ["app-link"],
-      dataAppLink: "settings/ai",
       title: "Opens in the Threa app",
     })
   })

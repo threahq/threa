@@ -10,7 +10,7 @@ interface HastNode {
 /**
  * Turns the guide's `app:` hrefs into chips that open the Threa app. The site
  * holds no workspace id, so every chip points at the app origin, which lands
- * the reader in their own workspace; `data-app-link` names the destination.
+ * the reader in their own workspace.
  * An href the app would not recognise fails the build instead of shipping a
  * dead link.
  */
@@ -23,7 +23,6 @@ export function rehypeAppLinks({ appUrl }: { appUrl: string }) {
         ...node.properties,
         href: appUrl,
         className: ["app-link"],
-        dataAppLink: href.slice("app:".length),
         title: "Opens in the Threa app",
       }
     }

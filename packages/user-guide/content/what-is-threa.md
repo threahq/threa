@@ -11,7 +11,7 @@ Threa is a chat app that keeps what matters. You write in conversations like in 
 
 ## Scratchpads come first
 
-You don't need a team to use Threa. A **scratchpad** is a private conversation that only you can open. Use it for notes, half-formed ideas, links you want to keep, or thinking out loud with [Ariadne](/guide/meet-ariadne), the built-in AI companion. Most people start here. See [Your first scratchpad](/guide/your-first-scratchpad).
+You don't need a team to use Threa. A **scratchpad** is a private conversation that only you can open. Use it for notes, half-formed ideas, links you want to keep, or thinking out loud with [Ariadne](/guide/meet-ariadne), the built-in AI companion. See [Your first scratchpad](/guide/your-first-scratchpad).
 
 ## Channels, DMs and threads
 
@@ -21,15 +21,15 @@ When you bring other people in, the same building blocks scale up:
 - **Direct messages** are private conversations between two people.
 - **Threads** branch off any message, so a side discussion doesn't bury the main conversation. A thread can have threads of its own.
 
-Everything you can write in is called a stream. You'll see all of them in the sidebar, and you can browse every stream you can reach on the [Streams](app:streams) page.
+Everything you can write in is called a stream. The sidebar lists the streams you've joined, and the [Streams](app:streams) page lists every stream you can reach.
 
 ## Memory
 
 A chat history is hard to search by gist. Threa turns the important parts into **memos**: short entries such as "Auth refactor held pending token-rotation review". Each memo keeps pointers to the messages it came from, so you can jump back to the original conversation.
 
-When Threa saves something, a "Saved to memory" line appears in the conversation. Open the [Memory](app:memory) page to browse, filter and search everything the workspace remembers. See [Search](app:search) for finding messages and files.
+When Threa saves something, a "Saved to memory" line appears in the conversation. Open the [Memory](app:memory) page to browse, filter and search everything the workspace remembers. Use [Search](app:search) to find messages and [Files](app:files) to find shared files.
 
-Memory is automatic by default and can be turned off per stream.
+Each stream has an **Automatic memory** setting. It starts on in channels, direct messages and Quick Notes, and off in scratchpads where Ariadne replies, so you choose whether a conversation with her gets remembered.
 
 ## Ariadne
 
@@ -37,4 +37,4 @@ Ariadne is Threa's built-in AI companion. She replies in scratchpads where the c
 
 ## Bring your own tools
 
-Threa isn't meant to lock you in. You can connect your own agents through the public API, the CLI and an MCP server. That is covered in the [developer docs](https://threa.io/developers), not in this guide.
+You can connect your own agents through the public API, the CLI and an MCP server. That is covered in the [developer docs](https://threa.io/developers), not in this guide.

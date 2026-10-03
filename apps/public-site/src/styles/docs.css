@@ -610,7 +610,9 @@ body.docs-resizing .api-op {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.docs-article code:not(.pg-pre code) {
+/* `.pg-pre code` is redundant with `pre code` but holds the specificity that
+   lets this rule beat later per-component code rules. */
+.docs-article code:not(.pg-pre code, pre code) {
   font-family: var(--font-mono);
   font-size: 0.84em;
   background: hsl(var(--ink) / 0.055);
@@ -2812,6 +2814,25 @@ body.docs-resizing .api-op {
 }
 .docs-article a.app-link:hover {
   border-color: hsl(var(--gold-dim));
+}
+
+/* Guide articles are plain markdown, so a fenced block is a bare <pre> on the
+   code surface the docs' samples use, without their toolbar. */
+.docs-article.is-guide pre {
+  margin: 18px 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  background: hsl(var(--paper));
+  color: hsl(var(--ink));
+  border: 1px solid hsl(var(--line));
+  border-radius: 5px;
+}
+[data-theme="dark"] .docs-article.is-guide pre {
+  background: hsl(var(--night));
+  color: hsl(38 14% 86%);
 }
 
 .docs-article .guide-list {

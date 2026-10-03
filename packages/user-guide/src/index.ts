@@ -29,6 +29,8 @@ export interface GuideArticle {
 
 const FRONT_MATTER = /^---\n([\s\S]*?)\n---\n/
 const FIELD = /^([a-z]+):\s*(.*)$/
+const FIELDS = new Set(["title", "summary", "section", "order"])
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 function parseFrontMatter(slug: string, raw: string): { fields: Map<string, string>; body: string } {
   const match = FRONT_MATTER.exec(raw)
@@ -38,12 +40,21 @@ function parseFrontMatter(slug: string, raw: string): { fields: Map<string, stri
     if (line.trim() === "") continue
     const field = FIELD.exec(line)
     if (!field) throw new Error(`Guide article "${slug}": front matter line is not "key: value": ${line}`)
-    fields.set(field[1]!, field[2]!.trim())
+    const key = field[1]!
+    const value = field[2]!.trim()
+    if (!FIELDS.has(key)) throw new Error(`Guide article "${slug}": unknown front matter key "${key}"`)
+    // Values are taken verbatim, so YAML quoting would leak the quotes into titles.
+    if (/^["']/.test(value)) throw new Error(`Guide article "${slug}": "${key}" must not be quoted`)
+    fields.set(key, value)
   }
   return { fields, body: raw.slice(match[0].length).trim() }
 }
 
 export function parseGuideArticle(slug: string, raw: string): GuideArticle {
+  // "index" is the overview page's route.
+  if (!SLUG.test(slug) || slug === "index") {
+    throw new Error(`Guide article "${slug}": file name must be a lowercase-hyphenated slug other than "index"`)
+  }
   const { fields, body } = parseFrontMatter(slug, raw)
   const need = (key: string): string => {
     const value = fields.get(key)
@@ -76,10 +87,17 @@ export function sortGuideArticles(articles: GuideArticle[]): GuideArticle[] {
   )
 }
 
+/** Articles from `content/*.md`, keyed by any path ending in the file name, in reading order. */
+export function guideArticlesFromFiles(files: Record<string, string>): GuideArticle[] {
+  return sortGuideArticles(
+    Object.entries(files).map(([path, raw]) =>
+      parseGuideArticle(path.slice(path.lastIndexOf("/") + 1, -".md".length), raw)
+    )
+  )
+}
+
 export function loadGuideArticles(): GuideArticle[] {
   const dir = fileURLToPath(new URL("../content", import.meta.url))
-  const articles = readdirSync(dir)
-    .filter((file) => file.endsWith(".md"))
-    .map((file) => parseGuideArticle(file.slice(0, -3), readFileSync(`${dir}/${file}`, "utf8")))
-  return sortGuideArticles(articles)
+  const files = readdirSync(dir).filter((file) => file.endsWith(".md"))
+  return guideArticlesFromFiles(Object.fromEntries(files.map((file) => [file, readFileSync(`${dir}/${file}`, "utf8")])))
 }

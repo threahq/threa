@@ -14,7 +14,7 @@ let indexPromise: Promise<PreparedEntry[]> | null = null
 let indexReady = false
 function loadIndex(): Promise<PreparedEntry[]> {
   const indexUrl = document.body.dataset.searchIndex
-  if (!indexUrl) throw new Error("search: <body> has no data-search-index")
+  if (!indexUrl) return Promise.reject(new Error("search: <body> has no data-search-index"))
   indexPromise ??= fetch(indexUrl)
     .then((res) => {
       if (!res.ok) throw new Error(`search index: HTTP ${res.status}`)

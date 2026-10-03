@@ -17,10 +17,6 @@ describe("guide articles", () => {
     expect(new Set(slugs).size).toBe(slugs.length)
   })
 
-  test("should not use the overview's slug when naming an article", () => {
-    expect(articles.map((a) => a.slug)).not.toContain("index")
-  })
-
   test("should link only to app destinations the app understands when a body uses an app: link", () => {
     const rejected = articles.flatMap((a) =>
       hrefs(a.body)
@@ -35,7 +31,7 @@ describe("guide articles", () => {
     const dangling = articles.flatMap((a) =>
       hrefs(a.body)
         .filter((href) => href.startsWith("/guide/"))
-        .filter((href) => !slugs.has(href.slice("/guide/".length)))
+        .filter((href) => !slugs.has(href.slice("/guide/".length).split("#")[0]!))
         .map((href) => `${a.slug}: ${href}`)
     )
     expect(dangling).toEqual([])
@@ -68,6 +64,22 @@ describe("parseGuideArticle", () => {
 
   test("should reject the article when order is not an integer", () => {
     expect(() => parseGuideArticle("x", valid.replace("order: 3", "order: soon"))).toThrow(/"order" must be an integer/)
+  })
+
+  test("should reject the article when the front matter has a key it does not know", () => {
+    expect(() => parseGuideArticle("x", valid.replace("order: 3", "order: 3\ntags: memory"))).toThrow(
+      /unknown front matter key "tags"/
+    )
+  })
+
+  test("should reject the article when a value is quoted", () => {
+    expect(() => parseGuideArticle("x", valid.replace("title: A title", 'title: "A title"'))).toThrow(
+      /"title" must not be quoted/
+    )
+  })
+
+  test.each(["index", "Meet_Ariadne", "-lead"])("should reject the article when its slug is %p", (slug) => {
+    expect(() => parseGuideArticle(slug, valid)).toThrow(/lowercase-hyphenated slug/)
   })
 
   test("should reject the article when there is no front matter", () => {

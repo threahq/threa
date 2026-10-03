@@ -14,10 +14,10 @@ A scratchpad is a private conversation only you can open. It is the quickest way
 In the sidebar, find the **Scratchpads** section and use its add button. The menu offers:
 
 - **New Scratchpad**: Ariadne is on, so she reads what you write and replies.
-- **New Quick Note**: the companion is off. It is plain storage with no AI replies.
+- **New Quick Note**: the companion is off, so Ariadne doesn't reply unless you mention her.
 - **New Encrypted Scratchpad** and **New Encrypted Quick Note**: end-to-end encrypted versions. Setting up encryption the first time walks you through a short setup.
 
-The sidebar's **Getting started** checklist has a "Write your first note" item that creates a scratchpad for you.
+While the sidebar shows the **Getting started** checklist, its "Write your first note" item creates a scratchpad for you.
 
 ## Write something
 
@@ -30,7 +30,7 @@ In a Companion scratchpad, Ariadne answers in the conversation. Ask her to think
 Each scratchpad has a **Companion mode**:
 
 - **Companion**: Ariadne reads new messages and replies.
-- **Quiet**: no AI replies and no inference cost, just a place to write.
+- **Quiet**: Ariadne stays out unless you mention her with `@ariadne`.
 
 Change it from the scratchpad's settings at any time. The same panel lets you choose which agent acts as the companion, and which kinds of tools she may use there.
 
@@ -38,7 +38,9 @@ Change it from the scratchpad's settings at any time. The same panel lets you ch
 
 While you write, Threa watches for knowledge worth keeping: decisions and the reasoning behind them, things you learned, procedures, background and references. When the conversation settles, it saves them as memos and shows a "Saved to memory" line with the titles. Select a title to open the memo.
 
-Browse everything on the [Memory](app:memory) page. If a scratchpad is full of noise you don't want remembered, turn off **Automatic memory** in its settings. Encrypted scratchpads never become memos, because the server can't read them.
+Whether that happens is set by **Automatic memory** in the scratchpad's settings. A new scratchpad with Ariadne on starts with it off, so turn it on when the conversation is worth keeping. A Quick Note starts with it on. Encrypted scratchpads never become memos, because the server can't read them.
+
+Browse everything on the [Memory](app:memory) page.
 
 ## Next
 
