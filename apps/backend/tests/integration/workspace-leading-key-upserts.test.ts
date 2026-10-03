@@ -268,12 +268,19 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     const hide = () =>
       BoardExclusionRepository.hideConversation(pool, { workspaceId: ws, conversationId: conversation, userId: viewer })
 
+    const backdated = new Date("2000-01-01T00:00:00Z")
+
     await hide()
+    await pool.query(
+      "UPDATE board_hidden_conversations SET hidden_at = $3 WHERE workspace_id = $1 AND conversation_id = $2",
+      [ws, conversation, backdated]
+    )
     const second = await hide()
 
-    expect(await BoardExclusionRepository.listHiddenConversations(pool, ws, viewer)).toEqual([
-      { conversationId: conversation, hiddenAt: second.hiddenAt },
-    ])
+    expect({
+      rows: await BoardExclusionRepository.listHiddenConversations(pool, ws, viewer),
+      restamped: second.hiddenAt > backdated,
+    }).toEqual({ rows: [{ conversationId: conversation, hiddenAt: second.hiddenAt }], restamped: true })
   })
 
   test("should keep one muted row when a stream is muted twice", async () => {
@@ -321,6 +328,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     await pool.query("UPDATE streams SET workspace_id = $1 WHERE id = $2", [ws, ids.stream])
   }
 
+  // Writer 1 is self-authored, so its row lands already read: an arbiter that updates A's row changes its read_at.
   const activity = (ws: string, ids: SharedIds, writer: 0 | 1, activityType: string) => ({
     workspaceId: ws,
     activityType,
