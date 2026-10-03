@@ -147,6 +147,26 @@ test("floats over the thread where the dock can't fit beside it, and docks once 
   await expect(dock(page)).toHaveCount(1)
 })
 
+test("the floating overview steps aside for an aside stage and returns when it closes", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId } = await seedChannelWithThread(page, "context-stage")
+
+  // Beside the pinned sidebar, a 900px window leaves no room for main + dock.
+  await page.setViewportSize({ width: 900, height: 900 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await page.locator("header").getByRole("button", { name: "In this stream" }).click()
+  await expect(dock(page).getByText("example.com").first()).toBeVisible()
+
+  await page.getByTestId("aside-header-chip").click()
+  await expect(page.getByTestId("aside-stage")).toBeVisible({ timeout: 15000 })
+  await expect(dock(page)).toHaveCount(0)
+  expect(new URL(page.url()).searchParams.get("context")).not.toBeNull()
+
+  await page.getByRole("button", { name: "Close aside" }).click()
+  await expect(page.getByTestId("aside-stage")).toHaveCount(0)
+  await expect(dock(page).getByText("example.com").first()).toBeVisible()
+})
+
 test("offers the overview from an archived channel's mobile sheet", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId } = await seedChannelWithThread(page, "context-archived")

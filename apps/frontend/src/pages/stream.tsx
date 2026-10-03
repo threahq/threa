@@ -874,8 +874,10 @@ export function StreamPage() {
     </>
   )
 
-  // The panel mounts its own overlay while it is open.
-  const streamContextOverlay = stream && !isDraft && !isPanelOpen && (
+  // The panel mounts its own overlay while it is open. The stage covers the
+  // page, so the overview (which may float above it) steps down while it's up;
+  // `?context` survives and brings it back when the stage closes.
+  const streamContextOverlay = stream && !isDraft && !isPanelOpen && !asideStage && (
     <StreamContextOverlay workspaceId={workspaceId!} streamId={streamId!} />
   )
 
