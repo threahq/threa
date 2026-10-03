@@ -12,12 +12,12 @@ permissions:
   actions: read
   contents: write
 
-# Serializes deploy announcements so two runs never read the same ledger and both
-# move it. A pending run replaced by a newer one loses nothing: the ledger has not
-# moved, so the newer announcement lists its commits too.
+# Serializes announcements so two runs never read the same ledger and both move it.
+# queue: max keeps every pending run; the default replaces it, dropping its alert.
 concurrency:
   group: notify-${{ github.event.workflow_run.name }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   notify:
@@ -77,28 +77,44 @@ jobs:
               }
 
               try {
-                const { data } = await github.rest.git.getRef({ ...repo, ref: LEDGER_REF })
-                ledgerSha = data.object.sha
-              } catch (err) {
-                if (err.status !== 404) throw err
-                core.warning(`${LEDGER_REF} missing; announcing the head commit and creating it`)
-              }
-
-              if (ledgerSha) {
-                const cmp = await github.rest.repos.compareCommitsWithBasehead({
-                  ...repo,
-                  basehead: `${ledgerSha}...${headSha}`,
-                })
-                if (cmp.data.status === "ahead") {
-                  // compareCommitsWithBasehead caps `commits` at 250; total_commits is the true
-                  // range size, so the "N commits" header and the omitted count stay honest.
-                  const list = cmp.data.commits.map((c) => ({ sha: c.sha, message: c.commit.message }))
-                  commits = list.slice(-MAX_LISTED)
-                  omitted = cmp.data.total_commits - commits.length
-                } else if (conclusion === "success") {
-                  core.info(`${headSha} already announced (${cmp.data.status} vs ${LEDGER_REF} ${ledgerSha})`)
-                  return
+                try {
+                  const { data } = await github.rest.git.getRef({ ...repo, ref: LEDGER_REF })
+                  ledgerSha = data.object.sha
+                } catch (err) {
+                  if (err.status !== 404) throw err
+                  core.warning(`${LEDGER_REF} missing; announcing the head commit and creating it`)
                 }
+
+                if (ledgerSha) {
+                  const basehead = `${ledgerSha}...${headSha}`
+                  const cmp = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead })
+                  if (cmp.data.status === "ahead") {
+                    // The unpaged response holds the OLDEST 250 commits; past that, fetch the
+                    // last two MAX_LISTED pages so the bullets end at the released head.
+                    const total = cmp.data.total_commits
+                    let raw = cmp.data.commits
+                    if (total > raw.length) {
+                      const last = Math.ceil(total / MAX_LISTED)
+                      raw = []
+                      for (const page of [last - 1, last]) {
+                        const { data } = await github.rest.repos.compareCommitsWithBasehead({ ...repo, basehead, per_page: MAX_LISTED, page })
+                        raw.push(...data.commits)
+                      }
+                    }
+                    const list = raw.map((c) => ({ sha: c.sha, message: c.commit.message }))
+                    commits = list.slice(-MAX_LISTED)
+                    omitted = total - commits.length
+                  } else if (conclusion === "success") {
+                    core.info(`${headSha} already announced (${cmp.data.status} vs ${LEDGER_REF} ${ledgerSha})`)
+                    return
+                  }
+                }
+              } catch (err) {
+                // A success must not move the ledger on a guess; a failure alert still goes out.
+                if (conclusion === "success") throw err
+                core.warning(`commit range lookup failed, announcing the head commit only: ${err.message}`)
+                commits = [{ sha: headSha, message: run.head_commit?.message }]
+                omitted = 0
               }
             }
 
