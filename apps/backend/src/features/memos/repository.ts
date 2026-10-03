@@ -575,6 +575,37 @@ export const MemoRepository = {
   },
 
   /**
+   * Active saved and reflective memos the batch's audience may see that cite one
+   * of `messageIds` edited after the memo was made: everything but private memos,
+   * plus `scopeUserId`'s own when the batch is that owner's. A conversation
+   * memo is reconsidered through its own conversation, so it is not returned here.
+   */
+  async findActiveMessageMemosCitingEdited(
+    db: Querier,
+    workspaceId: string,
+    messageIds: string[],
+    scopeUserId: string | null
+  ): Promise<Memo[]> {
+    if (messageIds.length === 0) return []
+    const result = await db.query<MemoRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+      WHERE workspace_id = ${workspaceId}
+        AND status = 'active'
+        AND memo_type = 'message'
+        AND (scope <> 'user' OR scope_user_id = ${scopeUserId})
+        AND source_message_ids && ${messageIds}::text[]
+        AND EXISTS (
+          SELECT 1 FROM messages
+          WHERE messages.id = ANY(memos.source_message_ids)
+            AND messages.id = ANY(${messageIds}::text[])
+            AND messages.edited_at > memos.created_at
+        )
+      ORDER BY created_at ASC
+    `)
+    return result.rows.map(mapRowToMemo)
+  },
+
+  /**
    * Serializes, per top-level stream, memo saves (batch, save_memo, reflective
    * capture) with each other and with retirement when a source message is
    * deleted. Keyed by the root so a save in a thread and a deletion in its
