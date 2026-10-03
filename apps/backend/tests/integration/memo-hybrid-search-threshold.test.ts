@@ -46,6 +46,7 @@ describe("MemoRepository.hybridSearch semantic distance cutoff", () => {
 
       const sourceMessageId = messageId()
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMessageId,
         streamId: scratchpadId,
         sequence: 1n,

@@ -101,6 +101,7 @@ describe("describe_memo viewer", () => {
       // gate passes in every turn and only the memo's scope separates them.
       const sourceMessageId = messageId()
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMessageId,
         streamId: publicChannelId,
         sequence: 1n,

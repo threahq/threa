@@ -80,6 +80,7 @@ describe("reflective capture: research sources", () => {
   async function seedMessage(stream: string): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id,
       streamId: stream,
       sequence: BigInt(Date.now()),
@@ -98,6 +99,7 @@ describe("reflective capture: research sources", () => {
   ): Promise<string> {
     const id = sessionId()
     await AgentSessionRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id,
       streamId: stream,
       personaId: personaId(),
