@@ -1766,16 +1766,16 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "streamContextItems", STREAM_CONTEXT_ITEMS_STORE)
       })
 
-    // v53: workspace users and personas are keyed by workspace like v50-v52.
+    // v54: workspace users and personas are keyed by workspace like v51-v53.
     // Connect copies a user into a partner workspace under the same `usr_` id,
     // and system personas share their `persona_` ids across workspaces, so a
     // second workspace's bootstrap overwrote the first's row. Every other index
     // is dropped so a missed call site throws instead of mixing workspaces. Rows
     // without a `workspaceId` are dropped; the bootstrap refetches them.
-    // One-way door: once a client has opened at v53, code declaring only v52
+    // One-way door: once a client has opened at v54, code declaring only v53
     // cannot open the database (IndexedDB refuses a version downgrade), so a
-    // revert of this bump is not available — reverting means a v54.
-    this.version(53)
+    // revert of this bump is not available — reverting means a v55.
+    this.version(54)
       .stores({
         [WORKSPACE_USERS_STORE]: "[workspaceId+id], workspaceId",
         [PERSONAS_STORE]: "[workspaceId+id], workspaceId",
