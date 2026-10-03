@@ -340,14 +340,6 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     isSelf: writer === 1,
   })
 
-  const overrideValue = async (ws: string, ids: SharedIds) =>
-    (
-      await pool.query("SELECT value FROM user_preference_overrides WHERE workspace_id = $1 AND user_id = $2", [
-        ws,
-        ids.member,
-      ])
-    ).rows[0] ?? null
-
   const sharedKeyCases: Array<{
     name: string
     oldKey: string
@@ -618,9 +610,9 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       write: async (ws, ids, writer) => {
         // The old event keys still span workspaces, so each workspace's event takes its own id and sequence.
         await pool.query(
-          `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload, actor_id, actor_type)
-           VALUES ($1, $2, $3, $4, 'message_created', $5, $6, 'user')`,
-          [ids.events[writer], ws, ids.stream, writer + 1, JSON.stringify({ messageId: ids.message }), ids.member]
+          `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload)
+           VALUES ($1, $2, $3, $4, 'message_created', $5)`,
+          [ids.events[writer], ws, ids.stream, writer + 1, JSON.stringify({ messageId: ids.message })]
         )
         return SparseReadRepository.insertReads(pool, {
           workspaceId: ws,
@@ -688,14 +680,14 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       oldKey: "user_preference_overrides_pkey",
       write: (ws, ids, writer) =>
         UserPreferencesRepository.setOverride(pool, ws, ids.member, "theme", `theme ${writer}`),
-      read: overrideValue,
+      read: (ws, ids) => UserPreferencesRepository.findOverride(pool, ws, ids.member, "theme"),
     },
     {
       name: "a preference override through bulkSetOverrides",
       oldKey: "user_preference_overrides_pkey",
       write: (ws, ids, writer) =>
         UserPreferencesRepository.bulkSetOverrides(pool, ws, ids.member, [{ key: "theme", value: `theme ${writer}` }]),
-      read: overrideValue,
+      read: (ws, ids) => UserPreferencesRepository.findOverride(pool, ws, ids.member, "theme"),
     },
   ]
 
