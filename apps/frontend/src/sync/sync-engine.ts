@@ -485,14 +485,20 @@ export class SyncEngine {
           !this.getVisibleServerStreamIds().includes(id)
         const results = response.results.filter((result) => ids.includes(result.streamId) && eligible(result.streamId))
         const histories = results.flatMap((result) => (result.status === 200 ? [result.history] : []))
-        const applied = await applyStreamPreviewHistories(
-          this.workspaceId,
-          histories,
-          { database: this.accountDatabase, generation: this.accountGeneration },
-          () => this.canRecoverPreview(generation),
-          eligible,
-          fetchStartedAt
-        )
+        let applied: Set<string>
+        try {
+          applied = await applyStreamPreviewHistories(
+            this.workspaceId,
+            histories,
+            { database: this.accountDatabase, generation: this.accountGeneration },
+            () => this.canRecoverPreview(generation),
+            eligible,
+            fetchStartedAt
+          )
+        } catch {
+          if (this.canRecoverPreview(generation)) console.error("Preview history cache write failed")
+          continue
+        }
         if (!this.canRecoverPreview(generation)) return
         for (const result of results) {
           if (!eligible(result.streamId) || (result.status === 200 && !applied.has(result.streamId))) continue
@@ -539,6 +545,8 @@ export class SyncEngine {
       } else {
         refresh.controller.abort()
         this.activeStreamRefreshes.delete(streamId)
+        const key = `stream:${streamId}`
+        if (this.deps.syncStatus.get(key) === "syncing") this.deps.syncStatus.set(key, "stale")
       }
     }
     this.refreshedWarmStreamIds.clear()
@@ -669,9 +677,24 @@ export class SyncEngine {
     // the full snapshot inside runBootstrap; the below-floor catch-up fallback
     // re-forces full when the cursor has dropped beneath the retained
     // sync-log floor.
-    const generation = this.recoveryGeneration
-    await this.runBootstrap(true)
-    if (!this.isAccountCurrent() || generation !== this.recoveryGeneration) return
+    let generation = this.recoveryGeneration
+    let connectionGeneration = this.connectionGeneration
+    while (true) {
+      await this.runBootstrap(true)
+      if (!this.isAccountCurrent()) return
+      if (generation === this.recoveryGeneration) break
+      const connectionChanges = this.connectionGeneration - connectionGeneration
+      // Connection churn retires history work, not this user-triggered HTTP recovery.
+      if (
+        this.socket?.connected ||
+        !navigator.onLine ||
+        connectionChanges <= 0 ||
+        this.recoveryGeneration - generation !== connectionChanges
+      )
+        return
+      generation = this.recoveryGeneration
+      connectionGeneration = this.connectionGeneration
+    }
     this.schedulePreviewDrain()
     void this.runCatchUp("resume")
   }
@@ -1369,6 +1392,7 @@ export class SyncEngine {
    */
   private async slimReconnectBootstrap(): Promise<BootstrapOutcome> {
     const generation = this.recoveryGeneration
+    const signal = this.recoveryAbort.signal
     const current = () => this.isAccountCurrent() && generation === this.recoveryGeneration
     const { workspaceId, syncStatus } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
@@ -1382,7 +1406,7 @@ export class SyncEngine {
     // catch-up still runs and the next reconnect bootstrap closes the gap.
     try {
       if (this.socket?.connected) {
-        await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
+        await awaitRecovery(joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine"), signal)
       }
       if (!current()) return { status: "cancelled" }
 
@@ -1711,6 +1735,10 @@ export class SyncEngine {
       this.applyReconnectStreamError(streamId, error)
       syncStatus.set(key, syncStatus.getError(key) ? "error" : "stale")
       return false
+    } finally {
+      if (this.activeStreamRefreshes.get(streamId) === refresh && syncStatus.get(key) === "syncing") {
+        syncStatus.set(key, "stale")
+      }
     }
   }
 
@@ -1729,7 +1757,7 @@ export class SyncEngine {
    * warm-up, not the sync authority, and must not flash loading chrome.
    */
   private warmStreamOverHttp(streamId: string): Promise<void> {
-    if (this.isDestroyed || !isServerStreamId(streamId)) {
+    if (!this.isAccountCurrent() || !isServerStreamId(streamId)) {
       return Promise.resolve()
     }
 
@@ -1753,13 +1781,14 @@ export class SyncEngine {
       // belong to the bootstrap query layer (useStreamBootstrap / the
       // coordinated stream queries) — warming here too would double-fetch the
       // full window on every cold open.
-      const after = await getLatestPersistedSequence(streamId)
-      if (after === null || this.isDestroyed) return
+      const after = await getLatestPersistedSequence(streamId, this.accountDatabase)
+      if (after === null || !this.isAccountCurrent()) return
 
       const fetchStartedAt = Date.now()
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, { after })
-      if (this.isDestroyed) return
+      if (!this.isAccountCurrent()) return
       await applyStreamBootstrap(workspaceId, streamId, bootstrap, { fetchStartedAt, queryClient })
+      if (!this.isAccountCurrent()) return
 
       // Merge into the query-cache bridge ONLY when an entry already exists —
       // same guard as backfillStreamGap. Seeding an append-mode delta as the

@@ -2,13 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createElement } from "react"
 import Dexie from "dexie"
 import { render, cleanup } from "@testing-library/react"
-import { db, getActiveDb } from "@/db/database"
+import { ThreaDatabase, db, getActiveDb, setActiveDb } from "@/db/database"
 import * as eventWrites from "@/db/event-writes"
 import { ApiError } from "@/api/client"
+import { setAssertedAccount } from "@/api/account-assertion"
+import { streamsApi } from "@/api/streams"
 import { streamKeys } from "@/hooks/use-streams"
 import { useStreamWarmup } from "@/hooks/use-stream-warmup"
 import { SyncEngine, SyncEngineContext } from "./sync-engine"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
+import { applyStreamBootstrap } from "./stream-sync"
+import * as streamSync from "./stream-sync"
 import { applyWorkspaceBootstrap } from "./workspace-sync"
 import {
   MockSocket,
@@ -1333,6 +1337,324 @@ describe("preview history recovery", () => {
 
     expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_panel", { after: "1" }]])
     expect((await db.events.get("evt_2"))?.payload).toMatchObject({ contentMarkdown: "panel recovered" })
+  })
+
+  it.each(
+    ["current", "URL-visible"].flatMap((surface) => ["B", "A to B to A"].map((destination) => [surface, destination]))
+  )("should discard a %s HTTP warm body after switching to %s", async (surface, destination) => {
+    const originalDatabase = getActiveDb()
+    const a = new ThreaDatabase(`warm_review_A_${crypto.randomUUID()}`, "workos_warm_A")
+    const b = new ThreaDatabase(`warm_review_B_${crypto.randomUUID()}`, "workos_warm_B")
+    let engine: SyncEngine | undefined
+    try {
+      setAssertedAccount("workos_warm_A")
+      setActiveDb(a)
+      eventWrites.bumpAccountGeneration()
+      const deps = makeDeps()
+      engine = createEngine(deps)
+      const socket = new MockSocket()
+      await engine.onConnect(asSocket(socket))
+      const streamId = "stream_private"
+      await applyStreamBootstrap("ws_1", streamId, makeStreamBootstrap(streamId, "1"))
+      deps.streamService.bootstrap.mockImplementation(streamsApi.bootstrap)
+      const started = deferred<void>()
+      let controller!: ReadableStreamDefaultController<Uint8Array>
+      const body = new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value
+        },
+      })
+      const late = makeStreamBootstrap(streamId, "2")
+      late.events[0].payload = { messageId: "msg_2", contentMarkdown: "Account A private content" }
+      let released = false
+      const release = () => {
+        if (released) return
+        released = true
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({ data: late })))
+        controller.close()
+      }
+      releases.push(release)
+      spies.push(
+        vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+          started.resolve()
+          return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } })
+        })
+      )
+      disconnect(engine, socket)
+      if (surface === "current") engine.setCurrentStreamId(streamId)
+      else engine.setVisibleStreamIds([streamId])
+      const warm: Promise<void> = Reflect.get(engine, "activeWarmFetches").get(streamId)
+      track(warm)
+      await started.promise
+      setAssertedAccount("workos_warm_B")
+      eventWrites.bumpAccountGeneration()
+      setActiveDb(b)
+      if (destination === "A to B to A") {
+        setAssertedAccount("workos_warm_A")
+        eventWrites.bumpAccountGeneration()
+        setActiveDb(a)
+      }
+      release()
+      await warm
+      expect({ original: await a.events.get("evt_2"), incoming: await b.events.get("evt_2") }).toEqual({
+        original: undefined,
+        incoming: undefined,
+      })
+    } finally {
+      engine?.destroy()
+      setActiveDb(originalDatabase)
+      eventWrites.bumpAccountGeneration()
+      setAssertedAccount(null)
+      await a.delete()
+      await b.delete()
+    }
+  })
+
+  it("should not admit an outgoing engine's navigation warmup under the incoming account", async () => {
+    const originalDatabase = getActiveDb()
+    const incoming = new ThreaDatabase(`warm_admission_${crypto.randomUUID()}`, "workos_warm_B")
+    let engine: SyncEngine | undefined
+    try {
+      const deps = makeDeps()
+      engine = createEngine(deps)
+      const socket = new MockSocket()
+      await engine.onConnect(asSocket(socket))
+      const initialCatchUp: Promise<void> | null = Reflect.get(engine, "activeCatchUp")
+      if (initialCatchUp) await track(initialCatchUp)
+      disconnect(engine, socket)
+      setAssertedAccount("workos_warm_B")
+      eventWrites.bumpAccountGeneration()
+      setActiveDb(incoming)
+      await applyStreamBootstrap("ws_1", "stream_private", makeStreamBootstrap("stream_private", "1"))
+      deps.streamService.bootstrap.mockImplementation(streamsApi.bootstrap)
+      const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ data: makeStreamBootstrap("stream_private", "2") }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+      spies.push(fetch)
+      const cursorRead = vi.spyOn(streamSync, "getLatestPersistedSequence")
+      spies.push(cursorRead)
+      engine.setCurrentStreamId("stream_private")
+      const warm: Promise<void> | undefined = Reflect.get(engine, "activeWarmFetches").get("stream_private")
+      if (warm) await track(warm)
+      expect({
+        requests: fetch.mock.calls.length,
+        cursorReads: cursorRead.mock.calls.map((call) => call[0]),
+        event: await incoming.events.get("evt_2"),
+      }).toEqual({
+        requests: 0,
+        cursorReads: [],
+        event: undefined,
+      })
+    } finally {
+      engine?.destroy()
+      setActiveDb(originalDatabase)
+      eventWrites.bumpAccountGeneration()
+      setAssertedAccount(null)
+      await incoming.delete()
+    }
+  })
+
+  it.each(
+    ["board", "panel"].flatMap((surface) =>
+      ["undeclare", "replace recovery"].map((retirement) => [surface, retirement])
+    )
+  )("should clear only the retired %s refresh's loading state on %s", async (surface, retirement) => {
+    const { deps, engine, socket } = await setup()
+    const joined = hold()
+    const started = deferred<void>()
+    socket.joinInterceptor = async (room) => {
+      if (room === "ws:ws_1:stream:stream_retired") {
+        started.resolve()
+        await joined.promise
+      }
+    }
+    const declare = (ids: string[]) =>
+      surface === "board" ? engine.setBoardStreamIds(ids) : engine.setPanelStreamIds(ids)
+    declare(["stream_retired"])
+    const drain: Promise<unknown> = Reflect.get(engine, "boardDrain")
+    track(drain)
+    await started.promise
+    expect(deps.syncStatus.get("stream:stream_retired")).toBe("syncing")
+    declare([])
+    if (retirement === "replace recovery") await track(engine.refreshAfterConnectivityResume())
+    joined.resolve()
+    await drain
+    expect({
+      status: deps.syncStatus.get("stream:stream_retired"),
+      loading: deps.syncStatus.isAnySyncing(),
+      requests: deps.streamService.bootstrap.mock.calls,
+    }).toEqual({ status: "stale", loading: false, requests: [] })
+  })
+
+  it.each(
+    ["current", "URL-visible"].flatMap((surface) => [1, 2].map((disconnects) => [surface, disconnects] as const))
+  )("should finish %s HTTP recovery when %s disconnects retire the online resume", async (surface, disconnects) => {
+    const streamId = "stream_resume_gap"
+    const missed = makeStreamBootstrap(streamId, "2")
+    missed.events[0].payload = { messageId: "msg_resume_gap", contentMarkdown: "Recovered after socket loss" }
+    const gap: SyncCatchUpEntry = {
+      syncId: "11",
+      eventType: "message:created",
+      payload: { workspaceId: "ws_1", streamId, event: missed.events[0] },
+      createdAt: new Date().toISOString(),
+    }
+    let gapCommitted = false
+    const deps = {
+      ...makeDeps(),
+      syncService: {
+        catchUp: vi.fn(async (_workspaceId: string, params: { after: string }) => ({
+          entries: gapCommitted && BigInt(params.after) < 11n ? [gap] : [],
+          head: gapCommitted ? "11" : "0",
+        })),
+      },
+    }
+    const engine = createEngine(deps)
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+    deps.streamService.bootstrap.mockResolvedValueOnce(makeStreamBootstrap(streamId, "1"))
+    if (surface === "current") engine.setCurrentStreamId(streamId)
+    else engine.setVisibleStreamIds([streamId])
+    await vi.waitFor(() => expect(deps.syncStatus.get(`stream:${streamId}`)).toBe("synced"))
+    engine.setBoardStreamIds(["stream_background"])
+    await vi.waitFor(() => expect(deps.syncStatus.get("stream:stream_background")).toBe("synced"))
+    deps.streamService.bootstrap.mockClear()
+    deps.syncService.catchUp.mockClear()
+    deps.streamService.bootstrap.mockResolvedValue(missed)
+    gapCommitted = true
+    const joined = hold()
+    const started = deferred<void>()
+    socket.joinInterceptor = async (room) => {
+      if (room === "ws:ws_1") {
+        started.resolve()
+        await joined.promise
+      }
+    }
+    const resume = track(engine.refreshAfterConnectivityResume())
+    await started.promise
+    for (let i = 0; i < disconnects; i++) disconnect(engine, socket)
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("11"))
+    await resume
+    joined.resolve()
+    expect({
+      event: (await db.events.get("evt_2"))?.payload,
+      requests: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
+      connected: socket.connected,
+    }).toEqual({
+      event: expect.objectContaining({ contentMarkdown: "Recovered after socket loss" }),
+      requests: [streamId],
+      connected: false,
+    })
+  })
+
+  it("should preserve a replacement refresh's loading state when the retired writer settles", async () => {
+    const { deps, engine } = await setup()
+    const streamId = "stream_replacement"
+    const heldWrite = hold()
+    const writeStarted = deferred<void>()
+    const apply = streamSync.applyStreamBootstrap
+    spies.push(
+      vi.spyOn(streamSync, "applyStreamBootstrap").mockImplementationOnce(async (...args) => {
+        writeStarted.resolve()
+        await heldWrite.promise
+        await apply(...args)
+      })
+    )
+    const heldResponse = hold()
+    deps.streamService.bootstrap
+      .mockResolvedValueOnce(makeStreamBootstrap(streamId, "2"))
+      .mockImplementationOnce(async () => {
+        await heldResponse.promise
+        return makeStreamBootstrap(streamId, "3")
+      })
+    engine.setBoardStreamIds([streamId])
+    await writeStarted.promise
+    const retired: Promise<boolean> = Reflect.get(engine, "activeStreamRefreshes").get(streamId).promise
+    track(retired)
+    const resume = track(engine.refreshAfterConnectivityResume())
+    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(2))
+    heldWrite.resolve()
+    await retired
+    expect(deps.syncStatus.get(`stream:${streamId}`)).toBe("syncing")
+    heldResponse.resolve()
+    await resume
+    await vi.waitFor(() => expect(deps.syncStatus.get(`stream:${streamId}`)).toBe("synced"))
+    expect(await db.events.get("evt_3")).toBeTruthy()
+  })
+
+  it("should recheck the warm-fetch account after its persisted cursor read", async () => {
+    const originalDatabase = getActiveDb()
+    const incoming = new ThreaDatabase(`warm_cursor_${crypto.randomUUID()}`, "workos_warm_B")
+    let engine: SyncEngine | undefined
+    try {
+      const deps = makeDeps()
+      engine = createEngine(deps)
+      const socket = new MockSocket()
+      await engine.onConnect(asSocket(socket))
+      await applyStreamBootstrap("ws_1", "stream_private", makeStreamBootstrap("stream_private", "1"))
+      disconnect(engine, socket)
+      const started = deferred<void>()
+      const held = hold()
+      const getSequence = streamSync.getLatestPersistedSequence
+      spies.push(
+        vi.spyOn(streamSync, "getLatestPersistedSequence").mockImplementationOnce(async (id, database) => {
+          started.resolve()
+          await held.promise
+          return getSequence(id, database)
+        })
+      )
+      const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ data: makeStreamBootstrap("stream_private", "2") }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+      spies.push(fetch)
+      deps.streamService.bootstrap.mockImplementation(streamsApi.bootstrap)
+      engine.setCurrentStreamId("stream_private")
+      const warm: Promise<void> = Reflect.get(engine, "activeWarmFetches").get("stream_private")
+      track(warm)
+      await started.promise
+      setAssertedAccount("workos_warm_B")
+      eventWrites.bumpAccountGeneration()
+      setActiveDb(incoming)
+      await applyStreamBootstrap("ws_1", "stream_private", makeStreamBootstrap("stream_private", "1"))
+      held.resolve()
+      await warm
+      expect({ requests: fetch.mock.calls.length, event: await incoming.events.get("evt_2") }).toEqual({
+        requests: 0,
+        event: undefined,
+      })
+    } finally {
+      engine?.destroy()
+      setActiveDb(originalDatabase)
+      eventWrites.bumpAccountGeneration()
+      setAssertedAccount(null)
+      await incoming.delete()
+    }
+  })
+
+  it("should report a preview cache-write failure without exposing identifiers or raw errors", async () => {
+    const { deps, engine } = await setup()
+    spies.push(
+      vi
+        .spyOn(getActiveDb().events, "bulkPut")
+        .mockRejectedValueOnce(new DOMException("sensitive row", "QuotaExceededError"))
+    )
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    spies.push(error)
+    engine.warmStreams(["stream_writefailure"])
+    const drain: Promise<void> = Reflect.get(engine, "previewDrain")
+    await track(drain)
+    expect({ messages: error.mock.calls, event: await db.events.get("evt_stream_writefailure_2") }).toEqual({
+      messages: [["Preview history cache write failed"]],
+      event: undefined,
+    })
+    engine.warmStreams(["stream_writefailure"])
+    await vi.waitFor(async () => expect(await db.events.get("evt_stream_writefailure_2")).toBeTruthy())
+    expect(deps.streamService.previewHistory).toHaveBeenCalledTimes(2)
   })
 
   it("should classify per-stream terminal errors while applying successful siblings", async () => {
