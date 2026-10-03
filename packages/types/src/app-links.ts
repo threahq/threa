@@ -50,8 +50,7 @@ function isOneOf<T extends string>(values: readonly T[], value: string | undefin
 /** Parses `app:settings/notifications`, `app:workspace-settings/bots` or `app:memory`; null for anything else. */
 export function parseAppLinkHref(href: string): AppLinkDestination | null {
   if (!href.startsWith(APP_LINK_SCHEME)) return null
-  const segments = href.slice(APP_LINK_SCHEME.length).split("/")
-  const [head, tab, ...rest] = segments
+  const [head, tab, ...rest] = href.slice(APP_LINK_SCHEME.length).split("/")
   if (rest.length > 0) return null
   if (head === "settings") return isOneOf(SETTINGS_TABS, tab) ? { kind: "settings", tab } : null
   if (head === "workspace-settings") {
@@ -59,21 +58,3 @@ export function parseAppLinkHref(href: string): AppLinkDestination | null {
   }
   return tab === undefined && isOneOf(APP_LINK_PAGES, head) ? { kind: "page", page: head } : null
 }
-
-export function formatAppLinkHref(destination: AppLinkDestination): string {
-  switch (destination.kind) {
-    case "page":
-      return `${APP_LINK_SCHEME}${destination.page}`
-    case "settings":
-      return `${APP_LINK_SCHEME}settings/${destination.tab}`
-    case "workspace-settings":
-      return `${APP_LINK_SCHEME}workspace-settings/${destination.tab}`
-  }
-}
-
-/** Every valid `app:` href, for prompts and validation of authored content. */
-export const APP_LINK_HREFS: readonly string[] = [
-  ...APP_LINK_PAGES.map((page) => formatAppLinkHref({ kind: "page", page })),
-  ...SETTINGS_TABS.map((tab) => formatAppLinkHref({ kind: "settings", tab })),
-  ...WORKSPACE_SETTINGS_TABS.map((tab) => formatAppLinkHref({ kind: "workspace-settings", tab })),
-]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { APP_LINK_HREFS, formatAppLinkHref, parseAppLinkHref } from "./app-links"
+import { parseAppLinkHref } from "./app-links"
 
 describe("app: links", () => {
   it("should parse each destination kind", () => {
@@ -26,9 +26,5 @@ describe("app: links", () => {
         "",
       ].map(parseAppLinkHref)
     ).toEqual([null, null, null, null, null, null, null])
-  })
-
-  it("should round-trip every registered href", () => {
-    expect(APP_LINK_HREFS.map((href) => formatAppLinkHref(parseAppLinkHref(href)!))).toEqual([...APP_LINK_HREFS])
   })
 })
