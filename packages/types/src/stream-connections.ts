@@ -198,7 +198,7 @@ export const bridgeAttachmentSchema = z.object({
 })
 export type BridgeAttachment = z.infer<typeof bridgeAttachmentSchema>
 
-/** A message's current state. A deleted message carries an empty body, no reactions and no files. */
+/** A message's current state. */
 export const bridgeMessageSchema = z.object({
   id: z.string().min(1),
   streamId: z.string().min(1),
@@ -210,13 +210,12 @@ export const bridgeMessageSchema = z.object({
   reactions: z.record(z.string(), z.array(z.string())),
   revision: z.number().int().positive(),
   editedAt: z.iso.datetime().nullable(),
-  deletedAt: z.iso.datetime().nullable(),
   createdAt: z.iso.datetime(),
   attachments: z.array(bridgeAttachmentSchema),
 })
 export type BridgeMessage = z.infer<typeof bridgeMessageSchema>
 
-/** What a partner applies: a message to upsert, or one that left the shared tree. */
+/** What a partner applies: a message to upsert, or one to drop because it was deleted or left the shared tree. */
 export const bridgeChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("message"), message: bridgeMessageSchema }),
   z.object({ kind: z.literal("message_removed"), messageId: z.string().min(1) }),

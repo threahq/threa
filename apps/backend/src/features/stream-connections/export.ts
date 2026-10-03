@@ -10,6 +10,7 @@ import {
   type BridgeStream,
   type EventType,
   type JSONContent,
+  type ThreaMark,
 } from "@threahq/types"
 import { withClient } from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -101,9 +102,8 @@ export const BRIDGE_NODE_RULES: ReadonlyMap<string, NodeRule> = new Map<string, 
   ["memoEmbed", "memoEmbed"],
 ])
 
-const BRIDGE_MARKS: ReadonlySet<string> = new Set(["bold", "italic", "strike", "code", "link"])
-
-const EMPTY_DOC: JSONContent = { type: "doc", content: [] }
+// Keyed by every mark type, so a new mark fails the typecheck until it is given a rule here.
+const BRIDGE_MARKS: Record<ThreaMark["type"], true> = { bold: true, italic: true, strike: true, code: true, link: true }
 
 interface BridgeCaller {
   workspaceId: string
@@ -135,6 +135,7 @@ export class StreamConnectionExportService {
   }
 
   async getManifest(caller: BridgeCaller): Promise<BridgeManifest> {
+    await this.assertEnabled(caller.workspaceId)
     return withClient(this.pool, async (client) => {
       const tree = await this.loadSharedTree(client, caller)
       const treeIds = new Set(tree.map((stream) => stream.id))
@@ -146,6 +147,7 @@ export class StreamConnectionExportService {
   }
 
   async listEvents(caller: BridgeCaller & { streamId: string; after: bigint; limit: number }): Promise<BridgeEvents> {
+    await this.assertEnabled(caller.workspaceId)
     return withClient(this.pool, async (client) => {
       const tree = await this.loadSharedTree(client, caller)
       const treeIds = new Set(tree.map((stream) => stream.id))
@@ -172,7 +174,7 @@ export class StreamConnectionExportService {
       const shared = messageIds.flatMap((id) => {
         const message = messages.get(id)
         if (!message) throw new Error(`Message ${id} named by an event of stream ${caller.streamId} does not exist`)
-        return treeIds.has(message.streamId) && !message.deletedAt ? [message] : []
+        return isShared(message, treeIds) ? [message] : []
       })
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
@@ -187,7 +189,7 @@ export class StreamConnectionExportService {
 
       const changes = messageIds.map((id): BridgeChange => {
         const message = messages.get(id)!
-        return treeIds.has(message.streamId)
+        return isShared(message, treeIds)
           ? { kind: "message", message: toBridgeMessage(message, attachments.get(id) ?? [], scope) }
           : { kind: "message_removed", messageId: id }
       })
@@ -206,7 +208,7 @@ export class StreamConnectionExportService {
       connection?.role === "host" &&
       connection.state === StreamConnectionStates.ACTIVE &&
       connection.remoteWorkspaceId === caller.callerWorkspaceId
-    if (!shared || !(await this.isEnabled(caller.workspaceId))) throw connectionNotFound()
+    if (!shared) throw connectionNotFound()
 
     const root = await StreamRepository.findByIdForWorkspace(client, connection.streamId, caller.workspaceId)
     if (!root) throw new Error(`Shared channel ${connection.streamId} is missing from ${caller.workspaceId}`)
@@ -221,8 +223,9 @@ export class StreamConnectionExportService {
     return tree
   }
 
-  private async isEnabled(workspaceId: string): Promise<boolean> {
-    return (await this.featureFlagService.getWorkspaceFlag(workspaceId, "streamConnections")) === "on"
+  private async assertEnabled(workspaceId: string): Promise<void> {
+    const flag = await this.featureFlagService.getWorkspaceFlag(workspaceId, "streamConnections")
+    if (flag !== "on") throw connectionNotFound()
   }
 }
 
@@ -261,31 +264,35 @@ function toBridgeStream(stream: Stream, head: bigint, scope: ContentScope): Brid
   }
 }
 
+/**
+ * A deleted message leaves the partner's copy: in-app it shows as a bare
+ * placeholder, so its author and times stay with the host.
+ */
+function isShared(message: Message, treeIds: ReadonlySet<string>): boolean {
+  return treeIds.has(message.streamId) && message.deletedAt === null
+}
+
 function toBridgeMessage(message: Message, attachments: Attachment[], scope: ContentScope): BridgeMessage {
   if (message.ciphertext) throw new Error(`Message ${message.id} is end-to-end encrypted and cannot be shared`)
-  const deleted = message.deletedAt !== null
-  const contentJson = deleted ? EMPTY_DOC : exportDoc(message.contentJson, scope)
+  const contentJson = exportDoc(message.contentJson, scope)
   return {
     id: message.id,
     streamId: message.streamId,
     authorId: message.authorId,
     authorType: message.authorType,
     contentJson,
-    contentMarkdown: deleted ? "" : deriveContentMarkdown(contentJson),
-    reactions: deleted ? {} : message.reactions,
+    contentMarkdown: deriveContentMarkdown(contentJson),
+    reactions: message.reactions,
     revision: message.revision,
     editedAt: message.editedAt?.toISOString() ?? null,
-    deletedAt: message.deletedAt?.toISOString() ?? null,
     createdAt: message.createdAt.toISOString(),
-    attachments: deleted
-      ? []
-      : attachments.map((attachment) => ({
-          id: attachment.id,
-          filename: attachment.filename,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
-          safetyStatus: attachment.safetyStatus,
-        })),
+    attachments: attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      safetyStatus: attachment.safetyStatus,
+    })),
   }
 }
 
@@ -330,7 +337,7 @@ function exportNode(node: JSONContent, scope: ContentScope): JSONContent | null 
   const rule = BRIDGE_NODE_RULES.get(node.type ?? "")
   if (!rule) throw new UnknownNodeTypeError(node.type ?? "")
   for (const mark of node.marks ?? []) {
-    if (!BRIDGE_MARKS.has(mark.type)) throw new Error(`Unknown mark type ${mark.type}`)
+    if (!Object.hasOwn(BRIDGE_MARKS, mark.type)) throw new Error(`Unknown mark type ${mark.type}`)
   }
 
   switch (rule) {

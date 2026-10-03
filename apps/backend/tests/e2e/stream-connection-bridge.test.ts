@@ -159,7 +159,6 @@ describe("Stream connection bridge", () => {
         reactions: message.reactions,
         revision: message.revision,
         editedAt: message.editedAt,
-        deletedAt: null,
         createdAt: message.createdAt,
         attachments: [],
         ...overrides,
@@ -313,7 +312,7 @@ describe("Stream connection bridge", () => {
     expect(fullReads.map((read) => read.cursor)).toEqual(shared.streams.map((stream) => stream.head))
   })
 
-  test("should export each changed message once, as it is now, and nothing the host keeps to itself", async () => {
+  test("should export each changed message once, as it is now, drop deleted ones, and withhold what the host keeps to itself", async () => {
     const { client, workspace, channel, partner } = await setup()
     const first = await sendMessage(client, workspace.id, channel.id, "first")
     const second = await sendMessage(client, workspace.id, channel.id, "second")
@@ -326,16 +325,7 @@ describe("Stream connection bridge", () => {
     const page = await events(partner, channel.id)
 
     expect(page).toEqual({
-      changes: [
-        exported(edited),
-        exported(reacted),
-        exported(doomed, {
-          contentJson: doc(),
-          contentMarkdown: "",
-          deletedAt: expect.any(String),
-          revision: expect.any(Number),
-        }),
-      ],
+      changes: [exported(edited), exported(reacted), { kind: "message_removed", messageId: doomed.id }],
       cursor: (await manifest(partner)).streams[0].head,
       hasMore: false,
     })
