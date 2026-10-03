@@ -135,7 +135,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    expect({ envelope: bootstrap.stream, stored: await db.streams.get(streamId) }).toMatchObject({
+    expect({ envelope: bootstrap.stream, stored: await db.streams.get(["ws_1", streamId]) }).toMatchObject({
       envelope: newer,
       stored: newer,
     })

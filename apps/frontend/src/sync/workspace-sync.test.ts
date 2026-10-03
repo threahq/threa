@@ -682,7 +682,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       fetchStartedAt
     )
 
-    expect(await db.streams.get(current.id)).toMatchObject({
+    expect(await db.streams.get(["ws_1", current.id])).toMatchObject({
       displayName: "new title",
       displayNameRevision: 4,
       messageCount: 12,
