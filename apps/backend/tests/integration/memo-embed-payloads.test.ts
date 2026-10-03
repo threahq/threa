@@ -11,7 +11,7 @@
  * present-and-empty rather than omitted, or a removed reference keeps its card.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, spyOn } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -221,6 +221,100 @@ describe("memo embed summaries on message payloads", () => {
     const payload = (await payloadOf(message.id, "message_edited")) as MessageEditedPayload
     expect(payload).toHaveProperty("memoEmbeds")
     expect(payload.memoEmbeds).toEqual([])
+  })
+
+  test("should batch root-specific summaries in one roundtrip and skip empty requests", async () => {
+    const publicRoot = streamId()
+    const stalePublicThread = streamId()
+    const foreignRoot = streamId()
+    const foreignSource = streamId()
+    const foreignWorkspace = workspaceId()
+    await WorkspaceRepository.insert(pool, {
+      id: foreignWorkspace,
+      name: "Foreign memo sources",
+      slug: `foreign-${foreignWorkspace}`,
+      createdBy: testUserId,
+    })
+    for (const [id, workspace, type, rootStreamId] of [
+      [publicRoot, testWorkspaceId, "channel", null],
+      [stalePublicThread, testWorkspaceId, "thread", channel],
+      [foreignRoot, foreignWorkspace, "channel", null],
+      [foreignSource, testWorkspaceId, "thread", foreignRoot],
+    ] as const) {
+      await StreamRepository.insert(pool, {
+        id,
+        workspaceId: workspace,
+        type,
+        rootStreamId,
+        visibility: "public",
+        createdBy: testUserId,
+      })
+    }
+    const publicMemo = await seedMemo(publicRoot, "Public source")
+    const threadMemo = await seedMemo(stalePublicThread, "Private effective root")
+    const userMemo = await seedMemo(channel, "User only")
+    const foreignRootMemo = await seedMemo(foreignSource, "Foreign effective root")
+    const foreignSourceMemo = await seedMemo(foreignRoot, "Foreign source")
+    const missingSourceMemo = await seedMemo(channel, "Missing source")
+    await pool.query("UPDATE memos SET scope = 'user', scope_user_id = $2 WHERE id = $1", [userMemo, testUserId])
+    await pool.query("UPDATE memos SET status = 'archived' WHERE id = $1", [publicMemo])
+    await pool.query("UPDATE memos SET status = 'superseded' WHERE id = $1", [threadMemo])
+    await pool.query("DELETE FROM messages WHERE id = (SELECT source_message_id FROM memos WHERE id = $1)", [
+      missingSourceMemo,
+    ])
+    const ids = [
+      sameStreamMemo,
+      publicMemo,
+      threadMemo,
+      userMemo,
+      foreignRootMemo,
+      foreignSourceMemo,
+      missingSourceMemo,
+      memoId(),
+    ]
+    const pairs = [channel, publicRoot].flatMap((citingRootStreamId) =>
+      ids.map((memoId) => ({ memoId, citingRootStreamId }))
+    )
+    pairs.push(pairs[0]!)
+    const querySpy = spyOn(pool, "query")
+    try {
+      const summaries = await MemoRepository.findEmbedSummariesByRoot(pool, testWorkspaceId, pairs)
+      expect(querySpy).toHaveBeenCalledTimes(1)
+      const summary = (memoId: string, title: string) => ({
+        memoId,
+        title,
+        knowledgeType: "decision",
+        memoType: "message",
+        tags: ["settings"],
+        updatedAt: expect.any(String),
+        version: expect.any(Number),
+      })
+      expect(summaries).toEqual(
+        new Map([
+          [
+            channel,
+            new Map([
+              [sameStreamMemo, summary(sameStreamMemo, "Theme switch")],
+              [publicMemo, summary(publicMemo, "Public source")],
+              [threadMemo, summary(threadMemo, "Private effective root")],
+            ]),
+          ],
+          [publicRoot, new Map([[publicMemo, summary(publicMemo, "Public source")]])],
+        ])
+      )
+      querySpy.mockClear()
+      expect(await MemoRepository.findEmbedSummariesByRoot(pool, testWorkspaceId, [])).toEqual(new Map())
+      expect(querySpy).toHaveBeenCalledTimes(0)
+      expect(await MemoRepository.findEmbedSummaries(pool, testWorkspaceId, ids, channel)).toEqual(
+        summaries.get(channel)!
+      )
+      expect(querySpy).toHaveBeenCalledTimes(1)
+      querySpy.mockClear()
+      expect(await MemoRepository.findEmbedSummaries(pool, testWorkspaceId, [], channel)).toEqual(new Map())
+      expect(querySpy).toHaveBeenCalledTimes(0)
+    } finally {
+      querySpy.mockRestore()
+    }
   })
 
   describe("bootstrap enrichment", () => {

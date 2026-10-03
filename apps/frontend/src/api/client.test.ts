@@ -124,6 +124,137 @@ describe("apiFetch request timeout", () => {
   })
 })
 
+describe("apiFetch body lifetime", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  function heldBody(status: number) {
+    let signal: AbortSignal
+    let streamController: ReadableStreamDefaultController<Uint8Array>
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller
+      },
+    })
+    const response = new Response(stream, { status })
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      signal = init!.signal!
+      const abort = () => streamController.error(signal.reason)
+      if (signal.aborted) abort()
+      else signal.addEventListener("abort", abort, { once: true })
+      return response
+    })
+    return { response, signal: () => signal }
+  }
+
+  it.each([200, 401, 500])("should abort a held %s body when the caller cancels after headers", async (status) => {
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    const transport = heldBody(status)
+    const caller = new AbortController()
+    const request = api.get("/anything", { signal: caller.signal }).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(transport.response.bodyUsed).toBe(true)
+    caller.abort()
+    expect(transport.signal().aborted).toBe(true)
+    const error = await request
+    expect(error).toBe(transport.signal().reason)
+    expect(error).toMatchObject({ name: "AbortError" })
+    expect(ApiError.isApiError(error)).toBe(false)
+    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_abort"])
+  })
+
+  it.each([200, 401])("should time out a held %s body without producing an auth error", async (status) => {
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    const transport = heldBody(status)
+    const request = api.get("/anything", { timeoutMs: 50 }).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(49)
+    expect(transport.signal().aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    const error = await request
+    expect(error).toBeInstanceOf(Error)
+    expect(error).toMatchObject({ message: "Request timed out after 50ms" })
+    expect(ApiError.isApiError(error)).toBe(false)
+    expect(transport.signal().aborted).toBe(true)
+    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_stalled", "http_timeout"])
+  })
+
+  it.each([200, 204])("should clean up cancellation and timeout after a completed %s response", async (status) => {
+    let signal: AbortSignal | null | undefined
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      signal = init?.signal
+      return new Response(status === 204 ? null : "{}", { status })
+    })
+    const caller = new AbortController()
+    const remove = vi.spyOn(caller.signal, "removeEventListener")
+    await expect(api.get("/anything", { signal: caller.signal, timeoutMs: 50 })).resolves.toEqual(
+      status === 204 ? undefined : {}
+    )
+    expect(remove).toHaveBeenCalledExactlyOnceWith("abort", expect.any(Function))
+    caller.abort()
+    await vi.advanceTimersByTimeAsync(50)
+    expect(signal?.aborted).toBe(false)
+  })
+
+  it("should preserve pre-aborted caller cancellation", async () => {
+    const transport = heldBody(200)
+    const caller = new AbortController()
+    caller.abort()
+    await expect(api.get("/anything", { signal: caller.signal })).rejects.toBe(transport.signal().reason)
+    expect(transport.signal().aborted).toBe(true)
+  })
+
+  it("should classify header failures as network failures and clean up", async () => {
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    const error = new TypeError("Failed to fetch")
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(error)
+    const caller = new AbortController()
+    const remove = vi.spyOn(caller.signal, "removeEventListener")
+    await expect(api.get("/anything", { signal: caller.signal })).rejects.toBe(error)
+    expect(remove).toHaveBeenCalledExactlyOnceWith("abort", expect.any(Function))
+    expect(events.map(({ event, fields }) => ({ event, reason: fields.reason }))).toEqual([
+      { event: "http_start", reason: undefined },
+      { event: "http_failure", reason: "network" },
+    ])
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(events.map(({ event }) => event)).toEqual(["http_start", "http_failure"])
+  })
+
+  it("should preserve a real server 401 and malformed successful JSON", async () => {
+    const events: RecordedEvent[] = []
+    captureConnectivityEvents(events)
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(mockResponse(401, { error: "Unauthorized", code: "UNAUTHORIZED" }))
+      .mockResolvedValueOnce(new Response("not json"))
+    await expect(api.get("/anything")).rejects.toMatchObject({
+      status: 401,
+      code: "UNAUTHORIZED",
+      message: "Unauthorized",
+    })
+    await expect(api.get("/anything")).rejects.toMatchObject({
+      status: 200,
+      code: "PARSE_ERROR",
+      message: "Failed to parse server response",
+    })
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(events.map(({ event, fields }) => ({ event, reason: fields.reason }))).toEqual([
+      { event: "http_start", reason: undefined },
+      { event: "http_failure", reason: "server" },
+      { event: "http_start", reason: undefined },
+      { event: "http_failure", reason: "unknown" },
+    ])
+  })
+})
+
 describe("HTTP connectivity phases", () => {
   beforeEach(() => {
     vi.restoreAllMocks()

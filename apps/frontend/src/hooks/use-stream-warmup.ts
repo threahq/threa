@@ -12,6 +12,6 @@ export function useStreamWarmup(streamIds: string[]): void {
   const key = useMemo(() => [...new Set(streamIds)].sort().join(","), [streamIds])
 
   useEffect(() => {
-    if (key) syncEngine.warmStreams(key.split(","))
+    if (key) return syncEngine.warmStreams(key.split(","))
   }, [syncEngine, key])
 }

@@ -758,6 +758,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     audit("streams.slug_available", "read"),
     stream.checkSlugAvailable
   )
+  app.post(
+    "/api/workspaces/:workspaceId/streams/preview-history",
+    ...authed,
+    audit("streams.preview_history", "read"),
+    stream.previewHistory
+  )
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, audit("streams.get", "read"), stream.get)
   app.patch(
     "/api/workspaces/:workspaceId/streams/:streamId",

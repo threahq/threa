@@ -89,6 +89,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "streams.update",
   "streams.regenerate_title",
   "streams.bootstrap",
+  "streams.preview_history",
   "streams.get_brief",
   "streams.put_brief",
   "streams.update_companion",

@@ -35,6 +35,7 @@ export interface StreamService {
   list: typeof streamsApi.list
   get: typeof streamsApi.get
   bootstrap: typeof streamsApi.bootstrap
+  previewHistory: typeof streamsApi.previewHistory
   create: typeof streamsApi.create
   update: typeof streamsApi.update
   updateCompanionMode: typeof streamsApi.updateCompanionMode

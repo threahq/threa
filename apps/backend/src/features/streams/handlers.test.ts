@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:te
 import type { LinkPreviewSummary } from "@threahq/types"
 import type { Request, Response } from "express"
 import type { StreamEvent } from "./event-repository"
-import { applyLinkPreviewStateToEvents, collectThreadAnchorIds, createStreamHandlers } from "./handlers"
+import { createStreamHandlers } from "./handlers"
+import { applyLinkPreviewStateToEvents, collectThreadAnchorIds } from "./bootstrap-enrichment"
 import type { StreamService } from "./service"
 import * as agentsBarrel from "../agents"
+import { StreamPreviewHistoryService } from "./preview-history-service"
+import { readAuditSubjects } from "../access-log"
 
 function createMessageEvent(messageId: string): StreamEvent {
   return {
@@ -114,6 +117,55 @@ describe("applyLinkPreviewStateToEvents", () => {
     const [event] = applyLinkPreviewStateToEvents([stored], new Map([["msg_1", [enriched]]]), new Set())
 
     expect((event.payload as { linkPreviews?: LinkPreviewSummary[] }).linkPreviews).toEqual([enriched])
+  })
+})
+
+describe("createStreamHandlers.previewHistory", () => {
+  it("should audit delivered numeric ranges and every denied missing or empty stream", async () => {
+    const results = [
+      { streamId: "stream_ok", status: 200, history: { events: [{ sequence: "10" }, { sequence: "2" }] } },
+      { streamId: "stream_denied", status: 403, code: "FORBIDDEN" },
+      { streamId: "stream_missing", status: 404, code: "NOT_FOUND" },
+      { streamId: "stream_empty", status: 200, history: { events: [] } },
+    ]
+    const spy = spyOn(StreamPreviewHistoryService.prototype, "get").mockResolvedValue({ results } as Awaited<
+      ReturnType<StreamPreviewHistoryService["get"]>
+    >)
+    const handlers = createStreamHandlers({} as Parameters<typeof createStreamHandlers>[0])
+    const json = mock(() => undefined)
+    const res = { json, locals: {} } as unknown as Response
+    try {
+      await handlers.previewHistory(
+        { body: { streamIds: results.map((r) => r.streamId) }, workspaceId: "ws_1", user: { id: "usr_1" } } as Request,
+        res
+      )
+      expect(readAuditSubjects(res)).toEqual([
+        { type: "stream", id: "stream_ok", fromSeq: 2, toSeq: 10 },
+        { type: "stream", id: "stream_denied" },
+        { type: "stream", id: "stream_missing" },
+        { type: "stream", id: "stream_empty" },
+      ])
+      expect(json).toHaveBeenCalledWith({ results })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+  it("should reject malformed batches before reading any history", async () => {
+    const handlers = createStreamHandlers({} as Parameters<typeof createStreamHandlers>[0])
+    const json = mock(() => undefined)
+    for (const body of [
+      undefined,
+      {},
+      { streamIds: [] },
+      { streamIds: ["stream_a", "stream_a"] },
+      { streamIds: ["invalid"] },
+      { streamIds: ["stream_a"], extra: true },
+    ]) {
+      await expect(handlers.previewHistory({ body } as Request, { json } as unknown as Response)).rejects.toMatchObject(
+        { status: 400, code: "VALIDATION_ERROR" }
+      )
+    }
+    expect(json).not.toHaveBeenCalled()
   })
 })
 

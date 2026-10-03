@@ -7,6 +7,7 @@ import {
   type StreamEvent,
   type Stream,
   type StreamBootstrap,
+  type StreamPreviewHistory,
   type StreamReadFrontier,
   type LinkPreviewSummary,
   type MemoEmbedSummary,
@@ -265,9 +266,15 @@ async function cleanupStaleOptimisticEvents(
   }
 }
 
+type BootstrapHistory = Pick<
+  StreamBootstrap,
+  "stream" | "events" | "latestSequence" | "hasOlderEvents" | "syncMode" | "snapshotAt" | "slots" | "sharedMessages"
+> &
+  Partial<Pick<StreamBootstrap, "membership" | "contextBag" | "readState" | "threadStates">>
+
 async function pruneBootstrapReplaceWindow(
   streamId: string,
-  bootstrap: StreamBootstrap,
+  bootstrap: BootstrapHistory,
   database: ThreaDatabase
 ): Promise<void> {
   const db = database
@@ -306,10 +313,11 @@ async function pruneBootstrapReplaceWindow(
 async function writeBootstrapEventsAndStream(
   workspaceId: string,
   streamId: string,
-  bootstrap: StreamBootstrap,
+  bootstrap: BootstrapHistory,
   now: number,
   fetchStartedAt: number | undefined,
-  account: AccountWriteContext
+  account: AccountWriteContext,
+  preserveExistingStream = false
 ): Promise<StreamReadFrontier | undefined> {
   const db = account.database
   await cleanupStaleOptimisticEvents(streamId, db, fetchStartedAt)
@@ -516,6 +524,8 @@ async function writeBootstrapEventsAndStream(
   // is the sidebar's activity sort key). Use update() for existing records
   // and fall back to put() if the stream doesn't exist in IDB yet.
   const stream = preserveDmDisplayName(bootstrap.stream)
+  const cachedStream = await db.streams.get(stream.id)
+  if (preserveExistingStream && cachedStream) return undefined
   const preservedReadState = await persistBootstrapReadState(workspaceId, streamId, bootstrap, now, fetchStartedAt, db)
   // A preserved local frontier is what the envelope must carry into the
   // per-stream query cache (callers write it via `toCachedStreamBootstrap`
@@ -524,11 +534,10 @@ async function writeBootstrapEventsAndStream(
   if (preservedReadState) bootstrap.readState = preservedReadState
   const incomingStreamData = {
     ...stream,
-    notificationLevel: bootstrap.membership?.notificationLevel,
-    contextBag: bootstrap.contextBag,
+    ...("membership" in bootstrap ? { notificationLevel: bootstrap.membership?.notificationLevel } : {}),
+    ...("contextBag" in bootstrap ? { contextBag: bootstrap.contextBag } : {}),
     _cachedAt: now,
   }
-  const cachedStream = await db.streams.get(stream.id)
   const fullStreamData = cachedStream ? mergeStreamByRevision(cachedStream, incomingStreamData) : incomingStreamData
 
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
@@ -570,7 +579,7 @@ async function writeBootstrapEventsAndStream(
 async function persistBootstrapReadState(
   workspaceId: string,
   streamId: string,
-  bootstrap: StreamBootstrap,
+  bootstrap: BootstrapHistory,
   now: number,
   fetchStartedAt: number | undefined,
   database: ThreaDatabase
@@ -625,7 +634,7 @@ type BootstrapThreadState = NonNullable<StreamBootstrap["threadStates"]>[number]
 
 async function applyBootstrapThreadStates(
   streamId: string,
-  bootstrap: StreamBootstrap,
+  bootstrap: BootstrapHistory,
   now: number,
   database: ThreaDatabase
 ): Promise<void> {
@@ -797,7 +806,63 @@ export async function applyStreamBootstrap(
   reconcileStreamBootstrapAgentActivity(workspaceId, bootstrap)
 }
 
-export function reconcileStreamBootstrapAgentActivity(workspaceId: string, bootstrap: StreamBootstrap): void {
+export async function applyStreamPreviewHistories(
+  workspaceId: string,
+  histories: StreamPreviewHistory[],
+  account: AccountWriteContext,
+  isCurrent: () => boolean,
+  isEligible: (streamId: string) => boolean,
+  fetchStartedAt: number
+): Promise<Set<string>> {
+  const db = account.database
+  const applied = new Set<string>()
+  const current = () => isCurrent() && getAccountGeneration() === account.generation
+  for (const history of histories) {
+    if (!current()) throw new Error("Obsolete preview recovery")
+    if (!isEligible(history.stream.id)) continue
+    let becameIneligible = false
+    try {
+      const written = await db.transaction(
+        "rw",
+        [db.events, db.streams, db.streamReadState, db.pendingMessages, db.pendingOperations, db.slots],
+        async () => {
+          if (!current()) throw new Error("Obsolete preview recovery")
+          if (!isEligible(history.stream.id)) return false
+          await writeBootstrapEventsAndStream(
+            workspaceId,
+            history.stream.id,
+            history,
+            Date.now(),
+            fetchStartedAt,
+            account,
+            true
+          )
+          if (!current()) throw new Error("Obsolete preview recovery")
+          if (!isEligible(history.stream.id)) {
+            becameIneligible = true
+            throw new Error("Preview stream became ineligible")
+          }
+          return true
+        }
+      )
+      if (written) applied.add(history.stream.id)
+    } catch (error) {
+      if (!becameIneligible || !current()) throw error
+    }
+  }
+  if (!current()) return applied
+  for (const history of histories) {
+    if (applied.has(history.stream.id) && isEligible(history.stream.id)) {
+      reconcileStreamBootstrapAgentActivity(workspaceId, history)
+    }
+  }
+  return applied
+}
+
+export function reconcileStreamBootstrapAgentActivity(
+  workspaceId: string,
+  bootstrap: Pick<StreamBootstrap, "stream" | "events">
+): void {
   const { stream } = bootstrap
   if (stream.workspaceId !== workspaceId) return
   reconcileAgentActivityFromStreamEvents(workspaceId, agentActivityStreamContext(stream), bootstrap.events)

@@ -9,6 +9,8 @@ import {
   type EventType,
 } from "@threahq/types"
 
+export const EVENTS_DEFAULT_LIMIT = 50
+
 interface StreamEventRow {
   id: string
   stream_id: string
@@ -223,6 +225,55 @@ export const StreamEventRepository = {
     return result.rows.map(mapRowToEvent)
   },
 
+  async listPreviewWindows(
+    db: Querier,
+    streamIds: string[],
+    viewerId: string
+  ): Promise<Map<string, { events: StreamEvent[]; hasOlderEvents: boolean; latestSequence: bigint | null }>> {
+    const projectionPatchTypes: EventType[] = [
+      "message_edited",
+      "message_deleted",
+      "reaction_added",
+      "reaction_removed",
+    ]
+    const windows = new Map<string, { events: StreamEvent[]; hasOlderEvents: boolean; latestSequence: bigint | null }>()
+    if (streamIds.length === 0) return windows
+    const result = await db.query<StreamEventRow & { requested_stream_id: string; latest_sequence: string | null }>(sql`
+      SELECT requested.stream_id AS requested_stream_id, head.sequence AS latest_sequence, event_window.*
+      FROM unnest(${streamIds}::text[]) AS requested(stream_id)
+      LEFT JOIN LATERAL (
+        SELECT sequence FROM stream_events
+        WHERE stream_id = requested.stream_id
+        ORDER BY sequence DESC LIMIT 1
+      ) head ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
+        FROM stream_events
+        WHERE stream_id = requested.stream_id
+          AND (event_type != ALL(${AUTHOR_SCOPED_EVENT_TYPES}::text[]) OR actor_id = ${viewerId})
+          AND event_type != ALL(${projectionPatchTypes}::text[])
+        ORDER BY sequence DESC LIMIT ${EVENTS_DEFAULT_LIMIT + 1}
+      ) event_window ON TRUE
+      ORDER BY requested.stream_id, event_window.sequence DESC
+    `)
+    for (const row of result.rows) {
+      let window = windows.get(row.requested_stream_id)
+      if (!window) {
+        window = {
+          events: [],
+          hasOlderEvents: false,
+          latestSequence: row.latest_sequence === null ? null : BigInt(row.latest_sequence),
+        }
+        windows.set(row.requested_stream_id, window)
+      }
+      if (row.id === null) continue
+      if (window.events.length === EVENTS_DEFAULT_LIMIT) window.hasOlderEvents = true
+      else window.events.push(mapRowToEvent(row))
+    }
+    for (const window of windows.values()) window.events.reverse()
+    return windows
+  },
+
   async list(
     db: Querier,
     streamId: string,
@@ -234,7 +285,7 @@ export const StreamEventRepository = {
       viewerId?: string
     }
   ): Promise<StreamEvent[]> {
-    const limit = filters?.limit ?? 50
+    const limit = filters?.limit ?? EVENTS_DEFAULT_LIMIT
     const types = filters?.types
     const viewerId = filters?.viewerId
     const afterSequence = filters?.afterSequence
@@ -304,7 +355,7 @@ export const StreamEventRepository = {
     options?: { limit?: number; viewerId?: string }
   ): Promise<{ events: StreamEvent[]; hasOlder: boolean; hasNewer: boolean }> {
     // Ensure at least 2 so probe-trimming doesn't consume the target event
-    const total = Math.max(options?.limit ?? 50, 2)
+    const total = Math.max(options?.limit ?? EVENTS_DEFAULT_LIMIT, 2)
     const half = Math.floor(total / 2)
 
     // Fetch older (including target) and newer sequentially on the provided connection.
