@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import Dexie from "dexie"
+import { withoutWorkspace } from "@/test/workspace-rows"
 import {
   ThreaDatabase,
   type CachedBoardHiddenConversation,
@@ -85,11 +86,6 @@ function cachedContextItem(
     _cachedAt: 1000,
     ...overrides,
   }
-}
-
-function withoutWorkspace<T extends { workspaceId: string }>(row: T): Omit<T, "workspaceId"> {
-  const { workspaceId: _omitted, ...rest } = row
-  return rest
 }
 
 async function seedV51(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {

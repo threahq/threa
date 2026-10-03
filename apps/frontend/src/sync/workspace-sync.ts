@@ -1109,7 +1109,7 @@ export function registerWorkspaceSocketHandlers(
       )
     })
 
-    await db.workspaceUsers.delete(payload.removedUserId)
+    await db.workspaceUsers.delete([workspaceId, payload.removedUserId])
   }
 
   const handleWorkspaceUserUpdated = async (payload: WorkspaceUserUpdatedPayload) => {
@@ -1956,8 +1956,8 @@ export function registerWorkspaceSocketHandlers(
       return { ...old, personas: [...personas, synthesized] }
     })
     // Upsert into IDB: update the display fields if present, else insert the synthesized row.
-    const existing = await db.personas.get(id)
-    if (existing) await db.personas.update(id, { ...patch, _cachedAt: Date.now() })
+    const existing = await db.personas.get([workspaceId, id])
+    if (existing) await db.personas.update([workspaceId, id], { ...patch, _cachedAt: Date.now() })
     else await db.personas.put(synthesized)
 
     queryClient.invalidateQueries({ queryKey: personaKeys.config(workspaceId, payload.agentId) })
@@ -3753,37 +3753,34 @@ async function cleanupStaleEntities(
   // bootstrap enumerates streams — not each stream's valid slot keys — so they
   // can't ride the generic deleteStale (Amendment A4).
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
+  const staleUserIds = await staleEntityIds(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now)
+  const stalePersonaIds = await staleEntityIds(db.personas, "workspaceId", workspaceId, bootstrapPersonaIds, now)
 
-  const [
-    ,
-    ,
-    staleUserIds,
-    staleMembershipIds,
-    staleDmPeerIds,
-    stalePersonaIds,
-    staleBotIds,
-    staleLabelIds,
-    staleLabelAssignmentIds,
-  ] = await Promise.all([
-    staleStreamIds.length > 0
-      ? db.streams.bulkDelete(staleStreamIds.map((streamId) => [workspaceId, streamId]))
-      : Promise.resolve(),
-    deleteSlotsForStreams(db, workspaceId, staleStreamIds),
-    deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),
-    deleteStale(db.streamMemberships, "workspaceId", workspaceId, bootstrapMembershipIds, now),
-    // NO streamReadState sweep: the bootstrap map enumerates MEMBER streams
-    // only, so a row omitted from it is usually a nonmember thread's lazy
-    // frontier — not stale data. Neither an omitted map (old server / cached
-    // pre-cutover payload) nor a present one (explicit `{}` included) is a
-    // deletion authority over rows it never enumerated. Standalone rows are
-    // deleted only by explicit lifecycle cleanup: terminal-stream deletes in
-    // applyReconnectBootstrapBatch, stream removal, and account DB teardown.
-    deleteStale(db.dmPeers, "workspaceId", workspaceId, bootstrapDmPeerIds, now),
-    deleteStale(db.personas, "workspaceId", workspaceId, bootstrapPersonaIds, now),
-    deleteStale(db.bots, "workspaceId", workspaceId, bootstrapBotIds, now),
-    deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
-    deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
-  ])
+  const [, , , staleMembershipIds, staleDmPeerIds, , staleBotIds, staleLabelIds, staleLabelAssignmentIds] =
+    await Promise.all([
+      staleStreamIds.length > 0
+        ? db.streams.bulkDelete(staleStreamIds.map((streamId) => [workspaceId, streamId]))
+        : Promise.resolve(),
+      deleteSlotsForStreams(db, workspaceId, staleStreamIds),
+      staleUserIds.length > 0
+        ? db.workspaceUsers.bulkDelete(staleUserIds.map((userId) => [workspaceId, userId]))
+        : Promise.resolve(),
+      deleteStale(db.streamMemberships, "workspaceId", workspaceId, bootstrapMembershipIds, now),
+      // NO streamReadState sweep: the bootstrap map enumerates MEMBER streams
+      // only, so a row omitted from it is usually a nonmember thread's lazy
+      // frontier — not stale data. Neither an omitted map (old server / cached
+      // pre-cutover payload) nor a present one (explicit `{}` included) is a
+      // deletion authority over rows it never enumerated. Standalone rows are
+      // deleted only by explicit lifecycle cleanup: terminal-stream deletes in
+      // applyReconnectBootstrapBatch, stream removal, and account DB teardown.
+      deleteStale(db.dmPeers, "workspaceId", workspaceId, bootstrapDmPeerIds, now),
+      stalePersonaIds.length > 0
+        ? db.personas.bulkDelete(stalePersonaIds.map((personaId) => [workspaceId, personaId]))
+        : Promise.resolve(),
+      deleteStale(db.bots, "workspaceId", workspaceId, bootstrapBotIds, now),
+      deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
+      deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
+    ])
 
   removeRowConfirmations(workspaceId, "streams", staleStreamIds)
   removeRowConfirmations(workspaceId, "streamMemberships", staleMembershipIds)

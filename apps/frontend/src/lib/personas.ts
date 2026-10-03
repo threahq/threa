@@ -25,16 +25,15 @@ function managedByFromKind(kind: PersonaKind): CachedPersona["managedBy"] {
  * rides the `agent_config:updated` broadcast and the fork response. The display
  * fields are real; the heavy config fields (systemPrompt, tools, temperature, …)
  * are null until a bootstrap resync fills them, matching what the broadcast
- * handler writes. A custom/personal row is workspace-scoped; a personal row is
+ * handler writes. Every row carries the caching workspace; a personal row is
  * owned. Single source for the two callers that turn a list item into a store row
  * (the sync broadcast handler and the fork mutation's optimistic seed).
  */
 export function cachedPersonaFromListItem(item: PersonaListItem, workspaceId: string): CachedPersona {
-  const isWorkspaceScoped = item.kind === "custom" || item.kind === "personal"
   const nowIso = new Date().toISOString()
   return {
     id: item.id,
-    workspaceId: isWorkspaceScoped ? workspaceId : null,
+    workspaceId,
     slug: item.slug,
     name: item.name,
     description: item.description,
