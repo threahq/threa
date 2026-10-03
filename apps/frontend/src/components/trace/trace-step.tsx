@@ -483,6 +483,7 @@ function renderStepContent(
         const messages = structured.messages as MessageInfo[]
         const rerunContext = (structured.rerunContext as RerunContextInfo | undefined) ?? null
         const attachedContext = (structured.attachedContext as AttachedContextInfo | undefined) ?? null
+        const recalledMemos = Array.isArray(structured.recalledMemos) ? (structured.recalledMemos as TraceSource[]) : []
         const triggerMessage = messages.find((m) => m.isTrigger)
         const contextMessages = messages.filter((m) => !m.isTrigger)
 
@@ -511,6 +512,22 @@ function renderStepContent(
                 the trace exposes what was fed to the model. */}
             {attachedContext && attachedContext.refs.length > 0 && (
               <AttachedContextSection attachedContext={attachedContext} workspaceId={workspaceId} />
+            )}
+
+            {recalledMemos.length > 0 && (
+              <div>
+                <div className="text-muted-foreground text-[11px] mb-1.5 font-medium">Recalled from memory:</div>
+                <div className="rounded-md text-xs bg-muted/30">
+                  {recalledMemos.map((source, i) => (
+                    <SourceItem
+                      key={source.memoId ?? i}
+                      source={source}
+                      workspaceId={workspaceId}
+                      isLast={i === recalledMemos.length - 1}
+                    />
+                  ))}
+                </div>
+              </div>
             )}
 
             {contextMessages.length > 0 && (

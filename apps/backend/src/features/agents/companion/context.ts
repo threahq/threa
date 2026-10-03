@@ -27,6 +27,7 @@ import { resolvePersonaStyleSlots } from "./config"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
 import { loadEpisodeSummaryPromptBlock } from "./episode-summaries"
 import { loadConversationHighlight } from "./conversation-highlight"
+import { formatRecalledMemosBlock, type PreparedRecall, type RecalledMemo } from "./prepared-recall"
 import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStitch } from "./cross-surface-stitch"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
@@ -40,6 +41,7 @@ export interface ContextDeps {
   db: Pool
   userPreferencesService: UserPreferencesService
   conversationSummaryService: ConversationSummaryService
+  preparedRecall: PreparedRecall
 }
 
 export interface ContextParams {
@@ -120,6 +122,8 @@ export interface AgentContext {
    * edit surfaces as a conflict instead of a silent clobber.
    */
   streamBrief: StreamBrief | null
+  /** Memos prepared recall put in front of the model this turn. */
+  recalledMemos: RecalledMemo[]
 }
 
 async function resolveScratchpadCustomPrompt(
@@ -150,7 +154,7 @@ async function resolveScratchpadCustomPrompt(
  * creates system prompt, and formats messages as ModelMessage[].
  */
 export async function buildAgentContext(deps: ContextDeps, params: ContextParams): Promise<AgentContext> {
-  const { db, userPreferencesService, conversationSummaryService } = deps
+  const { db, userPreferencesService, conversationSummaryService, preparedRecall } = deps
   const {
     workspaceId,
     streamId,
@@ -220,18 +224,36 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     memoViewerUserId = resolveMemoViewer(accessSpec)
   }
 
-  const streamContext = await buildStreamContext(db, stream, {
-    preferences,
-    // users.timezone is the heartbeat-fresh device timezone; it wins over the
-    // "home timezone" preference so scheduling and "now" match the device.
-    deviceTimezone: invokingUser?.timezone ?? undefined,
-    currentTime,
-    maxMessages: policy.maxMessages,
-    maxChars: policy.maxChars,
-    triggerMessageId: messageId,
-    includeAttachments: true,
-    includeLinkPreviews: true,
-  })
+  // Recall runs beside the window build: its embedding and scoring calls are
+  // the slow part, and nothing in the window depends on them.
+  const [streamContext, recalled] = await Promise.all([
+    buildStreamContext(db, stream, {
+      preferences,
+      // users.timezone is the heartbeat-fresh device timezone; it wins over the
+      // "home timezone" preference so scheduling and "now" match the device.
+      deviceTimezone: invokingUser?.timezone ?? undefined,
+      currentTime,
+      maxMessages: policy.maxMessages,
+      maxChars: policy.maxChars,
+      triggerMessageId: messageId,
+      includeAttachments: true,
+      includeLinkPreviews: true,
+    }),
+    invokingUserId && accessibleStreamIds && triggerMessage
+      ? preparedRecall.recall({
+          workspaceId,
+          invokingUserId,
+          query: triggerMessage.contentMarkdown,
+          accessibleStreamIds,
+          memoViewerUserId,
+        })
+      : Promise.resolve([]),
+  ])
+
+  // The window already carries these memos' sources, and an edit may have
+  // corrected them since the memo was captured.
+  const windowMessageIds = new Set(streamContext.conversationHistory.map((m) => m.id))
+  const recalledMemos = recalled.filter((memo) => !memo.sourceMessageIds.some((id) => windowMessageIds.has(id)))
 
   const streamScopedMessages = streamContext.conversationHistory.filter((m) => m.streamId === stream.id)
   const rollingConversationSummary = await conversationSummaryService.updateForContext({
@@ -485,6 +507,8 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       ? formatSpawnedFromContext(crossSurfaceStitch, authorNames, streamContext.temporal)
       : null
 
+  const recalledMemosBlock = formatRecalledMemosBlock(recalledMemos)
+
   const composeSystemPrompt = (tools: AgentTool[], effectivePurpose: TurnPurpose): SplitSystemPrompt => {
     const systemPrompt = buildSystemPrompt({
       persona,
@@ -510,10 +534,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       styleSlots: resolvePersonaStyleSlots(persona),
       personaKnowledge,
     })
-    // Prior-turn digests are re-derived each turn, so they belong outside the
-    // cached span alongside temporal grounding.
-    return turnDigestBlock
-      ? { ...systemPrompt, volatile: `${systemPrompt.volatile}\n\n${turnDigestBlock}` }
+    // Prior-turn digests and recalled memos are re-derived each turn, so they
+    // belong outside the cached span alongside temporal grounding.
+    const volatileTail = [turnDigestBlock, recalledMemosBlock].filter((block) => block !== null)
+    return volatileTail.length > 0
+      ? { ...systemPrompt, volatile: [systemPrompt.volatile, ...volatileTail].join("\n\n") }
       : systemPrompt
   }
 
@@ -531,5 +556,6 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessibleStreamIds,
     memoViewerUserId,
     streamBrief,
+    recalledMemos,
   }
 }

@@ -187,6 +187,8 @@ import {
   WorkspaceAgent,
   GeneralResearcher,
   PersonaAgent,
+  PreparedRecall,
+  PREPARED_RECALL_QUESTION,
   InjectionScreen,
   WebSearchJudge,
   TraceEmitter,
@@ -451,6 +453,21 @@ export async function startServer(): Promise<ServerInstance> {
         availability: decisionsAvailability,
       })
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
+  const preparedRecall = new PreparedRecall({
+    memoExplorerService,
+    scorer: config.useStubAI
+      ? new StubRelevanceScorer()
+      : new ResidencyRoutedRelevanceScorer({
+          residency: aiResidency,
+          decisions: new DecisionsRelevanceScorer({
+            ai,
+            subject: "knowledge memos",
+            question: PREPARED_RECALL_QUESTION,
+            functionId: "prepared-recall-score",
+          }),
+          availability: decisionsAvailability,
+        }),
+  })
   const searchService = new SearchService({
     pool,
     embeddingService,
@@ -1171,6 +1188,7 @@ export async function startServer(): Promise<ServerInstance> {
     searchService,
     resolveSearchFlag: (workspaceId, workosUserId) => featureFlagService.getFlag(workspaceId, workosUserId, "search"),
     conversationSummaryService,
+    preparedRecall,
     attachmentService,
     memoExplorerService,
     storage,

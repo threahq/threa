@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { StreamTypes } from "@threahq/types"
 import { StreamBriefRepository, type StreamBrief } from "../../streams"
+import { MessageRepository } from "../../messaging"
 import { buildAgentContext } from "./context"
+import type { PreparedRecallParams } from "./prepared-recall"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository } from "../persona-attachment-repository"
 import { joinSystemPrompt } from "./prompt/system-prompt"
+import * as contextBuilder from "../context-builder"
 
 const persona: Persona = {
   id: "persona_1",
@@ -38,6 +41,7 @@ const deps = {
   db: emptyDb,
   userPreferencesService: { getPreferences: mock(async () => undefined) } as never,
   conversationSummaryService: { updateForContext: mock(async () => null) } as never,
+  preparedRecall: { recall: mock(async () => []) } as never,
 }
 
 function fakeBrief(streamId: string): StreamBrief {
@@ -111,6 +115,73 @@ describe("buildAgentContext stream brief (roadmap 4.1)", () => {
     })
 
     expect(joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))).not.toContain("## Stream Brief")
+  })
+})
+
+describe("buildAgentContext prepared recall", () => {
+  afterEach(() => mock.restore())
+
+  it("recalls against the invoking user's message and puts the memos the window doesn't carry in the volatile prompt", async () => {
+    const trigger = {
+      id: "msg_1",
+      streamId: "stream_pad",
+      authorType: "user",
+      authorId: "usr_1",
+      contentMarkdown: "What should I bring to the picnic?",
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    }
+    spyOn(MessageRepository, "findById").mockResolvedValue(trigger as never)
+    const buildStreamContext = contextBuilder.buildStreamContext
+    spyOn(contextBuilder, "buildStreamContext").mockImplementation(async (...args) => ({
+      ...(await buildStreamContext(...args)),
+      conversationHistory: [trigger as never],
+    }))
+    const memo = (id: string, sourceMessageId: string) => ({
+      id,
+      title: id,
+      abstract: `${id} abstract`,
+      knowledgeType: "context" as const,
+      sourceMessageIds: [sourceMessageId],
+      createdAt: new Date("2026-09-30T10:00:00Z"),
+      score: 1,
+    })
+    const recall = mock(async (_params: PreparedRecallParams) => [
+      memo("memo_allergy", "msg_elsewhere"),
+      memo("memo_picnic", "msg_1"),
+    ])
+
+    const context = await buildAgentContext(
+      { ...deps, preparedRecall: { recall } as never },
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_pad",
+        stream: {
+          id: "stream_pad",
+          workspaceId: "ws_1",
+          type: StreamTypes.SCRATCHPAD,
+          rootStreamId: null,
+          parentStreamId: null,
+          displayName: "Pad",
+          createdBy: "usr_1",
+        } as never,
+        messageId: "msg_1",
+        persona,
+        purpose: { kind: "catch_up" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+      }
+    )
+
+    expect({
+      query: recall.mock.calls[0]?.[0],
+      volatile: context.composeSystemPrompt([], { kind: "catch_up" }).volatile,
+      recalled: context.recalledMemos.map((m) => m.id),
+    }).toEqual({
+      query: expect.objectContaining({ invokingUserId: "usr_1", query: "What should I bring to the picnic?" }),
+      volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
+      recalled: ["memo_allergy"],
+    })
   })
 })
 

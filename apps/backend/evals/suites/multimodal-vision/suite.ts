@@ -50,6 +50,8 @@ import {
   TraceEmitter,
   SessionAbortRegistry,
   ConversationSummaryService,
+  PreparedRecall,
+  PREPARED_RECALL_QUESTION,
 } from "../../../src/features/agents"
 import { SearchService, SearchQueryExpander, SearchRefiner } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
@@ -416,6 +418,15 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       conversationSummaryService,
       attachmentService,
       memoExplorerService,
+      preparedRecall: new PreparedRecall({
+        memoExplorerService,
+        scorer: new DecisionsRelevanceScorer({
+          ai: ctx.ai,
+          subject: "knowledge memos",
+          question: PREPARED_RECALL_QUESTION,
+          functionId: "prepared-recall-score",
+        }),
+      }),
       storage: mockStorage,
       modelRegistry,
       createMessage,

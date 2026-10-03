@@ -13,6 +13,7 @@ import {
   type ConversationDirective,
   type FeatureFlagValue,
   type SourceItem,
+  type TraceSource,
 } from "@threahq/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
@@ -43,7 +44,13 @@ import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
 import { repairMessageReferences } from "@threahq/prosemirror"
-import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
+import {
+  buildAgentContext,
+  buildToolSet,
+  withCompanionSession,
+  type PreparedRecall,
+  type WithSessionResult,
+} from "./companion"
 import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
 import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
@@ -121,6 +128,7 @@ export interface PersonaAgentDeps {
   /** The invoking user's `search` flag: "off" keeps pre-rework tool prompts and ranking. */
   resolveSearchFlag: (workspaceId: string, workosUserId: string) => Promise<FeatureFlagValue<"search">>
   conversationSummaryService: ConversationSummaryService
+  preparedRecall: PreparedRecall
   attachmentService: AttachmentService
   memoExplorerService: MemoExplorerService
   storage: StorageProvider
@@ -457,6 +465,7 @@ export class PersonaAgent {
       generalResearcher,
       searchService,
       conversationSummaryService,
+      preparedRecall,
       attachmentService,
       memoExplorerService,
       storage,
@@ -818,7 +827,7 @@ export class PersonaAgent {
         const policy = await withClient(pool, (client) => resolveContextWindowPolicy(client, { stream }))
 
         const agentContext = await buildAgentContext(
-          { db: pool, userPreferencesService, conversationSummaryService },
+          { db: pool, userPreferencesService, conversationSummaryService, preparedRecall },
           {
             workspaceId,
             streamId,
@@ -907,6 +916,16 @@ export class PersonaAgent {
             extras: {
               rerunContext: toTraceRerunContext(rerunContext),
               ...(attachedContext && { attachedContext }),
+              ...(agentContext.recalledMemos.length > 0 && {
+                recalledMemos: agentContext.recalledMemos.map(
+                  (memo): TraceSource => ({
+                    type: "workspace_memo",
+                    title: memo.title,
+                    memoId: memo.id,
+                    snippet: memo.abstract.slice(0, 200),
+                  })
+                ),
+              }),
             },
           }
         }

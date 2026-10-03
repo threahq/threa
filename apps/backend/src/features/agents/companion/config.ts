@@ -68,3 +68,29 @@ export function resolvePersonaStyleSlots(persona: Persona): { tone?: string; bre
     persona.brevityPrompt ?? (persona.brevityPreset ? BREVITY_PRESET_FRAGMENTS[persona.brevityPreset] : undefined)
   return { tone, brevity }
 }
+
+// Prepared recall: before the first model call, the trigger message is matched
+// against the memos this turn's audience may read and the decision model keeps
+// the ones a reply should take into account. The ladder judges the bearing on
+// a reply, not the match to a query: a peanut allergy does not answer "what
+// should I bring to the picnic", but a reply that ignored it would be wrong.
+// Deliberately free of cues about the content itself (INV-54).
+export const PREPARED_RECALL_QUESTION = {
+  instructions: (index: number) =>
+    `How much should a reply to the message in "query" take candidate [${index}] in the candidates list into account?`,
+  criteria: [
+    "has no bearing on a reply to the message",
+    "shares a topic with the message, but a good reply would not use it",
+    "a good reply would take it into account",
+    "a reply that ignored it would be wrong, unsafe, or contradict what the people involved have said",
+  ],
+} as const
+
+/** Between the second and third rungs: a memo is kept only when a good reply would use it. */
+export const PREPARED_RECALL_MIN_SCORE = 0.5
+export const PREPARED_RECALL_CANDIDATE_LIMIT = 30
+export const PREPARED_RECALL_MAX_MEMOS = 5
+/** Long pastes carry their point early; the rest only dilutes the embedding. */
+export const PREPARED_RECALL_QUERY_MAX_CHARS = 2000
+/** The query embedding has no deadline of its own; scoring stops itself at 3 s. */
+export const PREPARED_RECALL_TIMEOUT_MS = 5000

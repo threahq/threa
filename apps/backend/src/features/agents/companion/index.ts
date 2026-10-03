@@ -1,5 +1,6 @@
 export { buildAgentContext, type ContextDeps, type ContextParams, type AgentContext } from "./context"
 export { buildToolSet, type ToolSetConfig } from "./tool-set"
 export { withCompanionSession, type WithSessionResult } from "./session"
+export { PreparedRecall, type RecalledMemo } from "./prepared-recall"
 export { truncateMessages, MAX_MESSAGE_CHARS } from "@threahq/agent-runtime"
 export { stripInaccessibleAgentRefs, type DroppedRef, type DroppedRefReason } from "./strip-inaccessible-refs"

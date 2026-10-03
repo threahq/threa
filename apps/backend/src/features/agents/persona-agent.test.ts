@@ -300,6 +300,7 @@ async function runSupersedeRerun(params: {
     generalResearcher: { research: research as unknown as () => Promise<unknown> },
     searchService: {},
     conversationSummaryService: { updateForContext: async () => null },
+    preparedRecall: { recall: async () => [] },
     attachmentService: {},
     memoExplorerService: {},
     storage: {},

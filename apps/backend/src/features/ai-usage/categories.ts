@@ -22,6 +22,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "tool-injection-screen": { category: "agents", stage: "agents" },
   "web-search-judge": { category: "agents", stage: "agents" },
   "turn-digest": { category: "agents", stage: "agents" },
+  "prepared-recall-score": { category: "agents", stage: "agents" },
   "summary-update": { category: "agents", stage: "agents" },
   "agent.episode-summary": { category: "agents", stage: "agents" },
   "agent-rerun-response-validation": { category: "agents", stage: "agents" },

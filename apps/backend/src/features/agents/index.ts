@@ -28,8 +28,17 @@ export {
   truncateMessages,
   MAX_MESSAGE_CHARS,
   stripInaccessibleAgentRefs,
+  PreparedRecall,
 } from "./companion"
-export type { ContextDeps, ContextParams, AgentContext, ToolSetConfig, DroppedRef, DroppedRefReason } from "./companion"
+export type {
+  ContextDeps,
+  ContextParams,
+  AgentContext,
+  ToolSetConfig,
+  DroppedRef,
+  DroppedRefReason,
+  RecalledMemo,
+} from "./companion"
 
 export { TraceEmitter, SessionTrace, ActiveStep } from "./trace-emitter"
 
@@ -259,7 +268,7 @@ export {
   EPISODE_SUMMARY_MAX_TOKENS,
   EPISODE_SUMMARY_INJECT_COUNT,
 } from "./companion/config"
-export { TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS } from "./companion/config"
+export { TONE_PRESET_FRAGMENTS, BREVITY_PRESET_FRAGMENTS, PREPARED_RECALL_QUESTION } from "./companion/config"
 export {
   SUMMARIZER_MAX_TOKENS,
   SUMMARIZER_MODEL_ID,

@@ -48,6 +48,8 @@ import {
   TraceEmitter,
   SessionAbortRegistry,
   ConversationSummaryService,
+  PreparedRecall,
+  PREPARED_RECALL_QUESTION,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
 import { SearchService, SearchQueryExpander, SearchRefiner } from "../../../src/features/search"
@@ -242,6 +244,15 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
       conversationSummaryService,
       attachmentService,
       memoExplorerService,
+      preparedRecall: new PreparedRecall({
+        memoExplorerService,
+        scorer: new DecisionsRelevanceScorer({
+          ai: ctx.ai,
+          subject: "knowledge memos",
+          question: PREPARED_RECALL_QUESTION,
+          functionId: "prepared-recall-score",
+        }),
+      }),
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
       webSearchEngines: ctx.credentials.webSearchEngines,
