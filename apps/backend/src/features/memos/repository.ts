@@ -239,7 +239,8 @@ export interface HybridSearchParams {
   keywordWeight?: number
   semanticWeight?: number
   k?: number
-  semanticDistanceThreshold?: number
+  /** `null` lets every embedded memo into the semantic leg, for callers that score the candidates themselves. */
+  semanticDistanceThreshold?: number | null
   /** B2: apply the structural knowledge/stream-type boost (default true; bypassed for temporal intent). */
   applyStructuralBoost?: boolean
 }
@@ -1182,7 +1183,7 @@ export const MemoRepository = {
         WHERE m.workspace_id = ${workspaceId}
           AND m.status = ANY(${statuses})
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold}
+          AND (${semanticDistanceThreshold === null} OR m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold ?? 0})
           AND (
             ${!hasStreamFilter}
             OR COALESCE(msg_stream.id, conv_stream.id) = ANY(${streamIds ?? []})

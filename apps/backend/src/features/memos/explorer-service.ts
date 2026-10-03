@@ -59,6 +59,8 @@ export interface MemoExplorerSearchParams {
   mode?: MemoSearchMode
   /** An embedding of `query` the caller already holds; skips the embedding call. */
   embedding?: number[]
+  /** Overrides the semantic leg's distance cutoff; `null` admits every embedded memo. */
+  semanticDistanceThreshold?: number | null
 }
 
 export interface MemoStreamRef {
@@ -177,6 +179,7 @@ export class MemoExplorerService {
         keywordWeight: intent.keywordWeight,
         semanticWeight: intent.semanticWeight,
         applyStructuralBoost: intent.intent !== "temporal",
+        semanticDistanceThreshold: params.semanticDistanceThreshold,
       })
 
       if (hybridResults.length > 0) {

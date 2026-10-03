@@ -59,6 +59,9 @@ export class PreparedRecall {
       query,
       limit: PREPARED_RECALL_CANDIDATE_LIMIT,
       mode: "fast",
+      // The memo a reply needs is often far from the message in embedding space
+      // (a Thai menu vs a peanut allergy); the scorer, not distance, decides.
+      semanticDistanceThreshold: null,
     })
     if (candidates.length === 0) return []
 
