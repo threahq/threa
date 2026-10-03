@@ -2608,7 +2608,7 @@ export class StreamService {
     // Source the payload from the post-write row: the store is monotonic, so a
     // stale-device advance is rejected and the post-write frontier — not the raw
     // event — is the read position this user's other sessions adopt.
-    const inboxClearMode = await resolveInboxClearMode(client, memberId)
+    const inboxClearMode = await resolveInboxClearMode(client, workspaceId, memberId)
     const { state: postWrite } = await ReadStateRepository.advance(client, workspaceId, streamId, memberId, eventId, {
       holdInInbox: inboxClearMode !== "read",
     })

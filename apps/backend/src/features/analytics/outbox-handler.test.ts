@@ -4,7 +4,7 @@ import * as cursorLockModule from "@threahq/backend-common"
 import type { ProcessResult } from "@threahq/backend-common"
 import { AnalyticsOutboxHandler } from "./outbox-handler"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { UserPreferencesRepository } from "../user-preferences"
+import { UserPreferencesRepository, userOverrideRefKey } from "../user-preferences"
 
 function makeFakeCursorLock() {
   return () => ({
@@ -13,6 +13,12 @@ function makeFakeCursorLock() {
     }),
   })
 }
+
+function consentMap(...entries: Array<[workspaceId: string, userId: string, value: string]>) {
+  return new Map(entries.map(([workspaceId, userId, value]) => [userOverrideRefKey(workspaceId, userId), value]))
+}
+
+const USR_A_GRANTED = consentMap(["ws_test", "usr_a", "granted"])
 
 function createHandler(consent: Map<string, unknown> = new Map()) {
   const fakeCursorLock = makeFakeCursorLock()
@@ -107,7 +113,7 @@ afterEach(() => {
 
 describe("AnalyticsOutboxHandler", () => {
   it("should capture message_sent with the workspace group when the author granted consent", async () => {
-    const { handler, captureEvent } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent } = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({})] as any)
 
     handler.handle()
@@ -124,7 +130,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it.each(["denied", "unset"])("should not capture when consent is %s", async (consentValue) => {
-    const consent = consentValue === "unset" ? new Map() : new Map([["usr_a", consentValue]])
+    const consent = consentValue === "unset" ? new Map() : consentMap(["ws_test", "usr_a", consentValue])
     const { handler, captureEvent } = createHandler(consent)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({})] as any)
 
@@ -135,7 +141,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should not capture a persona-authored message", async () => {
-    const { handler, captureEvent } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent } = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
       messageCreatedEvent({ actorType: "persona", actorId: "persona_ariadne" }),
     ] as any)
@@ -147,7 +153,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should not capture anything for an E2E stream", async () => {
-    const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(USR_A_GRANTED)
     excludeE2eRootedStreamIds.mockResolvedValue([])
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({})] as any)
 
@@ -158,7 +164,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should capture reaction_added with the expected object", async () => {
-    const { handler, captureEvent } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent } = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([reactionEvent()] as any)
 
     handler.handle()
@@ -175,7 +181,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should capture stream_created with streamType", async () => {
-    const { handler, captureEvent } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent } = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([streamCreatedEvent()] as any)
 
     handler.handle()
@@ -192,7 +198,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should capture the created thread's own id when stream:created routes to the parent stream", async () => {
-    const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
       streamCreatedEvent({
         streamId: "stream_parent",
@@ -214,7 +220,7 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should capture stream_joined with the expected object", async () => {
-    const { handler, captureEvent } = createHandler(new Map([["usr_a", "granted"]]))
+    const { handler, captureEvent } = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([streamMemberJoinedEvent()] as any)
 
     handler.handle()
@@ -281,12 +287,12 @@ describe("AnalyticsOutboxHandler", () => {
   })
 
   it("should give a replayed outbox row the uuid it had the first time", async () => {
-    const first = createHandler(new Map([["usr_a", "granted"]]))
+    const first = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({ id: 7n })] as any)
     first.handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    const replay = createHandler(new Map([["usr_a", "granted"]]))
+    const replay = createHandler(USR_A_GRANTED)
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
       messageCreatedEvent({ id: 7n }),
       messageCreatedEvent({ id: 8n }),
@@ -300,19 +306,39 @@ describe("AnalyticsOutboxHandler", () => {
     expect(original).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
   })
 
-  it("should read consent once per batch with the distinct actor ids", async () => {
+  it("should read consent once per batch with the distinct workspace and actor pairs", async () => {
     const { handler, findOverrideForUsers } = createHandler(new Map())
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
-      messageCreatedEvent({ id: 1n, actorId: "usr_a" }),
-      reactionEvent({ id: 2n, userId: "usr_b" }),
-      messageCreatedEvent({ id: 3n, actorId: "usr_a" }),
+      messageCreatedEvent({ id: 1n, actorId: "usr_a", workspaceId: "ws_a" }),
+      reactionEvent({ id: 2n, userId: "usr_b", workspaceId: "ws_c" }),
+      messageCreatedEvent({ id: 3n, actorId: "usr_a", workspaceId: "ws_a" }),
+      messageCreatedEvent({ id: 4n, actorId: "usr_a", workspaceId: "ws_b" }),
     ] as any)
 
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
     expect(findOverrideForUsers).toHaveBeenCalledTimes(1)
-    expect(findOverrideForUsers.mock.calls[0][1]).toEqual(["usr_a", "usr_b"])
-    expect(findOverrideForUsers.mock.calls[0][2]).toBe("analyticsConsent")
+    expect(findOverrideForUsers.mock.calls[0].slice(1)).toEqual([
+      [
+        { workspaceId: "ws_a", userId: "usr_a" },
+        { workspaceId: "ws_c", userId: "usr_b" },
+        { workspaceId: "ws_b", userId: "usr_a" },
+      ],
+      "analyticsConsent",
+    ])
+  })
+
+  it("should capture only in the workspace where the user granted consent when one user id appears in two", async () => {
+    const { handler, captureEvent } = createHandler(consentMap(["ws_a", "usr_a", "granted"]))
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      messageCreatedEvent({ id: 1n, actorId: "usr_a", workspaceId: "ws_b" }),
+      messageCreatedEvent({ id: 2n, actorId: "usr_a", workspaceId: "ws_a" }),
+    ] as any)
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(captureEvent.mock.calls.map((call) => call[0].groups)).toEqual([{ workspace: "ws_a" }])
   })
 })

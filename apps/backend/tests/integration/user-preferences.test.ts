@@ -1,6 +1,10 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test"
 import { Pool } from "pg"
-import { UserPreferencesService, UserPreferencesRepository } from "../../src/features/user-preferences"
+import {
+  UserPreferencesService,
+  UserPreferencesRepository,
+  userOverrideRefKey,
+} from "../../src/features/user-preferences"
 import { workspaceId, userId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
 import { ANALYTICS_CONSENT_GRANTED, ANALYTICS_CONSENT_KEY, DEFAULT_USER_PREFERENCES } from "@threahq/types"
@@ -46,7 +50,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
       })
 
       // Verify no rows in database
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toHaveLength(0)
     })
   })
@@ -59,7 +63,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
       })
 
       // Verify only one row exists
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toHaveLength(1)
       expect(overrides[0]).toMatchObject({ key: "theme", value: "dark" })
     })
@@ -71,7 +75,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
       })
 
       // Verify no rows exist
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toHaveLength(0)
     })
 
@@ -81,7 +85,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         theme: "dark",
       })
 
-      let overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      let overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toHaveLength(1)
 
       // Revert to default
@@ -89,7 +93,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         theme: "system",
       })
 
-      overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toHaveLength(0)
     })
 
@@ -101,7 +105,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         },
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
 
       // Should have two separate rows for nested keys
       expect(overrides).toHaveLength(2)
@@ -136,7 +140,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         },
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
 
       // Should have 4 overrides
       expect(overrides).toHaveLength(4)
@@ -156,7 +160,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         scratchpadCustomPrompt: "Be terse in scratchpads.",
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
 
       expect(overrides).toEqual([{ key: "scratchpadCustomPrompt", value: "Be terse in scratchpads." }])
     })
@@ -168,7 +172,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         defaultCompanionPersonaId: ARIADNE_AGENT_ID,
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toEqual([{ key: "defaultCompanionPersonaId", value: ARIADNE_AGENT_ID }])
     })
 
@@ -176,12 +180,12 @@ describe("User Preferences - Sparse Override Pattern", () => {
       await service.updatePreferences(testWorkspaceId, testUserId, {
         defaultCompanionPersonaId: ARIADNE_AGENT_ID,
       })
-      expect(await UserPreferencesRepository.findOverrides(pool, testUserId)).toHaveLength(1)
+      expect(await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)).toHaveLength(1)
 
       await service.updatePreferences(testWorkspaceId, testUserId, {
         defaultCompanionPersonaId: null,
       })
-      expect(await UserPreferencesRepository.findOverrides(pool, testUserId)).toHaveLength(0)
+      expect(await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)).toHaveLength(0)
     })
 
     test("should reject a default companion persona id that is not an active workspace persona", async () => {
@@ -192,7 +196,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
       ).rejects.toMatchObject({ status: 400, code: "PERSONA_NOT_AVAILABLE" })
 
       // Nothing was stored on the rejected write.
-      expect(await UserPreferencesRepository.findOverrides(pool, testUserId)).toHaveLength(0)
+      expect(await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)).toHaveLength(0)
     })
   })
 
@@ -204,7 +208,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         },
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
 
       expect(overrides).toHaveLength(1)
       expect(overrides[0]).toMatchObject({
@@ -227,7 +231,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         },
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
 
       expect(overrides).toEqual([{ key: "keyboardShortcuts.openSearch", value: "mod+shift+s" }])
 
@@ -248,7 +252,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
         keyboardShortcuts: {},
       })
 
-      const overrides = await UserPreferencesRepository.findOverrides(pool, testUserId)
+      const overrides = await UserPreferencesRepository.findOverrides(pool, testWorkspaceId, testUserId)
       expect(overrides).toHaveLength(0)
 
       const prefs = await service.getPreferences(testWorkspaceId, testUserId)
@@ -266,14 +270,14 @@ describe("User Preferences - Sparse Override Pattern", () => {
 
       const result = await UserPreferencesRepository.findOverrideForUsers(
         pool,
-        [userA, userB, userC],
+        [userA, userB, userC].map((id) => ({ workspaceId: testWorkspaceId, userId: id })),
         "analyticsConsent"
       )
 
       expect(result).toEqual(
         new Map([
-          [userA, "granted"],
-          [userB, "denied"],
+          [userOverrideRefKey(testWorkspaceId, userA), "granted"],
+          [userOverrideRefKey(testWorkspaceId, userB), "denied"],
         ])
       )
       expect(await UserPreferencesRepository.findOverrideForUsers(pool, [], "analyticsConsent")).toEqual(new Map())
@@ -300,7 +304,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
   })
 
   describe("analytics consent grant", () => {
-    const grant = () => service.findAnalyticsConsentGrant(pool, testUserId)
+    const grant = () => service.findAnalyticsConsentGrant(pool, testWorkspaceId, testUserId)
     const setConsent = (analyticsConsent: "granted" | "denied" | "unset") =>
       service.updatePreferences(testWorkspaceId, testUserId, { analyticsConsent })
 
@@ -334,7 +338,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
       seen.unset = await grant()
       await setConsent("granted")
       seen.afterUnset = await grant()
-      await UserPreferencesRepository.deleteOverride(pool, testUserId, ANALYTICS_CONSENT_KEY)
+      await UserPreferencesRepository.bulkDeleteOverrides(pool, testWorkspaceId, testUserId, [ANALYTICS_CONSENT_KEY])
       await UserPreferencesRepository.setOverride(
         pool,
         testWorkspaceId,
@@ -343,7 +347,10 @@ describe("User Preferences - Sparse Override Pattern", () => {
         ANALYTICS_CONSENT_GRANTED
       )
       seen.afterDelete = await grant()
-      await UserPreferencesRepository.deleteAllOverrides(pool, testUserId)
+      await UserPreferencesRepository.bulkDeleteOverrides(pool, testWorkspaceId, testUserId, [
+        ANALYTICS_CONSENT_KEY,
+        "theme",
+      ])
       seen.reset = await grant()
       await UserPreferencesRepository.bulkSetOverrides(pool, testWorkspaceId, testUserId, [
         { key: ANALYTICS_CONSENT_KEY, value: ANALYTICS_CONSENT_GRANTED },

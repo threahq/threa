@@ -1,6 +1,7 @@
 import { sql, type Querier } from "../../db"
 
 interface PreferenceOverrideRow {
+  workspace_id: string
   user_id: string
   key: string
   value: unknown
@@ -13,12 +14,17 @@ export interface PreferenceOverrideRecord {
   value: unknown
 }
 
+export function userOverrideRefKey(workspaceId: string, userId: string): string {
+  return `${workspaceId}:${userId}`
+}
+
 export const UserPreferencesRepository = {
-  async findOverrides(db: Querier, userId: string): Promise<PreferenceOverrideRecord[]> {
+  async findOverrides(db: Querier, workspaceId: string, userId: string): Promise<PreferenceOverrideRecord[]> {
     const result = await db.query<PreferenceOverrideRow>(sql`
       SELECT key, value
       FROM user_preference_overrides
-      WHERE user_id = ${userId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
     `)
     return result.rows.map((row) => ({
       key: row.key,
@@ -31,11 +37,17 @@ export const UserPreferencesRepository = {
    * (i.e. inherits the default). Cheaper than merging the whole preference object
    * when a caller needs one key (INV-27).
    */
-  async findOverride(db: Querier, userId: string, key: string): Promise<PreferenceOverrideRecord | null> {
+  async findOverride(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    key: string
+  ): Promise<PreferenceOverrideRecord | null> {
     const result = await db.query<PreferenceOverrideRow>(sql`
       SELECT key, value
       FROM user_preference_overrides
-      WHERE user_id = ${userId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
         AND key = ${key}
     `)
     const row = result.rows[0]
@@ -48,10 +60,17 @@ export const UserPreferencesRepository = {
    * transaction ends, so a concurrent change to it commits either before this
    * read (and is seen) or after the caller's writes, never between.
    */
-  async findOverrideGeneration(db: Querier, userId: string, key: string, value: unknown): Promise<string | null> {
+  async findOverrideGeneration(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    key: string,
+    value: unknown
+  ): Promise<string | null> {
     const result = await db.query<{ value_generation: string }>(sql`
       SELECT value_generation FROM user_preference_overrides
-      WHERE user_id = ${userId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
         AND key = ${key}
         AND value = ${JSON.stringify(value)}::jsonb
       FOR SHARE
@@ -66,14 +85,6 @@ export const UserPreferencesRepository = {
       ON CONFLICT (user_id, key) DO UPDATE SET
         value = ${JSON.stringify(value)}::jsonb,
         updated_at = NOW()
-    `)
-  },
-
-  async deleteOverride(db: Querier, userId: string, key: string): Promise<void> {
-    await db.query(sql`
-      DELETE FROM user_preference_overrides
-      WHERE user_id = ${userId}
-        AND key = ${key}
     `)
   },
 
@@ -104,32 +115,34 @@ export const UserPreferencesRepository = {
     )
   },
 
-  async bulkDeleteOverrides(db: Querier, userId: string, keys: string[]): Promise<void> {
+  async bulkDeleteOverrides(db: Querier, workspaceId: string, userId: string, keys: string[]): Promise<void> {
     if (keys.length === 0) return
 
     await db.query(sql`
       DELETE FROM user_preference_overrides
-      WHERE user_id = ${userId}
+      WHERE workspace_id = ${workspaceId}
+        AND user_id = ${userId}
         AND key = ANY(${keys})
     `)
   },
 
-  async deleteAllOverrides(db: Querier, userId: string): Promise<void> {
-    await db.query(sql`
-      DELETE FROM user_preference_overrides
-      WHERE user_id = ${userId}
-    `)
-  },
+  /** Keyed by `userOverrideRefKey(workspaceId, userId)`. */
+  async findOverrideForUsers(
+    db: Querier,
+    refs: Array<{ workspaceId: string; userId: string }>,
+    key: string
+  ): Promise<Map<string, unknown>> {
+    if (refs.length === 0) return new Map()
 
-  async findOverrideForUsers(db: Querier, userIds: string[], key: string): Promise<Map<string, unknown>> {
-    if (userIds.length === 0) return new Map()
-
-    const result = await db.query<Pick<PreferenceOverrideRow, "user_id" | "value">>(sql`
-      SELECT user_id, value
-      FROM user_preference_overrides
-      WHERE user_id = ANY(${userIds})
-        AND key = ${key}
+    const result = await db.query<Pick<PreferenceOverrideRow, "workspace_id" | "user_id" | "value">>(sql`
+      SELECT o.workspace_id, o.user_id, o.value
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.userId)}::text[])
+        AS ref(workspace_id, user_id)
+      JOIN user_preference_overrides o
+        ON o.workspace_id = ref.workspace_id
+        AND o.user_id = ref.user_id
+      WHERE o.key = ${key}
     `)
-    return new Map(result.rows.map((row) => [row.user_id, row.value]))
+    return new Map(result.rows.map((row) => [userOverrideRefKey(row.workspace_id, row.user_id), row.value]))
   },
 }
