@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { StreamTypes } from "@threahq/types"
-import { StreamBriefRepository, type StreamBrief } from "../../streams"
+import { AgentToolNames, MemoryModes, StreamTypes } from "@threahq/types"
+import { StreamBriefRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { buildAgentContext } from "./context"
 import type { PreparedRecallParams } from "./prepared-recall"
@@ -258,5 +258,71 @@ describe("buildAgentContext persona knowledge (context attachments, decision 7)"
     expect(prompt).toContain("### guide.md\n\nGUIDE CONTENT")
     expect(prompt).toContain("### spec.txt\n\nSPEC SUMMARY")
     expect(prompt.indexOf("### guide.md")).toBeLessThan(prompt.indexOf("### spec.txt"))
+  })
+})
+
+describe("buildAgentContext How You Work card", () => {
+  afterEach(() => mock.restore())
+
+  const policy = { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false } as const
+  const thread = {
+    id: "stream_thread",
+    workspaceId: "ws_1",
+    type: StreamTypes.THREAD,
+    rootStreamId: "stream_root",
+    parentStreamId: "stream_root",
+    displayName: "A thread",
+    createdBy: "usr_1",
+  }
+
+  it("should follow the root's memory mode and the delegated model when a thread turn has no trigger", async () => {
+    spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
+    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(async (_db, streamId) =>
+      streamId === "stream_root"
+        ? ({ id: "stream_root", rootStreamId: null, memoryMode: MemoryModes.OFF } as never)
+        : (thread as never)
+    )
+
+    const context = await buildAgentContext(deps, {
+      workspaceId: "ws_1",
+      streamId: "stream_thread",
+      stream: thread as never,
+      messageId: "msg_1",
+      persona,
+      purpose: { kind: "catch_up" },
+      policy,
+      subagentModel: "openrouter:anthropic/claude-opus-5-5",
+    })
+
+    const prompt = joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))
+    expect(prompt).toContain("In this thread you run on `openrouter:anthropic/claude-opus-5-5`")
+    expect(prompt).toContain("No one triggered this turn")
+    expect(prompt).toContain("Memory capture is off here")
+  })
+
+  it("should list the capabilities of the toolset the turn was composed with", async () => {
+    spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
+    const scratchpad = {
+      ...thread,
+      id: "stream_pad",
+      type: StreamTypes.SCRATCHPAD,
+      rootStreamId: null,
+      parentStreamId: null,
+    }
+
+    const context = await buildAgentContext(deps, {
+      workspaceId: "ws_1",
+      streamId: "stream_pad",
+      stream: scratchpad as never,
+      messageId: "msg_1",
+      persona,
+      purpose: { kind: "catch_up" },
+      policy,
+    })
+
+    const prompt = joinSystemPrompt(
+      context.composeSystemPrompt([{ name: AgentToolNames.WEB_SEARCH, config: {} }] as never, { kind: "catch_up" })
+    )
+    expect(prompt).toContain("What you can do:\n- Search the web.\n\n")
   })
 })

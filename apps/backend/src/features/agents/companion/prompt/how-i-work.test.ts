@@ -37,13 +37,14 @@ describe("buildHowIWorkSection", () => {
     ])
 
     expect(capabilities(card)).toEqual([
-      "Research the workspace: messages, memos and files within the reach described above.",
+      "Research the workspace: messages, memos and files, within the reach described above.",
       "Search the web and read web pages.",
       "Schedule a follow-up: come back to this conversation at a set time and pick up where it left off.",
+      "List scheduled follow-ups.",
       "Change the user's own settings (theme, date and time format, timezone, language, notifications, working hours) when they ask.",
     ])
     expect(card).toContain("including memories private to them")
-    expect(card).toContain("Harder turns may be escalated to `openrouter:openai/gpt-5.6-terra`")
+    expect(card).toContain("If a reply fails Threa's checks, the retry runs on `openrouter:openai/gpt-5.6-terra`")
     expect(card).toContain("Memory capture is on here")
   })
 
@@ -53,6 +54,30 @@ describe("buildHowIWorkSection", () => {
     )
 
     expect(toolsWithoutLine).toEqual([AgentToolNames.SEND_MESSAGE, AgentToolNames.REPORT_BACK])
+  })
+
+  test("should claim only the wired half of a capability when a persona enables part of it", () => {
+    const card = buildHowIWorkSection(ariadne, privateScratchpad, [
+      AgentToolNames.READ_URL,
+      AgentToolNames.SEARCH_USERS,
+      AgentToolNames.CANCEL_FOLLOW_UP,
+      AgentToolNames.GITHUB_PULLS,
+      AgentToolNames.GITHUB_ISSUES,
+    ])
+
+    expect(capabilities(card)).toEqual([
+      "Read web pages.",
+      "Find people, within the reach described above.",
+      "Cancel scheduled follow-ups.",
+      "Read GitHub pull requests and issues. Read-only.",
+    ])
+  })
+
+  test("should claim no workspace reach when no wired tool reads beyond the conversation", () => {
+    const card = buildHowIWorkSection(ariadne, privateScratchpad, [AgentToolNames.WEB_SEARCH])
+
+    expect(card).toContain("What you reach: None of your tools here read beyond this conversation")
+    expect(card).not.toContain("including memories private to them")
   })
 
   test("should say nothing beyond replying when no tools are wired", () => {
@@ -70,7 +95,7 @@ describe("buildHowIWorkSection", () => {
     )
 
     expect(card).toContain("In this thread you run on `openrouter:anthropic/claude-opus-5-5`")
-    expect(card).not.toContain("escalated")
+    expect(card).not.toContain("retry runs on")
   })
 
   test("should defer to the enclave's tools, drop escalation and mention no memos when sealed", () => {
@@ -83,15 +108,13 @@ describe("buildHowIWorkSection", () => {
     expect(card).toContain(
       "Memory: Nothing said here becomes a memo, because the server can't read it. Between conversations you remember only through summaries of your earlier sessions in this stream."
     )
-    expect(card).not.toContain("escalated")
+    expect(card).not.toContain("retry runs on")
   })
 
   test("should say private conversations stay out when the channel is public", () => {
-    const card = buildHowIWorkSection(
-      ariadne,
-      { ...privateScratchpad, access: "public_only", memoryCapture: "off" },
-      []
-    )
+    const card = buildHowIWorkSection(ariadne, { ...privateScratchpad, access: "public_only", memoryCapture: "off" }, [
+      AgentToolNames.SEARCH_MESSAGES,
+    ])
 
     expect(card).toContain("You never pull anyone's private conversations in here")
     expect(card).toContain("Memory capture is off here")

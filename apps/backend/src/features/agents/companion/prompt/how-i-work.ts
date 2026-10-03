@@ -23,80 +23,139 @@ interface CardPersona {
 
 type CardToolName = AgentToolName | typeof WORKSPACE_RESEARCH_TOOL_NAME
 
-const CAPABILITIES: Array<{ tools: CardToolName[]; line: string }> = [
+/**
+ * One line per capability, phrased from only the tools wired this turn: a
+ * persona can enable any subset, and stream policy drops tools too, so a line
+ * never claims a sibling tool that isn't there.
+ */
+const CAPABILITIES: Array<{ parts: Array<[CardToolName, string]>; line: (phrases: string) => string }> = [
   {
-    tools: [WORKSPACE_RESEARCH_TOOL_NAME],
-    line: "Research the workspace: messages, memos and files within the reach described above.",
+    parts: [[WORKSPACE_RESEARCH_TOOL_NAME, "research the workspace: messages, memos and files"]],
+    line: (p) => `${p}, within the reach described above.`,
   },
-  { tools: [AgentToolNames.WEB_SEARCH, AgentToolNames.READ_URL], line: "Search the web and read web pages." },
   {
-    tools: [AgentToolNames.GENERAL_RESEARCH],
-    line: "Run deeper research that combines the workspace, the web and connected integrations.",
-  },
-  {
-    tools: [
-      AgentToolNames.SEARCH_MESSAGES,
-      AgentToolNames.SEARCH_STREAMS,
-      AgentToolNames.SEARCH_USERS,
-      AgentToolNames.GET_STREAM_MESSAGES,
+    parts: [
+      [AgentToolNames.WEB_SEARCH, "search the web"],
+      [AgentToolNames.READ_URL, "read web pages"],
     ],
-    line: "Search messages, streams and people, and read a stream's history, within the reach described above.",
+    line: (p) => `${p}.`,
   },
   {
-    tools: [AgentToolNames.SEARCH_ATTACHMENTS, AgentToolNames.READ_ATTACHMENT],
-    line: "Find and read files shared in the workspace: documents, PDFs, spreadsheets and images.",
-  },
-  {
-    tools: [AgentToolNames.RUN_COMMAND],
-    line: "Run code and shell commands in a sandbox tied to this stream.",
-  },
-  { tools: [AgentToolNames.DESCRIBE_MEMO], line: "Open memos to see their sources." },
-  { tools: [AgentToolNames.SAVE_MEMO], line: "Save something to memory when someone asks." },
-  { tools: [AgentToolNames.REACT_TO_MESSAGE], line: "React to messages with an emoji." },
-  {
-    tools: [
-      AgentToolNames.SCHEDULE_FOLLOW_UP,
-      AgentToolNames.LIST_FOLLOW_UPS,
-      AgentToolNames.CANCEL_FOLLOW_UP,
-      AgentToolNames.UPDATE_FOLLOW_UP,
+    parts: [
+      [
+        AgentToolNames.GENERAL_RESEARCH,
+        "run deeper research that combines the workspace, the web and connected integrations",
+      ],
     ],
-    line: "Schedule a follow-up: come back to this conversation at a set time and pick up where it left off.",
-  },
-  { tools: [AgentToolNames.UPDATE_STREAM_BRIEF], line: "Keep this stream's brief up to date." },
-  {
-    tools: [AgentToolNames.START_SUBAGENT],
-    line: "Hand a question to another model, which answers in a thread under a card in this stream, when a person asks for a second opinion or names a model.",
+    line: (p) => `${p}.`,
   },
   {
-    tools: [AgentToolNames.DELEGATE_TASK],
-    line: "Hand a longer task to the user's own local agent (for example a coding agent on their machine), which reports back here, when a person asked for the work.",
-  },
-  {
-    tools: [AgentToolNames.UPDATE_USER_SETTINGS],
-    line: "Change the user's own settings (theme, date and time format, timezone, language, notifications, working hours) when they ask.",
-  },
-  {
-    tools: [
-      AgentToolNames.GITHUB_REPOS,
-      AgentToolNames.GITHUB_COMMITS,
-      AgentToolNames.GITHUB_PULLS,
-      AgentToolNames.GITHUB_CONTENT,
-      AgentToolNames.GITHUB_WORKFLOWS,
-      AgentToolNames.GITHUB_RELEASES,
-      AgentToolNames.GITHUB_ISSUES,
+    parts: [
+      [AgentToolNames.SEARCH_MESSAGES, "search messages"],
+      [AgentToolNames.SEARCH_STREAMS, "find streams"],
+      [AgentToolNames.SEARCH_USERS, "find people"],
+      [AgentToolNames.GET_STREAM_MESSAGES, "read a stream's history"],
     ],
-    line: "Read GitHub repositories, commits, pull requests, issues, workflows and releases. Read-only.",
+    line: (p) => `${p}, within the reach described above.`,
   },
   {
-    tools: [
-      AgentToolNames.LINEAR_LIST_ISSUES,
-      AgentToolNames.LINEAR_GET_ISSUE,
-      AgentToolNames.LINEAR_LIST_PROJECTS,
-      AgentToolNames.LINEAR_GET_PROJECT,
+    parts: [
+      [AgentToolNames.SEARCH_ATTACHMENTS, "find files shared in the workspace"],
+      [AgentToolNames.READ_ATTACHMENT, "read shared files (documents, PDFs, spreadsheets and images)"],
     ],
-    line: "Read Linear issues and projects. Read-only.",
+    line: (p) => `${p}.`,
+  },
+  {
+    parts: [[AgentToolNames.RUN_COMMAND, "run code and shell commands in a sandbox tied to this stream"]],
+    line: (p) => `${p}.`,
+  },
+  { parts: [[AgentToolNames.DESCRIBE_MEMO, "open memos to see their sources"]], line: (p) => `${p}.` },
+  { parts: [[AgentToolNames.SAVE_MEMO, "save something to memory when someone asks"]], line: (p) => `${p}.` },
+  { parts: [[AgentToolNames.REACT_TO_MESSAGE, "react to messages with an emoji"]], line: (p) => `${p}.` },
+  {
+    parts: [
+      [
+        AgentToolNames.SCHEDULE_FOLLOW_UP,
+        "schedule a follow-up: come back to this conversation at a set time and pick up where it left off",
+      ],
+    ],
+    line: (p) => `${p}.`,
+  },
+  {
+    parts: [
+      [AgentToolNames.LIST_FOLLOW_UPS, "list"],
+      [AgentToolNames.UPDATE_FOLLOW_UP, "change"],
+      [AgentToolNames.CANCEL_FOLLOW_UP, "cancel"],
+    ],
+    line: (p) => `${p} scheduled follow-ups.`,
+  },
+  { parts: [[AgentToolNames.UPDATE_STREAM_BRIEF, "keep this stream's brief up to date"]], line: (p) => `${p}.` },
+  {
+    parts: [
+      [
+        AgentToolNames.START_SUBAGENT,
+        "hand a question to another model, which answers in a thread under a card in this stream, when a person asks for a second opinion or names a model",
+      ],
+    ],
+    line: (p) => `${p}.`,
+  },
+  {
+    parts: [
+      [
+        AgentToolNames.DELEGATE_TASK,
+        "hand a longer task to the user's own local agent (for example a coding agent on their machine), which reports back here, when a person asked for the work",
+      ],
+    ],
+    line: (p) => `${p}.`,
+  },
+  {
+    parts: [
+      [
+        AgentToolNames.UPDATE_USER_SETTINGS,
+        "change the user's own settings (theme, date and time format, timezone, language, notifications, working hours) when they ask",
+      ],
+    ],
+    line: (p) => `${p}.`,
+  },
+  {
+    parts: [
+      [AgentToolNames.GITHUB_REPOS, "repositories"],
+      [AgentToolNames.GITHUB_CONTENT, "files"],
+      [AgentToolNames.GITHUB_COMMITS, "commits"],
+      [AgentToolNames.GITHUB_PULLS, "pull requests"],
+      [AgentToolNames.GITHUB_ISSUES, "issues"],
+      [AgentToolNames.GITHUB_WORKFLOWS, "workflows"],
+      [AgentToolNames.GITHUB_RELEASES, "releases"],
+    ],
+    line: (p) => `read GitHub ${p}. Read-only.`,
+  },
+  {
+    parts: [
+      [AgentToolNames.LINEAR_LIST_ISSUES, "issues"],
+      [AgentToolNames.LINEAR_GET_ISSUE, "issues"],
+      [AgentToolNames.LINEAR_LIST_PROJECTS, "projects"],
+      [AgentToolNames.LINEAR_GET_PROJECT, "projects"],
+    ],
+    line: (p) => `read Linear ${p}. Read-only.`,
   },
 ]
+
+/** Tools that read beyond this conversation; without one, the access spec reaches nothing. */
+const WORKSPACE_REACH_TOOLS: ReadonlySet<string> = new Set<CardToolName>([
+  WORKSPACE_RESEARCH_TOOL_NAME,
+  AgentToolNames.GENERAL_RESEARCH,
+  AgentToolNames.SEARCH_MESSAGES,
+  AgentToolNames.SEARCH_STREAMS,
+  AgentToolNames.SEARCH_USERS,
+  AgentToolNames.GET_STREAM_MESSAGES,
+  AgentToolNames.SEARCH_ATTACHMENTS,
+  AgentToolNames.READ_ATTACHMENT,
+  AgentToolNames.DESCRIBE_MEMO,
+])
+
+function joinPhrases(phrases: string[]): string {
+  return phrases.length > 1 ? `${phrases.slice(0, -1).join(", ")} and ${phrases.at(-1)}` : phrases[0]
+}
 
 const REACH: Record<AgentAccessSpec["type"], string> = {
   user_full_access:
@@ -115,9 +174,12 @@ const SEALED_CAPABILITIES =
 
 function capabilityBlock(toolNames: readonly string[]): string {
   const wired = new Set(toolNames)
-  const lines = CAPABILITIES.filter((capability) => capability.tools.some((tool) => wired.has(tool))).map(
-    (capability) => `- ${capability.line}`
-  )
+  const lines = CAPABILITIES.flatMap(({ parts, line }) => {
+    const phrases = [...new Set(parts.filter(([tool]) => wired.has(tool)).map(([, phrase]) => phrase))]
+    if (phrases.length === 0) return []
+    const text = line(joinPhrases(phrases))
+    return [`- ${text[0].toUpperCase()}${text.slice(1)}`]
+  })
   return lines.length > 0 ? lines.join("\n") : "- Nothing beyond replying in this conversation."
 }
 
@@ -126,17 +188,20 @@ function modelLine(persona: CardPersona, self: SelfKnowledge): string {
     return `In this thread you run on \`${self.subagentModel}\`, the model a person asked to answer here.`
   }
   // The enclave never escalates, so a sealed turn always runs the persona's own model.
-  return persona.escalationModel && !self.sealed
-    ? `You run on \`${persona.model}\`. Harder turns may be escalated to \`${persona.escalationModel}\`.`
+  return persona.escalationModel && persona.escalationModel !== persona.model && !self.sealed
+    ? `You run on \`${persona.model}\`. If a reply fails Threa's checks, the retry runs on \`${persona.escalationModel}\`.`
     : `You run on \`${persona.model}\`.`
 }
 
-function reachLine(self: SelfKnowledge): string {
+function reachLine(self: SelfKnowledge, toolNames: readonly string[]): string {
   if (self.sealed) {
     return "This is an end-to-end-encrypted scratchpad. You see this conversation and nothing else in the workspace."
   }
   if (self.access === null) {
     return "No one triggered this turn, so you work from this conversation alone and can't search the rest of the workspace."
+  }
+  if (!toolNames.some((tool) => WORKSPACE_REACH_TOOLS.has(tool))) {
+    return "None of your tools here read beyond this conversation, so you work from it alone."
   }
   return REACH[self.access]
 }
@@ -169,9 +234,9 @@ Use this when someone asks what you are, what you can do, or what you can see. A
 
 You are ${persona.name}, an AI agent in Threa. ${modelLine(persona, self)} Your model, tools and instructions are configured in Threa's persona settings, not by you.
 
-What you see: the messages in this conversation (older parts may be summarised), the files people share in it, and what your tools return. You don't see the user's screen, their other apps, or anything they haven't sent here.
+What you see: the messages in this conversation (older parts may be summarised), the files people share in it, context the app attaches to a turn (such as the conversation an aside was opened from, or a thread you were asked about), and what your tools return. You don't watch the user's screen or see their other apps.
 
-What you reach: ${reachLine(self)}
+What you reach: ${reachLine(self, toolNames)}
 
 Memory: ${memoryLine(self)}
 
