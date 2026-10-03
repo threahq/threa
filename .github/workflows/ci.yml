@@ -156,6 +156,7 @@ jobs:
           bun run --cwd packages/backend-common test
           bun run --cwd packages/prosemirror test
           bun run --cwd packages/agent-runtime test
+          bun run --cwd packages/user-guide test
 
   frontend-tests:
     name: Frontend Tests (${{ matrix.shard_index }}/${{ strategy.job-total }})

@@ -45,6 +45,7 @@ function parseFrontMatter(slug: string, raw: string): { fields: Map<string, stri
     if (!FIELDS.has(key)) throw new Error(`Guide article "${slug}": unknown front matter key "${key}"`)
     // Values are taken verbatim, so YAML quoting would leak the quotes into titles.
     if (/^["']/.test(value)) throw new Error(`Guide article "${slug}": "${key}" must not be quoted`)
+    if (fields.has(key)) throw new Error(`Guide article "${slug}": front matter repeats "${key}"`)
     fields.set(key, value)
   }
   return { fields, body: raw.slice(match[0].length).trim() }
@@ -73,9 +74,12 @@ export function parseGuideArticle(slug: string, raw: string): GuideArticle {
   if (!/^\d+$/.test(orderText))
     throw new Error(`Guide article "${slug}": "order" must be an integer, got "${orderText}"`)
 
-  if (body === "") throw new Error(`Guide article "${slug}": body is empty`)
+  const title = need("title")
+  // The body's heading is the page's visible h1 and the mirror's first line.
+  if (body.split("\n", 1)[0] !== `# ${title}`)
+    throw new Error(`Guide article "${slug}": body must start with "# ${title}"`)
 
-  return { slug, title: need("title"), summary: need("summary"), section: section.id, order: Number(orderText), body }
+  return { slug, title, summary: need("summary"), section: section.id, order: Number(orderText), body }
 }
 
 const sectionIndex = (id: GuideSectionId) => GUIDE_SECTIONS.findIndex((s) => s.id === id)

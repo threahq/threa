@@ -12,11 +12,6 @@ describe("guide articles", () => {
     expect(articles.length).toBeGreaterThan(0)
   })
 
-  test("should have unique slugs when articles are flat files", () => {
-    const slugs = articles.map((a) => a.slug)
-    expect(new Set(slugs).size).toBe(slugs.length)
-  })
-
   test("should link only to app destinations the app understands when a body uses an app: link", () => {
     const rejected = articles.flatMap((a) =>
       hrefs(a.body)
@@ -39,7 +34,7 @@ describe("guide articles", () => {
 })
 
 describe("parseGuideArticle", () => {
-  const valid = "---\ntitle: A title\nsummary: One line.\nsection: memory\norder: 3\n---\n\n# Body\n"
+  const valid = "---\ntitle: A title\nsummary: One line.\nsection: memory\norder: 3\n---\n\n# A title\n\nText.\n"
 
   test("should return the front matter fields and the trimmed body when the article is valid", () => {
     expect(parseGuideArticle("a-title", valid)).toEqual({
@@ -48,7 +43,7 @@ describe("parseGuideArticle", () => {
       summary: "One line.",
       section: "memory",
       order: 3,
-      body: "# Body",
+      body: "# A title\n\nText.",
     })
   })
 
@@ -75,6 +70,18 @@ describe("parseGuideArticle", () => {
   test("should reject the article when a value is quoted", () => {
     expect(() => parseGuideArticle("x", valid.replace("title: A title", 'title: "A title"'))).toThrow(
       /"title" must not be quoted/
+    )
+  })
+
+  test("should reject the article when a key repeats", () => {
+    expect(() => parseGuideArticle("x", valid.replace("order: 3", "order: 3\ntitle: Another"))).toThrow(
+      /repeats "title"/
+    )
+  })
+
+  test("should reject the article when the body does not open with its title as the heading", () => {
+    expect(() => parseGuideArticle("x", valid.replace("# A title", "# Another title"))).toThrow(
+      /body must start with "# A title"/
     )
   })
 

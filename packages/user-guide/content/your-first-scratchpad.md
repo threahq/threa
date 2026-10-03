@@ -30,7 +30,7 @@ In a Companion scratchpad, Ariadne answers in the conversation. Ask her to think
 Each scratchpad has a **Companion mode**:
 
 - **Companion**: Ariadne reads new messages and replies.
-- **Quiet**: Ariadne stays out unless you mention her with `@ariadne`.
+- **Quiet**: Ariadne stays out unless you mention her with `@ariadne`. In an encrypted scratchpad mentions don't reach her, so switch to Companion to talk to her there.
 
 Change it from the scratchpad's settings at any time. The same panel lets you choose which agent acts as the companion, and which kinds of tools she may use there.
 
@@ -45,4 +45,4 @@ Browse everything on the [Memory](app:memory) page.
 ## Next
 
 - Read [Meet Ariadne](/guide/meet-ariadne) to learn what she can see and do.
-- Turn on [notification settings](app:settings/notifications) if you want to hear back when she or someone else replies.
+- Open [Notifications](app:settings/notifications) settings to turn on push notifications, so you hear back when she replies.
