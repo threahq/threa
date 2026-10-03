@@ -15,6 +15,7 @@ function makeDeps(memoExplorer: MemoExplorerService): WorkspaceToolDeps {
     workspaceId: "workspace_test",
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
+    memoViewerUserId: undefined,
     searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
     storage: {} as WorkspaceToolDeps["storage"],

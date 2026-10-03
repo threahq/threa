@@ -31,7 +31,8 @@ export interface ComputeAccessSpecParams {
  * Compute the access spec for an agent based on invocation context.
  *
  * Rules:
- * - Private scratchpad: Full user access (user's scratchpads, channels, DMs, etc.)
+ * - Private scratchpad: Full user access (user's scratchpads, channels, DMs, etc.);
+ *   one with other members is treated like a private channel
  * - Public scratchpad: Only public streams
  * - Private channel: Public streams + this channel (and its threads)
  * - Public channel: Only public streams
@@ -50,12 +51,16 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
   }
 
   switch (effectiveStream.type) {
-    case StreamTypes.SCRATCHPAD:
-      // Private scratchpad: user sees everything they can access
+    case StreamTypes.SCRATCHPAD: {
       // Public scratchpad: anyone can see, so agent only sees public
-      return effectiveStream.visibility === Visibilities.PRIVATE
+      if (effectiveStream.visibility !== Visibilities.PRIVATE) return { type: "public_only" }
+      // Adding someone to a scratchpad's thread adds them to the scratchpad, so
+      // its audience is only the invoker when no one else is a member.
+      const members = await StreamMemberRepository.list(db, { streamId: effectiveStream.id })
+      return members.every((m) => m.memberId === invokingUserId)
         ? { type: "user_full_access", userId: invokingUserId }
-        : { type: "public_only" }
+        : { type: "public_plus_stream", streamId: effectiveStream.id }
+    }
 
     case StreamTypes.ASIDE:
       // An aside is always private to its creator: scratchpad semantics.

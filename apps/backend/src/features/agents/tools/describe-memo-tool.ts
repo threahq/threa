@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threahq/types"
+import { AgentStepTypes, AgentToolNames, MemoStatuses, TOOL_CATEGORIES_BY_NAME } from "@threahq/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
@@ -17,13 +17,14 @@ export type DescribeMemoInput = z.infer<typeof DescribeMemoSchema>
  * URLs.
  *
  * Access scope: gated by `accessibleStreamIds` inside `MemoExplorerService.getById`,
- * which rejects memos whose source stream is outside the invoking user's reach
- * and filters per-source-message access. Outputs only ids the caller could have
- * obtained directly via `search_messages`, so emitting them as pointer URLs
- * does not widen the access surface.
+ * which rejects memos whose source stream is outside the turn's reach and
+ * filters per-source-message access; user-scoped memos resolve only for
+ * `memoViewerUserId`. Outputs only ids the caller could have obtained directly
+ * via `search_messages`, so emitting them as pointer URLs does not widen the
+ * access surface.
  */
 export function createDescribeMemoTool(deps: WorkspaceToolDeps) {
-  const { workspaceId, accessibleStreamIds, invokingUserId, memoExplorer } = deps
+  const { workspaceId, accessibleStreamIds, memoViewerUserId, memoExplorer } = deps
 
   return defineAgentTool({
     name: "describe_memo",
@@ -52,9 +53,9 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
       try {
         const detail = await memoExplorer.getById(workspaceId, input.memoId, {
           accessibleStreamIds,
-          userId: invokingUserId,
+          userId: memoViewerUserId,
         })
-        if (!detail) {
+        if (detail?.memo.status !== MemoStatuses.ACTIVE) {
           return {
             output: JSON.stringify({
               error: "Memo not found, archived, or you don't have access to its source stream",
