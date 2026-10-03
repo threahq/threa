@@ -245,10 +245,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     const params = (id: string) => ({ id, workspaceId: ws, attachmentId: attachment })
 
     await VideoTranscodeJobRepository.upsert(pool, params(firstId))
-    await VideoTranscodeJobRepository.updateSubmitted(pool, ws, firstId, "mc_1")
+    const submitted = await VideoTranscodeJobRepository.updateSubmitted(pool, ws, firstId, "mc_1")
     const second = await VideoTranscodeJobRepository.upsert(pool, params(videoTranscodeJobId()))
 
-    expect({ id: second.id, status: second.status, mediaconvertJobId: second.mediaconvertJobId }).toEqual({
+    expect({ submitted, id: second.id, status: second.status, mediaconvertJobId: second.mediaconvertJobId }).toEqual({
+      submitted: true,
       id: firstId,
       status: "pending",
       mediaconvertJobId: null,
@@ -472,13 +473,15 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a video transcode job",
       oldKey: "video_transcode_jobs_attachment_id_key",
-      write: (ws, ids) =>
-        VideoTranscodeJobRepository.upsert(pool, {
+      write: async (ws, ids) => {
+        const job = await VideoTranscodeJobRepository.upsert(pool, {
           id: videoTranscodeJobId(),
           workspaceId: ws,
           attachmentId: ids.attachment,
-        }),
-      read: firstRow("id, status", "video_transcode_jobs", "attachment"),
+        })
+        await VideoTranscodeJobRepository.updateSubmitted(pool, ws, job.id, "mc_1")
+      },
+      read: firstRow("id, status, mediaconvert_job_id", "video_transcode_jobs", "attachment"),
     },
   ]
 
