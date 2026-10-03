@@ -197,15 +197,16 @@ export class StreamConnectionService {
   private async isCurrentAdmin(workspaceId: string, userId: string): Promise<boolean> {
     const user = await UserRepository.findById(this.pool, workspaceId, userId)
     if (!user || !isAdmin(user.role)) return false
-    // `role` falls back to users.role when the WorkOS mirror has no active row,
-    // so a deactivated membership would still read as admin. A missing row
-    // keeps the fallback: the mirror may not have landed yet.
     const membership = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(
       this.pool,
       workspaceId,
       user.workosUserId
     )
-    return membership === null || membership.status === "active"
+    if (membership) return membership.status === "active"
+    // Without an active mirror row `role` is the stale users.role. That is the
+    // only role a workspace WorkOS doesn't mirror has (dev, pre-mirror
+    // workspaces). In one it mirrors, a missing row is a removed membership.
+    return !(await WorkspaceUserPermissionsRepository.existsForWorkspace(this.pool, workspaceId))
   }
 
   /** Projects a control-plane snapshot. Safe to repeat and to receive out of order. */

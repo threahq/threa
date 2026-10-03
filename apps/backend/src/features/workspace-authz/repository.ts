@@ -105,6 +105,14 @@ export const WorkspaceUserPermissionsRepository = {
     return row ? mapRow(row) : null
   },
 
+  async existsForWorkspace(db: Querier, workspaceId: string): Promise<boolean> {
+    const result = await db.query<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM workspace_user_permissions WHERE workspace_id = $1) AS exists`,
+      [workspaceId]
+    )
+    return result.rows[0].exists
+  },
+
   async listByWorkspace(db: Querier, workspaceId: string): Promise<WorkspaceUserPermissions[]> {
     const result = await db.query<WorkspaceUserPermissionsRow>(
       `SELECT ${SELECT_FIELDS}

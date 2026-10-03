@@ -110,7 +110,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
       )}
     </div>
   )
-  if (loadFailed && rows.length === 0) return <div className="p-1">{loadFailed}</div>
+  if (loadFailed && (refusal || empty)) return <div className="p-1">{loadFailed}</div>
 
   const create = async () => {
     setActionError(null)
@@ -151,7 +151,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
           <Label className="text-sm font-medium">Shared with</Label>
           <ul className="space-y-2">
             {connected.map((connection) => (
-              <li key={connection.id} className="flex items-center gap-3 rounded-lg border px-3 py-3">
+              <li key={connection.id} className="flex items-center gap-3 rounded-md border px-3 py-3">
                 <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 truncate text-sm font-medium">{connection.remoteWorkspaceName}</span>
               </li>
@@ -231,7 +231,7 @@ function PendingInvite({
       {link ? (
         <CopyableLink url={link} label="Invite link" />
       ) : (
-        <div className="rounded-lg border px-3 py-3 text-sm text-muted-foreground">
+        <div className="rounded-md border px-3 py-3 text-sm text-muted-foreground">
           Waiting for a workspace to accept.
         </div>
       )}

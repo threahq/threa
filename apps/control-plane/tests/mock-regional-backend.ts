@@ -80,8 +80,8 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
-    // GET /internal/stream-connections/channel — the host channel, for the invite page and before an accept,
-    // validated against the same required query the region applies.
+    // GET /internal/stream-connections/channel — the host channel, for the invite page and before an accept.
+    // Requires the keys the region's channelQuerySchema requires.
     if (req.method === "GET" && url.startsWith("/internal/stream-connections/channel?")) {
       const query = new URL(url, "http://mock").searchParams
       if (!["workspaceId", "streamId", "invitedBy"].every((key) => query.get(key))) {

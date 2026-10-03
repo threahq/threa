@@ -645,6 +645,15 @@ describe("StreamConnectionService", () => {
       )
     )
     for (const user of [stillAdmin, leftChannel]) await StreamMemberRepository.insert(pool, privateChannel.id, user.id)
+    for (const user of [stillAdmin, leftChannel, neverMember]) {
+      await WorkspaceUserPermissionsRepository.upsert(pool, {
+        workspaceId: host.id,
+        workosUserId: user.workosUserId,
+        roleSlugs: ["admin"],
+        status: "active",
+        lastEventAt: new Date(),
+      })
+    }
     await WorkspaceUserPermissionsRepository.upsert(pool, {
       workspaceId: host.id,
       workosUserId: demoted.workosUserId,
@@ -683,6 +692,41 @@ describe("StreamConnectionService", () => {
       neverMember: false,
       neverMemberOnPublic: true,
     })
+  })
+
+  test("should treat an admin WorkOS removed as gone once it mirrors the workspace", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const [kept, removed] = await Promise.all(
+      ["kept", "removed"].map((name) => addTestMember(pool, host.id, `${name}-${host.id}`, "admin"))
+    )
+    for (const user of [kept, removed]) {
+      await WorkspaceUserPermissionsRepository.upsert(pool, {
+        workspaceId: host.id,
+        workosUserId: user.workosUserId,
+        roleSlugs: ["admin"],
+        status: "active",
+        lastEventAt: new Date(Date.now() - 60_000),
+      })
+    }
+    await WorkspaceUserPermissionsRepository.delete(pool, {
+      workspaceId: host.id,
+      workosUserId: removed.workosUserId,
+      eventCreatedAt: new Date(),
+    })
+
+    const shareable = async (invitedBy: string) =>
+      (await service.describeChannel({ workspaceId: host.id, streamId: stream.id, invitedBy })).shareable
+    const answers = {
+      kept: await shareable(kept.id),
+      removed: await shareable(removed.id),
+      removedCreates: await service
+        .createInvite({ workspaceId: host.id, streamId: stream.id, userId: removed.id })
+        .catch((err: { status: number; code: string }) => ({ status: err.status, code: err.code })),
+    }
+
+    expect(answers).toEqual({ kept: true, removed: false, removedCreates: { status: 403, code: "FORBIDDEN" } })
+    expect(cp.requests).toEqual([])
   })
 
   test("should refuse to describe a channel for a workspace this region doesn't hold", async () => {

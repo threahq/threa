@@ -589,13 +589,19 @@ describe("ConnectTab", () => {
       message: "Shared channels are turned off for this workspace.",
     },
     { error: new ApiError(403, "FORBIDDEN", "no"), message: "Only workspace admins can share channels." },
-  ])("should say why the load was refused and offer no retry ($error.code)", async ({ error, message }) => {
+  ])("should say only why the load was refused, over any cached rows ($error.code)", async ({ error, message }) => {
+    await putStreamConnection("ws_host", makePartner("strconn_1", "Beta"))
+    await putStreamConnection("ws_host", makeConnection({ id: "strconn_2", state: "revoked", revision: 2 }))
     vi.spyOn(streamConnectionsApi, "list").mockRejectedValue(error)
 
     renderTab()
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message)
-    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument()
+    expect({
+      retry: screen.queryByRole("button", { name: "Try again" }),
+      create: screen.queryByRole("button", { name: "Create invite link" }),
+      partner: screen.queryByText("Beta"),
+    }).toEqual({ retry: null, create: null, partner: null })
   })
 
   it("should keep showing the cached invites and offer a retry when the load fails", async () => {

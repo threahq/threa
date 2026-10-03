@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
+import type { ListStreamConnectionsResponse } from "@threahq/types"
 import { enrollWorkspaceFlag, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
 
 /**
@@ -67,6 +68,7 @@ async function expectSharedWith(page: Page, partnerNames: string[]) {
   await expect(dialog.getByText("Shared with")).toBeVisible({ timeout: 10000 })
   for (const name of partnerNames) await expect(dialog.getByText(name)).toBeVisible()
   await expect(dialog.getByRole("button", { name: "Create invite link" })).toBeVisible()
+  await expect(dialog.getByRole("alert")).toHaveCount(0)
 }
 
 test.describe("Stream connections", () => {
@@ -109,7 +111,21 @@ test.describe("Stream connections", () => {
       const secondInvite = await createInviteLink(page)
       await acceptInvite(thirdPage, secondInvite, slug, host.workspaceName, third.workspaceName, partner.workspaceName)
 
+      const listing = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          new URL(response.url()).pathname === `/api/workspaces/${host.workspaceId}/streams/${streamId}/connections`
+      )
       await page.reload()
+      const listed = await listing
+      expect(listed.status()).toBe(200)
+      const { connections } = (await listed.json()) as ListStreamConnectionsResponse
+      expect(
+        connections
+          .filter((connection) => connection.state === "active")
+          .map((connection) => connection.remoteWorkspaceName)
+          .sort()
+      ).toEqual([partner.workspaceName, third.workspaceName].sort())
       await expectSharedWith(page, [partner.workspaceName, third.workspaceName])
     } finally {
       await Promise.all(contexts.map((context) => context.close()))
