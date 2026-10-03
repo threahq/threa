@@ -21,6 +21,7 @@
  * - accuracy (run-level): ≥80% of all cases pass every evaluator.
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { ulid } from "ulid"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { briefCorrectionCases } from "./cases"
@@ -289,6 +290,7 @@ async function runBriefCorrectionTask(input: BriefCorrectionInput, ctx: EvalCont
       attachmentService,
       memoExplorerService,
       preparedRecall: new PreparedRecall({
+        analyticsReporter: new DisabledAnalyticsReporter(),
         memoExplorerService,
         scorer: new DecisionsRelevanceScorer({
           ai: ctx.ai,

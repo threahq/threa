@@ -10,6 +10,7 @@
  * than asserting on the row alone.
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
@@ -98,6 +99,7 @@ describe("memo:created delivery", () => {
   beforeAll(async () => {
     pool = await setupTestDatabase()
     service = new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: {} as never,
       memorizer: {} as never,

@@ -8,6 +8,7 @@
  * the event that comes back out of the table.
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, testMessageContent, withTransaction, addTestMember } from "./setup"
@@ -39,6 +40,7 @@ describe("save_memo capture event", () => {
   beforeAll(async () => {
     pool = await setupTestDatabase()
     service = new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: {} as never,
       memorizer: {} as never,

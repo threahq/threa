@@ -1,3 +1,4 @@
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AgentStepTypes, MemoryModes, type StreamType, type Visibility } from "@threahq/types"
@@ -32,6 +33,7 @@ describe("reflective capture: research sources", () => {
 
   function captureService(): ReflectiveCaptureService {
     const memoService = new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: {
         classifyConversation: async () => {

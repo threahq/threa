@@ -23,6 +23,7 @@
  *   - vision-describe-image-001
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { multimodalVisionCases, type MultimodalVisionInput, type MultimodalVisionExpected } from "./cases"
 import type { MultimodalVisionOutput, VisionMessage } from "./types"
@@ -419,6 +420,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       attachmentService,
       memoExplorerService,
       preparedRecall: new PreparedRecall({
+        analyticsReporter: new DisabledAnalyticsReporter(),
         memoExplorerService,
         scorer: new DecisionsRelevanceScorer({
           ai: ctx.ai,

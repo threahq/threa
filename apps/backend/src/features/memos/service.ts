@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import { ulid } from "ulid"
 import { AISpendDeniedError } from "@threahq/agent-runtime"
+import type { AnalyticsReporter } from "@threahq/backend-common"
 import { withTransaction, withClient, type Querier } from "../../db"
 import {
   assertStreamWritable,
@@ -57,16 +58,10 @@ import {
 const MEMORY_CONTEXT_LIMIT = 20
 const MIN_CONVERSATION_MESSAGES = 1
 
-/** Logged once per classified conversation as "Memo capture outcome"; the capture-rate counter reads it. */
-type CaptureOutcome = "memorized" | "not_worthy" | "low_confidence" | "unchanged" | "empty" | "failed"
+export const MEMO_CAPTURE_OUTCOME_EVENT = "memo_capture_outcome"
 
-function logCaptureOutcome(
-  ids: { workspaceId: string; streamId: string; conversationId: string },
-  outcome: CaptureOutcome,
-  extra?: Record<string, unknown>
-): void {
-  logger.info({ ...ids, outcome, ...extra }, "Memo capture outcome")
-}
+/** One per classified conversation; the capture rate is `memorized` over all of them. */
+type CaptureOutcome = "memorized" | "not_worthy" | "low_confidence" | "unchanged" | "empty" | "failed"
 
 /** Key with the highest count, or undefined when the map is empty. */
 function mostCommon(counts: Map<string, number>): string | undefined {
@@ -292,6 +287,7 @@ export interface MemoServiceConfig {
   messageFormatter: MessageFormatter
   /** Optional — when absent, the memo pipeline runs exactly as before. */
   suggestionCollector?: SuggestionCollectorLike
+  analyticsReporter: AnalyticsReporter
 }
 
 export class MemoService implements MemoServiceLike {
@@ -301,6 +297,7 @@ export class MemoService implements MemoServiceLike {
   private embeddingService: EmbeddingServiceLike
   private messageFormatter: MessageFormatter
   private suggestionCollector?: SuggestionCollectorLike
+  private analyticsReporter: AnalyticsReporter
 
   constructor(config: MemoServiceConfig) {
     this.pool = config.pool
@@ -309,6 +306,25 @@ export class MemoService implements MemoServiceLike {
     this.embeddingService = config.embeddingService
     this.messageFormatter = config.messageFormatter
     this.suggestionCollector = config.suggestionCollector
+    this.analyticsReporter = config.analyticsReporter
+  }
+
+  /**
+   * Counted as a PostHog service event grouped by workspace, with no person
+   * profile and no content, so it holds for users who denied analytics.
+   */
+  private recordCaptureOutcome(
+    ids: { workspaceId: string; streamId: string; conversationId: string },
+    outcome: CaptureOutcome,
+    extra?: { memoCount?: number; isRevision?: boolean; confidence?: number }
+  ): void {
+    logger.info({ ...ids, outcome, ...extra }, "Memo capture outcome")
+    this.analyticsReporter.captureEvent({
+      distinctId: `workspace:${ids.workspaceId}`,
+      event: MEMO_CAPTURE_OUTCOME_EVENT,
+      properties: { outcome, ...extra, $process_person_profile: false },
+      groups: { workspace: ids.workspaceId },
+    })
   }
 
   /** One batch per stream at a time: a stream another batch holds is skipped. */
@@ -593,21 +609,20 @@ export class MemoService implements MemoServiceLike {
         }
 
         if (!classification.isKnowledgeWorthy) {
-          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "not_worthy")
+          this.recordCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "not_worthy")
           continue
         }
 
         if (classification.confidence != null && classification.confidence < MEMO_GEM_CONFIDENCE_FLOOR) {
-          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "low_confidence", {
+          this.recordCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "low_confidence", {
             confidence: classification.confidence,
-            threshold: MEMO_GEM_CONFIDENCE_FLOOR,
           })
           continue
         }
 
         // Existing memos that the classifier judged unchanged: leave them as-is.
         if (existingMemos.length > 0 && !classification.shouldReviseExisting) {
-          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "unchanged")
+          this.recordCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "unchanged")
           continue
         }
 
@@ -638,7 +653,7 @@ export class MemoService implements MemoServiceLike {
             })
 
         if (contents.length === 0) {
-          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "empty", { isRevision })
+          this.recordCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "empty", { isRevision })
           continue
         }
 
@@ -680,7 +695,7 @@ export class MemoService implements MemoServiceLike {
           })
         }
 
-        logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "memorized", {
+        this.recordCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "memorized", {
           isRevision,
           memoCount: contents.length,
         })
@@ -695,7 +710,7 @@ export class MemoService implements MemoServiceLike {
           continue
         }
         failedItemIds.add(item.id)
-        logCaptureOutcome({ workspaceId, streamId, conversationId: item.itemId }, "failed")
+        this.recordCaptureOutcome({ workspaceId, streamId, conversationId: item.itemId }, "failed")
         logger.error(
           { error, conversationId: item.itemId, workspaceId, streamId },
           "Failed to process conversation for memo"

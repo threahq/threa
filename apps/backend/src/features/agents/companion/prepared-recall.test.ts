@@ -1,6 +1,7 @@
+import { DisabledAnalyticsReporter, type AnalyticsEvent } from "@threahq/backend-common"
 import { describe, expect, it, mock } from "bun:test"
 import type { MemoExplorerResult, MemoExplorerService } from "../../memos"
-import { PreparedRecall, formatRecalledMemosBlock } from "./prepared-recall"
+import { PREPARED_RECALL_EVENT, PreparedRecall, formatRecalledMemosBlock } from "./prepared-recall"
 
 function result(id: string, title: string): MemoExplorerResult {
   return {
@@ -26,6 +27,15 @@ const params = {
   memoViewerUserId: "usr_1",
 }
 
+function recordingReporter() {
+  const captureEvent = mock((_event: AnalyticsEvent) => {})
+  return { reporter: Object.assign(new DisabledAnalyticsReporter(), { captureEvent }), captureEvent }
+}
+
+function outcomes(captureEvent: ReturnType<typeof recordingReporter>["captureEvent"]) {
+  return captureEvent.mock.calls.map(([event]) => event.properties?.outcome)
+}
+
 describe("PreparedRecall", () => {
   it("keeps the memos a reply should use, best first, within the turn's audience", async () => {
     const search = mock(async (_params: Parameters<MemoExplorerService["search"]>[0]) => [
@@ -33,7 +43,9 @@ describe("PreparedRecall", () => {
       result("memo_allergy", "Peanut allergy"),
       result("memo_diet", "Vegetarian on weekdays"),
     ])
+    const { reporter, captureEvent } = recordingReporter()
     const recall = new PreparedRecall({
+      analyticsReporter: reporter,
       memoExplorerService: { search },
       scorer: { score: async () => [0.1, 1, 0.66] },
     })
@@ -43,28 +55,53 @@ describe("PreparedRecall", () => {
     expect({
       ids: recalled.map((memo) => memo.id),
       permissions: search.mock.calls[0]?.[0].permissions,
+      events: captureEvent.mock.calls,
     }).toEqual({
       ids: ["memo_allergy", "memo_diet"],
       permissions: { accessibleStreamIds: ["stream_pad"], userId: "usr_1" },
+      events: [
+        [
+          {
+            distinctId: "workspace:ws_1",
+            event: PREPARED_RECALL_EVENT,
+            properties: {
+              outcome: "recalled",
+              candidateCount: 3,
+              recalledCount: 2,
+              durationMs: expect.any(Number),
+              $process_person_profile: false,
+            },
+            groups: { workspace: "ws_1" },
+          },
+        ],
+      ],
     })
   })
 
-  it("recalls nothing when the candidates could not be scored", async () => {
+  it("recalls nothing, and counts it, when the candidates could not be scored", async () => {
+    const { reporter, captureEvent } = recordingReporter()
     const recall = new PreparedRecall({
+      analyticsReporter: reporter,
       memoExplorerService: { search: async () => [result("memo_allergy", "Peanut allergy")] },
       scorer: { score: async () => null },
     })
 
-    expect(await recall.recall(params)).toEqual([])
+    expect({ recalled: await recall.recall(params), outcomes: outcomes(captureEvent) }).toEqual({
+      recalled: [],
+      outcomes: ["unscored"],
+    })
   })
 
-  it("goes on without recall when the search stalls or fails", async () => {
+  it("goes on without recall when the search stalls or fails, counting each", async () => {
+    const { reporter, captureEvent } = recordingReporter()
     const stalled = new PreparedRecall({
+      analyticsReporter: reporter,
       memoExplorerService: { search: () => new Promise(() => {}) },
       scorer: { score: async () => [] },
       timeoutMs: 10,
     })
     const failing = new PreparedRecall({
+      analyticsReporter: reporter,
       memoExplorerService: {
         search: async () => {
           throw new Error("db down")
@@ -73,15 +110,24 @@ describe("PreparedRecall", () => {
       scorer: { score: async () => [] },
     })
 
-    expect({ stalled: await stalled.recall(params), failing: await failing.recall(params) }).toEqual({
+    expect({
+      stalled: await stalled.recall(params),
+      failing: await failing.recall(params),
+      outcomes: outcomes(captureEvent),
+    }).toEqual({
       stalled: [],
       failing: [],
+      outcomes: ["timeout", "failed"],
     })
   })
 
   it("does not search for an empty message", async () => {
     const search = mock(async () => [])
-    const recall = new PreparedRecall({ memoExplorerService: { search }, scorer: { score: async () => [] } })
+    const recall = new PreparedRecall({
+      analyticsReporter: new DisabledAnalyticsReporter(),
+      memoExplorerService: { search },
+      scorer: { score: async () => [] },
+    })
 
     await recall.recall({ ...params, query: "   " })
 
@@ -92,6 +138,7 @@ describe("PreparedRecall", () => {
 describe("formatRecalledMemosBlock", () => {
   it("renders each memo escaped, with its id and capture date, and nothing when none were recalled", async () => {
     const recall = new PreparedRecall({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       memoExplorerService: { search: async () => [result("memo_allergy", "Peanut <allergy>")] },
       scorer: { score: async () => [1] },
     })

@@ -455,6 +455,7 @@ export async function startServer(): Promise<ServerInstance> {
   const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
   const preparedRecall = new PreparedRecall({
     memoExplorerService,
+    analyticsReporter,
     scorer: config.useStubAI
       ? new StubRelevanceScorer()
       : new ResidencyRoutedRelevanceScorer({
@@ -1127,6 +1128,7 @@ export async function startServer(): Promise<ServerInstance> {
     ? new StubMemoService()
     : new MemoService({
         pool,
+        analyticsReporter,
         classifier: new ResidencyRoutedMemoClassifier({
           residency: aiResidency,
           decisions: new DecisionsMemoClassifier(ai),

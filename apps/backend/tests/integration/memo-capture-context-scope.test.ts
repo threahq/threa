@@ -1,3 +1,4 @@
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { ConversationStatuses, type StreamType, type Visibility } from "@threahq/types"
@@ -47,6 +48,7 @@ describe("memo capture: model context honors memo scope", () => {
 
   function service(): MemoService {
     return new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: {
         classifyConversation: async (_conversation: unknown, _messages: unknown, existing: { abstract: string }[]) => {

@@ -1,3 +1,4 @@
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
 import {
@@ -198,6 +199,7 @@ describe("memo sources: deleted and edited messages", () => {
   /** A batch whose memorizer captures one memo citing every message it was shown. */
   function capturingService(classify: () => Promise<ConversationClassification> = async () => worthy): MemoService {
     return new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: { classifyConversation: classify },
       memorizer: {
@@ -264,6 +266,7 @@ describe("memo sources: deleted and edited messages", () => {
     const memorized: string[][] = []
 
     await new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: { classifyConversation: async () => worthy },
       memorizer: {
