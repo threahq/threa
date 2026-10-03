@@ -270,4 +270,80 @@ export const memoClassifierCases: EvalCase<MemoClassifierInput, MemoClassifierEx
     },
     expectedOutput: { expectKnowledgeWorthy: true, expectReviseExisting: true },
   },
+
+  {
+    id: "personal-health-fact-001",
+    name: "Personal: a lasting health fact about someone they care for is knowledge",
+    input: {
+      topicSummary: "Allergitest för Ylva",
+      category: "personal",
+      messages: [
+        {
+          ...KRIS,
+          contentMarkdown: "Allergitestet för Ylva klart. Hon är allergisk mot sesam, inte jordnötter som vi trodde",
+          minutesAgo: 20,
+        },
+        { ...KRIS, contentMarkdown: "Så ingen tahini eller hummus. Jordnötter och nötter går bra", minutesAgo: 18 },
+        { ...PIERRE, contentMarkdown: "Skönt att ni vet nu iaf!", minutesAgo: 15 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true },
+  },
+
+  {
+    id: "personal-availability-001",
+    name: "Personal: a months-long absence with its cover is knowledge, unlike a meetup",
+    input: {
+      topicSummary: "Parental leave",
+      category: "personal",
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown: "Heads up before it's announced: I'm on parental leave from November 3 until January 9.",
+          minutesAgo: 20,
+        },
+        { ...KRIS, contentMarkdown: "Congrats!! Who takes your on-call weeks?", minutesAgo: 18 },
+        { ...PIERRE, contentMarkdown: "Mira covers all my on-call shifts while I'm away.", minutesAgo: 15 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true },
+  },
+
+  {
+    id: "own-negotiation-001",
+    name: "Agency: a deal the participants are party to is theirs, not relayed news",
+    input: {
+      topicSummary: "Board prep",
+      category: "knowledge",
+      messages: [
+        {
+          ...KRIS,
+          contentMarkdown: "Confidential: second meeting with Halvard about them acquiring us. Codename KESTREL.",
+          minutesAgo: 30,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "They floated a 42M EUR valuation. Board meets on the 20th to decide whether to continue.",
+          minutesAgo: 28,
+        },
+        { ...KRIS, contentMarkdown: "Nobody outside the board knows yet.", minutesAgo: 27 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true },
+  },
+
+  {
+    id: "personal-out-today-001",
+    name: "Personal: being out sick today is a passing state, not knowledge",
+    input: {
+      topicSummary: "Sjuk idag",
+      category: "personal",
+      messages: [
+        { ...PIERRE, contentMarkdown: "Ligger hemma med feber idag, kollar slack ibland", minutesAgo: 20 },
+        { ...KRIS, contentMarkdown: "Krya på dig! Jag tar mötet kl 14", minutesAgo: 18 },
+        { ...PIERRE, contentMarkdown: "Tack, räknar med att vara tillbaka imorgon", minutesAgo: 15 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: false },
+  },
 ]

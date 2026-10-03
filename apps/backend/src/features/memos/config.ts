@@ -324,12 +324,13 @@ Knowledge-worthy conversations:
 - Record learnings the participants discovered or validated themselves (from debugging, incidents, experiments, or observing a tool they build with behave a certain way)
 - Establish durable context about WHY things are the way they are
 - Contain reference information that will be useful later
+- Record a lasting fact about a participant or someone they look after (an allergy, a leave period and who covers it, a standing day off), or a deal or negotiation they are themselves party to
 
 NOT knowledge-worthy:
 - Pure social chat or banter
 - Transient status: a bare "it's broken / it works / it's slow right now" with no cause, fix, or decision — the state is stale within the hour, so nothing durable was produced (the FIX for that same bug WOULD be worthy — judge by what was produced, not the subject)
 - Reactions to news, product releases, or announcements — hot takes and impressions about things outside the participants' control that set no direction for their own work ("the new model looks disappointing", "did you see the leak?") fail the agency test. This is topic-neutral: the SAME subject becomes worthy the moment the participants turn it into something they produced — a validated learning about how a tool behaves, or a decision to adopt or drop it.
-- Personal small talk: travel plans, whereabouts, moods, weekend logistics
+- Personal small talk: moods, where someone is today, plans for this evening or weekend
 - Conversations where important information is in external links only
 - Incomplete discussions that trail off without resolution
 
@@ -391,17 +392,18 @@ const WORTHY_CRITERIA: Record<KnowledgeType, string> = {
   learning:
     "The participants discovered or validated something themselves, through debugging, an incident, an experiment, or watching a tool they build with behave a certain way.",
   reference:
-    "A stable look-it-up fact the participants established or pinned down: an id, a value, a name, a location, a durable constraint.",
+    "A stable look-it-up fact the participants established or pinned down: an id, a value, a name, a location, a durable constraint — including a lasting fact about a participant or someone they look after, such as an allergy, a leave period and who covers it, or a standing day off.",
   context:
-    "Durable background on WHY something is the way it is, or where it now lives — the state of their own setup and what moved it there. Reach for this LAST, after the four above: a passing status or a reaction that fits none of them is not context, it is not worth capturing.",
+    "Durable background on WHY something is the way it is, or where it now lives — the state of their own setup and what moved it there, or where a deal or negotiation they are party to stands. Reach for this LAST, after the four above: a passing status or a reaction that fits none of them is not context, it is not worth capturing.",
 }
 
 const UNWORTHY_CRITERIA = {
   transient_status:
     "A passing state — it is broken, it works, it is slow right now — with no cause, fix, decision, or lasting change attached. True for an hour, worthless after. The FIX for that same problem would be a procedure or a learning; this is the bare state.",
   reaction_or_relay:
-    "The participants passed along or reacted to something outside their own control: news, a release, an announcement, a rumor, a third-party event. The underlying fact may be perfectly durable and it still belongs here, because they did not produce it. Recasting the reaction as a fact about them does not move it.",
-  social: "Banter, small talk, travel plans, whereabouts, moods, logistics. Nothing was produced and nothing lasts.",
+    "The participants passed along or reacted to something they are not party to: news, a release, an announcement, a rumor, a third-party event. The underlying fact may be perfectly durable and it still belongs here, because they did not produce it. Recasting the reaction as a fact about them does not move it. An offer made to them, a negotiation they are in, or their own test result is theirs, never this.",
+  social:
+    "Banter, small talk, moods, and short-lived personal logistics: where someone is today, plans for this evening or weekend. Nothing was produced and nothing lasts. A personal fact that stays true for months is a reference, not this.",
   unresolved:
     "A discussion that trails off without landing, or whose substance lives only behind an external link. Something was being worked on; nothing was reached.",
 }
@@ -415,7 +417,7 @@ export const WORTHINESS_INSTRUCTIONS = `What durable knowledge did the participa
 
 Two tests decide it, and an option on the worthy side has to pass BOTH:
 - DURABILITY: would the core still be true and useful in six months?
-- AGENCY: did the participants decide it, work it out, or validate it themselves, rather than voice a reaction to something outside their control?
+- AGENCY: did the participants decide it, work it out, or validate it themselves, rather than voice a reaction to something outside their control? A first-hand fact about their own lives, or a deal they are party to, is theirs.
 
 A conversation is not worth capturing just because it is long or technical. If the durable core is "they chatted about X", pick the option on the unworthy side that names why. Message tags carry a relative \`age\` — a passing state described days ago has gone stale, while a decision or a validated learning stays durable regardless of age.`
 
@@ -431,7 +433,7 @@ const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team
 
 Before writing anything, gate every candidate through two topic-neutral tests — a candidate that fails EITHER is not a memo. Apply them to what was actually produced, never blanket-ban the subject. A whole conversation can pass zero candidates; returning no memos is correct and common when nothing here lasts or nothing here was produced by the participants:
 - DURABLE? Would the core still be true and useful in six months? A worked-out procedure, a committed decision, a validated finding lasts. A passing state — "it's broken / it works / it's slow right now" — is stale within the hour and yields nothing; the CAUSE or FIX behind it is what's durable, so capture what was produced, not the passing state.
-- PRODUCED BY THEM? Did the participants decide it, work it out, or validate it themselves — or are they relaying or reacting to something outside their control (news, a release, a third-party event, a rumor)? Relay and reaction fail this gate EVEN WHEN the underlying fact is perfectly durable: "Company X shut down its product" or "they don't want to work there because of the CEO" is still true next year, but the participants only passed it along — it is not knowledge they produced, so it is not a memo. Recasting a reaction as a fact about them ("they dislike X", "they found Y impressive") does not rescue it. The moment they turn that same subject into something they produced — a decision to adopt or drop it, or a learning they validated about a tool they build with — it passes.
+- PRODUCED BY THEM? Did the participants decide it, work it out, or validate it themselves — or are they relaying or reacting to something outside their control (news, a release, a third-party event, a rumor)? Relay and reaction fail this gate EVEN WHEN the underlying fact is perfectly durable: "Company X shut down its product" or "they don't want to work there because of the CEO" is still true next year, but the participants only passed it along — it is not knowledge they produced, so it is not a memo. Recasting a reaction as a fact about them ("they dislike X", "they found Y impressive") does not rescue it. A first-hand, lasting fact about their own lives (an allergy, a leave period and who covers it, a standing day off) or a deal they are party to (an offer made to them) is theirs and passes. The moment they turn that same subject into something they produced — a decision to adopt or drop it, or a learning they validated about a tool they build with — it passes.
 
 How to write the memos that clear both gates:
 1. ONE TOPIC PER MEMO. If a conversation settles two unrelated things (e.g. a deployment decision and a hiring update), produce two separate memos. Never blend topics into a single memo.
@@ -450,7 +452,7 @@ CHOOSING knowledgeType — pick the tightest fit; if nothing fits, the memo prob
 - decision: a choice the participants committed to, with its rationale.
 - procedure: a sequence they worked out that reliably achieves something.
 - learning: something they discovered or validated themselves.
-- reference: a stable, look-it-up fact worth pinning (an id, a value, a name).
+- reference: a stable, look-it-up fact worth pinning (an id, a value, a name, a lasting personal fact).
 - context: durable "why it is this way" background that outlives the moment. Reach for it LAST, not as a catch-all — a transient status, a passing reaction, or an event that fits none of the other types is not context, it is not a memo.
 
 Output ONLY valid JSON matching the schema.

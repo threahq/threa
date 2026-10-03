@@ -296,4 +296,31 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       expectSupersedesExisting: true,
     },
   },
+
+  {
+    id: "personal-facts-captured-001",
+    name: "Personal: a lasting health fact and a leave period are memos, a sick day and congratulations are not",
+    input: {
+      category: "extraction",
+      messages: [
+        {
+          ...KRIS,
+          contentMarkdown: "Allergitestet för Ylva klart. Hon är allergisk mot sesam, inte jordnötter som vi trodde",
+          minutesAgo: 30,
+        },
+        { ...KRIS, contentMarkdown: "Så ingen tahini eller hummus. Jordnötter och nötter går bra", minutesAgo: 28 },
+        { ...PIERRE, contentMarkdown: "Skönt att ni vet! Btw jag är föräldraledig 3 nov till 9 jan", minutesAgo: 20 },
+        { ...PIERRE, contentMarkdown: "Mira tar alla mina jourpass medan jag är borta", minutesAgo: 18 },
+        { ...PIERRE, contentMarkdown: "Är hemma sjuk idag förresten, så svarar lite segt", minutesAgo: 17 },
+        { ...KRIS, contentMarkdown: "Grattis!! 🎉", minutesAgo: 15 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 2,
+      maxMemos: 2,
+      mustCoverAny: [["sesam", "sesame"], ["Mira"], ["nov"]],
+      mustNotContain: ["sjuk", "sick", "Grattis"],
+      conclusionMustState: "Ylva is allergic to sesame, not peanuts",
+    },
+  },
 ]
