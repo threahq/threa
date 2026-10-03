@@ -589,7 +589,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
         )}
         {!isDraft &&
           stream &&
-          !stream.archivedAt &&
           (isMobile ? (
             <>
               <Button
@@ -604,7 +603,10 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
               <SidebarActionDrawer
                 open={isMenuDrawerOpen}
                 onOpenChange={setIsMenuDrawerOpen}
-                actions={panelMenuActions}
+                // An archived stream keeps only the view rows.
+                actions={
+                  stream.archivedAt ? panelMenuActions.filter((a) => a.id === "stream-context") : panelMenuActions
+                }
                 title="Stream actions"
                 description="Choose an action for this stream."
                 header={
@@ -620,15 +622,17 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
               />
             </>
           ) : (
-            <SidebarActionMenu
-              actions={panelMenuActions}
-              ariaLabel="Stream actions"
-              trigger={
-                <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" aria-label="Stream actions">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              }
-            />
+            !stream.archivedAt && (
+              <SidebarActionMenu
+                actions={panelMenuActions}
+                ariaLabel="Stream actions"
+                trigger={
+                  <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" aria-label="Stream actions">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                }
+              />
+            )
           ))}
         {/* Hide X close button on mobile (back button used instead) */}
         {!isMobile && <SidePanelClose onClose={onClose} />}

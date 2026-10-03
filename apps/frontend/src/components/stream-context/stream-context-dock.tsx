@@ -4,6 +4,8 @@ import { usePanelLayout } from "@/hooks/use-panel-layout"
 
 interface StreamContextDockTarget {
   target: HTMLElement | null
+  /** False when the column can't fit beside the main column; the overview floats over the stream instead. */
+  fits: boolean
 }
 
 const StreamContextDockContext = createContext<StreamContextDockTarget | null>(null)

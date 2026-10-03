@@ -5,6 +5,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * Desktop "In this stream" docks beside the stream it lists instead of covering
  * it: the stream stays usable, a jump scrolls it in place with the overview
  * still open, and a thread's overview docks to the right of the thread panel.
+ * Where the column can't fit beside the main column it floats over the stream's
+ * top-right corner instead.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -97,4 +99,120 @@ test("docks beside the stream, jumps in place, and docks a thread's overview bes
   await page.keyboard.press("Escape")
   await expect(dock(page)).toHaveCount(0)
   await expect(page.getByTestId("panel").getByText("thread link")).toBeVisible()
+})
+
+async function seedChannelWithThread(page: Page, prefix: string) {
+  await loginAndCreateWorkspace(page, prefix)
+  await createChannel(page, `${prefix}-${Date.now().toString(36)}`)
+  const url = page.url()
+  const workspaceId = url.match(/\/w\/([^/]+)/)?.[1]
+  const streamId = url.match(/\/s\/([^/?]+)/)?.[1]
+  expect(workspaceId && streamId, `ids in URL: ${url}`).toBeTruthy()
+  const anchorId = await postMessage(page, workspaceId!, streamId!, "channel link https://example.com/alpha")
+  const threadId = await createThread(page, workspaceId!, streamId!, anchorId)
+  await postMessage(page, workspaceId!, threadId, "thread link https://example.org/beta")
+  return { workspaceId: workspaceId!, streamId: streamId!, threadId }
+}
+
+test("floats over the thread where the dock can't fit beside it, and docks once there's room", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-narrow")
+
+  // Beside the pinned sidebar, main (400) + thread (300) fit but a third
+  // 300px column doesn't.
+  await page.setViewportSize({ width: 1150, height: 900 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
+  const toggle = page.getByTestId("panel").getByRole("button", { name: "In this stream" })
+  await toggle.click()
+  await expect(dock(page)).toBeFocused()
+  await expect(dock(page).getByText("example.org").first()).toBeVisible()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByTestId("stream-context-dock").getByRole("complementary")).toHaveCount(0)
+
+  // Over the thread's top-right corner, below its header, with main untouched.
+  const floating = await dock(page).boundingBox()
+  const panel = await box(page, '[data-testid="panel"]')
+  const panelHeader = await box(page, '[data-testid="panel"] header')
+  expect(floating!.x + floating!.width).toBeGreaterThan(panel.x + panel.width - 16)
+  expect(floating!.y).toBeGreaterThanOrEqual(panelHeader.y + panelHeader.height)
+  expect((await box(page, '[data-editor-zone="main"]')).width).toBeGreaterThanOrEqual(400)
+
+  await page.keyboard.press("Escape")
+  await expect(dock(page)).toHaveCount(0)
+  await expect(toggle).toBeFocused()
+
+  // Crossing the fit width moves the overview between float and dock without
+  // pulling focus out of the composer.
+  await toggle.click()
+  await expect(dock(page)).toBeFocused()
+  const composer = page.locator('[data-testid="panel"] [contenteditable="true"]')
+  await composer.click()
+  await expect(composer).toBeFocused()
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await expect(page.getByTestId("stream-context-dock").getByText("example.org").first()).toBeVisible()
+  await expect(dock(page)).toHaveCount(1)
+  await expect(composer).toBeFocused()
+  await page.setViewportSize({ width: 1150, height: 900 })
+  await expect(page.getByTestId("stream-context-dock").getByRole("complementary")).toHaveCount(0)
+  await expect(dock(page).getByText("example.org").first()).toBeVisible()
+  await expect(composer).toBeFocused()
+
+  // The float covers the thread, so a jump closes it.
+  const row = dock(page).locator("div.group", { hasText: "example.org" }).first()
+  await row.hover()
+  await row.getByRole("button", { name: "Go to message", exact: true }).click()
+  await expect(dock(page)).toHaveCount(0)
+  expect(new URL(page.url()).searchParams.get("context")).toBeNull()
+  await expect(page.getByTestId("panel").getByText("thread link")).toBeInViewport()
+})
+
+test("the floating overview steps aside for an aside stage and returns when it closes", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId } = await seedChannelWithThread(page, "context-stage")
+
+  // Beside the pinned sidebar, a 900px window leaves no room for main + dock.
+  await page.setViewportSize({ width: 900, height: 900 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await page.locator("header").getByRole("button", { name: "In this stream" }).click()
+  await expect(dock(page).getByText("example.com").first()).toBeVisible()
+
+  await page.getByTestId("aside-header-chip").click()
+  await expect(page.getByTestId("aside-stage")).toBeVisible({ timeout: 15000 })
+  await expect(dock(page)).toHaveCount(0)
+  expect(new URL(page.url()).searchParams.get("context")).not.toBeNull()
+
+  await page.getByRole("button", { name: "Close aside" }).click()
+  await expect(page.getByTestId("aside-stage")).toHaveCount(0)
+  await expect(dock(page).getByText("example.com").first()).toBeVisible()
+})
+
+test("offers the overview from an archived channel's mobile sheet", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId } = await seedChannelWithThread(page, "context-archived")
+  await expectApiOk(
+    await page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/archive`),
+    "archive channel"
+  )
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  await page.locator("header").getByRole("button", { name: "Stream actions" }).click()
+  await page.getByRole("button", { name: /In this stream/ }).click()
+  await expect(page.getByRole("dialog").getByText("example.com").first()).toBeVisible()
+})
+
+test("offers the overview from an archived thread's mobile panel sheet", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-archived-thread")
+  await expectApiOk(
+    await page.request.post(`/api/workspaces/${workspaceId}/streams/${threadId}/archive`),
+    "archive thread"
+  )
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
+  await page.locator("header", { hasText: "Back" }).getByRole("button", { name: "Stream actions" }).click()
+  const sheet = page.getByRole("dialog")
+  await sheet.getByRole("button", { name: /In this stream/ }).click()
+  await expect(page.getByRole("dialog").getByText("example.org").first()).toBeVisible()
 })

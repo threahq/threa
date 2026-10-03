@@ -1,6 +1,7 @@
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { usePanel, useSidebar } from "@/contexts"
 import { memoDeepLink } from "@/lib/memo-url"
+import { useStreamContextDock } from "./stream-context-dock"
 import { StreamContextGallery } from "./stream-context-gallery"
 import { StreamContextSurface } from "./stream-context-surface"
 import { useStreamContextOpen } from "./use-stream-context-open"
@@ -17,20 +18,22 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
   const navigate = useNavigate()
   const { openPanel } = usePanel()
   const { isMobile } = useSidebar()
+  const dock = useStreamContextDock()
+  const coversStream = isMobile || dock?.fits === false
   const gallery = useStreamGallery()
 
   // The desktop dock sits beside the stream, so it stays open; the phone's
-  // drawer covers it and steps aside. A message in one of the root's threads
-  // opens that thread, in the same navigation: a second one would start from
-  // the stale params and drop the panel. A fresh push gives StreamContent's
-  // `?m=` effect a new location key to act on.
+  // drawer and the floating panel cover it and step aside. A message in one of
+  // the root's threads opens that thread, in the same navigation: a second one
+  // would start from the stale params and drop the panel. A fresh push gives
+  // StreamContent's `?m=` effect a new location key to act on.
   const jumpToMessage = (messageId: string, inStreamId = streamId) => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev)
       if (inStreamId !== streamId) {
         next.delete("context")
         next.set("panel", inStreamId)
-      } else if (isMobile) next.delete("context")
+      } else if (coversStream) next.delete("context")
       next.set("m", messageId)
       return next
     })
