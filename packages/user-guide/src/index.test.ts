@@ -17,6 +17,10 @@ describe("guide articles", () => {
     expect(new Set(slugs).size).toBe(slugs.length)
   })
 
+  test("should not use the overview's slug when naming an article", () => {
+    expect(articles.map((a) => a.slug)).not.toContain("index")
+  })
+
   test("should link only to app destinations the app understands when a body uses an app: link", () => {
     const rejected = articles.flatMap((a) =>
       hrefs(a.body)

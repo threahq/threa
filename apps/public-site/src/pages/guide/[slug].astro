@@ -1,0 +1,21 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import { guideArticles, renderGuideArticle } from "../../lib/user-guide"
+
+export function getStaticPaths() {
+  return guideArticles.map((article) => ({ params: { slug: article.slug }, props: { article } }))
+}
+
+const { article } = Astro.props
+const { html, sections } = await renderGuideArticle(article)
+---
+
+<DocsLayout
+  area="guide"
+  title={`${article.title} · Threa User Guide`}
+  description={article.summary}
+  current={article.slug}
+  sections={sections}
+>
+  <Fragment set:html={html} />
+</DocsLayout>

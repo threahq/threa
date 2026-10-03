@@ -345,7 +345,10 @@
     "apps/public-site": {
       "name": "@threahq/public-site",
       "dependencies": {
+        "@astrojs/markdown-remark": "6.3.11",
         "@astrojs/sitemap": "^3.7.3",
+        "@threahq/types": "workspace:*",
+        "@threahq/user-guide": "workspace:*",
         "astro": "^5.6.1",
         "katex": "^0.16.47",
       },

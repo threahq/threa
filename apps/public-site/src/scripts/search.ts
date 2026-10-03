@@ -7,14 +7,15 @@ import {
   type SearchHit,
 } from "../lib/search"
 
-const INDEX_URL = "/developers/search-index.json"
 const HIT_KEY = "threa:search-hit"
 const FLASH_MS = 1600
 
 let indexPromise: Promise<PreparedEntry[]> | null = null
 let indexReady = false
 function loadIndex(): Promise<PreparedEntry[]> {
-  indexPromise ??= fetch(INDEX_URL)
+  const indexUrl = document.body.dataset.searchIndex
+  if (!indexUrl) throw new Error("search: <body> has no data-search-index")
+  indexPromise ??= fetch(indexUrl)
     .then((res) => {
       if (!res.ok) throw new Error(`search index: HTTP ${res.status}`)
       return res.json() as Promise<SearchEntry[]>

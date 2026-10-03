@@ -2776,3 +2776,53 @@ body.docs-resizing .api-op {
 [data-theme="dark"] .note.warn {
   border-left-color: hsl(8 55% 55%);
 }
+
+/* ---------- USER GUIDE ---------- */
+.docs-draft-banner {
+  max-width: 760px;
+  margin: 0 0 28px;
+  padding: 10px 14px;
+  background: hsl(var(--paper-warm));
+  border: 1px dashed hsl(var(--gold-dim));
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: hsl(var(--ink-soft));
+}
+.docs-draft-banner strong {
+  color: hsl(var(--ink));
+}
+.docs-draft-banner a,
+.docs-article.is-guide a:not(.app-link) {
+  color: hsl(var(--gold-dim));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* An app: link in running prose: a chip, so it reads as a place in the app. */
+.docs-article a.app-link {
+  display: inline-block;
+  padding: 0 7px;
+  background: hsl(var(--paper-sunk));
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  color: hsl(var(--ink));
+  text-decoration: none;
+  line-height: 1.5;
+}
+.docs-article a.app-link:hover {
+  border-color: hsl(var(--gold-dim));
+}
+
+.docs-article .guide-list {
+  list-style: none;
+  padding: 0;
+}
+.docs-article .guide-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.docs-article .guide-list a {
+  font-weight: 600;
+}

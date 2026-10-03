@@ -1,0 +1,30 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import { guideSections } from "../../lib/user-guide"
+---
+
+<DocsLayout
+  area="guide"
+  current="index"
+  sections={guideSections.map((s) => ({ id: s.id, label: s.title }))}
+>
+  <h1>Threa user guide</h1>
+  <p>
+    How to use Threa day to day: write in a private scratchpad, bring in your team, and let Ariadne and memory do the
+    remembering.
+  </p>
+
+  {guideSections.map((section) => (
+    <>
+      <h2 id={section.id}>{section.title}</h2>
+      <ul class="guide-list">
+        {section.articles.map((a) => (
+          <li>
+            <a href={`/guide/${a.slug}`}>{a.title}</a>
+            <span>{a.summary}</span>
+          </li>
+        ))}
+      </ul>
+    </>
+  ))}
+</DocsLayout>
