@@ -201,7 +201,9 @@ html[data-input="mouse"] .message-hover-wash:hover {
  */
 
 @layer base {
-  /* Disable double-tap zoom on mobile — the app is not zoomable.
+  /* The app is not zoomable: the shell is sized to the visual viewport, so a
+     pinched page crops every surface and pans in both axes. `pan-x pan-y`
+     drops pinch and double-tap zoom, which `manipulation` only half did.
      Lock html/body scroll to prevent mobile browsers from scrolling
      the page-level viewport when the keyboard is open (which lets the
      message input slide past the top of the screen). */
@@ -212,7 +214,7 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 
   html {
-    touch-action: manipulation;
+    touch-action: pan-x pan-y;
   }
 
   :root {
