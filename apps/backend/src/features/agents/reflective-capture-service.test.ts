@@ -138,6 +138,7 @@ describe("ReflectiveCaptureService", () => {
 
     expect(result).toEqual({ captured: 1 })
     expect(claim).toHaveBeenCalledTimes(1)
+    expect(claim).toHaveBeenCalledWith(expect.anything(), "ws_1", "session_1", expect.any(Date))
     // Anchored to the real trigger message, participants resolved from it.
     expect(captureSessionReflection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -276,7 +277,7 @@ describe("ReflectiveCaptureService", () => {
     await expect(service(memoService).capture({ workspaceId: "ws_1", sessionId: "session_1" })).rejects.toThrow(
       "embed provider timeout"
     )
-    expect(release).toHaveBeenCalledWith(expect.anything(), "session_1")
+    expect(release).toHaveBeenCalledWith(expect.anything(), "ws_1", "session_1")
   })
 
   test("no-ops when it loses the claim race to a concurrent delivery", async () => {

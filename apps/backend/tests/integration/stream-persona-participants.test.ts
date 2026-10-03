@@ -65,6 +65,7 @@ describe("Stream Persona Participants", () => {
       // Verify participation was recorded
       const hasParticipated = await StreamPersonaParticipantRepository.hasParticipated(
         pool,
+        testWorkspaceId,
         testStreamId,
         testPersonaId
       )
@@ -93,8 +94,10 @@ describe("Stream Persona Participants", () => {
       })
 
       // Verify NO participation was recorded
-      const participants = await StreamPersonaParticipantRepository.findPersonasByStream(pool, testStreamId)
-      expect(participants).toHaveLength(0)
+      const { rows } = await pool.query(`SELECT persona_id FROM stream_persona_participants WHERE stream_id = $1`, [
+        testStreamId,
+      ])
+      expect(rows).toEqual([])
     })
 
     test("should be idempotent - multiple messages create only one record", async () => {
@@ -135,19 +138,19 @@ describe("Stream Persona Participants", () => {
       })
 
       // Verify only one participation record exists
-      const participants = await StreamPersonaParticipantRepository.findPersonasByStream(pool, testStreamId)
-      expect(participants).toHaveLength(1)
-      expect(participants[0].personaId).toBe(testPersonaId)
+      const { rows } = await pool.query(`SELECT persona_id FROM stream_persona_participants WHERE stream_id = $1`, [
+        testStreamId,
+      ])
+      expect(rows).toEqual([{ persona_id: testPersonaId }])
     })
   })
 
   describe("Repository Queries", () => {
-    test("should find all streams where a persona has participated", async () => {
+    test("should report participation per stream", async () => {
       const testWorkspaceId = workspaceId()
       const testPersonaId = personaId()
       const creatorId = userId()
 
-      // Create 3 streams
       const stream1 = streamId()
       const stream2 = streamId()
       const stream3 = streamId()
@@ -160,97 +163,22 @@ describe("Stream Persona Participants", () => {
         )
       }
 
-      // Persona participates in stream1 and stream2, but not stream3
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: stream1,
-        authorId: testPersonaId,
-        authorType: "persona",
-        ...testMessageContent("Hello in stream 1"),
-      })
-
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: stream2,
-        authorId: testPersonaId,
-        authorType: "persona",
-        ...testMessageContent("Hello in stream 2"),
-      })
-
-      // Verify findStreamsByPersona returns correct streams
-      const streams = await StreamPersonaParticipantRepository.findStreamsByPersona(pool, testPersonaId)
-      expect(streams).toHaveLength(2)
-      expect(streams).toContain(stream1)
-      expect(streams).toContain(stream2)
-      expect(streams).not.toContain(stream3)
-    })
-
-    test("should filter streams where ALL personas have participated", async () => {
-      const testWorkspaceId = workspaceId()
-      const persona1 = personaId()
-      const persona2 = personaId()
-      const creatorId = userId()
-
-      // Create 3 streams
-      const stream1 = streamId()
-      const stream2 = streamId()
-      const stream3 = streamId()
-
-      for (const sid of [stream1, stream2, stream3]) {
-        await pool.query(
-          `INSERT INTO streams (id, workspace_id, type, visibility, created_by)
-           VALUES ($1, $2, 'scratchpad', 'private', $3)`,
-          [sid, testWorkspaceId, creatorId]
-        )
+      for (const sid of [stream1, stream2]) {
+        await eventService.createMessage({
+          workspaceId: testWorkspaceId,
+          streamId: sid,
+          authorId: testPersonaId,
+          authorType: "persona",
+          ...testMessageContent("Hello from persona"),
+        })
       }
 
-      // stream1: both personas participate
-      // stream2: only persona1 participates
-      // stream3: only persona2 participates
-
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: stream1,
-        authorId: persona1,
-        authorType: "persona",
-        ...testMessageContent("Persona 1 in stream 1"),
-      })
-
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: stream1,
-        authorId: persona2,
-        authorType: "persona",
-        ...testMessageContent("Persona 2 in stream 1"),
-      })
-
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: stream2,
-        authorId: persona1,
-        authorType: "persona",
-        ...testMessageContent("Only persona 1 in stream 2"),
-      })
-
-      await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: stream3,
-        authorId: persona2,
-        authorType: "persona",
-        ...testMessageContent("Only persona 2 in stream 3"),
-      })
-
-      // Filter for streams where BOTH personas participated
-      const result = await StreamPersonaParticipantRepository.filterStreamsWithAllPersonas(
-        pool,
-        [stream1, stream2, stream3],
-        [persona1, persona2]
+      const participated = await Promise.all(
+        [stream1, stream2, stream3].map((sid) =>
+          StreamPersonaParticipantRepository.hasParticipated(pool, testWorkspaceId, sid, testPersonaId)
+        )
       )
-
-      expect(result.size).toBe(1)
-      expect(result.has(stream1)).toBe(true)
-      expect(result.has(stream2)).toBe(false)
-      expect(result.has(stream3)).toBe(false)
+      expect(participated).toEqual([true, true, false])
     })
   })
 

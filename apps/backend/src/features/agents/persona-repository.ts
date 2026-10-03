@@ -251,60 +251,42 @@ const SELECT_FIELDS = `
 `
 
 export const PersonaRepository = {
-  async findById(db: Querier, id: string, workspaceId?: string | null): Promise<Persona | null> {
+  async findById(db: Querier, workspaceId: string, id: string): Promise<Persona | null> {
     const builtIn = await resolveBuiltInPersona(db, id, workspaceId)
     if (builtIn) return builtIn
 
-    const result = await db.query<PersonaRow>(
-      workspaceId == null
-        ? sql`
-            SELECT ${sql.raw(SELECT_FIELDS)}
-            FROM personas
-            WHERE id = ${id}
-          `
-        : sql`
-            SELECT ${sql.raw(SELECT_FIELDS)}
-            FROM personas
-            WHERE id = ${id}
-              AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
-          `
-    )
+    const result = await db.query<PersonaRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM personas
+      WHERE id = ${id}
+        AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
+    `)
     return result.rows[0] ? mapRowToPersona(result.rows[0]) : null
   },
 
-  async findByIds(db: Querier, ids: string[], workspaceId?: string | null): Promise<Persona[]> {
+  async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Persona[]> {
     if (ids.length === 0) return []
 
     const builtInConfigs = ids.map(getBuiltInAgentConfig).filter((agent): agent is BuiltInAgentConfig => agent !== null)
     const dbIds = ids.filter((id) => !getBuiltInAgentConfig(id))
-    let builtIns: Persona[]
+    let builtIns: Persona[] = []
 
-    if (workspaceId && builtInConfigs.length > 0) {
+    if (builtInConfigs.length > 0) {
       const overrides = await AgentConfigOverrideRepository.listActiveByWorkspace(db, workspaceId)
       const overridesByAgentId = new Map(overrides.map((override) => [override.agentId, override.patch]))
       builtIns = builtInConfigs.map((agent) =>
         resolveBuiltInPersonaWithOverrides(agent, overridesByAgentId, workspaceId)
       )
-    } else {
-      builtIns = builtInConfigs.map(mapBuiltInToPersona)
     }
 
     if (dbIds.length === 0) return builtIns
 
-    const result = await db.query<PersonaRow>(
-      workspaceId == null
-        ? sql`
-            SELECT ${sql.raw(SELECT_FIELDS)}
-            FROM personas
-            WHERE id = ANY(${dbIds})
-          `
-        : sql`
-            SELECT ${sql.raw(SELECT_FIELDS)}
-            FROM personas
-            WHERE id = ANY(${dbIds})
-              AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
-          `
-    )
+    const result = await db.query<PersonaRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM personas
+      WHERE id = ANY(${dbIds})
+        AND (workspace_id = ${workspaceId} OR workspace_id IS NULL)
+    `)
     return [...builtIns, ...result.rows.map(mapRowToPersona)]
   },
 

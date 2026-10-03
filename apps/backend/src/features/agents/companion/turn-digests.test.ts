@@ -1,7 +1,8 @@
-import { describe, expect, it } from "bun:test"
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { TURN_DIGEST_INJECT_COUNT } from "@threahq/agent-runtime"
 import type { TurnDigestStepContent } from "@threahq/types"
-import type { AgentSessionStep, RecentDigestStep } from "../session-repository"
-import { buildTurnDigestPromptBlock } from "./turn-digests"
+import { AgentSessionRepository, type AgentSessionStep, type RecentDigestStep } from "../session-repository"
+import { buildTurnDigestPromptBlock, loadTurnDigestPromptBlock } from "./turn-digests"
 
 function digestRow(over: {
   findings: string
@@ -96,5 +97,26 @@ describe("buildTurnDigestPromptBlock", () => {
       new Set()
     )
     expect(block).toContain("Turn completed 2026-06-09T07:00:00.000Z")
+  })
+})
+
+describe("loadTurnDigestPromptBlock", () => {
+  afterEach(() => mock.restore())
+
+  it("should read digests inside the caller's workspace", async () => {
+    const find = spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([])
+
+    await loadTurnDigestPromptBlock({} as never, {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      personaId: "persona_1",
+      accessibleStreamIds: null,
+    })
+
+    expect(find).toHaveBeenCalledWith(expect.anything(), "ws_1", {
+      streamId: "stream_1",
+      personaId: "persona_1",
+      limit: TURN_DIGEST_INJECT_COUNT,
+    })
   })
 })

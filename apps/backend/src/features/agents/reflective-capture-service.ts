@@ -35,7 +35,7 @@ export class ReflectiveCaptureService {
     const { workspaceId, sessionId } = params
     const { pool, memoService } = this.deps
 
-    const session = await AgentSessionRepository.findById(pool, sessionId)
+    const session = await AgentSessionRepository.findById(pool, workspaceId, sessionId)
     if (!session) {
       logger.debug({ sessionId }, "reflective capture skipped — session not found")
       return { captured: 0 }
@@ -53,7 +53,7 @@ export class ReflectiveCaptureService {
     const memoryModeStream = await findMemoryModeStream(pool, workspaceId, session.streamId)
     if (!isMemoryAutomationOn(memoryModeStream)) {
       // Claim so a redelivery doesn't re-resolve the stream on every attempt.
-      await AgentSessionRepository.setReflectiveCaptured(pool, sessionId, new Date())
+      await AgentSessionRepository.setReflectiveCaptured(pool, workspaceId, sessionId, new Date())
       logger.debug({ sessionId, streamId: session.streamId }, "reflective capture skipped — memory automation off")
       return { captured: 0 }
     }
@@ -64,14 +64,14 @@ export class ReflectiveCaptureService {
     // from its messages. It also needs a real in-stream message to anchor to.
     if (!digest || !digest.hasResearch || !digest.anchorMessageId) {
       // Claim anyway so a non-research session isn't re-evaluated on every redelivery.
-      await AgentSessionRepository.setReflectiveCaptured(pool, sessionId, new Date())
+      await AgentSessionRepository.setReflectiveCaptured(pool, workspaceId, sessionId, new Date())
       logger.debug({ sessionId }, "reflective capture skipped — no research residue to capture")
       return { captured: 0 }
     }
 
     // Claim once before the expensive AI work so concurrent/redelivered jobs
     // can't both classify+memorize and stack duplicate captures (INV-20).
-    const claimed = await AgentSessionRepository.setReflectiveCaptured(pool, sessionId, new Date())
+    const claimed = await AgentSessionRepository.setReflectiveCaptured(pool, workspaceId, sessionId, new Date())
     if (!claimed) {
       logger.debug({ sessionId }, "reflective capture skipped — already claimed")
       return { captured: 0 }
@@ -97,7 +97,7 @@ export class ReflectiveCaptureService {
       // claim here precedes the AI calls — the release restores that same
       // retry-on-transient-failure behavior while keeping the no-duplicate
       // guarantee (only the delivery that won the atomic claim reaches here).
-      await AgentSessionRepository.clearReflectiveCaptured(pool, sessionId).catch((clearErr) =>
+      await AgentSessionRepository.clearReflectiveCaptured(pool, workspaceId, sessionId).catch((clearErr) =>
         logger.error({ sessionId, err: clearErr }, "reflective capture — failed to release claim after error")
       )
       throw err

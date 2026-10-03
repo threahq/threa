@@ -205,6 +205,7 @@ export const DecisionRequestRepository = {
 
   /** Set-based expiry of every lapsed open decision (INV-56), returning what moved. */
   async expireDue(db: Querier, now: Date): Promise<DecisionRequestRecord[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the expiry sweep covers every workspace
     const result = await db.query<DecisionRequestRow>(sql`
       UPDATE decision_requests SET
         status = ${DecisionRequestStatuses.EXPIRED},

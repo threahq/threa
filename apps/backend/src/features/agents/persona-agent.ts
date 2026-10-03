@@ -503,11 +503,11 @@ export class PersonaAgent {
         // The draft applies over the saved persona — built-in defaults or the
         // custom row; `customBase` supplies the row for a custom (ignored for a
         // built-in). A gone/corrupt draft resolves to the saved base.
-        const savedBase = await PersonaRepository.findById(client, personaId, workspaceId)
+        const savedBase = await PersonaRepository.findById(client, workspaceId, personaId)
         persona = resolveDraftTestPersona(draft, personaId, workspaceId, savedBase) ?? savedBase
       }
       if (!persona) {
-        persona = await PersonaRepository.findById(client, personaId, workspaceId)
+        persona = await PersonaRepository.findById(client, workspaceId, personaId)
       }
       if (!persona || persona.status !== "active") {
         return { skip: true as const, reason: "persona not found or inactive" }
@@ -859,7 +859,7 @@ export class PersonaAgent {
         // Persist which message IDs are in the agent's context window
         // so edit-triggered reruns can check exact membership
         const contextMessageIds = agentContext.streamContext.conversationHistory.map((m) => m.id)
-        await AgentSessionRepository.updateContextMessageIds(pool, session.id, contextMessageIds)
+        await AgentSessionRepository.updateContextMessageIds(pool, workspaceId, session.id, contextMessageIds)
 
         // Initial context for the leading CONTEXT_RECEIVED trace step — the
         // runtime emits it as a `context:received` event at run start, through
@@ -1020,7 +1020,7 @@ export class PersonaAgent {
         // `sources` is required on the commit payload (empty array = none) so a
         // caller can't silently drop citations — see TurnCommit.
         const doSendMessage = async (msgInput: { content: string; sources: SourceItem[] }) => {
-          const latestSession = await AgentSessionRepository.findById(db, session.id)
+          const latestSession = await AgentSessionRepository.findById(db, workspaceId, session.id)
           if (!latestSession || latestSession.status !== SessionStatuses.RUNNING) {
             throw new Error(`Session ${session.id} is no longer running`)
           }
@@ -1652,7 +1652,7 @@ export class PersonaAgent {
             }),
           observers: [createSessionTraceProjector(trace), digestCollector],
           shouldAbort: async () => {
-            const latestSession = await AgentSessionRepository.findById(db, session.id)
+            const latestSession = await AgentSessionRepository.findById(db, workspaceId, session.id)
             if (!latestSession) return "session missing"
             if (latestSession.status === SessionStatuses.RUNNING) return null
             if (latestSession.status === SessionStatuses.DELETED) return "session deleted"
@@ -1701,7 +1701,7 @@ export class PersonaAgent {
 
               const [members, personas] = await Promise.all([
                 userIds.length > 0 ? UserRepository.findByIds(db, workspaceId, userIds) : Promise.resolve([]),
-                personaIds.length > 0 ? PersonaRepository.findByIds(db, personaIds, workspaceId) : Promise.resolve([]),
+                personaIds.length > 0 ? PersonaRepository.findByIds(db, workspaceId, personaIds) : Promise.resolve([]),
               ])
 
               const names = new Map<string, string>()
@@ -1766,7 +1766,7 @@ export class PersonaAgent {
               })
             },
             updateSequence: async (updateSessionId, sequence) => {
-              await AgentSessionRepository.updateLastSeenSequence(db, updateSessionId, sequence)
+              await AgentSessionRepository.updateLastSeenSequence(db, workspaceId, updateSessionId, sequence)
             },
             awaitAttachments: async (messageIds) => {
               const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
@@ -1816,7 +1816,7 @@ export class PersonaAgent {
           // that supersedes it escalates to the persona's escalationModel
           // (roadmap 2.3).
           if (isSupersedeRerun && loopResult.responseValidationFailed) {
-            await AgentSessionRepository.markResponseValidationFailed(db, session.id)
+            await AgentSessionRepository.markResponseValidationFailed(db, workspaceId, session.id)
           }
 
           if (supersededMessagePlan) {
@@ -1940,7 +1940,7 @@ export class PersonaAgent {
     const { workspaceId, supersedesSessionId, streamId, personaId, triggerMessageId } = params
     if (!supersedesSessionId) return null
 
-    const supersededSession = await AgentSessionRepository.findById(db, supersedesSessionId)
+    const supersededSession = await AgentSessionRepository.findById(db, workspaceId, supersedesSessionId)
     if (!supersededSession) {
       logger.warn({ supersedesSessionId }, "Superseded session was not found; skipping reconciliation")
       return null

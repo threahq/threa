@@ -62,7 +62,7 @@ const customConfig = {
 
 describe("PersonaRepository built-in agent config", () => {
   test("resolves Ariadne from code without requiring a personas row", async () => {
-    const persona = await PersonaRepository.findById(createDb([]), ARIADNE_AGENT_ID)
+    const persona = await PersonaRepository.findById(createDb([]), "workspace_1", ARIADNE_AGENT_ID)
 
     expect(persona).toMatchObject({
       id: ARIADNE_AGENT_ID,
@@ -90,7 +90,7 @@ describe("PersonaRepository built-in agent config", () => {
       ],
     ])
 
-    const persona = await PersonaRepository.findById(db, ARIADNE_AGENT_ID, "workspace_1")
+    const persona = await PersonaRepository.findById(db, "workspace_1", ARIADNE_AGENT_ID)
 
     expect(persona?.model).toBe("openrouter:anthropic/claude-haiku-4.5")
     expect(persona?.enabledTools).toEqual([AgentToolNames.READ_URL])
@@ -106,7 +106,7 @@ describe("PersonaRepository built-in agent config", () => {
       ],
     ])
 
-    await expect(PersonaRepository.findById(db, ARIADNE_AGENT_ID, "workspace_1")).rejects.toThrow(
+    await expect(PersonaRepository.findById(db, "workspace_1", ARIADNE_AGENT_ID)).rejects.toThrow(
       "Invalid agent config override"
     )
   })
@@ -121,15 +121,15 @@ describe("PersonaRepository built-in agent config", () => {
       ],
     ])
 
-    await expect(PersonaRepository.findById(db, ARIADNE_AGENT_ID, "workspace_1")).rejects.toThrow(
+    await expect(PersonaRepository.findById(db, "workspace_1", ARIADNE_AGENT_ID)).rejects.toThrow(
       "Invalid agent config override"
     )
   })
 
-  test("scopes DB persona reads to the caller workspace (and global system rows) when workspaceId is provided", async () => {
+  test("scopes DB persona reads to the caller workspace (and global system rows)", async () => {
     const db = createDb([[]])
 
-    await PersonaRepository.findById(db, "persona_workspace_helper", "workspace_1")
+    await PersonaRepository.findById(db, "workspace_1", "persona_workspace_helper")
 
     const query = db.queries[0] as { text: string; values: unknown[] }
     expect(query.text).toContain("workspace_id = $2")
@@ -163,11 +163,10 @@ describe("PersonaRepository built-in agent config", () => {
       [workspacePersonaRow],
     ])
 
-    const personas = await PersonaRepository.findByIds(
-      db,
-      [ARIADNE_AGENT_ID, "persona_workspace_helper"],
-      "workspace_1"
-    )
+    const personas = await PersonaRepository.findByIds(db, "workspace_1", [
+      ARIADNE_AGENT_ID,
+      "persona_workspace_helper",
+    ])
 
     expect(personas.map((persona) => persona.id)).toEqual([ARIADNE_AGENT_ID, "persona_workspace_helper"])
     expect(personas[0].model).toBe("openrouter:anthropic/claude-haiku-4.5")
@@ -210,7 +209,7 @@ describe("PersonaRepository built-in agent config", () => {
       tone_prompt: "Be blunt.",
       brevity_prompt: "Be terse.",
     }
-    const persona = await PersonaRepository.findById(createDb([[row]]), "persona_workspace_helper", "workspace_1")
+    const persona = await PersonaRepository.findById(createDb([[row]]), "workspace_1", "persona_workspace_helper")
     expect(persona).toMatchObject({
       escalationModel: "openrouter:anthropic/claude-opus-4.8",
       tonePrompt: "Be blunt.",

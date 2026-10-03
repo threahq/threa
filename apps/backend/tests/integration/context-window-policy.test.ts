@@ -95,7 +95,7 @@ async function insertCompletedSession(
     status: SessionStatuses.RUNNING,
     serverId: "test-server",
   })
-  await AgentSessionRepository.completeSession(client, id, { lastSeenSequence })
+  await AgentSessionRepository.completeSession(client, wsIdArg, id, { lastSeenSequence })
 }
 
 describe("resolveContextWindowPolicy", () => {

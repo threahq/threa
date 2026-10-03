@@ -43,9 +43,9 @@ export function buildTurnDigestPromptBlock(
 /** Fetch + filter + format in one call — the context build's single entry point. */
 export async function loadTurnDigestPromptBlock(
   db: Querier,
-  params: { streamId: string; personaId: string; accessibleStreamIds: Set<string> | null }
+  params: { workspaceId: string; streamId: string; personaId: string; accessibleStreamIds: Set<string> | null }
 ): Promise<string | null> {
-  const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, {
+  const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, params.workspaceId, {
     streamId: params.streamId,
     personaId: params.personaId,
     limit: TURN_DIGEST_INJECT_COUNT,

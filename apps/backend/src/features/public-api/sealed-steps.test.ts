@@ -177,7 +177,8 @@ describe("startBotInvocationSealedStep", () => {
       res
     )
 
-    const appendParams = append.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    const appendParams = append.mock.calls[0]?.[2] as unknown as Record<string, unknown>
+    expect(append.mock.calls[0]?.[1]).toBe("ws_1")
     expect(appendParams).toMatchObject({
       id: "step_1",
       sessionId: "binv_1",
@@ -261,7 +262,8 @@ describe("recordBotInvocationSealedStep", () => {
       res
     )
 
-    const updateParams = update.mock.calls[0]?.[2] as unknown as Record<string, unknown>
+    expect(update.mock.calls[0]?.slice(1, 3)).toEqual(["ws_1", "step_1"])
+    const updateParams = update.mock.calls[0]?.[3] as unknown as Record<string, unknown>
     // sessionId scopes the finalize so a caller-supplied stepId can't touch another session's step.
     expect(updateParams).toMatchObject({
       sessionId: "binv_1",
@@ -293,7 +295,7 @@ describe("recordBotInvocationSealedStep", () => {
       res
     )
 
-    const appendParams = append.mock.calls[0]?.[1] as unknown as Record<string, unknown>
+    const appendParams = append.mock.calls[0]?.[2] as unknown as Record<string, unknown>
     expect(appendParams).toMatchObject({ id: "step_1", contentCiphertext: "c2VhbGVk" })
     expect(appendParams.completedAt).toBeInstanceOf(Date)
     // The fallback advances the inline indicator (progress) plus the completed frame.
@@ -314,7 +316,7 @@ describe("recordBotInvocationSealedStep", () => {
       res
     )
 
-    expect(heartbeat).toHaveBeenCalledWith(expect.anything(), "binv_1")
+    expect(heartbeat).toHaveBeenCalledWith(expect.anything(), "ws_1", "binv_1")
   })
 })
 
@@ -454,7 +456,7 @@ describe("sendBotInvocationSealedMessage", () => {
 
     await handlers.sendBotInvocationSealedMessage(req(sealedBody), res)
 
-    expect(findSessionForUpdate).toHaveBeenCalledWith(expect.anything(), "binv_1")
+    expect(findSessionForUpdate).toHaveBeenCalledWith(expect.anything(), "ws_1", "binv_1")
     const claimOrder = findActiveClaim.mock.invocationCallOrder[0]!
     const sessionOrder = findSessionForUpdate.mock.invocationCallOrder[0]!
     const insertOrder = createMessage.mock.invocationCallOrder[0]!

@@ -748,6 +748,7 @@ describe("EventService.editMessage version capture", () => {
       actorId: "persona_1",
     })
 
+    expect(hasParticipatedSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", "persona_1")
     expect(StreamEventRepository.insert).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

@@ -172,7 +172,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
     // append distinct rows instead of clobbering each other.
     const outcome = await withTransaction(pool, async (client) => {
       const finalize = (key: string) =>
-        AgentSessionRepository.finalizeStepByClientStepId(client, {
+        AgentSessionRepository.finalizeStepByClientStepId(client, this.deps.workspaceId, {
           sessionId,
           clientStepId: key,
           stepType: step.stepType,
@@ -184,7 +184,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         const finalized = await finalize(clientStepId)
         if (finalized) return { step: finalized, event: "finalized" as const }
       }
-      const inserted = await AgentSessionRepository.appendStep(client, {
+      const inserted = await AgentSessionRepository.appendStep(client, this.deps.workspaceId, {
         id: stepId,
         sessionId,
         stepType: step.stepType,
@@ -208,7 +208,7 @@ export class BotInvocationTraceSink implements TraceStepSink<BotOpenStep> {
         }
         return { step: inserted, event: null }
       }
-      await AgentSessionRepository.updateCurrentStepType(client, sessionId, inserted.stepType)
+      await AgentSessionRepository.updateCurrentStepType(client, this.deps.workspaceId, sessionId, inserted.stepType)
       return { step: inserted, event: started ? ("started" as const) : ("inserted" as const) }
     })
     this.lastStep = outcome.step
@@ -345,13 +345,14 @@ class SynthesizedTraceSink implements TraceStepSink<BotOpenStep> {
 
   constructor(
     private readonly db: Querier,
+    private readonly workspaceId: string,
     private readonly sessionId: string
   ) {}
 
   async record(step: TraceStepRecord): Promise<void> {
     const completedAt = new Date()
     this.steps.push(
-      await AgentSessionRepository.appendStep(this.db, {
+      await AgentSessionRepository.appendStep(this.db, this.workspaceId, {
         id: generateStepId(),
         sessionId: this.sessionId,
         stepType: step.stepType,
@@ -398,12 +399,13 @@ class SynthesizedTraceSink implements TraceStepSink<BotOpenStep> {
 export async function synthesizeReplyOnlyBotTrace(
   db: Querier,
   params: {
+    workspaceId: string
     sessionId: string
     trigger: { messageId: string; authorName: string; authorType: AuthorType; createdAt: string; content: string }
     reply: { messageId: string; content: string }
   }
 ): Promise<AgentSessionStep[]> {
-  const sink = new SynthesizedTraceSink(db, params.sessionId)
+  const sink = new SynthesizedTraceSink(db, params.workspaceId, params.sessionId)
   const projector = new TraceProjector(sink)
   await projector.handle({
     type: "context:received",

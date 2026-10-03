@@ -122,7 +122,7 @@ describe("withCompanionSession", () => {
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(session)
     spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(
+    const findByIdSpy = spyOn(AgentSessionRepository, "findById").mockResolvedValue(
       makeRunningSession({
         status: SessionStatuses.SUPERSEDED,
         completedAt: new Date("2026-02-19T12:01:05.000Z"),
@@ -165,6 +165,39 @@ describe("withCompanionSession", () => {
       reason: "session superseded before completion",
     })
     expect(stepsSpy).not.toHaveBeenCalled()
+    expect(findByIdSpy).toHaveBeenCalledWith({}, "ws_1", "session_1")
+  })
+
+  it("heartbeats the session inside its workspace while the turn runs", async () => {
+    mockTransactions()
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(makeRunningSession())
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as any)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const heartbeatSpy = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue()
+    const intervalSpy = spyOn(globalThis, "setInterval")
+
+    await withCompanionSession(
+      {
+        pool: {} as any,
+        triggerMessageId: "msg_trigger_1",
+        streamId: "stream_1",
+        personaId: "persona_1",
+        personaName: "Ariadne",
+        workspaceId: "ws_1",
+        serverId: "server_1",
+        initialSequence: 10n,
+      },
+      async () => {
+        const heartbeat = intervalSpy.mock.calls.find(([, ms]) => ms === 15_000)?.[0] as () => Promise<void>
+        await heartbeat()
+        return { messagesSent: 0, sentMessageIds: [], lastSeenSequence: 11n }
+      }
+    )
+
+    expect(heartbeatSpy).toHaveBeenCalledWith({}, "ws_1", "session_1")
   })
 
   it("does not resume when guarded RUNNING transition loses to terminal status change", async () => {
@@ -206,6 +239,7 @@ describe("withCompanionSession", () => {
     })
     expect(updateStatusSpy).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "session_1",
       SessionStatuses.RUNNING,
       expect.objectContaining({
@@ -226,7 +260,7 @@ describe("withCompanionSession", () => {
     spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(session)
     // The catch checks the latest status (not DELETED/SUPERSEDED) before failing.
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(session)
+    const findByIdSpy = spyOn(AgentSessionRepository, "findById").mockResolvedValue(session)
     spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(
       makeRunningSession({ status: SessionStatuses.FAILED })
     )
@@ -250,13 +284,17 @@ describe("withCompanionSession", () => {
         throw thrown
       }
     )
-    return { result, insertEventSpy, insertOutboxSpy }
+    return { result, insertEventSpy, insertOutboxSpy, findByIdSpy }
   }
 
   it("emits a non-terminal agent_session:interrupted on a retryable failure", async () => {
-    const { result, insertEventSpy, insertOutboxSpy } = await runFailingSession({ attempt: 0, maxAttempts: 5 })
+    const { result, insertEventSpy, insertOutboxSpy, findByIdSpy } = await runFailingSession({
+      attempt: 0,
+      maxAttempts: 5,
+    })
 
     expect(result).toEqual({ status: "failed", sessionId: "session_1", willRetry: true, retryable: true })
+    expect(findByIdSpy).toHaveBeenCalledWith({}, "ws_1", "session_1")
     expect(insertEventSpy).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -372,7 +410,7 @@ describe("per-stream session concurrency (roadmap 3.2)", () => {
     const insertSpy = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockImplementation(async (_db, params) =>
       makeRunningSession({ id: `session_${params.streamId}`, streamId: params.streamId })
     )
-    spyOn(AgentSessionRepository, "completeSession").mockImplementation(async (_db, id) =>
+    spyOn(AgentSessionRepository, "completeSession").mockImplementation(async (_db, _workspaceId, id) =>
       makeRunningSession({ id, status: SessionStatuses.COMPLETED, completedAt: new Date("2026-02-19T12:01:00.000Z") })
     )
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])

@@ -46,14 +46,14 @@ export async function authorizeSealedCallback(
   params: { workspaceId: string; botId: string; invocationId: string; callbackToken: string | undefined },
   opts: { acceptCompletedSession?: boolean; acceptFailedSession?: boolean } = {}
 ): Promise<SealedCallbackContext> {
-  const session = await AgentSessionRepository.findById(pool, params.invocationId)
+  const session = await AgentSessionRepository.findById(pool, params.workspaceId, params.invocationId)
   if (opts.acceptCompletedSession && opts.acceptFailedSession) assertSessionRunningOrCompletedOrFailed(session)
   else if (opts.acceptCompletedSession) assertSessionRunningOrCompleted(session)
   else if (opts.acceptFailedSession) assertSessionRunningOrFailed(session)
   else assertSessionRunning(session)
   verifyCallbackToken(session, params.callbackToken)
-  const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
-  if (!stream || stream.workspaceId !== params.workspaceId) {
+  const stream = await StreamRepository.findById(pool, params.workspaceId, session.streamId)
+  if (!stream) {
     throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
   }
   const bot = await BotRepository.findById(pool, params.workspaceId, params.botId)
@@ -123,7 +123,7 @@ export async function finalizeSealedStep(
   const completedAt = new Date()
   // Scope the finalize to this session: frame.stepId is caller-supplied, so an
   // unscoped update would let a bot overwrite another session's step row.
-  let persisted = await AgentSessionRepository.updateStep(pool, frame.stepId, {
+  let persisted = await AgentSessionRepository.updateStep(pool, session.workspaceId, frame.stepId, {
     sessionId: session.id,
     contentCiphertext: frame.ciphertext,
     contentEnvelope: frame.envelope,
@@ -137,7 +137,7 @@ export async function finalizeSealedStep(
   if (!persisted) {
     const startedAt = new Date(completedAt.getTime() - (frame.durationMs ?? 0))
     persisted = await withTransaction(pool, async (tx) => {
-      const created = await AgentSessionRepository.appendStep(tx, {
+      const created = await AgentSessionRepository.appendStep(tx, session.workspaceId, {
         id: frame.stepId,
         sessionId: session.id,
         stepType: frame.stepType,
@@ -147,7 +147,7 @@ export async function finalizeSealedStep(
         startedAt,
         completedAt,
       })
-      await AgentSessionRepository.updateCurrentStepType(tx, session.id, frame.stepType)
+      await AgentSessionRepository.updateCurrentStepType(tx, session.workspaceId, session.id, frame.stepType)
       return created
     })
     emitBotSealedProgress(io, ctx, persisted)

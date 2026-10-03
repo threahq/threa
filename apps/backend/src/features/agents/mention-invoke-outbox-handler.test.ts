@@ -105,7 +105,7 @@ describe("MentionInvokeHandler", () => {
     handler.handle()
     await ran
 
-    expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_ariadne"], "ws_test")
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), "ws_test", ["persona_ariadne"])
     expect(send).toHaveBeenCalledTimes(1)
     expect(send).toHaveBeenCalledWith(JobQueues.PERSONA_AGENT, {
       workspaceId: "ws_test",
@@ -151,7 +151,7 @@ describe("MentionInvokeHandler", () => {
     handler.handle()
     await ran
 
-    expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_lena"], "ws_test")
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), "ws_test", ["persona_lena"])
     expect(send).toHaveBeenCalledTimes(1)
   })
 
@@ -181,7 +181,7 @@ describe("MentionInvokeHandler", () => {
     handler.handle()
     await ran
 
-    expect(findByIds).toHaveBeenCalledWith(expect.anything(), ["persona_ariadne"], "ws_test")
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), "ws_test", ["persona_ariadne"])
     expect(send).toHaveBeenCalledTimes(1)
   })
 

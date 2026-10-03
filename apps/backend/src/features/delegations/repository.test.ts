@@ -363,7 +363,7 @@ describe("DelegatedTaskRepository.findCreatedEventId", () => {
 
     expect(captured.text).toContain("event_type = 'delegation:created'")
     expect(captured.text).toContain("payload->>'delegationId'")
-    expect(captured.values).toEqual(["dlg_1", "ws_1", "dlg_1"])
+    expect(captured.values).toEqual(["ws_1", "dlg_1", "ws_1", "dlg_1"])
     expect(eventId).toBe("event_1")
   })
 

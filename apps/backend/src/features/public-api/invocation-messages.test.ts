@@ -400,7 +400,7 @@ describe("sendBotInvocationMessage", () => {
       streamIds: ["stream_turn"],
       principal: { kind: "bot", botId: "bot_1" },
     })
-    expect(findSessionForUpdate).toHaveBeenCalledWith(expect.anything(), "binv_1")
+    expect(findSessionForUpdate).toHaveBeenCalledWith(expect.anything(), "ws_1", "binv_1")
     const order = [
       resolveAuthority.mock.invocationCallOrder[0]!,
       findActiveClaimForUpdate.mock.invocationCallOrder[0]!,

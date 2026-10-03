@@ -567,7 +567,7 @@ async function resolveAuthorDisplayNames(
   }
   if (byType.persona.size > 0) {
     fetches.push(
-      PersonaRepository.findByIds(pool, [...byType.persona], workspaceId).then((personas) => {
+      PersonaRepository.findByIds(pool, workspaceId, [...byType.persona]).then((personas) => {
         for (const p of personas) nameMap.set(p.id, p.name)
       })
     )
@@ -1053,7 +1053,7 @@ export function createPublicApiHandlers({
 
   async function terminalizeBotDenial(params: {
     error: unknown
-    session: { id: string; streamId: string; personaId: string; triggerMessageId: string }
+    session: { id: string; workspaceId: string; streamId: string; personaId: string; triggerMessageId: string }
     stream: Stream
     botId: string
     callbackToken: string
@@ -1110,7 +1110,7 @@ export function createPublicApiHandlers({
     botId: string,
     callbackToken: string
   ): Promise<{ invocationId: string; sessionId: string; message: Message | null } | null> {
-    const session = await AgentSessionRepository.findById(client, invocation.id)
+    const session = await AgentSessionRepository.findById(client, invocation.workspaceId, invocation.id)
     if (
       !session ||
       session.status !== AgentSessionStatuses.COMPLETED ||
@@ -1933,7 +1933,7 @@ export function createPublicApiHandlers({
             code: "SESSION_CONTROL_MESSAGE_UNSUPPORTED",
           })
         }
-        const callbackSession = await AgentSessionRepository.findById(tx, snapshot.id)
+        const callbackSession = await AgentSessionRepository.findById(tx, workspaceId, snapshot.id)
         if (
           snapshot.status === "claimed" &&
           callbackSession &&
@@ -1974,7 +1974,7 @@ export function createPublicApiHandlers({
             code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
           })
         }
-        const session = await AgentSessionRepository.findByIdForUpdate(tx, invocation.id)
+        const session = await AgentSessionRepository.findByIdForUpdate(tx, workspaceId, invocation.id)
         if (activeClaim) assertSessionRunningOrFailed(session)
         else assertSessionRunningOrCompleted(session)
         if (session.personaId !== botId) {
@@ -2065,7 +2065,7 @@ export function createPublicApiHandlers({
           if (!claim || claim.responseStreamId !== snapshot.responseStreamId) {
             throw invocationClaimNotFound()
           }
-          const created = await AgentSessionRepository.appendStep(tx, {
+          const created = await AgentSessionRepository.appendStep(tx, req.workspaceId!, {
             id: data.stepId,
             sessionId: session.id,
             stepType: data.stepType,
@@ -2074,7 +2074,7 @@ export function createPublicApiHandlers({
             contentEnvelope: data.envelope,
             startedAt: new Date(),
           })
-          await AgentSessionRepository.updateCurrentStepType(tx, session.id, data.stepType)
+          await AgentSessionRepository.updateCurrentStepType(tx, req.workspaceId!, session.id, data.stepType)
           return created
         })
       } catch (error) {
@@ -2164,7 +2164,7 @@ export function createPublicApiHandlers({
           if (!claim || claim.responseStreamId !== snapshot.responseStreamId) {
             throw invocationClaimNotFound()
           }
-          const locked = await AgentSessionRepository.findByIdForUpdate(tx, session.id)
+          const locked = await AgentSessionRepository.findByIdForUpdate(tx, req.workspaceId!, session.id)
           if (activeClaim) assertSessionRunningOrFailed(locked)
           else assertSessionRunningOrCompleted(locked)
           if (locked.personaId !== bot.id) {
@@ -2375,7 +2375,7 @@ export function createPublicApiHandlers({
           // winning the RUNNING→COMPLETED transition so a raced redelivery can't
           // double-emit. Plaintext-free: counts + timing only.
           const latestSequence = await eventService.getLatestSequence(stream.workspaceId, session.streamId)
-          const finalized = await AgentSessionRepository.completeSession(client, session.id, {
+          const finalized = await AgentSessionRepository.completeSession(client, req.workspaceId!, session.id, {
             lastSeenSequence: latestSequence ?? 0n,
             responseMessageId: message?.id ?? null,
             sentMessageIds: message ? [message.id] : [],
@@ -2384,7 +2384,7 @@ export function createPublicApiHandlers({
           if (!finalized) return { kind: "completed", message, sessionFinalized: false }
 
           const completedAt = finalized.completedAt ?? new Date()
-          const steps = await AgentSessionRepository.findStepsBySession(client, session.id)
+          const steps = await AgentSessionRepository.findStepsBySession(client, req.workspaceId!, session.id)
           const streamEvent = await StreamEventRepository.insert(client, {
             id: eventId(),
             workspaceId: stream.workspaceId,
@@ -2486,7 +2486,7 @@ export function createPublicApiHandlers({
             if (!replay) throw invocationClaimNotFound()
             return { completed: null, message: null, sessionFinalized: false, synthesizedSteps: [], replay }
           }
-          denialSession = await AgentSessionRepository.findById(client, snapshot.id)
+          denialSession = await AgentSessionRepository.findById(client, req.workspaceId!, snapshot.id)
 
           let authorityLocked = false
           if (data.sealedReply || contentMarkdown) {
@@ -2637,7 +2637,8 @@ export function createPublicApiHandlers({
               })
             }
           }
-          const session = denialSession ?? (await AgentSessionRepository.findById(client, completed.id))
+          const session =
+            denialSession ?? (await AgentSessionRepository.findById(client, req.workspaceId!, completed.id))
           // RUNNING is the happy path; FAILED is recoverable here. Reaching this
           // point means the claim was still valid (findActiveClaimForUpdate above
           // succeeded), so the only way the session is FAILED is an orphan
@@ -2646,14 +2647,19 @@ export function createPublicApiHandlers({
           // leaving the trace stuck red.
           if (session?.status === AgentSessionStatuses.RUNNING || session?.status === AgentSessionStatuses.FAILED) {
             const latestSequence = await eventService.getLatestSequence(req.workspaceId!, completed.responseStreamId)
-            const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
-              lastSeenSequence: latestSequence ?? 0n,
-              responseMessageId: message?.id ?? null,
-              sentMessageIds: message ? [message.id] : [],
-              recoverFromFailed: true,
-            })
+            const finalizedSession = await AgentSessionRepository.completeSession(
+              client,
+              req.workspaceId!,
+              completed.id,
+              {
+                lastSeenSequence: latestSequence ?? 0n,
+                responseMessageId: message?.id ?? null,
+                sentMessageIds: message ? [message.id] : [],
+                recoverFromFailed: true,
+              }
+            )
             if (finalizedSession) {
-              let steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
+              let steps = await AgentSessionRepository.findStepsBySession(client, req.workspaceId!, completed.id)
               // Synthesized-trace floor (N-6): a reply-only harness never POSTed
               // /steps, so reconstruct the minimal context_received → message_sent
               // trace in the same transaction — the completed event's stepCount
@@ -2662,6 +2668,7 @@ export function createPublicApiHandlers({
               if (steps.length === 0 && message) {
                 const author = await UserRepository.findById(client, req.workspaceId!, completed.authorUserId)
                 synthesizedSteps = await synthesizeReplyOnlyBotTrace(client, {
+                  workspaceId: req.workspaceId!,
                   sessionId: completed.id,
                   trigger: {
                     messageId: completed.sourceMessageId,
@@ -2793,7 +2800,7 @@ export function createPublicApiHandlers({
           })
         }
 
-        const session = await AgentSessionRepository.findById(client, failed.id)
+        const session = await AgentSessionRepository.findById(client, req.workspaceId!, failed.id)
         if (!session || session.status !== AgentSessionStatuses.RUNNING) return { failed, sessionFailed: false }
         const stream = await StreamRepository.findById(client, session.workspaceId, session.streamId)
         const sessionFailed = await failSessionWithLifecycleInTransaction(client, session, stream, data.errorMessage)
@@ -3525,7 +3532,7 @@ export function createPublicApiHandlers({
         // send by the same bot on this stream mis-stamps to that stale session.
         // The partial unique index caps it at one running session per stream, so
         // this only misfires under the abnormal stuck-running state.
-        const runningSession = await AgentSessionRepository.findRunningByStream(pool, streamId)
+        const runningSession = await AgentSessionRepository.findRunningByStream(pool, workspaceId, streamId)
         const sessionId = runningSession?.personaId === bot.id ? runningSession.id : undefined
 
         const { message, conversationId } = await eventService.createMessageForPrincipalReturningConversation(
