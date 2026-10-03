@@ -79,8 +79,10 @@ async function runMemorizerTask(input: MemorizerInput, ctx: EvalContext): Promis
   const conversationId = `conv_${ulid()}`
   const existingMemos = (input.existingMemos ?? []).map((m) => toMemo(m, conversationId))
 
+  const memoryContext = (input.memoryContext ?? []).map((m) => toMemo(m, `conv_${ulid()}`))
+  const titles = new Map([...memoryContext, ...existingMemos].map((m) => [m.id, m.title]))
   const context = {
-    memoryContext: input.memoryContext ?? [],
+    memoryContext,
     content: messages,
     existingMemos,
     workspaceId: ctx.workspaceId,
@@ -100,7 +102,7 @@ async function runMemorizerTask(input: MemorizerInput, ctx: EvalContext): Promis
         knowledgeType: m.knowledgeType,
         keyPoints: m.keyPoints,
         tags: m.tags,
-        supersedesMemoIds: m.supersedesMemoIds,
+        supersedesTitles: m.supersedesMemoIds.map((id) => titles.get(id) ?? id),
       })),
     }
   } catch (error) {

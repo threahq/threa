@@ -734,6 +734,45 @@ export const MemoRepository = {
     return result.rows.map((row) => ({ memo: mapRowToMemo(row), distance: row.distance }))
   },
 
+  /**
+   * The `ids` a candidate memo may retire, in input order: those from its own
+   * conversation, and those whose newest source message is no newer than the
+   * candidate's newest. A re-run of an older conversation can contradict a
+   * memo that already reversed it; without this it would retire the newer
+   * conclusion. Compares `created_at`, not `edited_at`, so a typo fix can't
+   * make old knowledge look new.
+   */
+  async filterSupersedable(
+    db: Querier,
+    workspaceId: string,
+    ids: string[],
+    candidate: { conversationId: string | null; sourceMessageIds: string[] }
+  ): Promise<string[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      SELECT m.id
+      FROM memos m
+      WHERE m.workspace_id = ${workspaceId}
+        AND m.id = ANY(${ids}::text[])
+        AND (
+          m.source_conversation_id = ${candidate.conversationId}
+          OR (
+            SELECT max(msg.created_at)
+            FROM messages msg
+            JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
+            WHERE msg.id = ANY(array_append(m.source_message_ids, m.source_message_id))
+          ) <= (
+            SELECT max(msg.created_at)
+            FROM messages msg
+            JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
+            WHERE msg.id = ANY(${candidate.sourceMessageIds}::text[])
+          )
+        )
+    `)
+    const allowed = new Set(result.rows.map((row) => row.id))
+    return ids.filter((id) => allowed.has(id))
+  },
+
   /** Mark memos superseded in one round-trip (INV-56). Workspace-scoped (INV-8). */
   async markSuperseded(db: Querier, workspaceId: string, ids: string[], revisionReason: string): Promise<void> {
     if (ids.length === 0) return

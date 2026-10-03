@@ -6,8 +6,8 @@ import type { EvalClassifierMessage, EvalExistingMemo } from "../memo-classifier
 
 export interface MemorizerInput {
   messages: EvalClassifierMessage[]
-  /** Prior stream memo abstracts (vocabulary context). */
-  memoryContext?: string[]
+  /** The stream's memos from other conversations: vocabulary context, and what a reversal may retire. */
+  memoryContext?: EvalExistingMemo[]
   /** Existing memos for this conversation — presence selects the revision path. */
   existingMemos?: EvalExistingMemo[]
   category?: "extraction" | "revision" | "selectivity" | "transient"
@@ -19,8 +19,8 @@ export interface MemorizerOutputMemo {
   knowledgeType: string
   keyPoints: string[]
   tags: string[]
-  /** Existing-memo ids this memo explicitly retires (reversed/replaced conclusion). */
-  supersedesMemoIds: string[]
+  /** Titles of the shown memos this memo explicitly retires (reversed/replaced conclusion). */
+  supersedesTitles: string[]
 }
 
 export interface MemorizerOutput {
@@ -49,6 +49,6 @@ export interface MemorizerExpected {
   conclusionMustState?: string
   /** LLM-judged: no memo may assert this conclusion (the abandoned/reversed side). */
   conclusionMustNotState?: string
-  /** Some memo must explicitly retire at least one existing memo via supersedesMemoIds. */
-  expectSupersedesExisting?: boolean
+  /** A title: memos must retire exactly that shown memo via supersedesMemoIds. null: none may retire anything. */
+  expectSupersedes?: string | null
 }

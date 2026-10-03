@@ -482,7 +482,7 @@ export class MemoService implements MemoServiceLike {
       fetchedData.formattedConversations.set(conversationId, formatted)
     }
 
-    const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
+    const memoryContext = fetchedData.existingMemos
     const memosToCreate: MemoToCreate[] = []
     const deferredItemIds = new Set<string>()
     const failedItemIds = new Set<string>()
@@ -775,9 +775,21 @@ export class MemoService implements MemoServiceLike {
         // subsumes the in-batch check. Same-conversation repeats are gated
         // here too — the revision prompt alone demonstrably re-emits
         // near-identical memos when a conversation is re-processed.
-        const explicitSupersedeIds = (memoData.supersedesMemoIds ?? []).filter(
-          (id) => !createdMemos.some((m) => m.id === id)
-        )
+        const citedIds = (memoData.supersedesMemoIds ?? []).filter((id) => !createdMemos.some((m) => m.id === id))
+        const explicitSupersedeIds = await MemoRepository.filterSupersedable(client, workspaceId, citedIds, {
+          conversationId: memoData.sourceConversationId ?? null,
+          sourceMessageIds: memoData.sourceMessageIds,
+        })
+        if (explicitSupersedeIds.length < citedIds.length) {
+          logger.info(
+            {
+              conversationId: memoData.sourceConversationId,
+              memoId: memoData.id,
+              keptIds: citedIds.filter((id) => !explicitSupersedeIds.includes(id)),
+            },
+            "Kept cited memo(s) whose sources are newer than the capture citing them"
+          )
+        }
 
         // A memo this one explicitly retires is never its dedup blocker: a
         // correction of an inverted conclusion shares nearly all its text with
@@ -815,9 +827,10 @@ export class MemoService implements MemoServiceLike {
 
         // Explicit supersession first: the memorizer names the memos whose
         // conclusion this one reverses or replaces (ids pre-validated against
-        // the conversation's own memos). Embedding distance cannot catch a
-        // reversal — "chose X" and "chose Y" embed far apart — so the model's
-        // citation is authoritative. The embedding check below still runs for
+        // the stream memos it was shown, so a reversal in a later conversation
+        // retires the earlier one). Embedding distance cannot catch a reversal
+        // — "chose X" and "chose Y" embed far apart — so the model's citation
+        // is authoritative. The embedding check below still runs for
         // unflagged paraphrase re-captures.
         if (explicitSupersedeIds.length > 0) {
           memoData.parentMemoId = explicitSupersedeIds[0]
@@ -1345,9 +1358,11 @@ export class MemoService implements MemoServiceLike {
 
     // Phase 3: memorize. `content: []` — every reflective memo shares the sources
     // resolved in phase 1, so there is no per-memo source resolution.
+    // `supersedesMemoIds` is ignored: an agent's reflection never retires a
+    // memo; a human reversal lands through the conversation batch instead.
     const contents = (
       await this.memorizer.memorizeConversation(digest, {
-        memoryContext: context.existingMemos.map((m) => m.abstract),
+        memoryContext: context.existingMemos,
         content: [],
         existingTags: context.existingTags,
         workspaceId,

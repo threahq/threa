@@ -158,22 +158,28 @@ export const conclusionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> 
   },
 }
 
-/** A reversal must retire the memo it contradicts via supersedesMemoIds. */
+/** A reversal must retire exactly the memo it contradicts via supersedesMemoIds; anything else retires nothing. */
 export const supersessionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = {
   name: "supersession",
   evaluate: (output, expected): EvaluatorResult => {
-    if (!expected.expectSupersedesExisting) {
+    if (expected.expectSupersedes === undefined) {
       return { name: "supersession", score: 1, passed: true, details: "No supersession requirements" }
     }
     if (output.error) {
       return { name: "supersession", score: 0, passed: false, details: `Error: ${output.error}` }
     }
-    const passed = output.memos.some((m) => m.supersedesMemoIds.length > 0)
+    const retired = [...new Set(output.memos.flatMap((m) => m.supersedesTitles))]
+    const want = expected.expectSupersedes
+    const passed = want === null ? retired.length === 0 : retired.length === 1 && retired[0] === want
+    if (passed) return { name: "supersession", score: 1, passed: true }
     return {
       name: "supersession",
-      score: passed ? 1 : 0,
-      passed,
-      details: passed ? undefined : "No memo explicitly superseded an existing memo (reversal left both standing)",
+      score: 0,
+      passed: false,
+      details:
+        retired.length === 0
+          ? `No memo retired "${want}" (reversal left both standing)`
+          : `Retired ${retired.map((t) => `"${t}"`).join(", ")}; expected ${want === null ? "nothing" : `only "${want}"`}`,
     }
   },
 }
