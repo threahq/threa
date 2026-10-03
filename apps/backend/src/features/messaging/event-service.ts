@@ -48,7 +48,7 @@ import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "../stream-context"
-import { MemoRepository, resolveMemoEmbedSummaries } from "../memos"
+import { MemoRepository, resolveMemoEmbedSummaries, resolveMemoSummariesByStream } from "../memos"
 import {
   attachmentReferenceId,
   eventId,
@@ -2613,24 +2613,24 @@ export class EventService {
 
     const byMessage = new Map([...edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const), ...citing])
     const editedIds = new Set(edited.map((m) => m.id))
-    const streamIds = "streamIds" in scope ? scope.streamIds : [scope.streamId]
-    const streams = await StreamRepository.findByIdsInWorkspace(this.pool, scope.workspaceId, streamIds)
-    const rootByStream = new Map(streams.map((stream) => [stream.id, stream.rootStreamId ?? stream.id]))
-    const idsByRoot = new Map<string, Set<string>>()
+    // The citing stream is the creation EVENT's, never the message projection's
+    // (a move rewrites that). The scope is what the caller authorized, so an
+    // event from outside it is a caller bug, not something to resolve.
+    const scopeStreamIds = new Set("streamIds" in scope ? scope.streamIds : [scope.streamId])
+    const memoIdsByStream = new Map<string, Set<string>>()
     for (const [messageId, ids] of byMessage) {
-      const root = rootByStream.get(sourceStreamByMessage.get(messageId)!)
-      if (!root) throw new Error("Memo embed message is outside bootstrap stream scope")
-      const rootIds = idsByRoot.get(root) ?? new Set<string>()
-      for (const id of ids) rootIds.add(id)
-      idsByRoot.set(root, rootIds)
+      const streamId = sourceStreamByMessage.get(messageId)
+      if (!streamId || !scopeStreamIds.has(streamId)) {
+        throw new Error("Memo embed message is outside bootstrap stream scope")
+      }
+      if (ids.length === 0) continue
+      const streamMemoIds = memoIdsByStream.get(streamId) ?? new Set<string>()
+      for (const id of ids) streamMemoIds.add(id)
+      memoIdsByStream.set(streamId, streamMemoIds)
     }
-    const summariesByRoot = await MemoRepository.findEmbedSummariesByRoot(
-      this.pool,
-      scope.workspaceId,
-      [...idsByRoot].flatMap(([citingRootStreamId, ids]) => [...ids].map((memoId) => ({ memoId, citingRootStreamId })))
-    )
+    const summariesByStream = await resolveMemoSummariesByStream(this.pool, scope.workspaceId, memoIdsByStream)
     for (const [messageId, ids] of byMessage) {
-      const summaries = summariesByRoot.get(rootByStream.get(sourceStreamByMessage.get(messageId)!)!)
+      const summaries = summariesByStream.get(sourceStreamByMessage.get(messageId)!)
       const resolved = ids.map((id) => summaries?.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
       const mustSet = editedIds.has(messageId) || messageIdsWithKey.has(messageId)
       if (!mustSet && resolved.length === 0) continue

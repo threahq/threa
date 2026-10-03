@@ -48,14 +48,26 @@ export function capSubjects(refs: AuditSubjectRef[]): AuditSubjectRef[] {
   return kept
 }
 
-const AUDIT_SUBJECTS_KEY = "auditSubjects"
+export interface AuditDenial {
+  status: 403 | 404
+  subject: AuditSubjectRef
+}
 
-/** Replace the audit subjects the finish hook will persist for this request. */
-export function setAuditSubjects(res: Response, refs: AuditSubjectRef[]): void {
+const AUDIT_SUBJECTS_KEY = "auditSubjects"
+const AUDIT_DENIALS_KEY = "auditDenials"
+
+// A 2xx batch can refuse individual results. Only delivered refs belong to
+// the successful request row; refusals need their own denial outcomes.
+export function setAuditSubjects(res: Response, refs: AuditSubjectRef[], denials: AuditDenial[] = []): void {
   res.locals[AUDIT_SUBJECTS_KEY] = refs
+  res.locals[AUDIT_DENIALS_KEY] = denials
 }
 
 /** Read the audit subjects a handler populated, if any. */
 export function readAuditSubjects(res: Response): AuditSubjectRef[] | undefined {
   return res.locals[AUDIT_SUBJECTS_KEY] as AuditSubjectRef[] | undefined
+}
+
+export function readAuditDenials(res: Response): AuditDenial[] {
+  return (res.locals[AUDIT_DENIALS_KEY] as AuditDenial[] | undefined) ?? []
 }

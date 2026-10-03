@@ -1,7 +1,7 @@
 import type { Express, Request, RequestHandler, Response } from "express"
 import type { AccessLogService } from "./service"
 import type { AccessKind, AccessLogOperation, AccessOutcome, ActorType } from "./operations"
-import { capSubjects, readAuditSubjects } from "./subjects"
+import { capSubjects, readAuditDenials, readAuditSubjects, type AuditSubjectRef } from "./subjects"
 
 /**
  * The marker a route's audit middleware carries so the boot-time coverage guard
@@ -131,35 +131,47 @@ export function createAuditMiddleware(accessLogService: AccessLogService): Audit
         .filter(([name]) => name !== "workspaceId" && name !== "secret")
         .map(([, value]) => ({ type: "param", id: value }))
       onResponseDone(res, (aborted) => {
+        const identity = resolveIdentity(req)
+        const record = (outcome: AccessOutcome, status: number, subjects: AuditSubjectRef[] | null) =>
+          accessLogService.record({
+            workspaceId: req.workspaceId ?? routeWorkspaceId,
+            actorType: identity?.actorType ?? "user",
+            actorId: identity?.actorId ?? "unknown",
+            authRef: identity?.authRef ?? null,
+            onBehalfOfUserId: identity?.onBehalfOfUserId ?? null,
+            operation,
+            accessKind: kind,
+            outcome,
+            subjects,
+            detail: buildDetail(aborted, outcome, status, identity),
+            ip: req.ip ?? null,
+            userAgent: req.headers["user-agent"] ?? null,
+            requestId: (req as Request & { id?: string }).id ?? null,
+          })
+
+        const outcome = aborted && !res.headersSent ? "error" : outcomeFromStatus(res.statusCode)
         // Handler-declared no-op: a poll that found no work read nothing, and
         // recording it forever is machine noise, not audit signal. Only a
         // 2xx handler path may set this — denials and errors always record.
-        if (res.locals.auditSkip === true && outcomeFromStatus(res.statusCode) === "success" && !aborted) return
-        const identity = resolveIdentity(req)
-        const outcome = aborted && !res.headersSent ? "error" : outcomeFromStatus(res.statusCode)
-
+        const skipped = res.locals.auditSkip === true && outcomeFromStatus(res.statusCode) === "success" && !aborted
         // No identity at all: only denials are worth a row (attempted access to
         // an authed surface); successful unauthenticated hits are skipped.
-        if (!identity && outcome !== "denied") return
-
-        const workspaceId = req.workspaceId ?? routeWorkspaceId
-        accessLogService.record({
-          workspaceId,
-          actorType: identity?.actorType ?? "user",
-          actorId: identity?.actorId ?? "unknown",
-          authRef: identity?.authRef ?? null,
-          onBehalfOfUserId: identity?.onBehalfOfUserId ?? null,
-          operation,
-          accessKind: kind,
-          outcome,
-          subjects:
+        if (!skipped && (identity || outcome === "denied")) {
+          record(
+            outcome,
+            res.statusCode,
             readAuditSubjects(res) ??
-            (outcome === "denied" && routeParamRefs.length > 0 ? capSubjects(routeParamRefs) : null),
-          detail: buildDetail(aborted, outcome, res.statusCode, identity),
-          ip: req.ip ?? null,
-          userAgent: req.headers["user-agent"] ?? null,
-          requestId: (req as Request & { id?: string }).id ?? null,
-        })
+              (outcome === "denied" && routeParamRefs.length > 0 ? capSubjects(routeParamRefs) : null)
+          )
+        }
+
+        // Refusals cannot inherit the request's skip rules. Grouping by status
+        // bounds inserts for a probing batch while retaining each refusal.
+        const deniedByStatus = new Map<number, AuditSubjectRef[]>()
+        for (const { status, subject } of readAuditDenials(res)) {
+          deniedByStatus.set(status, [...(deniedByStatus.get(status) ?? []), subject])
+        }
+        for (const [status, subjects] of deniedByStatus) record("denied", status, subjects)
       })
       next()
     }

@@ -13,13 +13,13 @@
  * actually returns.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, spyOn } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { MemoRepository } from "../../src/features/memos"
+import { MemoRepository, resolveMemoSummariesByStream } from "../../src/features/memos"
 import { userId, workspaceId, streamId, messageId, memoId } from "../../src/lib/id"
 
 describe("MemoRepository.findEmbedSummaries", () => {
@@ -276,5 +276,71 @@ describe("MemoRepository.findEmbedSummaries", () => {
 
   test("returns an empty map for no ids without touching the database", async () => {
     expect(await MemoRepository.findEmbedSummaries(pool, testWorkspaceId, [], citingRoot)).toEqual(new Map())
+  })
+
+  // The by-stream resolver owns stream → root → memo grouping for every caller
+  // that spans streams. Each citing stream is answered against its own root,
+  // and a stream this workspace has no row for only ever gets the public leg —
+  // including a foreign-workspace row that names a local private root.
+  test("resolveMemoSummariesByStream answers each citing stream by its root in two roundtrips", async () => {
+    const ownRoom = await seedMemo(citingRoot, { title: "Own room" })
+    const otherRoom = await seedMemo(privateChannel, { title: "Other room" })
+    const open = await seedMemo(publicChannel, { title: "Open" })
+    const ids = [ownRoom, otherRoom, open]
+    const missingStream = streamId()
+    const foreignThread = streamId()
+    const foreignWorkspace = workspaceId()
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: foreignWorkspace,
+        name: "Foreign citing stream",
+        slug: `foreign-${foreignWorkspace}`,
+        createdBy: testUserId,
+      })
+      await StreamRepository.insert(client, {
+        id: foreignThread,
+        workspaceId: foreignWorkspace,
+        type: "thread",
+        visibility: "private",
+        parentStreamId: privateChannel,
+        rootStreamId: privateChannel,
+        createdBy: testUserId,
+      })
+    })
+
+    const querySpy = spyOn(pool, "query")
+    let roundtrips: number
+    let byStream: Awaited<ReturnType<typeof resolveMemoSummariesByStream>>
+    try {
+      byStream = await resolveMemoSummariesByStream(
+        pool,
+        testWorkspaceId,
+        new Map([
+          [citingThread, ids],
+          [privateChannel, ids],
+          [missingStream, ids],
+          [foreignThread, ids],
+          [publicChannel, []],
+        ])
+      )
+      roundtrips = querySpy.mock.calls.length
+    } finally {
+      querySpy.mockRestore()
+    }
+
+    const titlesByStream = Object.fromEntries(
+      [...byStream].map(([stream, summaries]) => [stream, [...summaries.values()].map((s) => s.title).sort()])
+    )
+    expect({ roundtrips, titlesByStream }).toEqual({
+      // One stream lookup, one memo statement — however many roots are involved.
+      roundtrips: 2,
+      titlesByStream: {
+        [citingThread]: ["Open", "Own room"],
+        [privateChannel]: ["Open", "Other room"],
+        [missingStream]: ["Open"],
+        [foreignThread]: ["Open"],
+        [publicChannel]: [],
+      },
+    })
   })
 })

@@ -17,7 +17,7 @@ function recordingService() {
   return { service, rows }
 }
 
-async function requestAndAwaitRow(app: express.Express, path: string, rows: unknown[]): Promise<void> {
+async function requestAndAwaitRow(app: express.Express, path: string, rows: unknown[], expected = 1): Promise<void> {
   const server = app.listen(0)
   try {
     const port = (server.address() as AddressInfo).port
@@ -25,13 +25,13 @@ async function requestAndAwaitRow(app: express.Express, path: string, rows: unkn
     // The record hook fires on the response 'finish' event, after the fetch
     // resolves — poll briefly rather than racing it.
     const deadline = Date.now() + 2000
-    while (rows.length === 0 && Date.now() < deadline) {
+    while (rows.length < expected && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 5))
     }
   } finally {
     server.close()
   }
-  expect(rows.length).toBe(1)
+  expect(rows.length).toBe(expected)
 }
 
 describe("audit() denied-row forensics", () => {
@@ -80,6 +80,63 @@ describe("audit() denied-row forensics", () => {
       detail: null,
       subjects: [{ type: "stream", id: "stream_1" }],
     })
+  })
+})
+
+describe("audit() per-result denials inside a 2xx batch", () => {
+  it("keeps the success row to delivered subjects and records one denied row per refused status", async () => {
+    const { service, rows } = recordingService()
+    const audit = createAuditMiddleware(service)
+    const app = express()
+    app.post(
+      "/api/workspaces/:workspaceId/streams/preview-history",
+      (req, _res, next) => {
+        req.botApiKey = { id: "bk_1", botId: "bot_1" } as NonNullable<express.Request["botApiKey"]>
+        next()
+      },
+      audit("streams.preview_history", "read"),
+      (_req, res) => {
+        setAuditSubjects(
+          res,
+          [{ type: "stream", id: "stream_ok", fromSeq: 2, toSeq: 10 }],
+          [
+            { status: 403, subject: { type: "stream", id: "stream_private" } },
+            { status: 404, subject: { type: "stream", id: "stream_gone" } },
+            { status: 403, subject: { type: "stream", id: "stream_private_2" } },
+          ]
+        )
+        res.status(200).json({ ok: true })
+      }
+    )
+
+    await requestAndAwaitRow(app, "/api/workspaces/ws_1/streams/preview-history", rows, 3)
+
+    const shared = {
+      workspaceId: "ws_1",
+      actorType: "bot",
+      actorId: "bot_1",
+      authRef: "bk_1",
+      operation: "streams.preview_history",
+      accessKind: "read",
+    }
+    expect(rows).toMatchObject([
+      {
+        ...shared,
+        outcome: "success",
+        detail: null,
+        subjects: [{ type: "stream", id: "stream_ok", fromSeq: 2, toSeq: 10 }],
+      },
+      {
+        ...shared,
+        outcome: "denied",
+        detail: { status: 403 },
+        subjects: [
+          { type: "stream", id: "stream_private" },
+          { type: "stream", id: "stream_private_2" },
+        ],
+      },
+      { ...shared, outcome: "denied", detail: { status: 404 }, subjects: [{ type: "stream", id: "stream_gone" }] },
+    ])
   })
 })
 

@@ -490,5 +490,80 @@ describe("memo embed summaries on message payloads", () => {
       )?.payload as MessageCreatedPayload
       expect(payload.memoEmbeds).toEqual([])
     })
+
+    // A citing stream with no row resolves against its own id, so only the
+    // public leg can match: the bootstrap still serves, and the summary the
+    // room could read while its row existed is retracted.
+    test("fails closed to public memos when the citing stream's row is missing", async () => {
+      const vanishing = streamId()
+      const publicElsewhere = streamId()
+      await withTransaction(pool, async (client) => {
+        for (const [id, visibility] of [
+          [vanishing, "private"],
+          [publicElsewhere, "public"],
+        ] as const) {
+          await StreamRepository.insert(client, {
+            id,
+            workspaceId: testWorkspaceId,
+            type: "channel",
+            visibility,
+            slug: `s-${id.slice(-8)}`,
+            createdBy: testUserId,
+          })
+        }
+      })
+      const ownRoomMemo = await seedMemo(vanishing, "Own room")
+      const publicMemo = await seedMemo(publicElsewhere, "Public")
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: vanishing,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("both readable at creation", [ownRoomMemo, publicMemo]),
+      })
+      const events = await eventService.listEvents(vanishing, { limit: 200 })
+      const created = events.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )
+      expect((created?.payload as MessageCreatedPayload).memoEmbeds?.map((s) => s.memoId)).toEqual([
+        ownRoomMemo,
+        publicMemo,
+      ])
+
+      await pool.query(`DELETE FROM streams WHERE id = $1`, [vanishing])
+
+      const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+        workspaceId: testWorkspaceId,
+        streamId: vanishing,
+      })
+
+      const payload = enriched.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )?.payload as MessageCreatedPayload
+      expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([publicMemo])
+    })
+
+    // The scope is the caller's statement of which streams it authorized. An
+    // event from any other stream is a caller bug, and resolving its memos
+    // would answer for a room nobody checked.
+    test("rejects a window holding an event from outside the declared scope", async () => {
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("cited in the channel", [sameStreamMemo]),
+      })
+      const events = (await eventService.listEvents(channel, { limit: 200 })).filter(
+        (e) => (e.payload as { messageId?: string }).messageId === message.id
+      )
+
+      await expect(
+        eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+          workspaceId: testWorkspaceId,
+          streamId: privateElsewhere,
+        })
+      ).rejects.toThrow("Memo embed message is outside bootstrap stream scope")
+    })
   })
 })

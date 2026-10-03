@@ -22,8 +22,8 @@ import type { SyncLogEntry } from "./repository"
  *
  * Slots re-hydrate per VIEWER (`hydrateSharedMessageRefs`) — catch-up is a
  * per-user read, and the viewer-scoped resolver is the sharing feature's own
- * read-path authority. Memo summaries re-resolve per citing ROOT
- * (`findEmbedSummaries`) — cards are room-gated, not viewer-gated. A
+ * read-path authority. Memo summaries re-resolve per citing ROOT — cards
+ * are room-gated, not viewer-gated. A
  * `memo:updated` entry whose summary the room may no longer see is dropped
  * whole.
  */
@@ -113,8 +113,6 @@ export async function sanitizeSyncEntries(
     }
   }
 
-  // Memo summaries: the shared per-citing-stream resolver (INV-35) groups by
-  // root and runs one predicate query per distinct root.
   const dropped = new Set<SyncLogEntry>()
   const memoIdsByStreamId = new Map<string, Set<string>>()
   const addMemoIds = (streamId: string, ids: string[]) => {

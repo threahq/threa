@@ -480,10 +480,15 @@ export function createStreamHandlers({
     async previewHistory(req: Request, res: Response) {
       const { streamIds } = validateRequest(previewHistorySchema, req.body)
       const result = await previewHistoryService.get(req.workspaceId!, req.user!.id, streamIds)
+      // The batch is 200 whatever each result is, so a refused id listed as a
+      // subject would read as a successful access to that stream.
       setAuditSubjects(
         res,
-        result.results.map((entry) =>
-          streamSequenceRangeRef(entry.streamId, entry.status === 200 ? entry.history.events : [])
+        result.results.flatMap((entry) =>
+          entry.status === 200 ? [streamSequenceRangeRef(entry.streamId, entry.history.events)] : []
+        ),
+        result.results.flatMap((entry) =>
+          entry.status === 200 ? [] : [{ status: entry.status, subject: { type: "stream", id: entry.streamId } }]
         )
       )
       res.json(result)

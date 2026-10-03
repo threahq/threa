@@ -139,11 +139,15 @@ describe("createStreamHandlers.previewHistory", () => {
         { body: { streamIds: results.map((r) => r.streamId) }, workspaceId: "ws_1", user: { id: "usr_1" } } as Request,
         res
       )
+      // A refused id must never read as a subject of the successful read: the
+      // delivered-but-empty stream stays a subject, the refusals are denials.
       expect(readAuditSubjects(res)).toEqual([
         { type: "stream", id: "stream_ok", fromSeq: 2, toSeq: 10 },
-        { type: "stream", id: "stream_denied" },
-        { type: "stream", id: "stream_missing" },
         { type: "stream", id: "stream_empty" },
+      ])
+      expect(res.locals.auditDenials).toEqual([
+        { status: 403, subject: { type: "stream", id: "stream_denied" } },
+        { status: 404, subject: { type: "stream", id: "stream_missing" } },
       ])
       expect(json).toHaveBeenCalledWith({ results })
     } finally {

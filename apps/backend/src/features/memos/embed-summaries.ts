@@ -37,12 +37,13 @@ export async function resolveMemoEmbedSummaries(
 /**
  * Resolve summaries for memo ids grouped by the STREAM citing them, for
  * callers that span streams (the board/label batch below, the sync-log
- * sanitizer). Roots are looked up once for the distinct streams, and memos
- * once per distinct root (INV-56). Per-root grouping is not an optimisation:
- * the predicate is "readable by everyone who can see the citing stream", so a
- * memo id that qualifies under one root may not under another and must be
- * asked separately. A stream whose row is missing resolves against its own id
- * — fail closed, only the public leg of the predicate can match.
+ * sanitizer, bootstrap enrichment). Roots are looked up once for the distinct
+ * streams, and memos in one statement over every (memo, root) pair (INV-56).
+ * Pairing by root is not an optimisation: the predicate is "readable by
+ * everyone who can see the citing stream", so a memo id that qualifies under
+ * one root may not under another and must be asked separately. A stream with
+ * no row in this workspace resolves against its own id — fail closed, only
+ * the public leg of the predicate can match.
  *
  * Returns one map per input stream id (possibly empty), keyed memoId → summary.
  */
@@ -55,7 +56,7 @@ export async function resolveMemoSummariesByStream(
   if (memoIdsByStreamId.size === 0) return result
 
   const streamIds = [...memoIdsByStreamId.keys()]
-  const streams = await StreamRepository.findByIds(db, streamIds)
+  const streams = await StreamRepository.findByIdsInWorkspace(db, workspaceId, streamIds)
   const rootByStreamId = new Map(streams.map((s) => [s.id, s.rootStreamId ?? s.id]))
 
   const idsByRoot = new Map<string, Set<string>>()
@@ -66,10 +67,11 @@ export async function resolveMemoSummariesByStream(
     idsByRoot.set(root, bucket)
   }
 
-  const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
-  for (const [root, ids] of idsByRoot) {
-    summariesByRoot.set(root, await MemoRepository.findEmbedSummaries(db, workspaceId, [...ids], root))
-  }
+  const summariesByRoot = await MemoRepository.findEmbedSummariesByRoot(
+    db,
+    workspaceId,
+    [...idsByRoot].flatMap(([citingRootStreamId, ids]) => [...ids].map((memoId) => ({ memoId, citingRootStreamId })))
+  )
 
   for (const streamId of streamIds) {
     const root = rootByStreamId.get(streamId) ?? streamId
