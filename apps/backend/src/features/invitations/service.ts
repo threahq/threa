@@ -153,41 +153,43 @@ export class InvitationService {
   }
 
   async acceptInvitation(invitationId: string, identity: WorkosIdentity): Promise<string | null> {
-    return withTransaction(this.pool, (client) => this.acceptInvitationInTransaction(client, invitationId, identity))
+    return withTransaction(this.pool, async (client) => {
+      const workspaceId = await InvitationRepository.findWorkspaceIdByInvitationId(client, invitationId)
+      return workspaceId ? this.acceptInvitationInTransaction(client, workspaceId, invitationId, identity) : null
+    })
   }
 
   private async acceptInvitationInTransaction(
     client: Querier,
+    workspaceId: string,
     invitationId: string,
     identity: WorkosIdentity
   ): Promise<string | null> {
-    const initial = await InvitationRepository.findById(client, invitationId)
+    const initial = await InvitationRepository.findById(client, workspaceId, invitationId)
     if (!initial) return null
     const email = identity.email.toLowerCase().trim()
     if (!initial.email || initial.email.toLowerCase() !== email) {
       throw new InvitationAcceptanceError("INVITATION_EMAIL_MISMATCH")
     }
 
-    await InvitationRepository.lockMembershipIdentity(client, initial.workspaceId, identity.workosUserId)
+    await InvitationRepository.lockMembershipIdentity(client, workspaceId, identity.workosUserId)
     const parentId = initial.parentLinkId ?? (initial.kind === "link" ? initial.id : null)
-    const parent = parentId ? await InvitationRepository.findByIdForUpdate(client, parentId) : null
+    const parent = parentId ? await InvitationRepository.findByIdForUpdate(client, workspaceId, parentId) : null
     const invitation =
-      parentId === invitationId ? parent : await InvitationRepository.findByIdForUpdate(client, invitationId)
-    if (
-      !invitation ||
-      invitation.workspaceId !== initial.workspaceId ||
-      invitation.parentLinkId !== initial.parentLinkId
-    ) {
+      parentId === invitationId
+        ? parent
+        : await InvitationRepository.findByIdForUpdate(client, workspaceId, invitationId)
+    if (!invitation || invitation.parentLinkId !== initial.parentLinkId) {
       return null
     }
     if (!invitation.email || invitation.email.toLowerCase() !== email) {
       throw new InvitationAcceptanceError("INVITATION_EMAIL_MISMATCH")
     }
 
-    const isMember = await UserRepository.isMember(client, invitation.workspaceId, identity.workosUserId)
+    const isMember = await UserRepository.isMember(client, workspaceId, identity.workosUserId)
     if (invitation.status === "accepted") {
       if (isMember && (!invitation.acceptedWorkosUserId || invitation.acceptedWorkosUserId === identity.workosUserId)) {
-        return invitation.workspaceId
+        return workspaceId
       }
       return null
     }
@@ -207,7 +209,7 @@ export class InvitationService {
     let consumedByWorkosUserId: string | null = null
     if (!isMember) {
       await this.workspaceService.createUserInTransaction(client, {
-        workspaceId: invitation.workspaceId,
+        workspaceId,
         workosUserId: identity.workosUserId,
         email,
         name: identity.name,
@@ -219,23 +221,24 @@ export class InvitationService {
 
     const accepted = await InvitationRepository.accept(
       client,
+      workspaceId,
       invitation.id,
       new Date(),
       consumedByWorkosUserId,
       consumedByWorkosUserId !== null
     )
     if (!accepted) return null
-    if (parent && consumedByWorkosUserId) await InvitationRepository.incrementRevision(client, parent.id)
-    const currentParent = parent ? await InvitationRepository.findById(client, parent.id) : null
+    if (parent && consumedByWorkosUserId) await InvitationRepository.incrementRevision(client, workspaceId, parent.id)
+    const currentParent = parent ? await InvitationRepository.findById(client, workspaceId, parent.id) : null
     await OutboxRepository.insert(client, "invitation:accepted", {
-      workspaceId: invitation.workspaceId,
+      workspaceId,
       invitationId: invitation.id,
       email,
       workosUserId: identity.workosUserId,
       userName: identity.name,
       ...(currentParent ? linkState(currentParent) : {}),
     })
-    return invitation.workspaceId
+    return workspaceId
   }
 
   async acceptPendingForEmail(email: string, identity: WorkosIdentity): Promise<AcceptPendingResult> {
@@ -249,7 +252,12 @@ export class InvitationService {
       for (const invitation of pending) {
         try {
           await client.query("SAVEPOINT accept_inv")
-          const workspaceId = await this.acceptInvitationInTransaction(client, invitation.id, identity)
+          const workspaceId = await this.acceptInvitationInTransaction(
+            client,
+            invitation.workspaceId,
+            invitation.id,
+            identity
+          )
           await client.query("RELEASE SAVEPOINT accept_inv")
           if (workspaceId) accepted.push(workspaceId)
         } catch (error) {
@@ -280,14 +288,8 @@ export class InvitationService {
   }
 
   async resendInvitation(invitationId: string, workspaceId: string): Promise<Invitation | null> {
-    const invitation = await InvitationRepository.findById(this.pool, invitationId)
-    if (
-      !invitation ||
-      invitation.workspaceId !== workspaceId ||
-      invitation.status !== "pending" ||
-      invitation.kind !== "email" ||
-      !invitation.email
-    ) {
+    const invitation = await InvitationRepository.findById(this.pool, workspaceId, invitationId)
+    if (!invitation || invitation.status !== "pending" || invitation.kind !== "email" || !invitation.email) {
       return null
     }
     await this.revokeInvitation(invitationId, workspaceId)

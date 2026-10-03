@@ -1174,15 +1174,7 @@ export function sqlTextAssertionExemptions(packageDir) {
  * lowering its file's number is always welcome; raising one, or adding a file,
  * is what the rule exists to stop.
  */
-export const unscopedSqlAllowlist = {
-  "apps/backend/src/features/access-log/repository.ts": 5,
-  "apps/backend/src/features/ai-usage/usage-repository.ts": 2,
-  "apps/backend/src/features/invitations/repository.ts": 7,
-  "apps/backend/src/features/perf-diagnostics/repository.ts": 2,
-  "apps/backend/src/features/workspace-integrations/repository.ts": 1,
-  "apps/backend/src/features/workspaces/repository.ts": 1,
-  "apps/backend/src/features/workspaces/user-repository.ts": 2,
-}
+export const unscopedSqlAllowlist = {}
 
 export function unscopedSqlExemptions(packageDir) {
   return pathsUnderPackage(unscopedSqlAllowlist, packageDir)
