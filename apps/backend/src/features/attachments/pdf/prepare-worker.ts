@@ -11,11 +11,11 @@ export function createPdfPrepareWorker(deps: PdfPrepareWorkerDeps): JobHandler<P
   const { pdfProcessingService } = deps
 
   return async (job) => {
-    const { attachmentId, filename } = job.data
+    const { attachmentId, workspaceId, filename } = job.data
 
     logger.info({ jobId: job.id, attachmentId, filename }, "Starting PDF prepare job")
 
-    await pdfProcessingService.prepare(attachmentId)
+    await pdfProcessingService.prepare(workspaceId, attachmentId)
 
     logger.info({ jobId: job.id, attachmentId }, "PDF prepare job completed")
   }

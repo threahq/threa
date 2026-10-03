@@ -1,9 +1,13 @@
-import { describe, it, expect, mock, beforeEach } from "bun:test"
+import { afterAll, describe, it, expect, mock, beforeEach } from "bun:test"
 import { awaitAttachmentProcessing, hasPendingAttachmentProcessing } from "./await-processing"
 import { AttachmentRepository } from "./repository"
 import type { Attachment } from "./repository"
 
 const originalFindByIds = AttachmentRepository.findByIds
+
+afterAll(() => {
+  AttachmentRepository.findByIds = originalFindByIds
+})
 
 describe("awaitAttachmentProcessing", () => {
   beforeEach(() => {
@@ -13,7 +17,7 @@ describe("awaitAttachmentProcessing", () => {
   it("returns immediately when no attachments provided", async () => {
     const mockPool = {} as any
 
-    const result = await awaitAttachmentProcessing(mockPool, [])
+    const result = await awaitAttachmentProcessing(mockPool, "ws_1", [])
 
     expect(result).toEqual({
       allCompleted: true,
@@ -44,10 +48,12 @@ describe("awaitAttachmentProcessing", () => {
       createdAt: new Date(),
     }
 
-    AttachmentRepository.findByIds = mock(() => Promise.resolve([mockAttachment]))
+    const findByIds = mock(() => Promise.resolve([mockAttachment]))
+    AttachmentRepository.findByIds = findByIds
 
-    const result = await awaitAttachmentProcessing(mockPool, ["attach_1"], 1000)
+    const result = await awaitAttachmentProcessing(mockPool, "ws_1", ["attach_1"], 1000)
 
+    expect(findByIds).toHaveBeenCalledWith(mockPool, "ws_1", ["attach_1"])
     expect(result).toEqual({
       allCompleted: true,
       completedIds: ["attach_1"],
@@ -79,7 +85,7 @@ describe("awaitAttachmentProcessing", () => {
 
     AttachmentRepository.findByIds = mock(() => Promise.resolve([mockAttachment]))
 
-    const result = await awaitAttachmentProcessing(mockPool, ["attach_1"], 1000)
+    const result = await awaitAttachmentProcessing(mockPool, "ws_1", ["attach_1"], 1000)
 
     expect(result).toEqual({
       allCompleted: false,
@@ -133,7 +139,7 @@ describe("awaitAttachmentProcessing", () => {
 
     AttachmentRepository.findByIds = mock(() => Promise.resolve(mockAttachments))
 
-    const result = await awaitAttachmentProcessing(mockPool, ["attach_1", "attach_2"], 1000)
+    const result = await awaitAttachmentProcessing(mockPool, "ws_1", ["attach_1", "attach_2"], 1000)
 
     expect(result.allCompleted).toBe(false)
     expect(result.completedIds).toContain("attach_1")
@@ -165,7 +171,7 @@ describe("awaitAttachmentProcessing", () => {
     AttachmentRepository.findByIds = mock(() => Promise.resolve([mockAttachment]))
 
     // Use very short timeout to speed up test
-    const result = await awaitAttachmentProcessing(mockPool, ["attach_1"], 100)
+    const result = await awaitAttachmentProcessing(mockPool, "ws_1", ["attach_1"], 100)
 
     expect(result.allCompleted).toBe(false)
     expect(result.completedIds).toHaveLength(0)
@@ -181,7 +187,7 @@ describe("hasPendingAttachmentProcessing", () => {
   it("returns false for empty array", async () => {
     const mockPool = {} as any
 
-    const result = await hasPendingAttachmentProcessing(mockPool, [])
+    const result = await hasPendingAttachmentProcessing(mockPool, "ws_1", [])
 
     expect(result).toBe(false)
   })
@@ -210,7 +216,7 @@ describe("hasPendingAttachmentProcessing", () => {
 
     AttachmentRepository.findByIds = mock(() => Promise.resolve([mockAttachment]))
 
-    const result = await hasPendingAttachmentProcessing(mockPool, ["attach_1"])
+    const result = await hasPendingAttachmentProcessing(mockPool, "ws_1", ["attach_1"])
 
     expect(result).toBe(false)
   })
@@ -237,10 +243,12 @@ describe("hasPendingAttachmentProcessing", () => {
       createdAt: new Date(),
     }
 
-    AttachmentRepository.findByIds = mock(() => Promise.resolve([mockAttachment]))
+    const findByIds = mock(() => Promise.resolve([mockAttachment]))
+    AttachmentRepository.findByIds = findByIds
 
-    const result = await hasPendingAttachmentProcessing(mockPool, ["attach_1"])
+    const result = await hasPendingAttachmentProcessing(mockPool, "ws_1", ["attach_1"])
 
+    expect(findByIds).toHaveBeenCalledWith(mockPool, "ws_1", ["attach_1"])
     expect(result).toBe(true)
   })
 
@@ -268,7 +276,7 @@ describe("hasPendingAttachmentProcessing", () => {
 
     AttachmentRepository.findByIds = mock(() => Promise.resolve([mockAttachment]))
 
-    const result = await hasPendingAttachmentProcessing(mockPool, ["attach_1"])
+    const result = await hasPendingAttachmentProcessing(mockPool, "ws_1", ["attach_1"])
 
     expect(result).toBe(true)
   })

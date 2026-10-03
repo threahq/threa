@@ -10,11 +10,11 @@ export function createExcelProcessingWorker(deps: ExcelProcessingWorkerDeps): Jo
   const { excelProcessingService } = deps
 
   return async (job) => {
-    const { attachmentId, filename } = job.data
+    const { attachmentId, workspaceId, filename } = job.data
 
     logger.info({ jobId: job.id, attachmentId, filename }, "Processing Excel workbook job")
 
-    await excelProcessingService.processExcel(attachmentId)
+    await excelProcessingService.processExcel(workspaceId, attachmentId)
 
     logger.info({ jobId: job.id, attachmentId }, "Excel processing job completed")
   }

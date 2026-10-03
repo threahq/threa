@@ -102,11 +102,12 @@ function errorOutput(error: string, attachmentId: string): AgentToolResult {
 
 async function readWhole(
   db: Pool,
+  workspaceId: string,
   storage: StorageProvider,
   attachment: Attachment,
   supportsVision: boolean
 ): Promise<AgentToolResult> {
-  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, attachment.id)
+  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, workspaceId, attachment.id)
   const output = JSON.stringify({
     id: attachment.id,
     filename: attachment.filename,
@@ -140,12 +141,13 @@ async function readWhole(
 
 async function readLines(
   db: Pool,
+  workspaceId: string,
   storage: StorageProvider,
   attachment: Attachment,
   startLine: number,
   endLine: number
 ): Promise<AgentToolResult> {
-  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, attachment.id)
+  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, workspaceId, attachment.id)
   if (!extraction || extraction.sourceType !== "text" || !extraction.textMetadata) {
     return errorOutput("This attachment has no readable text lines", attachment.id)
   }
@@ -165,11 +167,12 @@ async function readLines(
 
 async function readPages(
   db: Pool,
+  workspaceId: string,
   attachment: Attachment,
   startPage: number,
   endPage: number
 ): Promise<AgentToolResult> {
-  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, attachment.id)
+  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, workspaceId, attachment.id)
   if (!extraction || extraction.sourceType !== "pdf" || !extraction.pdfMetadata) {
     return errorOutput("This attachment has no readable PDF pages", attachment.id)
   }
@@ -177,7 +180,13 @@ async function readPages(
   if (startPage > totalPages || endPage > totalPages) {
     return errorOutput(`Requested pages are out of range; the PDF has ${totalPages} pages`, attachment.id)
   }
-  const pages = await PdfPageExtractionRepository.findByAttachmentAndPageRange(db, attachment.id, startPage, endPage)
+  const pages = await PdfPageExtractionRepository.findByAttachmentAndPageRange(
+    db,
+    workspaceId,
+    attachment.id,
+    startPage,
+    endPage
+  )
   return {
     output: JSON.stringify({
       filename: attachment.filename,
@@ -189,13 +198,14 @@ async function readPages(
 
 async function readRows(
   db: Pool,
+  workspaceId: string,
   storage: StorageProvider,
   attachment: Attachment,
   sheetName: string,
   startRow: number | undefined,
   endRow: number | undefined
 ): Promise<AgentToolResult> {
-  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, attachment.id)
+  const extraction = await AttachmentExtractionRepository.findByAttachmentId(db, workspaceId, attachment.id)
   if (!extraction || extraction.sourceType !== "excel" || !extraction.excelMetadata) {
     return errorOutput("This attachment has no readable spreadsheet", attachment.id)
   }
@@ -274,15 +284,15 @@ Use \`search_attachments\` first when you don't already have the attachment id.`
 
         const section = input.section
         if (!section) {
-          return readWhole(db, storage, attachment, supportsVision)
+          return readWhole(db, workspaceId, storage, attachment, supportsVision)
         }
         if (section.kind === "lines") {
-          return readLines(db, storage, attachment, section.startLine, section.endLine)
+          return readLines(db, workspaceId, storage, attachment, section.startLine, section.endLine)
         }
         if (section.kind === "pages") {
-          return readPages(db, attachment, section.startPage, section.endPage)
+          return readPages(db, workspaceId, attachment, section.startPage, section.endPage)
         }
-        return readRows(db, storage, attachment, section.sheetName, section.startRow, section.endRow)
+        return readRows(db, workspaceId, storage, attachment, section.sheetName, section.startRow, section.endRow)
       } catch (error) {
         logger.error({ error, attachmentId: input.attachmentId }, "Read attachment failed")
         return errorOutput(

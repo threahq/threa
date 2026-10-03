@@ -262,9 +262,14 @@ export async function buildStreamContext(
   }
 
   if (options?.includeAttachments) {
-    context.conversationHistory = await enrichMessagesWithAttachments(db, context.conversationHistory, {
-      triggerMessageId: options.triggerMessageId,
-    })
+    context.conversationHistory = await enrichMessagesWithAttachments(
+      db,
+      stream.workspaceId,
+      context.conversationHistory,
+      {
+        triggerMessageId: options.triggerMessageId,
+      }
+    )
   }
   if (options?.includeLinkPreviews) {
     context.conversationHistory = await enrichMessagesWithLinkPreviews(
@@ -556,6 +561,7 @@ export interface EnrichAttachmentsOptions {
  */
 export async function enrichMessagesWithAttachments(
   db: Querier,
+  workspaceId: string,
   messages: Message[],
   options?: EnrichAttachmentsOptions
 ): Promise<MessageWithAttachments[]> {
@@ -564,7 +570,7 @@ export async function enrichMessagesWithAttachments(
 
   const messageIds = messages.map((m) => m.id)
 
-  const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
+  const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, workspaceId, messageIds)
 
   if (attachmentsByMessage.size === 0) {
     return messages
@@ -577,7 +583,11 @@ export async function enrichMessagesWithAttachments(
     }
   }
 
-  const extractionsByAttachment = await AttachmentExtractionRepository.findByAttachmentIds(db, allAttachmentIds)
+  const extractionsByAttachment = await AttachmentExtractionRepository.findByAttachmentIds(
+    db,
+    workspaceId,
+    allAttachmentIds
+  )
 
   const triggerIdx = triggerMessageId ? messages.findIndex((m) => m.id === triggerMessageId) : -1
 

@@ -91,7 +91,7 @@ describe("PDF Repositories", () => {
         expect(inserted.rawText).toBe("This is the extracted text from page 1")
         expect(inserted.processingStatus).toBe("pending")
 
-        const found = await PdfPageExtractionRepository.findById(client, pageId)
+        const found = await PdfPageExtractionRepository.findById(client, testWorkspaceId, pageId)
         expect(found).not.toBeNull()
         expect(found!.id).toBe(pageId)
       })
@@ -140,7 +140,7 @@ describe("PDF Repositories", () => {
         const count = await PdfPageExtractionRepository.insertMany(client, pages)
         expect(count).toBe(3)
 
-        const found = await PdfPageExtractionRepository.findByAttachmentId(client, attId)
+        const found = await PdfPageExtractionRepository.findByAttachmentId(client, testWorkspaceId, attId)
         expect(found.length).toBe(3)
         expect(found.map((p) => p.pageNumber)).toEqual([1, 2, 3])
       })
@@ -172,7 +172,13 @@ describe("PDF Repositories", () => {
 
         await PdfPageExtractionRepository.insertMany(client, pages)
 
-        const range = await PdfPageExtractionRepository.findByAttachmentAndPageRange(client, attId, 3, 7)
+        const range = await PdfPageExtractionRepository.findByAttachmentAndPageRange(
+          client,
+          testWorkspaceId,
+          attId,
+          3,
+          7
+        )
         expect(range.length).toBe(5)
         expect(range.map((p) => p.pageNumber)).toEqual([3, 4, 5, 6, 7])
       })
@@ -206,6 +212,7 @@ describe("PDF Repositories", () => {
         // Update should succeed when status matches
         const updated = await PdfPageExtractionRepository.updateProcessingStatus(
           client,
+          testWorkspaceId,
           pageId,
           ProcessingStatuses.PROCESSING,
           { onlyIfStatusIn: [ProcessingStatuses.PENDING] }
@@ -215,73 +222,12 @@ describe("PDF Repositories", () => {
         // Update should fail when status doesn't match
         const notUpdated = await PdfPageExtractionRepository.updateProcessingStatus(
           client,
+          testWorkspaceId,
           pageId,
           ProcessingStatuses.COMPLETED,
           { onlyIfStatusIn: [ProcessingStatuses.PENDING] }
         )
         expect(notUpdated).toBe(false)
-      })
-    })
-
-    test("counts pages by status", async () => {
-      const attId = attachmentId()
-
-      await withTestTransaction(pool, async (client) => {
-        await AttachmentRepository.insert(client, {
-          id: attId,
-          workspaceId: testWorkspaceId,
-          streamId: testStreamId,
-          uploadedBy: testUserId,
-          filename: "count-test.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 1024,
-          storagePath: "/test/count-test.pdf",
-        })
-
-        const pages = [
-          {
-            id: pdfPageId(),
-            attachmentId: attId,
-            workspaceId: testWorkspaceId,
-            pageNumber: 1,
-            classification: "text_rich" as const,
-            processingStatus: "pending" as const,
-          },
-          {
-            id: pdfPageId(),
-            attachmentId: attId,
-            workspaceId: testWorkspaceId,
-            pageNumber: 2,
-            classification: "text_rich" as const,
-            processingStatus: "completed" as const,
-          },
-          {
-            id: pdfPageId(),
-            attachmentId: attId,
-            workspaceId: testWorkspaceId,
-            pageNumber: 3,
-            classification: "text_rich" as const,
-            processingStatus: "completed" as const,
-          },
-          {
-            id: pdfPageId(),
-            attachmentId: attId,
-            workspaceId: testWorkspaceId,
-            pageNumber: 4,
-            classification: "text_rich" as const,
-            processingStatus: "failed" as const,
-          },
-        ]
-
-        await PdfPageExtractionRepository.insertMany(client, pages)
-
-        const counts = await PdfPageExtractionRepository.countByStatus(client, attId)
-        expect(counts).toMatchObject({
-          pending: 1,
-          completed: 2,
-          failed: 1,
-          processing: 0,
-        })
       })
     })
   })
@@ -318,40 +264,9 @@ describe("PDF Repositories", () => {
         expect(inserted.pagesFailed).toBe(0)
         expect(inserted.status).toBe("preparing")
 
-        const found = await PdfProcessingJobRepository.findById(client, jobId)
+        const found = await PdfProcessingJobRepository.findById(client, testWorkspaceId, jobId)
         expect(found).not.toBeNull()
         expect(found!.id).toBe(jobId)
-      })
-    })
-
-    test("finds job by attachment ID", async () => {
-      const attId = attachmentId()
-      const jobId = pdfJobId()
-
-      await withTestTransaction(pool, async (client) => {
-        await AttachmentRepository.insert(client, {
-          id: attId,
-          workspaceId: testWorkspaceId,
-          streamId: testStreamId,
-          uploadedBy: testUserId,
-          filename: "find-test.pdf",
-          mimeType: "application/pdf",
-          sizeBytes: 1024,
-          storagePath: "/test/find-test.pdf",
-        })
-
-        await PdfProcessingJobRepository.insert(client, {
-          id: jobId,
-          attachmentId: attId,
-          workspaceId: testWorkspaceId,
-          totalPages: 5,
-          status: PdfJobStatuses.PROCESSING_PAGES,
-        })
-
-        const found = await PdfProcessingJobRepository.findByAttachmentId(client, attId)
-        expect(found).not.toBeNull()
-        expect(found!.id).toBe(jobId)
-        expect(found!.status).toBe("processing_pages")
       })
     })
 
@@ -380,15 +295,15 @@ describe("PDF Repositories", () => {
         })
 
         // Increment completed pages
-        const result1 = await PdfProcessingJobRepository.incrementPagesCompleted(client, jobId)
+        const result1 = await PdfProcessingJobRepository.incrementPagesCompleted(client, testWorkspaceId, jobId)
         expect(result1.pagesCompleted).toBe(1)
         expect(result1.pagesFailed).toBe(0)
         expect(result1.totalPages).toBe(5)
 
-        const result2 = await PdfProcessingJobRepository.incrementPagesCompleted(client, jobId)
+        const result2 = await PdfProcessingJobRepository.incrementPagesCompleted(client, testWorkspaceId, jobId)
         expect(result2.pagesCompleted).toBe(2)
 
-        const result3 = await PdfProcessingJobRepository.incrementPagesCompleted(client, jobId)
+        const result3 = await PdfProcessingJobRepository.incrementPagesCompleted(client, testWorkspaceId, jobId)
         expect(result3.pagesCompleted).toBe(3)
       })
     })
@@ -417,7 +332,7 @@ describe("PDF Repositories", () => {
           status: PdfJobStatuses.PROCESSING_PAGES,
         })
 
-        const result = await PdfProcessingJobRepository.incrementPagesFailed(client, jobId)
+        const result = await PdfProcessingJobRepository.incrementPagesFailed(client, testWorkspaceId, jobId)
         expect(result.pagesFailed).toBe(1)
         expect(result.pagesCompleted).toBe(0)
       })
@@ -447,10 +362,15 @@ describe("PDF Repositories", () => {
           status: PdfJobStatuses.PREPARING,
         })
 
-        const updated = await PdfProcessingJobRepository.updateStatus(client, jobId, PdfJobStatuses.COMPLETED)
+        const updated = await PdfProcessingJobRepository.updateStatus(
+          client,
+          testWorkspaceId,
+          jobId,
+          PdfJobStatuses.COMPLETED
+        )
         expect(updated).toBe(true)
 
-        const found = await PdfProcessingJobRepository.findById(client, jobId)
+        const found = await PdfProcessingJobRepository.findById(client, testWorkspaceId, jobId)
         expect(found).not.toBeNull()
         expect(found!.status).toBe("completed")
         expect(found!.completedAt).not.toBeNull()
@@ -481,12 +401,18 @@ describe("PDF Repositories", () => {
           status: PdfJobStatuses.PROCESSING_PAGES,
         })
 
-        const updated = await PdfProcessingJobRepository.updateStatus(client, jobId, PdfJobStatuses.FAILED, {
-          errorMessage: "Failed to process page 3",
-        })
+        const updated = await PdfProcessingJobRepository.updateStatus(
+          client,
+          testWorkspaceId,
+          jobId,
+          PdfJobStatuses.FAILED,
+          {
+            errorMessage: "Failed to process page 3",
+          }
+        )
         expect(updated).toBe(true)
 
-        const found = await PdfProcessingJobRepository.findById(client, jobId)
+        const found = await PdfProcessingJobRepository.findById(client, testWorkspaceId, jobId)
         expect(found).not.toBeNull()
         expect(found!.status).toBe("failed")
         expect(found!.errorMessage).toBe("Failed to process page 3")

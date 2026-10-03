@@ -92,7 +92,7 @@ async function setupTestWorkspace(pool: Pool): Promise<TestContext> {
     storagePath: `tests/openapi-attachment-${testRunId}.bin`,
     safetyStatus: AttachmentSafetyStatuses.CLEAN,
   })
-  await AttachmentRepository.attachToMessage(pool, [attachment], attachmentMessage.id, channel.id)
+  await AttachmentRepository.attachToMessage(pool, workspace.id, [attachment], attachmentMessage.id, channel.id)
   await AttachmentExtractionRepository.insert(pool, {
     id: extractionId(),
     attachmentId: attachment,

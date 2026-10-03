@@ -1769,13 +1769,13 @@ export class PersonaAgent {
               await AgentSessionRepository.updateLastSeenSequence(db, workspaceId, updateSessionId, sequence)
             },
             awaitAttachments: async (messageIds) => {
-              const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
+              const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, workspaceId, messageIds)
               const allAttachmentIds: string[] = []
               for (const attachments of attachmentsByMessage.values()) {
                 for (const a of attachments) allAttachmentIds.push(a.id)
               }
               if (allAttachmentIds.length > 0) {
-                await awaitAttachmentProcessing(db, allAttachmentIds)
+                await awaitAttachmentProcessing(db, workspaceId, allAttachmentIds)
               }
             },
             streamId: targetStreamId,

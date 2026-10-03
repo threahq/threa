@@ -19,6 +19,7 @@ export interface AwaitAttachmentProcessingResult {
  */
 export async function awaitAttachmentProcessing(
   pool: Pool,
+  workspaceId: string,
   attachmentIds: string[],
   timeoutMs: number = DEFAULT_ATTACHMENT_PROCESSING_TIMEOUT_MS
 ): Promise<AwaitAttachmentProcessingResult> {
@@ -37,7 +38,7 @@ export async function awaitAttachmentProcessing(
   // This is intentional per INV-41: we release between polling intervals to avoid
   // holding connections during sleep. Do NOT wrap in withClient.
   while (pendingIds.size > 0 && Date.now() - startTime < timeoutMs) {
-    const attachments = await AttachmentRepository.findByIds(pool, Array.from(pendingIds))
+    const attachments = await AttachmentRepository.findByIds(pool, workspaceId, Array.from(pendingIds))
 
     for (const attachment of attachments) {
       if (attachment.processingStatus === ProcessingStatuses.COMPLETED) {
@@ -93,10 +94,14 @@ export async function awaitAttachmentProcessing(
  * Check if any attachments in a list are still pending or processing.
  * Quick check without polling.
  */
-export async function hasPendingAttachmentProcessing(pool: Pool, attachmentIds: string[]): Promise<boolean> {
+export async function hasPendingAttachmentProcessing(
+  pool: Pool,
+  workspaceId: string,
+  attachmentIds: string[]
+): Promise<boolean> {
   if (attachmentIds.length === 0) return false
 
-  const attachments = await AttachmentRepository.findByIds(pool, attachmentIds)
+  const attachments = await AttachmentRepository.findByIds(pool, workspaceId, attachmentIds)
 
   return attachments.some(
     (a) => a.processingStatus === ProcessingStatuses.PENDING || a.processingStatus === ProcessingStatuses.PROCESSING

@@ -3,5 +3,5 @@
  * service and a no-op stub (used when image processing is disabled in tests).
  */
 export interface ImageThumbnailServiceLike {
-  generateThumbnail(attachmentId: string): Promise<void>
+  generateThumbnail(workspaceId: string, attachmentId: string): Promise<void>
 }

@@ -87,7 +87,13 @@ describe("ConversationService.getBoardMessages", () => {
         sizeBytes: 128,
         storagePath: `${testWorkspaceId}/secret.png`,
       })
-      await AttachmentRepository.attachToMessage(client, [attachment.id], deletedMessageId, testStreamId)
+      await AttachmentRepository.attachToMessage(
+        client,
+        testWorkspaceId,
+        [attachment.id],
+        deletedMessageId,
+        testStreamId
+      )
       const liveAttachment = await AttachmentRepository.insert(client, {
         id: attachmentId(),
         workspaceId: testWorkspaceId,
@@ -98,7 +104,13 @@ describe("ConversationService.getBoardMessages", () => {
         sizeBytes: 64,
         storagePath: `${testWorkspaceId}/public.png`,
       })
-      await AttachmentRepository.attachToMessage(client, [liveAttachment.id], liveMessageId, testStreamId)
+      await AttachmentRepository.attachToMessage(
+        client,
+        testWorkspaceId,
+        [liveAttachment.id],
+        liveMessageId,
+        testStreamId
+      )
       await MessageRepository.softDelete(client, testWorkspaceId, deletedMessageId)
       await ConversationRepository.insert(client, {
         id: convId,
@@ -181,11 +193,15 @@ describe("ConversationService.getBoardMessages", () => {
       const messages = await service.getBoardMessages(testWorkspaceId, convId)
       const live = messages.find((m) => m.id === liveMessageId)!
       const tombstone = messages.find((m) => m.id === deletedMessageId)!
-      expect(findByMessageIds.mock.calls.map(([, ids]) => ids)).toEqual([[liveMessageId]])
       expect({
+        hydrations: findByMessageIds.mock.calls.map(([, workspaceId, ids]) => ({ workspaceId, ids })),
         liveFilenames: live.attachments.map((a) => a.filename),
         tombstoneAttachments: tombstone.attachments,
-      }).toEqual({ liveFilenames: ["public.png"], tombstoneAttachments: [] })
+      }).toEqual({
+        hydrations: [{ workspaceId: testWorkspaceId, ids: [liveMessageId] }],
+        liveFilenames: ["public.png"],
+        tombstoneAttachments: [],
+      })
     } finally {
       findByMessageIds.mockRestore()
     }

@@ -10,11 +10,11 @@ export function createImageCaptionWorker(deps: ImageCaptionWorkerDeps): JobHandl
   const { imageCaptionService } = deps
 
   return async (job) => {
-    const { attachmentId, filename, mimeType } = job.data
+    const { attachmentId, workspaceId, filename, mimeType } = job.data
 
     logger.info({ jobId: job.id, attachmentId, filename, mimeType }, "Processing image caption job")
 
-    await imageCaptionService.processImage(attachmentId)
+    await imageCaptionService.processImage(workspaceId, attachmentId)
 
     logger.info({ jobId: job.id, attachmentId }, "Image caption job completed")
   }

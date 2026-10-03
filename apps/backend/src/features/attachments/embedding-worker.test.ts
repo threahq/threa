@@ -47,13 +47,14 @@ describe("createAttachmentEmbeddingWorker", () => {
   })
 
   it("generates and stores an embedding for an eligible extraction", async () => {
-    spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue(makeExtraction())
+    const findSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue(makeExtraction())
     const updateSpy = spyOn(AttachmentExtractionRepository, "updateSummaryEmbedding").mockResolvedValue(true)
     const embeddingService = makeEmbeddingService()
 
     const worker = createAttachmentEmbeddingWorker({ pool: {} as any, embeddingService })
     await worker(makeJob())
 
+    expect(findSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1")
     expect(embeddingService.embed).toHaveBeenCalledTimes(1)
     expect(embeddingService.embed).toHaveBeenCalledWith("A quarterly revenue report broken down by product line.", {
       workspaceId: "ws_1",
@@ -117,16 +118,15 @@ describe("createAttachmentEmbeddingWorker", () => {
     expect(updateSpy).not.toHaveBeenCalled()
   })
 
-  it("refuses to write when the workspace in the payload doesn't match the extraction (INV-8)", async () => {
-    spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue(
-      makeExtraction({ workspaceId: "ws_other" })
-    )
+  it("looks the extraction up under the payload's workspace and writes nothing when that workspace has none (INV-8)", async () => {
+    const findSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue(null)
     const updateSpy = spyOn(AttachmentExtractionRepository, "updateSummaryEmbedding").mockResolvedValue(true)
     const embeddingService = makeEmbeddingService()
 
     const worker = createAttachmentEmbeddingWorker({ pool: {} as any, embeddingService })
     await worker(makeJob())
 
+    expect(findSpy).toHaveBeenCalledWith(expect.anything(), "ws_1", "attach_1")
     expect(embeddingService.embed).not.toHaveBeenCalled()
     expect(updateSpy).not.toHaveBeenCalled()
   })

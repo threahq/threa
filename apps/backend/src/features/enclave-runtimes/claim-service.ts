@@ -545,7 +545,7 @@ export class EnclaveClaimService {
         .map((m) => m.id)
         .reverse(),
     ]
-    const attachmentCiphertexts = await this.loadAttachmentCiphertexts(attachmentCiphertextIds)
+    const attachmentCiphertexts = await this.loadAttachmentCiphertexts(workspaceId, attachmentCiphertextIds)
 
     // Prior turns' sealed digests (C-1) + the prior sealed rolling summary (C-2):
     // both are opaque to the backend (only the enclave's SSK wraps open them,
@@ -777,10 +777,11 @@ export class EnclaveClaimService {
    * unavailable) rather than failing the whole turn.
    */
   private async loadAttachmentCiphertexts(
+    workspaceId: string,
     /** Message ids in shipping priority order (trigger first, then newest history). */
     messageIds: string[]
   ): Promise<{ attachmentId: string; ciphertext: string }[]> {
-    const byMessage = await AttachmentRepository.findByMessageIds(this.pool, messageIds)
+    const byMessage = await AttachmentRepository.findByMessageIds(this.pool, workspaceId, messageIds)
     const e2eRows = messageIds.flatMap((id) => (byMessage.get(id) ?? []).filter((a) => a.e2eOnly))
     if (e2eRows.length === 0) return []
 

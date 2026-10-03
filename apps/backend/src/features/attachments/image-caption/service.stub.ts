@@ -15,8 +15,8 @@ export class StubImageCaptionService implements ImageCaptionServiceLike {
     this.pool = pool
   }
 
-  async processImage(attachmentId: string): Promise<void> {
+  async processImage(workspaceId: string, attachmentId: string): Promise<void> {
     logger.debug({ attachmentId }, "Stub image caption service - marking as skipped")
-    await AttachmentRepository.updateProcessingStatus(this.pool, attachmentId, ProcessingStatuses.SKIPPED)
+    await AttachmentRepository.updateProcessingStatus(this.pool, workspaceId, attachmentId, ProcessingStatuses.SKIPPED)
   }
 }

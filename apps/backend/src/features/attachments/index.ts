@@ -102,10 +102,12 @@ export {
   StubVideoTranscodingService,
   ThreaMediaConvertClient,
   VideoTranscodeJobRepository,
+  createVideoTranscodeOnDLQ,
   isVideoAttachment,
 } from "./video"
 export type { VideoTranscodingServiceDeps, VideoTranscodingServiceLike } from "./video"
 
+export { createAttachmentFailedOnDLQ } from "./on-dlq"
 export { createImageCaptionWorker } from "./image-caption/worker"
 export { createImageThumbnailWorker } from "./image/worker"
 export { createPdfPrepareWorker } from "./pdf/prepare-worker"

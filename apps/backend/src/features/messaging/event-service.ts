@@ -768,14 +768,11 @@ export class EventService {
     const attachmentsToAttach: string[] = []
     const attachmentsToReference: string[] = []
     if (params.attachmentIds && params.attachmentIds.length > 0) {
-      const attachments = await AttachmentRepository.findByIds(client, params.attachmentIds)
+      const attachments = await AttachmentRepository.findByIds(client, params.workspaceId, params.attachmentIds)
       if (attachments.length !== params.attachmentIds.length) {
         throw new Error("Invalid attachment IDs: not all attachments were found")
       }
       for (const a of attachments) {
-        if (a.workspaceId !== params.workspaceId) {
-          throw new Error("Invalid attachment IDs: must belong to this workspace")
-        }
         // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
         // bytes). Single source of truth with the download path. One widening:
         // the author's OWN still-settling reservation may bind (send-while-
@@ -849,7 +846,13 @@ export class EventService {
       // payload freezes "uploading" for an upload that already finished, and
       // that settle's status event was skipped (the row was unbound then).
       if (attachmentsToAttach.length > 0) {
-        const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
+        const attached = await AttachmentRepository.attachToMessage(
+          client,
+          params.workspaceId,
+          attachmentsToAttach,
+          msgId,
+          params.streamId
+        )
         if (attached !== attachmentsToAttach.length) {
           // A concurrent send with the same clientMessageId may have won the
           // bind: attach now runs BEFORE the message insert (whose ON CONFLICT
@@ -872,7 +875,7 @@ export class EventService {
       const pendingIds = attachments.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
       let uploadsByAttachmentId = new Map<string, AttachmentUpload>()
       if (pendingIds.length > 0) {
-        const refreshed = await AttachmentRepository.findByIds(client, pendingIds)
+        const refreshed = await AttachmentRepository.findByIds(client, params.workspaceId, pendingIds)
         const refreshedById = new Map(refreshed.map((a) => [a.id, a]))
         summaryRows = attachments.map((a) => refreshedById.get(a.id) ?? a)
         const stillPendingIds = summaryRows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus)).map((a) => a.id)
@@ -1503,7 +1506,7 @@ export class EventService {
             // move it in the feed.
             const contextAttachments =
               validatedReferenceIds.length > 0
-                ? await AttachmentRepository.findByIds(client, validatedReferenceIds)
+                ? await AttachmentRepository.findByIds(client, params.workspaceId, validatedReferenceIds)
                 : []
             await StreamContextRepository.replaceForMessage(
               client,
@@ -1583,16 +1586,13 @@ export class EventService {
   private async _validateEditAttachmentReferences(client: PoolClient, params: EditMessageParams): Promise<string[]> {
     if (!params.attachmentIds || params.attachmentIds.length === 0) return []
 
-    const attachments = await AttachmentRepository.findByIds(client, params.attachmentIds)
+    const attachments = await AttachmentRepository.findByIds(client, params.workspaceId, params.attachmentIds)
     if (attachments.length !== params.attachmentIds.length) {
       throw new Error("Invalid attachment IDs: not all attachments were found")
     }
 
     const validated: string[] = []
     for (const a of attachments) {
-      if (a.workspaceId !== params.workspaceId) {
-        throw new Error("Invalid attachment IDs: must belong to this workspace")
-      }
       // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
       // bytes). Single source of truth with the download path.
       if (!isAttachmentSafeForSharing(a.safetyStatus)) {
@@ -2789,15 +2789,13 @@ export class EventService {
     let uploadRowByAttachmentId = new Map<string, AttachmentUpload>()
     if (refreshAttachmentIds.length > 0) {
       await withClient(this.pool, async (client) => {
-        const rows = await AttachmentRepository.findByIds(client, refreshAttachmentIds)
+        const rows = await AttachmentRepository.findByIds(client, scope.workspaceId, refreshAttachmentIds)
         attachmentRowById = new Map(rows.map((a) => [a.id, a]))
         const pendingRows = rows.filter((a) => !isAttachmentSafeForSharing(a.safetyStatus))
         if (pendingRows.length > 0) {
-          // One bootstrap enriches one workspace's events, so any row's
-          // workspaceId scopes the tracking-table read (INV-8).
           uploadRowByAttachmentId = await AttachmentUploadRepository.findByAttachmentIds(
             client,
-            pendingRows[0].workspaceId,
+            scope.workspaceId,
             pendingRows.map((a) => a.id)
           )
         }
