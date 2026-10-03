@@ -57,6 +57,17 @@ import {
 const MEMORY_CONTEXT_LIMIT = 20
 const MIN_CONVERSATION_MESSAGES = 1
 
+/** Logged once per classified conversation as "Memo capture outcome"; the capture-rate counter reads it. */
+type CaptureOutcome = "memorized" | "not_worthy" | "low_confidence" | "unchanged" | "empty" | "failed"
+
+function logCaptureOutcome(
+  ids: { workspaceId: string; streamId: string; conversationId: string },
+  outcome: CaptureOutcome,
+  extra?: Record<string, unknown>
+): void {
+  logger.info({ ...ids, outcome, ...extra }, "Memo capture outcome")
+}
+
 /** Key with the highest count, or undefined when the map is empty. */
 function mostCommon(counts: Map<string, number>): string | undefined {
   let best: string | undefined
@@ -582,23 +593,21 @@ export class MemoService implements MemoServiceLike {
         }
 
         if (!classification.isKnowledgeWorthy) {
+          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "not_worthy")
           continue
         }
 
         if (classification.confidence != null && classification.confidence < MEMO_GEM_CONFIDENCE_FLOOR) {
-          logger.info(
-            {
-              conversationId: conversation.id,
-              confidence: classification.confidence,
-              threshold: MEMO_GEM_CONFIDENCE_FLOOR,
-            },
-            "Conversation skipped due to low classifier confidence"
-          )
+          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "low_confidence", {
+            confidence: classification.confidence,
+            threshold: MEMO_GEM_CONFIDENCE_FLOOR,
+          })
           continue
         }
 
         // Existing memos that the classifier judged unchanged: leave them as-is.
         if (existingMemos.length > 0 && !classification.shouldReviseExisting) {
+          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "unchanged")
           continue
         }
 
@@ -629,7 +638,7 @@ export class MemoService implements MemoServiceLike {
             })
 
         if (contents.length === 0) {
-          logger.info({ conversationId: conversation.id, isRevision }, "Memorizer returned no memos")
+          logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "empty", { isRevision })
           continue
         }
 
@@ -671,10 +680,10 @@ export class MemoService implements MemoServiceLike {
           })
         }
 
-        logger.info(
-          { conversationId: conversation.id, isRevision, memoCount: contents.length },
-          "Conversation memos generated"
-        )
+        logCaptureOutcome({ workspaceId, streamId, conversationId: conversation.id }, "memorized", {
+          isRevision,
+          memoCount: contents.length,
+        })
       } catch (error) {
         // Unfingerprinted, so the retry asks the model again instead of
         // skipping the conversation as unchanged.
@@ -686,6 +695,7 @@ export class MemoService implements MemoServiceLike {
           continue
         }
         failedItemIds.add(item.id)
+        logCaptureOutcome({ workspaceId, streamId, conversationId: item.itemId }, "failed")
         logger.error(
           { error, conversationId: item.itemId, workspaceId, streamId },
           "Failed to process conversation for memo"
