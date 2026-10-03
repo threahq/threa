@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import { useSidebar } from "@/contexts"
+import { cn } from "@/lib/utils"
 import type { StreamContextPanelProps } from "./stream-context-chrome"
 import { useStreamContextDock } from "./stream-context-dock"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
@@ -19,9 +20,9 @@ interface StreamContextSurfaceProps {
 
 /**
  * Hosts the "In this stream" overview: the page's docked right-edge column on
- * desktop, beside the stream it lists, and a bottom drawer on mobile or where
- * the column doesn't fit. The same
- * {@link StreamContextIndexPanel} renders inside both.
+ * desktop, beside the stream it lists; a panel floating over the stream's
+ * top-right corner where that column doesn't fit; a bottom drawer on mobile.
+ * The same {@link StreamContextIndexPanel} renders inside each.
  */
 export function StreamContextSurface(props: StreamContextSurfaceProps) {
   const { isMobile } = useSidebar()
@@ -40,7 +41,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
     />
   )
 
-  if (isMobile || dock?.fits === false) {
+  if (isMobile) {
     return (
       <Drawer open={open} onOpenChange={(next) => !next && onClose()}>
         <DrawerContent className="h-[88dvh]">
@@ -54,15 +55,43 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
     )
   }
 
-  if (!open || !dock?.target) return null
-  return createPortal(<DockedOverview onClose={onClose}>{panel}</DockedOverview>, dock.target)
+  if (!open || !dock) return null
+  // Without room for the column, the stream showing this overview owns the
+  // window's right edge (the dock is closed), and its header is h-12 on the
+  // page and the panel alike.
+  if (!dock.fits) {
+    return createPortal(
+      <OverviewRegion
+        onClose={onClose}
+        className="fixed bottom-2 right-2 top-14 z-30 w-96 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border/60 bg-background shadow-lg animate-in fade-in-0 slide-in-from-top-1"
+      >
+        {panel}
+      </OverviewRegion>,
+      document.body
+    )
+  }
+  if (!dock.target) return null
+  return createPortal(
+    <OverviewRegion onClose={onClose} className="flex-1">
+      {panel}
+    </OverviewRegion>,
+    dock.target
+  )
 }
 
-function DockedOverview({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+function OverviewRegion({
+  onClose,
+  className,
+  children,
+}: {
+  onClose: () => void
+  className: string
+  children: ReactNode
+}) {
   const ref = useRef<HTMLElement>(null)
   const opener = useRef<HTMLElement | null>(null)
 
-  // Focus comes in on open so Escape reaches the dock, and goes back to the
+  // Focus comes in on open so Escape reaches the overview, and goes back to the
   // opener on close unless the user already moved it somewhere else. A rerun
   // (StrictMode) finds focus already inside and keeps the original opener.
   useEffect(() => {
@@ -79,7 +108,7 @@ function DockedOverview({ onClose, children }: { onClose: () => void; children: 
       ref={ref}
       tabIndex={-1}
       aria-label="In this stream"
-      className="flex min-h-0 flex-1 flex-col outline-none"
+      className={cn("flex min-h-0 flex-col outline-none", className)}
       onKeyDown={(e) => {
         if (e.key !== "Escape" || e.defaultPrevented) return
         // Claims the key so the stream's window-level Escape doesn't also settle it.

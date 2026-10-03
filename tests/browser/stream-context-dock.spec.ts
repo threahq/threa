@@ -5,7 +5,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * Desktop "In this stream" docks beside the stream it lists instead of covering
  * it: the stream stays usable, a jump scrolls it in place with the overview
  * still open, and a thread's overview docks to the right of the thread panel.
- * Where the column can't fit beside the main column it opens as the drawer.
+ * Where the column can't fit beside the main column it floats over the stream's
+ * top-right corner instead.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -113,7 +114,7 @@ async function seedChannelWithThread(page: Page, prefix: string) {
   return { workspaceId: workspaceId!, streamId: streamId!, threadId }
 }
 
-test("opens as the drawer where the dock can't fit beside a thread, and docks once there's room", async ({ page }) => {
+test("floats over the thread where the dock can't fit beside it, and docks once there's room", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-narrow")
 
@@ -121,14 +122,29 @@ test("opens as the drawer where the dock can't fit beside a thread, and docks on
   // 300px column doesn't.
   await page.setViewportSize({ width: 1150, height: 900 })
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
-  await page.getByTestId("panel").getByRole("button", { name: "In this stream" }).click()
-  await expect(page.getByRole("dialog").getByText("example.org").first()).toBeVisible()
-  await expect(dock(page)).toHaveCount(0)
-  expect((await box(page, '[data-editor-zone="main"]')).width).toBeGreaterThanOrEqual(400)
-
-  await page.setViewportSize({ width: 1600, height: 900 })
+  const toggle = page.getByTestId("panel").getByRole("button", { name: "In this stream" })
+  await toggle.click()
+  await expect(dock(page)).toBeFocused()
   await expect(dock(page).getByText("example.org").first()).toBeVisible()
   await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByTestId("stream-context-dock").getByRole("complementary")).toHaveCount(0)
+
+  // Over the thread's top-right corner, below its header, with main untouched.
+  const floating = await dock(page).boundingBox()
+  const panel = await box(page, '[data-testid="panel"]')
+  const panelHeader = await box(page, '[data-testid="panel"] header')
+  expect(floating!.x + floating!.width).toBeGreaterThan(panel.x + panel.width - 16)
+  expect(floating!.y).toBeGreaterThanOrEqual(panelHeader.y + panelHeader.height)
+  expect((await box(page, '[data-editor-zone="main"]')).width).toBeGreaterThanOrEqual(400)
+
+  await page.keyboard.press("Escape")
+  await expect(dock(page)).toHaveCount(0)
+  await expect(toggle).toBeFocused()
+
+  await toggle.click()
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await expect(page.getByTestId("stream-context-dock").getByText("example.org").first()).toBeVisible()
+  await expect(dock(page)).toHaveCount(1)
 })
 
 test("offers the overview from an archived channel's mobile sheet", async ({ page }) => {
