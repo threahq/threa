@@ -42,8 +42,8 @@ export interface CachedWorkspace {
 export interface CachedWorkspaceUser {
   id: string // workspace user ID (legacy prefix: member_xxx)
   workspaceId: string
-  workosUserId: string
-  email: string
+  workosUserId: string | null
+  email: string | null
   role: WorkspaceRoleSlug
   slug: string
   name: string
