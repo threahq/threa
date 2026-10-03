@@ -159,13 +159,17 @@ const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joi
 /**
  * A thread whose window holds only hidden rows is empty only when the server's
  * own latest window is too: a cache can hold the membership rows and miss the
- * replies, and its rows outlive the server's answer by a render or more.
+ * replies, and its rows outlive the server's answer by a render or more. Not
+ * before the first cache read either: a server answer kept from earlier in the
+ * session can predate replies the cache holds.
  */
 export function isThreadConfirmedEmpty(args: {
   isConfirmedEmpty: boolean
+  isResolved: boolean
   bootstrapEvents: ReadonlyArray<Pick<StreamEvent, "eventType">> | undefined
 }): boolean {
   if (args.isConfirmedEmpty) return true
+  if (!args.isResolved) return false
   return args.bootstrapEvents?.every((event) => THREAD_HIDDEN_EVENT_TYPES.has(event.eventType)) === true
 }
 
@@ -2956,6 +2960,7 @@ export function StreamContent({
                             isLoading={isLoading}
                             isConfirmedEmpty={isThreadConfirmedEmpty({
                               isConfirmedEmpty,
+                              isResolved,
                               bootstrapEvents: bootstrap?.events,
                             })}
                             workspaceId={workspaceId}
