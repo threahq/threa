@@ -160,7 +160,7 @@ describe("memo sources: deleted and edited messages", () => {
   }
 
   async function deleteMessage(seeded: { streamId: string }, id: string): Promise<void> {
-    const deleted = await MessageRepository.softDelete(pool, id)
+    const deleted = await MessageRepository.softDelete(pool, testWorkspaceId, id)
     await handler.run({
       id: 1n,
       eventType: "message:deleted",
@@ -269,7 +269,7 @@ describe("memo sources: deleted and edited messages", () => {
   test("a batch shows the model only the messages that are not deleted", async () => {
     const seeded = await seedConversation()
     const [deletedId, liveId] = seeded.messageIds
-    await MessageRepository.softDelete(pool, deletedId)
+    await MessageRepository.softDelete(pool, testWorkspaceId, deletedId)
     await withTransaction(pool, (client) => queue(client, seeded))
     const formatted: string[][] = []
     const memorized: string[][] = []
@@ -300,7 +300,7 @@ describe("memo sources: deleted and edited messages", () => {
     const seeded = await seedConversation()
     const [deletedId, liveId] = seeded.messageIds
     const memo = await seedMemo(seeded, seeded.messageIds)
-    await MessageRepository.softDelete(pool, deletedId)
+    await MessageRepository.softDelete(pool, testWorkspaceId, deletedId)
 
     const detail = await new MemoExplorerService({
       pool,
@@ -633,7 +633,7 @@ describe("memo sources: deleted and edited messages", () => {
     const [deletedId, liveId] = seeded.messageIds
     const onlyDeleted = await seedMemo(seeded, [deletedId])
     const partlyDeleted = await seedMemo(seeded, [deletedId, liveId])
-    await MessageRepository.softDelete(pool, deletedId)
+    await MessageRepository.softDelete(pool, testWorkspaceId, deletedId)
 
     const planned = (await plan({ pool }, testWorkspaceId)).flatMap((chunk) => chunk.ids)
     const firstRun = await processChunk({ pool }, testWorkspaceId, { ids: [deletedId] })
