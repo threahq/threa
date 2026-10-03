@@ -1,22 +1,10 @@
+import type { WorkspaceSettingsTab } from "@threahq/types"
+
 /** URL query param that drives the workspace settings dialog. */
 export const WS_SETTINGS_PARAM = "ws-settings"
 
 /** Selects a bot in the bots tab, so a link can open its detail. */
 export const WS_SETTINGS_BOT_PARAM = "bot"
-
-export const WORKSPACE_SETTINGS_TABS = [
-  "general",
-  "schedule",
-  "statuses",
-  "dictation",
-  "users",
-  "ai-agents",
-  "integrations",
-  "bots",
-  "api-keys",
-  "feature-flags",
-] as const
-export type WorkspaceSettingsTab = (typeof WORKSPACE_SETTINGS_TABS)[number]
 
 export const WORKSPACE_SETTINGS_TAB_CONFIG: Record<WorkspaceSettingsTab, { label: string; description: string }> = {
   general: { label: "General", description: "Workspace identity and region" },

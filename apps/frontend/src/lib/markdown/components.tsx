@@ -10,7 +10,7 @@ import {
   parseQuoteHref,
   parseSharedMessageHref,
 } from "@threahq/prosemirror"
-import type { ContentRange } from "@threahq/types"
+import { APP_LINK_SCHEME, type ContentRange } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { buildConversationPanelPath } from "@/lib/stream-links"
@@ -24,6 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
+import { AppLink } from "@/components/in-app-link/app-link"
 import { AttachmentChip } from "@/components/timeline/attachment-chip"
 import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
@@ -224,6 +225,10 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   const giphyHref = href ? parseGiphyHref(href) : null
   if (giphyHref) {
     return <GifChip label={<ProcessedChildren>{children}</ProcessedChildren>} />
+  }
+
+  if (href?.startsWith(APP_LINK_SCHEME)) {
+    return <AppLink href={href} label={<ProcessedChildren>{children}</ProcessedChildren>} />
   }
 
   const memoHref = href ? parseMemoHref(href) : null

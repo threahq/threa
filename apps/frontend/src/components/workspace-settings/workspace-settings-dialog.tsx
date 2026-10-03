@@ -10,14 +10,8 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { ResponsiveSettingsNav, SETTINGS_DIALOG_LAYOUT_CLASSNAMES } from "@/components/ui/responsive-settings-nav"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
-import {
-  WORKSPACE_SETTINGS_TABS,
-  WORKSPACE_SETTINGS_TAB_CONFIG,
-  WS_SETTINGS_BOT_PARAM,
-  WS_SETTINGS_PARAM,
-  type WorkspaceSettingsTab,
-} from "./tab-config"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
+import { WORKSPACE_SETTINGS_TAB_CONFIG, WS_SETTINGS_BOT_PARAM, WS_SETTINGS_PARAM } from "./tab-config"
+import { WORKSPACE_PERMISSION_SCOPES, WORKSPACE_SETTINGS_TABS, type WorkspaceSettingsTab } from "@threahq/types"
 import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"

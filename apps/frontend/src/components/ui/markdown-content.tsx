@@ -89,6 +89,11 @@ function urlTransform(url: string): string {
   if (url.startsWith("agent:")) {
     return url
   }
+  // Allow app: protocol so MarkdownLink can render in-app destinations from
+  // agents and the user guide as chips. Same reasoning as above.
+  if (url.startsWith("app:")) {
+    return url
+  }
   // Allow giphy: protocol so the link renderer can swap the anchor for the
   // inline GIF embed. Same reasoning as the pointer protocols above.
   if (url.startsWith("giphy:")) {

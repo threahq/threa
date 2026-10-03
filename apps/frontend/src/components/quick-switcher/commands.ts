@@ -23,9 +23,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { openCompose } from "@/stores/compose-overlay-store"
-import { SETTINGS_TABS, type SettingsTab } from "@threahq/types"
+import { SETTINGS_TABS, type SettingsTab, type WorkspaceSettingsTab } from "@threahq/types"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
-import type { WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
 import type { OutcomesFilters } from "@/components/agent-outcomes"
 
