@@ -86,15 +86,6 @@ describe("same-id copies across workspaces", () => {
     })
   }
 
-  async function seedEvent(ws: string, ids: Ids, label: "a" | "b") {
-    // stream_sequences keeps its single-column key until the follow-up contract, so the allocating insert cannot run for a second workspace.
-    await pool.query(
-      `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, broadcast_sequence, event_type, payload)
-       VALUES ($1, $2, $3, 1, 1, 'message_created', $4)`,
-      [ids.event, ws, ids.stream, JSON.stringify({ messageId: ids.message, origin: label })]
-    )
-  }
-
   async function seedPair() {
     const wsA = workspaceId()
     const wsB = workspaceId()
@@ -115,7 +106,12 @@ describe("same-id copies across workspaces", () => {
       payload: { messageId: ids.message, origin: "a" },
     })
     await seedWorkspace(wsB, ids, "b")
-    await seedEvent(wsB, ids, "b")
+    // stream_sequences keeps its single-column key until the follow-up contract, so the allocating insert cannot run for a second workspace.
+    await pool.query(
+      `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, broadcast_sequence, event_type, payload)
+       VALUES ($1, $2, $3, 1, 1, 'message_created', $4)`,
+      [ids.event, wsB, ids.stream, JSON.stringify({ messageId: ids.message, origin: "b" })]
+    )
     return { wsA, wsB, ids }
   }
 

@@ -488,7 +488,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a user conversation placement",
       oldKey: "message_conversation_state_pkey",
-      write: async (ws, ids, writer) => {
+      write: async (ws, ids) => {
         await MessageRepository.insert(pool, {
           id: ids.message,
           workspaceId: ws,
@@ -496,7 +496,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           sequence: 1n,
           authorId: ids.member,
           authorType: AuthorTypes.USER,
-          ...testMessageContent(`settled by hand ${writer}`),
+          ...testMessageContent("settled by hand"),
         })
         return MessageConversationStateRepository.settleForConversationTargets(
           pool,

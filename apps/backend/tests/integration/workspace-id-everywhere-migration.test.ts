@@ -77,12 +77,6 @@ async function seedParents(client: PoolClient): Promise<void> {
   ])
 }
 
-async function insertChildren(client: PoolClient, workspaceId?: string): Promise<void> {
-  for (const child of CHILDREN) {
-    await client.query(insertStatement(child, workspaceId))
-  }
-}
-
 async function readWorkspaceIds(client: PoolClient): Promise<Record<string, string | null>> {
   const entries: Array<[string, string | null]> = []
   for (const child of CHILDREN) {
@@ -141,7 +135,7 @@ describe("workspace_id rollout migrations", () => {
 
     const outcome = await withTestTransaction(pool, async (client) => {
       await seedParents(client)
-      await insertChildren(client, PARENT_WORKSPACE)
+      for (const child of CHILDREN) await client.query(insertStatement(child, PARENT_WORKSPACE))
       const generation = async () =>
         (await client.query<{ value_generation: string }>("SELECT value_generation FROM user_preference_overrides"))
           .rows[0]?.value_generation

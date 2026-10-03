@@ -284,31 +284,20 @@ describe("Stream Persona Participants", () => {
       // stream1: user1, user2
       // stream2: user1
       // stream3: user1, user2
-      await pool.query(`INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)`, [
-        testWorkspaceId,
-        stream1,
-        member1,
-      ])
-      await pool.query(`INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)`, [
-        testWorkspaceId,
-        stream1,
-        member2,
-      ])
-      await pool.query(`INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)`, [
-        testWorkspaceId,
-        stream2,
-        member1,
-      ])
-      await pool.query(`INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)`, [
-        testWorkspaceId,
-        stream3,
-        member1,
-      ])
-      await pool.query(`INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)`, [
-        testWorkspaceId,
-        stream3,
-        member2,
-      ])
+      const memberships: Array<[string, string]> = [
+        [stream1, member1],
+        [stream1, member2],
+        [stream2, member1],
+        [stream3, member1],
+        [stream3, member2],
+      ]
+      for (const [sid, member] of memberships) {
+        await pool.query(`INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)`, [
+          testWorkspaceId,
+          sid,
+          member,
+        ])
+      }
 
       // Persona participates in stream1 and stream2
       await eventService.createMessage({
