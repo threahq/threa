@@ -355,7 +355,7 @@ export function WorkspaceSyncHandler({
 
   // StrictMode runs cleanup then setup synchronously and would hand the socket
   // connect effect a destroyed engine, so destroy waits a microtask and only
-  // runs if no setup followed — i.e. a real unmount (workspace switch remount).
+  // runs if no setup followed — i.e. a real unmount.
   const mountedRef = useRef(false)
   useEffect(() => {
     mountedRef.current = true
