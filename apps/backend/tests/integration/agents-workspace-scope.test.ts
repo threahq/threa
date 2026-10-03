@@ -329,9 +329,13 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
         completed_at: at(9),
         episode_summary: "B secret episode",
       })
-      digestStep = await addStep(wsA, sessionNew, 1, AgentStepTypes.TURN_DIGEST)
+      digestStep = await addStep(wsA, sessionNew, 1, AgentStepTypes.TURN_DIGEST, {
+        content: JSON.stringify({ findings: "A digest" }),
+      })
       thinkingStep = await addStep(wsA, sessionNew, 2, AgentStepTypes.THINKING)
-      await addStep(wsB, sessionNew, 3, AgentStepTypes.TURN_DIGEST)
+      await addStep(wsB, sessionNew, 3, AgentStepTypes.TURN_DIGEST, {
+        content: JSON.stringify({ findings: "B secret digest" }),
+      })
       await addStep(wsB, decoyHistory, 1, AgentStepTypes.TURN_DIGEST)
 
       streamRun = await addStream(wsA, userA)
@@ -409,7 +413,14 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
         steps: (await AgentSessionRepository.findStepsBySession(pool, wsA, sessionNew)).map((step) => step.id),
       }).toEqual({
         digests: [digestStep],
-        episodes: [{ summary: "A episode", sessionCreatedAt: createdNew, sessionCompletedAt: completedNew }],
+        episodes: [
+          {
+            summary: "A episode",
+            sessionCreatedAt: createdNew,
+            sessionCompletedAt: completedNew,
+            turnDigests: [{ findings: "A digest" }],
+          },
+        ],
         steps: [digestStep, thinkingStep],
       })
     })

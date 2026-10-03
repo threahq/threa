@@ -54,7 +54,7 @@ describe("episode summaries: source stream access", () => {
       status,
     })
     for (const [stepNumber, sourceStreamIds] of digestSourceStreamIds.entries()) {
-      await AgentSessionRepository.upsertStep(pool, {
+      await AgentSessionRepository.upsertStep(pool, ids.workspaceId, {
         id: stepId(),
         sessionId: id,
         stepNumber,
@@ -63,7 +63,7 @@ describe("episode summaries: source stream access", () => {
         startedAt: new Date(),
       })
     }
-    await AgentSessionRepository.setEpisodeSummary(pool, id, summary)
+    await AgentSessionRepository.setEpisodeSummary(pool, ids.workspaceId, id, summary)
   }
 
   async function injectedSummaries(
