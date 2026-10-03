@@ -18,6 +18,7 @@ import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelResizeHandle } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { usePanel } from "@/contexts"
+import { StreamContextDockProvider } from "@/components/stream-context"
 import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamTypes } from "@threahq/types"
 import { cn } from "@/lib/utils"
@@ -127,116 +128,120 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
     [applyWidth, columnWidth]
   )
 
+  // The page's overview dock sits under this stage, so a thread held in the
+  // host pane offers no overview here.
   return (
-    <div
-      data-testid="aside-stage"
-      data-aside-id={asideId}
-      className="absolute inset-0 z-30 flex flex-col bg-background"
-    >
-      <TooltipProvider delayDuration={300}>
-        <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-background px-4">
-          <AsideGlyph className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-          <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
-          <AsidePrivateBadge />
-          <AsideAnchorLine
-            workspaceId={workspaceId}
-            hostStreamId={hostStreamId}
-            anchorId={aside?.parentAnchorId}
-            variant="chip"
-          />
-          <span className="flex-1" />
-          {drafts.length > 0 && (
-            <span className={ASIDE_META}>
-              {drafts.length} {drafts.length === 1 ? "draft" : "drafts"}
-            </span>
-          )}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground"
-            aria-label="Close aside"
-            onClick={closeAside}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </header>
-      </TooltipProvider>
+    <StreamContextDockProvider value={null}>
+      <div
+        data-testid="aside-stage"
+        data-aside-id={asideId}
+        className="absolute inset-0 z-30 flex flex-col bg-background"
+      >
+        <TooltipProvider delayDuration={300}>
+          <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-background px-4">
+            <AsideGlyph className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+            <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
+            <AsidePrivateBadge />
+            <AsideAnchorLine
+              workspaceId={workspaceId}
+              hostStreamId={hostStreamId}
+              anchorId={aside?.parentAnchorId}
+              variant="chip"
+            />
+            <span className="flex-1" />
+            {drafts.length > 0 && (
+              <span className={ASIDE_META}>
+                {drafts.length} {drafts.length === 1 ? "draft" : "drafts"}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              aria-label="Close aside"
+              onClick={closeAside}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </header>
+        </TooltipProvider>
 
-      <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 bg-muted/40 p-3">
-        {/* The two panes carry the app's editor zones rather than one of their
+        <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 bg-muted/40 p-3">
+          {/* The two panes carry the app's editor zones rather than one of their
             own: type-to-focus and the composer's height observer both route by
             zone, and a zone they do not know is a zone they ignore. */}
-        {threadInPane ? (
-          <div data-testid="aside-host-pane" data-view="panel" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
-            <PanelHost workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
-          </div>
-        ) : (
-          <div
-            data-testid="aside-host-pane"
-            data-view="host"
-            data-editor-zone="main"
-            className={cn(ASIDE_PANE, "min-w-0 flex-1")}
-          >
-            <div className={ASIDE_PANE_HEAD}>
-              <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
+          {threadInPane ? (
+            <div data-testid="aside-host-pane" data-view="panel" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
+              <PanelHost workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
             </div>
-            <div className="relative min-h-0 flex-1">
-              <StreamErrorBoundary streamId={hostStreamId}>
-                <StreamContent
-                  workspaceId={workspaceId}
-                  streamId={hostStreamId}
-                  stream={host}
-                  highlightMessageId={searchParams.get("m")}
-                  autoFocus={hostTakesFocus}
-                />
-              </StreamErrorBoundary>
+          ) : (
+            <div
+              data-testid="aside-host-pane"
+              data-view="host"
+              data-editor-zone="main"
+              className={cn(ASIDE_PANE, "min-w-0 flex-1")}
+            >
+              <div className={ASIDE_PANE_HEAD}>
+                <span className="min-w-0 truncate font-medium text-foreground">{hostName ?? "Conversation"}</span>
+              </div>
+              <div className="relative min-h-0 flex-1">
+                <StreamErrorBoundary streamId={hostStreamId}>
+                  <StreamContent
+                    workspaceId={workspaceId}
+                    streamId={hostStreamId}
+                    stream={host}
+                    highlightMessageId={searchParams.get("m")}
+                    autoFocus={hostTakesFocus}
+                  />
+                </StreamErrorBoundary>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <PanelResizeHandle
-          isResizing={isResizing}
-          panelWidth={columnWidth}
-          minWidth={ASIDE_STAGE_MIN_WIDTH}
-          maxWidth={maxWidth}
-          onPointerDown={handleResizeStart}
-          onPointerMove={handleResizeMove}
-          onPointerEnd={handleResizeEnd}
-          onKeyDown={onDividerKeyDown}
-          ariaLabel="Resize aside"
-        />
-
-        <div
-          ref={split.containerRef}
-          data-editor-zone="panel"
-          className="flex min-h-0 min-w-0 shrink-0 flex-col gap-3"
-          style={{ width: columnWidth }}
-        >
-          <AsideDrafts
-            workspaceId={workspaceId}
-            asideId={asideId}
-            surface={draftSurface}
-            className={cn(ASIDE_PANE, "shrink-0")}
-            style={draftSurface.openScope ? { height: split.height } : undefined}
+          <PanelResizeHandle
+            isResizing={isResizing}
+            panelWidth={columnWidth}
+            minWidth={ASIDE_STAGE_MIN_WIDTH}
+            maxWidth={maxWidth}
+            onPointerDown={handleResizeStart}
+            onPointerMove={handleResizeMove}
+            onPointerEnd={handleResizeEnd}
+            onKeyDown={onDividerKeyDown}
+            ariaLabel="Resize aside"
           />
-          {draftSurface.openScope && <AsideSplitHandle split={split} />}
-          <div className={cn(ASIDE_PANE, "min-h-0 flex-1")}>
-            <div className={ASIDE_PANE_HEAD}>
-              <AsideGlyph className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
-              <span className="font-medium text-foreground">Conversation</span>
-            </div>
-            <div className="relative min-h-0 flex-1">
-              <AsideConversation
-                workspaceId={workspaceId}
-                asideId={asideId}
-                aside={aside}
-                autoFocus={!draftSurface.openScope}
-                onInsertAgentBlock={draftSurface.insertAgentBlock}
-              />
+
+          <div
+            ref={split.containerRef}
+            data-editor-zone="panel"
+            className="flex min-h-0 min-w-0 shrink-0 flex-col gap-3"
+            style={{ width: columnWidth }}
+          >
+            <AsideDrafts
+              workspaceId={workspaceId}
+              asideId={asideId}
+              surface={draftSurface}
+              className={cn(ASIDE_PANE, "shrink-0")}
+              style={draftSurface.openScope ? { height: split.height } : undefined}
+            />
+            {draftSurface.openScope && <AsideSplitHandle split={split} />}
+            <div className={cn(ASIDE_PANE, "min-h-0 flex-1")}>
+              <div className={ASIDE_PANE_HEAD}>
+                <AsideGlyph className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+                <span className="font-medium text-foreground">Conversation</span>
+              </div>
+              <div className="relative min-h-0 flex-1">
+                <AsideConversation
+                  workspaceId={workspaceId}
+                  asideId={asideId}
+                  aside={aside}
+                  autoFocus={!draftSurface.openScope}
+                  onInsertAgentBlock={draftSurface.insertAgentBlock}
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </StreamContextDockProvider>
   )
 }

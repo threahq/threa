@@ -82,7 +82,9 @@ export function useStreamContextRows(
  */
 export function useStreamContextOccurrences(
   workspaceId: string,
+  streamId: string,
   rootStreamId: string,
+  scope: StreamContextScope,
   groupRef: string | null
 ): CachedStreamContextItem[] | undefined {
   return useLiveQuery(async () => {
@@ -97,8 +99,13 @@ export function useStreamContextOccurrences(
     // another root lands under the same key. The server's `listOccurrences`
     // filters workspace + root; an unfiltered read would list more occurrences
     // than the row was labelled with and jump into a foreign stream.
-    return rows.filter((row) => row.workspaceId === workspaceId && row.rootStreamId === rootStreamId)
-  }, [workspaceId, rootStreamId, groupRef])
+    return rows.filter(
+      (row) =>
+        row.workspaceId === workspaceId &&
+        row.rootStreamId === rootStreamId &&
+        (scope === "tree" || row.streamId === streamId)
+    )
+  }, [workspaceId, streamId, rootStreamId, scope, groupRef])
 }
 
 /**

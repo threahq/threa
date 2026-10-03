@@ -1,7 +1,9 @@
-import * as DialogPrimitive from "@radix-ui/react-dialog"
+import { useEffect, useRef, type ReactNode } from "react"
+import { createPortal } from "react-dom"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import { useSidebar } from "@/contexts"
-import { cn } from "@/lib/utils"
+import type { StreamContextPanelProps } from "./stream-context-chrome"
+import { useStreamContextDock } from "./stream-context-dock"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
 interface StreamContextSurfaceProps {
@@ -9,21 +11,20 @@ interface StreamContextSurfaceProps {
   streamId: string
   open: boolean
   onClose: () => void
-  onJumpToMessage: (messageId: string) => void
+  onJumpToMessage: StreamContextPanelProps["onJumpToMessage"]
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
   onOpenGallery: (key: string) => void
 }
 
 /**
- * Hosts the "In this stream" overview: a right-side slide-out on desktop and a
- * bottom drawer on mobile. The same {@link StreamContextIndexPanel} renders inside
- * both. Desktop uses the Radix Dialog primitive (not a hand-rolled overlay) so
- * focus is trapped while open, returned to the trigger on close, and the closed
- * panel leaves the tab order entirely instead of lingering off-screen.
+ * Hosts the "In this stream" overview: the page's docked right-edge column on
+ * desktop, beside the stream it lists, and a bottom drawer on mobile. The same
+ * {@link StreamContextIndexPanel} renders inside both.
  */
 export function StreamContextSurface(props: StreamContextSurfaceProps) {
   const { isMobile } = useSidebar()
+  const dock = useStreamContextDock()
   const { open, onClose } = props
 
   const panel = (
@@ -52,27 +53,40 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
     )
   }
 
+  if (!open || !dock?.target) return null
+  return createPortal(<DockedOverview onClose={onClose}>{panel}</DockedOverview>, dock.target)
+}
+
+function DockedOverview({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null)
+  const opener = useRef<HTMLElement | null>(null)
+
+  // Focus comes in on open so Escape reaches the dock, and goes back to the
+  // opener on close unless the user already moved it somewhere else. A rerun
+  // (StrictMode) finds focus already inside and keeps the original opener.
+  useEffect(() => {
+    const active = document.activeElement
+    if (active instanceof HTMLElement && !ref.current?.contains(active)) opener.current = active
+    ref.current?.focus({ preventScroll: true })
+    return () => {
+      if (document.activeElement === document.body) opener.current?.focus({ preventScroll: true })
+    }
+  }, [])
+
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay
-          className={cn(
-            "fixed inset-0 z-40 bg-black/40",
-            "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-          )}
-        />
-        <DialogPrimitive.Content
-          aria-describedby={undefined}
-          className={cn(
-            "fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-full flex-col border-l bg-background shadow-xl outline-none",
-            "transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out",
-            "data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right data-[state=closed]:duration-200 data-[state=open]:duration-300"
-          )}
-        >
-          <DialogPrimitive.Title className="sr-only">In this stream</DialogPrimitive.Title>
-          {panel}
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    <aside
+      ref={ref}
+      tabIndex={-1}
+      aria-label="In this stream"
+      className="flex min-h-0 flex-1 flex-col outline-none"
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || e.defaultPrevented) return
+        // Claims the key so the stream's window-level Escape doesn't also settle it.
+        e.preventDefault()
+        onClose()
+      }}
+    >
+      {children}
+    </aside>
   )
 }

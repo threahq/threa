@@ -2257,9 +2257,14 @@ export function StreamContent({
         )
       if (overlayOwnsEscape) return
       if (dividerEventId) escapeUnread()
-      // Settle only a stream alone on the page: with a panel, an aside or the
-      // conversation list open, Escape belongs to that surface.
-      else if (!panelId && getAsideState() === null && searchParams.get("convView") !== "open")
+      // Settle only a stream alone on the page: with a panel, an aside, the
+      // conversation list or the docked overview open, Escape belongs to that surface.
+      else if (
+        !panelId &&
+        getAsideState() === null &&
+        searchParams.get("convView") !== "open" &&
+        searchParams.get("context") === null
+      )
         clearInboxRef.current([streamId])
       else return
       // One step per keypress: the thread panel's StreamContent listens too.

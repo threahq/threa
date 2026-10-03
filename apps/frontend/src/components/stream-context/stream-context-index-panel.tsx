@@ -33,6 +33,7 @@ import { useStreamFromStore } from "@/stores/stream-store"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { StreamContextRow } from "./stream-context-row"
 import { useStreamContextFeed } from "./use-stream-context-feed"
+import { useStreamContextScope } from "./use-stream-context-scope"
 import {
   chipsFromCounts,
   ContextChipRow,
@@ -79,7 +80,7 @@ const MAX_JUMP_PAGES = 10
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const { workspaceId, streamId, onClose, onJumpToMessage, onOpenThread, onOpenMemo, onOpenGallery } = props
   const stream = useStreamFromStore(streamId)
-  const rootStreamId = stream?.rootStreamId ?? streamId
+  const { rootStreamId, scope } = useStreamContextScope(streamId)
   const rootStream = useStreamFromStore(rootStreamId)
   const isOnline = useIsOnline()
   const users = useWorkspaceUsers(workspaceId)
@@ -128,7 +129,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
 
   const categories = useMemo(() => filterCategories(effectiveFilter), [effectiveFilter])
   const feed = useStreamContextFeed(workspaceId, streamId, rootStreamId, {
-    scope: "tree",
+    scope,
     categories,
     q: debounced.parsed.text || undefined,
     from: debounced.authorId ?? undefined,
@@ -137,7 +138,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   })
   const { authorId, before, after, searchTerms, supported } = live
 
-  const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
+  const rows = useStreamContextRows(workspaceId, streamId, rootStreamId, scope)
 
   // Who `from:` can meaningfully name here: this stream's members, plus the
   // viewer (a public root grants read without a membership row — INV-62 — so
@@ -248,7 +249,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       let more = feed.hasNextPage
       for (let page = 0; index === -1 && page < MAX_JUMP_PAGES && more; page += 1) {
         more = (await feed.fetchNextPage()).hasNextPage
-        const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, "tree")
+        const fresh = await readStreamContextRows(workspaceId, streamId, rootStreamId, scope)
         const rebuilt = collapseContextRows(
           filterContextRows(fresh, {
             categories,
@@ -278,7 +279,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       // keep tabbing from where they landed.
       scrollerRef.current?.focus({ preventScroll: true })
     },
-    [items, feed, workspaceId, streamId, rootStreamId, categories, searchTerms, authorId, before, after]
+    [items, feed, workspaceId, streamId, rootStreamId, scope, categories, searchTerms, authorId, before, after]
   )
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = feed
   useEffect(() => {
@@ -532,7 +533,7 @@ function ContextRowWithOccurrences({
   streamId: string
   searchTerms: string[]
   filters: RowFilters
-  onJumpToMessage: (messageId: string) => void
+  onJumpToMessage: StreamContextPanelProps["onJumpToMessage"]
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
   onOpenGallery: (key: string) => void
@@ -540,12 +541,9 @@ function ContextRowWithOccurrences({
   const [expanded, setExpanded] = useState(false)
   const expandable = row.occurrenceCount > 1 && row._status !== "pending"
 
-  // A thread's artifact is part of its root's context (INV-62), so opening it
-  // means opening the thread first — the message isn't in the root's timeline.
-  const jump = (messageId: string) => {
-    if (row.streamId !== streamId) onOpenThread(row.streamId)
-    onJumpToMessage(messageId)
-  }
+  // A thread's artifact is part of its root's context (INV-62); its message is
+  // in the thread's timeline, not the root's.
+  const jump = (messageId: string) => onJumpToMessage(messageId, row.streamId)
 
   return (
     <div>
@@ -580,7 +578,6 @@ function ContextRowWithOccurrences({
           filters={filters}
           searchTerms={searchTerms}
           onJump={onJumpToMessage}
-          onOpenThread={onOpenThread}
         />
       )}
     </div>
@@ -603,18 +600,17 @@ function OccurrenceList({
   filters,
   searchTerms,
   onJump,
-  onOpenThread,
 }: {
   row: CachedStreamContextItem
   workspaceId: string
   streamId: string
   filters: RowFilters
   searchTerms: string[]
-  onJump: (messageId: string) => void
-  onOpenThread: (threadId: string) => void
+  onJump: StreamContextPanelProps["onJumpToMessage"]
 }) {
   const groupRef = contextGroupRef(row)
-  const occurrences = useStreamContextOccurrences(workspaceId, row.rootStreamId, groupRef)
+  const { scope } = useStreamContextScope(streamId)
+  const occurrences = useStreamContextOccurrences(workspaceId, streamId, row.rootStreamId, scope, groupRef)
   const { formatRelative } = useFormattedDate()
   const { q, from, before, after } = filters
 
@@ -624,7 +620,7 @@ function OccurrenceList({
       .occurrences(workspaceId, streamId, {
         category: row.category,
         groupKey: row.groupKey,
-        scope: "tree",
+        scope,
         q,
         from,
         before,
@@ -641,7 +637,7 @@ function OccurrenceList({
     return () => {
       cancelled = true
     }
-  }, [workspaceId, streamId, row.category, row.groupKey, row.rootStreamId, q, from, before, after])
+  }, [workspaceId, streamId, scope, row.category, row.groupKey, row.rootStreamId, q, from, before, after])
 
   // IDB holds every occurrence ever seeded for the group, including ones an
   // earlier unfiltered fetch brought in, so the text filter has to be applied
@@ -663,8 +659,7 @@ function OccurrenceList({
             onClick={() => {
               const target = occurrence.sourceMessageId ?? occurrence.anchorEventId
               if (!target) return
-              if (occurrence.streamId !== streamId) onOpenThread(occurrence.streamId)
-              onJump(target)
+              onJump(target, occurrence.streamId)
             }}
             className={cn(
               "flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] text-muted-foreground",

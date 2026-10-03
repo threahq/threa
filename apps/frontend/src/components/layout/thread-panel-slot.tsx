@@ -21,6 +21,15 @@ interface ThreadPanelSlotProps {
   onResizeKeyDown: (e: React.KeyboardEvent) => void
   /** Hold the panel out of the tab order while something covers it. */
   inert?: boolean
+  /**
+   * Total width docked at the right edge, published as `--panel-inset-right`,
+   * and whether its change animates. Every slot in a row publishes the same
+   * pair, so their write order is moot.
+   */
+  insetRight?: number
+  insetAnimates?: boolean
+  testId?: string
+  resizeLabel?: string
   children: React.ReactNode
 }
 
@@ -38,13 +47,17 @@ export function ThreadPanelSlot({
   onResizeEnd,
   onResizeKeyDown,
   inert,
+  insetRight = displayWidth,
+  insetAnimates = shouldAnimate,
+  testId = "panel",
+  resizeLabel,
   children,
 }: ThreadPanelSlotProps) {
   useLayoutEffect(() => {
     const root = document.documentElement
-    root.style.setProperty("--panel-inset-right", `${displayWidth}px`)
-    root.style.setProperty("--panel-inset-duration", shouldAnimate ? `${PANEL_TRANSITION_MS}ms` : "0ms")
-  }, [displayWidth, shouldAnimate])
+    root.style.setProperty("--panel-inset-right", `${insetRight}px`)
+    root.style.setProperty("--panel-inset-duration", insetAnimates ? `${PANEL_TRANSITION_MS}ms` : "0ms")
+  }, [insetRight, insetAnimates])
 
   // A layout-effect cleanup, not a passive one: routes that each mount their own
   // slot swap instances within a single commit, and React runs every layout
@@ -62,7 +75,7 @@ export function ThreadPanelSlot({
 
   return (
     <div
-      data-testid="panel"
+      data-testid={testId}
       inert={inert || undefined}
       className={cn("flex-shrink-0 overflow-hidden", shouldAnimate && "transition-[width] duration-200 ease-out")}
       style={{ width: displayWidth }}
@@ -79,6 +92,7 @@ export function ThreadPanelSlot({
             onPointerMove={onResizeMove}
             onPointerEnd={onResizeEnd}
             onKeyDown={onResizeKeyDown}
+            ariaLabel={resizeLabel}
           />
           <div className="flex-1 min-w-0 overflow-hidden">{children}</div>
         </div>

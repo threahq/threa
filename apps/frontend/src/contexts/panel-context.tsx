@@ -84,6 +84,11 @@ interface PanelContextValue {
 
 const PanelContext = createContext<PanelContextValue | null>(null)
 
+/** A newly opened panel starts bare: the old panel's (or the page's) overview must not reopen over it. */
+function clearPanelCover(params: URLSearchParams) {
+  for (const param of PANEL_COVER) params.delete(param)
+}
+
 interface PanelProviderProps {
   children: ReactNode
 }
@@ -102,6 +107,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const getPanelUrl = useCallback(
     (streamId: string) => {
       const newParams = new URLSearchParams(searchParams)
+      clearPanelCover(newParams)
       newParams.set("panel", streamId)
       return `${location.pathname}?${newParams.toString()}`
     },
@@ -116,6 +122,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev)
+          clearPanelCover(next)
           next.set("panel", streamId)
           return next
         },
