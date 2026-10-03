@@ -57,7 +57,10 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
       aria-label="In this stream"
       className="flex min-h-0 flex-1 flex-col"
       onKeyDown={(e) => {
-        if (e.key === "Escape" && !e.defaultPrevented) onClose()
+        if (e.key !== "Escape" || e.defaultPrevented) return
+        // Claims the key so the stream's window-level Escape doesn't also settle it.
+        e.preventDefault()
+        onClose()
       }}
     >
       {panel}
