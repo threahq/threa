@@ -19,7 +19,8 @@ interface StreamContextSurfaceProps {
 
 /**
  * Hosts the "In this stream" overview: the page's docked right-edge column on
- * desktop, beside the stream it lists, and a bottom drawer on mobile. The same
+ * desktop, beside the stream it lists, and a bottom drawer on mobile or where
+ * the column doesn't fit. The same
  * {@link StreamContextIndexPanel} renders inside both.
  */
 export function StreamContextSurface(props: StreamContextSurfaceProps) {
@@ -39,7 +40,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
     />
   )
 
-  if (isMobile) {
+  if (isMobile || dock?.fits === false) {
     return (
       <Drawer open={open} onOpenChange={(next) => !next && onClose()}>
         <DrawerContent className="h-[88dvh]">

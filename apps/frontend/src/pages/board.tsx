@@ -10,7 +10,8 @@ import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
 import { usePanelLayout, useTypeToFocus } from "@/hooks"
-import { MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
+import { MIN_PANEL_WIDTH, fitsDockedColumns } from "@/hooks/use-panel-layout"
+import { useElementWidth } from "@/hooks/use-element-width"
 import {
   StreamContextDockProvider,
   StreamContextDockSlot,
@@ -219,7 +220,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const { panelId, isPanelOpen, closePanel } = usePanel()
   // The board has no overview of its own; `?context` belongs to the open panel.
   const [isContextOpen] = useStreamContextOpen()
-  const isDockOpen = isContextOpen && isPanelOpen && !isMobile
   // A thread the aside's surface holds (the stage's host pane, or the phone's
   // sheet) is mounted there and nowhere else: not in the slot, not as the
   // phone's takeover behind the sheet.
@@ -435,8 +435,11 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       archivedRootIds,
     ]
   )
+  const containerRef = useRef<HTMLDivElement>(null)
+  // The overview only docks beside an open panel, so it always needs room for two columns.
+  const dockFits = fitsDockedColumns(useElementWidth(containerRef), 2)
+  const isDockOpen = isContextOpen && isPanelOpen && !isMobile && dockFits
   const {
-    containerRef,
     panelWidth,
     maxWidth,
     minWidth,
@@ -449,7 +452,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen, { reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
+  } = usePanelLayout(isPanelOpen, { containerRef, reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
   const dock = useStreamContextDockLayout(containerRef, isDockOpen, displayWidth)
 
   // The query is the fetch/seed engine; the board reads reactively from IDB. The
@@ -1025,7 +1028,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
 
   return (
-    <StreamContextDockProvider value={{ target: dock.target }}>
+    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
       <div ref={containerRef} className={layout.container}>
         <div className={layout.main} inert={layout.mainInert || asideStage || undefined}>
           {boardColumn}

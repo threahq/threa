@@ -77,7 +77,8 @@ import {
   useStreamContextDockLayout,
   useStreamContextOpen,
 } from "@/components/stream-context"
-import { MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
+import { MIN_PANEL_WIDTH, fitsDockedColumns } from "@/hooks/use-panel-layout"
+import { useElementWidth } from "@/hooks/use-element-width"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -91,9 +92,10 @@ export function StreamPage() {
   const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
   // "In this stream" overview. While a panel is open, `?context` is the panel's.
   const [isContextOpen, setContextOpen] = useStreamContextOpen()
-  const isDockOpen = isContextOpen && !isMobile
+  const containerRef = useRef<HTMLDivElement>(null)
+  const dockFits = fitsDockedColumns(useElementWidth(containerRef), isPanelOpen ? 2 : 1)
+  const isDockOpen = isContextOpen && !isMobile && dockFits
   const {
-    containerRef,
     panelWidth,
     maxWidth,
     minWidth,
@@ -106,7 +108,7 @@ export function StreamPage() {
     handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen, { reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
+  } = usePanelLayout(isPanelOpen, { containerRef, reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
   const dock = useStreamContextDockLayout(containerRef, isDockOpen, displayWidth)
   const asideHostKey = useAsideHost()
   // The stage replaces this page's timeline; the phone's sheet sits over one
@@ -548,9 +550,10 @@ export function StreamPage() {
     )
   }
 
-  // Same eligibility as the ⋯ trigger: persisted streams only, and archived
-  // non-scratchpads have no actions to offer.
-  const canOpenSheet = !!stream && !isDraft && !(isArchived && !isScratchpad)
+  // Persisted streams only. Archived non-scratchpads offer no stream actions,
+  // so their sheet holds just the view rows.
+  const offersStreamActions = !(isArchived && !isScratchpad)
+  const canOpenSheet = !!stream && !isDraft && (offersStreamActions || sheetViewActions.length > 0)
 
   let headerTitle: React.ReactNode
   if (isEditing) {
@@ -776,46 +779,44 @@ export function StreamPage() {
               </DropdownMenu>
             </div>
           )}
-          {stream &&
-            !isDraft &&
-            !(isArchived && !isScratchpad) &&
-            (isMobile ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  aria-label="Stream actions"
-                  onClick={() => setIsMenuDrawerOpen(true)}
-                >
+          {stream && isMobile && canOpenSheet && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="Stream actions"
+                onClick={() => setIsMenuDrawerOpen(true)}
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+              <StreamSheet
+                open={isMenuDrawerOpen}
+                onOpenChange={setIsMenuDrawerOpen}
+                workspaceId={workspaceId}
+                streamId={streamId}
+                stream={stream}
+                streamName={streamName}
+                actions={[
+                  ...sheetViewActions,
+                  ...(offersStreamActions ? streamMenuActions : []).map((action, i) =>
+                    i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
+                  ),
+                ]}
+              />
+            </>
+          )}
+          {stream && !isMobile && !isDraft && offersStreamActions && (
+            <SidebarActionMenu
+              actions={streamMenuActions}
+              ariaLabel="Stream actions"
+              trigger={
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
-                <StreamSheet
-                  open={isMenuDrawerOpen}
-                  onOpenChange={setIsMenuDrawerOpen}
-                  workspaceId={workspaceId}
-                  streamId={streamId}
-                  stream={stream}
-                  streamName={streamName}
-                  actions={[
-                    ...sheetViewActions,
-                    ...streamMenuActions.map((action, i) =>
-                      i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
-                    ),
-                  ]}
-                />
-              </>
-            ) : (
-              <SidebarActionMenu
-                actions={streamMenuActions}
-                ariaLabel="Stream actions"
-                trigger={
-                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            ))}
+              }
+            />
+          )}
         </div>
       </header>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId!} streamId={streamId!} />}
@@ -889,7 +890,7 @@ export function StreamPage() {
   const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
 
   return (
-    <StreamContextDockProvider value={{ target: dock.target }}>
+    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
       <div ref={containerRef} className={layout.container}>
         <div
           className={layout.main}

@@ -20,6 +20,14 @@ function panelMaxWidth(containerWidth: number): number {
   return Math.max(MIN_PANEL_WIDTH, Math.min(ratioCap, mainFloorCap))
 }
 
+/**
+ * Whether `columns` side columns fit beside the main column at their minimum
+ * widths. Unmeasured (0) counts as fitting, so the first render keeps its layout.
+ */
+export function fitsDockedColumns(containerWidth: number, columns: number): boolean {
+  return containerWidth === 0 || containerWidth >= MIN_MAIN_WIDTH + MIN_PANEL_WIDTH * columns
+}
+
 interface PanelLayoutOptions {
   /** Measure a container another layout already owns, for a second column in the same row. */
   containerRef?: RefObject<HTMLDivElement | null>
