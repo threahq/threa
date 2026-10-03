@@ -58,7 +58,7 @@ describe("catch-up replay instrumentation", () => {
     const engine = smallGapEngine()
 
     await engine.onConnect(asSocket(new MockSocket()))
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("small_user_2")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "small_user_2"])).toBeDefined())
 
     const names = capture.snapshot().map((s) => s.name)
     expect(names.filter((n) => n === "catchup.entryApply")).toHaveLength(3)
@@ -71,7 +71,7 @@ describe("catch-up replay instrumentation", () => {
     const engine = smallGapEngine()
 
     await engine.onConnect(asSocket(new MockSocket()))
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("small_user_2")).toBeDefined())
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get(["ws_1", "small_user_2"])).toBeDefined())
 
     expect(engine.getSyncCursor()).toBe("13")
     expect(getPerfCapture()).toBe(NO_CAPTURE)

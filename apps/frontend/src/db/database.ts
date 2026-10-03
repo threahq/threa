@@ -28,7 +28,8 @@ import type {
 import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 
-const WORKSPACE_USERS_STORE = "workspaceUsers"
+const WORKSPACE_USERS_STORE = "workspaceUsersByWorkspace"
+const PERSONAS_STORE = "personasByWorkspace"
 const STREAMS_STORE = "streamsByWorkspace"
 const SLOTS_STORE = "slotsByWorkspace"
 const BOARD_MUTED_STREAMS_STORE = "boardMutedStreamsByWorkspace"
@@ -305,7 +306,7 @@ export interface CachedBot {
 
 export interface CachedPersona {
   id: string
-  workspaceId: string | null
+  workspaceId: string
   slug: string
   name: string
   description: string | null
@@ -1139,13 +1140,13 @@ async function moveRows(tx: Transaction, from: string, to: string): Promise<void
 
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
-  workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
+  workspaceUsers!: Table<CachedWorkspaceUser, [string, string]>
   streams!: Table<CachedStream, [string, string]>
   streamMemberships!: EntityTable<CachedStreamMembership, "id">
   streamReadState!: EntityTable<CachedStreamReadState, "id">
   dmPeers!: EntityTable<CachedDmPeer, "id">
   events!: Table<CachedEvent, [string, string]>
-  personas!: EntityTable<CachedPersona, "id">
+  personas!: Table<CachedPersona, [string, string]>
   bots!: EntityTable<CachedBot, "id">
   pendingMessages!: EntityTable<PendingMessage, "clientId">
   syncCursors!: EntityTable<SyncCursor, "key">
@@ -1264,10 +1265,10 @@ export class ThreaDatabase extends Dexie {
     // We intentionally reset cache during this rename; bootstrap refetch repopulates it.
     this.version(12)
       .stores({
-        [WORKSPACE_USERS_STORE]: "id, workspaceId, workosUserId, email, slug, _cachedAt",
+        workspaceUsers: "id, workspaceId, workosUserId, email, slug, _cachedAt",
         [LEGACY_WORKSPACE_USERS_STORE]: null,
       })
-      .upgrade((tx) => tx.table(WORKSPACE_USERS_STORE).clear())
+      .upgrade((tx) => tx.table("workspaceUsers").clear())
 
     // v13: Cache stream memberships and DM peers for offline seed.
     // Also adds parentStreamId/rootStreamId/archivedAt to CachedStream (already stored
@@ -1765,7 +1766,29 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "streamContextItems", STREAM_CONTEXT_ITEMS_STORE)
       })
 
-    this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
+    // v53: workspace users and personas are keyed by workspace like v50-v52.
+    // Connect copies a user into a partner workspace under the same `usr_` id,
+    // and system personas share their `persona_` ids across workspaces, so a
+    // second workspace's bootstrap overwrote the first's row. Every other index
+    // is dropped so a missed call site throws instead of mixing workspaces. Rows
+    // without a `workspaceId` are dropped; the bootstrap refetches them.
+    // One-way door: once a client has opened at v53, code declaring only v52
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v54.
+    this.version(53)
+      .stores({
+        [WORKSPACE_USERS_STORE]: "[workspaceId+id], workspaceId",
+        [PERSONAS_STORE]: "[workspaceId+id], workspaceId",
+        workspaceUsers: null,
+        personas: null,
+      })
+      .upgrade(async (tx) => {
+        await moveRows(tx, "workspaceUsers", WORKSPACE_USERS_STORE)
+        await moveRows(tx, "personas", PERSONAS_STORE)
+      })
+
+    this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
+    this.personas = this.table(PERSONAS_STORE)
     this.streams = this.table(STREAMS_STORE)
     this.slots = this.table(SLOTS_STORE)
     this.boardMutedStreams = this.table(BOARD_MUTED_STREAMS_STORE)

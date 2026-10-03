@@ -599,7 +599,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     await applyWorkspaceBootstrap("ws_1", makeBootstrap(), fetchStartedAt)
 
-    expect(await db.workspaceUsers.get("user_gone")).toBeUndefined()
+    expect(await db.workspaceUsers.get(["ws_1", "user_gone"])).toBeUndefined()
   })
 
   it("skips cleanup when fetchStartedAt is not provided", async () => {
@@ -1198,7 +1198,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       expect((await db.streams.get(["ws_1", "stream_d1"]))?.displayName).toBe("Renamed")
       expect((await db.streams.get(["ws_1", "stream_d1"]))?._cachedAt).toBeGreaterThan(1)
       expect((await db.streams.get(["ws_1", "stream_d2"]))?._cachedAt).toBe(1)
-      expect((await db.workspaceUsers.get("member_1"))?._cachedAt).toBe(1)
+      expect((await db.workspaceUsers.get(["ws_1", "member_1"]))?._cachedAt).toBe(1)
     })
 
     it("a row present in the bootstrap but skipped by the diff is never swept", async () => {
@@ -1210,7 +1210,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
       expect(await db.streams.get(["ws_1", "stream_d1"])).toBeDefined()
       expect(await db.streams.get(["ws_1", "stream_d2"])).toBeDefined()
-      expect(await db.workspaceUsers.get("member_1")).toBeDefined()
+      expect(await db.workspaceUsers.get(["ws_1", "member_1"])).toBeDefined()
       expect(await db.streamMemberships.get("ws_1:stream_d1")).toBeDefined()
       expect((await db.streams.get(["ws_1", "stream_d1"]))?._cachedAt).toBe(1)
     })
@@ -5495,5 +5495,207 @@ describe("stream:activity is the single preview writer", () => {
     ).toBe(false)
 
     cleanup()
+  })
+})
+
+describe("workspace users and personas that share an id across workspaces (real IndexedDB)", () => {
+  const OLD = 1_000
+
+  const userIn = (workspaceId: string, overrides: Record<string, unknown> = {}) => ({
+    ...makeWorkspaceUser(),
+    id: "usr_copied",
+    workspaceId,
+    slug: `kris-${workspaceId}`,
+    name: `Kris in ${workspaceId}`,
+    ...overrides,
+  })
+
+  const personaIn = (workspaceId: string, overrides: Record<string, unknown> = {}) => ({
+    id: "persona_system_ariadne",
+    workspaceId,
+    slug: "ariadne",
+    name: `Ariadne in ${workspaceId}`,
+    description: null,
+    avatarEmoji: null,
+    avatarUrl: null,
+    systemPrompt: `prompt of ${workspaceId}`,
+    model: "openrouter:anthropic/claude-sonnet-5",
+    temperature: 0.5,
+    maxTokens: 2048,
+    enabledTools: ["search"],
+    managedBy: "system" as const,
+    ownerUserId: null,
+    status: "active" as const,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  })
+
+  const bootstrapFor = (workspaceId: string, overrides: Partial<WorkspaceBootstrap>) =>
+    makeBootstrap({ workspace: { ...makeBootstrap().workspace, id: workspaceId }, ...overrides })
+
+  const handlerRefs = {
+    getCurrentStreamId: () => undefined,
+    getCurrentUser: () => ({ id: "workos_1" }),
+    subscribeStream: vi.fn(),
+  }
+
+  const byWorkspace = (a: { workspaceId: string }, b: { workspaceId: string }) =>
+    a.workspaceId.localeCompare(b.workspaceId)
+  const usersByWorkspace = async () => (await db.workspaceUsers.toArray()).sort(byWorkspace)
+  const personasByWorkspace = async () => (await db.personas.toArray()).sort(byWorkspace)
+
+  beforeEach(async () => {
+    await Promise.all([db.workspaceUsers.clear(), db.personas.clear()])
+  })
+
+  it.each([
+    ["applyWorkspaceBootstrap", applyWorkspaceBootstrap],
+    [
+      "applyReconnectBootstrapBatch",
+      (workspaceId: string, bootstrap: WorkspaceBootstrap, fetchStartedAt: number) =>
+        applyReconnectBootstrapBatch(workspaceId, bootstrap, new Map(), new Set(), new Set(), fetchStartedAt),
+    ],
+  ])("should leave the other workspace's rows alone when %s writes the same ids", async (_name, apply) => {
+    const userB = { ...userIn("ws_b"), _cachedAt: OLD }
+    const personaB = { ...personaIn("ws_b"), _cachedAt: OLD }
+    await db.workspaceUsers.put(userB)
+    await db.personas.put(personaB)
+    const userA = userIn("ws_a")
+    const systemPersonaA = personaIn("ws_a", { workspaceId: null })
+
+    await apply(
+      "ws_a",
+      bootstrapFor("ws_a", { users: [userA], personas: [systemPersonaA] } as Partial<WorkspaceBootstrap>),
+      Date.now()
+    )
+
+    expect({ users: await usersByWorkspace(), personas: await personasByWorkspace() }).toEqual({
+      users: [{ ...userA, _cachedAt: expect.any(Number) }, userB],
+      personas: [{ ...systemPersonaA, workspaceId: "ws_a", _cachedAt: expect.any(Number) }, personaB],
+    })
+  })
+
+  it("should delete only the removed workspace's user when workspace_user:removed shares the id", async () => {
+    const userA = { ...userIn("ws_a"), _cachedAt: OLD }
+    const userB = { ...userIn("ws_b"), _cachedAt: OLD }
+    await db.workspaceUsers.bulkPut([userA, userB])
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_a", new QueryClient(), handlerRefs)
+
+    await emitAsync("workspace_user:removed", { workspaceId: "ws_a", removedUserId: "usr_copied" })
+
+    expect(await usersByWorkspace()).toEqual([userB])
+    cleanup()
+  })
+
+  it("should patch only the broadcasting workspace's persona when agent_config:updated shares the id", async () => {
+    const personaA = { ...personaIn("ws_a"), _cachedAt: OLD }
+    const personaB = { ...personaIn("ws_b"), _cachedAt: OLD }
+    await db.personas.bulkPut([personaA, personaB])
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_a", new QueryClient(), handlerRefs)
+    const persona = {
+      id: personaA.id,
+      slug: "ariadne-renamed",
+      name: "Renamed in ws_a",
+      description: "now described",
+      avatarEmoji: "x",
+      avatarUrl: null,
+      model: "openrouter:anthropic/claude-opus-5",
+      kind: "builtin" as const,
+      ownerUserId: null,
+      isCustomized: false,
+      status: "archived" as const,
+    }
+
+    await emitAsync("agent_config:updated", { workspaceId: "ws_a", agentId: personaA.id, persona })
+
+    expect(await personasByWorkspace()).toEqual([
+      {
+        ...personaA,
+        slug: "ariadne-renamed",
+        name: "Renamed in ws_a",
+        description: "now described",
+        avatarEmoji: "x",
+        model: "openrouter:anthropic/claude-opus-5",
+        status: "archived",
+        _cachedAt: expect.any(Number),
+      },
+      personaB,
+    ])
+    cleanup()
+  })
+
+  it.each([
+    ["builtin", "system", null],
+    ["custom", "workspace", null],
+    ["personal", "user", "usr_owner"],
+  ] as const)(
+    "should insert a %s persona under the broadcasting workspace when another workspace holds the id",
+    async (kind, managedBy, ownerUserId) => {
+      const personaB = { ...personaIn("ws_b"), _cachedAt: OLD }
+      await db.personas.put(personaB)
+      const { socket, emitAsync } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_a", new QueryClient(), handlerRefs)
+      const persona = {
+        id: personaB.id,
+        slug: "ariadne",
+        name: "Ariadne in ws_a",
+        description: null,
+        avatarEmoji: null,
+        avatarUrl: null,
+        model: "openrouter:anthropic/claude-sonnet-5",
+        kind,
+        ownerUserId,
+        isCustomized: false,
+        status: "active" as const,
+      }
+
+      await expect(
+        emitAsync("agent_config:updated", { workspaceId: "ws_a", agentId: persona.id, persona })
+      ).resolves.toBeUndefined()
+
+      expect(await personasByWorkspace()).toEqual([
+        {
+          id: persona.id,
+          workspaceId: "ws_a",
+          slug: "ariadne",
+          name: "Ariadne in ws_a",
+          description: null,
+          avatarEmoji: null,
+          avatarUrl: null,
+          systemPrompt: null,
+          model: "openrouter:anthropic/claude-sonnet-5",
+          temperature: null,
+          maxTokens: null,
+          enabledTools: null,
+          managedBy,
+          ownerUserId,
+          status: "active",
+          createdAt: expect.any(String),
+          updatedAt: expect.any(String),
+          _cachedAt: expect.any(Number),
+        },
+        personaB,
+      ])
+      cleanup()
+    }
+  )
+
+  it("should sweep only the bootstrapped workspace's stale users and personas when another workspace holds the same ids", async () => {
+    const userA = { ...userIn("ws_a"), _cachedAt: OLD }
+    const userB = { ...userIn("ws_b"), _cachedAt: OLD }
+    const personaA = { ...personaIn("ws_a"), _cachedAt: OLD }
+    const personaB = { ...personaIn("ws_b"), _cachedAt: OLD }
+    await db.workspaceUsers.bulkPut([userA, userB])
+    await db.personas.bulkPut([personaA, personaB])
+
+    await applyWorkspaceBootstrap("ws_a", bootstrapFor("ws_a", { users: [], personas: [] }), Date.now())
+
+    expect({ users: await usersByWorkspace(), personas: await personasByWorkspace() }).toEqual({
+      users: [userB],
+      personas: [personaB],
+    })
   })
 })
