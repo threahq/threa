@@ -65,6 +65,7 @@ describe("push receipt routes", () => {
   async function currentGrant(): Promise<string | null> {
     return UserPreferencesRepository.findOverrideGeneration(
       pool,
+      workspaceId,
       ownerUserId,
       ANALYTICS_CONSENT_KEY,
       ANALYTICS_CONSENT_GRANTED

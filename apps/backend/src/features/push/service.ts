@@ -260,7 +260,7 @@ interface CrossFeatureLookups {
    * every withdrawal, reset or re-grant), or null when not granted. Inside a
    * transaction on `db`, a concurrent change cannot commit until it ends.
    */
-  findAnalyticsConsentGrant: (db: Querier, userId: string) => Promise<string | null>
+  findAnalyticsConsentGrant: (db: Querier, workspaceId: string, userId: string) => Promise<string | null>
   /** The stream's root is end-to-end encrypted under the current policy (INV-62 root walk). */
   isE2eRootedStream: (db: Querier, workspaceId: string, streamId: string) => Promise<boolean>
 }
@@ -949,7 +949,11 @@ export class PushService {
               workspaceId: started.workspaceId,
               deliveryId: started.id,
             })
-            const consentGeneration = await this.lookups.findAnalyticsConsentGrant(savepoint, started.userId)
+            const consentGeneration = await this.lookups.findAnalyticsConsentGrant(
+              savepoint,
+              started.workspaceId,
+              started.userId
+            )
             if (consentGeneration === null) return false
             return PushReceiptRepository.armDelivery(savepoint, {
               workspaceId: started.workspaceId,
@@ -1048,7 +1052,7 @@ export class PushService {
    * trusted. A grant withdrawn and given again is a different grant.
    */
   private async deliveryReceiptAllowed(db: Querier, workspaceId: string, receipt: LivePushReceipt): Promise<boolean> {
-    const grant = await this.lookups.findAnalyticsConsentGrant(db, receipt.userId)
+    const grant = await this.lookups.findAnalyticsConsentGrant(db, workspaceId, receipt.userId)
     if (grant === null || grant !== receipt.consentGeneration) return false
     return receipt.streamId === null || !(await this.lookups.isE2eRootedStream(db, workspaceId, receipt.streamId))
   }

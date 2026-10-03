@@ -184,6 +184,7 @@ describe("durable push delivery", () => {
       rewrapOutstanding: boolean
       /** The user's current consent grant (a value generation), null when not granted. */
       consent: string | null | Error
+      consentReads: Array<{ workspaceId: string; userId: string }>
       onConsent: (() => Promise<void>) | null
     }
     let sources: Sources
@@ -204,6 +205,7 @@ describe("durable push delivery", () => {
         reminder: null,
         rewrapOutstanding: true,
         consent: null,
+        consentReads: [],
         onConsent: null,
       }
     })
@@ -268,7 +270,8 @@ describe("durable push delivery", () => {
           },
           resolveFiredReminder: async () => sources.reminder,
           isRewrapOutstanding: async () => sources.rewrapOutstanding,
-          findAnalyticsConsentGrant: async () => {
+          findAnalyticsConsentGrant: async (_db, workspaceId, userId) => {
+            sources.consentReads.push({ workspaceId, userId })
             await sources.onConsent?.()
             if (sources.consent instanceof Error) throw sources.consent
             return sources.consent
@@ -1439,6 +1442,17 @@ describe("durable push delivery", () => {
         )
       })
 
+      test("should read the consent grant for the delivery's workspace and user when arming a receipt", async () => {
+        const service = createService()
+        sources.consent = GRANT
+        await subscribe(ws, uid, "https://push.example.com/consent-read", 1)
+
+        await service.planActivityPush(event(), activityPayload())
+        await drainDuePushJobs(pool, service, ws)
+
+        expect(sources.consentReads).toEqual([{ workspaceId: ws, userId: uid }])
+      })
+
       test("should send without a capability when arming the receipt fails", async () => {
         const service = createService()
         sources.consent = GRANT
@@ -2004,7 +2018,8 @@ describe("durable push delivery", () => {
           resolveActivityPush: (params) => activityService.resolvePushSource(params),
           resolveFiredReminder: (params) => savedService.resolveFiredReminder(params),
           isRewrapOutstanding: async () => false,
-          findAnalyticsConsentGrant: (db, userId) => preferencesService.findAnalyticsConsentGrant(db, userId),
+          findAnalyticsConsentGrant: (db, workspaceId, userId) =>
+            preferencesService.findAnalyticsConsentGrant(db, workspaceId, userId),
           isE2eRootedStream: async (db, workspaceId, streamId) =>
             (await E2eStreamsRepository.excludeE2eRootedStreamIds(db, [{ workspaceId, streamId }])).length === 0,
         },
@@ -2208,7 +2223,7 @@ describe("durable push delivery", () => {
             `SELECT token_hash, stream_id, consent_generation::text AS consent_generation FROM push_receipts WHERE workspace_id = $1`,
             [ctx.ws]
           )
-          const grant = await preferencesService.findAnalyticsConsentGrant(pool, ctx.recipient.id)
+          const grant = await preferencesService.findAnalyticsConsentGrant(pool, ctx.ws, ctx.recipient.id)
           observed[c.name] = {
             sent: sent !== undefined,
             tokenInData: JSON.stringify(sent?.data ?? {}).includes(token ?? "no token sent"),
