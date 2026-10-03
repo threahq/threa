@@ -60,7 +60,7 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect(await db.drafts.count()).toBe(1)
     expect((await db.drafts.get(row.id))?.baseVersion).toBe(1)
     // The loaded draft is never also a stash entry — exactly one pointer at it.
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe(row.id)
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe(row.id)
   })
 
   it("clearLoadedDraft queues an idempotent cleanup delete for a never-confirmed draft", async () => {
@@ -127,8 +127,8 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect((await db.drafts.get(loadedRow.id))?.scope).toBe(toScope)
     expect((await db.drafts.get("draft_stash"))?.scope).toBe(toScope)
     // The loaded pointer followed its draft to the new scope; the old scope is empty.
-    expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
-    expect((await db.composerLoaded.get(toScope))?.draftId).toBe(loadedRow.id)
+    expect((await db.composerLoaded.get([workspaceId, fromScope]))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, toScope]))?.draftId).toBe(loadedRow.id)
     // Each draft is queued for a push so the server row follows.
     expect(await pendingUpserts(loadedRow.id)).toBe(1)
     expect(await pendingUpserts("draft_stash")).toBe(1)
@@ -168,8 +168,8 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     const moved = await relocateLoadedDraft(workspaceId, fromScope, toScope)
 
     expect(moved?.id).toBe(sourceRow.id)
-    expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
-    expect((await db.composerLoaded.get(toScope))?.draftId).toBe(sourceRow.id)
+    expect((await db.composerLoaded.get([workspaceId, fromScope]))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, toScope]))?.draftId).toBe(sourceRow.id)
     expect(await db.drafts.get(sourceRow.id)).toMatchObject({
       id: sourceRow.id,
       scope: toScope,

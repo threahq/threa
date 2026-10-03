@@ -212,7 +212,7 @@ describe("applyDraftUpserted", () => {
     const row = await db.drafts.get("draft_x")
     expect(row?.contentJson).toEqual(makeDoc("my edits"))
     expect(row?.baseVersion).toBe(1)
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_x")
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe("draft_x")
     expect(await hasPendingDraftUpsert("draft_x")).toBe(true)
   })
 
@@ -236,8 +236,8 @@ describe("applyDraftUpserted", () => {
     expect(row).toMatchObject({ scope: newScope, baseVersion: 2 })
     // ...and the device-local loaded pointer followed it: the old scope is empty,
     // the new scope points at the draft, so the reply isn't stranded.
-    expect((await db.composerLoaded.get(oldScope))?.draftId).toBeUndefined()
-    expect((await db.composerLoaded.get(newScope))?.draftId).toBe("draft_x")
+    expect((await db.composerLoaded.get([workspaceId, oldScope]))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, newScope]))?.draftId).toBe("draft_x")
   })
 
   it("re-scopes a non-loaded (stash) draft without creating a pointer", async () => {
@@ -256,7 +256,7 @@ describe("applyDraftUpserted", () => {
     )
 
     expect((await db.drafts.get("draft_stash"))?.scope).toBe(newScope)
-    expect((await db.composerLoaded.get(newScope))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, newScope]))?.draftId).toBeUndefined()
   })
 
   it("does not duplicate on an echo of our own in-flight write (echo-before-ack)", async () => {
@@ -276,7 +276,7 @@ describe("applyDraftUpserted", () => {
     )
 
     expect(await db.drafts.count()).toBe(1)
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_x")
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe("draft_x")
   })
 })
 
@@ -288,7 +288,7 @@ describe("applyDraftDeleted", () => {
     await applyDraftDeleted({ workspaceId, targetUserId: userId, draftId: "draft_x" }, workspaceId)
 
     expect(await db.drafts.get("draft_x")).toBeUndefined()
-    expect((await db.composerLoaded.get(scope))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBeUndefined()
   })
 
   it("preserves unpushed local edits as a fresh draft instead of deleting (no-loss)", async () => {
@@ -303,7 +303,7 @@ describe("applyDraftDeleted", () => {
     const ours = (await db.drafts.toArray()).find((d) => d.id !== "draft_x")
     expect(ours?.contentJson).toEqual(makeDoc("my edits"))
     expect(ours?.baseVersion).toBe(0)
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe(ours!.id)
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe(ours!.id)
     expect(await hasPendingDraftUpsert("draft_x")).toBe(false)
     expect(await hasPendingDraftUpsert(ours!.id)).toBe(true)
   })
@@ -576,7 +576,7 @@ describe("executeDraftUpsert", () => {
     expect(await db.drafts.get("draft_x")).toBeUndefined()
     const migrated = await db.drafts.get("draft_new")
     expect(migrated).toMatchObject({ contentJson: makeDoc("mine"), baseVersion: 1 })
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_new")
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe("draft_new")
   })
 
   it("keeps keystrokes typed during the in-flight split push (id migration re-reads the live row)", async () => {
@@ -614,7 +614,7 @@ describe("executeDraftUpsert", () => {
     const kept = await db.drafts.get("draft_x")
     expect(kept).toMatchObject({ baseVersion: 3, contentJson: makeDoc("theirs") })
     // Seeding never activates the composer.
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
   })
 
   it("seeds a drifted kept row even while this push's own op row is still in the table (sent mid-push)", async () => {
@@ -966,7 +966,7 @@ describe("inbound sync never activates the composer (loaded pointer is local-onl
 
     expect(await db.drafts.get("draft_server1")).toBeDefined()
     // A roamed/echoed draft lands in the stash pile, never checked into a composer.
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
   })
 
   it("applyDraftsBootstrap writes rows but never a composer-loaded pointer", async () => {
@@ -974,7 +974,7 @@ describe("inbound sync never activates the composer (loaded pointer is local-onl
 
     expect(await db.drafts.get("draft_server1")).toBeDefined()
     expect(await db.drafts.get("draft_server2")).toBeDefined()
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
   })
 })
 
@@ -995,7 +995,7 @@ describe("deleteDraftById — the single user-initiated delete path", () => {
 
     await deleteDraftById(workspaceId, "draft_x")
 
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
   })
 
   it("queues an idempotent server delete for a never-confirmed draft to clean up in-flight upsert ghosts", async () => {
@@ -1104,7 +1104,7 @@ describe("reconcileStagedDrafts", () => {
 
     await reconcileStagedDrafts(workspaceId)
 
-    const pointer = await db.composerLoaded.get(loadedScope)
+    const pointer = await db.composerLoaded.get([workspaceId, loadedScope])
     expect(pointer?.draftId).toBeTruthy()
     const created = pointer?.draftId ? await db.drafts.get(pointer.draftId) : undefined
     expect(created?.contentJson).toEqual(makeDoc("brand new"))
@@ -1157,7 +1157,102 @@ describe("reconcileStagedDrafts", () => {
 
     await reconcileStagedDrafts(workspaceId)
 
-    expect(await db.composerLoaded.get(loadedScope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, loadedScope])).toBeUndefined()
     expect(readStagedDraft(workspaceId, loadedScope)).toBeNull()
+  })
+})
+
+describe("composer pointers are per workspace (the same scope in two workspaces)", () => {
+  const wsA = "ws_a"
+  const wsB = "ws_b"
+
+  const draftA = localDraft({ id: "draft_a", workspaceId: wsA, baseVersion: 1, contentJson: makeDoc("a body") })
+  const draftB = localDraft({ id: "draft_b", workspaceId: wsB, baseVersion: 1, contentJson: makeDoc("b body") })
+  const pointerB = { scope, workspaceId: wsB, draftId: "draft_b" }
+
+  async function seedBoth(sharedScope = scope) {
+    await db.drafts.bulkPut([
+      { ...draftA, scope: sharedScope },
+      { ...draftB, scope: sharedScope },
+    ])
+    await db.composerLoaded.bulkPut([
+      { scope: sharedScope, workspaceId: wsA, draftId: "draft_a" },
+      { scope: sharedScope, workspaceId: wsB, draftId: "draft_b" },
+    ])
+  }
+
+  it("should leave the other workspace's pointer when a remote delete removes the loaded draft", async () => {
+    await seedBoth()
+
+    await applyDraftDeleted({ workspaceId: wsA, targetUserId: userId, draftId: "draft_a" }, wsA)
+
+    expect({ pointers: await db.composerLoaded.toArray(), drafts: await db.drafts.toArray() }).toEqual({
+      pointers: [pointerB],
+      drafts: [draftB],
+    })
+  })
+
+  it("should follow a remote re-scope with this workspace's pointer only", async () => {
+    const oldScope = "thread:msg_1"
+    const newScope = "stream:thread_1"
+    await seedBoth(oldScope)
+
+    await applyDraftUpserted(
+      {
+        workspaceId: wsA,
+        targetUserId: userId,
+        draft: wireDraft({
+          id: "draft_a",
+          workspaceId: wsA,
+          scope: newScope,
+          version: 2,
+          contentJson: makeDoc("a body"),
+        }),
+      },
+      wsA
+    )
+
+    expect({
+      pointers: await db.composerLoaded.toArray(),
+      scopes: (await db.drafts.orderBy("id").toArray()).map((row) => [row.id, row.scope]),
+    }).toEqual({
+      pointers: [
+        { scope: newScope, workspaceId: wsA, draftId: "draft_a" },
+        { scope: oldScope, workspaceId: wsB, draftId: "draft_b" },
+      ],
+      scopes: [
+        ["draft_a", newScope],
+        ["draft_b", oldScope],
+      ],
+    })
+  })
+
+  it("should repoint only this workspace's pointer when a draft's id migrates", async () => {
+    await seedBoth()
+
+    await migrateLocalDraftId(wsA, "draft_a", localDraft({ id: "draft_a2", workspaceId: wsA, baseVersion: 0 }))
+
+    expect(await db.composerLoaded.toArray()).toEqual([{ scope, workspaceId: wsA, draftId: "draft_a2" }, pointerB])
+  })
+
+  it("should recover a staged tail into its own workspace and leave the other workspace's loaded draft alone", async () => {
+    await db.drafts.put(draftB)
+    await db.composerLoaded.put(pointerB)
+    stageDraftContent(wsA, scope, makeDoc("a staged tail"))
+
+    await reconcileStagedDrafts(wsA)
+
+    const pointers = await db.composerLoaded.toArray()
+    const recoveredId = String(pointers[0].draftId)
+    expect({
+      pointers,
+      drafts: Object.fromEntries((await db.drafts.toArray()).map((row) => [row.id, row])),
+    }).toEqual({
+      pointers: [{ scope, workspaceId: wsA, draftId: recoveredId }, pointerB],
+      drafts: {
+        draft_b: draftB,
+        [recoveredId]: expect.objectContaining({ workspaceId: wsA, scope, contentJson: makeDoc("a staged tail") }),
+      },
+    })
   })
 })

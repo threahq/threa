@@ -25,14 +25,14 @@ beforeEach(async () => {
 describe("stashLoadedDraft (pointer-move stash)", () => {
   it("detaches the loaded pointer but keeps the row at rest, so it roams as a stash entry", async () => {
     const loaded = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("draft body"), attachments: [] })
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe(loaded.id)
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe(loaded.id)
 
     const stashedId = await stashLoadedDraft(workspaceId, scope)
 
     expect(stashedId).toBe(loaded.id)
     // Pointer cleared; the row is preserved (not deleted) so it stays a stash entry
     // and keeps roaming — no plaintext snapshot into a new row.
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
     const row = await db.drafts.get(loaded.id)
     expect(row).toBeDefined()
     // Durable stash (chunk 4): the marker is set WITHOUT bumping recency, and a
@@ -92,7 +92,7 @@ describe("stashLoadedDraft (pointer-move stash)", () => {
     const stashedId = await stashLoadedDraft(workspaceId, scope, { putAway: false })
 
     expect(stashedId).toBe(loaded.id)
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
     // No marker: a disarm is "stop replying here", not "put the draft away" —
     // the board button and auto-restore must keep advertising it everywhere.
     expect((await db.drafts.get(loaded.id))?.stashedAt ?? null).toBeNull()
@@ -123,7 +123,7 @@ describe("stashLoadedDraft (pointer-move stash)", () => {
     expect(row?.ciphertext).toBe("ct_sealed")
     // Still ciphertext-only at rest after stashing.
     expect(row?.contentJson).toEqual(EMPTY_DOC)
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
   })
 })
 
@@ -132,11 +132,11 @@ describe("restoreStashedDraftToComposer (pointer-move restore)", () => {
     const first = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("first"), attachments: [] })
     await stashLoadedDraft(workspaceId, scope)
     const second = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("second"), attachments: [] })
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe(second.id)
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe(second.id)
 
     await restoreStashedDraftToComposer(workspaceId, scope, first.id)
 
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe(first.id)
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe(first.id)
     // Both rows survive (nothing deleted) — `second` is now the stash entry.
     expect(await db.drafts.get(first.id)).toBeDefined()
     expect(await db.drafts.get(second.id)).toBeDefined()
@@ -722,13 +722,13 @@ describe("restoreStashedDraftToComposer — id validated in the txn (INV-20)", (
 
     // The pointer follows the migration — never the retired id, which would
     // render an empty composer over an orphaned row.
-    expect((await db.composerLoaded.get(scope))?.draftId).toBe("draft_rekeyed")
+    expect((await db.composerLoaded.get([workspaceId, scope]))?.draftId).toBe("draft_rekeyed")
     expect(await db.drafts.get(first.id)).toBeUndefined()
   })
 
   it("returns false for a row that is genuinely gone, and points at nothing", async () => {
     expect(await restoreStashedDraftToComposer(workspaceId, scope, "draft_never")).toBe(false)
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
   })
 })
 

@@ -469,7 +469,7 @@ describe("useAllDrafts deleteDraft", () => {
     expect(await db.drafts.get("draft_loaded")).toBeUndefined()
     // The unified delete path clears the loaded pointer too, so the composer
     // empties instead of dangling at a missing row.
-    expect(await db.composerLoaded.get(scope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, scope])).toBeUndefined()
     expect(await pendingDeleteIds()).toContain("draft_loaded")
     expect(kickOperationQueue).toHaveBeenCalled()
   })

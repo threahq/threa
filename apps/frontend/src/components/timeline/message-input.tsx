@@ -291,7 +291,7 @@ function MessageInputComponent({
   // own draft scope, durably (`composerTarget`). The composer then edits THAT
   // draft: the arm is which draft is open, not a flag riding whatever is typed
   // next, so it survives a reload and the strip renders straight from it.
-  const { scope: storedTarget, isResolved: targetResolved } = useComposerTarget(hostScope)
+  const { scope: storedTarget, isResolved: targetResolved } = useComposerTarget(workspaceId, hostScope)
   const parsedTarget = storedTarget ? parseBoardDraftKey(storedTarget) : null
   const targetConversationId =
     parsedTarget && (parsedTarget.kind === "reply" || parsedTarget.kind === "branch-reply")
@@ -351,7 +351,7 @@ function MessageInputComponent({
   const disarmTarget = useCallback(async () => {
     gestureArmedIdRef.current = null
     const vacated = effectiveTargetRef.current
-    await clearComposerTarget(hostScope)
+    await clearComposerTarget(workspaceId, hostScope)
     if (!vacated || mountedOnTargetRef.current > 1) return
     try {
       await composerRef.current.flushDraft()
@@ -541,8 +541,8 @@ function MessageInputComponent({
   useEffect(() => {
     if (!effectiveTarget || mountedOnTarget <= 1) return
     gestureArmedIdRef.current = null
-    void clearComposerTarget(hostScope)
-  }, [effectiveTarget, mountedOnTarget, hostScope])
+    void clearComposerTarget(workspaceId, hostScope)
+  }, [effectiveTarget, mountedOnTarget, workspaceId, hostScope])
 
   // Hand the armed conversation off to its side panel (Mechanism B), which renders
   // it across its root + threads and routes the reply recency-biased into the live

@@ -335,10 +335,10 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
         // scope, keeping whichever side is newer so a draft already started in
         // the real DM isn't clobbered. The virtual scope's drafts are then
         // purged. (Stash piles on the virtual scope are rare and dropped here.)
-        const fromLoadedId = (await db.composerLoaded.get(draftKey))?.draftId ?? null
+        const fromLoadedId = (await db.composerLoaded.get([workspaceId, draftKey]))?.draftId ?? null
         const fromDraft = fromLoadedId ? await db.drafts.get(fromLoadedId) : undefined
         if (fromDraft) {
-          const toLoadedId = (await db.composerLoaded.get(realStreamKey))?.draftId ?? null
+          const toLoadedId = (await db.composerLoaded.get([workspaceId, realStreamKey]))?.draftId ?? null
           const toDraft = toLoadedId ? await db.drafts.get(toLoadedId) : undefined
           if (!toDraft || toDraft.clientUpdatedAt < fromDraft.clientUpdatedAt) {
             await upsertLoadedDraft(workspaceId, realStreamKey, {

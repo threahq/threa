@@ -50,8 +50,8 @@ function isStaleObservedResolve(scope: string, observedResolveSeq: number | unde
 }
 
 /** Resolve the draft id currently checked out into the composer for a scope. */
-async function getLoadedDraftId(scope: string): Promise<string | null> {
-  const row = await db.composerLoaded.get(scope)
+async function getLoadedDraftId(workspaceId: string, scope: string): Promise<string | null> {
+  const row = await db.composerLoaded.get([workspaceId, scope])
   return row?.draftId ?? null
 }
 
@@ -186,7 +186,7 @@ export async function upsertLoadedDraft(
   let unchangedForeignRow: CachedDraft | null = null
   for (let attempt = 0; attempt < 3; attempt++) {
     // Identity-addressed when the caller named a row; pointer-addressed otherwise.
-    let loadedId = forceCreate ? null : (expectedId ?? (await getLoadedDraftId(scope)))
+    let loadedId = forceCreate ? null : (expectedId ?? (await getLoadedDraftId(workspaceId, scope)))
     let existing = loadedId ? await db.drafts.get(loadedId) : undefined
     if (expectedId && !existing && !forceCreate) {
       // The expected row may have been RE-KEYED rather than deleted (a split ack
@@ -278,7 +278,7 @@ export async function upsertLoadedDraft(
     let wrotePointer = false
     const outcome = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
       if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return "dropped"
-      const livePointer = (await db.composerLoaded.get(scope))?.draftId ?? null
+      const livePointer = await getLoadedDraftId(workspaceId, scope)
       // Pointer-addressed saves revalidate the pointer; identity-addressed ones
       // revalidate the ROW below, so a repoint can't route them onto another draft.
       if (!expectedId && livePointer !== loadedId) return "conflict"
@@ -403,7 +403,7 @@ async function removeLoadedDraftLocally(
   let removedId: string | null = null
   const clearedScopes: string[] = []
   await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-    let loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
+    let loadedId = await getLoadedDraftId(workspaceId, scope)
     if (expectedDraftId && loadedId !== expectedDraftId) return
     if (!loadedId && fallbackDraftId && (await db.drafts.get(fallbackDraftId))) loadedId = fallbackDraftId
     let version: number | undefined
@@ -414,12 +414,12 @@ async function removeLoadedDraftLocally(
       const holders = await db.composerLoaded.where("workspaceId").equals(workspaceId).toArray()
       for (const holder of holders) {
         if (holder.draftId === loadedId && holder.scope !== scope) {
-          await db.composerLoaded.delete(holder.scope)
+          await db.composerLoaded.delete([workspaceId, holder.scope])
           clearedScopes.push(holder.scope)
         }
       }
     }
-    await db.composerLoaded.delete(scope)
+    await db.composerLoaded.delete([workspaceId, scope])
     if (loadedId) await mirror(loadedId, version)
     removedId = loadedId
   })
@@ -453,7 +453,7 @@ export async function clearLoadedDraft(
     // Follow a re-key (`migrateLocalDraftId`) so an empty save for the pre-split
     // id clears the row that id became, not nothing at all.
     targetId = (await db.drafts.get(expectedDraftId)) ? expectedDraftId : resolveMigratedDraftId(expectedDraftId)
-    const pointer = (await db.composerLoaded.get(scope))?.draftId ?? null
+    const pointer = await getLoadedDraftId(workspaceId, scope)
     if (pointer !== targetId) {
       // The delete-path twin of the write path's foreign-holder split, enforced
       // INSIDE `removeDraftRowById`'s transaction (INV-20): a pointer anywhere
@@ -567,7 +567,7 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
   const rows = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
     const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
     for (const row of found) await db.drafts.delete(row.id)
-    await db.composerLoaded.delete(scope)
+    await db.composerLoaded.delete([workspaceId, scope])
     for (const row of found) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
     return found
   })
@@ -592,10 +592,10 @@ export async function purgePlaintextScopeDrafts(workspaceId: string, scope: stri
   const removed = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
     const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
     const plaintext = found.filter((row) => !row.ciphertext)
-    const loaded = await db.composerLoaded.get(scope)
+    const loaded = await db.composerLoaded.get([workspaceId, scope])
     for (const row of plaintext) await db.drafts.delete(row.id)
     if (loaded && plaintext.some((row) => row.id === loaded.draftId)) {
-      await db.composerLoaded.delete(scope)
+      await db.composerLoaded.delete([workspaceId, scope])
       clearedPointer = true
     }
     // Mirror the removal of any plaintext copy that reached the server, inside
@@ -642,7 +642,7 @@ export async function stashLoadedDraft(
   // deliberately NOT bumped — putting a draft away must not reorder the pile.
   let stashed: CachedDraft | null = null
   const draftId = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-    const id = (await db.composerLoaded.get(scope))?.draftId ?? null
+    const id = await getLoadedDraftId(workspaceId, scope)
     if (!id) return null
     const row = await db.drafts.get(id)
     if (putAway && row && row.stashedAt == null) {
@@ -650,7 +650,7 @@ export async function stashLoadedDraft(
       await db.drafts.put(stashed)
       await enqueueDraftUpsert(workspaceId, id)
     }
-    await db.composerLoaded.delete(scope)
+    await db.composerLoaded.delete([workspaceId, scope])
     return id
   })
   if (!draftId) return null
@@ -696,7 +696,7 @@ export async function restoreStashedDraftToComposer(
     }
     const holders = await db.composerLoaded.where("workspaceId").equals(workspaceId).toArray()
     const others = holders.filter((row) => row.draftId === pointedId && row.scope !== scope)
-    for (const row of others) await db.composerLoaded.delete(row.scope)
+    for (const row of others) await db.composerLoaded.delete([workspaceId, row.scope])
     await db.composerLoaded.put({ scope, workspaceId, draftId: pointedId })
     // Restoring unstashes: the durable "put away" flag clears the
     // moment a composer takes the draft back, and the clear rides the same push
@@ -792,7 +792,7 @@ export async function relocateLoadedDraft(
 ): Promise<CachedDraft | null> {
   let moved: CachedDraft | null = null
   await db.transaction("rw", db.drafts, db.composerLoaded, db.composerTarget, db.pendingOperations, async () => {
-    const loadedId = (await db.composerLoaded.get(fromScope))?.draftId ?? null
+    const loadedId = await getLoadedDraftId(workspaceId, fromScope)
     const live = loadedId ? await db.drafts.get(loadedId) : null
     if (live && live.scope === fromScope) {
       moved = { ...live, scope: toScope }
@@ -800,7 +800,7 @@ export async function relocateLoadedDraft(
       await enqueueDraftUpsert(workspaceId, live.id, { forceNewOp: true })
     }
     if (opts?.targetHost) {
-      if (toScope === opts.targetHost) await db.composerTarget.delete(opts.targetHost)
+      if (toScope === opts.targetHost) await db.composerTarget.delete([workspaceId, opts.targetHost])
       else await db.composerTarget.put({ host: opts.targetHost, workspaceId, scope: toScope })
     }
   })
@@ -964,14 +964,15 @@ export function useDraftMessage(
         // (there is nothing of ours to delete).
         let effectiveTarget = targetId
         let mintedDetachedId = false
-        if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
+        if (strictIdentity && targetId === null && (await getLoadedDraftId(workspaceId, draftKey)) !== null) {
           if (isEmptyContent(contentJson) && (attachments?.length ?? 0) === 0) return null
           effectiveTarget = generateLocalDraftId()
           mintedDetachedId = true
         }
         // A filing-only move may preserve an existing row whose live editor was
         // deliberately cleared, but it must not mint empty drafts from nothing.
-        if (options?.keepEmpty && effectiveTarget === null && (await getLoadedDraftId(draftKey)) === null) return null
+        if (options?.keepEmpty && effectiveTarget === null && (await getLoadedDraftId(workspaceId, draftKey)) === null)
+          return null
 
         // The scope's resolve sequence as this save begins. If a resolve-on-send
         // advances it before the create below runs, this save is a stale echo of
@@ -988,7 +989,7 @@ export function useDraftMessage(
           // preserve them, exactly as the plaintext path preserves them below. The
           // sealed row holds no plaintext attachments at rest, so they're read back
           // from the in-memory decrypt cache (the plaintext authority).
-          const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(draftKey))
+          const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(workspaceId, draftKey))
           const finalAttachments = attachments ?? (currentLoadedId ? cachedDraftAttachments(currentLoadedId) : [])
           if (!options?.keepEmpty && isEmptyContent(contentJson) && finalAttachments.length === 0) {
             await clearLoadedDraft(workspaceId, draftKey, effectiveTarget)
@@ -1020,7 +1021,7 @@ export function useDraftMessage(
         // sidecar must survive a content-only save (e.g. user typing into a
         // bag-attached scratchpad) — without this preservation the chip would
         // vanish from the composer the moment the first keystroke fires.
-        const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(draftKey))
+        const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(workspaceId, draftKey))
         const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
         const finalAttachments = attachments ?? currentDraft?.attachments ?? []
         const finalContextRefs = currentDraft?.contextRefs ?? []
@@ -1115,7 +1116,7 @@ export function useDraftMessage(
         // row instead.
         let effectiveTarget = targetId
         let mintedDetachedId = false
-        if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
+        if (strictIdentity && targetId === null && (await getLoadedDraftId(workspaceId, draftKey)) !== null) {
           // A detached row claims no pointer, so nothing ever reconciles it with
           // its siblings — and the per-row duplicate check below looks at a row
           // that does not exist yet, so it always passes. Only a scope-wide look
@@ -1134,7 +1135,7 @@ export function useDraftMessage(
           // attachment stays in the composer session, like a typed body would.
           const gate = e2eGateRef.current
           if (!gate.unlocked || !gate.senderId || !gate.streamId) return
-          const sealedLoadedId = effectiveTarget ?? (await getLoadedDraftId(draftKey))
+          const sealedLoadedId = effectiveTarget ?? (await getLoadedDraftId(workspaceId, draftKey))
           const currentSealed = sealedLoadedId ? cachedDraftAttachments(sealedLoadedId) : []
           if (currentSealed.some((a) => a.id === attachment.id)) return
           const body = (sealedLoadedId ? cachedDraftBody(sealedLoadedId) : null) ?? EMPTY_DOC
@@ -1154,7 +1155,7 @@ export function useDraftMessage(
           }
           return
         }
-        const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(draftKey))
+        const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(workspaceId, draftKey))
         const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
         const currentAttachments = currentDraft?.attachments ?? []
 
@@ -1208,7 +1209,7 @@ export function useDraftMessage(
         // every branch below self-no-ops.
         let effectiveTarget = targetId
         let mintedDetachedId = false
-        if (strictIdentity && targetId === null && (await getLoadedDraftId(draftKey)) !== null) {
+        if (strictIdentity && targetId === null && (await getLoadedDraftId(workspaceId, draftKey)) !== null) {
           effectiveTarget = generateLocalDraftId()
           mintedDetachedId = true
         }
@@ -1218,7 +1219,7 @@ export function useDraftMessage(
           // cache for the same reason `addAttachment` does. Locked → no-op.
           const gate = e2eGateRef.current
           if (!gate.unlocked || !gate.senderId || !gate.streamId) return
-          const sealedLoadedId = effectiveTarget ?? (await getLoadedDraftId(draftKey))
+          const sealedLoadedId = effectiveTarget ?? (await getLoadedDraftId(workspaceId, draftKey))
           if (!sealedLoadedId) return
           const remaining = cachedDraftAttachments(sealedLoadedId).filter((a) => a.id !== attachmentId)
           const body = cachedDraftBody(sealedLoadedId) ?? EMPTY_DOC
@@ -1244,7 +1245,7 @@ export function useDraftMessage(
           }
           return
         }
-        const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(draftKey))
+        const currentLoadedId = effectiveTarget ?? (await getLoadedDraftId(workspaceId, draftKey))
         const currentDraft = currentLoadedId ? await db.drafts.get(currentLoadedId) : undefined
         if (!currentDraft) return
 

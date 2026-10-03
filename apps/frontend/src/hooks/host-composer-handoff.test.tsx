@@ -67,7 +67,7 @@ describe("useHostComposerHandoff", () => {
       expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
         { kind: "content", content: CONTENT, attachments: [] },
       ])
-      expect(await db.composerTarget.get("stream:stream_host")).toBeUndefined()
+      expect(await db.composerTarget.get(["ws_1", "stream:stream_host"])).toBeUndefined()
       expect(pathname).toBe("/w/ws_1/board")
     } finally {
       unmount()
@@ -96,7 +96,7 @@ describe("useHostComposerHandoff", () => {
     })
 
     expect(delivered).not.toBeNull()
-    expect((await db.composerTarget.get("stream:stream_host"))?.scope).toBe("board:reply:conv_1")
+    expect((await db.composerTarget.get(["ws_1", "stream:stream_host"]))?.scope).toBe("board:reply:conv_1")
     expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
       { kind: "content", content: CONTENT, attachments: [] },
     ])
@@ -110,7 +110,7 @@ describe("useHostComposerHandoff", () => {
     ).toBeNull()
     expect(await send({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: [] })).toBeNull()
     expect(peekShareHandoffBatch("stream_host")).toBeNull()
-    expect(await db.composerTarget.get("stream:stream_host")).toBeUndefined()
+    expect(await db.composerTarget.get(["ws_1", "stream:stream_host"])).toBeUndefined()
   })
 
   it("rides the same queue as a share, in order, so one insert path drains both", async () => {

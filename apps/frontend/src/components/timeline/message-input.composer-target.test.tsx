@@ -341,7 +341,7 @@ describe("the timeline composer's durable target", () => {
     })
     await waitFor(
       async () => {
-        const loadedId = (await db.composerLoaded.get(hostScope))?.draftId
+        const loadedId = (await db.composerLoaded.get([workspaceId, hostScope]))?.draftId
         expect(loadedId).toBeDefined()
         expect(loadedId).not.toBe(original.id)
       },
@@ -353,7 +353,7 @@ describe("the timeline composer's durable target", () => {
       attachments: [{ id: "attach_keep", filename: "keep.txt", mimeType: "text/plain", sizeBytes: 12 }],
       stashedAt: expect.any(Number),
     })
-    const loadedId = (await db.composerLoaded.get(hostScope))?.draftId
+    const loadedId = (await db.composerLoaded.get([workspaceId, hostScope]))?.draftId
     expect(await db.drafts.get(loadedId!)).toMatchObject({
       contentJson: {
         type: "doc",
@@ -391,7 +391,7 @@ describe("the timeline composer's durable target", () => {
     await waitFor(() => expect(restoreAttachments).toHaveBeenCalledWith([file]), { timeout: 7000 })
     await waitFor(
       async () => {
-        const loadedId = (await db.composerLoaded.get(hostScope))?.draftId
+        const loadedId = (await db.composerLoaded.get([workspaceId, hostScope]))?.draftId
         expect(loadedId).toBeDefined()
         expect(await db.drafts.get(loadedId!)).toMatchObject({ attachments: [file] })
       },
@@ -427,7 +427,7 @@ describe("the timeline composer's durable target", () => {
       expect(toastSpy).toHaveBeenCalledWith("Couldn't prepare this composer for sharing. Your draft was kept.")
     )
     expect(screen.getByTestId("editor-body")).toHaveTextContent("keep this")
-    expect((await db.composerLoaded.get(hostScope))?.draftId).toBe(original.id)
+    expect((await db.composerLoaded.get([workspaceId, hostScope]))?.draftId).toBe(original.id)
     expect((await db.drafts.get(original.id))?.stashedAt).toBeUndefined()
     expect(peekShareHandoff(streamId)?.messageId).toBe("msg_retry")
     expect(errorSpy).toHaveBeenCalled()
@@ -456,7 +456,7 @@ describe("the timeline composer's durable target", () => {
     )
     expect(screen.getByTestId("editor-json")).not.toHaveTextContent('"messageId":"msg_rejected"')
     expect(peekShareHandoff(streamId)?.messageId).toBe("msg_rejected")
-    expect(await db.composerLoaded.get(hostScope)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, hostScope])).toBeUndefined()
     expect(errorSpy).toHaveBeenCalled()
   }, 10_000)
 
@@ -479,7 +479,7 @@ describe("the timeline composer's durable target", () => {
     await waitFor(() => expect(screen.getByTestId("editor-json")).toHaveTextContent('"messageId":"msg_strict"'), {
       timeout: 7000,
     })
-    await waitFor(async () => expect((await db.composerLoaded.get(hostScope))?.draftId).toBeDefined(), {
+    await waitFor(async () => expect((await db.composerLoaded.get([workspaceId, hostScope]))?.draftId).toBeDefined(), {
       timeout: 7000,
     })
     expect(screen.getByTestId("editor-json").textContent?.match(/msg_strict/g)).toHaveLength(1)
@@ -518,7 +518,7 @@ describe("the timeline composer's durable target", () => {
     })
     await waitFor(
       async () => {
-        const loadedId = (await db.composerLoaded.get(targetScope))?.draftId
+        const loadedId = (await db.composerLoaded.get([workspaceId, targetScope]))?.draftId
         expect(loadedId).toBeDefined()
         expect(loadedId).not.toBe(target.id)
       },
@@ -615,22 +615,22 @@ describe("the timeline composer's durable target", () => {
     await seedDrafts()
     mount()
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
-    const stableDraftId = (await db.composerLoaded.get(hostScope))?.draftId
+    const stableDraftId = (await db.composerLoaded.get([workspaceId, hostScope]))?.draftId
 
     await userEvent.click(screen.getByRole("button", { name: "type" }))
     await waitFor(async () => expect(await bodyOf(hostScope)).toBe("typed here"))
     await act(async () => registeredConversationReplyHandler?.({ conversationId: "conv_1" }))
     await waitFor(async () => {
-      expect((await db.composerTarget.get(hostScope))?.scope).toBe(boardScope)
-      expect((await db.composerLoaded.get(boardScope))?.draftId).toBe(stableDraftId)
+      expect((await db.composerTarget.get([workspaceId, hostScope]))?.scope).toBe(boardScope)
+      expect((await db.composerLoaded.get([workspaceId, boardScope]))?.draftId).toBe(stableDraftId)
     })
 
     const secondScope = "board:reply:conv_2"
     renderedBodies = []
     await act(async () => registeredConversationReplyHandler?.({ conversationId: "conv_2" }))
     await waitFor(async () => {
-      expect((await db.composerTarget.get(hostScope))?.scope).toBe(secondScope)
-      expect((await db.composerLoaded.get(secondScope))?.draftId).toBe(stableDraftId)
+      expect((await db.composerTarget.get([workspaceId, hostScope]))?.scope).toBe(secondScope)
+      expect((await db.composerLoaded.get([workspaceId, secondScope]))?.draftId).toBe(stableDraftId)
     })
 
     expect(await db.drafts.get(stableDraftId!)).toMatchObject({
@@ -666,7 +666,7 @@ describe("the timeline composer's durable target", () => {
 
     mount()
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("board body"))
-    const stableDraftId = (await db.composerLoaded.get(boardScope))?.draftId
+    const stableDraftId = (await db.composerLoaded.get([workspaceId, boardScope]))?.draftId
     expect(stableDraftId).toBeDefined()
 
     await userEvent.click(screen.getByRole("button", { name: "type" }))
@@ -674,11 +674,11 @@ describe("the timeline composer's durable target", () => {
     renderedBodies = []
     await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
 
-    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+    await waitFor(async () => expect(await db.composerTarget.get([workspaceId, hostScope])).toBeUndefined())
     await waitFor(() => expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument())
     expect(screen.getByTestId("editor-body")).toHaveTextContent("typed here")
     expect(renderedBodies).not.toContain("")
-    expect((await db.composerLoaded.get(hostScope))?.draftId).toBe(stableDraftId)
+    expect((await db.composerLoaded.get([workspaceId, hostScope]))?.draftId).toBe(stableDraftId)
     expect(await db.drafts.get(stableDraftId!)).toMatchObject({
       id: stableDraftId,
       scope: hostScope,
@@ -694,16 +694,16 @@ describe("the timeline composer's durable target", () => {
     await setComposerTarget(workspaceId, hostScope, boardScope)
     mount()
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("board body"))
-    const stableDraftId = (await db.composerLoaded.get(boardScope))?.draftId
+    const stableDraftId = (await db.composerLoaded.get([workspaceId, boardScope]))?.draftId
 
     await userEvent.click(screen.getByRole("button", { name: "clear" }))
     renderedBodies = []
     await userEvent.click(screen.getByRole("button", { name: /cancel reply in conversation/i }))
 
-    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+    await waitFor(async () => expect(await db.composerTarget.get([workspaceId, hostScope])).toBeUndefined())
     expect(screen.getByTestId("editor-body").textContent).toBe("")
     expect(renderedBodies).not.toContain("stream body")
-    expect((await db.composerLoaded.get(hostScope))?.draftId).toBe(stableDraftId)
+    expect((await db.composerLoaded.get([workspaceId, hostScope]))?.draftId).toBe(stableDraftId)
     expect(await db.drafts.get(stableDraftId!)).toMatchObject({
       id: stableDraftId,
       scope: hostScope,
@@ -720,7 +720,7 @@ describe("the timeline composer's durable target", () => {
 
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stream body"))
     expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
-    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+    await waitFor(async () => expect(await db.composerTarget.get([workspaceId, hostScope])).toBeUndefined())
     expect(await bodyOf(boardScope)).toBe("board body")
   })
 
@@ -734,7 +734,7 @@ describe("the timeline composer's durable target", () => {
     // Positive sync point first: the stored row exists and the component has had
     // its liveQuery emission flushed. Without this the assertions below would run
     // before the target was ever observed and would pass with the carve-out gone.
-    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeDefined())
+    await waitFor(async () => expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined())
     await settle()
 
     expect(screen.getByTestId("editor-body")).not.toHaveTextContent("board body")
@@ -742,7 +742,7 @@ describe("the timeline composer's durable target", () => {
     expect(await bodyOf(boardScope)).toBe("board body")
     // The target survives — the carve-out declines to apply it, it does not
     // delete it, so unlocking or leaving the encrypted stream restores the arm.
-    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+    expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined()
   })
 
   it("does not route a restored arm — a page load must not open the panel or focus", async () => {
@@ -759,7 +759,7 @@ describe("the timeline composer's durable target", () => {
     // Still armed and still editing the board draft — the strip is the whole
     // effect of a restored arm.
     expect(screen.getByTestId("editor-body")).toHaveTextContent("board body")
-    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+    expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined()
   })
 
   it("does not re-route a gesture arm after navigating away and back", async () => {
@@ -786,7 +786,7 @@ describe("the timeline composer's durable target", () => {
 
     // Coming back is a navigation, not a gesture: the arm shows and does nothing.
     expect(openPanelSpy).not.toHaveBeenCalled()
-    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+    expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined()
   })
 
   // Every path that drops the target goes through the one disarm, which clears
@@ -805,7 +805,7 @@ describe("the timeline composer's durable target", () => {
       registeredConversationReplyHandler?.({ conversationId: "conv_1" })
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
-    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeDefined())
+    await waitFor(async () => expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined())
     expect(openPanelSpy).not.toHaveBeenCalled()
 
     // The conversation turns out to be gone: the target is dropped.
@@ -816,7 +816,7 @@ describe("the timeline composer's durable target", () => {
     rerenderAtStream(view, "stream_other")
     await settle()
     rerenderAtStream(view, streamId)
-    await waitFor(async () => expect(await db.composerTarget.get(hostScope)).toBeUndefined())
+    await waitFor(async () => expect(await db.composerTarget.get([workspaceId, hostScope])).toBeUndefined())
 
     // A later arm for the same conversation that is NOT a gesture — a restore
     // adopting the row, or a page load. It must show the strip and nothing else.
@@ -832,7 +832,7 @@ describe("the timeline composer's durable target", () => {
     await settle()
 
     expect(openPanelSpy).not.toHaveBeenCalled()
-    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+    expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined()
   })
 
   it("still routes an arm made by the gesture when the conversation lives in a thread", async () => {
@@ -848,7 +848,7 @@ describe("the timeline composer's durable target", () => {
     })
 
     await waitFor(() => expect(openPanelSpy).toHaveBeenCalled())
-    await waitFor(async () => expect(await db.composerLoaded.get(boardScope)).toBeUndefined())
+    await waitFor(async () => expect(await db.composerLoaded.get([workspaceId, boardScope])).toBeUndefined())
   })
 
   it("holds the arm when the board-post fetch fails for anything but a 404", async () => {
@@ -861,7 +861,7 @@ describe("the timeline composer's durable target", () => {
     await waitFor(() => expect(screen.getByTestId("conversation-reply-strip")).toBeInTheDocument())
     await settle()
     // The target, the strip and the composer's scope all survive a 502.
-    expect(await db.composerTarget.get(hostScope)).toBeDefined()
+    expect(await db.composerTarget.get([workspaceId, hostScope])).toBeDefined()
     expect(screen.getByTestId("editor-body")).toHaveTextContent("board body")
     expect(await bodyOf(boardScope)).toBe("board body")
   })
@@ -880,7 +880,7 @@ describe("the timeline composer's durable target", () => {
 
     await waitFor(() => expect(screen.getByTestId("editor-body")).toHaveTextContent("stashed stream body"))
     // The deep link is an explicit "work on this one": the arm yields to it.
-    expect(await db.composerTarget.get(hostScope)).toBeUndefined()
+    expect(await db.composerTarget.get([workspaceId, hostScope])).toBeUndefined()
     expect(screen.queryByTestId("conversation-reply-strip")).not.toBeInTheDocument()
     await waitFor(() => expect(screen.getByTestId("search-params")).toHaveTextContent(""))
     // The board draft stays where it was written (the × semantics).
