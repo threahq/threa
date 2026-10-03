@@ -116,7 +116,7 @@ function ConversationMessages({ workspaceId, conversationId, onMessageClick }: C
     isLoading,
     error,
   } = useQuery({
-    queryKey: conversationKeys.messages(conversationId),
+    queryKey: conversationKeys.messages(workspaceId, conversationId),
     queryFn: () => conversationService.getMessages(workspaceId, conversationId),
   })
 

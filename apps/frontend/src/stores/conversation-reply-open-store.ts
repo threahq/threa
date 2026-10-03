@@ -1,3 +1,5 @@
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
+
 /**
  * Ephemeral per-conversation signal asking a conversation side panel to open its
  * reply composer as soon as it mounts. "Reply in conversation" fires from a
@@ -18,19 +20,21 @@ const listeners = new Map<string, Set<() => void>>()
  * panel already mounted for this conversation is notified immediately; otherwise
  * the request waits (briefly) to be consumed on the panel's next mount.
  */
-export function requestConversationReplyOpen(conversationId: string): void {
-  cache.set(conversationId, Date.now() + HANDOFF_TTL_MS)
-  const subs = listeners.get(conversationId)
+export function requestConversationReplyOpen(workspaceId: string, conversationId: string): void {
+  const key = workspaceScopedKey(workspaceId, conversationId)
+  cache.set(key, Date.now() + HANDOFF_TTL_MS)
+  const subs = listeners.get(key)
   if (subs) {
     for (const listener of subs) listener()
   }
 }
 
 /** Read + clear a pending reply-open request for the conversation (respecting the TTL). */
-export function consumeConversationReplyOpen(conversationId: string): boolean {
-  const expiresAt = cache.get(conversationId)
+export function consumeConversationReplyOpen(workspaceId: string, conversationId: string): boolean {
+  const key = workspaceScopedKey(workspaceId, conversationId)
+  const expiresAt = cache.get(key)
   if (expiresAt === undefined) return false
-  cache.delete(conversationId)
+  cache.delete(key)
   return expiresAt >= Date.now()
 }
 
@@ -40,18 +44,23 @@ export function consumeConversationReplyOpen(conversationId: string): boolean {
  * {@link consumeConversationReplyOpen} read so it catches a request queued before
  * it subscribed, and reacts to one that arrives while it's already open.
  */
-export function subscribeConversationReplyOpen(conversationId: string, listener: () => void): () => void {
-  let subs = listeners.get(conversationId)
+export function subscribeConversationReplyOpen(
+  workspaceId: string,
+  conversationId: string,
+  listener: () => void
+): () => void {
+  const key = workspaceScopedKey(workspaceId, conversationId)
+  let subs = listeners.get(key)
   if (!subs) {
     subs = new Set()
-    listeners.set(conversationId, subs)
+    listeners.set(key, subs)
   }
   subs.add(listener)
   return () => {
-    const set = listeners.get(conversationId)
+    const set = listeners.get(key)
     if (!set) return
     set.delete(listener)
-    if (set.size === 0) listeners.delete(conversationId)
+    if (set.size === 0) listeners.delete(key)
   }
 }
 

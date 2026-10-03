@@ -38,12 +38,12 @@ describe("account storage namespace", () => {
     expect(listStagedDrafts(WORKSPACE)).toEqual([])
     expect(readDraftTarget(WORKSPACE)).toBe("")
     expect(readTargetMru(WORKSPACE)).toEqual([])
-    expect(loadTimelineAnchor("stream_1")).toBeNull()
+    expect(loadTimelineAnchor(WORKSPACE, "stream_1")).toBeNull()
 
     // And the unowned writes left nothing behind for the next account either.
     writeDraftTarget(WORKSPACE, "stream_x")
     pushTargetMru(WORKSPACE, "stream_x")
-    saveTimelineAnchor("stream_1", { targetId: "msg_1", offsetPx: 12 })
+    saveTimelineAnchor(WORKSPACE, "stream_1", { targetId: "msg_1", offsetPx: 12 })
     expect(localStorage.length).toBe(0)
   })
 })
@@ -102,13 +102,13 @@ describe("account-owned browser storage", () => {
 
   it("should keep a reader's timeline anchor with the account that was reading", () => {
     setStorageAccount(ACCOUNT_A)
-    saveTimelineAnchor("stream_shared", { targetId: "msg_7", offsetPx: -20 })
+    saveTimelineAnchor(WORKSPACE, "stream_shared", { targetId: "msg_7", offsetPx: -20 })
 
     setStorageAccount(ACCOUNT_B)
-    expect(loadTimelineAnchor("stream_shared")).toBeNull()
-    saveTimelineAnchor("stream_shared", { targetId: "msg_99", offsetPx: 0 })
+    expect(loadTimelineAnchor(WORKSPACE, "stream_shared")).toBeNull()
+    saveTimelineAnchor(WORKSPACE, "stream_shared", { targetId: "msg_99", offsetPx: 0 })
 
     setStorageAccount(ACCOUNT_A)
-    expect(loadTimelineAnchor("stream_shared")).toEqual({ targetId: "msg_7", offsetPx: -20 })
+    expect(loadTimelineAnchor(WORKSPACE, "stream_shared")).toEqual({ targetId: "msg_7", offsetPx: -20 })
   })
 })

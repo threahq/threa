@@ -575,6 +575,7 @@ export function InlineComposerForm({
   // Inline drafts are plaintext (no `e2eStreamId` on the composer above), so the
   // picker's own `contentJson` fallback previews suffice — no decrypt pass.
   const stashPickerProps = {
+    workspaceId,
     drafts: stash.drafts,
     originById: stashOrigins,
     canStashCurrent: composer.canSend,

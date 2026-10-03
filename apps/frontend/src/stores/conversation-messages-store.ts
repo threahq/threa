@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { db, type CachedConversationMessage } from "@/db"
 import type { BoardPostMessage } from "@threahq/types"
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
 
 const EMPTY: CachedConversationMessage[] = []
 
@@ -101,10 +102,6 @@ export async function patchConversationMessage(
 // synchronously at mount; the liveQuery owns it from its first emission on.
 const snapshotByConversation = new Map<string, CachedConversationMessage[]>()
 
-function snapshotKey(workspaceId: string, conversationId: string): string {
-  return `${workspaceId}/${conversationId}`
-}
-
 /**
  * Fill the snapshot for `conversationIds` from one bulk Dexie read. Only ABSENT
  * keys are written: a key already present came from a liveQuery emission (or an
@@ -116,7 +113,7 @@ function snapshotKey(workspaceId: string, conversationId: string): string {
  * Bounded by the caller: the board primes the prewarmed cards' conversations only.
  */
 export async function primeConversationMessages(workspaceId: string, conversationIds: string[]): Promise<void> {
-  const missing = conversationIds.filter((id) => !snapshotByConversation.has(snapshotKey(workspaceId, id)))
+  const missing = conversationIds.filter((id) => !snapshotByConversation.has(workspaceScopedKey(workspaceId, id)))
   if (missing.length === 0) return
   const rows = await db.conversationMessages
     .where("[workspaceId+conversationId]")
@@ -127,7 +124,7 @@ export async function primeConversationMessages(workspaceId: string, conversatio
   for (const [id, conversationRows] of byConversation) {
     // Re-check: a liveQuery may have emitted for this conversation while the read
     // was in flight, and that value wins.
-    const key = snapshotKey(workspaceId, id)
+    const key = workspaceScopedKey(workspaceId, id)
     if (snapshotByConversation.has(key)) continue
     snapshotByConversation.set(key, conversationRows)
   }
@@ -135,7 +132,7 @@ export async function primeConversationMessages(workspaceId: string, conversatio
 
 /** Whether every one of `conversationIds` has been read into the snapshot. */
 export function conversationMessagesPrimed(workspaceId: string, conversationIds: string[]): boolean {
-  return conversationIds.every((id) => snapshotByConversation.has(snapshotKey(workspaceId, id)))
+  return conversationIds.every((id) => snapshotByConversation.has(workspaceScopedKey(workspaceId, id)))
 }
 
 /** Drop the snapshot — for tests, so a module-level map can't leak rows across
@@ -182,10 +179,10 @@ export function useConversationBackfillMessages(
       : undefined
   useEffect(() => {
     if (!enabled || !rows) return
-    snapshotByConversation.set(snapshotKey(workspaceId, conversationId), rows)
+    snapshotByConversation.set(workspaceScopedKey(workspaceId, conversationId), rows)
   }, [workspaceId, conversationId, enabled, rows])
   if (!enabled) return EMPTY
-  return rows ?? snapshotByConversation.get(snapshotKey(workspaceId, conversationId)) ?? EMPTY
+  return rows ?? snapshotByConversation.get(workspaceScopedKey(workspaceId, conversationId)) ?? EMPTY
 }
 
 /**

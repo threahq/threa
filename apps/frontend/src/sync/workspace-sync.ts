@@ -2375,7 +2375,7 @@ export function registerWorkspaceSocketHandlers(
       // panel would sit on its 60s-stale copy — the settling mark would never
       // appear or fade. Patch the by-id cache in place when it holds the row
       // (no refetch, panel stays live); otherwise mark it stale.
-      const boardPostKey = conversationKeys.boardPost(payload.conversation.id)
+      const boardPostKey = conversationKeys.boardPost(workspaceId, payload.conversation.id)
       const cached = queryClient.getQueryData<BoardPost>(boardPostKey)
       // A patched post must stay internally consistent, like
       // mergeBoardConversation: prune rendered rows to the new membership, and

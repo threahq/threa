@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { onlineManager, QueryObserver } from "@tanstack/react-query"
-import { SyncEngine, isSyncEngineCurrent, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
+import { SyncEngine, CATCHUP_COLLAPSE_THRESHOLD } from "./sync-engine"
 import { isApplyWindowOpen, resetApplyWindow, subscribeApplyWindow } from "@/stores/apply-window"
 import { resetAgentActivityStore, getAgentActivityForStream, upsertAgentSession } from "@/stores/agent-activity-store"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
@@ -2520,16 +2520,6 @@ describe("SyncEngine cursor gate wiring", () => {
     const withoutSyncService = new SyncEngine(makeDeps())
     expect(withoutSyncService.getLiveEventSource()).toBeNull()
     withoutSyncService.destroy()
-  })
-
-  it("isSyncEngineCurrent forces recreation on workspace change and destroy only", () => {
-    const engine = new SyncEngine(makeSyncDeps())
-
-    expect(isSyncEngineCurrent(engine, "ws_other")).toBe(false)
-    expect(isSyncEngineCurrent(engine, "ws_1")).toBe(true)
-
-    engine.destroy()
-    expect(isSyncEngineCurrent(engine, "ws_1")).toBe(false)
   })
 })
 

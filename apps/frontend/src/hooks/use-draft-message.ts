@@ -45,8 +45,8 @@ export function getDraftMessageKey(
 
 const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.env.VITE_DRAFT_DEBOUNCE_MS) : 500
 
-function isStaleObservedResolve(scope: string, observedResolveSeq: number | undefined): boolean {
-  return observedResolveSeq !== undefined && getScopeResolveSeq(scope) > observedResolveSeq
+function isStaleObservedResolve(workspaceId: string, scope: string, observedResolveSeq: number | undefined): boolean {
+  return observedResolveSeq !== undefined && getScopeResolveSeq(workspaceId, scope) > observedResolveSeq
 }
 
 /** Resolve the draft id currently checked out into the composer for a scope. */
@@ -277,7 +277,7 @@ export async function upsertLoadedDraft(
     // stale save into the create branch the bumped seq is visible.
     let wrotePointer = false
     const outcome = await db.transaction("rw", db.drafts, db.composerLoaded, db.pendingOperations, async () => {
-      if (isStaleObservedResolve(scope, opts?.observedResolveSeq)) return "dropped"
+      if (isStaleObservedResolve(workspaceId, scope, opts?.observedResolveSeq)) return "dropped"
       const livePointer = await getLoadedDraftId(workspaceId, scope)
       // Pointer-addressed saves revalidate the pointer; identity-addressed ones
       // revalidate the ROW below, so a repoint can't route them onto another draft.
@@ -531,7 +531,7 @@ export async function resolveLoadedDraft(
   // bump happens-before the pointer delete, which happens-before any later read
   // that would route a racing save into the create path — so the save sees the
   // advanced seq and drops its create.
-  recordScopeResolved(scope)
+  recordScopeResolved(workspaceId, scope)
   await removeLoadedDraftLocally(
     workspaceId,
     scope,
@@ -558,7 +558,7 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
   // editor's own teardown flush, moments later) would otherwise find no loaded
   // pointer and take the CREATE path, resurrecting the draft that was just
   // deleted. `resolveLoadedDraft` fences for the same reason.
-  recordScopeResolved(scope)
+  recordScopeResolved(workspaceId, scope)
   // Read + delete the rows, clear the loaded pointer, AND enqueue the server
   // deletes atomically: `baseVersion` reflects any server confirmation that
   // landed before the delete (ghost-draft race), and an inbound echo can never
@@ -977,7 +977,7 @@ export function useDraftMessage(
         // The scope's resolve sequence as this save begins. If a resolve-on-send
         // advances it before the create below runs, this save is a stale echo of
         // the just-sent content and `upsertLoadedDraft` drops its create.
-        const observedResolveSeq = getScopeResolveSeq(draftKey)
+        const observedResolveSeq = getScopeResolveSeq(workspaceId, draftKey)
 
         const gate = e2eGateRef.current
         if (gate.enabled) {
@@ -1008,7 +1008,7 @@ export function useDraftMessage(
             if (!saved) return null
             advanceIdentity(saved.id)
             syncEngine?.kickOperationQueue()
-            return isStaleObservedResolve(draftKey, observedResolveSeq) ? null : saved
+            return isStaleObservedResolve(workspaceId, draftKey, observedResolveSeq) ? null : saved
           } catch (err) {
             // A failed seal (e.g. the session locked between the gate check and the
             // seal) must never interrupt the user — the content stands in the composer.
@@ -1049,7 +1049,7 @@ export function useDraftMessage(
         if (!saved) return null
         advanceIdentity(saved.id)
         syncEngine?.kickOperationQueue()
-        return isStaleObservedResolve(draftKey, observedResolveSeq) ? null : saved
+        return isStaleObservedResolve(workspaceId, draftKey, observedResolveSeq) ? null : saved
       })
     },
     [draftKey, workspaceId, syncEngine, contentDraftId, chainWrite]

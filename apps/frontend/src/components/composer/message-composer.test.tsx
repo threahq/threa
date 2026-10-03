@@ -349,6 +349,16 @@ describe("MessageComposer", () => {
     })
 
     it("prepends a queued runtime command without dropping the existing draft", async () => {
+      const MockMicButton = forwardRef(function MockMicButton(
+        _props: unknown,
+        ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
+      ) {
+        useImperativeHandle(ref, () => ({ abort: vi.fn(), prepareSendAsIs: vi.fn() }))
+        return null
+      })
+      spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+        MockMicButton as unknown as typeof micButtonModule.MicButton
+      )
       const onContentChange = vi.fn()
       const content: JSONContent = {
         type: "doc",
@@ -357,13 +367,14 @@ describe("MessageComposer", () => {
       render(
         <MessageComposer
           {...defaultProps}
+          workspaceId="ws_1"
           streamId="stream_steer"
           content={content}
           onContentChange={onContentChange}
         />
       )
 
-      act(() => queueComposerCommandRequest("stream_steer", "/steer "))
+      act(() => queueComposerCommandRequest("ws_1", "stream_steer", "/steer "))
 
       await waitFor(() =>
         expect(onContentChange).toHaveBeenCalledWith({
@@ -859,6 +870,7 @@ describe("MessageComposer", () => {
             workspaceId="ws_1"
             initialMobileChromeOpen
             stashedDrafts={{
+              workspaceId: "ws_1",
               drafts: [draft, { ...draft, id: "draft_2" }],
               canStashCurrent: false,
               onStashCurrent: vi.fn(),
@@ -1008,6 +1020,7 @@ describe("MessageComposer", () => {
             {...defaultProps}
             onStashDraft={onStashDraft}
             stashedDrafts={{
+              workspaceId: "ws_1",
               drafts: [draft],
               canStashCurrent: false,
               onStashCurrent: vi.fn(),

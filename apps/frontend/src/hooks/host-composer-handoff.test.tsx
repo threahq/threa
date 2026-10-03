@@ -64,7 +64,7 @@ describe("useHostComposerHandoff", () => {
       })
 
       expect(delivered).not.toBeNull()
-      expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+      expect(peekShareHandoffBatch("ws_1", "stream_host")?.handoffs).toEqual([
         { kind: "content", content: CONTENT, attachments: [] },
       ])
       expect(await db.composerTarget.get(["ws_1", "stream:stream_host"])).toBeUndefined()
@@ -82,7 +82,7 @@ describe("useHostComposerHandoff", () => {
     })
 
     expect(delivered).not.toBeNull()
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+    expect(peekShareHandoffBatch("ws_1", "stream_host")?.handoffs).toEqual([
       { kind: "content", content: CONTENT, attachments: [] },
     ])
     await waitFor(() => expect(pathname).toBe("/w/ws_1/s/stream_host"))
@@ -97,7 +97,7 @@ describe("useHostComposerHandoff", () => {
 
     expect(delivered).not.toBeNull()
     expect((await db.composerTarget.get(["ws_1", "stream:stream_host"]))?.scope).toBe("board:reply:conv_1")
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+    expect(peekShareHandoffBatch("ws_1", "stream_host")?.handoffs).toEqual([
       { kind: "content", content: CONTENT, attachments: [] },
     ])
   })
@@ -109,7 +109,7 @@ describe("useHostComposerHandoff", () => {
       await send({ hostStreamId: "stream_host", originScope: "board:subtopic:msg_1", content: CONTENT })
     ).toBeNull()
     expect(await send({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: [] })).toBeNull()
-    expect(peekShareHandoffBatch("stream_host")).toBeNull()
+    expect(peekShareHandoffBatch("ws_1", "stream_host")).toBeNull()
     expect(await db.composerTarget.get(["ws_1", "stream:stream_host"])).toBeUndefined()
   })
 
@@ -123,10 +123,10 @@ describe("useHostComposerHandoff", () => {
       version: null,
       range: null,
     }
-    queueShareHandoff("stream_host", pointer)
+    queueShareHandoff("ws_1", "stream_host", pointer)
     await handoff()({ hostStreamId: "stream_host", originScope: "stream:stream_host", content: CONTENT })
 
-    expect(peekShareHandoffBatch("stream_host")?.handoffs).toEqual([
+    expect(peekShareHandoffBatch("ws_1", "stream_host")?.handoffs).toEqual([
       { kind: "pointer", attrs: pointer },
       { kind: "content", content: CONTENT, attachments: [] },
     ])
@@ -144,12 +144,12 @@ describe("useHostComposerHandoff", () => {
         attachments: [file],
       })
       expect(queued).not.toBeNull()
-      const batch = peekShareHandoffBatch("stream_host")!
+      const batch = peekShareHandoffBatch("ws_1", "stream_host")!
       expect(batch.handoffs).toEqual([{ kind: "content", content: [], attachments: [file] }])
       // The source hears the destination's verdict once it has persisted.
       let verdict: boolean | null = null
       void queued!.delivered.then((delivered) => (verdict = delivered))
-      acknowledgeShareHandoffBatch("stream_host", batch)
+      acknowledgeShareHandoffBatch("ws_1", "stream_host", batch)
       settleShareHandoffBatch(batch, true)
       await waitFor(() => expect(verdict).toBe(true))
     } finally {

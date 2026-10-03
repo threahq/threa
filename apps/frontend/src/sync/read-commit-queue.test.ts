@@ -13,7 +13,6 @@ const commit =
 
 function makeQueue() {
   return new ReadCommitQueue({
-    workspaceId: "ws_1",
     commitRef: { current: (streamId, lastEventId, opts) => commit(streamId, lastEventId, opts) },
   })
 }

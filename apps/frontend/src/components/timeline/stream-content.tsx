@@ -1427,8 +1427,8 @@ export function StreamContent({
   // The landing may restore to a row inside a run the viewer has since
   // collapsed; that run opens so the anchor row is there to land on (INV-70).
   const restoreAnchorId = useMemo(
-    () => (useVirtualized ? loadTimelineAnchor(streamId)?.targetId : undefined),
-    [streamId, useVirtualized]
+    () => (useVirtualized ? loadTimelineAnchor(workspaceId, streamId)?.targetId : undefined),
+    [workspaceId, streamId, useVirtualized]
   )
 
   const visibleItems = useMemo(
@@ -2433,7 +2433,7 @@ export function StreamContent({
     // of the stream, and the localStorage read + linear index scan below are
     // not free at that cadence.
     if (landingRef.current.decided) return
-    const anchor = useVirtualized ? loadTimelineAnchor(streamId) : null
+    const anchor = useVirtualized ? loadTimelineAnchor(workspaceId, streamId) : null
     const landing = resolveStreamLanding({
       // The per-stream deep-link latch, not the transient ?m= param — a
       // stream entered via deep-link must never land elsewhere, even after
@@ -2520,6 +2520,7 @@ export function StreamContent({
     }
   }, [
     useVirtualized,
+    workspaceId,
     streamId,
     navigationType,
     location.state,
@@ -2551,7 +2552,7 @@ export function StreamContent({
     const snapshot = () => {
       timer = 0
       if (isFollowingTailRef.current) {
-        clearTimelineAnchor(streamId)
+        clearTimelineAnchor(workspaceId, streamId)
         detachedHoldRef.current = null
         return
       }
@@ -2564,7 +2565,7 @@ export function StreamContent({
       if (scrollAbortRef.current) return
       const best = snapshotTopVisibleRow(el)
       if (best) {
-        saveTimelineAnchor(streamId, { targetId: best.id, offsetPx: best.offsetPx })
+        saveTimelineAnchor(workspaceId, streamId, { targetId: best.id, offsetPx: best.offsetPx })
         detachedHoldRef.current = { id: best.id, offsetPx: best.offsetPx, takenAt: performance.now() }
       }
     }
@@ -2590,7 +2591,7 @@ export function StreamContent({
       window.removeEventListener("pagehide", onPageHide)
       document.removeEventListener("visibilitychange", onVisibilityChange)
     }
-  }, [useVirtualized, virtualScrollerEl, streamId, isFollowingTailRef])
+  }, [useVirtualized, virtualScrollerEl, workspaceId, streamId, isFollowingTailRef])
 
   // Detached viewport guard. While the reader is parked off the tail, content
   // above them keeps resizing: virtua corrects size estimates as rows measure,
@@ -3232,7 +3233,7 @@ function TimelineMessageList({
   // resolves, which is well before the settle ends.
   const promotedMountRef = useRef<{ streamId: string; promoted: boolean } | null>(null)
   if (promotedMountRef.current?.streamId !== streamId) {
-    promotedMountRef.current = { streamId, promoted: getDraftPromotionEvents(streamId) !== null }
+    promotedMountRef.current = { streamId, promoted: getDraftPromotionEvents(workspaceId, streamId) !== null }
   }
   const continuesDraft = promotedMountRef.current.promoted
 

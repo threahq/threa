@@ -2157,16 +2157,6 @@ function parseHeartbeatHead(value: string): bigint | null {
   }
 }
 
-/**
- * Whether `engine` can keep serving this workspace; when false, the React
- * layer destroys it and constructs a fresh one. Only a workspace switch (or a
- * prior destroy) forces recreation now that the cursor mode is fixed — the
- * engine always runs the active cursor when a sync service is wired.
- */
-export function isSyncEngineCurrent(engine: SyncEngine, workspaceId: string): boolean {
-  return engine.workspaceId === workspaceId && !engine.isDestroyed
-}
-
 interface BootstrapClaim<T> {
   promise: Promise<T | null>
   resolve: (bootstrap: T | null) => void

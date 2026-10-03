@@ -14,6 +14,7 @@
  */
 
 import { accountStorageKey } from "@/lib/account-storage"
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
 
 // Where a reader is parked, in streams only that reader can see, so the map
 // hangs off the active account. Anchors saved under the old
@@ -59,9 +60,9 @@ function writeAll(map: Record<string, StoredAnchor>): void {
   }
 }
 
-export function saveTimelineAnchor(streamId: string, anchor: TimelineAnchor): void {
+export function saveTimelineAnchor(workspaceId: string, streamId: string, anchor: TimelineAnchor): void {
   const map = readAll()
-  map[streamId] = { ...anchor, at: Date.now() }
+  map[workspaceScopedKey(workspaceId, streamId)] = { ...anchor, at: Date.now() }
   const ids = Object.keys(map)
   if (ids.length > MAX_ENTRIES) {
     // Corrupt entries (readAll doesn't validate fields) sort as 0 — oldest —
@@ -76,17 +77,18 @@ export function saveTimelineAnchor(streamId: string, anchor: TimelineAnchor): vo
   writeAll(map)
 }
 
-export function loadTimelineAnchor(streamId: string): TimelineAnchor | null {
-  const entry = readAll()[streamId]
+export function loadTimelineAnchor(workspaceId: string, streamId: string): TimelineAnchor | null {
+  const entry = readAll()[workspaceScopedKey(workspaceId, streamId)]
   if (!entry) return null
   if (typeof entry.targetId !== "string" || !Number.isFinite(entry.offsetPx) || !Number.isFinite(entry.at)) return null
   if (Date.now() - entry.at > ANCHOR_TTL_MS) return null
   return { targetId: entry.targetId, offsetPx: entry.offsetPx }
 }
 
-export function clearTimelineAnchor(streamId: string): void {
+export function clearTimelineAnchor(workspaceId: string, streamId: string): void {
+  const key = workspaceScopedKey(workspaceId, streamId)
   const map = readAll()
-  if (!(streamId in map)) return
-  delete map[streamId]
+  if (!(key in map)) return
+  delete map[key]
   writeAll(map)
 }

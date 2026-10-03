@@ -168,13 +168,13 @@ test.describe("Unread marker open", () => {
     await page.setViewportSize({ width: 1024, height: 500 })
 
     await page.evaluate(
-      ({ sid, anchorsKey }) => {
+      ({ anchorId, anchorsKey }) => {
         localStorage.setItem(
           anchorsKey,
-          JSON.stringify({ [sid]: { targetId: "msg_00000000000000000000000000", offsetPx: 0, at: Date.now() } })
+          JSON.stringify({ [anchorId]: { targetId: "msg_00000000000000000000000000", offsetPx: 0, at: Date.now() } })
         )
       },
-      { sid: streamId, anchorsKey: await accountStorageKey(page, "timeline-anchors") }
+      { anchorId: `${workspaceId}/${streamId}`, anchorsKey: await accountStorageKey(page, "timeline-anchors") }
     )
 
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
