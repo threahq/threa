@@ -2848,7 +2848,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    const row = await db.conversations.get("conv_1")
+    const row = await db.conversations.get(["ws_1", "conv_1"])
     expect(row?._lastActivityMs).toBe(Date.parse("2026-06-22T12:00:00.000Z"))
     // A cached card merges in place — no refetch of the board head.
     expect(invalidate).not.toHaveBeenCalledWith(
@@ -2898,8 +2898,49 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(await db.conversations.get("conv_x")).toBeUndefined()
+    expect(await db.conversations.get(["ws_1", "conv_x"])).toBeUndefined()
     expect(invalidate).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("leaves both workspaces' copies of a conversation id and the hidden row untouched when another workspace's update and un-hide arrive", async () => {
+    await db.conversations.clear()
+    await db.boardHiddenConversations.clear()
+    const cachedPost = (workspaceId: string, topicSummary: string) =>
+      ({
+        id: "conv_shared",
+        workspaceId,
+        conversation: { id: "conv_shared", topicSummary, lastActivityAt: "2026-06-20T12:00:00.000Z" },
+        openingMessage: null,
+        recentMessages: [],
+        totalReplies: 0,
+        _lastActivityMs: Date.parse("2026-06-20T12:00:00.000Z"),
+        _cachedAt: 1000,
+      }) as never
+    await db.conversations.bulkPut([cachedPost("ws_1", "in ws_1"), cachedPost("ws_2", "in ws_2")])
+    await db.boardHiddenConversations.put({ id: "conv_shared", workspaceId: "ws_1", hiddenAt: 500, _cachedAt: 1000 })
+    const queryClient = new QueryClient()
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("conversation:updated", {
+      workspaceId: "ws_2",
+      conversation: { id: "conv_shared", topicSummary: "renamed in ws_2", lastActivityAt: "2026-06-22T12:00:00.000Z" },
+    })
+    await emitAsync("board:conversation_hide_changed", {
+      workspaceId: "ws_2",
+      targetUserId: "usr_1",
+      conversationId: "conv_shared",
+      active: false,
+    })
+
+    expect({
+      conversations: await db.conversations.toArray(),
+      hidden: await db.boardHiddenConversations.toArray(),
+    }).toEqual({
+      conversations: [cachedPost("ws_1", "in ws_1"), cachedPost("ws_2", "in ws_2")],
+      hidden: [{ id: "conv_shared", workspaceId: "ws_1", hiddenAt: 500, _cachedAt: 1000 }],
+    })
     cleanup()
   })
 
@@ -3892,9 +3933,9 @@ describe("registerWorkspaceSocketHandlers", () => {
       stream: makeStream("stream_arch_board", { archivedAt: "2026-01-01T00:00:00Z" }),
     })
     await vi.waitFor(async () => {
-      expect(await db.conversations.get("conv_arch")).toMatchObject({ rootArchived: true })
+      expect(await db.conversations.get(["ws_1", "conv_arch"])).toMatchObject({ rootArchived: true })
     })
-    expect((await db.conversations.get("conv_elsewhere"))?.rootArchived).toBeUndefined()
+    expect((await db.conversations.get(["ws_1", "conv_elsewhere"]))?.rootArchived).toBeUndefined()
 
     emit("stream:unarchived", {
       workspaceId: "ws_1",
@@ -3902,7 +3943,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       stream: makeStream("stream_arch_board", { archivedAt: null }),
     })
     await vi.waitFor(async () => {
-      expect(await db.conversations.get("conv_arch")).toMatchObject({ rootArchived: false })
+      expect(await db.conversations.get(["ws_1", "conv_arch"])).toMatchObject({ rootArchived: false })
     })
 
     cleanup()
@@ -3964,9 +4005,9 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
 
     await vi.waitFor(async () => {
-      expect(await db.conversations.get("conv_in_thread")).toMatchObject({ rootArchived: true })
+      expect(await db.conversations.get(["ws_1", "conv_in_thread"])).toMatchObject({ rootArchived: true })
     })
-    expect((await db.conversations.get("conv_elsewhere"))?.rootArchived).toBeUndefined()
+    expect((await db.conversations.get(["ws_1", "conv_elsewhere"]))?.rootArchived).toBeUndefined()
     const sidebar = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(sidebar?.streams.map((s) => s.id)).toEqual(["chan_other"])
     expect({
@@ -3990,7 +4031,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       threadStreamIds: ["thread_deep", "thread_nearer"],
     })
     await vi.waitFor(async () => {
-      expect(await db.conversations.get("conv_in_thread")).toMatchObject({ rootArchived: false })
+      expect(await db.conversations.get(["ws_1", "conv_in_thread"])).toMatchObject({ rootArchived: false })
     })
     expect(
       queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_deep"))?.archivedAncestor
@@ -4011,7 +4052,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       _cachedAt: Date.now(),
     })
     await seedBoardRow("conv_inert", "ws_1", "thread_inert_child", "chan_sealed")
-    await db.conversations.update("conv_inert", { rootArchived: true })
+    await db.conversations.update(["ws_1", "conv_inert"], { rootArchived: true })
 
     const queryClient = new QueryClient()
     const invalidate = vi.spyOn(queryClient, "invalidateQueries")
@@ -4039,7 +4080,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     await vi.waitFor(async () => {
       expect((await db.streams.get(["ws_1", "thread_inert"]))?.archivedAt).toBeNull()
     })
-    expect(await db.conversations.get("conv_inert")).toMatchObject({ rootArchived: true })
+    expect(await db.conversations.get(["ws_1", "conv_inert"])).toMatchObject({ rootArchived: true })
     expect(
       queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "thread_inert_child"))?.archivedAncestor
     ).toEqual({ streamId: "thread_inert", archivedAt: "2026-02-01T00:00:00Z" })
@@ -5342,9 +5383,9 @@ describe("stream:member_removed board cleanup", () => {
     emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
 
     await vi.waitFor(async () => {
-      expect(await db.conversations.get("conv_x")).toBeUndefined()
+      expect(await db.conversations.get(["ws_1", "conv_x"])).toBeUndefined()
     })
-    expect(await db.conversations.get("conv_keep")).toBeDefined()
+    expect(await db.conversations.get(["ws_1", "conv_keep"])).toBeDefined()
     cleanup()
   })
 
@@ -5356,7 +5397,7 @@ describe("stream:member_removed board cleanup", () => {
     emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_1" })
 
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(await db.conversations.get("conv_x")).toBeDefined()
+    expect(await db.conversations.get(["ws_1", "conv_x"])).toBeDefined()
     cleanup()
   })
 
@@ -5368,7 +5409,7 @@ describe("stream:member_removed board cleanup", () => {
     emit("stream:member_removed", { workspaceId: "ws_1", streamId: "chan_x", memberId: "member_2" })
 
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(await db.conversations.get("conv_x")).toBeDefined()
+    expect(await db.conversations.get(["ws_1", "conv_x"])).toBeDefined()
     cleanup()
   })
 })

@@ -712,7 +712,7 @@ describe("useSettleConversationMessage", () => {
     })
 
     expect(settleMessage).toHaveBeenCalledWith(WORKSPACE_ID, "conv_1", "m_1")
-    expect(merge).toHaveBeenCalledWith("conv_1", conversation, ["m_2"])
+    expect(merge).toHaveBeenCalledWith(WORKSPACE_ID, "conv_1", conversation, ["m_2"])
     expect(queryClient.getQueryData(conversationKeys.list(WORKSPACE_ID, STREAM_ID, {}))).toEqual([
       makeConversation("conv_0"),
       { id: "conv_1", topicSummary: "stale" },

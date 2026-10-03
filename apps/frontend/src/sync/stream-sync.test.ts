@@ -4608,7 +4608,7 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
     })
     off()
 
-    expect(await db.streamContextItems.get("link:https://example.com/t:msg_t")).toMatchObject({
+    expect(await db.streamContextItems.get(["ws_1", "link:https://example.com/t:msg_t"])).toMatchObject({
       streamId: THREAD_ID,
       rootStreamId: STREAM_ID,
     })
@@ -4699,7 +4699,7 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
     })
 
     // Anchored on the source message's own time, not the debounced capture time.
-    expect(await db.streamContextItems.get("memo:memo_1:msg_9")).toMatchObject({
+    expect(await db.streamContextItems.get(["ws_1", "memo:memo_1:msg_9"])).toMatchObject({
       category: "memo",
       sourceMessageId: "msg_9",
       streamId: STREAM_ID,
@@ -4759,7 +4759,7 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
       parentThreadSummary: null,
     })
 
-    expect(await db.streamContextItems.get("link:https://example.com/a:msg_1")).toMatchObject({
+    expect(await db.streamContextItems.get(["ws_1", "link:https://example.com/a:msg_1"])).toMatchObject({
       streamId: THREAD_ID,
       rootStreamId: STREAM_ID,
     })
@@ -4770,7 +4770,7 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
     await harness.emit("message:created", { workspaceId: "ws_1", streamId: STREAM_ID, event })
 
     // The read endpoint seeds the server's copy over the same key.
-    const seeded = await db.streamContextItems.get("link:https://example.com/a:msg_1")
+    const seeded = await db.streamContextItems.get(["ws_1", "link:https://example.com/a:msg_1"])
     await db.streamContextItems.put({
       ...seeded!,
       groupKey: "https://example.com/a",
@@ -4782,7 +4782,7 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
     // Catch-up replays the same event through the same handler.
     await harness.emit("message:created", { workspaceId: "ws_1", streamId: STREAM_ID, event })
 
-    expect(await db.streamContextItems.get("link:https://example.com/a:msg_1")).toMatchObject({
+    expect(await db.streamContextItems.get(["ws_1", "link:https://example.com/a:msg_1"])).toMatchObject({
       detail: expect.objectContaining({ title: "Example" }),
       _status: undefined,
     })
@@ -4825,7 +4825,7 @@ describe("registerStreamSocketHandlers — stream context rows", () => {
       },
     })
 
-    expect(await db.streamContextItems.get("link:https://example.com/old:msg_old")).toBeDefined()
+    expect(await db.streamContextItems.get(["ws_1", "link:https://example.com/old:msg_old"])).toBeDefined()
   })
 })
 

@@ -1624,7 +1624,7 @@ function bindStreamSocketHandlers(
     })
     // Mirror onto the backfill store so an expanded card's server-fetched row
     // takes the edit too (no-op when the message isn't cached there).
-    await patchConversationMessage(editPayload.messageId, {
+    await patchConversationMessage(workspaceId, editPayload.messageId, {
       contentMarkdown: editPayload.contentMarkdown,
       editedAt: editEvent.createdAt,
     })
@@ -1657,7 +1657,7 @@ function bindStreamSocketHandlers(
       ...p,
       deletedAt: payload.deletedAt,
     }))
-    await patchConversationMessage(payload.messageId, { deletedAt: payload.deletedAt })
+    await patchConversationMessage(workspaceId, payload.messageId, { deletedAt: payload.deletedAt })
 
     // A deleted message holds no context rows — the server drops them in the
     // delete transaction with no separate event.
@@ -1781,7 +1781,7 @@ function bindStreamSocketHandlers(
       }
       return { ...p, reactions }
     })
-    await patchConversationMessage(payload.messageId, (row) => {
+    await patchConversationMessage(workspaceId, payload.messageId, (row) => {
       const reactions = { ...row.reactions }
       const existing = reactions[payload.emoji] || []
       if (existing.includes(payload.userId)) return {}
@@ -1802,7 +1802,7 @@ function bindStreamSocketHandlers(
       }
       return { ...p, reactions }
     })
-    await patchConversationMessage(payload.messageId, (row) => {
+    await patchConversationMessage(workspaceId, payload.messageId, (row) => {
       const reactions = { ...row.reactions }
       if (!reactions[payload.emoji]) return {}
       reactions[payload.emoji] = reactions[payload.emoji].filter((id) => id !== payload.userId)
@@ -2017,7 +2017,7 @@ function bindStreamSocketHandlers(
       ...p,
       linkPreviews: preserveBakedInAppData(payload.previews, p.linkPreviews as LinkPreviewSummary[] | undefined),
     }))
-    await patchConversationMessage(payload.messageId, (row) => ({
+    await patchConversationMessage(workspaceId, payload.messageId, (row) => ({
       linkPreviews: preserveBakedInAppData(payload.previews, row.linkPreviews),
     }))
   }

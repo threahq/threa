@@ -13,19 +13,27 @@ import { db } from "@/db"
  *  Memoized on the live rows so the returned Map keeps a stable identity between
  *  data changes — callers use it in `useMemo`/`useCallback` deps. */
 export function useBoardHiddenConversations(workspaceId: string): Map<string, number> {
-  const rows = useLiveQuery(
-    () => db.boardHiddenConversations.where("workspaceId").equals(workspaceId).toArray(),
+  const result = useLiveQuery(
+    async () => ({
+      forWorkspaceId: workspaceId,
+      rows: await db.boardHiddenConversations.where("workspaceId").equals(workspaceId).toArray(),
+    }),
     [workspaceId]
   )
+  const rows = result?.forWorkspaceId === workspaceId ? result.rows : undefined
   return useMemo(() => new Map((rows ?? []).map((row) => [row.id, row.hiddenAt])), [rows])
 }
 
 /** Muted root-stream ids for a workspace (stable identity between data changes). */
 export function useBoardMutedStreamIds(workspaceId: string): Set<string> {
-  const rows = useLiveQuery(
-    () => db.boardMutedStreams.where("workspaceId").equals(workspaceId).toArray(),
+  const result = useLiveQuery(
+    async () => ({
+      forWorkspaceId: workspaceId,
+      rows: await db.boardMutedStreams.where("workspaceId").equals(workspaceId).toArray(),
+    }),
     [workspaceId]
   )
+  const rows = result?.forWorkspaceId === workspaceId ? result.rows : undefined
   return useMemo(() => new Set((rows ?? []).map((row) => row.id)), [rows])
 }
 
@@ -68,8 +76,8 @@ export async function putHidden(workspaceId: string, conversationId: string, hid
   await db.boardHiddenConversations.put({ id: conversationId, workspaceId, hiddenAt, _cachedAt: Date.now() })
 }
 
-export async function deleteHidden(conversationId: string): Promise<void> {
-  await db.boardHiddenConversations.delete(conversationId)
+export async function deleteHidden(workspaceId: string, conversationId: string): Promise<void> {
+  await db.boardHiddenConversations.delete([workspaceId, conversationId])
 }
 
 export async function putMuted(workspaceId: string, streamId: string): Promise<void> {

@@ -1,16 +1,19 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { __resetConversationMessageSnapshots } from "@/stores/conversation-messages-store"
-import { waitFor } from "@testing-library/react"
+import { renderHook, waitFor } from "@testing-library/react"
 import Dexie from "dexie"
 import { db } from "@/db"
 import {
   seedBoardPosts,
+  addBoardConversationStream,
   mergeBoardConversation,
   putOptimisticBoardPost,
   reconcileOptimisticBoardPost,
   deleteOptimisticBoardPost,
   setBoardRootArchived,
   removeBoardConversationsForStream,
+  useBoardPost,
+  useBoardPosts,
 } from "./board-store"
 import { seedConversationMessages } from "./conversation-messages-store"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness } from "@threahq/types"
@@ -118,7 +121,7 @@ describe("seedBoardPosts", () => {
 
     await seedBoardPosts(WORKSPACE_ID, [delayed])
 
-    expect(await db.conversations.get("conv_1")).toMatchObject({
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_1"])).toMatchObject({
       conversation: {
         lastActivityAt: "2026-06-21T12:00:00.000Z",
         topicSummary: "socket topic",
@@ -138,7 +141,7 @@ describe("mergeBoardConversation", () => {
       ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
       messageIds: ["m1", "r1"],
     }
-    const merged = await mergeBoardConversation("conv_1", conversation)
+    const merged = await mergeBoardConversation(WORKSPACE_ID, "conv_1", conversation)
     expect(merged).toBe(true)
     const board = await readBoard()
     expect(board.map((p) => p.id)).toEqual(["conv_1", "conv_2"])
@@ -151,15 +154,15 @@ describe("mergeBoardConversation", () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")])])
     const conversation = { ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"), messageIds: ["m1", "r1"] }
 
-    await mergeBoardConversation("conv_1", conversation, ["r1"])
-    expect((await db.conversations.get("conv_1"))?.settlingMessageIds).toEqual(["r1"])
+    await mergeBoardConversation(WORKSPACE_ID, "conv_1", conversation, ["r1"])
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_1"]))?.settlingMessageIds).toEqual(["r1"])
 
     // An emitter that doesn't report the set must not silently clear it.
-    await mergeBoardConversation("conv_1", conversation)
-    expect((await db.conversations.get("conv_1"))?.settlingMessageIds).toEqual(["r1"])
+    await mergeBoardConversation(WORKSPACE_ID, "conv_1", conversation)
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_1"]))?.settlingMessageIds).toEqual(["r1"])
 
-    await mergeBoardConversation("conv_1", conversation, [])
-    expect((await db.conversations.get("conv_1"))?.settlingMessageIds).toEqual([])
+    await mergeBoardConversation(WORKSPACE_ID, "conv_1", conversation, [])
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_1"]))?.settlingMessageIds).toEqual([])
   })
 
   it("drops a re-filed message from the preview when it leaves the membership", async () => {
@@ -172,9 +175,9 @@ describe("mergeBoardConversation", () => {
       ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
       messageIds: ["m1", "r1"],
     }
-    const merged = await mergeBoardConversation("conv_1", conversation)
+    const merged = await mergeBoardConversation(WORKSPACE_ID, "conv_1", conversation)
     expect(merged).toBe(true)
-    expect((await db.conversations.get("conv_1"))?.recentMessages.map((m) => m.id)).toEqual(["r1"])
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_1"]))?.recentMessages.map((m) => m.id)).toEqual(["r1"])
   })
 
   it("reports unhandled when the opening itself moved away, so the caller refetches", async () => {
@@ -185,14 +188,15 @@ describe("mergeBoardConversation", () => {
       ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
       messageIds: ["r1"],
     }
-    const merged = await mergeBoardConversation("conv_1", conversation)
+    const merged = await mergeBoardConversation(WORKSPACE_ID, "conv_1", conversation)
     expect(merged).toBe(false)
     // The row stays put (no vanish-and-return) with the aggregate applied.
-    expect((await db.conversations.get("conv_1"))?.conversation.messageIds).toEqual(["r1"])
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_1"]))?.conversation.messageIds).toEqual(["r1"])
   })
 
   it("returns false when the card isn't cached (caller hydrates instead)", async () => {
     const merged = await mergeBoardConversation(
+      WORKSPACE_ID,
       "conv_absent",
       makeConversation("conv_absent", "2026-06-22T12:00:00.000Z")
     )
@@ -204,10 +208,10 @@ describe("mergeBoardConversation", () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z")])
     // A row left pending by an in-flight optimistic write (the reply rides the
     // events rail now; the projection row can still be flagged pending elsewhere).
-    const seeded = await db.conversations.get("conv_1")
+    const seeded = await db.conversations.get([WORKSPACE_ID, "conv_1"])
     await db.conversations.put({ ...seeded!, _status: "pending" })
-    await mergeBoardConversation("conv_1", makeConversation("conv_1", "2026-06-21T12:00:05.000Z"))
-    expect((await db.conversations.get("conv_1"))?._status).toBeUndefined()
+    await mergeBoardConversation(WORKSPACE_ID, "conv_1", makeConversation("conv_1", "2026-06-21T12:00:05.000Z"))
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_1"]))?._status).toBeUndefined()
   })
 
   it("drops the card when the conversation is emptied (its last message threaded off / reassigned)", async () => {
@@ -216,14 +220,14 @@ describe("mergeBoardConversation", () => {
       makePost("conv_2", "2026-06-21T12:00:00.000Z"),
     ])
     const emptied = { ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"), messageIds: [] }
-    const merged = await mergeBoardConversation("conv_1", emptied)
+    const merged = await mergeBoardConversation(WORKSPACE_ID, "conv_1", emptied)
     expect(merged).toBe(true)
     expect((await readBoard()).map((p) => p.id)).toEqual(["conv_2"])
   })
 
   it("reports an emptied conversation handled even when uncached, so the caller doesn't hydrate it", async () => {
     const emptied = { ...makeConversation("conv_absent", "2026-06-22T12:00:00.000Z"), messageIds: [] }
-    const merged = await mergeBoardConversation("conv_absent", emptied)
+    const merged = await mergeBoardConversation(WORKSPACE_ID, "conv_absent", emptied)
     expect(merged).toBe(true)
     expect(await readBoard()).toHaveLength(0)
   })
@@ -243,7 +247,7 @@ describe("putOptimisticBoardPost", () => {
 
   it("slots a pending card keyed by the real conversation id, renderable from the send alone", async () => {
     await putOptimisticBoardPost(WORKSPACE_ID, input)
-    const row = await db.conversations.get("conv_new")
+    const row = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(row).toMatchObject({
       id: "conv_new",
       workspaceId: WORKSPACE_ID,
@@ -259,8 +263,8 @@ describe("putOptimisticBoardPost", () => {
 
   it("reconciles in place: the conversation echo merges over it and clears the pending flag", async () => {
     await putOptimisticBoardPost(WORKSPACE_ID, input)
-    await mergeBoardConversation("conv_new", makeConversation("conv_new", "2026-06-22T12:00:05.000Z"))
-    const row = await db.conversations.get("conv_new")
+    await mergeBoardConversation(WORKSPACE_ID, "conv_new", makeConversation("conv_new", "2026-06-22T12:00:05.000Z"))
+    const row = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(row?._status).toBeUndefined()
     // Merge keeps the optimistic opening body (the echo carries no message bodies).
     expect(row?.openingMessage?.contentMarkdown).toBe("just posted")
@@ -269,7 +273,7 @@ describe("putOptimisticBoardPost", () => {
   it("is insert-if-absent: never overwrites an existing row (echo/refetch won, or the stub is already down)", async () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_new", "2026-06-22T12:00:09.000Z")])
     await putOptimisticBoardPost(WORKSPACE_ID, input)
-    const row = await db.conversations.get("conv_new")
+    const row = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(row?._status).toBeUndefined()
     // The existing row's opening (msg m1 from makePost) is untouched, not clobbered
     // with the seed's msg_1.
@@ -281,7 +285,7 @@ describe("putOptimisticBoardPost", () => {
       ...input,
       attachments: [{ id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 }],
     })
-    const row = await db.conversations.get("conv_new")
+    const row = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(row?.openingMessage?.attachments).toEqual([
       { id: "att_1", filename: "shot.png", mimeType: "image/png", sizeBytes: 2048 },
     ])
@@ -313,7 +317,7 @@ describe("reconcileOptimisticBoardPost (new-scratchpad drain refine)", () => {
   it("drain beat the echo (still pending): replaces the stub wholesale with the real ids", async () => {
     await putOptimisticBoardPost(WORKSPACE_ID, stub)
     await reconcileOptimisticBoardPost(WORKSPACE_ID, real)
-    const row = await db.conversations.get("conv_new")
+    const row = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(row?._status).toBe("pending")
     expect(row?.conversation.streamId).toBe("stream_real")
     expect(row?.conversation.messageIds).toEqual(["msg_real"])
@@ -328,19 +332,19 @@ describe("reconcileOptimisticBoardPost (new-scratchpad drain refine)", () => {
     // The `conversation:created` echo reconciles the aggregate (real messageIds,
     // clears `_status`) but keeps the stub's stale opening (mergeBoardConversation
     // carries no message bodies).
-    await mergeBoardConversation("conv_new", {
+    await mergeBoardConversation(WORKSPACE_ID, "conv_new", {
       ...makeConversation("conv_new", "2026-06-22T12:00:05.000Z"),
       streamId: "stream_real",
       messageIds: ["msg_real"],
     })
-    const afterEcho = await db.conversations.get("conv_new")
+    const afterEcho = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(afterEcho?._status).toBeUndefined()
     expect(afterEcho?.openingMessage?.id).toBe("temp_scratch") // stale, mismatched → would render twice
     expect(afterEcho?.openingMessage?.id).not.toBe(afterEcho?.conversation.messageIds[0])
 
     // The drain's later refine patches the real opening onto the reconciled row.
     await reconcileOptimisticBoardPost(WORKSPACE_ID, real)
-    const row = await db.conversations.get("conv_new")
+    const row = await db.conversations.get([WORKSPACE_ID, "conv_new"])
     expect(row?._status).toBeUndefined() // not regressed back to pending
     expect(row?.openingMessage?.id).toBe("msg_real")
     expect(row?.openingMessage?.contentMarkdown).toBe("server markdown")
@@ -352,7 +356,7 @@ describe("reconcileOptimisticBoardPost (new-scratchpad drain refine)", () => {
   it("cancelled mid-send (no row): does NOT resurrect the card", async () => {
     // The user deleted the post while the send was in flight — its card is gone.
     await reconcileOptimisticBoardPost(WORKSPACE_ID, real)
-    expect(await db.conversations.get("conv_new")).toBeUndefined()
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_new"])).toBeUndefined()
   })
 })
 
@@ -370,19 +374,19 @@ describe("deleteOptimisticBoardPost", () => {
 
   it("drops a pending stub (a cancelled queued post) so it doesn't linger as a phantom", async () => {
     await putOptimisticBoardPost(WORKSPACE_ID, input)
-    await deleteOptimisticBoardPost("conv_new")
-    expect(await db.conversations.get("conv_new")).toBeUndefined()
+    await deleteOptimisticBoardPost(WORKSPACE_ID, "conv_new")
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_new"])).toBeUndefined()
   })
 
   it("leaves a reconciled card alone (a stale cancel must not delete a committed post)", async () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_new", "2026-06-22T12:00:00.000Z")])
-    await deleteOptimisticBoardPost("conv_new")
-    expect(await db.conversations.get("conv_new")).toBeDefined()
+    await deleteOptimisticBoardPost(WORKSPACE_ID, "conv_new")
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_new"])).toBeDefined()
   })
 
   it("no-ops when the card doesn't exist", async () => {
-    await deleteOptimisticBoardPost("conv_absent")
-    expect(await db.conversations.get("conv_absent")).toBeUndefined()
+    await deleteOptimisticBoardPost(WORKSPACE_ID, "conv_absent")
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_absent"])).toBeUndefined()
   })
 })
 
@@ -403,17 +407,17 @@ describe("setBoardRootArchived", () => {
 
     await setBoardRootArchived(WORKSPACE_ID, ["chan_1"], true)
 
-    expect(await db.conversations.get("conv_root")).toMatchObject({ rootArchived: true })
-    expect(await db.conversations.get("conv_anchor")).toMatchObject({ rootArchived: true })
-    expect((await db.conversations.get("conv_other"))?.rootArchived).toBeUndefined()
-    expect((await db.conversations.get("conv_ws2"))?.rootArchived).toBeUndefined()
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_root"])).toMatchObject({ rootArchived: true })
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_anchor"])).toMatchObject({ rootArchived: true })
+    expect((await db.conversations.get([WORKSPACE_ID, "conv_other"]))?.rootArchived).toBeUndefined()
+    expect((await db.conversations.get(["ws_2", "conv_ws2"]))?.rootArchived).toBeUndefined()
   })
 
   it("clears the flag on unarchive", async () => {
     await seedBoardPosts(WORKSPACE_ID, [scopedPost("conv_root", "thread_1", "chan_1")])
     await setBoardRootArchived(WORKSPACE_ID, ["chan_1"], true)
     await setBoardRootArchived(WORKSPACE_ID, ["chan_1"], false)
-    expect(await db.conversations.get("conv_root")).toMatchObject({ rootArchived: false })
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_root"])).toMatchObject({ rootArchived: false })
   })
 })
 
@@ -428,10 +432,10 @@ describe("removeBoardConversationsForStream", () => {
 
     await removeBoardConversationsForStream(WORKSPACE_ID, "chan_1")
 
-    expect(await db.conversations.get("conv_root")).toBeUndefined()
-    expect(await db.conversations.get("conv_anchor")).toBeUndefined()
-    expect(await db.conversations.get("conv_other")).toBeDefined()
-    expect(await db.conversations.get("conv_ws2")).toBeDefined()
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_root"])).toBeUndefined()
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_anchor"])).toBeUndefined()
+    expect(await db.conversations.get([WORKSPACE_ID, "conv_other"])).toBeDefined()
+    expect(await db.conversations.get(["ws_2", "conv_ws2"])).toBeDefined()
   })
 })
 
@@ -442,7 +446,7 @@ describe("mergeBoardConversation — backfill-store pruning", () => {
     ])
     await seedConversationMessages(WORKSPACE_ID, "conv_1", [makeMessage("r_old"), makeMessage("r_moved")])
 
-    await mergeBoardConversation("conv_1", {
+    await mergeBoardConversation(WORKSPACE_ID, "conv_1", {
       ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
       messageIds: ["m1", "r_old"],
     })
@@ -458,11 +462,254 @@ describe("mergeBoardConversation — backfill-store pruning", () => {
     await seedBoardPosts(WORKSPACE_ID, [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r1")])])
     await seedConversationMessages(WORKSPACE_ID, "conv_1", [makeMessage("r1")])
 
-    await mergeBoardConversation("conv_1", {
+    await mergeBoardConversation(WORKSPACE_ID, "conv_1", {
       ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
       messageIds: [],
     })
 
     await waitFor(async () => expect(await db.conversationMessages.toArray()).toEqual([]))
+  })
+})
+
+function postWithTopic(id: string, lastActivityAt: string, topicSummary: string): BoardPost {
+  const post = makePost(id, lastActivityAt)
+  return { ...post, conversation: { ...post.conversation, topicSummary } }
+}
+
+async function topicsByWorkspace() {
+  return (await db.conversations.toArray()).map((row) => ({
+    workspaceId: row.workspaceId,
+    id: row.id,
+    topic: row.conversation.topicSummary,
+    status: row._status,
+  }))
+}
+
+describe("workspace isolation — a copied stream keeps its conversation and message ids in the partner workspace", () => {
+  const stub = {
+    conversationId: "conv_new",
+    messageId: "temp_1",
+    streamId: "draft_1",
+    authorId: "usr_1",
+    contentMarkdown: "client markdown",
+    rootStreamId: "draft_1",
+    rootStreamType: "scratchpad" as const,
+    createdAt: "2026-06-22T12:00:00.000Z",
+  }
+  const real = {
+    ...stub,
+    messageId: "msg_real",
+    streamId: "stream_real",
+    rootStreamId: "stream_real",
+    contentMarkdown: "server markdown",
+  }
+
+  it("keeps the same conversation id separate per workspace and never merges a title across them", async () => {
+    const socketTopic = {
+      topicSummary: "socket topic in a",
+      topicSummarySource: "explicit" as const,
+      topicSummaryRevision: 4,
+    }
+    const inA = makePost("conv_1", "2026-06-20T12:00:00.000Z")
+    await seedBoardPosts("ws_a", [{ ...inA, conversation: { ...inA.conversation, ...socketTopic } }])
+
+    const inB = makePost("conv_1", "2026-06-21T12:00:00.000Z")
+    await seedBoardPosts("ws_b", [
+      {
+        ...inB,
+        conversation: {
+          ...inB.conversation,
+          topicSummary: "generated topic in b",
+          topicSummarySource: "generated",
+          topicSummaryRevision: 2,
+        },
+      },
+    ])
+
+    expect(await topicsByWorkspace()).toEqual([
+      { workspaceId: "ws_a", id: "conv_1", topic: "socket topic in a", status: undefined },
+      { workspaceId: "ws_b", id: "conv_1", topic: "generated topic in b", status: undefined },
+    ])
+  })
+
+  it("merges a conversation update into its own workspace's row only", async () => {
+    await seedBoardPosts("ws_a", [postWithTopic("conv_1", "2026-06-20T12:00:00.000Z", "in a")])
+    await seedBoardPosts("ws_b", [postWithTopic("conv_1", "2026-06-20T12:00:00.000Z", "in b")])
+
+    const merged = await mergeBoardConversation("ws_b", "conv_1", {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      topicSummary: "updated in b",
+    })
+
+    expect({ merged, rows: await topicsByWorkspace() }).toEqual({
+      merged: true,
+      rows: [
+        { workspaceId: "ws_a", id: "conv_1", topic: "in a", status: undefined },
+        { workspaceId: "ws_b", id: "conv_1", topic: "updated in b", status: undefined },
+      ],
+    })
+  })
+
+  it("reports an update uncached when only another workspace holds the conversation", async () => {
+    await seedBoardPosts("ws_a", [postWithTopic("conv_1", "2026-06-20T12:00:00.000Z", "in a")])
+
+    const merged = await mergeBoardConversation(
+      "ws_b",
+      "conv_1",
+      makeConversation("conv_1", "2026-06-22T12:00:00.000Z")
+    )
+
+    expect({ merged, rows: await topicsByWorkspace() }).toEqual({
+      merged: false,
+      rows: [{ workspaceId: "ws_a", id: "conv_1", topic: "in a", status: undefined }],
+    })
+  })
+
+  it("slots a pending card in one workspace without being blocked by the other workspace's row", async () => {
+    await seedBoardPosts("ws_a", [postWithTopic("conv_new", "2026-06-22T12:00:09.000Z", "in a")])
+
+    await putOptimisticBoardPost("ws_b", {
+      conversationId: "conv_new",
+      messageId: "msg_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      contentMarkdown: "just posted",
+      rootStreamId: "stream_1",
+      rootStreamType: "channel",
+      createdAt: "2026-06-22T12:00:00.000Z",
+    })
+
+    expect(await topicsByWorkspace()).toEqual([
+      { workspaceId: "ws_a", id: "conv_new", topic: "in a", status: undefined },
+      { workspaceId: "ws_b", id: "conv_new", topic: null, status: "pending" },
+    ])
+  })
+
+  it("refines and cancels only its own workspace's pending card", async () => {
+    await putOptimisticBoardPost("ws_a", stub)
+    await putOptimisticBoardPost("ws_b", stub)
+
+    await reconcileOptimisticBoardPost("ws_b", real)
+    const afterRefine = (await db.conversations.toArray()).map((row) => ({
+      workspaceId: row.workspaceId,
+      openingId: row.openingMessage?.id,
+    }))
+
+    await deleteOptimisticBoardPost("ws_b", "conv_new")
+    const afterCancel = (await db.conversations.toArray()).map((row) => row.workspaceId)
+
+    expect({ afterRefine, afterCancel }).toEqual({
+      afterRefine: [
+        { workspaceId: "ws_a", openingId: "temp_1" },
+        { workspaceId: "ws_b", openingId: "msg_real" },
+      ],
+      afterCancel: ["ws_a"],
+    })
+  })
+
+  it("does not resurrect a card in a workspace whose own pending card is gone", async () => {
+    await putOptimisticBoardPost("ws_a", stub)
+
+    await reconcileOptimisticBoardPost("ws_b", real)
+
+    expect((await db.conversations.toArray()).map((row) => ({ workspaceId: row.workspaceId, id: row.id }))).toEqual([
+      { workspaceId: "ws_a", id: "conv_new" },
+    ])
+  })
+
+  it("records a reached stream on its own workspace's card only when both workspaces hold the same conversation id", async () => {
+    await seedBoardPosts("ws_a", [scopedPost("conv_1", "chan_1", "chan_1")])
+    await seedBoardPosts("ws_b", [scopedPost("conv_1", "chan_1", "chan_1")])
+
+    await addBoardConversationStream("ws_b", "conv_1", "chan_2")
+
+    expect(
+      (await db.conversations.toArray()).map((row) => ({ workspaceId: row.workspaceId, streamIds: row.streamIds }))
+    ).toEqual([
+      { workspaceId: "ws_a", streamIds: ["stream_1"] },
+      { workspaceId: "ws_b", streamIds: ["stream_1", "chan_2"] },
+    ])
+  })
+
+  it("removes a stream's cards from its own workspace only when both workspaces hold the same conversation id", async () => {
+    await seedBoardPosts("ws_a", [scopedPost("conv_1", "chan_1", "chan_1")])
+    await seedBoardPosts("ws_b", [scopedPost("conv_1", "chan_1", "chan_1")])
+
+    await removeBoardConversationsForStream("ws_a", "chan_1")
+
+    expect((await db.conversations.toArray()).map((row) => ({ workspaceId: row.workspaceId, id: row.id }))).toEqual([
+      { workspaceId: "ws_b", id: "conv_1" },
+    ])
+  })
+
+  it("prunes backfilled messages of its own workspace only when a conversation id is shared", async () => {
+    await seedBoardPosts("ws_a", [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r_moved")])])
+    await seedBoardPosts("ws_b", [makePost("conv_1", "2026-06-20T12:00:00.000Z", [makeMessage("r_moved")])])
+    await seedConversationMessages("ws_a", "conv_1", [makeMessage("r_moved")])
+    await seedConversationMessages("ws_b", "conv_1", [makeMessage("r_moved")])
+
+    await mergeBoardConversation("ws_a", "conv_1", {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: ["m1"],
+    })
+    await waitFor(async () =>
+      expect((await db.conversationMessages.toArray()).map((row) => row.workspaceId)).toEqual(["ws_b"])
+    )
+
+    await mergeBoardConversation("ws_b", "conv_1", {
+      ...makeConversation("conv_1", "2026-06-22T12:00:00.000Z"),
+      messageIds: [],
+    })
+    await waitFor(async () => expect(await db.conversationMessages.toArray()).toEqual([]))
+  })
+})
+
+describe("board reads across a workspace switch", () => {
+  it("should report the feed as loading right after the workspace changes, then settle on the new workspace's feed", async () => {
+    await seedBoardPosts("ws_a", [makePost("conv_a", "2026-06-20T12:00:00.000Z")])
+    await seedBoardPosts("ws_b", [makePost("conv_b", "2026-06-21T12:00:00.000Z")])
+    const { result, rerender } = renderHook(({ workspaceId }) => useBoardPosts(workspaceId), {
+      initialProps: { workspaceId: "ws_a" },
+    })
+    await waitFor(() => expect(result.current?.map((row) => row.id)).toEqual(["conv_a"]))
+
+    rerender({ workspaceId: "ws_b" })
+    const rightAfterSwitch = result.current
+
+    expect(rightAfterSwitch).toBeUndefined()
+    await waitFor(() => expect(result.current?.map((row) => row.id)).toEqual(["conv_b"]))
+  })
+
+  it("should report a conversation as loading right after the workspace changes, then settle on the new workspace's row of the same id", async () => {
+    await seedBoardPosts("ws_a", [postWithTopic("conv_1", "2026-06-20T12:00:00.000Z", "in a")])
+    await seedBoardPosts("ws_b", [postWithTopic("conv_1", "2026-06-20T12:00:00.000Z", "in b")])
+    const { result, rerender } = renderHook(
+      ({ workspaceId, conversationId }) => useBoardPost(workspaceId, conversationId),
+      { initialProps: { workspaceId: "ws_a", conversationId: "conv_1" } }
+    )
+    await waitFor(() => expect(result.current?.conversation.topicSummary).toBe("in a"))
+
+    rerender({ workspaceId: "ws_b", conversationId: "conv_1" })
+    const rightAfterSwitch = result.current
+
+    expect(rightAfterSwitch).toBeUndefined()
+    await waitFor(() => expect(result.current?.conversation.topicSummary).toBe("in b"))
+  })
+
+  it("should report a conversation as loading right after the conversation changes within a workspace", async () => {
+    await seedBoardPosts("ws_a", [
+      postWithTopic("conv_1", "2026-06-20T12:00:00.000Z", "first"),
+      postWithTopic("conv_2", "2026-06-21T12:00:00.000Z", "second"),
+    ])
+    const { result, rerender } = renderHook(({ conversationId }) => useBoardPost("ws_a", conversationId), {
+      initialProps: { conversationId: "conv_1" },
+    })
+    await waitFor(() => expect(result.current?.conversation.topicSummary).toBe("first"))
+
+    rerender({ conversationId: "conv_2" })
+    const rightAfterSwitch = result.current
+
+    expect(rightAfterSwitch).toBeUndefined()
+    await waitFor(() => expect(result.current?.conversation.topicSummary).toBe("second"))
   })
 })

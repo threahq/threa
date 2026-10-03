@@ -7,6 +7,7 @@ import type { CachedEvent } from "@/db"
 import {
   deleteContextRowsForMessage,
   putLocalContextRows,
+  readStreamContextRows,
   reparentContextRows,
   replaceContextRowsForMessage,
   seedStreamContextItems,
@@ -110,7 +111,7 @@ describe("stream-context-store", () => {
       rootStreamId: ROOT,
     })
     await putLocalContextRows(local)
-    expect(await db.streamContextItems.get(local[0].key)).toMatchObject({
+    expect(await db.streamContextItems.get([WORKSPACE_ID, local[0].key])).toMatchObject({
       _status: "pending",
       groupKey: "https://Example.com/a/",
     })
@@ -151,7 +152,7 @@ describe("stream-context-store", () => {
     // Event replay (catch-up, gate resume) re-derives the same local row.
     await putLocalContextRows(local)
 
-    const row = await db.streamContextItems.get(local[0].key)
+    const row = await db.streamContextItems.get([WORKSPACE_ID, local[0].key])
     expect(row).toMatchObject({ groupKey: "https://example.com/a", detail: { title: "Example" } })
     expect(row?._status).toBeUndefined()
   })
@@ -261,10 +262,130 @@ describe("stream-context-store", () => {
     ])
     await reparentContextRows(WORKSPACE_ID, ["msg_1"], "stream_thread", ROOT)
 
-    expect(await db.streamContextItems.get("link:a:msg_1")).toMatchObject({
+    expect(await db.streamContextItems.get([WORKSPACE_ID, "link:a:msg_1"])).toMatchObject({
       streamId: "stream_thread",
       rootStreamId: ROOT,
     })
-    expect(await db.streamContextItems.get("link:a:msg_2")).toMatchObject({ streamId: ROOT })
+    expect(await db.streamContextItems.get([WORKSPACE_ID, "link:a:msg_2"])).toMatchObject({ streamId: ROOT })
+  })
+})
+
+describe("stream-context-store workspace isolation — a copied stream keeps its message ids and context keys in the partner workspace", () => {
+  const KEY = "link:https://example.com/a:msg_1"
+
+  beforeEach(async () => {
+    await db.streamContextItems.clear()
+  })
+
+  function localRows(workspaceId: string) {
+    return contextItemsFromEvent(
+      { ...messageEvent("msg_1", "https://example.com/a", "2026-07-01T10:00:00.000Z"), workspaceId },
+      { workspaceId, streamId: ROOT, rootStreamId: ROOT }
+    )
+  }
+
+  async function rowsByWorkspace() {
+    return (await db.streamContextItems.toArray()).map((row) => ({
+      workspaceId: row.workspaceId,
+      key: row.key,
+      status: row._status,
+      snippet: row.snippet,
+    }))
+  }
+
+  it("writes a pending local row in one workspace even when the other workspace holds the same key reconciled", async () => {
+    await seedStreamContextItems("ws_a", ROOT, [serverItem({ key: KEY, snippet: "reconciled in a" })])
+
+    await putLocalContextRows(localRows("ws_b"))
+
+    expect(await rowsByWorkspace()).toEqual([
+      { workspaceId: "ws_a", key: KEY, status: undefined, snippet: "reconciled in a" },
+      { workspaceId: "ws_b", key: KEY, status: "pending", snippet: "hi" },
+    ])
+  })
+
+  it("rebuilds a message's rows in its own workspace only, dropping a removed link there alone", async () => {
+    await seedStreamContextItems("ws_a", ROOT, [serverItem({ key: KEY, snippet: "in a" })])
+    await seedStreamContextItems("ws_b", ROOT, [serverItem({ key: KEY, snippet: "in b" })])
+
+    await replaceContextRowsForMessage("ws_a", "msg_1", [])
+
+    expect(await rowsByWorkspace()).toEqual([{ workspaceId: "ws_b", key: KEY, status: undefined, snippet: "in b" }])
+  })
+
+  it("deletes and re-homes a message's rows in its own workspace only", async () => {
+    await seedStreamContextItems("ws_a", ROOT, [serverItem({ key: KEY })])
+    await seedStreamContextItems("ws_b", ROOT, [serverItem({ key: KEY })])
+
+    await reparentContextRows("ws_a", ["msg_1"], "stream_thread", ROOT)
+    const afterReparent = (await db.streamContextItems.toArray()).map((row) => ({
+      workspaceId: row.workspaceId,
+      streamId: row.streamId,
+    }))
+    await deleteContextRowsForMessage("ws_b", "msg_1")
+    const afterDelete = (await db.streamContextItems.toArray()).map((row) => row.workspaceId)
+
+    expect({ afterReparent, afterDelete }).toEqual({
+      afterReparent: [
+        { workspaceId: "ws_a", streamId: "stream_thread" },
+        { workspaceId: "ws_b", streamId: ROOT },
+      ],
+      afterDelete: ["ws_a"],
+    })
+  })
+
+  it("reads the feed and a group's occurrences of one workspace when the root and keys are shared with another", async () => {
+    await seedStreamContextItems("ws_a", ROOT, [serverItem({ key: KEY, snippet: "in a" })])
+    await seedStreamContextItems("ws_b", ROOT, [serverItem({ key: KEY, snippet: "in b" })])
+
+    const tree = renderHook(() => useStreamContextRows("ws_b", ROOT, ROOT, "tree"))
+    const stream = renderHook(() => useStreamContextRows("ws_b", ROOT, ROOT, "stream"))
+    const occurrences = renderHook(() => useStreamContextOccurrences("ws_b", ROOT, "link:https://example.com/a"))
+    await waitFor(() => {
+      expect(tree.result.current).toBeDefined()
+      expect(stream.result.current).toBeDefined()
+      expect(occurrences.result.current).toBeDefined()
+    })
+
+    expect({
+      tree: tree.result.current?.map((row) => row.snippet),
+      stream: stream.result.current?.map((row) => row.snippet),
+      occurrences: occurrences.result.current?.map((row) => row.snippet),
+      oneShotTree: (await readStreamContextRows("ws_b", ROOT, ROOT, "tree")).map((row) => row.snippet),
+      oneShotStream: (await readStreamContextRows("ws_b", ROOT, ROOT, "stream")).map((row) => row.snippet),
+    }).toEqual({
+      tree: ["in b"],
+      stream: ["in b"],
+      occurrences: ["in b"],
+      oneShotTree: ["in b"],
+      oneShotStream: ["in b"],
+    })
+  })
+
+  it("returns undefined from the feed and the occurrences in the render after the workspace changes, until the new workspace's rows resolve", async () => {
+    await seedStreamContextItems("ws_a", ROOT, [serverItem({ key: KEY, snippet: "in a" })])
+    await seedStreamContextItems("ws_b", ROOT, [serverItem({ key: KEY, snippet: "in b" })])
+
+    const { result, rerender } = renderHook(
+      ({ workspaceId }) => ({
+        feed: useStreamContextRows(workspaceId, ROOT, ROOT, "tree"),
+        occurrences: useStreamContextOccurrences(workspaceId, ROOT, "link:https://example.com/a"),
+      }),
+      { initialProps: { workspaceId: "ws_a" } }
+    )
+    const snippets = () => ({
+      feed: result.current.feed?.map((row) => row.snippet),
+      occurrences: result.current.occurrences?.map((row) => row.snippet),
+    })
+    await waitFor(() => expect(snippets()).toEqual({ feed: ["in a"], occurrences: ["in a"] }))
+
+    rerender({ workspaceId: "ws_b" })
+    const rightAfterSwitch = snippets()
+    await waitFor(() => expect(snippets()).toEqual({ feed: ["in b"], occurrences: ["in b"] }))
+
+    expect({ rightAfterSwitch, settled: snippets() }).toEqual({
+      rightAfterSwitch: { feed: undefined, occurrences: undefined },
+      settled: { feed: ["in b"], occurrences: ["in b"] },
+    })
   })
 })
