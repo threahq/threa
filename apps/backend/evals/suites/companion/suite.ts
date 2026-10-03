@@ -24,6 +24,7 @@
  *   - dm-companion-casual-001
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { companionCases, type CompanionInput, type CompanionExpected } from "./cases"
 import type { CompanionOutput, CompanionMessage, CompanionTrajectoryStep } from "./types"
@@ -551,6 +552,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       attachmentService,
       memoExplorerService,
       preparedRecall: new PreparedRecall({
+        analyticsReporter: new DisabledAnalyticsReporter(),
         memoExplorerService,
         // `EVAL_PREPARED_RECALL=off` is the no-recall arm: an unscored pool recalls nothing.
         scorer:

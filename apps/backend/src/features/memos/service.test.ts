@@ -1,9 +1,10 @@
+import { DisabledAnalyticsReporter, type AnalyticsEvent } from "@threahq/backend-common"
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
 import { AISpendDeniedError } from "@threahq/agent-runtime"
 import type { Conversation } from "../conversations"
 import type { Message } from "../messaging"
-import { MemoService } from "./service"
+import { MemoService, MEMO_CAPTURE_OUTCOME_EVENT } from "./service"
 import { MEMO_REFLECTIVE_MAX_MEMOS } from "./config"
 import { MemoRepository } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
@@ -167,8 +168,10 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
   const classifyConversation = mock(async () => classification)
+  const captureEvent = mock((_event: AnalyticsEvent) => {})
 
   const service = new MemoService({
+    analyticsReporter: Object.assign(new DisabledAnalyticsReporter(), { captureEvent }),
     pool: {} as never,
     classifier: { classifyConversation } as never,
     memorizer: {
@@ -192,6 +195,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
     findSourceMessages,
     classifyConversation,
     recordFingerprints,
+    captureEvent,
   }
 }
 
@@ -347,6 +351,36 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
       expect.stringContaining("Superseded by revised capture")
     )
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_nearest" }))
+  })
+})
+
+describe("MemoService.processBatch — capture outcome counter", () => {
+  afterEach(() => mock.restore())
+
+  it("counts a memorized conversation as a workspace event with no person profile", async () => {
+    const { service, captureEvent } = setupService({ memoContents: [memoContent] })
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(captureEvent.mock.calls).toEqual([
+      [
+        {
+          distinctId: `workspace:${WORKSPACE_ID}`,
+          event: MEMO_CAPTURE_OUTCOME_EVENT,
+          properties: { outcome: "memorized", isRevision: false, memoCount: 1, $process_person_profile: false },
+          groups: { workspace: WORKSPACE_ID },
+        },
+      ],
+    ])
+  })
+
+  it("counts a conversation the classifier judged not worth memorizing", async () => {
+    const { service, captureEvent, classifyConversation } = setupService({ memoContents: [memoContent] })
+    classifyConversation.mockResolvedValue({ ...classification, isKnowledgeWorthy: false })
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(captureEvent.mock.calls.map(([event]) => event.properties?.outcome)).toEqual(["not_worthy"])
   })
 })
 
@@ -645,6 +679,7 @@ function setupSaveMemo() {
   const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
   const service = new MemoService({
+    analyticsReporter: new DisabledAnalyticsReporter(),
     pool: {} as never,
     classifier: {} as never,
     memorizer: {} as never,
@@ -960,6 +995,7 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
   const memorizeConversation = mock(async () => opts.memoContents ?? [memoContent])
 
   const service = new MemoService({
+    analyticsReporter: new DisabledAnalyticsReporter(),
     pool: {} as never,
     classifier: { classifyConversation } as never,
     memorizer: { memorizeConversation, reviseMemo: async () => [] } as never,

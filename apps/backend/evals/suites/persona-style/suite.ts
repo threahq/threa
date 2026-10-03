@@ -21,6 +21,7 @@
  *   bun run eval -- -s persona-style -c tone-warm-001
  */
 
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { ulid } from "ulid"
 import type { EvalSuite, EvalContext } from "../../framework/types"
 import { personaStyleCases } from "./cases"
@@ -245,6 +246,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
       attachmentService,
       memoExplorerService,
       preparedRecall: new PreparedRecall({
+        analyticsReporter: new DisabledAnalyticsReporter(),
         memoExplorerService,
         scorer: new DecisionsRelevanceScorer({
           ai: ctx.ai,

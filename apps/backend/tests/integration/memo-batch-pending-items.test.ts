@@ -1,3 +1,4 @@
+import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
 import { ConversationStatuses, MemoryModes } from "@threahq/types"
@@ -39,6 +40,7 @@ describe("memo batch: pending items", () => {
     embed?: () => Promise<number[][]>
   }): MemoService {
     return new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: { classifyConversation: overrides.classify ?? (async () => worthy) },
       memorizer: {
