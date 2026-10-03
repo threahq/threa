@@ -1294,14 +1294,12 @@ export class MemoService implements MemoServiceLike {
       const settingLanguage = overrides.find((o) => o.key === "memoLanguage")?.value
       const memoLanguage =
         typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
-      // A memo is readable by whoever can read its anchor's root, so research
-      // from any other root (or a cited stream that no longer resolves) has an
-      // audience the memo can't honor.
+      // Only research from the anchor's root becomes a source: a source's
+      // deletion retires the memo, and the memo's readers can open it.
       const citedStreams = await StreamRepository.findByIdsInWorkspace(client, workspaceId, citedStreamIds)
       const inRootStreamIds = citedStreams
         .filter((s) => (s.rootStreamId ?? s.id) === memoScope.rootStreamId)
         .map((s) => s.id)
-      const citesOutsideRoot = inRootStreamIds.length < citedStreamIds.length
       const inRootMessages = await MessageRepository.findByIdsInStreams(
         client,
         workspaceId,
@@ -1312,16 +1310,8 @@ export class MemoService implements MemoServiceLike {
         anchorMessageId,
         ...citedMessageIds.filter((id) => id !== anchorMessageId && inRootMessages.has(id)),
       ]
-      return { existingMemos, existingTags, memoLanguage, memoScope, citesOutsideRoot, sourceMessageIds }
+      return { existingMemos, existingTags, memoLanguage, memoScope, sourceMessageIds }
     })
-
-    if (context.memoScope.scope === MemoScopes.WORKSPACE && context.citesOutsideRoot) {
-      logger.info(
-        { sessionId, streamId },
-        "reflective capture skipped — shared memo would cite research from another root"
-      )
-      return none
-    }
 
     // Phase 2: classify the digest. topicSummary is null — the digest's own
     // "Trigger / researched / replied" sections carry the framing, and a session
